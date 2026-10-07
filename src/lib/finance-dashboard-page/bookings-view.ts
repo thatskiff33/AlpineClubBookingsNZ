@@ -1,4 +1,8 @@
-import { formatClubDayMonth, requireCalendarDate } from "@/lib/club-time";
+import {
+  formatClubDayMonth,
+  requireCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import {
   getFinanceBookingMetrics,
   type FinanceBookingMetricsResult,
@@ -20,6 +24,7 @@ import {
 } from "@/lib/finance-dashboard-page/model";
 import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
 // rows already scoped to one range, and widening it to the shared medium form
@@ -33,13 +38,14 @@ import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 // Greenwich; for a club west of it every trend point on the finance dashboard,
 // and every exported row label, named the PREVIOUS day (INV-DATE-019).
 
-function formatShortDate(dateOnly: string) {
-  return formatClubDayMonth(requireCalendarDate(dateOnly));
+function formatShortDate(dateOnly: string, format: ClubDateFormat) {
+  return formatClubDayMonth(requireCalendarDate(dateOnly), format);
 }
 
 export async function buildBookingsDashboard(
   selection: FinanceDashboardSelection,
   lodgeId: string | null,
+  format: ClubFormat,
 ): Promise<FinanceDashboardViewModel> {
   const warnings: string[] = [];
   const query = {
@@ -91,7 +97,7 @@ export async function buildBookingsDashboard(
   const ledgerGapBookings = metrics.paymentSummary.additionalLedgerGapBookings;
   if (ledgerGapBookings > 0) {
     warnings.push(
-      `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents)}: ${formatNumber(ledgerGapBookings)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`,
+      `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)}: ${formatNumber(ledgerGapBookings, format)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`,
     );
   }
   const moneyReconciliationPanel =
@@ -101,7 +107,7 @@ export async function buildBookingsDashboard(
       comparison: comparison?.moneyReconciliation ?? null,
       affectedMetrics:
         "Booked revenue, forward revenue, and comparison figures",
-      formatNumber,
+      formatNumber: (value) => formatNumber(value, format),
     });
 
   const realizedTotals = realized?.totals;
@@ -109,32 +115,32 @@ export async function buildBookingsDashboard(
   const cards: FinanceDashboardKpiCard[] = [
     {
       title: "Realized guest nights",
-      value: formatNumber(realizedTotals?.guestNights ?? 0),
+      value: formatNumber(realizedTotals?.guestNights ?? 0, format),
       description: "Guest nights stayed in the selected period.",
       footnote: compareTotals
-        ? `${formatSignedNumber((realizedTotals?.guestNights ?? 0) - compareTotals.guestNights)} vs comparison.`
+        ? `${formatSignedNumber((realizedTotals?.guestNights ?? 0) - compareTotals.guestNights, format)} vs comparison.`
         : undefined,
     },
     {
       title: "Occupancy",
-      value: formatPercent(realizedTotals?.occupancy.occupancyRate ?? 0),
+      value: formatPercent(realizedTotals?.occupancy.occupancyRate ?? 0, format),
       description: "Occupied bed nights divided by available bed nights.",
       footnote: compareTotals
-        ? `${formatPercent(compareTotals.occupancy.occupancyRate)} in comparison.`
+        ? `${formatPercent(compareTotals.occupancy.occupancyRate, format)} in comparison.`
         : undefined,
     },
     {
       title: "Booked revenue",
-      value: formatDollarsDisplay(realizedTotals?.bookedRevenueCents ?? 0),
+      value: formatDollarsDisplay(realizedTotals?.bookedRevenueCents ?? 0, format),
       description:
         "Booking-system revenue allocated across realized stay nights.",
       footnote: compareTotals
-        ? `${formatSignedDollarsDisplay((realizedTotals?.bookedRevenueCents ?? 0) - compareTotals.bookedRevenueCents)} vs comparison.`
+        ? `${formatSignedDollarsDisplay((realizedTotals?.bookedRevenueCents ?? 0) - compareTotals.bookedRevenueCents, format)} vs comparison.`
         : undefined,
     },
     {
       title: "Net collected cash",
-      value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents),
+      value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents, format),
       // #2408: one figure, counted once. The captured amount on a payment row
       // already includes any later price increase that was collected, so this
       // is the whole of the cash and not a part of it.
@@ -142,13 +148,14 @@ export async function buildBookingsDashboard(
         "Captured payments less refunds from local payment rows, including any collected price increase.",
       footnote:
         ledgerGapBookings > 0
-          ? `May understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`
+          ? `May understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`
           : "Cash is local payment-derived and separate from Xero revenue.",
     },
     {
       title: "Forward demand",
       value: formatNumber(
         metrics.forward?.totals.totalPipeline.guestNights ?? 0,
+        format,
       ),
       description:
         "Committed plus at-risk future guest nights in the forward window.",
@@ -163,6 +170,7 @@ export async function buildBookingsDashboard(
       title: "Outstanding additional payments",
       value: formatDollarsDisplay(
         metrics.paymentSummary.outstandingAdditionalCents,
+        format,
       ),
       description:
         "Extra owed after an upward booking change and not yet collected, for bookings in the selected range.",
@@ -170,7 +178,7 @@ export async function buildBookingsDashboard(
       // count every owing booking, whenever it stays) and the reports summary
       // (which counts the report's own date range). Say so, or the three
       // numbers look like a contradiction rather than three questions.
-      footnote: `${formatNumber(metrics.paymentSummary.outstandingAdditionalBookings)} booking${metrics.paymentSummary.outstandingAdditionalBookings === 1 ? "" : "s"} awaiting or failed payment in this range.`,
+      footnote: `${formatNumber(metrics.paymentSummary.outstandingAdditionalBookings, format)} booking${metrics.paymentSummary.outstandingAdditionalBookings === 1 ? "" : "s"} awaiting or failed payment in this range.`,
     },
   ];
 
@@ -183,7 +191,7 @@ export async function buildBookingsDashboard(
       variant: "line",
       xKey: "label",
       data: realized.byDate.map((entry) => ({
-        label: formatShortDate(entry.date),
+        label: formatShortDate(entry.date, format),
         occupancy: entry.occupancyRate,
         guestNights: entry.guestNights,
       })),
@@ -211,7 +219,7 @@ export async function buildBookingsDashboard(
       variant: "area",
       xKey: "label",
       data: metrics.forward.byDate.map((entry) => ({
-        label: formatShortDate(entry.date),
+        label: formatShortDate(entry.date, format),
         committed: entry.committed.guestNights,
         atRisk: entry.atRisk.guestNights,
       })),
@@ -236,7 +244,7 @@ export async function buildBookingsDashboard(
 
   const statusPanels = [
     moneyReconciliationPanel,
-    ...buildBookingStatusPanels(metrics),
+    ...buildBookingStatusPanels(metrics, format),
   ];
   return {
     cards,
@@ -276,6 +284,7 @@ export async function buildBookingsDashboard(
 
 function buildBookingStatusPanels(
   metrics: FinanceBookingMetricsResult,
+  format: ClubFormat,
 ): FinanceDashboardStatusPanel[] {
   const panels: FinanceDashboardStatusPanel[] = [];
   if (metrics.realized) {
@@ -285,8 +294,8 @@ function buildBookingStatusPanels(
       items: Object.entries(metrics.realized.statusBreakdown).map(
         ([status, summary]) => ({
           label: status,
-          value: formatNumber(summary.guestNights),
-          detail: `${formatNumber(summary.bookingCount)} bookings, ${formatDollarsDisplay(summary.bookedRevenueCents)}`,
+          value: formatNumber(summary.guestNights, format),
+          detail: `${formatNumber(summary.bookingCount, format)} bookings, ${formatDollarsDisplay(summary.bookedRevenueCents, format)}`,
         }),
       ),
     });
@@ -306,20 +315,21 @@ function buildBookingStatusPanels(
       items: [
         {
           label: "Awaiting payment",
-          value: formatNumber(additionalBreakdown.PENDING),
+          value: formatNumber(additionalBreakdown.PENDING, format),
           detail: "Charge not yet completed by the member.",
         },
         {
           label: "Payment failed",
-          value: formatNumber(additionalBreakdown.FAILED),
+          value: formatNumber(additionalBreakdown.FAILED, format),
           detail: "The last attempt to charge the card did not succeed.",
         },
         {
           label: "Total outstanding",
           value: formatDollarsDisplay(
             metrics.paymentSummary.outstandingAdditionalCents,
+            format,
           ),
-          detail: `Across ${formatNumber(metrics.paymentSummary.outstandingAdditionalBookings)} booking${metrics.paymentSummary.outstandingAdditionalBookings === 1 ? "" : "s"}.`,
+          detail: `Across ${formatNumber(metrics.paymentSummary.outstandingAdditionalBookings, format)} booking${metrics.paymentSummary.outstandingAdditionalBookings === 1 ? "" : "s"}.`,
         },
       ],
     });
@@ -334,16 +344,18 @@ function buildBookingStatusPanels(
       items: [
         {
           label: "Committed",
-          value: formatNumber(metrics.forward.totals.committed.guestNights),
+          value: formatNumber(metrics.forward.totals.committed.guestNights, format),
           detail: formatDollarsDisplay(
             metrics.forward.totals.committed.bookedRevenueCents,
+            format,
           ),
         },
         {
           label: "At risk",
-          value: formatNumber(metrics.forward.totals.atRisk.guestNights),
+          value: formatNumber(metrics.forward.totals.atRisk.guestNights, format),
           detail: formatDollarsDisplay(
             metrics.forward.totals.atRisk.bookedRevenueCents,
+            format,
           ),
         },
       ],

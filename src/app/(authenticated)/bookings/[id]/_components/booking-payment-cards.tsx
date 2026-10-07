@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCents } from "@/lib/utils";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
 import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
@@ -8,7 +8,7 @@ import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additi
 import {
   additionalPaymentEpisodeStartedAt,
   isAdditionalAmountUncollected,
-  isAdditionalPayableBookingStatus,
+  isAdditionalPaymentDoorOpenForBooking,
 } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
@@ -37,6 +37,7 @@ import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 export function BookingPaymentCards({
   booking,
   club,
+  money,
   viewer,
   access,
   party,
@@ -45,6 +46,7 @@ export function BookingPaymentCards({
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
+  money: BoundClubFormat;
   viewer: BookingDetailViewer;
   access: BookingDetailEditAccess;
   party: BookingDetailLinkedParty;
@@ -200,7 +202,7 @@ export function BookingPaymentCards({
                 <div>
                   <span className="text-warning-11">Amount due:</span>{" "}
                   <span className="font-medium">
-                    {formatCents(internetBankingPayment.amountCents)}
+                    {money.cents(internetBankingPayment.amountCents)}
                   </span>
                 </div>
                 {internetBankingPayment.reference ? (
@@ -293,15 +295,15 @@ export function BookingPaymentCards({
               <div className="mb-4 space-y-1 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <div className="flex items-center justify-between">
                   <span>Booking total</span>
-                  <span>{formatCents(booking.finalPriceCents)}</span>
+                  <span>{money.cents(booking.finalPriceCents)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Credit applied</span>
-                  <span>-{formatCents(creditAppliedCents)}</span>
+                  <span>-{money.cents(creditAppliedCents)}</span>
                 </div>
                 <div className="flex items-center justify-between font-medium">
                   <span>Amount due</span>
-                  <span>{formatCents(amountDueAfterCreditCents)}</span>
+                  <span>{money.cents(amountDueAfterCreditCents)}</span>
                 </div>
               </div>
             )}
@@ -399,12 +401,19 @@ export function BookingPaymentCards({
           booking marks the additional intent FAILED and leaves the amount alone,
           so an amount-and-status-only condition kept showing the owner of a
           CANCELLED booking a "pay this extra" card — and the secret route behind
-          it would still hand out a confirmable client secret. Same predicate the
-          route now uses, so the card and the money agree. */}
+          it would still hand out a confirmable client secret.
+
+          #3641: the booking half of the member's pay door, the same predicate
+          the secret route's door (`resolveAdditionalPaymentDoor`) is built on,
+          so the card, the route and the Xero reaper share one lifecycle rule.
+          Not the whole door: that needs an intent, and this card is shown for an
+          uncollected amount with none (a failed mint), to say it is owing. */}
       {booking.payment &&
         isBookingOwner &&
-        !isDeleted &&
-        isAdditionalPayableBookingStatus(booking.status) &&
+        isAdditionalPaymentDoorOpenForBooking({
+          bookingStatus: booking.status,
+          bookingDeletedAt: booking.deletedAt,
+        }) &&
         // #3340: the ONE uncollected predicate, called not restated
         // (`INV-SSOT-001`). Arrived from `main`, where it replaced these two
         // clauses in the pre-split page; re-homed here because #2958 moved this

@@ -16,6 +16,9 @@
  * without introducing an import cycle.
  */
 import { randomUUID } from "crypto";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "./deleted-account-email";
+
+export { DELETED_CONTACT_EMAIL_DOMAIN } from "./deleted-account-email";
 
 /**
  * Reserved club-internal domain for walk-in placeholder addresses. `.invalid`
@@ -36,8 +39,6 @@ export const PLACEHOLDER_CONTACT_EMAIL_DOMAIN = "no-email.invalid";
  * on every send. It is deliverability-equivalent to a walk-in placeholder — a
  * reserved-TLD address nobody reads — so it is treated as one.
  */
-export const DELETED_CONTACT_EMAIL_DOMAIN = "deleted.invalid";
-
 /**
  * The third club-internal `.invalid` address, and the one with a story (#2716).
  *

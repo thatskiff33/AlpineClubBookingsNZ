@@ -35,8 +35,10 @@ vi.mock("@/lib/stored-night-price-strand-reconcile", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/stored-night-prices/route";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { STRAND_RECONCILE_NOT_OFFERED_MESSAGE } from "@/lib/stored-night-price-repair";
+import { expectRevalidatesPageFile } from "@/lib/__tests__/support/revalidated-page";
 
 const params = Promise.resolve({ id: "booking-1" });
 
@@ -145,6 +147,7 @@ describe("POST /api/admin/bookings/[id]/stored-night-prices", () => {
       bookingGuestId: "guest-1",
       entries: validBody.nightPrices,
       store: TX,
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.record).toHaveBeenCalledWith({
       plan: { bookingGuestId: "guest-1" },
@@ -152,7 +155,11 @@ describe("POST /api/admin/bookings/[id]/stored-night-prices", () => {
       note: null,
       store: TX,
     });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/bookings/[id]", "page");
+    // #3635: the pattern must name the page file, route group included.
+    expectRevalidatesPageFile(
+      mocks.revalidatePath,
+      "src/app/(authenticated)/bookings/[id]/page.tsx",
+    );
   });
 
   it("keeps a domain refusal's own status instead of collapsing it into a 500", async () => {

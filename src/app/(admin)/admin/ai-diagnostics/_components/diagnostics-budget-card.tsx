@@ -7,8 +7,9 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
-import { APP_CURRENCY } from "@/config/operational";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { useClubFormat } from "@/components/club-format-provider";
+import { MoneyInput } from "@/components/ui/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
 
@@ -72,8 +73,12 @@ type BudgetState =
  * the canonical exact parser's job (#2685), which is also what refuses "12.005"
  * outright rather than quietly deciding which cent the person meant.
  */
+function normalizeBudgetDraft(value: string): string {
+  return value.trim().replace(/^\$/, "");
+}
+
 function dollarsToCents(value: string): number | null {
-  return parseDecimalDollarsToCents(value.trim().replace(/^\$/, ""));
+  return parseDecimalDollarsToCents(normalizeBudgetDraft(value));
 }
 
 export function DiagnosticsBudgetCard({
@@ -88,6 +93,15 @@ export function DiagnosticsBudgetCard({
    */
   moduleEnabled: boolean | null;
 }) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const format = useClubFormat();
+  const { currencyCode } = format;
   const [state, setState] = useState<BudgetState>({ kind: "loading" });
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -224,7 +238,7 @@ export function DiagnosticsBudgetCard({
     }
     if (cents > state.maxMonthlyBudgetCents) {
       setSaveError(
-        `The most that can be set is ${formatCents(state.maxMonthlyBudgetCents)}.`,
+        `The most that can be set is ${formatCents(state.maxMonthlyBudgetCents, format)}.`,
       );
       return;
     }
@@ -262,8 +276,8 @@ export function DiagnosticsBudgetCard({
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         <dt className="text-muted-foreground">Spent this month</dt>
         <dd className="tabular-nums">
-          {formatCents(state.settledCents)} of{" "}
-          {formatCents(state.monthlyBudgetCents)}
+          {formatCents(state.settledCents, format)} of{" "}
+          {formatCents(state.monthlyBudgetCents, format)}
         </dd>
         <dt className="text-muted-foreground">Questions asked</dt>
         <dd className="tabular-nums">{state.requestCount}</dd>
@@ -271,7 +285,7 @@ export function DiagnosticsBudgetCard({
           <>
             <dt className="text-muted-foreground">Held for questions in flight</dt>
             <dd className="tabular-nums">
-              {formatCents(state.activeReservedCents)}
+              {formatCents(state.activeReservedCents, format)}
             </dd>
           </>
         ) : null}
@@ -282,12 +296,12 @@ export function DiagnosticsBudgetCard({
           <label htmlFor={inputId} className="font-medium">
             Monthly budget
           </label>
-          <input
+          <MoneyInput
             id={inputId}
-            {...MONEY_INPUT_PROPS}
             value={draft}
+            normalizeDraft={normalizeBudgetDraft}
             aria-describedby={hintId}
-            onChange={(event) => setDraft(event.target.value)}
+            onValueChange={setDraft}
             readOnly={!canEdit}
             data-testid="budget-input"
             className="w-32 rounded-md border border-border bg-background px-3 py-1.5 tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-ring read-only:opacity-60"
@@ -305,7 +319,7 @@ export function DiagnosticsBudgetCard({
       </div>
 
       <p id={hintId} className="mt-2 text-xs text-muted-foreground">
-        In {APP_CURRENCY}, up to {formatCents(state.maxMonthlyBudgetCents)}.
+        In {currencyCode}, up to {formatCents(state.maxMonthlyBudgetCents, format)}.
         Zero switches off every paid Diagnostics question without touching the
         module.
       </p>

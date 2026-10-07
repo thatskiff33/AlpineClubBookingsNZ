@@ -15,6 +15,11 @@ import { parseDateOnly } from "@/lib/date-only";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3864: nothing to give back unless a case says so.
+  giveBackAppliedCredit: vi.fn<(...args: unknown[]) => Promise<{ appliedCreditCents: number; givenBackCents: number; payment: null }>>(
+    async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null }),
+  ),
+  paymentUpdate: vi.fn(),
   executeRaw: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
@@ -51,6 +56,10 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3864: the settle gives back credit a full-price capture left unspent.
+  giveBackAppliedCredit: (...args: unknown[]) => mocks.giveBackAppliedCredit(...args),
+  // #3792: the settle takes the member credit-ledger key after its lodge key.
+  lockMemberCreditLedger: vi.fn().mockResolvedValue(undefined),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
     mocks.deriveBookingAppliedCreditCents(...args),
   // #3369: the one home for the account-credit refusal four settlement paths
@@ -109,6 +118,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
@@ -119,6 +129,12 @@ const tx = {
   // #2286: the capacity engines read bed-holding hut-leader assignments
   // (custodian occupancy). None in these cases.
   hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+  // #3595: the settle asks the ledger once per booking whether its
+  // confirmation is already posted, then posts through the write door.
+  bookingLedgerLine: {
+    findFirst: vi.fn().mockResolvedValue(null),
+    createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
@@ -127,6 +143,7 @@ const tx = {
   },
   payment: {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
+    update: (...args: unknown[]) => mocks.paymentUpdate(...args),
   },
 };
 
@@ -180,6 +197,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
 
     await expect(
       markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         // Same-price replay: without the guard this settles the booking at
         // zero net cash (the amount check passes at 9000 === 9000).
@@ -205,6 +223,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
 
     await expect(
       markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_partial",
         amountCents: 9000,
@@ -228,6 +247,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
     });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_replayed",
       amountCents: 9000,
@@ -247,6 +267,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
     });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_stuck",
       amountCents: 9000,
@@ -280,6 +301,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
     mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_fresh",
       amountCents: 9000,

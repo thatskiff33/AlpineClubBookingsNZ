@@ -7,6 +7,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   FINANCE_MIX_COLORS,
   type FinanceValueType,
@@ -73,6 +74,7 @@ export function MixPieChart({
   height = 300,
   emptyMessage = "No breakdown available for this period.",
 }: MixPieChartProps) {
+  const format = useClubFormat();
   const positive = data.filter((datum) => datum.value > 0);
 
   if (positive.length === 0) {
@@ -105,7 +107,7 @@ export function MixPieChart({
       <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm">
         <p className="font-semibold text-popover-foreground">{entry.name}</p>
         <p className="text-muted-foreground">
-          {formatFinanceValue(value, valueType)} (
+          {formatFinanceValue(value, valueType, format)} (
           {(share * 100).toFixed(0)}%)
         </p>
       </div>

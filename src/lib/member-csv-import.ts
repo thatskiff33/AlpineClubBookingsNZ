@@ -6,6 +6,12 @@ import {
   parseTitleValue,
 } from "@/lib/member-enums";
 import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
+import {
+  DIETARY_REQUIREMENTS_LABEL,
+  DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
+  isDietaryRequirementsWithinLimit,
+  normalizeImportedDietaryRequirements,
+} from "@/lib/member-dietary-field";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
 export const MEMBER_IMPORT_COMMENTS_MAX_LENGTH = 4000;
@@ -66,6 +72,7 @@ interface MemberImportRowPayload {
   lastName: string;
   gender?: string;
   occupation?: string;
+  dietaryRequirements?: string;
   email: string;
   phone?: string;
   phoneCountryCode?: string;
@@ -123,6 +130,22 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     label: "Occupation",
     required: false,
     aliases: ["occupation", "job", "profession"],
+  },
+  {
+    // #2941: privacy-sensitive. The server imports it only while the club has
+    // the field ON (INV-PRIV-022). `dietaryallergyinformation` is the export's
+    // own header normalised, so an exported file round-trips.
+    key: "dietaryRequirements",
+    label: DIETARY_REQUIREMENTS_LABEL,
+    required: false,
+    aliases: [
+      "dietaryallergyinformation",
+      "dietaryrequirements",
+      "dietaryallergy",
+      "dietary",
+      "allergies",
+      "allergy",
+    ],
   },
   {
     key: "email",
@@ -582,6 +605,7 @@ function createEmptyMemberImportColumnMapping(): MemberImportColumnMapping {
     lastName: null,
     gender: null,
     occupation: null,
+    dietaryRequirements: null,
     email: null,
     phone: null,
     phoneCountryCode: null,
@@ -867,6 +891,12 @@ export function buildMemberImportPreview(
    */
   todayAtClub: string,
   dateFormats: Partial<MemberImportDateFormatMapping> = {},
+  /**
+   * #2941: whether the club takes the dietary/allergy column (the field is ON).
+   * While false the column is dropped from the preview rows and its length is
+   * not judged, exactly as the server discards it; default false, fail closed.
+   */
+  options: { importsDietaryRequirements?: boolean } = {},
 ): MemberImportPreview {
   const resolvedDateFormats: MemberImportDateFormatMapping = {
     ...createDefaultMemberImportDateFormatMapping(),
@@ -925,6 +955,11 @@ export function buildMemberImportPreview(
     const title = getValue(record, "title");
     const gender = getValue(record, "gender");
     const occupation = getValue(record, "occupation");
+    const dietaryRequirements = options.importsDietaryRequirements
+      ? (normalizeImportedDietaryRequirements(
+          getValue(record, "dietaryRequirements"),
+        ) ?? "")
+      : "";
     const phone = getValue(record, "phone");
     const phoneCountryCode = getValue(record, "phoneCountryCode");
     const phoneAreaCode = getValue(record, "phoneAreaCode");
@@ -945,6 +980,7 @@ export function buildMemberImportPreview(
     if (title) values.title = title;
     if (gender) values.gender = gender;
     if (occupation) values.occupation = occupation;
+    if (dietaryRequirements) values.dietaryRequirements = dietaryRequirements;
     if (phone) values.phone = phone;
     if (phoneCountryCode) values.phoneCountryCode = phoneCountryCode;
     if (phoneAreaCode) values.phoneAreaCode = phoneAreaCode;
@@ -990,6 +1026,14 @@ export function buildMemberImportPreview(
     if (occupation.length > MEMBER_IMPORT_OCCUPATION_MAX_LENGTH) {
       errors.push(
         `Occupation${getColumnContext(sourceColumnLabels, "occupation")} must be ${MEMBER_IMPORT_OCCUPATION_MAX_LENGTH} characters or fewer`,
+      );
+    }
+    if (!isDietaryRequirementsWithinLimit(dietaryRequirements)) {
+      errors.push(
+        DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE.replace(
+          DIETARY_REQUIREMENTS_LABEL,
+          `${DIETARY_REQUIREMENTS_LABEL}${getColumnContext(sourceColumnLabels, "dietaryRequirements")}`,
+        ),
       );
     }
     if (title && parseTitleValue(title) === undefined) {

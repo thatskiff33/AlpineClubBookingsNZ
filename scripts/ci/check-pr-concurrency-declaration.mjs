@@ -27,6 +27,16 @@ const SENSITIVE_PATH = /^(?:src\/(?:app\/api|lib)\/.*(?:booking|capacity|payment
 // that also touches real sensitive source still needs the full declaration.
 const TEST_FILE = /(?:^|\/)__tests__\/|\.(?:test|spec)\.[cm]?[jt]sx?$/i;
 
+/**
+ * Whether a changed path obliges a full declaration: sensitive source, and not a
+ * pure test file. Exported so that anything writing a declaration on a pull
+ * request's behalf (`render-epic-sync-pr-body.mjs`, #3721) asks this gate's own
+ * question instead of keeping a second copy of the pattern.
+ */
+export function isConcurrencySensitivePath(file) {
+  return !TEST_FILE.test(file) && SENSITIVE_PATH.test(file);
+}
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -62,9 +72,7 @@ function fieldValuePattern(field) {
  */
 export function validateConcurrencyDeclaration(body, changedFiles = null) {
   const diffKnown = Array.isArray(changedFiles);
-  const sensitiveFiles = (diffKnown ? changedFiles : []).filter(
-    (file) => !TEST_FILE.test(file) && SENSITIVE_PATH.test(file),
-  );
+  const sensitiveFiles = (diffKnown ? changedFiles : []).filter(isConcurrencySensitivePath);
 
   // Anchor to the START OF A LINE. A plain indexOf also matches the heading text
   // quoted inside prose or a code span — and a PR body that explains this gate
@@ -120,7 +128,7 @@ export function validateConcurrencyDeclaration(body, changedFiles = null) {
       throw new Error(
         "Concurrency declaration cannot use N/A here: the PR diff could not be resolved, " +
           "so there is no evidence that no sensitive path changed. Make the diff readable " +
-          "(fetch the base branch, or pass --base <ref> to npm run pr:check), or complete " +
+          "(fetch the base branch, or pass --base <ref> to pnpm run pr:check), or complete " +
           "the declaration fields instead.",
       );
     }
@@ -149,11 +157,11 @@ export function validateConcurrencyDeclaration(body, changedFiles = null) {
           ? `Concurrency declaration field "${field}:" has no value on its own line. ` +
             "Put the value on the SAME line as the label — a value wrapped onto the " +
             "following line reads as empty. Continuation lines after that first " +
-            "line are fine. Check it before pushing with: npm run pr:check -- <body-file>"
+            "line are fine. Check it before pushing with: pnpm run pr:check <body-file>"
           : `Concurrency declaration must complete "${field}:" or explicitly check N/A. ` +
             "Copy the field list verbatim from .github/pull_request_template.md — the " +
             "labels are matched exactly. Check it before pushing with: " +
-            "npm run pr:check -- <body-file>",
+            "pnpm run pr:check <body-file>",
       );
     }
   }
@@ -189,7 +197,7 @@ if (invokedPath === import.meta.url) {
     // keep asking for the declaration instead.
     //
     // The diff goes through `parseNameStatus`, exactly as the changelog gate and
-    // the offline `npm run pr:check` runner do, so a RENAME arrives as its
+    // the offline `pnpm run pr:check` runner do, so a RENAME arrives as its
     // delete + add pair. A bare `--name-only` listing prints only the rename's
     // destination, which let a PR move `src/lib/payment-settlement.ts` to
     // `src/lib/ledger.ts`, edit it, and match no sensitive path at all — and

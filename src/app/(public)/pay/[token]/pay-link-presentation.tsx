@@ -31,6 +31,7 @@ import {
   formatClubDate,
   parseInstant,
   type BoundClubTime,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 
 export interface Narrative {
@@ -51,6 +52,12 @@ export interface PaymentLinkContext {
     status: string;
     amountCents: number;
     internetBankingReference?: string;
+    /**
+     * #3638: false on a booking switched to Internet Banking — no card button.
+     * Optional on the wire, read as "available" when absent, so a page served
+     * an older response keeps its card.
+     */
+    cardPaymentAvailable?: boolean;
     expiresAt: string;
   } | null;
   canRequestFreshLink: boolean;
@@ -104,7 +111,7 @@ const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
  * not the string "Invalid Date", which only `toLocaleDateString` produces — so
  * this fallback is a FIX rather than a preserved behaviour.
  */
-export function formatStayDay(value: string): string {
+export function formatStayDay(value: string, format: ClubDateFormat): string {
   // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
   // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
   // `TypeError` out of the guard that exists to stop a throw. The premise above
@@ -114,7 +121,7 @@ export function formatStayDay(value: string): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
   } catch {
     return value;
   }
@@ -249,4 +256,22 @@ export function FinancialReviewNotice({ note }: { note: string }) {
       <p>{note}</p>
     </div>
   );
+}
+
+/**
+ * #3638 (`INV-PAY-102`): shown in place of the card button once the booking has
+ * switched to Internet Banking, because the card door would refuse the attempt.
+ */
+export function CardPaymentUnavailableNotice() {
+  return (
+    <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+      This booking is being paid by internet banking, so it can&apos;t be paid by
+      card here. Use the bank-transfer details below.
+    </p>
+  );
+}
+
+/** The bank-transfer box's heading: an alternative to the card, or the only way. */
+export function internetBankingHeading(link: { cardPaymentAvailable?: boolean }): string {
+  return link.cardPaymentAvailable !== false ? "Or pay by internet banking" : "Pay by internet banking";
 }

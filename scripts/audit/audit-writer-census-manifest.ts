@@ -545,12 +545,76 @@ export const AUDIT_CENSUS_TOTALS = {
   // environment-safety writers it is a sibling of, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
   // audit:census` on the composed tree, not incremented.
-  // 486 -> 484 (#52): the other-lodges CREATE and DELETE handlers are removed
-  // with their `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` writers - a site
-  // changes only the lodge the central server says it owns, and never adds to
-  // or removes from the shared registry. RE-MEASURED with `npm run
-  // audit:census`, not decremented.
-  writeSites: 484,
+  // 486 -> 487 (#3531 3b): `booking-payment.stored-night-price.rate-derived`,
+  // the record that the operator-run backfill re-derived a booking's evenly-split
+  // night prices from the rate table, every guest total unchanged. `payment`
+  // beside the officer night-price repair it mirrors. RE-MEASURED with
+  // `npm run audit:census` on the tree composed with #3563, not incremented.
+  // 487 -> 488 (#3029): `booking.guest_dietary.updated`/`.cleared`, the one
+  // awaited `createAuditLog` in the booking-value edit route, under `booking`
+  // and carrying the guest id and a changed flag, never the value
+  // (`INV-PRIV-022`). RE-MEASURED with `npm run audit:census`.
+  // 488 -> 489 (#3566): `AI_SPEND_CURRENCY_RATE_CLEARED`, the record that a
+  // currency change in `/api/admin/club-format` cleared the stored AI spend
+  // rate (owner decision 4) - who, the previous and new currency, and the rate
+  // that was cleared. One `tx.auditLog.create` in
+  // `src/lib/ai-spend-currency-clear.ts`, on that route's own Serializable
+  // transaction client, written only when a rate existed. Categorised
+  // `admin` at the site like the rate writer it undoes, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
+  // audit:census` on the tree merged with #3029, not incremented.
+  // 489 -> 490 (#3639): `booking.payment.late_notice_acknowledged`, the
+  // record that a Stripe success notice on a cancelled booking was answered
+  // WITHOUT a refund because the cancellation had already settled the money
+  // (or it was already refunded). One `logAudit` in
+  // `src/lib/cancelled-booking-late-capture.ts`, beside its #2774 sibling
+  // `late_capture_refund_withheld`, categorised `payment` at the site.
+  // RE-MEASURED with `npm run audit:census`, not incremented.
+  // 490 -> 492 (#3639, owner decision 26 Sep 2026): the club setting for a
+  // genuine late capture. `booking.payment.late_capture_refund_held` (a capture
+  // held for a treasurer) and the `booking.payment.refunded_after_cancellation`
+  // a treasurer's approval writes, both `logAudit` in
+  // `src/lib/late-capture-refund-approval.ts`, categorised `payment` at the site.
+  // RE-MEASURED with `npm run audit:census`, not incremented.
+  // 492 -> 493 (#3639 review): `booking-defaults.late_capture_refund_approval
+  // .changed`, the payment-category record of who switched the setting
+  // (`src/lib/late-capture-refund-setting-change.ts`). The approved refund's
+  // `refunded_after_cancellation` moved into one shared finisher, so it is still
+  // one site. RE-MEASURED with `npm run audit:census`, not incremented.
+  // 493 -> 492 (#3415): accepted quotes keep their held beds for officer
+  // review, removing the former accept-time capacity-block/revert writer.
+  // RE-MEASURED on the composed tree with #3639.
+  // 492 -> 493 (#3413): pending-adult identity resolution adds one classified
+  // booking-category logAudit site. RE-MEASURED on the composed tree.
+  // 493 -> 494 (#3462): `xero.operation.marked_failed`, the per-row Mark
+  // failed on a stale RUNNING Xero operation. One awaited `createAuditLog` in
+  // `src/app/api/admin/xero/operations/[id]/mark-failed/route.ts`,
+  // categorised `xero` at the site like its `mark-non-replayable` sibling.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  // 494 -> 495 (#3454): `recordTwoFactorMutation` in `src/lib/two-factor-audit.ts`,
+  // one awaited `createAuditLog` on the caller's transaction for the two-factor
+  // enrolment and the erasure's clear, categorised `security` at the site. The
+  // Xero token writes add no site: they go through the credential store's
+  // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
+  // 495 -> 496 (#3792): `xero.allocation.restored-booking-change-refused`, the
+  // durable record of a Xero allocation change the inbound credit-note sync
+  // refused to post to a cancelled booking whose applied credit was already
+  // restored. One awaited `createAuditLog` in
+  // `src/lib/xero-inbound/credit-note-repairs.ts`, categorised `xero` at the
+  // site, with `entityType`/`entityId` for the booking and no subject member.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  // 496 -> 497 (#3653 fix round, composed onto #3792 by #3630): `booking.payment.refund_recovered` written by
+  // the organiser child refund executor when a refund an earlier attempt failed
+  // to make is finally made - the corrective row the group cancel's own record
+  // ("refund owed") needs. One `logAudit` in
+  // `src/lib/organiser-child-refund-executor.ts`, categorised `booking` like the
+  // legacy group replay's row with the same action. RE-MEASURED with
+  // `pnpm run audit:census`, not incremented.
+  // 497 -> 495 (#52, composed with main): the other-lodges CREATE and
+  // DELETE handlers are removed with their `OTHER_LODGE_CREATED` and
+  // `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
+  // central server says it owns. RE-MEASURED with `npm run audit:census`.
+  writeSites: 495,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -631,7 +695,18 @@ export const AUDIT_CENSUS_TOTALS = {
     // rather than an awaited `createAuditLog` because it sits on a GET that has
     // already decided to serve a report, and a rejected audit write must not
     // turn a successful, correctly-gated read into a 500.
-    logAudit: { total: 267, uncategorised: 0 },
+    // 267 -> 268 (#3639): the late-notice acknowledgement, above.
+    // 268 -> 270 (#3639): the two late-capture approval writers, above.
+    // 270 -> 271 (#3639 review): the setting-change record, above.
+    // 271 -> 270 (#3415): no accept-time capacity-block/revert writer.
+    // 270 -> 271 (#3413): pending-adult identity resolution, above.
+    // 271 -> 270 (#3462 review): the bulk stale-RUNNING reset moved to an
+    // awaited `createAuditLog` inside the reset's own transaction, so the
+    // reset and its record commit together. RE-MEASURED with
+    // `pnpm run audit:census`.
+    // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
+    // above. RE-MEASURED with `pnpm run audit:census`.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -690,7 +765,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 122 -> 123 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts`, awaited the same best-effort way as
+    // `edit-financial-review-charge-sync.ts`, awaited the same best-effort way as
     // the two review-charge writers it belongs with.
     // NOT `edit-financial-review-charge-request.ts`, which imports only the
     // pure `measureCarriedAskShortfall` from that module and writes no row.
@@ -710,7 +785,16 @@ export const AUDIT_CENSUS_TOTALS = {
     // record of that change should not be able to be the part that quietly
     // failed.
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
-    createAuditLog: { total: 133, uncategorised: 0 },
+    // 134 -> 135 (#3029): the booking dietary edit record, awaited inside the
+    // edit's own transaction so the row and its audit commit together.
+    // 135 -> 136 (#3462): the Xero operation Mark failed record.
+    // 136 -> 137 (#3462 review): the bulk stale-RUNNING reset, moved here
+    // from `logAudit`. Mark failed, mark non-replayable and the bulk reset now
+    // each await their record inside the state change's transaction.
+    // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
+    // awaited on the transaction that changes the second factor.
+    // 138 -> 139 (#3792): the refused restored-booking allocation change record.
+    createAuditLog: { total: 139, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -742,8 +826,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the
     // club-timezone writer two entries above, on a route that does exactly the
     // same job, rather than a fifth form.
-    // 76 -> 74 (#52): the two removed other-lodges writers above.
-    "auditLog.create": { total: 74, uncategorised: 0 },
+    // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
+    // transaction beside the writer above, in the same form.
+    // 77 -> 75 (#52): the two removed other-lodges writers above.
+    "auditLog.create": { total: 75, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -825,7 +911,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // per-booking breakdown never reach a member surface — what is left is a
     // `details` sentence naming no booking, no nights and no party
     // (`INV-PRIV`).
-    booking: 104,
+    // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
+    // note is booking data, read by booking officers, so `booking` is its
+    // affected domain (`INV-PRIV-012`); the row names the field, never its value.
+    // -1 (#3415): the removed capacity-block/revert record was `booking`.
+    // +1 (#3653 fix round): the organiser child refund recovery record,
+    // `booking` like the legacy group replay's row with the same action - the
+    // same readers, and no member-facing disclosure. Composed (epic #3678 with
+    // `main`) and RE-MEASURED with `pnpm run audit:census`: 106.
+    booking: 106,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -878,7 +972,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // category those siblings already use.
     // 45 -> 46 (#3498): the reopen record, which is a money decision being
     // undone and belongs with the closure it reverses.
-    payment: 47,
+    // 48 -> 49 (#3639): the late-notice acknowledgement - a refund the
+    // late-capture handler declined, beside the rows that record the ones it
+    // made and withheld, read by the same people.
+    // 49 -> 51 (#3639): the held late capture and its approved refund.
+    // 51 -> 52 (#3639 review): the setting-change record.
+    payment: 52,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -1013,9 +1112,16 @@ export const AUDIT_CENSUS_TOTALS = {
     // 106 -> 107 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
     // save, read with `support:view` like every other settings row beside it, so
     // it widens nobody's access.
-    // 108 -> 106 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
+    // 108 -> 109 (#3566): `AI_SPEND_CURRENCY_RATE_CLEARED`. A widening of who
+    // can read what by one site, stated rather than counted: `admin` is
+    // readable with `support:view` alone, so the derived weakest-gate total
+    // moves 136 -> 137. The row carries two currency codes, a ratio and the id
+    // of the administrator whose currency change cleared it - no member data -
+    // and is `admin` for the reason its sibling AI_SPEND_CURRENCY_RATE_UPDATED
+    // is: installation configuration.
+    // 109 -> 107 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
     // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
-    admin: 106,
+    admin: 107,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1053,7 +1159,16 @@ export const AUDIT_CENSUS_TOTALS = {
     // `security` is readable with `support:view` alone, and a refused attempt to
     // change where a signed join token is sent is exactly what a support
     // operator correlating an incident needs to see.
-    security: 24,
+    // 24 -> 25 (#3454): `security.two_factor.enrolled`, `.recovery_codes_replaced`
+    // and `.cleared`, three actions through ONE site. A second factor is a
+    // credential, which is what this category holds, and it is readable with
+    // `support:view` alone, so the weakest-gate total moves 137 -> 138. That is a
+    // WIDENING of one site and three event types, and deliberate: an operator
+    // investigating a member's sign-in needs to see when their second factor was
+    // turned on, its recovery codes replaced or it was cleared. The rows carry no
+    // secret: booleans, the method, and for a replacement the COUNT of codes
+    // issued, never the codes.
+    security: 25,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —
@@ -1094,7 +1209,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // category every other writer of a member's Xero contact link already uses
     // (`xero.contact.synced_to_member`), so this keeps the subsystem uniform —
     // the test `INV-PRIV-013` applies. Nobody's readership changes.
-    xero: 37,
+    //
+    // 37 -> 38 (#3462): `xero.operation.marked_failed`, beside the other
+    // operation-panel writers. Nobody's readership changes.
+    //
+    // 38 -> 39 (#3792): `xero.allocation.restored-booking-change-refused`,
+    // beside the inbound reconcile's other `xero` rows. Nobody's readership
+    // changes.
+    xero: 39,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
@@ -1321,7 +1443,7 @@ export const APPLIED_AUDIT_CATEGORIES: Readonly<Record<string, string>> = {
   "src/app/api/admin/xero/member-grouping/route.ts::POST#6": "xero",
   "src/app/api/admin/xero/operations/[id]/requeue/route.ts::POST#0": "xero",
   "src/app/api/admin/xero/operations/[id]/retry/route.ts::POST#0": "xero",
-  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST#0": "xero",
+  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST.count#0": "xero",
   "src/app/api/admin/xero/operations/retry-all/route.ts::POST#0": "xero",
 
   // ─── Lodge display configuration and kiosk accounts → `lodge` ──────────────
@@ -2674,7 +2796,7 @@ export const AUDIT_WRITERS_WITHOUT_ENTITY_IDENTIFIER: Readonly<
     "A bulk resync spanning many members; the dry-run id stays in `details`.",
   "src/app/api/admin/xero/member-grouping/route.ts::POST#6":
     "The same bulk resync, on the accepted path.",
-  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST#0":
+  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST.count#0":
     "An updateMany over every stale RUNNING operation.",
   "src/app/api/admin/xero/operations/retry-all/route.ts::POST#0":
     "Enqueues retries for up to 200 operations.",

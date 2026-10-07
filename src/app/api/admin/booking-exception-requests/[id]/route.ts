@@ -37,6 +37,7 @@ import {
   hostingCoverageOverrideSchema,
   SameOwnerCoverageOverrideRequiredError,
 } from "@/lib/adult-member-hosting-same-owner";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * #2526 — the Booking Officer's DECISION endpoint for a booking-policy exception
@@ -382,6 +383,9 @@ export async function PATCH(
   } = parsed.data;
   const store = storeFor(source);
   const ipAddress = getClientIp(req);
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   // Read the frozen facts BEFORE deciding: the proposal (for the new-booking
   // execution parameters, which need the module client) and the reviewed reason
@@ -520,6 +524,7 @@ export async function PATCH(
   }
 
   const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
+    format,
     requestId: id,
     actorMemberId: session.user.id,
     // #3123 review — the CLUB's day (`INV-CONFIG-002`), resolved HERE because

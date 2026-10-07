@@ -1,4 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
+
+// #2941: the preview reads the dietary toggle; never a real settings query.
+const fieldFlags = vi.hoisted(() => ({ showDietaryRequirements: false }));
+vi.mock("@/lib/member-fields-settings", () => ({
+  loadMemberFieldsFlags: vi.fn(async () => ({
+    showTitle: true,
+    showGender: true,
+    showOccupation: true,
+    ...fieldFlags,
+  })),
+}));
+
 import { buildMemberMergePreview } from "@/lib/member-merge";
 
 const MASTER_ID = "master-1";
@@ -561,5 +573,54 @@ describe("family-link graph blockers on merge (#2255)", () => {
         count: 1,
       }),
     );
+  });
+});
+
+describe("buildMemberMergePreview dietary/allergy row (#2941, INV-PRIV-022)", () => {
+  const VALUE = "Severe peanut allergy";
+
+  function memberWithDietary() {
+    const master = makeMember(MASTER_ID);
+    const loser = makeMember(LOSER_ID);
+    return {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn((args: { select?: Record<string, unknown> }) =>
+        Promise.resolve(
+          args?.select && "dietaryRequirements" in args.select
+            ? [{ id: LOSER_ID, dietaryRequirements: VALUE }]
+            : [],
+        ),
+      ),
+    };
+  }
+
+  it("shows the value to the Full Admin while the field is ON", async () => {
+    fieldFlags.showDietaryRequirements = true;
+    try {
+      const result = await preview({ overrides: { member: memberWithDietary() } });
+      const row = result.fieldMerge.find((r) => r.field === "dietaryRequirements");
+      expect(row).toMatchObject({ loser: VALUE, result: VALUE, source: "loser" });
+    } finally {
+      fieldFlags.showDietaryRequirements = false;
+    }
+  });
+
+  it("hides the value while the field is OFF, saying only that one is recorded", async () => {
+    const result = await preview({ overrides: { member: memberWithDietary() } });
+    const row = result.fieldMerge.find((r) => r.field === "dietaryRequirements");
+    expect(row).toMatchObject({
+      loser: "[REDACTED]",
+      result: "[REDACTED]",
+      source: "loser",
+    });
+    expect(JSON.stringify(result)).not.toContain("peanut");
   });
 });

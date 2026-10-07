@@ -9,15 +9,16 @@ import {
   useState,
 } from "react";
 
-import { APP_LOCALE } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   asClubTimeZone,
   bindClubTime,
-  dateOnlyInstantOf,
   formatClubWeekdayDate,
+  formatClubWeekdayDayMonth,
   parseCalendarDate,
   requireClubTimeZone,
   type BoundClubTime,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 
@@ -76,25 +77,28 @@ function formatClock(club: BoundClubTime, date: Date): string {
 }
 
 /*
-  Not one of the shared helpers: the header date line deliberately drops the
-  year to fit the fixed-width clock block without shifting the layout, and the
-  kernel has no `HOUSE_SHAPES` entry for that bag.
+  THE HEADER DATE LINE IS THE KERNEL'S `weekdayDayMonth` HOUSE SHAPE ("Wed, 1
+  Jul"), which deliberately drops the year to fit the fixed-width clock block.
+  It used to be a local `Intl.DateTimeFormat` with a comment saying the kernel
+  had no such shape; it had had one since CT-4, and #3566 moved this onto it
+  (`formatClubWeekdayDayMonth`) — the same options bag, the same `UTC` pin over
+  the same UTC-midnight encoding, so the wall reads byte-identically.
 
-  PINNED TO `UTC`, AND ONLY EVER HANDED A CALENDAR DAY (CT-4, #2870). It used to
-  be pinned to `APP_TIME_ZONE` and handed EITHER a real instant (today's clock)
-  or a UTC-midnight window start (a simulated preview date) - one concept wearing
-  another's clothes, and a day early for any club west of Greenwich in the second
-  case. Both branches now resolve to a `CalendarDate` first: the live one through
-  `club.calendarDateOf`, which is the one operation allowed to say which club day
-  a moment falls on (INV-DATE-019), and the simulated one straight off the
-  window's own date-only key.
+  ONLY EVER HANDED A CALENDAR DAY (CT-4, #2870). It used to be pinned to
+  `APP_TIME_ZONE` and handed EITHER a real instant (today's clock) or a
+  UTC-midnight window start (a simulated preview date) - one concept wearing
+  another's clothes, and a day early for any club west of Greenwich in the
+  second case. Both branches now resolve to a `CalendarDate` first: the live one
+  through `club.calendarDateOf`, which is the one operation allowed to say which
+  club day a moment falls on (INV-DATE-019), and the simulated one straight off
+  the window's own date-only key.
+
+  THE LOCALE IS THE CLUB'S RECORDED ONE (#3564, #3566; INV-CONFIG-006), carried
+  by the binding: `DisplayClubTimeProvider` below binds the zone `page.tsx`
+  resolved together with the locale of the `ClubFormatProvider` that page mounts
+  around this screen, so the date line, the clock and the "updated" stamp all
+  follow the one setting.
 */
-const SHORT_WEEKDAY_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
 
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -122,7 +126,10 @@ export function readPreviewState(): {
 
 /** Human-readable label for the accessible simulating hint; falls back to the
  * raw value if it is not a real calendar date. */
-function formatSimulatedDate(dateStr: string): string {
+function formatSimulatedDate(
+  dateStr: string,
+  format: ClubDateFormat,
+): string {
   // A simulated preview date is a CALENDAR DAY and takes no zone at all: the
   // kernel's formatter pins `UTC` over the UTC-midnight encoding, so no
   // operator's clock and no club's setting can roll it back a day.
@@ -130,7 +137,7 @@ function formatSimulatedDate(dateStr: string): string {
   // here because the value comes off the query string.
   const parsed = parseCalendarDate(dateStr);
   if (parsed === null) return dateStr;
-  return formatClubWeekdayDate(parsed);
+  return formatClubWeekdayDate(parsed, format);
 }
 
 /** Live clock + payload freshness for the header (issue #56). Ticks on the
@@ -200,7 +207,7 @@ export function HeaderClock({
   const dateSource = simulatedDay ?? club.calendarDateOf(now);
   const dateLine = (
     <>
-      {SHORT_WEEKDAY_DAY.format(dateOnlyInstantOf(dateSource))}
+      {formatClubWeekdayDayMonth(dateSource, club.format)}
       {" · "}
       <b>updated {formatClock(club, updated).toLowerCase()}</b>
     </>
@@ -240,7 +247,7 @@ export function HeaderClock({
       )}
       {simulated && (
         <span className="display-visually-hidden">
-          Simulating {formatSimulatedDate(preview.previewDate as string)}
+          Simulating {formatSimulatedDate(preview.previewDate as string, club.format)}
         </span>
       )}
     </div>
@@ -265,12 +272,20 @@ export function DisplayClubTimeProvider({
   zone: string;
   children: React.ReactNode;
 }) {
+  /*
+    The locale comes from the shared `ClubFormatProvider` that `page.tsx` mounts
+    around `DisplayScreen` (#3566), so `DisplayScreen` keeps its one-prop
+    signature and the lobby's dates follow the same recorded locale as its
+    amounts. That provider has already normalised it.
+  */
+  const { locale } = useClubFormat();
   const bound = useMemo(
     () =>
       bindClubTime(
         asClubTimeZone(zone) ?? requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK),
+        { locale },
       ),
-    [zone],
+    [zone, locale],
   );
   return (
     <DisplayClubTimeContext.Provider value={bound}>

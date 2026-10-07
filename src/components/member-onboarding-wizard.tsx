@@ -64,6 +64,8 @@ interface ProfileFormMember {
   postalPostalCode: string;
   postalCountry: string;
   occupation?: string;
+  /** Present only while the club has the dietary field ON (#2941). */
+  dietaryRequirements?: string;
 }
 
 interface FamilyMember {
@@ -111,6 +113,7 @@ interface OnboardingData {
     name: string;
     ageTier: string;
     showOccupation: boolean;
+    showDietaryRequirements: boolean;
     profile: ProfileFormMember;
     status: OnboardingStatus;
     needsOwnDetailsConfirmation: boolean;
@@ -341,6 +344,9 @@ export function MemberOnboardingWizard({
                   submitLabel="Save and continue"
                   ageTier={data.currentMember.ageTier}
                   showOccupation={data.currentMember.showOccupation}
+                  showDietaryRequirements={
+                    data.currentMember.showDietaryRequirements
+                  }
                 />
               </div>
             ) : null}

@@ -112,7 +112,9 @@ const LODGE_VIEW_ONLY = onlyAreas({ lodgeLevel: "VIEW" }, "def-lodge-view");
 
 function signedInAs(accessRoles: unknown) {
   mocks.auth.mockResolvedValue({
-    user: { id: "viewer-1", role: "ADMIN", accessRoles },
+    // A live session always carries `canLogin` (#3603); requireAdmin hands on
+    // the DB-read value, which is true for anyone signed in.
+    user: { id: "viewer-1", role: "ADMIN", accessRoles, canLogin: true },
   } as never);
 }
 

@@ -15,7 +15,7 @@ vi.mock("@/lib/session-guards", () => ({
 
 const mockMemberFindUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: (...a: unknown[]) => mockMemberFindUnique(...a) } },
+  prisma: { member: { findUnique: (...a: unknown[]) => mockMemberFindUnique(...a) }, },
 }));
 
 const mockCreate = vi.fn();
@@ -31,7 +31,7 @@ vi.mock("@/lib/xero", () => {
     missingFields: string[];
     constructor(missingFields: string[]) {
       super(
-        `Member is missing required fields for Xero contact creation: ${missingFields.join(", ")}`
+        `Member is missing required fields for Xero contact creation: ${missingFields.join(", ")}`,
       );
       this.name = "XeroContactValidationError";
       this.missingFields = missingFields;
@@ -40,8 +40,7 @@ vi.mock("@/lib/xero", () => {
   class XeroContactCreatePartialSuccessError extends Error {
     constructor(
       readonly phase:
-        | "PROVIDER_CONTACT_CREATED"
-        | "LOCAL_MEMBER_LINK_COMMITTED",
+        "PROVIDER_CONTACT_CREATED" | "LOCAL_MEMBER_LINK_COMMITTED",
       readonly xeroContactId: string,
       readonly originalError: unknown,
     ) {
@@ -53,7 +52,8 @@ vi.mock("@/lib/xero", () => {
     XeroContactCreatePartialSuccessError,
     XeroContactValidationError,
     createXeroContactForMember: (...a: unknown[]) => mockCreate(...a),
-    findPotentialXeroContactsForMember: (...a: unknown[]) => mockFindPotential(...a),
+    findPotentialXeroContactsForMember: (...a: unknown[]) =>
+      mockFindPotential(...a),
     flushMemberSubscriptionHistory: (...a: unknown[]) => mockFlush(...a),
     syncMemberSubscriptionHistoryForLinkedContact: (...a: unknown[]) =>
       mockSyncHistory(...a),
@@ -67,7 +67,8 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/xero-links", () => ({
-  buildXeroContactUrl: (id: string) => `https://go.xero.com/app/contacts/contact/${id}`,
+  buildXeroContactUrl: (id: string) =>
+    `https://go.xero.com/app/contacts/contact/${id}`,
 }));
 vi.mock("@/lib/xero-api-errors", () => ({
   getXeroApiErrorInfo: () => ({
@@ -125,7 +126,7 @@ beforeEach(() => {
     firstName: "Alice",
     lastName: "Example",
     email: "alice@example.org",
-    passwordHash: null,
+    deletedAt: null,
     xeroContactId: null,
   });
   mockFindPotential.mockResolvedValue([]);
@@ -166,12 +167,12 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.missingFields).toEqual(["Email"]);
-    expect(body.error).toBe("Complete these fields before creating in Xero: Email");
+    expect(body.error).toBe("Complete these fields before creating in Xero: Email",);
   });
 
   it("maps a missing-name validation error to 422 listing only name fields", async () => {
     mockCreate.mockRejectedValue(
-      new XeroContactValidationError(["First Name", "Last Name"])
+      new XeroContactValidationError(["First Name", "Last Name"]),
     );
     const res = await POST(postReq(), { params });
     expect(res.status).toBe(422);
@@ -228,7 +229,7 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
     "maps an ambiguous reservation to the fixed safe 409 on the %s path",
     async (_label, body) => {
       mockCreate.mockRejectedValueOnce(
-        new XeroContactCreateInProgressError(),
+        new XeroContactCreateInProgressError()
       );
 
       const response = await POST(postReq(body), { params });
@@ -266,7 +267,7 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
 
   it("marks a newly created contact as linked when history refresh is deferred", async () => {
     mockCreate.mockResolvedValue("contact-1");
-    mockSyncHistory.mockRejectedValue(new HostingCoverageParticipantRetryError());
+    mockSyncHistory.mockRejectedValue(new HostingCoverageParticipantRetryError(),);
 
     const res = await POST(postReq(), { params });
 

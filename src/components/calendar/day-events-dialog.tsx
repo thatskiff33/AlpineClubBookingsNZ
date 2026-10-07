@@ -56,7 +56,7 @@ export function DayEventsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{dayKey ? formatDayKeyLong(dayKey) : "Events"}</DialogTitle>
+          <DialogTitle>{dayKey ? formatDayKeyLong(dayKey, club.format) : "Events"}</DialogTitle>
           <DialogDescription>
             {events.length === 1
               ? "1 event on this day."
@@ -86,7 +86,7 @@ export function DayEventsDialog({
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium">{event.title}</span>
                   <span className="block text-xs opacity-80">
-                    {formatEventTime(event, club.zone)}
+                    {formatEventTime(event, club.zone, club.format)}
                     {event.location && (
                       <span className="ml-1 inline-flex items-center gap-0.5">
                         <MapPin aria-hidden className="h-3 w-3" />

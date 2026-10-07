@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
 import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Readiness surfacing for the googleLogin module (#2035, DB-only since #2087):
 // credentials live in the encrypted C1 store and the module cannot be turned ON
@@ -13,7 +14,7 @@ import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
 function googleStatus(
   settings = { ...DEFAULT_MODULE_SETTINGS, googleLogin: true },
 ) {
-  const payload = buildClubModuleSettingsPayload(settings);
+  const payload = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, settings);
   return payload.modules.find((m) => m.key === "googleLogin")!;
 }
 

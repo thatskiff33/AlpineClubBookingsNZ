@@ -10,12 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
-import { formatCents } from "@/lib/utils";
-import { APP_CURRENCY } from "@/config/operational";
+import { MoneyInput } from "@/components/ui/money-input";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
+import type { ClubFormat } from "@/lib/club-format";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { useClubTime } from "@/components/club-time-provider";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
@@ -32,7 +34,7 @@ import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache";
 
 type FeeComponent = { id: string; label: string; amountCents: number; prorate: boolean; xeroAccountCode: string | null; xeroItemCode: string | null; sortOrder: number };
 type Fee = { id: string; amountCents: number; effectiveFrom: string; effectiveTo: string | null; ageTier?: string | null; billingBasis?: string; prorationRule?: string; components?: FeeComponent[] };
-// A draft component row in the fee editor (#1932, E6). Amounts are entered as NZD
+// A draft component row in the fee editor (#1932, E6). Amounts are entered as
 // strings and converted to integer cents on save, exactly like the fee total.
 type ComponentDraft = { label: string; amount: string; prorate: boolean; xeroAccountCode: string; xeroItemCode: string };
 const defaultComponentDraft = (): ComponentDraft => ({ label: "Annual membership fee", amount: "", prorate: true, xeroAccountCode: "", xeroItemCode: "" });
@@ -69,7 +71,7 @@ const JOINING_TIERS = [
 ] as const;
 const tierLabel = (tier: string | null) =>
   JOINING_TIERS.find((option) => option.value === (tier ?? "FLAT"))?.label ?? (tier ?? "Flat");
-const dollars = (cents: number | null) => cents == null ? "Not configured" : formatCents(cents);
+const dollars = (cents: number | null, format: ClubFormat) => cents == null ? "Not configured" : formatCents(cents, format);
 const memberName = (member: { firstName: string; lastName: string }) => `${member.firstName} ${member.lastName}`.trim();
 // The fee-level proration rule, in the same words as the editor's Proration
 // select (#2068, finding 7). Rendered on saved fees so the display can never
@@ -86,6 +88,18 @@ const componentIsProrated = (fee: Fee, component: FeeComponent) =>
   (fee.prorationRule ?? "NONE") !== "NONE" && component.prorate;
 
 export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boolean } = {}) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const format = useClubFormat();
+  const { currencyCode } = format;
+  // "an NZD amount", "a CHF amount": the article follows how the code's first
+  // letter is SAID, so a club on NZD reads exactly what it always has (#3567).
+  const amountNoun = `${/^[AEFHILMNORSX]/.test(currencyCode) ? "an" : "a"} ${currencyCode} amount`;
   // The default "effective from" for a new fee is the CLUB's today, and it has
   // to be: the server reads these windows in club time, so seeding them from
   // the build's `NEXT_PUBLIC_TZ` — fixed at build time, not read from the club's
@@ -297,7 +311,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   };
   function saveMembershipFee() {
     const amountCents = parseDecimalDollarsToCents(membershipAmount);
-    if (amountCents == null) { setError("Enter an NZD amount with no more than two decimal places."); return; }
+    if (amountCents == null) { setError(`Enter ${amountNoun} with no more than two decimal places.`); return; }
     // Build the reconciled components array (#1932, E6). NO_INVOICE fees carry no
     // components. A single component mirrors the fee total; multiple components
     // are parsed individually (the server is the final Σ==total validator).
@@ -309,7 +323,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       // looking it up (#2801).
       for (const [index, row] of componentRows.entries()) {
         const rowCents = componentRows.length === 1 ? amountCents : parseDecimalDollarsToCents(row.amount);
-        if (rowCents == null) { setError("Enter a valid NZD amount for each fee component."); return; }
+        if (rowCents == null) { setError(`Enter a valid ${currencyCode} amount for each fee component.`); return; }
         built.push({
           label: row.label.trim() || "Annual membership fee",
           amountCents: rowCents,
@@ -331,7 +345,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   }
   function saveEntranceFee() {
     const amountCents = parseDecimalDollarsToCents(entranceAmount);
-    if (amountCents == null) { setError("Enter an NZD amount with no more than two decimal places."); return; }
+    if (amountCents == null) { setError(`Enter ${amountNoun} with no more than two decimal places.`); return; }
     void mutate({
       action: editingEntranceFeeId ? "UPDATE_JOINING_FEE" : "CREATE_JOINING_FEE",
       ...(editingEntranceFeeId
@@ -369,13 +383,13 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
         <div className="grid gap-3 md:grid-cols-5">
           <div><Label htmlFor="joining-type">Membership type</Label><Select value={joiningTypeId} onValueChange={setJoiningTypeId} disabled={!!editingEntranceFeeId}><SelectTrigger id="joining-type"><SelectValue /></SelectTrigger><SelectContent>{data?.membershipTypes.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select></div>
           <div><Label htmlFor="joining-tier">Age tier</Label><Select value={joiningTier} onValueChange={setJoiningTier} disabled={!!editingEntranceFeeId}><SelectTrigger id="joining-tier"><SelectValue /></SelectTrigger><SelectContent>{JOINING_TIERS.map((tier) => <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label htmlFor="entrance-amount">Amount ({APP_CURRENCY})</Label><Input id="entrance-amount" {...MONEY_INPUT_PROPS} value={entranceAmount} onChange={(event) => setEntranceAmount(event.target.value)} {...entranceAmountHint.fieldProps} /><FieldHint {...entranceAmountHint.hintProps}>Example: 75.00</FieldHint></div>
+          <div><Label htmlFor="entrance-amount">Amount ({currencyCode})</Label><MoneyInput id="entrance-amount" value={entranceAmount} onValueChange={setEntranceAmount} {...entranceAmountHint.fieldProps} /><FieldHint {...entranceAmountHint.hintProps}>Example: 75.00</FieldHint></div>
           <div><Label htmlFor="entrance-from">Effective from</Label><Input id="entrance-from" type="date" value={entranceFrom} onChange={(event) => setEntranceFrom(event.target.value)} /></div>
           <div><Label htmlFor="entrance-to">Effective to (optional)</Label><Input id="entrance-to" type="date" value={entranceTo} onChange={(event) => setEntranceTo(event.target.value)} /></div>
         </div>
         <div className="flex gap-2"><Button disabled={saving || !joiningTypeId} onClick={saveEntranceFee}>{editingEntranceFeeId ? "Update joining fee" : "Add joining fee"}</Button>{editingEntranceFeeId && <Button variant="outline" onClick={resetEntranceForm}>Cancel edit</Button>}<Button variant="ghost" disabled={saving} onClick={cancelEntranceEditing}>Close section</Button></div>
       </>}
-      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}{!type.isActive && <span className="ml-2 text-sm text-muted-foreground">(archived)</span>}</div>{type.joiningFees.length === 0 ? <p className="text-sm text-muted-foreground">No joining fee</p> : type.joiningFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier)}</Badge><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setJoiningTypeId(type.id); setJoiningTier(fee.ageTier ?? "FLAT"); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); scrollToPanelTop(joiningPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_JOINING_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier)} joining fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>)}</div>
+      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}{!type.isActive && <span className="ml-2 text-sm text-muted-foreground">(archived)</span>}</div>{type.joiningFees.length === 0 ? <p className="text-sm text-muted-foreground">No joining fee</p> : type.joiningFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier)}</Badge><span>{dollars(fee.amountCents, format)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setJoiningTypeId(type.id); setJoiningTier(fee.ageTier ?? "FLAT"); setEntranceAmount(formatCentsPlain(fee.amountCents)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); scrollToPanelTop(joiningPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_JOINING_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier)} joining fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>)}</div>
     </CardContent></Card>
 
     <Card ref={membershipPanelRef} role="region" aria-labelledby="membership-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle id="membership-fees-title">Annual membership fees</CardTitle><CardDescription>the fee to be a paid-up member of the club</CardDescription></div>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => { setMembershipEditing(true); scrollToPanelTop(membershipPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
@@ -390,7 +404,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
               row; per-tier rows win at resolution. Per-family fees are flat-only,
               so the tier is forced to Flat and locked while PER_FAMILY is chosen. */}
           <div><Label htmlFor="membership-tier">Age tier</Label><Select value={membershipTier} onValueChange={(value) => { setMembershipTier(value); if (value !== "FLAT" && billingBasis === "PER_FAMILY") setBillingBasis("PER_MEMBER"); }} disabled={!!editingMembershipFeeId || billingBasis === "PER_FAMILY"}><SelectTrigger id="membership-tier"><SelectValue /></SelectTrigger><SelectContent>{JOINING_TIERS.map((tier) => <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label htmlFor="membership-amount">Annual amount ({APP_CURRENCY})</Label><Input id="membership-amount" {...MONEY_INPUT_PROPS} value={membershipAmount} onChange={(event) => setMembershipAmount(event.target.value)} disabled={billingBasis === "NO_INVOICE"} {...membershipAmountHint.fieldProps} /><FieldHint {...membershipAmountHint.hintProps}>{billingBasis === "NO_INVOICE" ? "A no-invoice fee raises no amount." : "Example: 150.00"}</FieldHint></div>
+          <div><Label htmlFor="membership-amount">Annual amount ({currencyCode})</Label><MoneyInput id="membership-amount" value={membershipAmount} onValueChange={setMembershipAmount} disabled={billingBasis === "NO_INVOICE"} {...membershipAmountHint.fieldProps} /><FieldHint {...membershipAmountHint.hintProps}>{billingBasis === "NO_INVOICE" ? "A no-invoice fee raises no amount." : "Example: 150.00"}</FieldHint></div>
           <div><Label htmlFor="billing-basis">Billing basis</Label><Select value={billingBasis} onValueChange={(value) => { setBillingBasis(value); if (value === "NO_INVOICE") setMembershipAmount("0"); if (value === "PER_FAMILY") setMembershipTier("FLAT"); }}><SelectTrigger id="billing-basis"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PER_MEMBER">Per member</SelectItem>{familyBillingActive && membershipTier === "FLAT" && <SelectItem value="PER_FAMILY">Per family</SelectItem>}<SelectItem value="NO_INVOICE">No invoice</SelectItem></SelectContent></Select></div>
           <div><Label htmlFor="proration-rule">Proration</Label><Select value={prorationRule} onValueChange={setProrationRule}><SelectTrigger id="proration-rule"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="NONE">Full annual fee</SelectItem><SelectItem value="REMAINING_MONTHS_INCLUSIVE">Remaining months, including decision month</SelectItem></SelectContent></Select></div>
           <div><Label htmlFor="membership-from">Effective from</Label><Input id="membership-from" type="date" value={membershipFrom} onChange={(event) => setMembershipFrom(event.target.value)} /></div>
@@ -402,7 +416,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
               <div className="flex items-center justify-between">
                 <Label>Invoice-line components</Label>
                 <span className={componentsReconcile ? "text-sm text-muted-foreground" : "text-sm text-warning-11"}>
-                  Components total {dollars(componentsTotalCents)}{componentsReconcile ? "" : ` · must equal the fee amount ${dollars(parsedFeeCents)}`}
+                  Components total {dollars(componentsTotalCents, format)}{componentsReconcile ? "" : ` · must equal the fee amount ${dollars(parsedFeeCents, format)}`}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">Each component is its own Xero invoice line. A single component uses the fee total. Components must sum to the fee amount. Leave Account or Item empty to use the resolved default.</p>
@@ -417,7 +431,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
                     is disabled, so that row's hint states what the amount is
                     rather than offering an example the operator cannot type
                     (#2264). */}
-                <div><Label htmlFor={`component-amount-${index}`} className="text-xs">Amount ({APP_CURRENCY})</Label><Input id={`component-amount-${index}`} {...MONEY_INPUT_PROPS} value={componentRows.length === 1 ? membershipAmount : row.amount} onChange={(event) => updateComponentRow(index, { amount: event.target.value })} disabled={componentRows.length === 1} aria-describedby={describedByFieldHint(componentAmountHintId(index))} /><FieldHint id={componentAmountHintId(index)}>{componentRows.length === 1 ? "Taken from the annual fee amount above." : "Example: 120.00"}</FieldHint></div>
+                <div><Label htmlFor={`component-amount-${index}`} className="text-xs">Amount ({currencyCode})</Label><MoneyInput id={`component-amount-${index}`} value={componentRows.length === 1 ? membershipAmount : row.amount} onValueChange={(value) => updateComponentRow(index, { amount: value })} disabled={componentRows.length === 1} aria-describedby={describedByFieldHint(componentAmountHintId(index))} /><FieldHint id={componentAmountHintId(index)}>{componentRows.length === 1 ? "Taken from the annual fee amount above." : "Example: 120.00"}</FieldHint></div>
                 {/* A "Full annual fee" (NONE) rule prorates nothing, so the
                     per-component Prorate opt-in is replaced with a read-only
                     "Prorate n/a" placeholder when the rule is NONE (#2068,
@@ -433,7 +447,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
             </div>}
         <div className="flex gap-2"><Button disabled={saving || !membershipTypeId} onClick={saveMembershipFee}><DollarSign className="mr-1 h-4 w-4" />{editingMembershipFeeId ? "Update annual fee" : "Add annual fee"}</Button>{editingMembershipFeeId && <Button variant="outline" onClick={resetMembershipForm}>Cancel edit</Button>}<Button variant="ghost" disabled={saving} onClick={cancelMembershipEditing}>Close section</Button></div>
       </>}
-      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id}><div className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier ?? null)}</Badge><Badge variant="outline">{dollars(fee.amountCents)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span>{fee.billingBasis !== "NO_INVOICE" && <Badge variant="outline">{prorationLabel(fee.prorationRule)}</Badge>}<span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{membershipEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipTier(fee.ageTier ?? "FLAT"); setMembershipAmount((fee.amountCents / 100).toFixed(2)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); setComponentRows(fee.components && fee.components.length > 0 ? fee.components.map((component) => ({ label: component.label, amount: (component.amountCents / 100).toFixed(2), prorate: component.prorate, xeroAccountCode: component.xeroAccountCode ?? "", xeroItemCode: component.xeroItemCode ?? "" })) : [defaultComponentDraft()]); scrollToPanelTop(membershipPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier ?? null)} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>{fee.components && fee.components.length > 0 && <ul className="mt-1 space-y-0.5 pl-3 text-xs text-muted-foreground">{fee.components.map((component) => <li key={component.id}>{component.label} · {dollars(component.amountCents)} · {componentIsProrated(fee, component) ? "prorated" : "full"}{component.xeroAccountCode ? ` · acct ${component.xeroAccountCode}` : ""}{component.xeroItemCode ? ` · item ${component.xeroItemCode}` : ""}</li>)}</ul>}</div>)}</div>)}</div>
+      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id}><div className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier ?? null)}</Badge><Badge variant="outline">{dollars(fee.amountCents, format)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span>{fee.billingBasis !== "NO_INVOICE" && <Badge variant="outline">{prorationLabel(fee.prorationRule)}</Badge>}<span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{membershipEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipTier(fee.ageTier ?? "FLAT"); setMembershipAmount(formatCentsPlain(fee.amountCents)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); setComponentRows(fee.components && fee.components.length > 0 ? fee.components.map((component) => ({ label: component.label, amount: formatCentsPlain(component.amountCents), prorate: component.prorate, xeroAccountCode: component.xeroAccountCode ?? "", xeroItemCode: component.xeroItemCode ?? "" })) : [defaultComponentDraft()]); scrollToPanelTop(membershipPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier ?? null)} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>{fee.components && fee.components.length > 0 && <ul className="mt-1 space-y-0.5 pl-3 text-xs text-muted-foreground">{fee.components.map((component) => <li key={component.id}>{component.label} · {dollars(component.amountCents, format)} · {componentIsProrated(fee, component) ? "prorated" : "full"}{component.xeroAccountCode ? ` · acct ${component.xeroAccountCode}` : ""}{component.xeroItemCode ? ` · item ${component.xeroItemCode}` : ""}</li>)}</ul>}</div>)}</div>)}</div>
     </CardContent></Card>
 
     {familyBillingActive && <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Family billing members</CardTitle>{data?.canEdit && !familyEditing && <Button variant="outline" size="sm" aria-label="Edit family billing" onClick={startFamilyEditing}>Edit</Button>}</CardHeader><CardContent className="space-y-3">

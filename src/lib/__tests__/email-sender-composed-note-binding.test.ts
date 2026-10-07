@@ -35,6 +35,11 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
   sendUnmuteableAdminAlert: mocks.sendUnmuteableAdminAlert,
 }));
 
+// #3643: the hold-kept alert stamps the Xero organisation at send time.
+vi.mock("@/lib/xero-link-short-code", () => ({
+  getXeroOrgShortCode: async () => null,
+}));
+
 import { EMAIL_AUDIT_DEFAULTS } from "@/lib/email-message-audit-defaults";
 import {
   renderTemplateString,
@@ -49,10 +54,13 @@ import {
   sendAdminLateCaptureAutoRefundAlert,
   sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
+import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email/admin-alerts-internet-banking";
+import { sendAdminSecondInstrumentSettlementConflictAlert } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
   sendSplitGuestPortionCancelledEmail,
 } from "@/lib/email/booking";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function capturedAdminTemplateData(): EmailTemplateData {
   expect(mocks.sendToAdmins).toHaveBeenCalledTimes(1);
@@ -84,7 +92,15 @@ describe("#2320 review — senders supply the composed notes their defaults rend
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.sendEmail.mockResolvedValue(undefined);
-    mocks.sendToAdmins.mockResolvedValue(undefined);
+    // What `sendToAdmins` really returns (#3672); a sender that reads it,
+    // like #3643's hold-kept alert, needs the shape rather than undefined.
+    mocks.sendToAdmins.mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 1,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
     mocks.sendUnmuteableAdminAlert.mockResolvedValue(undefined);
   });
 
@@ -97,7 +113,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       totalCents: 45000,
       holdUntil: new Date("2026-07-09T18:00:00.000Z"),
       parentUnpaid: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = capturedAdminTemplateData();
     expect(typeof data.settlementActionNote).toBe("string");
@@ -121,7 +137,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       guestCount: 3,
       totalCents: 45000,
       parentUnpaid: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = capturedAdminTemplateData();
     expect(typeof data.settlementActionNote).toBe("string");
@@ -153,7 +169,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       operationReference: "op_1",
       errorMessage: null,
       refundFailed: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = capturedAdminTemplateData();
     expect(typeof data.refundOutcomeNote).toBe("string");
@@ -176,7 +192,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       operationReference: "op_1",
       errorMessage: "card_declined",
       refundFailed: true,
-    });
+    }, CLUB_FORMAT_TEST);
     const failedData = capturedAdminTemplateData();
     const failedRendered = renderDefaultBody(
       "admin-duplicate-capture-refund",
@@ -204,7 +220,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: true,
       captureKind: "modification",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const deletedData = capturedUnmuteableTemplateData();
     expect(typeof deletedData.refundOutcomeNote).toBe("string");
@@ -227,7 +243,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: false,
       captureKind: "modification",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const cancelledData = capturedUnmuteableTemplateData();
     const cancelledRendered = renderDefaultBody(
@@ -257,7 +273,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: true,
       captureKind: "modification",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const modificationData = capturedUnmuteableTemplateData();
     expect(typeof modificationData.lateCaptureLeadNote).toBe("string");
@@ -278,7 +294,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: true,
       captureKind: "primary",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const primaryRendered = renderDefaultBody(
       "admin-late-capture-auto-refund",
@@ -305,7 +321,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       captureKind: "modification",
       handBackAmountCents: 2500,
       refundSent: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const withheldData = capturedUnmuteableTemplateData();
     expect(typeof withheldData.handBackConflictNote).toBe("string");
@@ -329,7 +345,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       captureKind: "modification",
       handBackAmountCents: null,
       refundSent: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const sentRendered = renderDefaultBody(
       "admin-late-capture-hand-back-conflict",
@@ -337,6 +353,134 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     );
     expect(sentRendered).toContain("may have gone back TWICE");
     expect(sentRendered).not.toContain("has NOT been sent back a second time");
+  });
+
+  it("admin-internet-banking-hold-kept: {{holdKeptNote}} gives the instruction each reason needs (#3643)", async () => {
+    /*
+      Part-paid says wait for the rest or cancel in the app (which credits the
+      part payment); paid-in-full says the sync is behind; unreadable says the
+      job keeps trying up to the bound; released-unreadable says it let go.
+      One editable body carries all four only through the token.
+    */
+    const send = (
+      reason:
+        | "part-paid"
+        | "part-paid-manual"
+        | "paid-in-full"
+        | "unreadable"
+        | "released-unreadable"
+        | "cancelled-payment-recorded",
+    ) =>
+      sendAdminInternetBankingHoldKeptAlert({
+        reason,
+        memberName: "Alice Example",
+        bookingId: "booking-9",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        holdUntil:
+          reason === "cancelled-payment-recorded" ? null : new Date("2026-07-20T00:00:00Z"),
+        paidCents: reason === "part-paid" ? 5000 : null,
+        amountOwingCents: reason === "part-paid" ? 10000 : null,
+        xeroInvoiceNumber: "INV-001",
+        xeroInvoiceUrl: null,
+      }, CLUB_FORMAT_TEST);
+    const rendered = async (reason: Parameters<typeof send>[0]) => {
+      mocks.sendToAdmins.mockClear();
+      await send(reason);
+      return renderDefaultBody("admin-internet-banking-hold-kept", capturedAdminTemplateData());
+    };
+
+    const partPaid = await rendered("part-paid");
+    expect(partPaid).toContain("Xero shows part of its invoice already paid");
+    expect(partPaid).toContain("records the part payment as money received");
+    expect(partPaid).toContain("Paid so far: $50.00");
+    expect(partPaid).toContain("Still owing: $100.00");
+
+    const paidInFull = await rendered("paid-in-full");
+    expect(paidInFull).toContain("paid in full");
+    expect(paidInFull).not.toContain("pay the rest");
+
+    const unreadable = await rendered("unreadable");
+    expect(unreadable).toContain("could not be read from Xero");
+    expect(unreadable).toContain("seven days after the hold deadline");
+    expect(unreadable).toContain("Paid so far: unknown");
+
+    const released = await rendered("released-unreadable");
+    expect(released).toContain("has now been released");
+    expect(released).not.toContain("NOT cancelled");
+
+    // #3643 D5: an organisation's, or an unsizable, payment is settled by hand.
+    const manual = await rendered("part-paid-manual");
+    expect(manual).toContain("cannot hand this payment back as account credit");
+    expect(manual).not.toContain("returns the refundable share");
+
+    // DECISION 2: the cancel alert, for a booking that may never have held.
+    const cancelled = await rendered("cancelled-payment-recorded");
+    expect(cancelled).toContain("cancelled as unpaid");
+    expect(cancelled).toContain("Hold deadline: none");
+  });
+
+  it("admin-second-instrument-settlement-conflict: {{secondInstrumentConflictNote}} says what the card money already did (#3638)", async () => {
+    const alert = {
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      bookingId: "booking-9",
+      bookingStatus: "PAID",
+      conflictKind: "settled" as const,
+      invoiceAmountCents: 27000,
+      cardHeldCents: 27000,
+      cardPaymentIntentId: "pi_card",
+      xeroInvoiceNumber: "INV-9",
+      // No link, so the send-time organisation stamp is not exercised here.
+      xeroInvoiceUrl: null,
+    };
+    await sendAdminSecondInstrumentSettlementConflictAlert(alert, CLUB_FORMAT_TEST);
+
+    const liveData = capturedUnmuteableTemplateData();
+    const liveRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      liveData,
+    );
+    expect(liveRendered).toContain("This booking may have been paid TWICE");
+    expect(liveRendered).not.toContain("later cancelled");
+    expect(liveRendered).toContain("Booking: booking-9");
+    expect(liveRendered).toContain("/bookings/booking-9");
+    // Unmuteable and named for the event, never the payment-failure mail.
+    const [liveArgs] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
+      { subject: string; templateName: string },
+    ];
+    expect(liveArgs.subject).toContain("may have been paid twice");
+    expect(liveArgs.templateName).toBe("admin-second-instrument-settlement-conflict");
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSecondInstrumentSettlementConflictAlert(
+      { ...alert, bookingStatus: "CANCELLED", conflictKind: "cancelledAfterCard" },
+      CLUB_FORMAT_TEST,
+    );
+    const cancelledRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(cancelledRendered).toContain("paid by card and later cancelled");
+    expect(cancelledRendered).not.toContain("This booking may have been paid TWICE");
+
+    // #3638 delta D3: the #1765 arm. The card was refunded before the switch,
+    // so the mail must not claim the cancellation settled it, nor that the
+    // booking was paid twice.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSecondInstrumentSettlementConflictAlert(
+      { ...alert, bookingStatus: "CANCELLED", conflictKind: "cancelledAfterRefund" },
+      CLUB_FORMAT_TEST,
+    );
+    const refundRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(refundRendered).toContain("refunded before it moved to Internet Banking");
+    expect(refundRendered).toContain("Nothing was paid twice");
+    expect(refundRendered).not.toContain("already settled the card payment");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

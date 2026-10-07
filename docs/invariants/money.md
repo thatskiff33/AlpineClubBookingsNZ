@@ -68,8 +68,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   grammar, and **that `null` must reach the person as a validation error**: no
   caller may substitute a zero, a `null` payload field, or a previous value
   silently. A money box is therefore spelled `type="text"` with
-  `inputMode="decimal"` — `MONEY_INPUT_PROPS` from the same module (owner
-  decision 14 Aug 2026): a `type="number"` control's value-sanitization strips
+  `inputMode="decimal"` via shared `MoneyInput` (owner decision 13 Sep 2026):
+  a `type="number"` control's value-sanitization strips
   anything that is not a floating-point number to `""` before any handler runs,
   so the parser never saw `"50abc"`, `"$45.00"` or `"1,000.00"` and the box read
   as deliberately cleared. An amount an accounting provider has ALREADY parsed into a number —
@@ -401,28 +401,191 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   promotion build-up not known, promotion build-up mismatch,
   discount-component mismatch, and final-price relation mismatch.
 
-  It checks recorded facts only: `Booking.totalPriceCents` against readable
+  It checks recorded facts: `Booking.totalPriceCents` against readable
   whole-guest sold-price evidence; `promoAdjustmentCents` against the
   `INV-MONEY-029` adjustment build-up when known; `discountCents` against
   `max(0, -promoAdjustmentCents)`; and `finalPriceCents` through
-  `bookingFinalPriceCents`. `EVEN_SPLIT` remains usable only at whole-guest
-  grain. Unknown provenance, a missing build-up, or a null adjustment becomes a
-  reason, never zero or a present-day reprice. Account credit remains solely in
+  `bookingFinalPriceCents`. `EVEN_SPLIT` is usable only at whole-guest grain.
+  Unknown provenance, a missing build-up or a null adjustment becomes a reason,
+  never zero or a present-day reprice. Account credit stays solely in
   `MemberCredit`.
 
   **The verdict is officer-only** (owner decision, 20 September 2026): a member
   sees their amounts unmarked and their data export carries no verdict.
-  `booking-money-reconciliation-audience.ts` is the one home for that gate, for
-  the named `WITHHELD` state replacing a nullable absence, and for the wording. Behind it, booking detail and lists, officer history,
-  finance metrics, reports and exports, and per-booking Xero reconciliation
-  input carry the same state and complete ordered reasons. The Xero invoice shape and every
-  displayed or settled amount remain unchanged. A read-only repeatable-read
-  census (`npm run booking-money:census`) reports all state/reason counts from
-  one ordered snapshot and writes nothing. The mutation-verified
-  `booking-money-writer-census.test.ts` names direct headline/component writers
-  and rejects raw-SQL or forwarded-delegate bypasses. A partly-refunded
-  guest-add mismatch is therefore visible for #3244 to repair separately; this
-  rule does not choose a card, charge, refund, credit, or invoice correction.
+  `booking-money-reconciliation-audience.ts` is the one home for that gate, the
+  named `WITHHELD` state replacing a nullable absence, and the wording. Behind
+  it, booking detail and lists, officer history, finance metrics, reports,
+  exports and per-booking Xero reconciliation input carry the same state and
+  ordered reasons; the Xero invoice shape and every displayed or settled amount
+  are unchanged. A read-only repeatable-read census
+  (`pnpm run booking-money:census`) reports state/reason counts, night rows by
+  provenance and strands by `INV-MOD-028` verdict per booking month, and edit
+  reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`
+  names direct headline/component writers and rejects raw-SQL or
+  forwarded-delegate bypasses. A partly-refunded guest-add mismatch is
+  therefore visible for #3244 to repair separately; this rule chooses no card,
+  charge, refund, credit, or invoice correction.
+
+## INV-MONEY-032
+
+- **A booking's money ledger is append-only, and one module writes it**
+  (#3580, programme #3527 stage 4; design
+  [`design/booking-ledger.md`](../design/booking-ledger.md)).
+  `BookingLedgerLine` records a booking's money as posted lines: charge,
+  settlement or adjustment, each with a sign, a quantity, a unit price and the
+  event that anchored it. A line is never updated or deleted; a correction is
+  a new line naming the one it reverses, and `reversesLineId` is unique.
+
+  **The balance is derived, never stored.** `booking-ledger-balance.ts` is the
+  one place charged, settled, adjusted and owed are summed. No running total
+  and no status: a stored copy of a derived figure is the mirror this table
+  retires.
+
+  **`booking-ledger-write.ts` is the only door**, it exposes creation alone,
+  and every posting goes inside the transaction of the writer whose act it
+  records — a settle that rolls back leaves no line saying it did not.
+  Building rows is pure and may be refused safely; writing them is a statement
+  and is never wrapped, because a refused statement has already aborted the
+  transaction. The database holds the shape rules: a sign is 1 or -1,
+  `amountCents` IS `sign * unitCents * quantity` with a non-negative unit and
+  quantity, a `GUEST_NIGHT` line names its strand and its nights, and nothing
+  else names any of them. The strand and the acting member are plain columns,
+  not keys, so no cascade can rewrite a posted line.
+  `booking-ledger-append-only-census.test.ts` fails a second writer, or any
+  update, upsert or delete of a line, anywhere — including in the door.
+
+  Stage C1 posts charge lines at confirmation, from the night rows, and
+  nothing reads them: `INV-PAY-047`'s mirror is still the answer until the
+  reads move (#3584). A strand with an unpriced night posts nothing, because
+  `INV-MOD-028` says a blank is not evidence of an amount.
+
+## INV-MONEY-033
+
+- **A booking-ledger posting is idempotent, and a booking's confirmation posts
+  once** (#3595). Two rules, because one was not enough.
+
+  **Each posting carries a key** derived from the event it records, built only
+  in `booking-ledger-posting-keys.ts`, and unique. The write door inserts with
+  `ON CONFLICT DO NOTHING`, so the same event posted twice is skipped: not a
+  duplicate line, and not a refused statement that would abort the caller's
+  transaction (`INV-MONEY-032`). A reversal is keyed by the reversed line's id,
+  so a second reversal of one line is a skipped replay, never a different
+  posting the unique `reversesLineId` could silently absorb. The same key, or
+  the same reversal target, twice in one batch is refused before anything is
+  sent.
+
+  **A key makes one event idempotent, not a booking's confirmation.** A
+  booking can pass the settle's PAID claim twice — mark-paid, its reversal
+  (`INV-PAY-045`), then a card payment — and its nights can change in between,
+  so their keys change too. The settle therefore fences per booking
+  (`bookingHasConfirmationLines`, under its own `lock(1)`), counting un-keyed
+  lines as well, and posts nothing if the booking is already confirmed on the
+  ledger. What changes after confirmation is a modification (#3582).
+
+  `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
+  transaction and the fence against PostgreSQL itself.
+
+## INV-MONEY-034
+
+- **A booking's settlement lines converge from its payment rows, at the place
+  the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
+  runs at the end of `reconcilePaymentAggregates` and from the three writers
+  that set the payment's columns themselves: the manual mark-paid settle, its
+  reversal, and the Xero payment-received receipt. It posts one line
+  per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
+  when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
+  refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
+  nothing for a $0 capture.
+
+  **A source that stops holding is reversed, never edited.** A mark-paid
+  reversal flips its row to `FAILED` (`INV-PAY-045`) and a refund can fail
+  after it was recorded; the sync then posts a reversal copied from the line,
+  once, keyed by the line's id. It never re-derives a method from the
+  payment's provenance, which a reversal clears.
+
+  **"Captured" and "recorded" are the mirror's own predicates**, in
+  `payment-transaction-status.ts`, so the ledger's captures equal
+  `Payment.amountCents` whenever anything is captured. Its refunds do NOT
+  always equal `refundedAmountCents`: that column only rises, is seeded
+  without rows on legacy payments, and is moved by credit and hand-back
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4's
+  census names those as `REFUND_MIRROR_*` classes (`INV-MONEY-037`). A line
+  whose source amount later changes is reported, not corrected.
+
+## INV-MONEY-035
+
+- **Every credit row a booking owns, and every hand-back, posts exactly one
+  settlement line, inside its writer's transaction** (#3599). Credit rows
+  have no chokepoint, so each writer calls `syncBookingLedgerCredits`; which
+  rows are the booking's is `member-credit-booking-rows.ts`'s, shared with
+  `deriveBookingAppliedCreditCents`. `booking-ledger-credit-writers.test.ts`
+  fails a credit write with no sync after it.
+
+  **Insert-only, because credit rows are.** No code changes a row's amount,
+  type or booking link — the census fails one that tries; only deleting a
+  booking nulls the link, and its lines go with it — so each row posts one
+  line keyed `credit:<id>`, never reversed, for the row's negation: applied
+  credit `CREDIT_APPLIED` (a give-back is negative), minted credit
+  `CREDIT_ISSUED`. While a booking's applied rows net to zero or less — every
+  current writer keeps them so — Σ `CREDIT_APPLIED` equals
+  `deriveBookingAppliedCreditCents`.
+
+  **A restore is not a reversal.** Restores are tiered by policy, so one can
+  be less than was applied; it posts `CREDIT_ISSUED` for exactly the restore,
+  anchored on the `CANCELLATION` because it returns credit already spent.
+
+  **A hand-back posts `BANK_REFUND`** when a task completes on the
+  `local-allocation` route, keyed `handback:<taskId>`, naming the officer, by
+  internet banking (#3529's wording decision, `INV-PAY-101`) — except on a
+  card payment, whose refund posts from its refund row.
+  `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
+  writers and the real resolver.
+
+## INV-MONEY-036
+
+- **An edit posts its own lines, per guest-night, or none; a review closure
+  records one parked edit's money once** (#3582). Rule and reason: design
+  `booking-ledger.md` §5.1 (edits: reversal plus re-post per night, sum or
+  nothing, only on a booking confirmed on the ledger, asked under `lock(1)`;
+  a parked edit posts nothing, `INV-MOD-040`) and §5.3 (a closure's share,
+  decided at booking grain). No review share posts a settlement line
+  (`INV-MONEY-034`, `INV-MONEY-035`). Pins:
+  `booking-ledger-modification-posting.test.ts`,
+  `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
+  direction), `booking-ledger-modification.realdb.test.ts`.
+
+## INV-MONEY-037
+
+- **Until the reads move, every booking's ledger is proved against its money
+  columns, and the cut-over waits on that proof** (#3583, design
+  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census` reads one
+  `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks seven
+  identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
+  and `GROUP_DISCOUNT` plus `adjusted(b)` less agreed give-backs, or, once
+  cancelled, `owed(b)` is zero; `amountCents` is Σ captures; `creditAppliedCents` is
+  Σ `CREDIT_APPLIED`; `refundedAmountCents` is −Σ `CARD_REFUND`;
+  `changeFeeCents` is Σ `CHANGE_FEE`; the uncollected ask is `max(0, owed(b))`
+  while an ask is live; and a live booking's `owed(b)` is what its columns say
+  is owed (`INV-PAY-047`'s residual plus the ask, less evidenced give-backs),
+  so no line can be wrong while every column agrees. A review line must match
+  what its closure credited, from credit rows and its own refund; rows it
+  cannot attribute fail closed (`AMBIGUOUS_REVIEW_GIVE_BACK`, §6). A disagreement names the
+  booking, both figures and the delta.
+
+  **A class explains an exact amount, from evidence the delta does not
+  hold.** It is classified only where components computed from the booking's
+  own rows sum to the delta to the cent; a cent either way, or the evidence
+  removed, is a disagreement (`booking-ledger-projection-census.test.ts`).
+
+  **The gate opens only on zero unclassified disagreements, coverage gaps and
+  integrity findings, and every class instance acknowledged.** Coverage is
+  money with no lines, a paid booking unconfirmed on the ledger, or an edit,
+  fee, credit row, capture or refund no live line records. Every class holds
+  the gate until the owner's `--acknowledged` file, kept outside the
+  repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
+  #3583; poster #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  on bookings the real writers built.
 
 ## INV-MONEY-006
 
@@ -537,6 +700,13 @@ check the others.
   `Member.lifeMemberDate` is **informational only** and is never read by any
   subscription derivation — the Life exemption is the `LIFE` membership type
   (subscriptionBehavior `NOT_REQUIRED`).
+
+- **Archived stored role-default types govern unassigned members (#3685).**
+  Booking and billing resolve the stored row by role-default key regardless of
+  active status. Billing uses its `subscriptionBehavior` and effective fee. A
+  legacy family holder's `PER_MEMBER` basis can lift suppression. Explicit
+  season assignments take precedence. Missing rows, or missing fees when
+  billing is required, produce exceptions; booking's synthetic fallback cannot bill.
 
 ## INV-MONEY-017
 

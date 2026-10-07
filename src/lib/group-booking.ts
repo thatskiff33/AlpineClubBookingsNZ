@@ -48,6 +48,10 @@ import { PUBLIC_GROUP_JOIN_MINIMUM_STAY_MESSAGE } from "@/lib/policies/minimum-s
 import { PUBLIC_GROUP_JOIN_ADULT_MEMBER_HOSTING_MESSAGE } from "@/lib/policies/adult-member-hosting";
 import { prisma } from "@/lib/prisma";
 import {
+  organiserPaysForNewJoiner,
+  paymentModeForNewJoiner,
+} from "@/lib/group-late-joiner";
+import {
   hashActionToken,
   isActionTokenFormat,
   issueActionToken,
@@ -74,6 +78,10 @@ import {
   GroupJoinConflictError,
   type BookingGuestInput as PricedGuestInput,
 } from "@/lib/booking-create";
+import {
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
 import {
   DEFAULT_BOOKING_PAYMENT_METHOD,
   type BookingPaymentMethod,
@@ -117,6 +125,8 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -375,28 +385,48 @@ async function requireOwnedGroupBookingByCode(
   return group;
 }
 
-/** Close a group to new joins. Existing child bookings are untouched. */
-export async function closeGroupBooking(rawCode: string, sessionUserId: string) {
+/**
+ * Set a group's join status (OPEN or CLOSED) for its organiser, never from
+ * CANCELLED. The organiser-pays cancel fence writes CANCELLED under
+ * `pg_advisory_xact_lock(1)`, and the paid apply, the reaper and the payer
+ * switch rely on it staying CANCELLED. So this takes the same key, re-reads the
+ * status under it, and writes with a status-guarded `updateMany`: a close or
+ * reopen racing the cancel waits for it and then refuses, instead of writing
+ * OPEN over CANCELLED from a stale read (#3672 review).
+ */
+async function setGroupBookingJoinStatus(
+  rawCode: string,
+  sessionUserId: string,
+  status: typeof GroupBookingStatus.OPEN | typeof GroupBookingStatus.CLOSED
+): Promise<{ id: string; status: GroupBookingStatus }> {
   const group = await requireOwnedGroupBookingByCode(rawCode, sessionUserId);
-  if (group.status === GroupBookingStatus.CANCELLED) {
+  const written = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const current = await tx.groupBooking.findUnique({
+      where: { id: group.id },
+      select: { status: true },
+    });
+    if (!current || current.status === GroupBookingStatus.CANCELLED) return false;
+    const claimed = await tx.groupBooking.updateMany({
+      where: { id: group.id, status: { not: GroupBookingStatus.CANCELLED } },
+      data: { status },
+    });
+    return claimed.count > 0;
+  });
+  if (!written) {
     throw new GroupBookingError("This group booking has been cancelled", 409);
   }
-  return prisma.groupBooking.update({
-    where: { id: group.id },
-    data: { status: GroupBookingStatus.CLOSED },
-  });
+  return { id: group.id, status };
+}
+
+/** Close a group to new joins. Existing child bookings are untouched. */
+export async function closeGroupBooking(rawCode: string, sessionUserId: string) {
+  return setGroupBookingJoinStatus(rawCode, sessionUserId, GroupBookingStatus.CLOSED);
 }
 
 /** Reopen a closed group to new joins. */
 export async function reopenGroupBooking(rawCode: string, sessionUserId: string) {
-  const group = await requireOwnedGroupBookingByCode(rawCode, sessionUserId);
-  if (group.status === GroupBookingStatus.CANCELLED) {
-    throw new GroupBookingError("This group booking has been cancelled", 409);
-  }
-  return prisma.groupBooking.update({
-    where: { id: group.id },
-    data: { status: GroupBookingStatus.OPEN },
-  });
+  return setGroupBookingJoinStatus(rawCode, sessionUserId, GroupBookingStatus.OPEN);
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +437,12 @@ export interface GroupBookingSummary {
   code: string;
   status: GroupBookingStatus;
   paymentMode: GroupBookingPaymentMode;
+  /**
+   * #3672: how a member joining NOW pays — each-pays-own once an
+   * organiser-pays group's settlement is paid. The join page describes this,
+   * not `paymentMode`.
+   */
+  joinerPaymentMode: GroupBookingPaymentMode;
   organiserFirstName: string;
   // The name of the lodge the group is actually staying at (the organiser
   // booking's lodge), so public join copy names the right property in a
@@ -425,6 +461,7 @@ export interface GroupBookingRecordForSummary {
   joinCode: string;
   status: GroupBookingStatus;
   paymentMode: GroupBookingPaymentMode;
+  settlement: { status: PaymentStatus } | null;
   joinDeadline: Date | null;
   organiserBooking: {
     checkIn: Date;
@@ -512,6 +549,7 @@ export function toGroupBookingSummary(
     code: group.joinCode,
     status: group.status,
     paymentMode: group.paymentMode,
+    joinerPaymentMode: paymentModeForNewJoiner(group),
     organiserFirstName: group.organiserMember.firstName,
     lodgeName: group.organiserBooking.lodge.name,
     checkIn: group.organiserBooking.checkIn,
@@ -546,6 +584,7 @@ export async function resolveGroupBookingByCode(
       joinCode: true,
       status: true,
       paymentMode: true,
+      settlement: { select: { status: true } },
       joinDeadline: true,
       organiserBooking: {
         select: {
@@ -621,7 +660,8 @@ export interface JoinGroupBookingResult {
   requiresPayment: boolean;
   // True for ORGANISER_PAYS: the joiner's beds are priced and held but the
   // organiser settles them, so the joiner is never billed and requiresPayment
-  // is always false.
+  // is always false. False for a joiner of an organiser-pays group whose
+  // settlement was already paid (#3672): they pay for themselves.
   organiserSettled: boolean;
 }
 
@@ -641,6 +681,9 @@ export interface JoinGroupBookingResult {
  *     joiner is never billed (requiresPayment is false) and cannot pay it
  *     themselves; the organiser settles the group total as one combined bill.
  *     The booking is still priced and holds the bed exactly as each-pays.
+ *   - ORGANISER_PAYS after the settlement is paid (#3672, `INV-PAY-109`): the
+ *     organiser is never billed again, so the joiner gets an ordinary
+ *     member-pays booking, exactly as EACH_PAYS_OWN.
  *
  * Non-member friends use the public join-request path, so every guest here must
  * be a member; a non-member guest is rejected with a clear message.
@@ -654,6 +697,9 @@ export async function joinGroupBookingAsMember(
   sessionUserId: string,
   sessionRole: string
 ): Promise<JoinGroupBookingResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const code = normaliseJoinCode(input.code);
   const group = code
     ? await prisma.groupBooking.findUnique({
@@ -665,6 +711,8 @@ export async function joinGroupBookingAsMember(
           paymentMode: true,
           maxJoiners: true,
           organiserMemberId: true,
+          // #3672: a paid settlement makes a new joiner member-pays.
+          settlement: { select: { status: true } },
           organiserBooking: {
             select: {
               id: true,
@@ -708,8 +756,10 @@ export async function joinGroupBookingAsMember(
   if (hasGroupStayFullyEnded(group.organiserBooking, clubDayInstantForJoin)) {
     throw new GroupBookingError("This group's stay has ended", 409);
   }
-  const organiserSettled =
-    group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS;
+  // #3672 (`INV-PAY-109`, owner option B): once the organiser has paid, a new
+  // joiner pays for themselves. Re-decided under `lock(1)` when the booking is
+  // written, so a settlement paid in between is caught there too.
+  const organiserSettled = organiserPaysForNewJoiner(group);
   if (
     group.organiserBooking.deletedAt ||
     !(ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
@@ -804,7 +854,7 @@ export async function joinGroupBookingAsMember(
   const lodgeCapacity = await getLodgeCapacity(groupLodgeId);
   if (guests.length > lodgeCapacity) {
     throw new GroupBookingError(
-      `A booking cannot exceed ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`),
       400
     );
   }
@@ -1017,6 +1067,7 @@ export async function joinGroupBookingAsMember(
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {
     outcome = await createConfirmedBooking({
+      format,
       // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved at the top of this
       // function, outside every transaction. `createConfirmedBooking` is
       // transaction-aware and so cannot read the club's zone for itself
@@ -1065,6 +1116,9 @@ export async function joinGroupBookingAsMember(
     // raises + emails the Xero invoice when internet_banking is chosen.
     paymentMethod: effectivePaymentMethod,
     internetBankingSettings,
+    // #3029 (`INV-MOD-059`): the joiner's guest rows are new, so a linked member
+    // is seeded from their current profile. Read here, outside every transaction.
+    guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
     });
   } catch (err) {
     if (isHostingCoverageParticipantRetry(err)) {
@@ -1116,11 +1170,13 @@ export async function joinGroupBookingAsMember(
     isZeroDollarConfirmed: outcome.isZeroDollarConfirmed,
     finalPriceCents: booking.finalPriceCents,
     // ORGANISER_PAYS joiners never pay; the organiser settles the group total.
+    // Read from the written booking (#3672): the payer is decided under the
+    // lock, so a joiner the paid settlement missed is sent to pay.
     requiresPayment:
-      !organiserSettled &&
+      !booking.organiserSettled &&
       booking.status === BookingStatus.PAYMENT_PENDING &&
       booking.finalPriceCents > 0,
-    organiserSettled,
+    organiserSettled: booking.organiserSettled,
   };
 }
 
@@ -1228,7 +1284,7 @@ export async function createNonMemberJoinRequest(
   const lodgeCapacity = await getLodgeCapacity(groupLodgeId);
   if (input.guests.length > lodgeCapacity) {
     throw new GroupBookingError(
-      `A booking cannot exceed ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`),
       400
     );
   }
@@ -1427,6 +1483,9 @@ export function parseNonMemberJoinGuests(
 export async function verifyAndCreateNonMemberJoin(
   token: string
 ): Promise<VerifyNonMemberJoinResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const tokenHash = hashActionToken(token);
   const join = await prisma.groupBookingJoin.findUnique({
     where: { verificationTokenHash: tokenHash },
@@ -1630,6 +1689,8 @@ export async function verifyAndCreateNonMemberJoin(
 
   let capacityFullNights: string[] | null = null;
   let created: { bookingId: string; memberId: string };
+  // #3029: read before the capacity-lock transaction below (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     created = await prisma.$transaction(async (tx) => {
@@ -1698,7 +1759,16 @@ export async function verifyAndCreateNonMemberJoin(
             // carries `| undefined` from an internal array read. Proven here
             // at the boundary rather than asserted, so a real gap throws
             // instead of writing a bed-allocation row with no stay range.
-            create: buildGuestCreateData(guests, price, checkIn, checkOut).map((guestCreate) => {
+            create: buildGuestCreateData(
+              guests,
+              price,
+              checkIn,
+              checkOut,
+              // #3029 (W5): a non-member joiner's party, so nothing is seeded —
+              // resolved through the one door all the same, so the rule is not
+              // restated here.
+              await resolveBookingGuestDietary(tx, guestDietarySeeding, guests),
+            ).map((guestCreate) => {
               if (guestCreate.stayStart === undefined || guestCreate.stayEnd === undefined) {
                 throw new Error("Guest create data is missing its stay range");
               }
@@ -1866,7 +1936,7 @@ export async function verifyAndCreateNonMemberJoin(
       priceCents,
       bookingReference: created.bookingId,
       expiresAt: paymentLinkExpiresAt,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, bookingId: created.bookingId },

@@ -37,6 +37,7 @@ import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-membe
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
   loadMemberGuestAddPolicy,
@@ -75,6 +76,15 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
+  bookingGuestDietaryCreateData,
+  bookingGuestDietaryUpdateData,
+  planHeldPartyRebuildDietary,
+  planHeldPartyRewriteDietary,
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import {
   priceBookingGuests,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
@@ -94,6 +104,9 @@ import { MEMBER_WHOLE_LODGE_GUEST_NAME_PREFIX } from "@/lib/placeholder-guest-na
 import { prisma } from "@/lib/prisma";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
@@ -113,6 +126,7 @@ const DECLINABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.PRICED,
   BookingRequestStatus.QUOTED,
   BookingRequestStatus.QUOTE_SENT,
+  BookingRequestStatus.ACCEPTED,
   BookingRequestStatus.QUERY_PENDING,
   BookingRequestStatus.MODIFICATION_REQUESTED,
 ] as const;
@@ -359,6 +373,9 @@ export async function getBookingRequestSettings(db: Pick<typeof prisma, "booking
     quoteReminderLeadDays:
       record?.quoteReminderLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders:
+      record?.assignSchoolTeachersAsHutLeaders ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays:
       record?.attendeeConfirmationLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.attendeeConfirmationLeadDays,
@@ -477,6 +494,7 @@ export async function updateBookingRequestSettings(input: {
   showPricingToNonMembers: boolean;
   quoteResponseTtlDays: number;
   quoteReminderLeadDays: number;
+  assignSchoolTeachersAsHutLeaders: boolean;
   attendeeConfirmationLeadDays: number;
   attendeeConfirmationReminderDays: number;
   adminMemberId: string;
@@ -488,6 +506,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -496,6 +515,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -515,6 +535,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
     },
   });
 
@@ -536,6 +557,7 @@ export async function updateBookingRequestSettings(input: {
     showPricingToNonMembers: settings.showPricingToNonMembers,
     quoteResponseTtlDays: settings.quoteResponseTtlDays,
     quoteReminderLeadDays: settings.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders: settings.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays: settings.attendeeConfirmationLeadDays,
     attendeeConfirmationReminderDays: settings.attendeeConfirmationReminderDays,
   };
@@ -848,7 +870,7 @@ export async function createMemberWholeLodgeRequest(input: {
     : await getDefaultLodgeCapacity();
   if (input.headcount > lodgeCapacity) {
     throw new BookingRequestError(
-      `A whole-lodge request cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A whole-lodge request cannot exceed the lodge capacity of ${limit} guests`),
       422
     );
   }
@@ -1235,7 +1257,7 @@ export async function priceBookingRequest(input: {
 /**
  * Decline a held/editor booking request (any of
  * DECLINABLE_BOOKING_REQUEST_STATUSES — VERIFIED, PRICED, QUOTED, QUOTE_SENT,
- * QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
+ * ACCEPTED, QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
  * email the requester (#1423 broadened this from VERIFIED/PRICED only).
  */
 export async function declineBookingRequest(input: {
@@ -1249,6 +1271,9 @@ export async function declineBookingRequest(input: {
   notifyMember?: boolean;
   ipAddress?: string;
 }) {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -1293,6 +1318,7 @@ export async function declineBookingRequest(input: {
       },
       data: {
         status: BookingRequestStatus.DECLINED,
+        pendingAdultCount: 0,
         reviewedByMemberId: input.adminMemberId,
         reviewedAt,
         declineReason,
@@ -1390,21 +1416,13 @@ export async function declineBookingRequest(input: {
   // the request (count > 0). A wrong-state decline therefore 409s WITHOUT ever
   // touching the hold.
   //
-  // #1423: decline now covers all six held/editor states
-  // (DECLINABLE_BOOKING_REQUEST_STATUSES), including QUOTE_SENT which DOES carry
-  // a live SENT quote a requester could still accept. That reintroduces a
-  // decline-vs-accept race, closed on BOTH sides:
-  //   * accept-wins-first — the requester accept converts the held booking to a
-  //     live PENDING booking before this decline runs; `requireRequestHold: true`
-  //     (below, #1406) makes `cancelBooking` refuse (409, no side effect) rather
-  //     than clobber it, so decline never destroys a paid booking.
-  //   * decline-wins-first — this decline claims DECLINED and releases the hold
-  //     first; the concurrent accept's status-guarded re-arm
-  //     (booking-request-quotes.ts, notIn [DECLINED, CANCELLED]) then refuses to
-  //     resurrect the finalised request, so no new booking is ever created.
-  // Because the hold-release runs only after the request is claimed DECLINED,
-  // `cancelBooking` here can only ever act on a still-held AWAITING_REVIEW
-  // booking, never a booking a winning accept already converted. Releasing
+  // #3415: decline includes QUOTE_SENT and ACCEPTED. If acceptance wins first,
+  // the request is ACCEPTED and its hold remains AWAITING_REVIEW; an officer
+  // may still claim DECLINED before releasing it. Generic cancellation refuses
+  // an ACCEPTED linked request, so this retirement must precede hold release.
+  // If decline wins first, acceptance's exact QUOTE_SENT/SENT claims refuse
+  // resurrection (#1423). Only officer approval converts the hold; its winning
+  // version claim makes a stale decline fail before release. Releasing
   // reuses the shared `cancelBooking` path (mirroring the admin "Release hold"
   // route): it cancels the held booking, reconciles/frees the beds, detaches
   // `heldBookingId`, and audits. It self-locks on advisory key 1 and runs its
@@ -1431,28 +1449,25 @@ export async function declineBookingRequest(input: {
         input.adminMemberId,
         "ADMIN",
         input.ipAddress ?? "",
+        format,
         "card",
         {
           // Admin declining, not the requester cancelling: suppress the
           // requester's "booking cancelled" email. The detach/reconcile/audit in
           // the shared cancel path still run.
           suppressCustomerNotification: true,
-          // #1406/#1423: a QUOTE_SENT request carries a live SENT quote whose
-          // AWAITING_REVIEW hold a concurrent requester accept could convert to a
-          // live PENDING booking. This opt-in guard makes the shared cancel path
-          // refuse (409, no side effect) rather than clobber that PENDING booking
-          // if the accept won the race — the accept-wins-first half of the
-          // decline-vs-accept race for the broadened declinable set (#1423).
+          // #1406: release only an AWAITING_REVIEW booking. Requester acceptance
+          // retains that status (#3415); officer approval owns conversion. The
+          // guard refuses a booking already moved out of the hold lifecycle.
           requireRequestHold: true,
         }
       );
       // Defensive: a 409 here means the held booking is no longer a releasable
       // AWAITING_REVIEW hold. Either a concurrent cancel of the SAME held booking
       // (a double-submitted decline, or a simultaneous admin "Release hold") won
-      // cancelBooking's single-flight (#1160/#1311), or — for a QUOTE_SENT
-      // request (#1423) — a requester accept already converted the hold to a live
-      // PENDING booking and `requireRequestHold` refused to clobber it. Either
-      // way this decline must NOT destroy that booking, so forward the 409.
+      // cancelBooking's single-flight (#1160/#1311), or the booking has otherwise
+      // left the hold lifecycle and `requireRequestHold` refused to clobber it.
+      // Either way this decline must NOT destroy that booking, so forward the 409.
       if (result.status === 409) {
         throw new BookingRequestDeclineCommittedError({
           message: result.error,
@@ -1695,20 +1710,39 @@ export interface ReassignHeldBookingGuestsResult {
   displacedMemberIds: string[];
 }
 
+export const HELD_BOOKING_GUEST_ORDER_BY = [{ createdAt: "asc" }, { id: "asc" }] satisfies Prisma.BookingGuestOrderByWithRelationInput[];
+
 export async function reassignHeldBookingGuests(
   tx: Prisma.TransactionClient,
   bookingId: string,
   guestCreates: HeldBookingGuestInput[],
-  memberGuest: ReassignMemberGuestContext
+  memberGuest: ReassignMemberGuestContext,
+  /**
+   * #3029 (`INV-MOD-059`): whether a guest who is NEW to the party is seeded from
+   * their dietary/allergy profile — the toggle, read by the caller before its
+   * transaction. REQUIRED for the same reason `memberGuest` is: both branches
+   * below rewrite who is on a row, and a missing answer could only mean leaving
+   * one person's allergy note on somebody else's row.
+   */
+  guestDietarySeeding: BookingGuestDietarySeeding
 ): Promise<ReassignHeldBookingGuestsResult> {
   const existing = await tx.bookingGuest.findMany({
     where: { bookingId },
     // MG4 (#2309) widens this select from `{ id }`. The two extra columns are
     // what make a SUBSTITUTION visible: without the old `memberId` this
     // function cannot tell "row 3 keeps Priya" from "row 3 is now Sione", and
-    // the person who was quietly dropped is never told.
-    select: { id: true, memberId: true, consentStatus: true },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    // the person who was quietly dropped is never told. #3029 adds the name
+    // and age tier, which is how a NON-member row is recognised as the same
+    // person, so their dietary note stays and nobody else inherits it.
+    select: {
+      id: true,
+      memberId: true,
+      consentStatus: true,
+      firstName: true,
+      lastName: true,
+      ageTier: true,
+    },
+    orderBy: HELD_BOOKING_GUEST_ORDER_BY,
   });
 
   // The consent decision for the INCOMING list, taken once for both branches so
@@ -1774,6 +1808,16 @@ export async function reassignHeldBookingGuests(
     rows.filter((row) => !alreadyNotifiedMemberIds.has(row.targetMemberId));
 
   if (existing.length !== guestCreates.length) {
+    // #3029 (W13): decided BEFORE the delete, while the old rows still exist to
+    // be read. A value is carried only to the same person, matched by a key
+    // unique on both sides — never by position, because these two lists are
+    // different lengths and do not line up.
+    const rebuildDietary = await planHeldPartyRebuildDietary(
+      tx,
+      guestDietarySeeding,
+      bookingId,
+      planned,
+    );
     await tx.bookingGuest.deleteMany({ where: { bookingId } });
     // One `create` per guest rather than one `createMany` (#2739), then ONE
     // `createMany` for the whole party's night rows.
@@ -1798,7 +1842,7 @@ export async function reassignHeldBookingGuests(
       priceCents: number;
       priceSource: "SOLD" | "EVEN_SPLIT";
     }> = [];
-    for (const guest of planned) {
+    for (const [index, guest] of planned.entries()) {
       const row = await tx.bookingGuest.create({
         data: {
           bookingId,
@@ -1812,6 +1856,7 @@ export async function reassignHeldBookingGuests(
           priceCents: guest.priceCents,
           rateMembershipTypeId: guest.rateMembershipTypeId ?? null,
           ...(guest.memberGuestConsent ?? {}),
+          ...bookingGuestDietaryCreateData(rebuildDietary[index]),
         },
         select: { id: true, memberId: true },
       });
@@ -1859,7 +1904,18 @@ export async function reassignHeldBookingGuests(
     return { guest, previous };
   });
 
-  for (const { guest, previous } of rewrites) {
+  // #3029 (W14): the positional pairing above decides identity, price and
+  // nights; it must not decide whose dietary note a row holds. The same person
+  // keeps theirs untouched; a substituted member is seeded from their own
+  // profile; a row that has become a non-member is cleared.
+  const rewriteDietary = await planHeldPartyRewriteDietary(
+    tx,
+    guestDietarySeeding,
+    bookingId,
+    rewrites.map(({ guest, previous }) => ({ previous, next: guest })),
+  );
+
+  for (const [rewriteIndex, { guest, previous }] of rewrites.entries()) {
     /**
      * Is this row still the SAME person it was before the swap?
      *
@@ -1911,6 +1967,7 @@ export async function reassignHeldBookingGuests(
          */
         ...(guest.memberGuestConsent ??
           (sameOccupant ? {} : CONSENT_FREE_GUEST_COLUMNS)),
+        ...bookingGuestDietaryUpdateData(rewriteDietary[rewriteIndex]),
       },
     });
   }
@@ -2019,6 +2076,9 @@ export async function approveBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveBookingRequestOutcome> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const foundRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2026,7 +2086,10 @@ export async function approveBookingRequest(input: {
     throw new BookingRequestError("Booking request not found", 404);
   }
   let request: BookingRequest = foundRequest;
-  if (request.status !== BookingRequestStatus.PRICED) {
+  if (request.type === BookingRequestType.SCHOOL && request.pendingAdultCount > 0) {
+    throw new BookingRequestError("Name every pending school adult before approving this request.", 409);
+  }
+  if (request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) {
     throw new BookingRequestError(
       "Only priced booking requests can be approved",
       409
@@ -2114,6 +2177,10 @@ export async function approveBookingRequest(input: {
     displacedMemberGuestIds: string[];
   };
 
+  // #3029 (W7/W13/W14, `INV-MOD-059`): read before the transaction below
+  // (`INV-LOCK-004`) and handed to every guest write it makes.
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
+
   try {
     conversion = await prisma.$transaction(async (tx) => {
       // Two-tier lock protocol (#1881). Converting the held AWAITING_REVIEW
@@ -2138,12 +2205,24 @@ export async function approveBookingRequest(input: {
       if (!lockedRequest) {
         throw new BookingRequestError("Booking request not found", 404);
       }
+      if (lockedRequest.type === BookingRequestType.SCHOOL) {
+        const residualPendingRows = typeof tx.bookingRequestPendingAdultReservationNight?.findMany === "function"
+          ? await tx.bookingRequestPendingAdultReservationNight.findMany({
+              where: { bookingRequestId: lockedRequest.id },
+              select: { id: true },
+              take: 1,
+            })
+          : [];
+        if (lockedRequest.pendingAdultCount > 0 || residualPendingRows.length > 0) {
+          throw new BookingRequestError("Name every pending school adult and reconcile the held beds before approving this request.", 409);
+        }
+      }
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
-      // request — a concurrent double-accept, or a retry whose caller re-armed
-      // the request to PRICED after it had already converted (line ~729 of
-      // booking-request-quotes.ts overwrites CONVERTED->PRICED but never clears
-      // convertedBookingId) — already created the booking. Under the advisory
+      // request — a concurrent double-approve, or (before #3415) a requester
+      // accept retry that re-armed a converted request to PRICED without
+      // clearing convertedBookingId; acceptance no longer writes a converted
+      // request — already created the booking. Under the advisory
       // lock we now observe its committed convertedBookingId, so return that
       // booking instead of creating a second one.
       const alreadyConverted = await claimAlreadyConvertedBookingRequest(
@@ -2182,7 +2261,7 @@ export async function approveBookingRequest(input: {
       }
       request = lockedRequest;
 
-      if (request.status !== BookingRequestStatus.PRICED || request.priceCents == null) {
+      if ((request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) || request.priceCents == null) {
         throw new BookingRequestError(
           "This booking request has already been processed",
           409
@@ -2227,7 +2306,7 @@ export async function approveBookingRequest(input: {
           // overwritten by an approval built from the older snapshot. Fences on
           // the integer version, not updatedAt (millisecond-collidable).
           version: request.version,
-          status: BookingRequestStatus.PRICED,
+          status: { in: [BookingRequestStatus.PRICED, BookingRequestStatus.ACCEPTED] },
         },
         data: {
           status: BookingRequestStatus.APPROVED,
@@ -2257,6 +2336,7 @@ export async function approveBookingRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
+        format,
       });
 
       let booking: { id: string };
@@ -2334,7 +2414,8 @@ export async function approveBookingRequest(input: {
             actor: memberGuestActor,
             policy: memberGuestPolicy,
             bookingCheckIn: request.checkIn,
-          }
+          },
+          guestDietarySeeding
         );
         memberGuestNotificationRows = reassigned.memberGuestNotificationRows;
         displacedMemberGuestIds = reassigned.displacedMemberIds;
@@ -2434,6 +2515,12 @@ export async function approveBookingRequest(input: {
           bookingCheckIn: request.checkIn,
         });
 
+        const guestDietary = await resolveBookingGuestDietary(
+          tx,
+          guestDietarySeeding,
+          consentPlan.guests,
+        );
+
         const createdBooking = await tx.booking.create({
           data: {
             memberId: member.id,
@@ -2448,7 +2535,9 @@ export async function approveBookingRequest(input: {
             notes: request.message,
             createdById: input.adminMemberId,
             guests: {
-              create: consentPlan.guests.map(toPipelineGuestCreateData),
+              create: consentPlan.guests.map((guest, index) =>
+                toPipelineGuestCreateData(guest, guestDietary[index]),
+              ),
             },
           },
           select: { id: true, guests: { select: { id: true, memberId: true } } },
@@ -2615,7 +2704,7 @@ export async function approveBookingRequest(input: {
         priceCents,
         bookingReference: conversion.bookingId,
         expiresAt: paymentLinkExpiresAt,
-      });
+      }, format);
     } catch (err) {
       logger.error(
         { err, bookingRequestId: request.id, bookingId: conversion.bookingId },
@@ -2816,6 +2905,7 @@ export function buildBookingRequestListWhere(
           BookingRequestStatus.PRICED,
           BookingRequestStatus.QUOTED,
           BookingRequestStatus.QUOTE_SENT,
+          BookingRequestStatus.ACCEPTED,
           BookingRequestStatus.QUERY_PENDING,
           BookingRequestStatus.MODIFICATION_REQUESTED,
         ],
@@ -2828,9 +2918,9 @@ export function buildBookingRequestListWhere(
 /**
  * The stored teachers/parent helpers, as the ADMIN QUEUE reads them.
  *
- * The names go through `nameField()` — the same helper `schoolTeacherSchema`
- * uses — because the panel and the server now answer the SAME question from
- * these two reads (#3412, review round 5, finding E). The panel builds the
+ * The names and email go through the same `schoolTeacherSchema` the acting
+ * path uses, because the panel and the server must answer the SAME question
+ * from these two reads (#3412, #3485). The panel builds the
  * party it is about to quote by putting these names in front of the generated
  * children and comparing that list to the stored one; the server rebuilds it
  * through `parseSchoolTeachers`, which trims and collapses CR/LF. A raw
@@ -2843,21 +2933,16 @@ export function buildBookingRequestListWhere(
  * misplaced-link warning fired against the teacher's own row, which disabled
  * Save quote too. Both doors shut on a request nothing was wrong with.
  *
- * A name the helper rejects (empty, or over 100 characters) now yields the same
- * empty list this parser has always returned for a shape it cannot read. That
- * is the answer the server already gives such a row — `parseSchoolTeachers`
- * refuses it outright — so the two reads agree there as well.
+ * A rejected teacher name or email yields the same empty list this parser has
+ * always returned for an unreadable shape, plus a school-only attention flag.
+ * The acting path refuses the entire list, so showing a partial one would
+ * misstate the party and could shift position-based guest/member links.
  */
-function parseAdminTeachers(raw: unknown) {
-  const schema = z.array(
-    z.object({
-      firstName: nameField(),
-      lastName: nameField(),
-      email: z.string().nullable().optional(),
-    })
-  );
-  const parsed = schema.safeParse(raw);
-  return parsed.success ? parsed.data : [];
+function readAdminTeachersForDisplay(raw: unknown) {
+  const parsed = storedSchoolTeacherListSchema.safeParse(raw);
+  return parsed.success
+    ? { teachers: parsed.data, needsAttention: false }
+    : { teachers: [], needsAttention: true };
 }
 
 export function serializeBookingRequestForAdmin(
@@ -2889,13 +2974,14 @@ export function serializeBookingRequestForAdmin(
   // is refused before it gets here; decline is the path that reaches this
   // serialiser with a flagged row, and it is the intended one.)
   //
-  // The two stored blobs are flagged SEPARATELY (#2342 review finding D). One
+  // The stored blobs are flagged SEPARATELY (#2342 review finding D). One
   // OR'd flag forced the panel to describe both failures whichever had
   // happened, so a row whose links were fine was told its links were hidden,
   // and a row whose names were fine was told to distrust them. Each flag means
   // exactly one thing: that blob failed its schema.
   const guestDisplay = readBookingRequestGuestsForDisplay(request.guests);
   const linkedDisplay = readLinkedGuestMembersForDisplay(request.linkedGuestMembers);
+  const teacherDisplay = readAdminTeachersForDisplay(request.teachers);
   return {
     id: request.id,
     type: request.type,
@@ -2927,7 +3013,10 @@ export function serializeBookingRequestForAdmin(
     // payload only: no member-facing serialiser reads this function.
     requestedByMemberId: request.requestedByMemberId,
     schoolName: request.schoolName,
-    teachers: parseAdminTeachers(request.teachers),
+    teachers: teacherDisplay.teachers,
+    // #3413: a SCHOOL-only capacity/quote count. No name is implied by it.
+    pendingAdultCount: request.pendingAdultCount,
+    pendingAdultsWriteEnabled: isPendingSchoolAdultsWriteEnabled(),
     cateringPreference: request.cateringPreference,
     linkedGuestMembers: linkedDisplay.links,
     contactFirstName: request.contactFirstName,
@@ -2945,6 +3034,11 @@ export function serializeBookingRequestForAdmin(
     // `linkedGuestMembers` above is then empty — no half-trusted links.
     ...(linkedDisplay.needsAttention
       ? { linkedMemberDataNeedsAttention: true }
+      : {}),
+    // General requests do not have a teacher blob. On school requests the flag
+    // names this blob alone; no partial list is trusted or displayed.
+    ...(request.type === BookingRequestType.SCHOOL && teacherDisplay.needsAttention
+      ? { teacherDataNeedsAttention: true }
       : {}),
     message: request.message,
     indicativePriceCents: request.indicativePriceCents,

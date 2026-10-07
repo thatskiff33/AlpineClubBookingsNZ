@@ -3,7 +3,13 @@ import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
 import { asRecord, readString } from "./xero-json";
-import { isRefundCreditNoteLinkCancelledInXero } from "./xero-refund-note-status";
+import {
+  canonicalRefundNoteFromField,
+  isPerDeltaRefundNoteLink,
+  isRefundCreditNoteLinkCancelledInXero,
+  perDeltaRefundNoteIds,
+  readCanonicalRefundNoteField,
+} from "./xero-refund-note-status";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import {
   redactSensitiveRecord,
@@ -13,6 +19,7 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
+import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -37,6 +44,13 @@ export interface XeroSyncOperationInput {
    * through `readXeroInvoiceEmailInstruction`.
    */
   invoiceEmailDelivery?: XeroInvoiceEmailInstruction | null;
+  /**
+   * The row's queue type when the payload does not name one — a handler that
+   * opens its own operation with the execution-shape payload (#3535: the
+   * clearing-note builder on a retry), so readers that select by the column
+   * still see the row. The payload's own `queueType` wins when present.
+   */
+  queueType?: string | null;
   createdByMemberId?: string | null;
 }
 
@@ -304,7 +318,7 @@ export async function findCanonicalPaymentRefundCreditNote(
       xeroRefundCreditNoteId: true,
     },
   });
-  const refundCreditNoteLinks = await db.xeroObjectLink.findMany({
+  const allRefundCreditNoteLinks = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
       localId: paymentId,
@@ -321,6 +335,9 @@ export async function findCanonicalPaymentRefundCreditNote(
       xeroObjectNumber: true,
     },
   });
+  // #3880: a per-refund note is never the canonical one, in any form below.
+  const perDeltaNoteIds = await perDeltaRefundNoteIds(paymentId, db);
+  const refundCreditNoteLinks = allRefundCreditNoteLinks.filter((link) => !perDeltaNoteIds.has(link.xeroObjectId));
   const refundPaymentLinks = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
@@ -344,7 +361,7 @@ export async function findCanonicalPaymentRefundCreditNote(
       operationType: "CREATE",
       localModel: "Payment",
       localId: paymentId,
-      xeroObjectId: { not: null },
+      xeroObjectId: { not: null, notIn: [...perDeltaNoteIds] },
     },
     orderBy: [
       { completedAt: "desc" },
@@ -368,11 +385,12 @@ export async function findCanonicalPaymentRefundCreditNote(
     );
   }
 
-  if (payment?.xeroRefundCreditNoteId) {
+  const canonicalFieldNoteId = canonicalRefundNoteFromField(payment?.xeroRefundCreditNoteId, perDeltaNoteIds);
+  if (canonicalFieldNoteId) {
     return {
-      xeroObjectId: payment.xeroRefundCreditNoteId,
+      xeroObjectId: canonicalFieldNoteId,
       xeroObjectNumber:
-        xeroObjectNumberById.get(payment.xeroRefundCreditNoteId) ?? null,
+        xeroObjectNumberById.get(canonicalFieldNoteId) ?? null,
       source: "payment",
     };
   }
@@ -380,7 +398,7 @@ export async function findCanonicalPaymentRefundCreditNote(
   for (const link of refundPaymentLinks) {
     const metadata = asRecord(link.metadata);
     const linkedCreditNoteId = readString(metadata?.creditNoteId);
-    if (linkedCreditNoteId) {
+    if (linkedCreditNoteId && !perDeltaNoteIds.has(linkedCreditNoteId)) {
       return {
         xeroObjectId: linkedCreditNoteId,
         xeroObjectNumber: xeroObjectNumberById.get(linkedCreditNoteId) ?? null,
@@ -454,7 +472,8 @@ export async function startXeroSyncOperation(
   // null.
   const requestPayload = sanitizeForJson(input.requestPayload);
   const payloadRecord = asRecord(requestPayload);
-  const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;
+  const queueType =
+    (payloadRecord ? readString(payloadRecord.queueType) : null) ?? input.queueType ?? null;
 
   try {
     return await db.xeroSyncOperation.create({
@@ -523,7 +542,10 @@ async function normalizePaymentRefundLinkWithClient(
     // active so `sumCoveredRefundCreditNoteCents` totals them correctly, so skip
     // the single-active canonical enforcement that non-Stripe single-note
     // refunds still rely on below.
-    if (payment?.source === PaymentSource.STRIPE) {
+    // #3880: a non-Stripe payment's per-refund note takes the Stripe rule, and
+    // the single-refund rule below never retires one.
+    const perDeltaNoteIds = payment?.source === PaymentSource.STRIPE ? new Set<string>() : await perDeltaRefundNoteIds(link.localId, client);
+    if (payment?.source === PaymentSource.STRIPE || isPerDeltaRefundNoteLink(link.metadata) || perDeltaNoteIds.has(link.xeroObjectId)) {
       // ... unless the incoming write itself says the note was VOIDED/DELETED
       // in Xero (inbound reconciliation and the operator status recorder carry
       // the live provider status). A cancelled note credits nothing, so its
@@ -543,7 +565,9 @@ async function normalizePaymentRefundLinkWithClient(
       };
     }
 
-    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? link.xeroObjectId;
+    // #3880 F1: a field naming a per-refund note is no canonical note at all.
+    const canonicalCreditNoteId =
+      canonicalRefundNoteFromField(payment?.xeroRefundCreditNoteId, perDeltaNoteIds) ?? link.xeroObjectId;
     const shouldBeActive = (link.active ?? true) && canonicalCreditNoteId === link.xeroObjectId;
 
     if (canonicalCreditNoteId === link.xeroObjectId) {
@@ -556,6 +580,7 @@ async function normalizePaymentRefundLinkWithClient(
           active: true,
           xeroObjectId: {
             not: canonicalCreditNoteId,
+            notIn: [...perDeltaNoteIds],
           },
         },
         data: {
@@ -579,7 +604,11 @@ async function normalizePaymentRefundLinkWithClient(
     });
     const metadata = asRecord(link.metadata);
     const linkedCreditNoteId = readString(metadata?.creditNoteId);
-    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? linkedCreditNoteId;
+    const canonicalCreditNoteId =
+      (await readCanonicalRefundNoteField(
+        payment ? { id: link.localId, xeroRefundCreditNoteId: payment.xeroRefundCreditNoteId } : null,
+        client,
+      )) ?? linkedCreditNoteId;
     const shouldBeActive =
       (link.active ?? true)
       && (!canonicalCreditNoteId || linkedCreditNoteId === canonicalCreditNoteId);
@@ -773,7 +802,8 @@ export async function deactivateXeroObjectLinks(params: {
 export async function completeXeroSyncOperation(
   operationId: string,
   completion: XeroSyncOperationCompletion,
-  options?: { store?: Prisma.TransactionClient },
+  // #3548: `keepSucceeded` leaves a row a concurrent leg completed SUCCEEDED as it is, links and all, and answers null.
+  options?: { store?: Prisma.TransactionClient; keepSucceeded?: boolean },
 ) {
   // #2314: organisation-agnostic in the column, organisation applied on read —
   // see the note on the object-link funnel above.
@@ -785,18 +815,25 @@ export async function completeXeroSyncOperation(
   );
 
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
-    const operation = await tx.xeroSyncOperation.update({
-      where: { id: operationId },
-      data: {
-        status: completion.status ?? "SUCCEEDED",
-        responsePayload: sanitizeForJson(completion.responsePayload),
-        xeroObjectType: completion.xeroObjectType ?? null,
-        xeroObjectId: completion.xeroObjectId ?? null,
-        xeroObjectNumber: completion.xeroObjectNumber ?? null,
-        xeroObjectUrl,
-        completedAt: new Date(),
-      },
-    });
+    const data = {
+      status: completion.status ?? "SUCCEEDED",
+      responsePayload: sanitizeForJson(completion.responsePayload),
+      xeroObjectType: completion.xeroObjectType ?? null,
+      xeroObjectId: completion.xeroObjectId ?? null,
+      xeroObjectNumber: completion.xeroObjectNumber ?? null,
+      xeroObjectUrl,
+      completedAt: new Date(),
+    };
+    if (options?.keepSucceeded) {
+      const claimed = await tx.xeroSyncOperation.updateMany({
+        where: { id: operationId, status: { not: "SUCCEEDED" } },
+        data,
+      });
+      if (claimed.count === 0) return null;
+    }
+    const operation = options?.keepSucceeded
+      ? await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
+      : await tx.xeroSyncOperation.update({ where: { id: operationId }, data });
 
     for (const link of completion.extraLinks ?? []) {
       await upsertXeroObjectLinkWithClient(tx, link);
@@ -808,7 +845,7 @@ export async function completeXeroSyncOperation(
     ? await completeWithClient(options.store)
     : await prisma.$transaction(completeWithClient);
 
-  if (operation.status === "PARTIAL") {
+  if (operation?.status === "PARTIAL") {
     try {
       const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");
       await maybeNotifyXeroRepeatedFailure(operation);
@@ -826,30 +863,71 @@ export async function completeXeroSyncOperation(
   return operation;
 }
 
+/**
+ * The optional write guard of {@link failXeroSyncOperation}: at most one, so a
+ * caller can never pass two and have one silently dropped (#3462).
+ */
+type FailXeroSyncOperationGuard =
+  | {
+      /**
+       * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
+       * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
+       * approval can withdraw a kept row in between. Answers null then.
+       */
+      keepCancelled: true;
+      onlyIfRunningSince?: never;
+    }
+  | {
+      /**
+       * #3462: fail the row ONLY while it is still the RUNNING claim stamped at
+       * this instant - the abandon of a claim whose handler threw before it
+       * owned completion. A row the handler already completed, failed or
+       * cancelled, or one a later claim re-stamped, is left exactly as it is.
+       * Answers null then.
+       */
+      onlyIfRunningSince: Date;
+      keepCancelled?: never;
+    }
+  | { keepCancelled?: never; onlyIfRunningSince?: never };
+
 export async function failXeroSyncOperation(
   operationId: string,
   error: unknown,
-  responsePayload?: unknown
+  responsePayload?: unknown,
+  options?: FailXeroSyncOperationGuard & {
+    /**
+     * #3462: the operator-facing message to record instead of the error's own
+     * (still redacted). The status code is still read from `error`.
+     */
+    lastErrorMessage?: string;
+  }
 ) {
   const statusCode = getXeroErrorStatusCode(error);
-  const rawMessage =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "Unknown Xero sync failure";
+  const rawMessage = options?.lastErrorMessage ?? xeroSyncErrorText(error);
   const message = redactSensitiveText(rawMessage);
+  const data = {
+    status: "FAILED" as const,
+    lastErrorCode: statusCode ? String(statusCode) : null,
+    lastErrorMessage: message,
+    responsePayload: sanitizeForJson(responsePayload ?? error),
+    completedAt: new Date(),
+  };
 
-  const operation = await prisma.xeroSyncOperation.update({
-    where: { id: operationId },
-    data: {
-      status: "FAILED",
-      lastErrorCode: statusCode ? String(statusCode) : null,
-      lastErrorMessage: message,
-      responsePayload: sanitizeForJson(responsePayload ?? error),
-      completedAt: new Date(),
-    },
-  });
+  const guard = options?.onlyIfRunningSince
+    ? { status: "RUNNING" as const, startedAt: options.onlyIfRunningSince }
+    : options?.keepCancelled
+      ? { status: { not: "CANCELLED" as const } }
+      : null;
+  if (guard) {
+    const failed = await prisma.xeroSyncOperation.updateMany({
+      where: { id: operationId, ...guard },
+      data,
+    });
+    if (failed.count === 0) return null;
+  }
+  const operation = guard
+    ? await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
+    : await prisma.xeroSyncOperation.update({ where: { id: operationId }, data });
 
   try {
     const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");

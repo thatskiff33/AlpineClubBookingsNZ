@@ -1,0 +1,77 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * #3791 (F4): the payments list's settlement figures - its sort and its
+ * settlement kind - read the credit ISSUED from a booking. A review's give-back
+ * of applied credit names the booking as its source too, so both queries the
+ * list makes ask for the issued credit types only, as the figures meant before.
+ */
+
+const mocks = vi.hoisted(() => ({
+  paymentFindMany: vi.fn(),
+  xeroSyncOperationFindMany: vi.fn(),
+  xeroObjectLinkFindMany: vi.fn(),
+  clubTimeSettingsFindUnique: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    payment: { findMany: mocks.paymentFindMany },
+    xeroSyncOperation: { findMany: mocks.xeroSyncOperationFindMany },
+    xeroObjectLink: { findMany: mocks.xeroObjectLinkFindMany },
+    clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
+  },
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+import { adminPaymentsQuerySchema, listAdminPayments } from "@/lib/admin-payments-service";
+import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
+
+const row = {
+  id: "pay-1",
+  bookingId: "booking-1",
+  amountCents: 1_000,
+  source: "STRIPE",
+  reference: null,
+  status: "SUCCEEDED",
+  stripePaymentIntentId: null,
+  xeroInvoiceId: null,
+  xeroInvoiceNumber: null,
+  refundedAmountCents: 0,
+  updatedAt: new Date("2026-06-15T00:00:00.000Z"),
+  transactions: [],
+  refunds: [],
+  booking: {
+    id: "booking-1",
+    status: "CONFIRMED",
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
+    creditsFromCancellation: [],
+    member: { id: "member-1", firstName: "Ada", lastName: "Member", email: "ada@example.com" },
+  },
+};
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.paymentFindMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
+    args?.where?.id?.in === undefined ? [row] : [row].filter((r) => args.where!.id!.in!.includes(r.id)),
+  );
+  mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
+  mocks.xeroObjectLinkFindMany.mockResolvedValue([]);
+  mocks.clubTimeSettingsFindUnique.mockResolvedValue({ timeZone: "Pacific/Auckland" });
+});
+
+describe("the payments list reads credit issued from a booking, not credit given back", () => {
+  it("MUTATION: asks every query for the issued credit types only", async () => {
+    await listAdminPayments(adminPaymentsQuerySchema.parse({ sort: "settlement" }));
+
+    expect(mocks.paymentFindMany).toHaveBeenCalledTimes(2);
+    for (const [args] of mocks.paymentFindMany.mock.calls) {
+      expect(JSON.stringify(args)).toContain(
+        JSON.stringify({ where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } }, select: { amountCents: true, description: true } }),
+      );
+    }
+  });
+});

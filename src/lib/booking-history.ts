@@ -9,7 +9,9 @@ import {
 } from "@/lib/booking-history-modification-narrative";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import type { RateMembershipLabelResolver } from "@/lib/rate-membership-label";
+import type { SettlementMarkerTimelineEntry } from "@/lib/manual-settlement-reversal-event";
 import { formatCents, formatSignedCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type BookingHistoryTone = "default" | "success" | "warning" | "danger";
 
@@ -107,6 +109,15 @@ interface BuildBookingHistoryOptions {
    */
   duplicateCaptureRefunds?: BookingHistoryDuplicateCaptureRefund[];
   /**
+   * #3638: the admin-only settlement markers — a manual payment reversed, a Xero
+   * payment on a cash-settled booking (#2262), a booking that may have been paid
+   * twice by card and bank. Rendered ONLY for the `"staff"` audience, whatever
+   * the caller passes: the page withholds them at the data feed as well, and
+   * this makes a member view that is handed them render nothing. Defaults to
+   * none.
+   */
+  settlementMarkers?: SettlementMarkerTimelineEntry[];
+  /**
    * #3033 (epic #2797): this booking has an OPEN financial review — a change
    * saved while the refund or credit for it could not be worked out from stored
    * history.
@@ -150,9 +161,12 @@ export function buildBookingHistoryItems({
   refundRequests,
   auditLogs,
   duplicateCaptureRefunds = [],
+  settlementMarkers = [],
   financialReviewPending = false,
   rateLabels = null,
-}: BuildBookingHistoryOptions): BookingHistoryItem[] {
+}: BuildBookingHistoryOptions,
+  format: ClubFormat,
+): BookingHistoryItem[] {
   /*
     #3033: WHICH row the open review belongs to.
 
@@ -215,7 +229,7 @@ export function buildBookingHistoryItems({
           category: "Payment",
           title: "Payment successful",
           detail: "Original booking payment was captured successfully.",
-          amountDisplay: amountCents != null ? formatCents(amountCents) : null,
+          amountDisplay: amountCents != null ? formatCents(amountCents, format) : null,
           tone: "success",
         });
         break;
@@ -237,7 +251,7 @@ export function buildBookingHistoryItems({
           category: "Payment",
           title: "Payment failed",
           detail: errorMessage ?? "The payment attempt did not complete successfully.",
-          amountDisplay: amountCents != null ? formatCents(amountCents) : null,
+          amountDisplay: amountCents != null ? formatCents(amountCents, format) : null,
           tone: "danger",
         });
         break;
@@ -255,7 +269,7 @@ export function buildBookingHistoryItems({
           category: "Payment",
           title: "Additional payment successful",
           detail: "Extra payment for a booking change was captured successfully.",
-          amountDisplay: amountCents != null ? formatCents(amountCents) : null,
+          amountDisplay: amountCents != null ? formatCents(amountCents, format) : null,
           tone: "success",
         });
         break;
@@ -280,7 +294,7 @@ export function buildBookingHistoryItems({
           title: "Additional payment recorded manually",
           detail:
             "An admin recorded that the payment received for this booking also covered the extra owing from a later change.",
-          amountDisplay: amountCents != null ? formatCents(amountCents) : null,
+          amountDisplay: amountCents != null ? formatCents(amountCents, format) : null,
           tone: "success",
         });
         break;
@@ -305,7 +319,7 @@ export function buildBookingHistoryItems({
           title: "Additional payment failed",
           detail:
             errorMessage ?? "The extra payment required by a booking change failed.",
-          amountDisplay: amountCents != null ? formatCents(amountCents) : null,
+          amountDisplay: amountCents != null ? formatCents(amountCents, format) : null,
           tone: "danger",
         });
         break;
@@ -341,12 +355,20 @@ export function buildBookingHistoryItems({
 
         const electedSentence =
           electionCents != null
-            ? `You had chosen to put ${formatCents(electionCents)} of account credit towards this booking, but it was paid in full before the credit could be applied.`
+            ? `You had chosen to put ${formatCents(electionCents, format)} of account credit towards this booking, but it was paid in full before the credit could be applied.`
             : "The account credit saved against this booking was not applied, because the booking was paid in full first.";
+        // #3864: credit that was spent and then returned because the card paid
+        // it all is "returned", not "not reduced".
+        const returned =
+          typeof parsedDetails?.creditReturnedCents === "number" &&
+          parsedDetails.creditReturnedCents > 0;
+        const usedClause = returned
+          ? "The credit applied to this booking was returned to your balance"
+          : "Your credit was not used for this booking and your balance was not reduced";
         const balanceSentence =
           availableCreditCents != null
-            ? ` Your credit was not used for this booking and your balance was not reduced — you had ${formatCents(availableCreditCents)} of account credit available at the time.`
-            : " Your credit was not used for this booking and your balance was not reduced.";
+            ? ` ${usedClause} — you had ${formatCents(availableCreditCents, format)} of account credit available at the time.`
+            : ` ${usedClause}.`;
 
         items.push({
           id: `audit-${auditLog.id}`,
@@ -357,7 +379,7 @@ export function buildBookingHistoryItems({
           // The amount of the EVENT — how much credit went unapplied — not a
           // claim about what is available; the detail above owns that, and owns
           // it with the live figure.
-          amountDisplay: electionCents != null ? formatCents(electionCents) : null,
+          amountDisplay: electionCents != null ? formatCents(electionCents, format) : null,
           tone: "warning",
         });
         break;
@@ -401,18 +423,18 @@ export function buildBookingHistoryItems({
   }
 
   for (const modification of modifications) {
-    const detailParts = [describeModification(modification)];
+    const detailParts = [describeModification(modification, format)];
     // #3530: the itemised lines behind the figure, when the edit stored them.
-    const linesNote = describeModificationLines(modification, rateLabels);
+    const linesNote = describeModificationLines(modification, rateLabels, format);
     if (linesNote) {
       detailParts.push(linesNote);
     }
-    const moneyBuildUpNote = moneyBuildUpNoteOf(modification);
+    const moneyBuildUpNote = moneyBuildUpNoteOf(modification, format);
     if (moneyBuildUpNote) {
       detailParts.push(moneyBuildUpNote);
     }
     if (modification.changeFeeCents > 0) {
-      detailParts.push(`Change fee applied: ${formatCents(modification.changeFeeCents)}.`);
+      detailParts.push(`Change fee applied: ${formatCents(modification.changeFeeCents, format)}.`);
     }
     // #2390: when a promotion's usage cap stopped it reaching somebody this
     // edit added, the reprice recorded the exact sentence the member was shown
@@ -468,7 +490,7 @@ export function buildBookingHistoryItems({
       detail: detailParts.filter(Boolean).join(" "),
       amountDisplay:
         modification.priceDiffCents !== 0
-          ? formatSignedCents(modification.priceDiffCents)
+          ? formatSignedCents(modification.priceDiffCents, format)
           : null,
       tone: awaitingReview
         ? "default"
@@ -489,7 +511,7 @@ export function buildBookingHistoryItems({
       detail: refundRequest.reason,
       amountDisplay:
         refundRequest.requestedAmountCents != null
-          ? formatCents(refundRequest.requestedAmountCents)
+          ? formatCents(refundRequest.requestedAmountCents, format)
           : null,
       tone: refundRequest.status === "PENDING" ? "warning" : "default",
     });
@@ -511,7 +533,7 @@ export function buildBookingHistoryItems({
         amountDisplay:
           refundRequest.status === "APPROVED" &&
           refundRequest.approvedAmountCents != null
-            ? formatCents(refundRequest.approvedAmountCents)
+            ? formatCents(refundRequest.approvedAmountCents, format)
             : null,
         tone: refundRequest.status === "APPROVED" ? "success" : "danger",
       });
@@ -525,7 +547,7 @@ export function buildBookingHistoryItems({
       category: "Payment",
       title: "Payment recorded",
       detail: "A successful payment is attached to this booking.",
-      amountDisplay: formatCents(payment.amountCents),
+      amountDisplay: formatCents(payment.amountCents, format),
       tone: "success",
     });
   }
@@ -538,7 +560,7 @@ export function buildBookingHistoryItems({
       title: "Payment failed",
       detail: "The latest payment attempt did not complete successfully.",
       amountDisplay:
-        payment.amountCents > 0 ? formatCents(payment.amountCents) : null,
+        payment.amountCents > 0 ? formatCents(payment.amountCents, format) : null,
       tone: "danger",
     });
   }
@@ -555,7 +577,7 @@ export function buildBookingHistoryItems({
       category: "Payment",
       title: "Additional payment recorded",
       detail: "A booking change increased the total and the extra payment succeeded.",
-      amountDisplay: formatCents(payment.additionalAmountCents),
+      amountDisplay: formatCents(payment.additionalAmountCents, format),
       tone: "success",
     });
   }
@@ -596,7 +618,7 @@ export function buildBookingHistoryItems({
       title: "Additional payment requested",
       detail:
         "A booking change increased the total. This extra amount has not been paid yet.",
-      amountDisplay: formatCents(payment.additionalAmountCents),
+      amountDisplay: formatCents(payment.additionalAmountCents, format),
       tone: "warning",
     });
   }
@@ -613,7 +635,7 @@ export function buildBookingHistoryItems({
       category: "Payment",
       title: "Additional payment failed",
       detail: "The latest extra payment required by a booking change failed.",
-      amountDisplay: formatCents(payment.additionalAmountCents),
+      amountDisplay: formatCents(payment.additionalAmountCents, format),
       tone: "danger",
     });
   }
@@ -630,9 +652,24 @@ export function buildBookingHistoryItems({
       detail:
         "A second card capture on this already-paid booking was automatically refunded — the booking's settlement is unaffected." +
         intentClause,
-      amountDisplay: formatCents(refund.amountCents),
+      amountDisplay: formatCents(refund.amountCents, format),
       tone: "warning",
     });
+  }
+
+  if (audience === "staff") {
+    for (const marker of settlementMarkers) {
+      items.push({
+        id: `settlement-marker-${marker.id}`,
+        occurredAt: marker.occurredAt,
+        category: "Payment",
+        title: marker.title,
+        detail: marker.detail,
+        amountDisplay:
+          marker.amountCents === null ? null : formatCents(marker.amountCents, format),
+        tone: marker.tone,
+      });
+    }
   }
 
   return items.sort(

@@ -4,11 +4,13 @@ import {
 } from "@/lib/member-address"
 import { seasonSelectLabel } from "@/lib/season-label"
 import { formatCents } from "@/lib/utils"
+import type { ClubFormat } from "@/lib/club-format"
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
   parseCalendarDate,
   parseInstant,
+  type ClubDateFormat,
 } from "@/lib/club-time"
 
 export interface AdminActor {
@@ -197,7 +199,10 @@ export function dedupeParentOptions<T extends { id: string }>(parents: T[]) {
   })
 }
 
-export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
+export function formatPromoBenefit(
+  promo: PromoCodeBenefitSource,
+  format: ClubFormat,
+) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
       ? `${promo.percentOff}% off per individual`
@@ -205,7 +210,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
   }
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off per individual`
+      ? `${formatCents(promo.valueCents, format)} off per individual`
       : "Fixed discount"
   }
   if (promo.type === "FIXED_NIGHTLY_PRICE") {
@@ -213,7 +218,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
       return "Fixed nightly price"
     }
     const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only"
-    return `${formatCents(promo.fixedNightlyPriceCents)} per eligible night · ${mode}`
+    return `${formatCents(promo.fixedNightlyPriceCents, format)} per eligible night · ${mode}`
   }
   if (promo.freeNightsPerIndividual !== null) {
     const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`
@@ -258,13 +263,17 @@ export function memberUsesSamePostalAddress(member: NullableMemberAddress) {
  * `src/app`; group F's `calendarDateOfSerialisedDbDate` (reported on #2870) is
  * the one call site both should collapse onto.
  */
-export function formatMemberCalendarDay(value: string, fallback = "—") {
+export function formatMemberCalendarDay(
+  value: string,
+  format: ClubDateFormat,
+  fallback = "—",
+) {
   const bare = parseCalendarDate(value)
-  if (bare !== null) return formatClubDate(bare)
+  if (bare !== null) return formatClubDate(bare, format)
   const instant = parseInstant(value)
   return instant === null
     ? fallback
-    : formatClubDate(calendarDateOfDateOnlyInstant(instant))
+    : formatClubDate(calendarDateOfDateOnlyInstant(instant), format)
 }
 
 export function formatMemberPhone(parts: {
@@ -338,8 +347,8 @@ export function formatMemberMembershipPreview(input: {
   currentSeasonYear: number
   currentSeasonTypeName: string | null
   currentSeasonSubscriptionLabel: string | null
-}) {
-  const season = seasonSelectLabel(input.currentSeasonYear)
+}, format: ClubDateFormat) {
+  const season = seasonSelectLabel(input.currentSeasonYear, format)
   return [
     `${season}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
     input.currentSeasonSubscriptionLabel,
@@ -352,11 +361,11 @@ export function formatMemberFinancePreview(input: {
   creditBalanceCents: number | null
   promoCodeCount: number
   xeroLinked: boolean
-}) {
+}, format: ClubFormat) {
   return [
     input.creditBalanceCents === null
       ? "Credit —"
-      : `Credit ${formatCents(input.creditBalanceCents)}`,
+      : `Credit ${formatCents(input.creditBalanceCents, format)}`,
     input.promoCodeCount > 0
       ? pluralize(input.promoCodeCount, "promo code")
       : null,
@@ -377,13 +386,13 @@ export function formatMemberCommitteePreview(input: {
 export function formatMemberHistoryPreview(input: {
   totalBookings: number
   lastStay: string | null
-}) {
+}, format: ClubDateFormat) {
   return [
     pluralize(input.totalBookings, "booking"),
     // `lastStay` is a `@db.Date` CALENDAR DAY, not an instant — see
     // `formatMemberCalendarDay`. The summary strip on the same page renders it
     // the same way, so the two can no longer name different days.
-    input.lastStay ? `last stay ${formatMemberCalendarDay(input.lastStay)}` : null,
+    input.lastStay ? `last stay ${formatMemberCalendarDay(input.lastStay, format)}` : null,
   ]
     .filter(Boolean)
     .join(PREVIEW_SEPARATOR)

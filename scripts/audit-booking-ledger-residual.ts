@@ -29,7 +29,7 @@
  * SAFE USAGE - run against a NON-PRODUCTION copy:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:audit-booking-ledger
+ *     pnpm run payments:audit-booking-ledger
  */
 import "dotenv/config";
 import process from "node:process";
@@ -43,13 +43,14 @@ import {
   type BookingLedgerIdentityRow,
 } from "../src/lib/additional-payment-ask";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 import { formatCents } from "../src/lib/utils";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:audit-booking-ledger            # read-only census (default)
-  npm run payments:audit-booking-ledger -- --sql   # print the equivalent SQL and exit
-  npm run payments:audit-booking-ledger -- --json  # also emit machine-readable JSON
+  pnpm run payments:audit-booking-ledger            # read-only census (default)
+  pnpm run payments:audit-booking-ledger --sql   # print the equivalent SQL and exit
+  pnpm run payments:audit-booking-ledger --json  # also emit machine-readable JSON
 
 This census is read-only. It never writes and never calls Xero/Stripe/SES.
 
@@ -129,6 +130,8 @@ async function main() {
     return;
   }
 
+  // The club's format (#3565), read once before the census query.
+  const format = await getClubFormat();
   const rows = await loadCensus();
   const unasked = rows.filter(
     (row) => bookingLedgerVerdict(row.residualCents) === "unasked",
@@ -150,10 +153,10 @@ async function main() {
     console.log(`## ${title}`);
     for (const row of group) {
       console.log(
-        `  ${row.bookingId}  ${row.bookingStatus.padEnd(16)} residual ${formatCents(row.residualCents)}` +
-          `  (price ${formatCents(row.finalPriceCents)}, fees ${formatCents(row.changeFeeCents)},` +
-          ` captured ${formatCents(row.amountCents)}, refunded ${formatCents(row.refundedAmountCents)},` +
-          ` credit ${formatCents(row.creditAppliedCents)}, ask ${formatCents(row.additionalAmountCents)}` +
+        `  ${row.bookingId}  ${row.bookingStatus.padEnd(16)} residual ${formatCents(row.residualCents, format)}` +
+          `  (price ${formatCents(row.finalPriceCents, format)}, fees ${formatCents(row.changeFeeCents, format)},` +
+          ` captured ${formatCents(row.amountCents, format)}, refunded ${formatCents(row.refundedAmountCents, format)},` +
+          ` credit ${formatCents(row.creditAppliedCents, format)}, ask ${formatCents(row.additionalAmountCents, format)}` +
           ` [${row.additionalPaymentStatus ?? "none"}])`,
       );
     }

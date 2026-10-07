@@ -2,6 +2,7 @@
 
 import {
   CLUB_TIME_TEST_ZONE,
+  ClubFormatTestProvider,
   fireEvent,
   render,
   screen,
@@ -16,6 +17,7 @@ import type {
   AuditTimelineEntry,
   AuditTimelineResponse,
 } from "@/lib/audit-query";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -208,12 +210,16 @@ describe("AuditTimeline spells a stamp in the club's zone (CT-4, #2870)", () => 
 
   function providerFor(zone: string) {
     return function PinnedClubTime({ children }: { children: ReactNode }) {
-      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+      return (
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
+      );
     };
   }
 
   function spelledIn(zone: string): string {
-    return bindClubTime(requireClubTimeZone(zone)).instantDateTime(
+    return bindClubTime(requireClubTimeZone(zone), CLUB_FORMAT_TEST).instantDateTime(
       new Date(STAMP),
     );
   }

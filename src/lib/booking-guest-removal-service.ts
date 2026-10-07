@@ -65,6 +65,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
@@ -102,14 +103,16 @@ import {
 // this authoritative gate. The gate itself is unchanged.
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
   type ModificationLine,
 } from "@/lib/booking-modification-lines";
+import type { ClubFormat } from "@/lib/club-format";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -138,6 +141,9 @@ export type RemoveBookingGuestResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
+  appliedCreditGivenBackCents: number;
+  /** #3653: see `BookingModificationPaymentContext`. */
+  organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -307,6 +313,7 @@ export async function removeBookingGuestInTransaction({
   subscriptionLockoutMode,
   hostingCoverageOverride,
   today,
+  format,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
@@ -376,6 +383,8 @@ export async function removeBookingGuestInTransaction({
     /** Must equal that row's `memberId`, or the authority does not apply. */
     targetMemberId: string;
   };
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<RemoveBookingGuestResult> {
   // Two-tier lock protocol (#1881). A single-guest removal computes a reduction
   // refund (money) AND re-checks capacity, so it takes BOTH locks: the global
@@ -918,6 +927,7 @@ export async function removeBookingGuestInTransaction({
     // the build-up is rewritten — from the engine's fresh decision over exactly
     // those guests. A PARKED removal re-ran nothing and records nothing.
     await recordBookingNightAdjustments(tx, {
+      format,
       bookingId,
       guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
       targets: promoResult.adjustmentTargets,
@@ -943,6 +953,7 @@ export async function removeBookingGuestInTransaction({
   )?.evidence;
   const moneyBuildUpSelection = parkedFinancialReview
     ? selectBookingMoneyBuildUp({
+        format,
         ...recordedMoneyBuildUp,
         baseEvidence: {
           kind: "UNKNOWN",
@@ -1018,6 +1029,8 @@ export async function removeBookingGuestInTransaction({
     changeFeeCents: 0,
     settlementOptions,
     settlementMethod,
+    todayAtClub,
+    format,
   });
 
   // Run the same lifecycle transitions the batch path applies (#1041):
@@ -1032,6 +1045,7 @@ export async function removeBookingGuestInTransaction({
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
+    format,
     guestsForPricing,
     skipBookingLifecycleRules:
       actorRole === "ADMIN" && !usesActiveBookingEditLifecycle(booking.status),
@@ -1118,19 +1132,19 @@ export async function removeBookingGuestInTransaction({
    * as the breakdown priced them, index-aligned with `guestsForPricing`. A
    * parked removal priced nothing and stores none.
    */
-  const priceLines =
+  const { priceLines, sides: pricingSides } =
     priceBreakdown === null
-      ? null
-      : await computeModificationPriceLines(
+      ? { priceLines: null, sides: null }
+      : await computeModificationPricing(
           { bookingId, site: "guest-removal" },
           () => {
             const promoCode = booking.promoRedemption?.promoCode.code ?? null;
-            return diffBookingPricing(
-              pricingSideFromStoredGuests(booking.guests, {
+            return {
+              before: pricingSideFromStoredGuests(booking.guests, {
                 promoAdjustmentCents: booking.promoAdjustmentCents,
                 promoCode,
               }),
-              pricingSideFromPriceBreakdown(
+              after: pricingSideFromPriceBreakdown(
                 remainingGuests.map((guest) => ({
                   guestKey: guest.id,
                   name: `${guest.firstName} ${guest.lastName}`.trim(),
@@ -1141,9 +1155,9 @@ export async function removeBookingGuestInTransaction({
                   promoCode: promoResult.promoRemoved ? null : promoCode,
                 },
               ),
-              priceDiffCents,
-            );
+            };
           },
+          priceDiffCents,
           logger,
         );
 
@@ -1174,6 +1188,7 @@ export async function removeBookingGuestInTransaction({
         settlementMethod: paymentImpact.settlementMethod,
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
+        ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.
@@ -1186,6 +1201,18 @@ export async function removeBookingGuestInTransaction({
       changeFeeCents: 0,
       ...(priceLines ? { priceLines } : {}),
     },
+  });
+
+  // #3582: the same before and after, per night, on the booking ledger — under
+  // the `lock(1)` this function took first. A parked removal posts nothing
+  // (`INV-MOD-040`); its review's closure does.
+  await postModificationLedgerLines({
+    store: tx,
+    bookingId,
+    lodgeId: booking.lodgeId,
+    bookingModification,
+    sides: pricingSides,
+    site: "guest-removal",
   });
 
   /**
@@ -1266,6 +1293,13 @@ export async function removeBookingGuestInTransaction({
       booking.payment?.id,
     );
   }
+  // #3653: an organiser-settled child's refund debt, before this edit commits.
+  await reserveOrganiserChildModificationRefund(tx, {
+    plan: paymentImpact.organiserChildRefund,
+    bookingId,
+    payment: booking.payment,
+    bookingModificationId: bookingModification.id,
+  });
 
   // #2364. Removing a guest cuts both ways: taking out the only adult member
   // opens a hosting review, and taking out the last non-member guest closes one.
@@ -1298,6 +1332,8 @@ export async function removeBookingGuestInTransaction({
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
+    appliedCreditGivenBackCents: paymentImpact.appliedCreditGivenBackCents,
+    organiserChildRefund: paymentImpact.organiserChildRefund,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,

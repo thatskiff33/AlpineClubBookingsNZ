@@ -4,10 +4,13 @@
  * booking or money row.
  */
 import { censusBookingMoneyReconciliation } from "../src/lib/booking-money-reconciliation-store";
+import { readClubTimeZoneOutsideRequest } from "../src/lib/club-time-zone-runtime";
 import { prisma } from "../src/lib/prisma";
 
 async function main(): Promise<void> {
-  const census = await censusBookingMoneyReconciliation(prisma);
+  // The per-month lines (#3531 3c) file each creation instant under the club's
+  // calendar month (INV-DATE-019); the zone is read once, outside the snapshot.
+  const census = await censusBookingMoneyReconciliation(prisma, await readClubTimeZoneOutsideRequest());
   process.stdout.write(`${JSON.stringify(census, null, 2)}\n`);
 }
 

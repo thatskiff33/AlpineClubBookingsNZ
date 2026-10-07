@@ -66,6 +66,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/return-to-waitlist/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { WAITLIST_CONFIRM_OFFER_RELEASE_FAILED_AUDIT_ACTION } from "@/lib/waitlist-confirm-recovery-contract";
 import {
   RETURN_TO_WAITLIST_AUDIT_ACTION,
@@ -398,11 +399,14 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
       3,
       "lodge-1",
     );
-    expect(mocks.processWaitlistForDates).toHaveBeenCalledWith({
-      checkIn: CHECK_IN,
-      checkOut: CHECK_OUT,
-      lodgeId: "lodge-1",
-    });
+    expect(mocks.processWaitlistForDates).toHaveBeenCalledWith(
+      {
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        lodgeId: "lodge-1",
+      },
+      CLUB_FORMAT_TEST,
+    );
   });
 
   it("re-offers at the lodge whose beds it actually freed, and cannot read any other", async () => {
@@ -420,11 +424,14 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
     expect(mutableSelect).not.toHaveProperty("waitlistOfferedLodgeId");
     expect(mutableSelect).not.toHaveProperty("waitlistOfferedPriceCents");
 
-    expect(mocks.processWaitlistForDates).toHaveBeenCalledWith({
-      checkIn: CHECK_IN,
-      checkOut: CHECK_OUT,
-      lodgeId: "lodge-1",
-    });
+    expect(mocks.processWaitlistForDates).toHaveBeenCalledWith(
+      {
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        lodgeId: "lodge-1",
+      },
+      CLUB_FORMAT_TEST,
+    );
     // The member's own lodge still brands their email.
     expect(mocks.sendWaitlistPlaceRestoredEmail).toHaveBeenCalledWith(
       expect.anything(),

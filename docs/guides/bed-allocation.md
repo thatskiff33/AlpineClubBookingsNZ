@@ -91,7 +91,7 @@ year in one go).
      still shows the Allocation preferences EDITOR on the board, where the link
      card now is; the alt text says so rather than describing the page as it is
      today, because a wrong substitute is worse for a screen-reader user than an
-     old one. Re-run `npm run docs:screenshots` and, in the same change, replace
+     old one. Re-run `pnpm run docs:screenshots` and, in the same change, replace
      "the Allocation preferences editor" below with "the Allocation preferences
      link card".
    -->
@@ -424,6 +424,13 @@ auto-allocation off, the guests come back to the awaiting-allocation list and
 you place them yourself.
 
 ## Troubleshooting
+
+An **Unnamed school adults have held beds** notice lists each affected booking
+and lodge night. These adults count toward lodge capacity but cannot be dragged
+onto individual beds until an officer records their real names on the accepted
+school booking request. The booking request's **Name one pending adult** action
+replaces one anonymous reservation with a named guest night without freeing the
+bed for another booking.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |

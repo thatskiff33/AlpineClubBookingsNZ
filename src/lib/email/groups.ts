@@ -3,6 +3,7 @@ import {
 } from "@/lib/email-templates/booking-requests";
 import {
   groupJoinCancelledTemplate,
+  groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
   groupSettlementExpiredTemplate,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Verification email for a non-member joining a group booking. Reuses the
@@ -76,7 +78,9 @@ export async function sendGroupSettlementReceiptEmail(params: {
   checkOut: Date;
   joinerCount: number;
   totalCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendEmail({
     to: params.email,
     subject: `Your group booking is settled — ${CLUB_NAME}`,
@@ -86,7 +90,7 @@ export async function sendGroupSettlementReceiptEmail(params: {
       checkOut: params.checkOut,
       joinerCount: params.joinerCount,
       totalCents: params.totalCents,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "group-settlement-receipt",
     templateData: {
@@ -94,7 +98,7 @@ export async function sendGroupSettlementReceiptEmail(params: {
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
       joinerCount: params.joinerCount,
-      total: formatMoneyCents(params.totalCents),
+      total: formatMoneyCents(params.totalCents, format),
     },
   });
 }
@@ -134,6 +138,41 @@ export async function sendGroupJoinSettledEmail(params: {
   });
 }
 
+/**
+ * #3672: joiner notice that the organiser's paid bill did not include them, so
+ * their booking is now theirs to pay.
+ */
+export async function sendGroupJoinPaySelfEmail(params: {
+  // Booking this message belongs to (#2258). Explicit union: pass the real
+  // booking id so the per-booking "No emails" switch can withhold this message,
+  // or `"none"` when the flow genuinely has no booking yet.
+  bookingContext: BookingEmailSourceContext;
+  email: string;
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Please pay for your place — ${CLUB_NAME}`,
+    html: await renderEmailHtml(() => groupJoinPaySelfTemplate({
+      firstName: params.firstName,
+      organiserName: params.organiserName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+    })),
+    bookingContext: classifyBookingOwnerContext(params.bookingContext),
+    templateName: "group-join-pay-self",
+    templateData: {
+      firstName: params.firstName,
+      organiserName: params.organiserName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+    },
+  });
+}
+
 /** Organiser notice that their abandoned combined payment released the beds. */
 export async function sendGroupSettlementExpiredEmail(params: {
   // Booking this message belongs to (#2258). Explicit union: pass the real
@@ -146,7 +185,9 @@ export async function sendGroupSettlementExpiredEmail(params: {
   checkOut: Date;
   joinerCount: number;
   totalCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendEmail({
     to: params.email,
     subject: `Your group payment expired — ${CLUB_NAME}`,
@@ -156,7 +197,7 @@ export async function sendGroupSettlementExpiredEmail(params: {
       checkOut: params.checkOut,
       joinerCount: params.joinerCount,
       totalCents: params.totalCents,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "group-settlement-expired",
     templateData: {
@@ -164,7 +205,7 @@ export async function sendGroupSettlementExpiredEmail(params: {
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
       joinerCount: params.joinerCount,
-      total: formatMoneyCents(params.totalCents),
+      total: formatMoneyCents(params.totalCents, format),
     },
   });
 }

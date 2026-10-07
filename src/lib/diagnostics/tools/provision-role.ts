@@ -6,7 +6,7 @@
  * else: no database handle, no environment read, no `server-only` import (the
  * operator CLI `scripts/diagnostics/provision-ai-diagnostics-role.ts` runs it
  * under `tsx`). That keeps three consumers on ONE definition of the role —
- * the operator's `npm run diagnostics:provision-role`, CI's privilege-proof
+ * the operator's `pnpm run diagnostics:provision-role`, CI's privilege-proof
  * step, and `ai-diagnostics-select-only-role.realdb.test.ts`, which proves the
  * shipped statements really do produce a role that cannot write. A test fixture
  * that re-declared its own grants would prove nothing about what operators run.
@@ -159,8 +159,8 @@ export interface AiDiagnosticsSelectGrant {
  *
  * The credential-bearing relations stay permanently out of scope (ADR-007 §1) and
  * are named here so a future reader can see they were considered:
- * `IntegrationCredential` (encrypted provider secrets) and `XeroToken` (PLAINTEXT
- * OAuth access and refresh tokens) are not granted, not readable, and not
+ * `IntegrationCredential` (encrypted provider secrets and Xero OAuth tokens) and
+ * `XeroToken` (the same tokens, encrypted, mirrored since #3454) are not granted, not readable, and not
  * grantable by any tool pack.
  *
  * The twelve, and the tool that argues for each:
@@ -489,7 +489,7 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
      */
     columns: [
       "id",
-      "email",
+      "email", "deletedAt", // predicate-only; never projected
       "firstName",
       "lastName",
       "ageTier",
@@ -591,7 +591,9 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
      * The responder id is compared only to the target id, and expiry only by
      * presence; neither raw value is projected. NOT GRANTED:
      * `rateMembershipTypeId` (a pricing snapshot, not evidence about the guest),
-     * `arrivedAt`, `departedAt` and `createdAt`.
+     * `arrivedAt`, `departedAt` and `createdAt` — and never `dietaryRequirements`,
+     * the stay's dietary/allergy note (#3029, `INV-PRIV-022`), which PostgreSQL
+     * then refuses to this role (42501) however a statement names it.
      *
      * Some columns were granted in an earlier revision and are not now; the
      * reason is worth recording because it is a property of this allowlist rather

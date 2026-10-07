@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({

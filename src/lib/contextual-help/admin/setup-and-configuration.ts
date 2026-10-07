@@ -8,6 +8,14 @@
  * and the booking messages under Bookings setup.
  */
 import { entry, help, type HelpEntry } from "../types";
+import {
+  CLUB_FORMAT_AI_RATE_CLEARED,
+  CLUB_FORMAT_CARD_PAYMENTS,
+  CLUB_FORMAT_NOTHING_REWRITTEN,
+  CLUB_FORMAT_PROVIDER_CURRENCIES,
+  CLUB_FORMAT_REACH,
+  CLUB_FORMAT_SERVER_SETTINGS,
+} from "@/lib/club-format-copy";
 
 export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
   entry(
@@ -548,7 +556,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Last changed",
           description:
-            "When the time zone was last saved, and who saved it. The name is blank when nobody chose it by hand — the zone recorded automatically on the first start after upgrading has no administrator behind it, and neither does one set by npm run setup:wizard at the command line.",
+            "When the time zone was last saved, and who saved it. The name is blank when nobody chose it by hand — the zone recorded automatically on the first start after upgrading has no administrator behind it, and neither does one set by pnpm run setup:wizard at the command line.",
         },
       ],
       [
@@ -567,13 +575,14 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         "Check both before launch, and again if the club ever changes what it charges in.",
         "Choose the three-letter code for the currency, such as NZD or CHF - not a symbol and not a name.",
         "Write the number and date format as a language tag: the language, then the country, separated by a hyphen, such as en-NZ or de-CH.",
-        "Read the consequences and tick the acknowledgement before saving; only a Full Admin can change these, and every change is recorded in the audit log with the old and new values.",
+        "Read the consequences and tick the acknowledgement before saving; every change is recorded in the audit log with the old and new values.",
+        "Every admin can open this page and see both values, where each came from and who last changed them; only a Full Admin can change them. Anyone else sees them read-only, with the Change button greyed out - unlike Club Time Zone and Environment Safety, which only a Full Admin can open at all.",
       ],
       [
         {
           name: "Currency",
           description:
-            "The three-letter code for the currency the club charges in, such as NZD. It decides how an amount is written - it never converts one. An amount already recorded is worth exactly what it was worth before.",
+            "The three-letter code for the currency the club charges in, such as NZD. It decides how an amount is written and the currency new card charges are made in. It never converts an amount: an amount already recorded stays the same number in the currency it was paid in.",
         },
         {
           name: "Number and date format",
@@ -582,8 +591,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         },
         {
           name: "Not the server's settings",
-          description:
-            "CURRENCY and LOCALE on the server seeded these once, and changing them no longer changes this setting - change it here. Do not remove them yet: the screens still write every amount and date from the server values until the later stages of #3205 move them across.",
+          description: CLUB_FORMAT_SERVER_SETTINGS,
         },
         {
           name: "Last changed",
@@ -592,9 +600,11 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         },
       ],
       [
-        "Saving here changes no screen yet. This records the club's choice; the pages that show money and dates are moved onto it in the changes that follow, and until then they still use the server settings.",
-        "No amount already recorded is rewritten or re-converted. A payment of 8450 cents is still 8450 cents; only the way an amount is written follows this setting.",
-        "Stripe still charges in the currency the deployment is configured with. Moving the club to a different currency is a conversation with the payment provider and the club's accountant before it is a setting here.",
+        CLUB_FORMAT_REACH,
+        CLUB_FORMAT_AI_RATE_CLEARED,
+        CLUB_FORMAT_NOTHING_REWRITTEN,
+        CLUB_FORMAT_CARD_PAYMENTS,
+        CLUB_FORMAT_PROVIDER_CURRENCIES,
       ],
     ),
   ),

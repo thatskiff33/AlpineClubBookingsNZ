@@ -1,5 +1,6 @@
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { SkifieldWhakapapaWidget } from "@/components/website/skifield-whakapapa-widget";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
@@ -36,8 +37,11 @@ import { clubTimeZone } from "@/lib/club-time/server";
  * harmless: the inner provider wins and carries the identical value.
  */
 export async function SkifieldWhakapapaEmbed() {
+  // The zone and the locale are resolved together (#3566): this mount sits
+  // outside both chromes on the root 404, so nothing above it carries either.
+  const [zone, format] = await Promise.all([clubTimeZone(), clubFormatValues()]);
   return (
-    <ClubTimeProvider zone={await clubTimeZone()}>
+    <ClubTimeProvider zone={zone} locale={format.locale}>
       <SkifieldWhakapapaWidget />
     </ClubTimeProvider>
   );

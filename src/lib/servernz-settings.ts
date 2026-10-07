@@ -299,7 +299,7 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
  * `major.minor`, or `SERVER_VERSION_UNKNOWN` when it answered 404. Written
  * AFTER the HTTP call has completed and outside any transaction. A failed call
  * never reaches here - the previous answer stays, so a network blip cannot
- * pause syncing (`INV-INT-025`). Bounded to the column's VarChar(16) by the
+ * pause syncing (`INV-INT-026`). Bounded to the column's VarChar(16) by the
  * caller's schema, which caps the wire value at 16 characters.
  */
 export async function recordServerVersionCheck(

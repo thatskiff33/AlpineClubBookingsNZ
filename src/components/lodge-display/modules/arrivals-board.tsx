@@ -13,6 +13,8 @@ import {
 } from "./module-options";
 import { displayWeekday, shiftDateOnly, shortDay } from "./status-helpers";
 import { formatArrivalTime } from "@/lib/arrival-time";
+import type { ClubDateFormat } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The everyday bar board (fork issues #30/#56; visual reference:
 // docs/lobby-display/mockups/everyday-bar-board.html). Pure function of the
@@ -242,8 +244,14 @@ export function windowDatesOf(state: DisplayState): string[] {
   return state.occupancy.map((day) => day.date);
 }
 
-function formatDayHeading(date: string, index: number): string {
-  return index === 0 ? `Tonight · ${shortDay(date)}` : shortDay(date);
+function formatDayHeading(
+  date: string,
+  index: number,
+  format: ClubDateFormat,
+): string {
+  return index === 0
+    ? `Tonight · ${shortDay(date, format)}`
+    : shortDay(date, format);
 }
 
 /**
@@ -254,11 +262,11 @@ function formatDayHeading(date: string, index: number): string {
  * second says "out Tue". Labelling both with the row's overall check-out was
  * the visible half of showing a broken stay as one unbroken bar.
  */
-export function barMeta(segment: BarSegment): string {
+export function barMeta(segment: BarSegment, format: ClubDateFormat): string {
   const since = segment.startsBeforeWindow
-    ? `since ${displayWeekday(segment.stayStart)} → `
+    ? `since ${displayWeekday(segment.stayStart, format)} → `
     : "";
-  return `${since}out ${shortDay(segment.stayEnd)}${segment.endsAfterWindow ? " →" : ""}`;
+  return `${since}out ${shortDay(segment.stayEnd, format)}${segment.endsAfterWindow ? " →" : ""}`;
 }
 
 /** Split "A - Kea" / "B Tui" style names into a letter tag + display name. */
@@ -282,6 +290,7 @@ export function ArrivalsBoard({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const days = intOption(options, "days", ARRIVALS_BOARD_DEFAULT_DAYS, {
     min: 1,
     max: 7,
@@ -323,7 +332,7 @@ export function ArrivalsBoard({
             data-today={index === 0 || undefined}
             role="columnheader"
           >
-            {formatDayHeading(date, index)}
+            {formatDayHeading(date, index, format)}
           </span>
         ))}
       </div>
@@ -403,7 +412,7 @@ export function ArrivalsBoard({
                           arr {formatArrivalTime(row.arrivalTime)}
                         </span>
                       )}
-                    <span className="display-bar-out">{barMeta(layout)}</span>
+                    <span className="display-bar-out">{barMeta(layout, format)}</span>
                   </div>
                 ));
               })}

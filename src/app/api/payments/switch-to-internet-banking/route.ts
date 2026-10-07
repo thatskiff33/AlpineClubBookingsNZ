@@ -34,7 +34,7 @@ import {
   loadInternetBankingPaymentSettings,
 } from "@/lib/internet-banking-settings";
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
-import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
+import { retireCardIntentBeforeElection } from "@/lib/card-intent-retirement";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -45,6 +45,7 @@ import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { consumeStoredCreditElection } from "@/lib/booking-credit-election";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The member's account credit leaves nothing for the invoice to ask for, so
@@ -65,7 +66,7 @@ class CreditCoversWholeBookingError extends Error {
  *
  * Mirrors the booking-create Internet Banking branch for an already-created
  * booking: flips its Payment to PaymentSource.INTERNET_BANKING with a BOOKING-
- * reference, voids any open Stripe intent, and raises + emails the Xero invoice.
+ * reference, voids any open Stripe intent (else refuses, #3638), and raises + emails the Xero invoice.
  * The booking stays PAYMENT_PENDING until Xero inbound reconciliation marks it
  * PAID, exactly like a booking created with Internet Banking. Internet Banking is
  * an optional module, so this 400s when it is off.
@@ -99,6 +100,9 @@ export async function POST(request: NextRequest) {
   }
 
   const { bookingId } = parsed.data;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -184,14 +188,36 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Void any open Stripe intent so the member can't also be charged by card.
-  if (booking.payment?.stripePaymentIntentId) {
-    try {
-      await cancelPaymentIntentIfCancellable(booking.payment.stripePaymentIntentId);
-    } catch (err) {
-      logger.error(
-        { err, bookingId },
-        "Failed to cancel Stripe intent while switching to Internet Banking"
+  // #3638 — the card payment must be DEAD before an invoice can exist beside
+  // it. The switch used to call the cancel and ignore the answer, so a card
+  // payment that had already gone through (or was going through, or whose
+  // cancel failed) survived the switch, settled the booking, and left the
+  // member holding an emailed Xero invoice for the same price. Refused here,
+  // before the locked transaction, so a refusal writes nothing and raises no
+  // invoice. A refunded intent (#1765's repay-after-refund booking) is as dead
+  // as a cancelled one. The rule: `INV-PAY-102`.
+  const cancelledCardIntentId = booking.payment?.stripePaymentIntentId ?? null;
+  if (cancelledCardIntentId && booking.payment) {
+    const retired = await retireCardIntentBeforeElection({
+      paymentIntentId: cancelledCardIntentId,
+      paymentStatus: booking.payment.status,
+      bookingId,
+      door: "internet-banking-switch",
+    });
+    if (retired !== "retired") {
+      return NextResponse.json(
+        retired === "notCancellable"
+          ? {
+              error:
+                "Your card payment for this booking has already gone through, so it can't be switched to Internet Banking. Refresh the page to see the latest status.",
+              code: "CARD_PAYMENT_NOT_CANCELLABLE",
+            }
+          : {
+              error:
+                "We couldn't confirm your card payment was cancelled, so this booking has not been switched to Internet Banking. Please try again in a few minutes.",
+              code: "CARD_PAYMENT_CANCEL_UNCONFIRMED",
+            },
+        { status: 409 },
       );
     }
   }
@@ -227,6 +253,21 @@ export async function POST(request: NextRequest) {
     });
     if (!locked || locked.status !== BookingStatus.PAYMENT_PENDING) {
       return { type: "notSwitchable" as const };
+    }
+
+    // #3638 — the upsert below forgets the card intent. It may only forget the
+    // one cancelled above: an intent minted while this request waited (a pay
+    // page opened in another tab) is still live and still chargeable, and
+    // dropping it would re-open the double collection the refusal closed.
+    const lockedPayment = await tx.payment.findUnique({
+      where: { bookingId: booking.id },
+      select: { stripePaymentIntentId: true },
+    });
+    if (
+      lockedPayment?.stripePaymentIntentId &&
+      lockedPayment.stripePaymentIntentId !== cancelledCardIntentId
+    ) {
+      return { type: "cardPaymentStarted" as const };
     }
 
     // Credit writers serialize on a per-member key, not lock(1). Compose all
@@ -275,6 +316,7 @@ export async function POST(request: NextRequest) {
     // booking has left it). Deliberately after the capacity decision above —
     // a refused switch must leave the election intact.
     const creditElection = await consumeStoredCreditElection(tx, {
+      format,
       bookingId: locked.id,
     });
 
@@ -408,9 +450,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (paymentResult.type === "cardPaymentStarted") {
+    // #3638: a card payment was started in another window while this request
+    // waited on the locks. Nothing was written; a retry cancels that intent
+    // first, so this is not the permanent refusal below.
+    return NextResponse.json(
+      {
+        error:
+          "A card payment was started for this booking in another window. Finish it there, or try switching to Internet Banking again.",
+        code: "CARD_PAYMENT_STARTED",
+      },
+      { status: 409 },
+    );
+  }
+
   if (paymentResult.type === "notSwitchable") {
     // A concurrent cancel/modify moved the booking out of PAYMENT_PENDING while
-    // we waited on the locks (#1881). Nothing was written; report a conflict.
+    // we waited on the locks (#1881), or the status-guarded CONFIRMED claim
+    // lost. Nothing was written; report a conflict.
     return NextResponse.json(
       { error: "This booking can no longer switch to Internet Banking." },
       { status: 409 },

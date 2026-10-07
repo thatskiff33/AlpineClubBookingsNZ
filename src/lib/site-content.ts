@@ -5,6 +5,8 @@ import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { resolveTextTokens } from "@/lib/page-content-embeds";
 import { SITE_CONTENT_KEYS } from "@/lib/page-content";
 import { starterSiteContent } from "../../prisma/starter-site-content";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Canonical display order for the keyed site content sections (currently the
 // three public footer columns). The key allowlist itself lives in the
@@ -102,6 +104,7 @@ export async function getSiteContentForAdmin(): Promise<SiteContentDocument[]> {
 async function renderFooterSection(
   record: { contentHtml: string } | undefined,
   key: SiteContentKeyValue,
+  format: ClubFormat,
 ): Promise<string> {
   const storedHtml =
     record !== undefined
@@ -111,7 +114,7 @@ async function renderFooterSection(
   if (!sanitised) {
     return "";
   }
-  return resolveTextTokens(sanitised);
+  return resolveTextTokens(sanitised, format);
 }
 
 /** The three public footer columns, sanitised and token-resolved. */
@@ -125,13 +128,16 @@ export async function getSiteFooterContent(): Promise<SiteFooterContent> {
   });
 
   const byKey = new Map(records.map((record) => [record.key, record]));
+  // The club's format (#3565), resolved once for all three columns.
+  const format = await clubFormatValues();
 
   const [blurbHtml, quickLinksHtml, affiliationsHtml] = await Promise.all([
-    renderFooterSection(byKey.get("FOOTER_BLURB"), "FOOTER_BLURB"),
-    renderFooterSection(byKey.get("FOOTER_QUICK_LINKS"), "FOOTER_QUICK_LINKS"),
+    renderFooterSection(byKey.get("FOOTER_BLURB"), "FOOTER_BLURB", format),
+    renderFooterSection(byKey.get("FOOTER_QUICK_LINKS"), "FOOTER_QUICK_LINKS", format),
     renderFooterSection(
       byKey.get("FOOTER_AFFILIATIONS"),
       "FOOTER_AFFILIATIONS",
+      format,
     ),
   ]);
 

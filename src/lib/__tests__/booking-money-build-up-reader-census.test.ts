@@ -148,7 +148,7 @@ describe("#3277 canonical stored-money reader census", () => {
   it("renders modification source metadata where guest removal and review rebase appear", () => {
     const history = productionCode("src/lib/booking-history.ts");
     expect(history).toMatch(
-      /const moneyBuildUpNote = moneyBuildUpNoteOf\(modification\);[\s\S]{0,120}detailParts\.push\(moneyBuildUpNote\)/,
+      /const moneyBuildUpNote = moneyBuildUpNoteOf\(modification, format\);[\s\S]{0,120}detailParts\.push\(moneyBuildUpNote\)/,
     );
     const narrative = productionCode(
       "src/lib/booking-history-modification-narrative.ts",

@@ -19,6 +19,7 @@
  * transition is never rolled back purely because its narrative event failed.
  */
 import { BookingEventType, Prisma } from "@prisma/client";
+import type { CancellationLedgerSnapshot } from "@/lib/paid-cancellation-event";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -48,6 +49,12 @@ export interface CancellationEventSnapshot {
   retainedAmountCents: number;
   /** Non-refundable change fees folded into the retained amount, if any. */
   changeFeeCents?: number;
+  /**
+   * #3611: what the booking ledger was told the club keeps
+   * (`retainedAmountCents` plus applied credit not restored, design §5.1), and
+   * the credit figures it rests on. Absent on cancellations before #3611.
+   */
+  ledger?: CancellationLedgerSnapshot;
 }
 
 /** Frozen bump facts stored on a BUMPED event. */
@@ -79,6 +86,18 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * failure must never sit inside the transition's own `$transaction`. The `db`
  * parameter exists for tests. Failures are logged and swallowed so a booking
  * transition is never undone purely because its narrative event failed.
+ *
+ * The ban is on SWALLOWING inside a transaction, not on writing an event in
+ * one. The documented exceptions write a DECISION record, not narrative, with a
+ * direct, un-swallowed `tx.bookingEvent.create` inside the transition's own
+ * transaction, so it must commit or roll back with what it describes:
+ * #3638's second-instrument conflict marker
+ * (`recordSecondInstrumentMarkerInTransaction`, inside the Xero settle
+ * transaction, so a failed insert aborts it and the delivery is retried), the
+ * paid-path CANCELLED snapshot (`writePaidCancellationEvent`, #3639,
+ * `INV-PAY-106`), so the cancel cannot commit without its decision, and
+ * #3672's group payer-switch marker (`releaseUnpaidJoinersToMemberPaysInTx`,
+ * `INV-PAY-109`), which must commit or roll back with the switch.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,

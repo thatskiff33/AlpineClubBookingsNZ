@@ -2,8 +2,13 @@
 
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { APP_TIME_ZONE } from "@/config/operational";
+import {
+  CLUB_CURRENCY_FALLBACK,
+  CLUB_LOCALE_FALLBACK,
+} from "@/lib/club-format";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 /**
@@ -11,7 +16,7 @@ import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
  * under the suite's default provider zone, `Pacific/Auckland`.
  *
  * IT PROVES NOTHING ABOUT ZONE AUTHORITY on its own: that zone is also what
- * `APP_TIME_ZONE` resolves to under test, so the migrated code and the
+ * the environment zone resolves to under test, so the migrated code and the
  * `getTodayDateOnly()` it replaced agree. The zone-authority test further down
  * chooses a zone the environment is not on, and is the one that can tell them
  * apart (CT-4, #2870).
@@ -320,7 +325,7 @@ describe("fee configuration page", () => {
    * THE DISCRIMINATING ONE (CT-4, #2870).
    *
    * The test above asserts the shape but cannot assert the AUTHORITY: it renders
-   * under `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to in
+   * under `Pacific/Auckland`, which is also what the environment zone resolves to in
    * this suite, so the migrated code and the `getTodayDateOnly()` it replaced
    * return the identical string. It would pass against either.
    *
@@ -340,7 +345,7 @@ describe("fee configuration page", () => {
    * environment, and nothing went red. A premise that never consults the
    * environment is not a premise about the environment.
    */
-  it("defaults the effective-from date to the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
+  it("defaults the effective-from date to the club's PERSISTED zone, not the environment zone or the host", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
       answerKey: "today",
@@ -359,15 +364,23 @@ describe("fee configuration page", () => {
       // span is 25 hours (-11 to +14), so at UTC hour 10 there are THREE. This
       // fixture is at UTC hour 0; re-derive the count if you move it. It is not needed either: `clubToday` consults only the zone it is
       // handed, so "read the machine's clock" is not a reachable mutation — the
-      // reachable one is "read APP_TIME_ZONE", which the environment excludes.
+      // reachable one is "read the environment zone", which the environment excludes.
     });
-    const environmentToday = todayIn(APP_TIME_ZONE);
+    const environmentToday = todayIn(ENVIRONMENT_CLUB_ZONE);
     expect(chosen.today).not.toBe(environmentToday);
 
     stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />, {
+      // A custom `wrapper` REPLACES the helper's, so this stack has to mount
+      // both providers itself — the format one on the shipped defaults, since
+      // this case is about the zone and nothing here reads a currency.
       wrapper: ({ children }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubFormatProvider
+          currencyCode={CLUB_CURRENCY_FALLBACK}
+          locale={CLUB_LOCALE_FALLBACK}
+        >
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_LOCALE_FALLBACK}>{children}</ClubTimeProvider>
+        </ClubFormatProvider>
       ),
     });
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
@@ -663,36 +676,53 @@ describe("fee configuration page", () => {
     expect(screen.queryByText("Prorate n/a")).toBeNull();
   });
 
-  // The amount labels used to hard-code "(NZD)"; they now read the club's
-  // configured currency code (#3325). The literal "(NZD)" pins above are the
-  // byte-identical proof under the default configuration; this case is what
-  // makes the code path discriminate — a fresh import under a different
-  // configured currency must label the inputs with THAT code.
-  it("labels the amount inputs with the configured currency code, not a hard-coded NZD (#3325)", async () => {
+  /*
+    THE AMOUNT LABELS FOLLOW THE CLUB'S RECORDED CURRENCY (#3564), AND THIS CASE
+    WAS INVERTED TO SAY SO.
+
+    #3325 took these labels off a hard-coded `"(NZD)"` and onto `APP_CURRENCY`,
+    and this case proved it by importing the section under a mocked
+    `@/config/operational` and demanding `(AUD)`. That was as far as #3325 could
+    go — and it pinned the very defect programme #3205 exists to remove, because
+    `APP_CURRENCY` was `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and was
+    `undefined` in the published image, so on a real deployment the label never
+    moved at all.
+
+    Now the recorded setting is the authority (INV-CONFIG-006). #3567 deleted
+    `@/config/operational`, so the mock went with it; the environment's claim is
+    now modelled by setting `NEXT_PUBLIC_CURRENCY` for the render, and its answer
+    must be IGNORED. Three currencies are in play and only one may appear: the club's recorded
+    `CHF`, the environment's `AUD`, and the shipped default `NZD`. Demanding
+    `CHF` while refusing the other two is what makes this discriminating — a
+    component still reading the environment renders `AUD`, and one that fell
+    back renders `NZD`, and each fails on its own line.
+  */
+  it("labels the amount inputs with the club's RECORDED currency, not the environment's and not NZD (#3564)", async () => {
+    const originalCurrency = process.env.NEXT_PUBLIC_CURRENCY;
+    process.env.NEXT_PUBLIC_CURRENCY = "AUD";
     vi.resetModules();
-    vi.doMock("@/config/operational", () => ({
-      APP_CURRENCY: "AUD",
-      APP_STRIPE_CURRENCY: "aud",
-      APP_TIME_ZONE: "Australia/Sydney",
-      APP_LOCALE: "en-AU",
-    }));
     try {
       const { FinanceFeesSections } = await import("@/app/(admin)/admin/fees/_components/finance-fees-sections");
-      // The fresh module tree has its own club-time context object, so the
-      // render helper's (static) provider would not be seen; wrap with the
-      // freshly imported one.
+      // The fresh module tree has its own context objects, so the render
+      // helper's (static) providers would not be seen; wrap with the freshly
+      // imported ones.
       const { ClubTimeProvider: FreshClubTimeProvider } = await import("@/components/club-time-provider");
+      const { ClubFormatProvider: FreshClubFormatProvider } = await import("@/components/club-format-provider");
       stubFetch(response(true, editableData));
       render(<FinanceFeesSections />, {
         wrapper: ({ children }) => (
-          <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+          <FreshClubFormatProvider currencyCode="CHF" locale="de-CH">
+            <FreshClubTimeProvider zone="Australia/Sydney" locale="de-CH">{children}</FreshClubTimeProvider>
+          </FreshClubFormatProvider>
         ),
       });
       fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-      expect(screen.getByLabelText("Annual amount (AUD)")).toBeTruthy();
+      expect(screen.getByLabelText("Annual amount (CHF)")).toBeTruthy();
+      expect(screen.queryByLabelText("Annual amount (AUD)")).toBeNull();
       expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
     } finally {
-      vi.doUnmock("@/config/operational");
+      if (originalCurrency === undefined) delete process.env.NEXT_PUBLIC_CURRENCY;
+      else process.env.NEXT_PUBLIC_CURRENCY = originalCurrency;
       vi.resetModules();
     }
   });

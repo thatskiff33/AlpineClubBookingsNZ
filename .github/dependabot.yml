@@ -14,20 +14,32 @@ updates:
       # Remove this when the app runtime moves beyond Node 24.
       - dependency-name: "@types/node"
         versions: [">=25"]
-      # Vitest 5 is a migration, not a bump (#3418). These two packages are
-      # peer-locked to each other, so Dependabot proposes them as two separate
-      # pull requests that each block the other and go red at install in under
-      # thirty seconds - neither can ever pass alone. Left unpinned, every new
-      # 5.x republishes that pair and a list with two permanent reds in it is a
-      # list where a real failure is harder to see.
-      #
-      # REMOVING THESE TWO ENTRIES IS THE FIRST COMMIT OF THE MIGRATION BRANCH.
-      # They are scoped to these packages only, so nothing else is suppressed.
-      - dependency-name: "vitest"
-        versions: [">=5"]
-      - dependency-name: "@vitest/coverage-v8"
-        versions: [">=5"]
     groups:
+      # #3673: packages that run install scripts (pnpm-workspace.yaml
+      # `allowBuilds`, pinned to exact versions) and the direct dependencies
+      # that bring them in. A bump of one of these fails the frozen install with
+      # ERR_PNPM_IGNORED_BUILDS until its new version is reviewed and written
+      # into `allowBuilds`, so it gets a PR of its own instead of turning the
+      # whole minor-and-patch group red. Dependabot puts a dependency in the
+      # FIRST group that matches, which is why this one comes first.
+      install-scripts:
+        # Minor and patch only, as in the group below: a major version still
+        # arrives as a PR of its own.
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "prisma"
+          - "@prisma/*"
+          - "@sentry/*"
+          - "esbuild"
+          - "tsx"
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+          - "unrs-resolver"
+          - "eslint-config-next"
+          - "eslint-import-resolver-typescript"
       npm-minor-and-patch:
         update-types:
           - minor

@@ -17,13 +17,20 @@ vi.mock("next/headers", () => ({
     new Headers(requestPath.value ? { "x-pathname": requestPath.value } : {}),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: {
-      findUnique: mockFindUnique,
+// Every fixture below is projected through the guard's own `select` (#3603), so
+// a field the guard stops selecting stops reaching it — exactly as with the real
+// client. Without this, a fixture carrying `canLogin` proved nothing about
+// whether the guard ever asked for it.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: {
+      member: {
+        findUnique: honourSelect(mockFindUnique, "Member"),
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 
@@ -418,5 +425,166 @@ describe("the anonymous reply on a module-gated path (#2404)", () => {
         error: "Forbidden",
       });
     }
+  });
+});
+
+/**
+ * A member whose login is switched off holds no access (#3603). `requireAdmin`
+ * re-reads the member on every call, so it must hand `canLogin` to the checks
+ * that clear on it; `requireActiveSessionUser` refuses the member outright.
+ * Each refusal is paired with the same fixture at `canLogin: true`, admitted,
+ * so the refusal is caused by the flag and nothing else.
+ */
+describe("a login-disabled member is refused by every gate form (#3603)", () => {
+  const FULL_ADMIN_ROWS = [{ role: "ADMIN" }];
+  // A club-defined role: no enum value, every area at edit through the joined
+  // definition. Never a Full Admin, so `permission: false` refuses it either way.
+  const CUSTOM_ROLE_ROWS = [
+    {
+      role: null,
+      roleDefinitionId: "def-custom",
+      roleDefinition: {
+        id: "def-custom",
+        overviewLevel: "EDIT",
+        bookingsLevel: "EDIT",
+        membershipLevel: "EDIT",
+        financeLevel: "EDIT",
+        lodgeLevel: "EDIT",
+        contentLevel: "EDIT",
+        supportLevel: "EDIT",
+      },
+    },
+  ];
+
+  function stageAdmin(accessRoles: unknown[], canLogin: boolean) {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      canLogin,
+      forcePasswordChange: false,
+      twoFactorEnabled: false,
+      accessRoles,
+    });
+  }
+
+  const gateForms = [
+    {
+      name: "permission: false (Full Admin only)",
+      run: () => requireAdmin({ permission: false }),
+    },
+    {
+      name: "an explicit area",
+      run: () => requireAdmin({ permission: { area: "bookings", level: "edit" } }),
+    },
+    {
+      name: "a path-inferred area",
+      run: () => {
+        requestPath.value = "/api/admin/bookings";
+        return requireAdmin();
+      },
+    },
+    {
+      name: '"any-admin"',
+      run: () => requireAdmin({ permission: "any-admin" }),
+    },
+  ] as const;
+
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockAuth.mockReset();
+    requestPath.value = null;
+  });
+
+  it.each(gateForms)("refuses a login-disabled Full Admin on $name", async ({ run }) => {
+    stageAdmin(FULL_ADMIN_ROWS, false);
+    const result = await run();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(403);
+  });
+
+  it.each(gateForms)("admits the same Full Admin with login enabled on $name", async ({ run }) => {
+    stageAdmin(FULL_ADMIN_ROWS, true);
+    const result = await run();
+    expect(result.ok).toBe(true);
+  });
+
+  it.each(gateForms)("refuses a login-disabled custom-role admin on $name", async ({ run }) => {
+    stageAdmin(CUSTOM_ROLE_ROWS, false);
+    const result = await run();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(403);
+  });
+
+  it.each(gateForms.filter(({ name }) => !name.startsWith("permission: false")))(
+    "admits the same custom-role admin with login enabled on $name",
+    async ({ run }) => {
+      stageAdmin(CUSTOM_ROLE_ROWS, true);
+      const result = await run();
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it("selects canLogin in the member re-read", async () => {
+    stageAdmin(FULL_ADMIN_ROWS, true);
+    await requireAdmin();
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ canLogin: true }),
+      }),
+    );
+  });
+
+  it("hands downstream checks the DB-read roles, login flag and matrix", async () => {
+    stageAdmin(FULL_ADMIN_ROWS, true);
+    const result = await requireAdmin();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.session.user.accessRoles).toEqual(["ADMIN"]);
+      expect(result.session.user.canLogin).toBe(true);
+      expect(result.session.user.adminPermissionMatrix?.membership).toBe("edit");
+    }
+  });
+
+  it("refuses a login-disabled member at the active-session check", async () => {
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      canLogin: false,
+      forcePasswordChange: false,
+    });
+
+    const response = await requireActiveSessionUser("member-1");
+
+    expect(response?.status).toBe(403);
+    await expect(response?.json()).resolves.toEqual({
+      error: "Sign-in is disabled for this account",
+    });
+  });
+
+  it("admits the same member with login enabled at the active-session check", async () => {
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      canLogin: true,
+      forcePasswordChange: false,
+    });
+
+    await expect(requireActiveSessionUser("member-1")).resolves.toBeNull();
+  });
+
+  it("refuses a login-disabled member through requireActiveSession", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "member-1", role: "USER", accessRoles: ["USER"], canLogin: true },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      canLogin: false,
+      forcePasswordChange: false,
+    });
+
+    const result = await requireActiveSession();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(403);
   });
 });

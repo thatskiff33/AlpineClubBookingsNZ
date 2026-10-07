@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
 import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -39,6 +40,17 @@ const mockApplyLocalRefundAllocation = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
+/**
+ * #3341: the ledger read `queueSupersededAdditionalIntentCancellations` makes
+ * for the live ADDITIONAL asks a mint retires. PR #543 added this double as a
+ * bare `[]`, which made the supersede a no-op in every case here; `[]` is honest
+ * only while the fixture carries no live ask, and the carry case below answers
+ * it with the row it retires.
+ */
+const mockSupersedeRead = vi.fn();
+const mockRunPaymentRecoveryOperationNow = vi.fn();
+// #3653: the organiser child refund's post-commit lookup of its own debt.
+const mockRecoveryOperationFindUnique = vi.fn().mockResolvedValue(null);
 const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueBookingModificationRefundRecovery = vi.fn();
 const mockEnqueueAdditionalPaymentIntentRecovery = vi.fn();
@@ -69,6 +81,19 @@ const mockBookingGuestValidationError = class BookingGuestValidationError extend
   }
 };
 
+// #3599: the credit rows' ledger lines are posted by one sync, proved in its own
+// suites and against Postgres; this suite tests what it always tested.
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/booking-ledger-credit-sync", () => ({
+  syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     /*
@@ -80,6 +105,9 @@ vi.mock("@/lib/prisma", () => ({
       means exactly what it meant before.
     */
     manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    paymentRecoveryOperation: {
+      findUnique: (...args: unknown[]) => mockRecoveryOperationFindUnique(...args),
+    },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as (cb: unknown) => unknown)(fn);
@@ -99,7 +127,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       updateMany: mockPaymentTransactionUpdateMany,
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: (...args: unknown[]) => mockSupersedeRead(...args),
     },
     member: {
       findUnique: mockMemberFindUnique,
@@ -226,6 +254,10 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
     mockEnqueuePaymentIntentCancellationRecovery(...args),
+  // The supersede's immediate cancel. Omitted, vitest's missing-export throw
+  // fired inside the minter's try/catch and read as a failed mint (#3341).
+  runPaymentRecoveryOperationNow: (...args: unknown[]) =>
+    mockRunPaymentRecoveryOperationNow(...args),
   processPaymentRecoveryOperations: (...args: unknown[]) =>
     mockProcessPaymentRecoveryOperations(...args),
   enqueueBookingModificationRefundRecovery: (...args: unknown[]) =>
@@ -662,6 +694,7 @@ const TX_MODE_PRE_TRANSACTION = {
   memberGuestPolicy: { enabled: false, requiresConsent: false },
   subscriptionLockoutMode: "off",
   xeroLockDates: { kind: "not-applicable" },
+  guestDietarySeeding: { seedFromProfile: false },
 } as never;
 
 describe("PUT /api/bookings/[id]/modify", () => {
@@ -694,6 +727,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockEnqueuePaymentIntentCancellationRecovery.mockResolvedValue({
       id: "recovery_1",
     });
+    mockSupersedeRead.mockResolvedValue([]);
+    mockRunPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
     mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({
       id: "recovery_refund",
     });
@@ -803,6 +838,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       "@/lib/booking-batch-modification-service"
     );
     const result = await modifyBookingBatch({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "bk1",
       actor: { id: "m1", role: "USER" },
@@ -858,6 +894,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         "@/lib/booking-batch-modification-service"
       );
       const result = await modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         actor: { id: "m1", role: "USER" },
@@ -958,6 +995,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       "@/lib/booking-batch-modification-service"
     );
     const result = await modifyBookingBatch({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "bk1",
       actor: { id: "officer-1", role: "ADMIN" },
@@ -1705,6 +1743,86 @@ describe("PUT /api/bookings/[id]/modify", () => {
       [2500, "EVEN_SPLIT"],
       [2500, "EVEN_SPLIT"],
     ]);
+  });
+
+  /**
+   * #3341 — THE MODIFY DOOR'S MINT -> SUPERSEDE -> ASK, OVER A LIVE ASK. The only
+   * case in this file where a price increase meets an earlier unpaid extra: the
+   * booking already owes $70 through `pi_old`, and adding a guest raises $100
+   * more. The member owes $170, the new intent asks for all of it and records
+   * the $70 it carried, and the real supersede queues `pi_old`'s cancellation.
+   */
+  it("carries an earlier unpaid ask into the new intent and retires the old one", async () => {
+    const base = makeBooking();
+    const booking = makeBooking({
+      payment: {
+        ...base.payment,
+        additionalAmountCents: 7000,
+        additionalPaymentStatus: "PENDING",
+        additionalPaymentIntentId: "pi_old",
+      },
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
+    mockSupersedeRead.mockResolvedValue([
+      { id: "txn_old", stripePaymentIntentId: "pi_old", amountCents: 7000 },
+    ]);
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const response = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          addGuests: [{ firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false }],
+        }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.additionalAmountCents).toBe(17000);
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 17000,
+        metadata: expect.objectContaining({ type: "modification_additional" }),
+      }),
+    );
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_batch",
+        amountCents: 17000,
+        carriedAskCents: 7000,
+      }),
+    );
+    expect(mockSupersedeRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentId: "pay_1", stripePaymentIntentId: { not: "pi_batch" } }),
+      }),
+    );
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "pay_1",
+      paymentTransactionId: "txn_old",
+      paymentIntentId: "pi_old",
+      amountCents: 7000,
+    });
   });
 
   it("creates an additional PaymentIntent when a paid booking increases in price", async () => {
@@ -3433,6 +3551,115 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
   });
 
+  // #3653 (`INV-PAY-114`), fix round. A REAL edit door, on a joiner's booking
+  // the organiser paid for by card, against an ISSUED invoice. The door used to
+  // queue the ordinary modification credit note at commit - before Stripe had
+  // moved anything - and the organiser child refund's executor queues the
+  // refund credit note once Stripe has, so the joiner's invoice was credited
+  // twice. The executor's note is the only one now; its single note per refund
+  // is proved against PostgreSQL in `organiser-child-refund.realdb.test.ts`.
+  it("an organiser child's reduction writes its refund debt and queues no modification credit note (#3653)", async () => {
+    const booking = makeBooking({ organiserSettled: true, parentBookingId: "organiser_bk" });
+    const tx = makeTx(booking) as ReturnType<typeof makeTx> & Record<string, unknown>;
+    const debtCreate = vi.fn().mockResolvedValue({ id: "op_child", amountCents: 5000 });
+    Object.assign(tx, {
+      groupBookingSettlement: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "settlement_1",
+          stripePaymentIntentId: "pi_combined",
+          amountCents: 20000,
+          status: "SUCCEEDED",
+          refundPlan: null,
+        }),
+      },
+      paymentRefund: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
+      paymentRecoveryOperation: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: debtCreate,
+      },
+    });
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
+    mockRecoveryOperationFindUnique.mockResolvedValueOnce({ id: "op_child" });
+
+    booking.guests = reconcilingNightRows(booking, [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ]);
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment!.amountCents = 10000;
+    expect(booking.payment!.xeroInvoiceId).toBe("inv_primary");
+
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const response = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        // No settlement method: the organiser's card is the only disposition.
+        body: JSON.stringify({ removeGuestIds: ["g2"] }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(debtCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        idempotencyKey: "organiser_child_refund_mod_mod_1",
+        paymentIntentId: "pi_combined",
+        amountCents: 5000,
+      }),
+    });
+    expect(mockRunPaymentRecoveryOperationNow).toHaveBeenCalledWith("op_child", expect.anything());
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroModificationAccountCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("refuses a price increase on an organiser child before the edit commits (#3653)", async () => {
+    const booking = makeBooking({ organiserSettled: true, parentBookingId: "organiser_bk" });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 10000,
+      guests: [
+        { priceCents: 5000, perNightCents: [2500, 2500] },
+        { priceCents: 5000, perNightCents: [2500, 2500] },
+      ],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const response = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          addGuests: [{ firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false }],
+        }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("paid for by the group organiser");
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+  });
+
   it("corrects an unpaid pay-on-account Xero invoice for the full delta on a batch reduction (#1015)", async () => {
     const booking = makeBooking({
       status: "CONFIRMED",
@@ -4061,6 +4288,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: true }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -4081,6 +4309,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: false }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -4172,6 +4401,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         "@/lib/booking-batch-modification-service"
       );
       return modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         // ADMIN, because the other-lodge election below is officer-only. The fence
@@ -4337,6 +4567,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         "@/lib/booking-batch-modification-service"
       );
       return modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         actor: { id: "officer-1", role: "ADMIN" },

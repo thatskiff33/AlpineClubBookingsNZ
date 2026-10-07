@@ -92,6 +92,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
+    // #3635: the refund note names a kept late capture's own invoice first;
+    // these bookings have none.
+    manualRefundTask: { findMany: async () => [] },
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: {
       findUnique: mocks.bookingFindUnique,
@@ -107,6 +110,8 @@ vi.mock("@/lib/prisma", () => ({
     xeroObjectLink: {
       findFirst: mocks.xeroObjectLinkFindFirst,
       findMany: mocks.xeroObjectLinkFindMany,
+      // #3642: the group-settlement worker counts prior invoices for its key.
+      count: vi.fn().mockResolvedValue(0),
     },
     memberCredit: {
       aggregate: mocks.memberCreditAggregate,
@@ -189,6 +194,8 @@ vi.mock("@/lib/member-credit", () => ({
 
 vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
   assertNoAppliedCreditDeallocationFence: mocks.assertNoAppliedCreditDeallocationFence,
+  // #3809: an edit's note waits on a deallocation; none is on its way here.
+  findUnconvergedAppliedCreditDeallocation: async () => null,
 }));
 
 vi.mock("@/lib/xero-contacts", () => ({
@@ -211,6 +218,7 @@ import {
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * Each case is an instant whose UTC calendar day is the day BEFORE the club's,
@@ -427,8 +435,9 @@ describe.each(CLUB_DAY_CASES)(
       // CT-5 (#2869) made the builder a pure function of its inputs, so the
       // clock read moved to the caller. What is asserted here is therefore the
       // caller's DERIVATION — `xeroDocumentDateForClubToday(<the club zone>)`,
-      // character-for-character what `createXeroRefundPaymentForInvoice` and
-      // `createXeroRefundCreditNote` pass — plus the pass-through itself.
+      // character-for-character what `createXeroCreditNote` passes on a first
+      // attempt (a later leg dates it from the note itself, #3548) — plus the
+      // pass-through itself.
       const payment = buildRefundCreditNotePayment({
         paymentId: "pay_local",
         creditNoteId: "cn_1",
@@ -504,7 +513,7 @@ describe.each(CLUB_DAY_CASES)(
       mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error(SENTINEL));
 
       await expect(
-        createUnappliedXeroCreditNote("pay_local", 5000),
+        createUnappliedXeroCreditNote("pay_local", 5000, CLUB_FORMAT_TEST),
       ).rejects.toThrow(SENTINEL);
 
       const creditNote = enqueuedOperation().requestPayload.creditNotes[0];
@@ -544,6 +553,7 @@ describe.each(CLUB_DAY_CASES)(
       });
 
       await createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1234abcd",
         refundAmountCents: 5000,
         bookingModificationId: "mod_1",
@@ -581,6 +591,7 @@ describe.each(CLUB_DAY_CASES)(
       });
 
       await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1234abcd",
         priceDiffCents: 5000,
         changeFeeCents: 0,
@@ -614,6 +625,7 @@ describe.each(CLUB_DAY_CASES)(
       });
 
       await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1234abcd",
         priceDiffCents: 5000,
         changeFeeCents: 0,
@@ -696,11 +708,22 @@ describe.each(CLUB_DAY_CASES)(
         run({
           $executeRaw: vi.fn().mockResolvedValue(undefined),
           groupBookingSettlement: { findUnique: mocks.settlementFindUnique },
+          // #3642: the worker learns its attempt from the CREATE rows.
+          xeroSyncOperation: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            findMany: vi.fn().mockResolvedValue([]),
+          },
         }),
       );
       mocks.settlementFindUnique.mockResolvedValue({
         id: "settle_1",
         createdAt: instant,
+        // #3642: only a settlement still awaiting its Internet Banking invoice
+        // gets one.
+        source: "INTERNET_BANKING",
+        status: "PENDING",
+        // #3642: the invoice is raised only at the settlement's own total.
+        amountCents: 5000,
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
         groupBooking: {
@@ -717,7 +740,20 @@ describe.each(CLUB_DAY_CASES)(
           status: "CONFIRMED",
           checkIn: new Date("2026-08-03T00:00:00.000Z"),
           checkOut: new Date("2026-08-05T00:00:00.000Z"),
-          guests: [],
+          finalPriceCents: 5000,
+          promoAdjustmentCents: 0,
+          promoRedemption: null,
+          guests: [
+            {
+              firstName: "Jo",
+              lastName: "Joiner",
+              ageTier: "ADULT",
+              isMember: true,
+              rateMembershipTypeId: null,
+              priceCents: 5000,
+              nights: [],
+            },
+          ],
         },
       ]);
       mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error(SENTINEL));

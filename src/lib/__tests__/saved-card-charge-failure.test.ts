@@ -6,6 +6,8 @@ import {
   PaymentStatus,
   PaymentTransactionKind,
 } from "@prisma/client";
+import { BelowStripeMinimumError, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3268 — the saved-card charge-failure classifier and the retirement of a
 // card it calls terminal. The cron integration (release first, then retire,
@@ -288,6 +290,16 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
   });
 });
 
+describe("a refusal made before Stripe was called is its own outcome (#3567 re-review)", () => {
+  it.each([
+    ["the club's currency", new UnsupportedChargeCurrencyError("JPY")],
+    ["the Stripe minimum", new BelowStripeMinimumError("Amount $0.30 is below the Stripe minimum ($0.50)")],
+  ])("%s -> local_refusal, never retry and never terminal (the card is fine)", (_label, err) => {
+    expect(classifySavedCardChargeFailure(err, { holdOverdueWindows: 1 }).outcome).toBe("local_refusal");
+    expect(classifySavedCardChargeFailure(err, { holdOverdueWindows: 9 }).outcome).toBe("local_refusal");
+  });
+});
+
 describe("describeTerminalSavedCardChargeFailure (#3268)", () => {
   it("tells the admin what happened, what was done, what the member was asked, and what Stripe said", () => {
     const text = describeTerminalSavedCardChargeFailure(
@@ -485,6 +497,12 @@ describe("retireUnusableSavedCard (#3268)", () => {
         }),
       },
       paymentTransaction: { create: vi.fn() },
+      // #3581: reconcile ends by converging the booking ledger's settlement
+      // lines; an empty ledger lets that run for real against this payment.
+      bookingLedgerLine: {
+        findMany: vi.fn(async () => []),
+        createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+      },
     };
 
     await retireUnusableSavedCard({ paymentMethodId: "pm_dead", bookingId: "b1" });
@@ -534,6 +552,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
 
   it("retires the card, then emails the member once and the admins once", async () => {
     await retireAndEscalateUnusableSavedCard({
+      format: CLUB_FORMAT_TEST,
       booking,
       paymentMethodId: "pm_dead",
       paymentIntentId: "N/A",
@@ -564,7 +583,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockSendSavedCardChargeFailedEmail.mockRejectedValue(new Error("SES down"));
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).resolves.toBeUndefined();
 
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
@@ -573,6 +592,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
 
   it("threads a failed claim release into the admin alert's wording", async () => {
     await retireAndEscalateUnusableSavedCard({
+      format: CLUB_FORMAT_TEST,
       booking,
       paymentMethodId: "pm_dead",
       paymentIntentId: "N/A",
@@ -590,7 +610,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockDetachPaymentMethod.mockRejectedValue(outage);
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).rejects.toBe(outage);
 
     expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
@@ -602,7 +622,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockSendAdminPaymentFailureAlert.mockRejectedValue(new Error("SES down"));
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).resolves.toBeUndefined();
     expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
   });

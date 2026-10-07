@@ -191,6 +191,7 @@ import {
   getAuditTimelinePage,
   isMemberVisibleAuditCategory,
 } from "@/lib/audit-query";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const db = txClient as unknown as Parameters<
   typeof reconcileEmailInheritanceForMemberChange
@@ -496,6 +497,7 @@ describe("the member-facing projection", () => {
       category: "family",
       audience: "member",
       currentMemberId: "child",
+      format: CLUB_FORMAT_TEST,
     });
 
     const entry = page.data[0]!;
@@ -519,6 +521,7 @@ describe("the member-facing projection", () => {
       pageSize: 10,
       category: "family",
       audience: "admin",
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(page.data[0]!.metadata).toEqual(storedRow.metadata);

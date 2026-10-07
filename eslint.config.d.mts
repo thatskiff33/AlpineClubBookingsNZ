@@ -28,6 +28,10 @@ export declare const MONEY_GUARD_EXEMPTIONS: readonly FileExemption[];
 
 /** #3302 — the reverse-direction guard: rendering cents, not building them. */
 export declare const CENTS_DISPLAY_GUARD_ARM: readonly string[];
+/** #3533 — the storage form in a sentence. Its OWN group: it shares none of
+ * the toFixed arm's exemptions, which were written about inputs and export
+ * cells rather than about text a person reads. */
+export declare const CENTS_IN_PROSE_GUARD_ARM: readonly string[];
 /** #3325 — INV-CONFIG-001: a literal locale on a currency `Intl.NumberFormat`. */
 export declare const CURRENCY_LOCALE_GUARD_ARM: readonly string[];
 /** Multi-file exemption entries (unlike `FileExemption`'s one file each). */
@@ -59,6 +63,12 @@ export declare const AMBIENT_AUTHORITY_RESOLVERS: {
     readonly liveDefaults: number;
     readonly [detail: string]: unknown;
   }>;
+};
+export declare const RETIRED_FORMAT_CONSTANT_ARMS: readonly string[];
+/** #3567 review: the environment currency/locale env-read arm, as bare selectors. */
+export declare const ENVIRONMENT_FORMAT_ARMS: readonly string[];
+export declare const CLUB_FORMAT_GUARD_ARMS: {
+  readonly requiredParameter: readonly string[];
 };
 export declare const SSOT_GUARD_ARMS: {
   readonly authorityDefault: readonly string[];

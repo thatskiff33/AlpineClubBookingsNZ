@@ -354,7 +354,7 @@ dropped wholesale rather than altered.
 The index stays at `docs/DOMAIN_INVARIANTS.md` (§6) and keeps the ten `##`
 domain headings of the pre-split document with byte-identical text, so **every
 anchor written before the split still resolves.** That is now a checked
-contract rather than an intention: `npm run docs:indexcheck` fails a rename,
+contract rather than an intention: `pnpm run docs:indexcheck` fails a rename,
 re-casing or removal of any of the ten (`STABLE_INDEX_HEADINGS` in
 `scripts/ci/check-doc-index-integrity.mjs`, #2720). Adding a NEW `##` section is
 free — a section that did not exist before the split carries no pre-split
@@ -373,7 +373,7 @@ A bare `DOMAIN_INVARIANTS.md` reference with no anchor still resolves, to the
 index; check that the index is what the sentence around it means. A
 `DOMAIN_INVARIANTS.md#<domain>` deep link resolves too, but delivers a table of
 one-line summaries — if the sentence promised the rules, re-point it at the
-domain file. `npm run docs:linkcheck` cannot tell these apart, because all of
+domain file. `pnpm run docs:linkcheck` cannot tell these apart, because all of
 them resolve.
 
 No redirect stubs are left behind. A stub is a second place a reader can land
@@ -437,13 +437,13 @@ One file per domain in this directory, plus this scheme and
 hundred IDs. The counts here are deliberately approximate, and the prefix count
 is gone altogether: it read sixteen until `INV-LOCK` arrived mid-review and made
 it seventeen. A figure written by hand is wrong within the week, and
-`npm run docs:indexcheck` prints the live ID and prefix totals plus the number
+`pnpm run docs:indexcheck` prints the live ID and prefix totals plus the number
 of tracked files it scanned on every run. The invariant-file count remains an
 approximation here rather than being mistaken for that tracked-file total.
 
 **The index is authoritative for prefix → file and ID → file**, and it is the
 only place that mapping is written down. It is deliberately not repeated here: a
-second copy is a second thing to rot, and `npm run docs:indexcheck` verifies the
+second copy is a second thing to rot, and `pnpm run docs:indexcheck` verifies the
 index against the files on every PR (§8) while it could not verify a prose copy.
 Start from the routing table in
 [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md).
@@ -491,17 +491,17 @@ than an outstanding item.
 | Largest single domain file (`membership-lifecycle.md`) | ~24k |
 | Typical domain file | 1–9k |
 
-`AGENTS.md` → "Read First" holds the agent-neutral always-read core to two
-documents, of which the index is one; every other invariant file is **routed** —
-opened at the moment its row matches what you are changing. Agent-interface
-adapters import or point to that authority instead of joining the mandatory
-core. That budget is the reason the index's one-line descriptions are capped at
-**12 words** each. The cap is load-bearing: relax it and the index stops fitting
-the core.
+`AGENTS.md` is the only always-read file. Since 5 Oct 2026 the index is not
+read in full on every task: agents find an id's file with `grep`, and the
+`AGENTS.md` routing table names each family's file. Every other invariant file
+is **routed** — opened at the moment its row matches what you are changing. The
+index's one-line descriptions stay capped at **12 words** each so a grep hit
+reads as a complete, scannable line, and so the index stays cheap for anyone who
+does read it whole.
 
 If the index ever outgrows the budget, the cheapest lever is to move the full ID
 catalogue into a separate `docs/invariants/ID-INDEX.md`, leaving the routing
-table in `docs/DOMAIN_INVARIANTS.md` as the always-read part. Keeping both in one
+table in `docs/DOMAIN_INVARIANTS.md` as the part people read. Keeping both in one
 file is preferred while it fits, because it satisfies "find the right file
 without opening more than one other file".
 
@@ -514,7 +514,7 @@ there is deliberately no `docs/invariants/README.md`: entry-point docs, guides,
 source files and agent helper scripts already point at that path in quantity.
 Moving it would turn a free migration into widespread edits and a permanent
 fork-compatibility break, and would gain nothing a reader can feel.
-`npm run docs:indexcheck` treats `docs/DOMAIN_INVARIANTS.md` as the root of the
+`pnpm run docs:indexcheck` treats `docs/DOMAIN_INVARIANTS.md` as the root of the
 invariants tree.
 
 This section used to add that "many inbound anchors" target the headings the
@@ -599,7 +599,7 @@ under a fresh ID heading, add the index row, and discard the conflict on
 
 ## 8. Enforcement
 
-`scripts/ci/check-doc-index-integrity.mjs`, run by `npm run docs:indexcheck` and
+`scripts/ci/check-doc-index-integrity.mjs`, run by `pnpm run docs:indexcheck` and
 by the `verify` job on every PR. It needs no network, no build and no Prisma
 client — it is a single `node` script over the tracked tree and its git base
 revision.
@@ -807,7 +807,7 @@ guard alone — never from citation resolution — because it quotes malformed f
 on purpose, in prose, to explain what the guard catches.
 
 Anchor-style citations (`…#inv-cap-021`) are deliberately **not** handled here —
-`npm run docs:linkcheck` already validates fragments against real headings, so
+`pnpm run docs:linkcheck` already validates fragments against real headings, so
 that half is covered and duplicating it would give two places to disagree.
 
 ### 8.1 Word budgets: one home per decision (#2789)

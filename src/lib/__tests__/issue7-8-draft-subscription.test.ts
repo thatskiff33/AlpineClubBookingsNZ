@@ -27,6 +27,8 @@ const mockTx = {
   payment: {
     create: vi.fn(),
     upsert: vi.fn(),
+    // #3638: the pay route's mint attach re-reads the source under lock(1).
+    findUnique: vi.fn(),
   },
   season: { findMany: vi.fn() },
   promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
@@ -69,6 +71,9 @@ const mockTx = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
     // #2364: the hosting review is reconciled inside the booking write, so
     // every prisma/tx double a booking path runs against needs this client.
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
@@ -345,6 +350,7 @@ beforeEach(() => {
   mockTx.booking.update.mockResolvedValue({});
   mockTx.bookingGuest.findMany.mockResolvedValue([]);
   mockTx.payment.create.mockResolvedValue({});
+  mockTx.payment.upsert.mockResolvedValue({ id: "payment-1" });
   mockTx.season.findMany.mockResolvedValue([]);
   // Rate-membership-type snapshot resolution (#1930, E4): member guests resolve
   // to FULL (role default -> member rate), true non-members to NON_MEMBER.
@@ -800,10 +806,13 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
 
     const res = await createPaymentIntent(req);
 
-    expect(res.status).toBe(400);
+    // #3638: the same body as the refusal under the attach lock, so the pay
+    // page needs one arm for it.
+    expect(res.status).toBe(409);
     await expect(res.json()).resolves.toEqual({
       error:
-        "This booking is already awaiting Internet Banking payment and cannot use the Stripe payment flow",
+        "This booking is being paid by Internet Banking, so it can't be paid by card. Pay by bank transfer using the booking's Internet Banking details instead.",
+      code: "SWITCHED_TO_INTERNET_BANKING",
     });
     expect(stripe.findOrCreateCustomer).not.toHaveBeenCalled();
     expect(stripe.createPaymentIntent).not.toHaveBeenCalled();

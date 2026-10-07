@@ -28,8 +28,9 @@
  * THE RULE, corrected by the CT-4 review, because a first version of this
  * paragraph had it backwards. It argued that swapping a pattern for
  * `formatClubDate` would change what a non-`en-NZ` deployment renders — but the
- * kernel's shapes format through `APP_LOCALE`, and it is the date-fns pattern
- * string that hard-codes English month names for every deployment. So the rule
+ * kernel's shapes format through the club's persisted locale (#3566), and it is
+ * the date-fns pattern string that hard-codes English month names for every
+ * deployment — the chart-label limitation `docs/guides/club-format.md` records. So the rule
  * is: a value in a HOUSE shape goes through the kernel, which honours the
  * configured locale; a value in a shape the kernel does not have stays on
  * date-fns, and that is a locale limitation this change inherits rather than

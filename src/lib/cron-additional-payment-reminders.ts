@@ -25,6 +25,7 @@ import {
   buildAdditionalOwedPaymentWhere,
   buildAdditionalOwedWhere,
 } from "@/lib/unpaid-finished-stays";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Chase an uncollected additional payment (#2350).
@@ -78,6 +79,9 @@ export interface AdditionalPaymentReminderResult {
 }
 
 export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymentReminderResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = new Date();
   const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
 
@@ -261,7 +265,7 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
         checkOut: booking.checkOut,
         requestedOn: episodeStartedAt,
         lodgeId: booking.lodgeId,
-      });
+      }, format);
 
       if (outcome.status !== "sent") {
         /*

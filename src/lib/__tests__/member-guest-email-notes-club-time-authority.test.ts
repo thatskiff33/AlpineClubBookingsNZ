@@ -9,15 +9,17 @@
  *
  * ## Why the container zone is moved, and why it is `America/Denver`
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
- * read ONCE at module load, so it is set before the graph is imported and the
+ * The environment's zone is `process.env.TZ || NEXT_PUBLIC_TZ ||
+ * "Pacific/Auckland"` (the `APP_TIME_ZONE` constant that held it was deleted in
+ * #3567; `ENVIRONMENT_CLUB_ZONE` is the test helper that names it now), read
+ * ONCE at module load, so it is set before the graph is imported and the
  * modules are re-imported after. `NEXT_PUBLIC_TZ` rather than `TZ`, so the
  * HOST's own clock stays wherever the runner put it — the same choice, for the
  * same reason, as `email-date-kind-override-zone.test.ts`, which this suite
  * follows in shape.
  *
  * Denver is BEHIND Greenwich, which is the side on which the defect shows: on
- * this repository's own machine `APP_TIME_ZONE` is `Pacific/Auckland`, and
+ * this repository's own machine the environment's zone is `Pacific/Auckland`, and
  * Auckland's projection of a UTC-midnight stored day is that same day, so a
  * suite that left the container alone would watch the old code be right by
  * coincidence and call it a pass.
@@ -44,6 +46,7 @@
  * Neither configuration catches both, which is why both are here.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTAINER_ZONE = "America/Denver";
 process.env.NEXT_PUBLIC_TZ = CONTAINER_ZONE;
@@ -67,7 +70,9 @@ vi.mock("@/lib/logger", () => ({
 
 vi.resetModules();
 
-const { APP_TIME_ZONE } = await import("@/config/operational");
+const { ENVIRONMENT_CLUB_ZONE } = await import(
+  "@/lib/__tests__/helpers/environment-club-zone"
+);
 const { __resetEmailClubTimeZoneForTests, primeEmailClubTimeZone } =
   await import("@/lib/email-templates-club-time");
 const { composeGuestNightsLabel, composeMemberGuestConsentOutcome } =
@@ -114,7 +119,7 @@ function lapseSentence(): string {
       expiredAt: EXPIRED_AT,
       creditCents: 4800,
     },
-  }).sentence;
+  }, CLUB_FORMAT_TEST).sentence;
 }
 
 async function withPersistedZone(zone: string): Promise<void> {
@@ -130,7 +135,7 @@ beforeEach(() => {
 describe("the premise every assertion below rests on", () => {
   it("the container really is pinned behind Greenwich", () => {
     // A premise failure here is a FAILURE and never a skip (#2870).
-    expect(APP_TIME_ZONE).toBe(CONTAINER_ZONE);
+    expect(ENVIRONMENT_CLUB_ZONE).toBe(CONTAINER_ZONE);
   });
 
   it("the three readings of the fixtures really do disagree", () => {
@@ -188,7 +193,7 @@ describe("a guest night is a stored calendar day and takes no zone", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       outcome: { kind: "APPROVED" },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sentence).toContain("Test Lodge, 1 Aug 2026 - 3 Aug 2026");
     expect(sentence).not.toContain("31 Jul 2026");
@@ -209,7 +214,7 @@ describe("a consent deadline is an instant and is read in the club's zone", () =
         expiredAt: EXPIRED_AT,
         creditCents: 4800,
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sentence).toContain("lapsed on 2 Aug 2026");
     // What the retired environment read would have said.
@@ -229,7 +234,7 @@ describe("a consent deadline is an instant and is read in the club's zone", () =
         expiredAt: EXPIRED_AT,
         blocker: "LAST_GUEST",
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sentence).toContain("lapsed on 2 Aug 2026");
     expect(sentence).not.toContain("lapsed on 1 Aug 2026");

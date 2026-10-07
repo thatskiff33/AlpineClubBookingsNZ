@@ -5,6 +5,7 @@ import {
   parseCalendarDate,
   parseInstant,
   type BoundClubTime,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 
 export interface MemberOption {
@@ -159,6 +160,15 @@ export interface FamilyGroupRequestSearchResult
   ineligibleReason?: string;
 }
 
+/**
+ * What a login-holder handover does to the outgoing holder's sessions (#3603):
+ * switching their login off stamps their revocation time, so every session they
+ * hold ends on its next request. One wording for the admin screen and the audit
+ * record, so the two cannot disagree.
+ */
+export const LOGIN_HOLDER_SIGN_OUT_NOTICE =
+  "The previous holder is signed out straight away: any session they hold ends on its next request.";
+
 export const AGE_TIER_COLORS: Record<string, string> = {
   // #2188 P2 (lens MEDIUM-5): age tiers are DEMOGRAPHIC categories, so they use
   // the categorical scales (never severity scales), with ONE assignment shared
@@ -220,13 +230,16 @@ export function normalizeFamilyEmail(email: string) {
  * UTC-midnight encoding in UTC, which is the identity for every club rather
  * than a projection.
  */
-export function formatFamilyGroupCalendarDay(value: string | null | undefined) {
+export function formatFamilyGroupCalendarDay(
+  value: string | null | undefined,
+  format: ClubDateFormat,
+) {
   if (!value) return "Not provided";
   const bare = parseCalendarDate(value);
-  if (bare !== null) return formatClubDate(bare);
+  if (bare !== null) return formatClubDate(bare, format);
   const instant = parseInstant(value);
   if (instant === null) return "Not provided";
-  return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
 }
 
 /**

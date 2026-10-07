@@ -441,6 +441,31 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     );
   });
 
+  it("MUTATION: on a cancelled booking, says what is still owed BEFORE the officer completes (#3835)", async () => {
+    const priced = { ...REVIEW_TASK, id: "task-review-owed", amountCents: null };
+    await openDialog(priced, "Record the adjustment");
+    // The server's answer, by the completion's own rule (`previewEditReviewStillOwed`).
+    vi.mocked(fetch).mockImplementation((async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.includes("/still-owed?")
+          ? { preview: { shareCents: Number(new URL(url, "http://x").searchParams.get("shareCents")), stillOwedCents: 2500, captureCents: 2500, creditCents: 0, route: "hand-back" } }
+          : { tasks: [priced] },
+    })) as never);
+
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "50.00" } });
+
+    expect(await screen.findByTestId("manual-refund-task-still-owed")).toHaveTextContent(
+      "Only $25.00 of the $50.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share.",
+    );
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/api/admin/payments/manual-refund-tasks/task-review-owed/still-owed?shareCents=5000");
+    // Nothing is asked for a charge: the notice is about money going back.
+    fireEvent.click(screen.getByLabelText(/The member owes the club/));
+    await waitFor(() => expect(screen.queryByTestId("manual-refund-task-still-owed")).not.toBeInTheDocument());
+  });
+
   it("posts a positive magnitude and an explicit direction (#3170)", async () => {
     const priced = { ...REVIEW_TASK, id: "task-review-post", amountCents: null };
     await openDialog(priced, "Record the adjustment");
@@ -647,7 +672,11 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
 
     const dialog = screen.getByRole("dialog");
     const buttonName = (button: HTMLElement) =>
-      (button.textContent ?? "").trim();
+      button.getAttribute("aria-label") ?? (button.textContent ?? "").trim();
+    const firstNightName = (nightBox("2026-08-11") as HTMLInputElement)
+      .labels?.[0]?.textContent?.trim();
+    const secondNightName = (nightBox("2026-08-12") as HTMLInputElement)
+      .labels?.[0]?.textContent?.trim();
     /*
       The inventory, pinned. A new control on this dialog fails HERE and has to
       be added below - at which point the loop underneath presses it and proves
@@ -656,7 +685,29 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     */
     expect(
       new Set(within(dialog).getAllByRole("button").map(buttonName)),
-    ).toEqual(new Set(["Close", "Cancel", "Close with no adjustment"]));
+    ).toEqual(
+      new Set([
+        "Close",
+        "Cancel",
+        "Close with no adjustment",
+        `Increase ${firstNightName} by one dollar`,
+        `Decrease ${firstNightName} by one dollar`,
+        `Increase ${secondNightName} by one dollar`,
+        `Decrease ${secondNightName} by one dollar`,
+      ]),
+    );
+
+    // The two controls attached to the blank second night must not invent its
+    // value. Target them by their accessible names, rather than weakening the
+    // dialog's exhaustive button inventory to ignore the shared money control.
+    for (const name of [
+      `Increase ${secondNightName} by one dollar`,
+      `Decrease ${secondNightName} by one dollar`,
+    ]) {
+      const blankNightControl = within(dialog).getByRole("button", { name });
+      expect(blankNightControl).toBeDisabled();
+      fireEvent.click(blankNightControl);
+    }
 
     const waysOut = new Set(["Close", "Cancel"]);
     const confirm = within(dialog).getByRole("button", {

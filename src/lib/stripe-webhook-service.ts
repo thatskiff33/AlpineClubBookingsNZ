@@ -6,10 +6,10 @@ import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
 import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroRefundCreditNoteOperation,
-  hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
+import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   sendBookingConfirmedEmail,
@@ -24,10 +24,19 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { findCompletedHandBackForLateCapture } from "@/lib/deleted-booking-modification-payment";
 import {
   announceAutomaticLateCaptureRefund,
+  acknowledgeSettledLateNotice,
   recordAutomaticLateCaptureRefund,
   reportWithheldLateCaptureRefund,
   type CancelledBookingLateCapture,
 } from "@/lib/cancelled-booking-late-capture";
+import { CANCELLED_BOOKING_LATE_CAPTURE_REASON } from "@/lib/cancellation-settled-money";
+import { holdLateCaptureForTreasurerIfRequired } from "@/lib/late-capture-refund-hold";
+import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
+import { findLateCapturePaymentIntents } from "@/lib/late-capture-xero-receipt";
+import {
+  buildLateCaptureRefundMetadata,
+  buildLateCaptureRefundStripeKeyPrefix,
+} from "@/lib/payment-recovery-keys";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
@@ -51,6 +60,10 @@ import {
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 type JsonRouteResult = {
   body: unknown;
@@ -59,14 +72,6 @@ type JsonRouteResult = {
 
 function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
-}
-
-function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
-  return (
-    status === PaymentStatus.SUCCEEDED ||
-    status === PaymentStatus.PARTIALLY_REFUNDED ||
-    status === PaymentStatus.REFUNDED
-  );
 }
 
 // F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A
@@ -184,6 +189,9 @@ async function claimStripeWebhookEvent(
 export async function processStripeWebhookEvent(
   event: Stripe.Event
 ): Promise<JsonRouteResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const webhookStart = Date.now();
   let claimedEvent = false;
   // F16 fence (#1887): the processingStartedAt we claimed. Both the COMPLETED
@@ -236,14 +244,16 @@ export async function processStripeWebhookEvent(
       case "payment_intent.succeeded":
         await handlePaymentIntentSucceeded(
           event.data.object as Stripe.PaymentIntent,
-          event
+          event,
+          format
         );
         break;
 
       case "payment_intent.payment_failed":
         await handlePaymentIntentFailed(
           event.data.object as Stripe.PaymentIntent,
-          event
+          event,
+          format
         );
         break;
 
@@ -415,7 +425,8 @@ async function adoptUnknownIntentsAttemptRow(
  */
 async function handlePaymentIntentSucceeded(
   paymentIntent: Stripe.PaymentIntent,
-  event: Stripe.Event
+  event: Stripe.Event,
+  format: ClubFormat,
 ) {
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
@@ -424,13 +435,13 @@ async function handlePaymentIntentSucceeded(
     const applied = await applyGroupSettlementSucceeded({
       id: paymentIntent.id,
       amount: paymentIntent.amount,
-    });
+    }, format);
     if (
       applied.outcome === "not_found" ||
       applied.outcome === "amount_mismatch" ||
       applied.outcome === "cancelled"
     ) {
-      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome);
+      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome, format);
     }
     return;
   }
@@ -457,7 +468,7 @@ async function handlePaymentIntentSucceeded(
 
   // Check if this is an additional modification payment
   if (paymentIntent.metadata?.type === "modification_additional") {
-    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId);
+    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId, format);
     return;
   }
 
@@ -487,7 +498,8 @@ async function handlePaymentIntentSucceeded(
   if (bookingRecord?.status === "CANCELLED") {
     await handleCancelledBookingPaymentSucceeded(
       bookingRecord,
-      paymentIntent
+      paymentIntent,
+      format
     );
     return;
   }
@@ -508,7 +520,8 @@ async function handlePaymentIntentSucceeded(
       paymentIntent.id,
       paymentTransaction.amountCents,
       paymentIntent.amount,
-      "Primary booking payment"
+      "Primary booking payment",
+      format
     );
     throw new Error(`Stripe payment amount mismatch for booking ${bookingId}`);
   }
@@ -544,7 +557,8 @@ async function handlePaymentIntentSucceeded(
       paymentIntent.id,
       bookingRecord.finalPriceCents,
       paymentIntent.amount,
-      "Primary booking payment (stale intent: booking was modified after the intent was created)"
+      "Primary booking payment (stale intent: booking was modified after the intent was created)",
+      format
     );
     throw new Error(
       `Stripe capture amount does not match current booking total for ${bookingId}`
@@ -552,6 +566,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   const reconciliation = await markBookingPaymentSucceeded({
+    format,
     bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
@@ -604,6 +619,7 @@ async function handlePaymentIntentSucceeded(
           booking.checkOut,
           booking.guests.length,
           booking.finalPriceCents,
+          format,
           {
             lodgeId: booking.lodgeId,
             ...(provisionalGuests ? { provisionalGuests } : {}),
@@ -630,7 +646,8 @@ async function handlePaymentIntentSucceeded(
  */
 async function handlePaymentIntentFailed(
   paymentIntent: Stripe.PaymentIntent,
-  event: Stripe.Event
+  event: Stripe.Event,
+  format: ClubFormat,
 ) {
   // Group settlement intents have no per-booking payment transaction; the
   // children stay CONFIRMED (beds held) so the organiser can retry.
@@ -702,7 +719,7 @@ async function handlePaymentIntentFailed(
         amountCents: paymentIntent.amount,
         errorMessage: failureMessage,
         paymentIntentId: paymentIntent.id,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send admin payment failure alert")
       );
     }
@@ -828,7 +845,8 @@ async function handlePaymentIntentProcessing(
  */
 async function handleAdditionalModificationPaymentSucceeded(
   paymentIntent: Stripe.PaymentIntent,
-  bookingId: string
+  bookingId: string,
+  format: ClubFormat,
 ) {
   const paymentTransaction = await findPaymentTransactionByIntentId({
     paymentIntentId: paymentIntent.id,
@@ -864,17 +882,19 @@ async function handleAdditionalModificationPaymentSucceeded(
     },
   });
 
-  if (bookingRecord?.status === "CANCELLED") {
+  // #3641: the one "refunded, not kept" predicate, shared with the late-capture Xero release.
+  if (bookingRecord && isLateCaptureRefundedBookingStatus(bookingRecord.status)) {
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
       paymentIntent,
-      paymentTransaction
+      paymentTransaction,
+      format
     );
     return;
   }
 
-  if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
-    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  if (isCapturedTransactionStatus(paymentTransaction.status)) {
+    const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       paymentIntent.id
     );
     if (released.released > 0) {
@@ -899,7 +919,8 @@ async function handleAdditionalModificationPaymentSucceeded(
       paymentIntent.id,
       paymentTransaction.amountCents,
       paymentIntent.amount,
-      "Booking modification payment"
+      "Booking modification payment",
+      format
     );
     throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
   }
@@ -913,7 +934,7 @@ async function handleAdditionalModificationPaymentSucceeded(
       : paymentIntent.payment_method?.id ?? null,
   });
 
-  const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
     paymentIntent.id
   );
   if (released.released > 0) {
@@ -1072,6 +1093,12 @@ async function handleSetupIntentCanceled(
   );
 }
 
+/** A refund of a late capture on a cancelled booking (#3635 round-3 R1). */
+async function isLateCaptureRefund(paymentIntentId: string | null | undefined): Promise<boolean> {
+  if (!paymentIntentId) return false;
+  return (await findLateCapturePaymentIntents([paymentIntentId])).has(paymentIntentId);
+}
+
 /**
  * Handle charge refund events (from Stripe dashboard or API refunds).
  */
@@ -1113,8 +1140,16 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     "Refund processed for payment"
   );
 
-  if (refundSync.refundDeltaCents > 0) {
-    // Queue only the newly-observed refund delta from Stripe. charge.amount_refunded is cumulative.
+  // #3635: a refund of a LATE capture is noted per capture, and only once the
+  // app has recorded that capture's receipt in Xero; one taken earlier is
+  // credited back when the receipt is recorded (`creditBackLateCaptureRefunds`).
+  if (refundSync.refundDeltaCents > 0 && (await isLateCaptureRefund(paymentIntentId))) {
+    await queueLateCaptureRefundCreditNote({
+      paymentId: refundSync.paymentId,
+      paymentIntentId: paymentIntentId!,
+    });
+  } else if (refundSync.refundDeltaCents > 0) {
+    // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
     try {
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
         refundSync.paymentId,
@@ -1156,7 +1191,8 @@ async function alertPaymentAmountMismatch(
   paymentIntentId: string,
   expectedCents: number,
   receivedCents: number,
-  paymentType: string
+  paymentType: string,
+  format: ClubFormat,
 ) {
   try {
     const booking = await prisma.booking.findUnique({
@@ -1174,9 +1210,9 @@ async function alertPaymentAmountMismatch(
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: receivedCents,
-      errorMessage: `${paymentType} amount mismatch. Expected ${expectedCents} cents but Stripe reported ${receivedCents} cents. The booking was not auto-updated and needs manual review.`,
+      errorMessage: `${paymentType} amount mismatch. Expected ${formatCents(expectedCents, format)} but Stripe reported ${formatCents(receivedCents, format)}. The booking was not auto-updated and needs manual review.`,
       paymentIntentId,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, bookingId, paymentIntentId },
@@ -1202,7 +1238,8 @@ async function alertPaymentAmountMismatch(
  */
 async function refundSupersededGroupSettlementIntent(
   paymentIntent: Stripe.PaymentIntent,
-  outcome: "not_found" | "amount_mismatch" | "cancelled"
+  outcome: "not_found" | "amount_mismatch" | "cancelled",
+  format: ClubFormat,
 ) {
   const groupBookingId = paymentIntent.metadata?.groupBookingId ?? null;
   const failureDescription =
@@ -1233,7 +1270,8 @@ async function refundSupersededGroupSettlementIntent(
     await alertSupersededGroupSettlementIntent(
       paymentIntent,
       groupBookingId,
-      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`
+      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`,
+      format
     );
     throw refundErr;
   }
@@ -1268,7 +1306,8 @@ async function refundSupersededGroupSettlementIntent(
   await alertSupersededGroupSettlementIntent(
     paymentIntent,
     groupBookingId,
-    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`
+    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`,
+    format
   );
 }
 
@@ -1276,7 +1315,8 @@ async function refundSupersededGroupSettlementIntent(
 async function alertSupersededGroupSettlementIntent(
   paymentIntent: Stripe.PaymentIntent,
   groupBookingId: string | null,
-  errorMessage: string
+  errorMessage: string,
+  format: ClubFormat,
 ) {
   try {
     const group = groupBookingId
@@ -1298,7 +1338,7 @@ async function alertSupersededGroupSettlementIntent(
       amountCents: paymentIntent.amount,
       errorMessage,
       paymentIntentId: paymentIntent.id,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, paymentIntentId: paymentIntent.id, groupBookingId },
@@ -1369,7 +1409,8 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     } | null;
   },
   paymentIntent: Stripe.PaymentIntent,
-  paymentTransaction: { id: string; status: PaymentStatus }
+  paymentTransaction: { id: string; status: PaymentStatus },
+  format: ClubFormat,
 ) {
   if (!booking.payment) {
     logger.error(
@@ -1379,11 +1420,25 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     return;
   }
 
+  // #3639: the same question as the primary handler, first. A change payment
+  // captured before a cancel that kept it — or a replay of one this handler
+  // already refunded — is acknowledged, not refunded again.
+  if (
+    await acknowledgeSettledLateNotice({
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      paymentIntent,
+      captureKind: "modification",
+    })
+  ) {
+    return;
+  }
+
   // The cancel claim marked this transaction FAILED; Stripe has now proven it
   // captured. Record the capture before refunding (the refund allocates
   // against a captured transaction). Skipped on replays where the row is
   // already captured/refunded so a completed refund is not flipped back.
-  if (!isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+  if (!isCapturedTransactionStatus(paymentTransaction.status)) {
     await markPaymentIntentTransactionSucceeded({
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
@@ -1434,13 +1489,19 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     // to mirror a refund this handler made, and it made none. The hand-back's own
     // accounting belongs to `resolveManualRefundTask`.
     await reportWithheldLateCaptureRefund({
+      format,
       capture: lateCapture,
       handBack: blockingHandBack,
     });
     return;
   }
 
+  // #3639 (owner decision 26 Sep 2026): the club may have a treasurer approve
+  // this refund; and a task that already owns this capture decides it.
+  if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
+
   const refundResult = await refundPaymentTransactions({
+    format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
     // Pin the refund to THIS transaction so replays mint identical Stripe
@@ -1451,11 +1512,8 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
         amountCents: paymentIntent.amount,
       },
     ],
-    metadata: {
-      bookingId: booking.id,
-      reason: "cancelled_booking_late_capture",
-    },
-    idempotencyKeyPrefix: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+    metadata: buildLateCaptureRefundMetadata(booking.id),
+    idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(booking.id, paymentIntent.id),
   });
   const refundId = refundResult.refunds[0]?.refundId;
 
@@ -1533,40 +1591,19 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // conflict alert — never both and never neither. Fire-and-forget with a `.catch`
   // that logs, unchanged: webhooks stay non-blocking, and the durable records are
   // the row and the audit entries.
-  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome).catch((err) =>
+  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome, format).catch((err) =>
     logger.error(
       { err, bookingId: booking.id },
       "Failed to send late additional-capture cancellation alert"
     )
   );
 
-  // The supplementary invoice operation for this intent is left in
-  // WAITING_PAYMENT on purpose (the stale-WAITING_PAYMENT reaper retires it).
-  // Only when a race already released it — or the payment carries a primary
-  // Xero invoice — does the refund need a corrective credit note; the
-  // enqueue is delta-capped against payment.refundedAmountCents, so replays
-  // and already-covered states collapse to a no-op.
-  try {
-    const needsCorrectiveCreditNote =
-      booking.payment.xeroInvoiceId !== null ||
-      (await hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(
-        paymentIntent.id
-      ));
-    if (needsCorrectiveCreditNote) {
-      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        booking.payment.id,
-        paymentIntent.amount
-      );
-      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      }
-    }
-  } catch (xeroErr) {
-    logger.error(
-      { err: xeroErr, bookingId: booking.id, paymentId: booking.payment.id },
-      "Failed to queue corrective Xero refund credit note after late additional capture on a cancelled booking"
-    );
-  }
+  // The corrective Xero credit note, when there is anything to correct - shared
+  // with the primary handler and the treasurer-approved refund (#3639).
+  await queueLateCaptureRefundCreditNote({
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+  });
 
   logger.warn(
     { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId },
@@ -1602,10 +1639,10 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * there.
  *
  * #2774's FENCE APPLIES HERE TOO, and one thing about it is worth stating plainly
- * rather than left for a reader to assume: nothing in the tree currently raises an
- * `OPEN` `ManualRefundTask` for a PRIMARY payment intent — the confirm-modification
- * -payment route is the only raiser of one of these and it handles modification
- * intents — so today the fence cannot fire on this path. It is here anyway because
+ * rather than left for a reader to assume: only the confirm-modification-payment
+ * route raises an `OPEN` task under the fence's `reason` sentences, and it handles
+ * modification intents — so today the fence cannot fire on this path. (#3639's
+ * treasurer-approval task carries its own sentence and is found by its marker.) It is here anyway because
  * the fence is keyed on the payment intent rather than on the handler, so a reader
  * of one handler must not conclude the other is unfenced, and a future raiser is
  * covered by construction. `booking-cancel.ts`'s cash-settlement task sits on the
@@ -1615,6 +1652,11 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * A refund failure is deliberately NOT swallowed, as in the sibling handler: the
  * webhook returns 500, the processed-event marker is cleared, and Stripe's retry
  * replays the same idempotent refund keys.
+ *
+ * #3639: it first asks what the cancellation already settled. A notice for money
+ * captured before the cancel, or already refunded, is acknowledged — 200, no
+ * refund, no Xero note, no status write, an audit entry — see
+ * `acknowledgeSettledLateNotice`.
  */
 async function handleCancelledBookingPaymentSucceeded(
   booking: {
@@ -1639,13 +1681,25 @@ async function handleCancelledBookingPaymentSucceeded(
       xeroInvoiceId: string | null;
     } | null;
   },
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  format: ClubFormat,
 ) {
   if (!booking.payment) {
     logger.error(
       { bookingId: booking.id, paymentIntentId: paymentIntent.id },
       "Cancelled booking received a successful Stripe payment without a local payment record"
     );
+    return;
+  }
+
+  if (
+    await acknowledgeSettledLateNotice({
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      paymentIntent,
+      captureKind: "primary",
+    })
+  ) {
     return;
   }
 
@@ -1661,7 +1715,8 @@ async function handleCancelledBookingPaymentSucceeded(
     amountCents: paymentIntent.amount,
     status: PaymentStatus.SUCCEEDED,
     paymentMethodId,
-    reason: "cancelled_booking_late_capture",
+    // #3639: marks this handler's own write, so a crash-and-retry still refunds.
+    reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
   });
 
   // #2773: the same shape the sibling handler builds, so the record, the audit
@@ -1691,20 +1746,22 @@ async function handleCancelledBookingPaymentSucceeded(
   });
   if (blockingHandBack) {
     await reportWithheldLateCaptureRefund({
+      format,
       capture: lateCapture,
       handBack: blockingHandBack,
     });
     return;
   }
 
+  // #3639: the same setting and ownership check as the sibling handler.
+  if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
+
   const refundResult = await refundPaymentTransactions({
+    format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
-    metadata: {
-      bookingId: booking.id,
-      reason: "cancelled_booking_late_capture",
-    },
-    idempotencyKeyPrefix: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+    metadata: buildLateCaptureRefundMetadata(booking.id),
+    idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(booking.id, paymentIntent.id),
   });
   const refundId = refundResult.refunds[0]?.refundId;
 
@@ -1736,27 +1793,14 @@ async function handleCancelledBookingPaymentSucceeded(
   // per admin in Notification Recipients or club-wide in Delivery Rules, for an
   // automatic money movement. Still exactly ONE notification for the event
   // (`INV-ADDPAY-037`): this replaces the previous mail rather than joining it.
-  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome).catch((err) =>
+  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome, format).catch((err) =>
     logger.error({ err, bookingId: booking.id }, "Failed to send late-capture cancellation alert")
   );
 
-  if (booking.payment.xeroInvoiceId) {
-    try {
-      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        booking.payment.id,
-        paymentIntent.amount
-      );
-
-      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, bookingId: booking.id, paymentId: booking.payment.id },
-        "Failed to queue Xero refund credit note after late cancelled-booking capture"
-      );
-    }
-  }
+  await queueLateCaptureRefundCreditNote({
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+  });
 
   logger.warn(
     { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId },

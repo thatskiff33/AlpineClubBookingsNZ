@@ -146,11 +146,11 @@ describe("AdminSidebar", () => {
       // Full-Admin only, like the two entries above it.
       "Club Time Zone",
       // Club Currency & Locale (#3563, programme #3205): the one persisted
-      // currency and number/date format. Full-Admin only, like the three
-      // entries above it.
+      // currency and number/date format. UNLIKE its neighbours, any admin may
+      // open it (#3596) — viewing is for every admin, changing is Full Admin.
       "Club Currency & Locale",
       // Environment Safety (ENV-SAFETY 1 #3034): is this the club's live site
-      // or a copy of it. Full-Admin only, like the four entries above it.
+      // or a copy of it. Full-Admin only, like Club Time Zone above it.
       "Environment Safety",
       "Committee",
     ]);
@@ -227,31 +227,92 @@ describe("AdminSidebar", () => {
     ).toContain("/admin/club-time");
   });
 
-  it("keeps Club Currency & Locale out of the sidebar for an admin who is not a Full Admin", () => {
-    // The same proof the two entries above carry, for the same reason (#3563):
-    // a support EDITOR satisfies the /admin/club-format prefix requirement on
-    // the matrix, so `fullAdminOnly` is the only thing keeping the entry out —
-    // and /api/admin/club-format refuses them on both verbs anyway, so showing
-    // it would be an offer the app cannot honour.
-    const scoped = {
-      overview: "view" as const,
+  it("shows Club Currency & Locale to every admitted admin, Full Admin or not (#3596)", () => {
+    // UNLIKE the two Full-Admin entries above: any admin may VIEW the club's
+    // currency and locale (owner decision on #3596), so the entry follows the
+    // page's admission rule rather than `fullAdminOnly`. The narrowest shipped
+    // grid is the proof — finance at view and nothing else, holding neither
+    // `support` (the area this href resolves to in the route map) nor
+    // `overview` — because a matrix check on the href would hide the entry
+    // from exactly the admin the page admits.
+    const financeViewerOnly = {
+      overview: "none" as const,
       bookings: "none" as const,
       membership: "none" as const,
-      finance: "none" as const,
+      finance: "view" as const,
       lodge: "none" as const,
       content: "none" as const,
-      support: "edit" as const,
+      support: "none" as const,
     };
-    expect(
-      getVisibleAdminNavSections(CLUB_DAY, allOn, scoped, false).flatMap(
+    const hrefsFor = (
+      matrix: Parameters<typeof getVisibleAdminNavSections>[2],
+      fullAdmin: boolean,
+    ) =>
+      getVisibleAdminNavSections(CLUB_DAY, allOn, matrix, fullAdmin).flatMap(
         (section) => section.items.map((item) => item.href),
+      );
+    expect(hrefsFor(financeViewerOnly, false)).toContain("/admin/club-format");
+    // Its Full-Admin neighbours stay hidden from the same admin, so the entry
+    // above is shown by its own rule and not by a loosened filter.
+    expect(hrefsFor(financeViewerOnly, false)).not.toContain("/admin/club-time");
+    expect(hrefsFor(financeViewerOnly, false)).not.toContain("/admin/environment");
+    // A Full Admin still sees it.
+    expect(hrefsFor(financeViewerOnly, true)).toContain("/admin/club-format");
+    // …and a matrix with no admin area at all does not.
+    expect(
+      hrefsFor(
+        {
+          overview: "none",
+          bookings: "none",
+          membership: "none",
+          finance: "none",
+          lodge: "none",
+          content: "none",
+          support: "none",
+        },
+        false,
       ),
     ).not.toContain("/admin/club-format");
+  });
+
+  it("renders the Club Currency & Locale link for a signed-in admin who is not a Full Admin (#3596)", () => {
+    /*
+      The rendered component, not just the pure seam above: the layout hands
+      `AdminSidebar` the same matrix and Full-Admin flag the pure seam takes, so
+      this is the link a finance-only admin actually meets. The two admission
+      entries (`ANY_ADMIN_ADMISSION_PATHS`) appear with no `fullAdminOnly` or
+      `orAccess` flag of their own (81c2b5d11); the Full-Admin neighbours stay
+      away from the same admin.
+    */
+    render(
+      <AdminSidebar
+        features={allOn}
+        permissionMatrix={{
+          overview: "none",
+          bookings: "none",
+          membership: "none",
+          finance: "view",
+          lodge: "none",
+          content: "none",
+          support: "none",
+        }}
+        isFullAdmin={false}
+      />,
+    );
     expect(
-      getVisibleAdminNavSections(CLUB_DAY, allOn, scoped, true).flatMap(
-        (section) => section.items.map((item) => item.href),
-      ),
-    ).toContain("/admin/club-format");
+      screen
+        .getByRole("link", { name: "Club Currency & Locale" })
+        .getAttribute("href"),
+    ).toBe("/admin/club-format");
+    expect(
+      screen.getByRole("link", { name: "AI Diagnostics" }).getAttribute("href"),
+    ).toBe("/admin/ai-diagnostics");
+    expect(
+      screen.queryByRole("link", { name: "Club Time Zone" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Environment Safety" }),
+    ).toBeNull();
   });
 
   it("owns Lobby Display once under Lodge Operations and keeps General intact", () => {

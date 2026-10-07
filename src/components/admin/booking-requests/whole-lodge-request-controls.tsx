@@ -5,9 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { MONEY_INPUT_PROPS } from "@/lib/money-input";
+import { MoneyInput } from "@/components/ui/money-input";
+import { type ClubDateFormat, formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /*
   #2263 — the admin-side additions for whole-lodge requests, kept as small
@@ -98,8 +99,8 @@ export function WholeLodgeRequestBadges({
  * club the two errors did not cancel and the night came out a day early. A
  * calendar day needs no zone at all, so both steps are gone.
  */
-function formatNight(value: string): string {
-  return formatClubDate(requireCalendarDate(value));
+function formatNight(value: string, format: ClubDateFormat): string {
+  return formatClubDate(requireCalendarDate(value), format);
 }
 
 /**
@@ -114,6 +115,7 @@ export function WholeLodgeAvailabilityStrip({
 }: {
   requestId: string;
 }) {
+  const format = useClubFormat();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<HoldConflictsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -173,7 +175,7 @@ export function WholeLodgeAvailabilityStrip({
                           : "rounded-md border border-border bg-muted px-2 py-1 text-xs text-muted-foreground"
                     }
                   >
-                    {formatNight(night.date)} ·{" "}
+                    {formatNight(night.date, format)} ·{" "}
                     {night.wholeLodgeHeld
                       ? "held"
                       : `${night.occupiedBeds}/${data.lodgeCapacity} beds`}
@@ -195,8 +197,8 @@ export function WholeLodgeAvailabilityStrip({
                     {data.conflicts.map((conflict) => (
                       <li key={conflict.id}>
                         {conflict.memberName} ·{" "}
-                        {formatNight(conflict.checkIn)}–
-                        {formatNight(conflict.checkOut)} ·{" "}
+                        {formatNight(conflict.checkIn, format)}–
+                        {formatNight(conflict.checkOut, format)} ·{" "}
                         {conflict.guestCount}{" "}
                         {conflict.guestCount === 1 ? "guest" : "guests"} ·{" "}
                         {conflict.status}
@@ -270,6 +272,7 @@ export function MemberWholeLodgeApprovalFields({
   onPricingModeChange: (mode: "per-guest" | "whole-lodge") => void;
   disabled?: boolean;
 }) {
+  const format = useClubFormat();
   const flatRateOffered = flatWholeLodgeTotalCents != null;
   return (
     <div className="space-y-3">
@@ -310,7 +313,7 @@ export function MemberWholeLodgeApprovalFields({
             />
             <span>
               <span className="font-medium">Price as whole lodge</span> —{" "}
-              {formatCents(flatWholeLodgeTotalCents)} for the whole building
+              {formatCents(flatWholeLodgeTotalCents, format)} for the whole building
               {nights > 0
                 ? ` (${nights} ${nights === 1 ? "night" : "nights"} at the season flat rate${nights === 1 ? "" : ", each night at its own season's rate"})`
                 : ""}
@@ -344,13 +347,12 @@ export function MemberWholeLodgeApprovalFields({
         <Label htmlFor={`whole-lodge-price-${requestId}`}>
           Total price override (optional)
         </Label>
-        <Input
+        <MoneyInput
           id={`whole-lodge-price-${requestId}`}
-          {...MONEY_INPUT_PROPS}
           className="w-40"
           value={priceDollars}
           disabled={disabled}
-          onChange={(event) => onPriceChange(event.target.value)}
+          onValueChange={onPriceChange}
         />
         <p className="text-xs text-muted-foreground">
           {flatRateOffered

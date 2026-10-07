@@ -54,6 +54,7 @@ import {
   declareEnvironmentRole,
   expectEnvironmentRolePremise,
 } from "@/lib/__tests__/helpers/environment-role";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // NZ today for the frozen clock below is 2026-10-11 (NZST is UTC+12).
 const NOW = new Date("2026-10-10T22:00:00.000Z");
@@ -157,7 +158,7 @@ describe("sendAdditionalPaymentReminders", () => {
       checkOut: new Date("2026-11-03T00:00:00.000Z"),
       requestedOn: EPISODE_STARTED_AT,
       lodgeId: "lodge-1",
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result.initialSentBookingIds).toEqual(["booking-1"]);
     expect(result.finalSentBookingIds).toEqual([]);
     // Only the day-three stamp is written; the pre-arrival one stays free.
@@ -417,6 +418,7 @@ describe("sendAdditionalPaymentReminders", () => {
         additionalAmountCents: 21_000,
         requestedOn: new Date("2026-10-04T00:00:00.000Z"),
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -446,6 +448,7 @@ describe("sendAdditionalPaymentReminders", () => {
         additionalAmountCents: 34_000,
         requestedOn: new Date("2026-10-05T00:00:00.000Z"),
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(
       mockPrisma.payment.updateMany.mock.calls[1][0].where.AND,

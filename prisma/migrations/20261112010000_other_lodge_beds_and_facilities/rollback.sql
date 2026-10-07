@@ -7,7 +7,7 @@
 -- speaks Alpine Central Server API 2.0.
 --
 -- WHAT IT RESTORES. The "bookingPath" column, byte-identical in shape to the
--- one 20261006010000_add_other_lodge_details_and_amenities created
+-- one 20261006020000_add_other_lodge_details_and_amenities created
 -- (VARCHAR(300), nullable, no default). Every row comes back NULL: PostgreSQL
 -- cannot un-drop a column. NULL is the safe value because the field is
 -- optional free text shown only in the admin editor, and a 2.0 site refills it

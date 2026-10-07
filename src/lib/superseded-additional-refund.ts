@@ -13,6 +13,7 @@ import {
   SUPERSEDED_ADDITIONAL_REFUND_EVENT_REASON,
   type SupersededAdditionalRefundEventSnapshot,
 } from "@/lib/superseded-additional-refund-event";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * THE ONE EPILOGUE of a `REFUND_SUPERSEDED_PAYMENT` recovery operation (#3340).
@@ -68,7 +69,10 @@ export async function reportSupersededPaymentRefund(params: {
   paymentId: string;
   paymentIntentId: string;
   refundedAmountCents: number;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
+  const { format } = params;
   const { bookingId, paymentId, paymentIntentId, refundedAmountCents } = params;
 
   let context: {
@@ -200,7 +204,7 @@ export async function reportSupersededPaymentRefund(params: {
     refundedAmountCents,
     amountOwingCents: context.amountOwingCents,
     lodgeId: context.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId, paymentIntentId },
       "Failed to email the member about a superseded-payment refund",
@@ -215,7 +219,7 @@ export async function reportSupersededPaymentRefund(params: {
     amountOwingCents: context.amountOwingCents,
     paymentIntentId,
     bookingId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId, paymentIntentId },
       "Failed to alert admins about a superseded-payment refund",

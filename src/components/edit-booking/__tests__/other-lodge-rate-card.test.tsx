@@ -10,7 +10,7 @@
  * A card test with hand-held state would pass while the real screen left a set
  * of ticks armed against no lodge — which the server then refuses on save.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";

@@ -1,4 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The environment's zone, PINNED (#3567 review). `TZ` is stubbed to it around
+ * every test below, so this file answers the same on a machine whose own `TZ`
+ * is anything else. It is what `APP_TIME_ZONE` fell back to before #3567
+ * deleted it, and what the seed reader answers when no zone is stored.
+ */
+const ENVIRONMENT_CLUB_ZONE = "Pacific/Auckland";
+beforeEach(() => {
+  vi.stubEnv("TZ", ENVIRONMENT_CLUB_ZONE);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import { NextRequest } from "next/server";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 // The real lookback constant (365 at the time of writing). `@/lib/booking-create`
@@ -7,12 +20,12 @@ import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confi
 import { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS as MAX_LOOKBACK_DAYS } from "@/lib/booking-create-types";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
 
 /*
   CT-4 (#2870): every date in this suite is relative to the CLUB's calendar day,
   taken from the persisted `ClubTimeSettings` row the prisma mock below serves —
-  not from `APP_TIME_ZONE`, which this file pins to a DIFFERENT zone on purpose.
+  not from the environment's zone (`ENVIRONMENT_CLUB_ZONE`), which differs from it
+  on purpose.
 
   Before CT-4 the route derived "today" from `getTodayDateOnly()`, i.e. the
   container's `TZ`, and this suite used the same helper as its oracle. The two
@@ -40,15 +53,10 @@ function getTodayDateOnly() {
 // service is a spy so we can assert what the route threads and inject its
 // structured errors; every pre-service helper is stubbed to pass through so the
 // request reaches the past-date / lock-date guards deterministically.
-// Deliberately NOT the persisted zone: the point of this file is that they can
-// differ and the route must follow the persisted one. Inlined because `vi.mock`
-// hoists above every const here.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
+// The environment zone used to be pinned here to `Pacific/Auckland`; that
+// constant was deleted in #3567 and nothing reads the environment's zone any
+// more, so the pin is gone. The premise below still checks the environment's
+// day differs from the persisted zone's.
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -103,7 +111,13 @@ vi.mock("@/lib/module-settings", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: h.memberFindUnique },
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
+    // #3451: the own-dependant guard's parent-link read. This suite's party
+    // carries member ids its mocked resolution does not return, so the shared
+    // entry point reads them as free text and asks; nobody here has a dependant.
+    member: { findUnique: h.memberFindUnique, findMany: vi.fn().mockResolvedValue([]) },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     // Member self-books (no admin bypass) run the minimum-stay policy check.
     minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
@@ -112,7 +126,7 @@ vi.mock("@/lib/prisma", () => ({
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     // The club's persisted timezone. NOT optional on this mock: `getClubTimeZone`
     // degrades silently to the environment when the delegate is missing, so
-    // leaving it off would put the route back on `APP_TIME_ZONE` with nothing
+    // leaving it off would put the route back on the environment's zone with nothing
     // failing.
     clubTimeSettings: {
       findUnique: vi.fn().mockResolvedValue({
@@ -220,6 +234,11 @@ vi.mock("@/lib/xero-organisation", () => ({
   // and falls back to the club default, so these tests stay about date gating.
   getXeroFinancialYearEndMonth: vi.fn(async () => null),
 }));
+// #3029: the route reads the dietary seeding toggle before any create service
+// runs; the real module reaches access-role definitions this file mocks.
+vi.mock("@/lib/member-dietary-booking-writes", () => ({
+  resolveBookingGuestDietarySeeding: vi.fn(async () => ({ seedFromProfile: false })),
+}));
 vi.mock("@/lib/booking-create", async () => {
   // Re-export the REAL constant (the factory is hoisted, so it cannot see the
   // top-level import): the route must enforce the same value the test asserts.
@@ -316,7 +335,7 @@ afterEach(() => {
 });
 
 describe("CT-4 (#2870): the past-date gate runs on the club's day", () => {
-  it("PREMISE: the persisted zone and APP_TIME_ZONE disagree about today", () => {
+  it("PREMISE: the persisted zone and the environment zone disagree about today", () => {
     /*
       The ANSWERS must differ, not merely the identifiers — `America/Chicago` is
       a different string from `America/Denver` and gives the same day, so a guard
@@ -326,9 +345,9 @@ describe("CT-4 (#2870): the past-date gate runs on the club's day", () => {
       The exact-lookback-boundary case below is what turns that disagreement into
       a failure: a check-in exactly MAX_LOOKBACK_DAYS before the CLUB's day is one
       day further back than MAX_LOOKBACK_DAYS before the ENVIRONMENT's, so a route
-      that still reads `APP_TIME_ZONE` refuses it with a 400.
+      that read the environment's zone would refuse it with a 400.
     */
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+    expect(clubToday(requireClubTimeZone(ENVIRONMENT_CLUB_ZONE))).not.toBe("2026-06-30");
     expect(clubToday(requireClubTimeZone("Pacific/Auckland"))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_CLUB_ZONE))).toBe("2026-06-30");
     expect(formatDateOnly(getTodayDateOnly())).toBe("2026-06-30");
@@ -806,5 +825,69 @@ describe("POST /api/bookings — S2 family-add notification wiring (#2284)", () 
 
     expect(res.status).toBe(201);
     expect(h.sendFamilyAddNotifications).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  #3407 (owner decision 14 Sep 2026): at a lodge nobody has given a capacity the
+  party-size refusal says the lodge is not set up for bookings yet, instead of
+  "A booking cannot exceed 0 guests". The rule itself is unchanged — the create
+  is still refused before any service runs — and an officer booking on behalf
+  through `/admin/book` (which posts here) gets exactly what a member gets.
+*/
+describe("POST /api/bookings — the party-size refusal at a lodge with no capacity (#3407)", () => {
+  async function capacityMock() {
+    const { getLodgeCapacity } = await import("@/lib/lodge-capacity");
+    return vi.mocked(getLodgeCapacity);
+  }
+  const twoGuests = [
+    ...guests,
+    { firstName: "Sam", lastName: "Doe", ageTier: "ADULT", isMember: true, memberId: "target-m2" },
+  ];
+
+  it("tells an officer booking on behalf that the lodge is not set up, and creates nothing", async () => {
+    (await capacityMock()).mockResolvedValueOnce(0);
+    const res = await POST(makeRequest(futurePayload()));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe(
+      "This lodge is not set up for bookings yet: the club has not set how many guests it can take.",
+    );
+    expect(body.error).not.toContain("0 guests");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("tells a member booking for themselves the same thing", async () => {
+    h.managementRole.mockReturnValue("USER");
+    h.hasAdminAccess.mockReturnValue(false);
+    h.hasAccessRole.mockReturnValue(true);
+    h.memberFindUnique.mockResolvedValue({
+      active: true,
+      emailVerified: new Date(),
+      xeroContactId: "xc-1",
+      ageTier: "ADULT",
+    });
+    (await capacityMock()).mockResolvedValueOnce(0);
+    const res = await POST(
+      makeRequest({
+        checkIn: daysFromTodayStr(30),
+        checkOut: daysFromTodayStr(32),
+        guests,
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("not set up for bookings yet");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("keeps the configured lodge's refusal byte for byte", async () => {
+    (await capacityMock()).mockResolvedValueOnce(1);
+    const res = await POST(makeRequest(futurePayload({ guests: twoGuests })));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("A booking cannot exceed 1 guests");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
   });
 });

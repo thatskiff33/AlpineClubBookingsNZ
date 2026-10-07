@@ -1076,10 +1076,10 @@ describe("review finding source/schema contracts", () => {
     expect(migrationBlock).toContain(
       "DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
     );
-    expect(migrationBlock).toContain("run: npx prisma migrate deploy");
+    expect(migrationBlock).toContain("run: pnpm exec prisma migrate deploy");
     expect(migrationBlock).not.toContain("drift_main");
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
     );
   });
 
@@ -1122,7 +1122,7 @@ describe("review finding source/schema contracts", () => {
       "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
     );
     expect(stepBlock).toContain(
-      "npx vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts"
     );
 
     // The three cases #2672 added, by name. A rename that loses one of them is
@@ -1138,6 +1138,37 @@ describe("review finding source/schema contracts", () => {
     ]) {
       expect(suite, `#2672 case missing: ${caseName}`).toContain(caseName);
     }
+  });
+
+  it("runs the page-content delete race against a real PostgreSQL in CI (#3852)", () => {
+    // The suite describe.skip's itself without the harness env vars, so an
+    // unwired step would turn the only proof that PostgreSQL gives the loser of
+    // two deletes a P2025 (and the winner the concurrently edited row) into a
+    // file that can never fail. Pins the step, its env and its ordering.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test page-content delete race against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(raceStep).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      raceStep,
+      workflow.indexOf("      - name:", raceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).toContain(
+      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+    );
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/page-content-delete-race.realdb.test.ts"
+    );
+    const suite = readRepoFile(
+      "src/lib/__tests__/page-content-delete-race.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
   });
 
   it("proves the SELECT-only diagnostics role against a real PostgreSQL in CI (#2374)", () => {
@@ -1161,7 +1192,7 @@ describe("review finding source/schema contracts", () => {
     expect(migrateStep).toBeGreaterThan(-1);
     expect(proofStep).toBeGreaterThan(migrateStep);
     expect(workflow.slice(proofStep)).toContain(
-      "npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts"
     );
 
     const suite = readRepoFile(
@@ -1189,7 +1220,7 @@ describe("review finding source/schema contracts", () => {
       "EMAIL_OVERRIDE_ANNOTATION_STRIP_TEST_DATABASE_URL:"
     );
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/email-message-annotation-strip.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/email-message-annotation-strip.test.ts"
     );
     const suite = readRepoFile(
       "src/lib/__tests__/email-message-annotation-strip.test.ts"
@@ -1230,7 +1261,7 @@ describe("review finding source/schema contracts", () => {
     // Both on the SAME step: the env var it needs, and the command that runs it.
     expect(step).toContain("MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL:");
     expect(step).toContain(
-      "npx vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts"
     );
     // A commented-out env line satisfies `toContain` on the raw text.
     expect(
@@ -1344,7 +1375,9 @@ describe("review finding source/schema contracts", () => {
     expect(schema).toContain("stripePaymentIntentId");
     expect(schema).toContain("currency");
     expect(schema).toContain("status");
-    expect(paymentTransactions).toContain("paymentRefund.upsert");
+    // #3640: inserted with ON CONFLICT DO NOTHING, so the insert itself says
+    // whether this writer recorded the refund (the mirror adds only then).
+    expect(paymentTransactions).toContain("paymentRefund.createMany");
     expect(paymentTransactions).toContain("recordStripeRefundLedgerEntry");
     expect(stripeWebhook).toContain("listRefundsForCharge");
     expect(stripeWebhook).toContain("syncRefundsFromStripeCharge");

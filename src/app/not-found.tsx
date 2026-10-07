@@ -4,6 +4,8 @@ import { getPublishedPageContentByPath } from "@/lib/page-content-html";
 import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
+import { ClubFormatProvider } from "@/components/club-format-provider";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Must render per-request (issue #2356), for the same reason `/display` must
@@ -61,12 +63,17 @@ async function loadNotFoundContent() {
     const page = await getPublishedPageContentByPath("/404");
     if (!page) return null;
 
-    const [embeddedBody, clubIdentity] = await Promise.all([
+    // The club's format (#3565) is read here, inside the same guard, because
+    // an embedded booking-request form below reads `useClubFormat()` in the
+    // browser and this page sits outside both chrome components' providers.
+    // `cache()` shares the read with `buildEmbeddedBody()`, so it is one read.
+    const [embeddedBody, clubIdentity, format] = await Promise.all([
       buildEmbeddedBody(page.contentHtml),
       getCachedClubIdentity(),
+      clubFormatValues(),
     ]);
 
-    return { page, embeddedBody, clubIdentity };
+    return { page, embeddedBody, clubIdentity, format };
   } catch {
     return null;
   }
@@ -76,7 +83,7 @@ export default async function NotFound() {
   const content = await loadNotFoundContent();
 
   if (content) {
-    const { page, embeddedBody, clubIdentity } = content;
+    const { page, embeddedBody, clubIdentity, format } = content;
     const headerHtml = { __html: page.headerText };
     const pageSlug = pageSlugFromPath(page.path);
 
@@ -108,14 +115,19 @@ export default async function NotFound() {
         >
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             {embeddedBody.length > 0 ? (
-              <div className="text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
-                <EmbeddedPageContentParts
-                  parts={embeddedBody}
-                  pageSlug={pageSlug}
-                  keyPrefix="not-found"
-                  clubIdentity={clubIdentity}
-                />
-              </div>
+              <ClubFormatProvider
+                currencyCode={format.currencyCode}
+                locale={format.locale}
+              >
+                <div className="text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
+                  <EmbeddedPageContentParts
+                    parts={embeddedBody}
+                    pageSlug={pageSlug}
+                    keyPrefix="not-found"
+                    clubIdentity={clubIdentity}
+                  />
+                </div>
+              </ClubFormatProvider>
             ) : null}
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link

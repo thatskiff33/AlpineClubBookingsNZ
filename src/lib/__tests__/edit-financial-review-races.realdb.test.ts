@@ -9,12 +9,18 @@
  *     under `pg_advisory_xact_lock(1)`. A `vi.fn()` cannot reproduce advisory-lock
  *     mutual exclusion, so a unit test that "proves" this proves only that the
  *     lock statement was SENT.
- *  2. **One task settles exactly ONCE.** The completion holds no advisory lock at
- *     all - deliberately, because serialising it would mean holding the global key
- *     across a Stripe round trip - so its whole single-flight guarantee is a
- *     status-guarded `updateMany` on `OPEN`. Whether that really excludes a
- *     concurrent completion is a question about row locks and READ COMMITTED
- *     re-evaluation, which only a real server answers.
+ *  2. **One task settles exactly ONCE.** The completion never holds an advisory
+ *     lock across the Stripe round trip - that runs after the commit - so its
+ *     single-flight guarantee is a status-guarded `updateMany` on `OPEN`. Since
+ *     #3582 an edit review's completion takes `pg_advisory_xact_lock(1)` as its
+ *     first lock inside the transaction (it posts booking-ledger lines), so two
+ *     completions now also queue behind each other on that key. Since #3740 the
+ *     task is read AFTER that key, so the second reads it closed and is refused
+ *     at the read (409); `manual-refund-task.test.ts` keeps the claim's own
+ *     OPEN fence pinned with the lock mocked.
+ *     Whether that really excludes a concurrent completion is a question about
+ *     row locks and READ COMMITTED re-evaluation, which only a real server
+ *     answers.
  *  3. **One booking edit sends exactly ONE supplementary Xero invoice** (#3170).
  *     Two officers settling the two review tasks of one edit both derive a total
  *     and both reach `enqueueXeroSupplementaryInvoiceOperation`; the per-anchor
@@ -46,14 +52,15 @@
  * To run directly against a throwaway scratch database:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
- *   npx vitest run src/lib/__tests__/edit-financial-review-races.realdb.test.ts
+ *   pnpm exec vitest run src/lib/__tests__/edit-financial-review-races.realdb.test.ts
  */
 import type { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import type { CalendarDate } from "@/lib/club-time";
 import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -71,6 +78,19 @@ const MODIFICATION_ID = "race-3032-modification";
  */
 const PAYMENT_ID = "race-3032-payment";
 const XERO_INVOICE_ID = "race-3032-xero-invoice";
+/** #3641: the captured card payment a retired supplementary invoice waited on. */
+const LATE_CAPTURE_INTENT_ID = "race-3641-pi-late";
+
+/**
+ * #3641: the one alert a refused re-queue sends, replaced so the enqueue-first
+ * interleaving below never reaches a mail transport. Everything else in the
+ * email module stays real for the proofs above.
+ */
+const lateCaptureAlert = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/email")),
+  sendAdminXeroSyncErrorAlert: lateCaptureAlert,
+}));
 
 /**
  * Fixed stay dates. The frozen test clock pins "today" at 2026-07-01, so these
@@ -244,6 +264,12 @@ let observerClient: PrismaClient;
       // exists to force - a race proof that passes vacuously.
       await prisma.xeroSyncOperation.deleteMany({
         where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] } },
+      });
+      // #3641: the late-capture case's captured transaction. Removed every run,
+      // because a SUCCEEDED row on this payment would change what the
+      // completion cases above compute.
+      await prisma.paymentTransaction.deleteMany({
+        where: { stripePaymentIntentId: LATE_CAPTURE_INTENT_ID },
       });
     }
 
@@ -536,10 +562,12 @@ let observerClient: PrismaClient;
       let holderPid = 0;
       let holderError: unknown;
 
-      // The completion path holds NO advisory lock — that is deliberate, and is
-      // why the contended resource here is the task ROW rather than a key. A
-      // third connection takes that row's lock and parks, so both completions
-      // are guaranteed to reach their status-guarded claim and block on it.
+      // The contended resource here is the task ROW. A third connection takes
+      // that row's lock and parks. Since #3582 the first completion takes
+      // `lock(1)` and then blocks on the row at its claim, and the second queues
+      // behind the first on `lock(1)` — `blockedByHolder` counts the chain, so
+      // both are still seen waiting on the holder. Since #3740 the second reads
+      // the task only after its lock, finds it closed, and is refused (409).
       const holder = lockHolderClient
         .$transaction(
           async (tx) => {
@@ -573,7 +601,7 @@ let observerClient: PrismaClient;
           confirmedAmountCents: 4500,
           direction: "REFUND_TO_MEMBER",
           recordedNightPrices: null,
-        });
+        }, CLUB_FORMAT_TEST);
 
       const settled = await Promise.allSettled([
         (async () => {
@@ -743,6 +771,169 @@ let observerClient: PrismaClient;
     });
 
     /**
+     * #3641 (`INV-PAY-104`): A REVIVED INVOICE AND A FRESH ENQUEUE NEVER BOTH GO
+     * OUT. A late capture re-queues the supplementary invoice the reaper retired
+     * from that same row, while a settlement (or the repair tool) may be queueing
+     * a fresh one for the same change. Both decide under the per-anchor key,
+     * taken through the one helper (`lockSupplementaryInvoiceAnchor`), so
+     * whichever runs second sees the first: a fresh enqueue after the revival
+     * finds the revived row outstanding and queues nothing; a revival after the
+     * enqueue finds that invoice outstanding and alerts instead of reviving.
+     *
+     * FORCED like the cases above, and in BOTH orders (delta review N5). The
+     * production key is held; the first contender is started and proven queued
+     * behind it, THEN the second is started and proven queued. PostgreSQL grants
+     * a contended advisory lock to its waiters in queue order, so the first
+     * started is the first to decide, and each order's expectations run on
+     * every run rather than whichever order the scheduler happened to pick.
+     */
+    it.each([["revive-first"], ["enqueue-first"]] as const)(
+      "FORCES the revive-versus-enqueue interleaving (%s): a late capture and a fresh enqueue of ONE edit leave exactly one invoice outstanding",
+      async (order) => {
+      await clearReviewRunState();
+      lateCaptureAlert.mockClear();
+
+      const { enqueueXeroSupplementaryInvoiceOperation } = await import(
+        "@/lib/xero-operation-outbox"
+      );
+      const { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } =
+        await import("@/lib/xero-supplementary-invoice-late-capture");
+
+      // The member's card payment was captured after the reaper retired its
+      // waiting invoice.
+      await prisma.paymentTransaction.create({
+        data: {
+          paymentId: PAYMENT_ID,
+          kind: "ADDITIONAL",
+          source: "STRIPE",
+          stripePaymentIntentId: LATE_CAPTURE_INTENT_ID,
+          amountCents: 20000,
+          status: "SUCCEEDED",
+        },
+      });
+      const retired = await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          status: "CANCELLED",
+          lastErrorCode: "STALE_WAITING_PAYMENT",
+          queueType: "SUPPLEMENTARY_INVOICE",
+          correlationKey: `race-3641:${MODIFICATION_ID}:retired`,
+          idempotencyKey: `race-3641:${MODIFICATION_ID}:retired`,
+          requestPayload: {
+            queueType: "SUPPLEMENTARY_INVOICE",
+            bookingId: BOOKING_ID,
+            bookingModificationId: MODIFICATION_ID,
+            priceDiffCents: 20000,
+            changeFeeCents: 0,
+            recordPayment: true,
+            paymentIntentId: LATE_CAPTURE_INTENT_ID,
+            waitForConfirmedAdditionalPayment: true,
+          },
+        },
+      });
+
+      const lockHeld = deferred();
+      const releaseLock = deferred();
+      let holderPid = 0;
+      let holderError: unknown;
+      // The production key spelled literally, for the reason the #3170 case
+      // gives: this is the assertion that both contenders contend on it.
+      const holder = lockHolderClient
+        .$transaction(
+          async (tx) => {
+            const rows = await tx.$queryRaw<
+              Array<{ pid: number }>
+            >`SELECT pg_backend_pid()::int AS pid`;
+            holderPid = rows[0]?.pid ?? 0;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(${MODIFICATION_ID}))`;
+            lockHeld.resolve();
+            await releaseLock.promise;
+          },
+          { maxWait: 5_000, timeout: 10_000 },
+        )
+        .catch((error: unknown) => {
+          holderError = error;
+          lockHeld.resolve();
+        });
+      await lockHeld.promise;
+      if (holderError) {
+        throw new Error(
+          `The lock-holder connection could not hold the supplementary-invoice key: ${String(holderError)}`,
+        );
+      }
+
+      const startRevive = () =>
+        releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
+          LATE_CAPTURE_INTENT_ID,
+        );
+      const startEnqueue = () =>
+        enqueueXeroSupplementaryInvoiceOperation({
+          bookingId: BOOKING_ID,
+          bookingModificationId: MODIFICATION_ID,
+          priceDiffCents: 20000,
+          changeFeeCents: 0,
+        });
+      const notQueued =
+        "The late-capture re-queue and the enqueue did not both queue on the per-anchor supplementary-invoice " +
+        "key, so a revived invoice and a fresh one could BOTH be sent for one booking edit " +
+        "(docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-104).";
+
+      let revive: ReturnType<typeof startRevive>;
+      let enqueue: ReturnType<typeof startEnqueue>;
+      if (order === "revive-first") {
+        revive = startRevive();
+        await waitForBlockedBy(holderPid, 1, notQueued);
+        enqueue = startEnqueue();
+      } else {
+        enqueue = startEnqueue();
+        await waitForBlockedBy(holderPid, 1, notQueued);
+        revive = startRevive();
+      }
+      await waitForBlockedBy(holderPid, 2, notQueued);
+
+      releaseLock.resolve();
+      await holder;
+      const [revived, enqueued] = await Promise.all([revive, enqueue]);
+
+      const outstanding = await prisma.xeroSyncOperation.findMany({
+        where: {
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          queueType: "SUPPLEMENTARY_INVOICE",
+          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+        },
+        select: { id: true },
+      });
+      expect(outstanding).toHaveLength(1);
+
+      const retiredAfter = await prisma.xeroSyncOperation.findUniqueOrThrow({
+        where: { id: retired.id },
+        select: { status: true, lastErrorCode: true },
+      });
+      if (order === "revive-first") {
+        // The enqueue found the revived row and queued nothing.
+        expect(revived.outcome).toBe("requeued");
+        expect(outstanding[0]?.id).toBe(retired.id);
+        expect(enqueued.queueOperationId).toBe(retired.id);
+        expect(lateCaptureAlert).not.toHaveBeenCalled();
+      } else {
+        // The revival saw that invoice and told an officer instead.
+        expect(revived.outcome).toBe("alerted");
+        expect(outstanding[0]?.id).not.toBe(retired.id);
+        expect(retiredAfter).toEqual({
+          status: "CANCELLED",
+          lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+        });
+        expect(lateCaptureAlert).toHaveBeenCalledTimes(1);
+      }
+      },
+    );
+
+    /**
      * #3166 — THE TWO MONEY RULES THAT READ AS ONE RULE, PINNED SEPARATELY.
      *
      * Both of the cases below are about "do not raise twice", and they demand
@@ -820,7 +1011,7 @@ let observerClient: PrismaClient;
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      });
+      }, CLUB_FORMAT_TEST);
 
       const next = await raiseInOwnTransaction();
 
@@ -873,6 +1064,585 @@ let observerClient: PrismaClient;
       });
       expect(credits).toHaveLength(1);
       expect(credits[0].amountCents).toBe(4500);
+    });
+
+    /**
+     * #3791: a credit-paid booking's review share, on real rows and through the
+     * REAL `cancelBooking`. A $200 booking paid entirely by account credit; a
+     * review refunds a $50 share; the booking is cancelled - before the review
+     * completes, or after. Either way the member gets the share once: $200 in
+     * all at a 100% tier, $105 at 50% with a $20 fee. Minting the share beside an
+     * unchanged applied figure paid it twice ($250 and $130).
+     */
+    describe("#3791: a credit-paid booking's review share is paid once", () => {
+      const CREDIT_NOTE_ID = "race-3791-credit-note";
+      const TIERS = [
+        { tier: "100%", rule: { refundPercentage: 100, fixedFeeCents: 0 }, totalBackCents: 20_000, netCents: 0 },
+        { tier: "50% with a $20 fee", rule: { refundPercentage: 50, fixedFeeCents: 2_000 }, totalBackCents: 10_500, netCents: 2_500 },
+      ];
+      let credit: typeof import("@/lib/member-credit");
+      let ledger: typeof import("@/lib/booking-ledger-balance");
+      let planAppliedCreditAllocation: (typeof import("@/lib/xero-applied-credit-allocation"))["planAppliedCreditAllocation"];
+
+      async function clearCreditRun() {
+        await clearReviewRunState();
+        await prisma.xeroSyncOperation.deleteMany({ where: { localId: PAYMENT_ID } });
+        const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
+        await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
+        await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
+        await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: MODIFICATION_ID } });
+        await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+        await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+        await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
+        await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+        await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID, id: { not: MODIFICATION_ID } } });
+        await prisma.bookingGuestNight.deleteMany({ where: { bookingGuestId: GUEST_ID } });
+        await prisma.bookingGuest.update({ where: { id: GUEST_ID }, data: { priceCents: 20_000 } });
+        await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID", totalPriceCents: 20_000, finalPriceCents: 20_000 } });
+      }
+
+      /**
+       * Applied credit, nothing captured, in one of three shapes: a card-path
+       * booking with no Xero invoice; one whose full-price invoice was raised
+       * and never had the credit allocated (the card path's own gap, see the
+       * #3791 report); and a bank-transfer booking whose credit IS allocated
+       * against its invoice. Paid in full by credit unless `appliedCents` is
+       * less than the $200, which leaves it unpaid and owing the rest.
+       */
+      async function payByCredit(shape: "card" | "card-invoiced" | "ib-allocated", appliedCents = 20_000) {
+        const unpaid = appliedCents < 20_000;
+        await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: unpaid ? "PAYMENT_PENDING" : "PAID" } });
+        await prisma.payment.update({
+          where: { id: PAYMENT_ID },
+          data: {
+            amountCents: 20_000 - appliedCents,
+            status: unpaid ? "PENDING" : "SUCCEEDED",
+            creditAppliedCents: appliedCents,
+            source: shape === "ib-allocated" ? "INTERNET_BANKING" : "STRIPE",
+            xeroInvoiceId: shape === "card" ? null : XERO_INVOICE_ID,
+          },
+        });
+        await prisma.memberCredit.create({
+          data: {
+            memberId: MEMBER_ID,
+            amountCents: appliedCents,
+            type: "ADMIN_ADJUSTMENT",
+            description: "race 3791 opening balance",
+            ...(shape === "ib-allocated" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
+          },
+        });
+        await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, appliedCents, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+        if (shape === "ib-allocated") {
+          // What the outbound allocation engine leaves: the applied row stamped
+          // with the note, and the working slice and its provenance link.
+          await prisma.memberCredit.updateMany({
+            where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED" },
+            data: { xeroCreditNoteId: CREDIT_NOTE_ID },
+          });
+          const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
+          await prisma.$transaction((tx) => repairLegacyAppliedCreditNoteAllocationsForBooking(BOOKING_ID, XERO_INVOICE_ID, tx, CLUB_FORMAT_TEST));
+        }
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+      }
+
+      /**
+       * The parked edit froze the booking at $200; its strand now sells for
+       * $150, so the review's re-price takes $50 off. Exact SOLD nights, which
+       * is what the re-base needs before it will move the price.
+       */
+      async function strandSellsFor(cents: number) {
+        await prisma.bookingGuest.update({ where: { id: GUEST_ID }, data: { priceCents: cents } });
+        await prisma.bookingGuestNight.createMany({
+          data: [
+            { bookingGuestId: GUEST_ID, stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: cents / 2, priceSource: "SOLD" },
+            { bookingGuestId: GUEST_ID, stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: cents / 2, priceSource: "SOLD" },
+          ],
+        });
+      }
+
+      /** The stay on the booking ledger, one line a night, as a confirmation posts it (#3527). */
+      async function confirmOnLedger() {
+        const nights = [new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-02T00:00:00.000Z")];
+        for (const [index, night] of nights.entries()) {
+          await prisma.bookingLedgerLine.create({ data: {
+            bookingId: BOOKING_ID, side: "CHARGE", kind: "GUEST_NIGHT", sign: 1, quantity: 1, unitCents: 10_000, amountCents: 10_000,
+            bookingGuestId: GUEST_ID, nightStart: night, nightEndExclusive: nights[index + 1] ?? CHECK_OUT, ageTier: "ADULT",
+            guestNames: ["Review Guest"], anchorKind: "CONFIRMATION", anchorId: BOOKING_ID, narration: "race 3791 confirmation",
+            lodgeId: LODGE_ID, postingKey: `race-3791-confirm-${index}`,
+          } });
+        }
+      }
+      const ledgerLines = () => prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID } });
+      const owed = async () => ledger.bookingLedgerBalance(await ledgerLines()).owedCents;
+
+      /** Every credit note this booking's reviews and cancellation queued, as the outbox worker will raise it. */
+      async function queuedNotes() {
+        const operations = await prisma.xeroSyncOperation.findMany({
+          where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] }, entityType: "CREDIT_NOTE" },
+          select: { id: true, queueType: true, correlationKey: true, requestPayload: true },
+          orderBy: { createdAt: "asc" },
+        });
+        return operations.map((operation) => {
+          const payload = operation.requestPayload as { refundAmountCents: number; reviewTaskId?: string; refundMethod?: string };
+          return {
+            id: operation.id,
+            queueType: operation.queueType,
+            cents: payload.refundAmountCents,
+            reviewTaskId: payload.reviewTaskId ?? null,
+            refundMethod: payload.refundMethod ?? null,
+            correlationKey: operation.correlationKey,
+          };
+        });
+      }
+
+      /**
+       * THE THREE INVARIANTS, as Xero will stand once its queue drains (second
+       * review round on #3791). Every figure is computed from the rows the app
+       * wrote - the queued documents, the allocation slices, the credit ledger -
+       * never from what the code under test reports.
+       *
+       *  - `invoiceNetCents`: the $200 invoice less its allocated REDUCTION notes
+       *    (review notes and clearing notes), to set beside the booking's price
+       *    on its own ledger (`charged + adjusted`).
+       *  - `invoiceDueCents`: that, less the applied credit still allocated to
+       *    it (a queued deallocation lands the slices at its target), to set
+       *    beside what the app says is owed.
+       *  - `unmatchedXeroCreditCents`: spend the member's whole app balance on a
+       *    new booking through the real allocation planner - noted credit first,
+       *    noteless rows minted a note as they are spent (#2717) - and count the
+       *    Xero credit left over. Every cent of the member's Xero credit is app
+       *    credit exactly when this is 0 and the spend is covered.
+       */
+      async function xeroOnceDrained() {
+        const notes = await queuedNotes();
+        const deallocation = await prisma.xeroSyncOperation.findFirst({
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
+          orderBy: { createdAt: "desc" },
+          select: { correlationKey: true, status: true },
+        });
+        const slices = await prisma.memberCreditNoteAllocation.findMany({
+          where: { appliedToBookingId: BOOKING_ID },
+          select: { memberCreditId: true, amountCents: true },
+        });
+        const slicedCents = slices.reduce((sum, slice) => sum + slice.amountCents, 0);
+        const allocatedCreditCents =
+          deallocation && deallocation.status !== "COMPLETED"
+            ? Number(deallocation.correlationKey?.split(":").at(-2))
+            : slicedCents;
+        const reductionCents = notes.filter((note) => note.queueType !== "MODIFICATION_ACCOUNT_CREDIT_NOTE").reduce((sum, note) => sum + note.cents, 0);
+        const invoiceNetCents = 20_000 - reductionCents;
+
+        // The member's lots as a later spend reads them. A queued account note
+        // lands on the minted row of its amount, as the builder's backfill does;
+        // one with no such row is Xero credit the app does not hold.
+        const rows = await prisma.memberCredit.findMany({
+          where: { memberId: MEMBER_ID, amountCents: { gt: 0 } },
+          select: { id: true, amountCents: true, type: true, xeroCreditNoteId: true, sourceBookingModificationId: true, createdAt: true },
+          orderBy: { createdAt: "asc" },
+        });
+        const noteCents = new Map<string, number>();
+        if (rows.some((row) => row.xeroCreditNoteId === CREDIT_NOTE_ID)) {
+          noteCents.set(CREDIT_NOTE_ID, rows.find((row) => row.xeroCreditNoteId === CREDIT_NOTE_ID)!.amountCents - allocatedCreditCents);
+        }
+        const stamped = new Map<string, string>();
+        for (const note of notes.filter((n) => n.queueType === "MODIFICATION_ACCOUNT_CREDIT_NOTE")) {
+          noteCents.set(note.id, note.cents);
+          const minted = rows.find(
+            (row) => row.type === "BOOKING_MODIFICATION_REFUND" && row.sourceBookingModificationId === MODIFICATION_ID
+              && row.amountCents === note.cents && !row.xeroCreditNoteId && !stamped.has(row.id),
+          );
+          if (minted) stamped.set(minted.id, note.id);
+        }
+        const lots = rows
+          .map((row) => {
+            const xeroCreditNoteId = row.xeroCreditNoteId ?? stamped.get(row.id) ?? null;
+            const remainingCents = xeroCreditNoteId === CREDIT_NOTE_ID ? row.amountCents - allocatedCreditCents : row.amountCents;
+            return { memberCreditId: row.id, creditType: row.type, xeroCreditNoteId, remainingCents };
+          })
+          .filter((lot) => lot.remainingCents > 0)
+          // Noted lots first, as the oldest funding note always is outside a frozen clock.
+          .sort((a, b) => Number(b.xeroCreditNoteId !== null) - Number(a.xeroCreditNoteId !== null));
+        const balanceCents = await credit.getMemberCreditBalance(MEMBER_ID);
+        const plan = planAppliedCreditAllocation(lots, balanceCents, CLUB_FORMAT_TEST);
+        for (const allocation of plan.noteAllocations) {
+          noteCents.set(allocation.xeroCreditNoteId, (noteCents.get(allocation.xeroCreditNoteId) ?? 0) - allocation.amountCents);
+        }
+        return {
+          invoiceNetCents,
+          invoiceDueCents: Math.max(0, invoiceNetCents - allocatedCreditCents),
+          unmatchedXeroCreditCents: [...noteCents.values()].reduce((sum, cents) => sum + cents, 0),
+        };
+      }
+
+      /** What the app says: the booking's price on its ledger, and what is owed on it. */
+      async function appSays() {
+        const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true, finalPriceCents: true } });
+        const appliedCents = await credit.deriveBookingAppliedCreditCents(BOOKING_ID);
+        return {
+          ledgerPriceCents: ledger.bookingLedgerPriceCents(await ledgerLines()),
+          owedCents: booking.status === "PAYMENT_PENDING" ? Math.max(0, booking.finalPriceCents - appliedCents) : 0,
+        };
+      }
+
+      /** The three invariants, asserted together. */
+      async function expectXeroToAgree({ priceToo = true }: { priceToo?: boolean } = {}) {
+        const xero = await xeroOnceDrained();
+        const app = await appSays();
+        if (priceToo) expect(xero.invoiceNetCents, "(i) invoice net of its reductions = the booking's price").toBe(app.ledgerPriceCents);
+        expect(xero.invoiceDueCents, "(ii) Xero's amount due = the app's owed").toBe(app.owedCents);
+        expect(xero.unmatchedXeroCreditCents, "(iii) the member's Xero credit = the app's").toBe(0);
+        return { xero, app };
+      }
+
+      /** The worker's deallocation, landed: the slices at its target, the row COMPLETED. */
+      async function deallocationConverges() {
+        const deallocation = await prisma.xeroSyncOperation.findFirstOrThrow({
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
+          select: { id: true, correlationKey: true },
+        });
+        const target = Number(deallocation.correlationKey?.split(":").at(-2));
+        const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
+        await prisma.memberCreditNoteAllocation.updateMany({ where: { appliedToBookingId: BOOKING_ID }, data: { amountCents: target } });
+        // ...and its provenance, as the worker re-records it.
+        const links = await prisma.xeroObjectLink.findMany({
+          where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) }, active: true },
+          select: { id: true, metadata: true },
+        });
+        for (const link of links) {
+          await prisma.xeroObjectLink.update({
+            where: { id: link.id },
+            data: { metadata: { ...(link.metadata as Record<string, unknown>), amountCents: target, rowTargetCents: target } },
+          });
+        }
+        await prisma.xeroSyncOperation.update({ where: { id: deallocation.id }, data: { status: "COMPLETED" } });
+        return deallocation.id;
+      }
+
+      const completeShare = (taskId: string, confirmedAmountCents = 5_000) =>
+        resolveManualRefundTask({
+          taskId,
+          resolution: "completed",
+          note: "Priced from the booking's own payment history.",
+          actingMemberId: MEMBER_ID,
+          confirmedAmountCents,
+          direction: "REFUND_TO_MEMBER",
+          recordedNightPrices: null,
+        }, CLUB_FORMAT_TEST);
+
+      /** A second review of the same edit: another surrendered night, the same anchor. */
+      const raiseSibling = () =>
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+          return raiseEditFinancialReviewTask({
+            ...raiseInput(),
+            occurrence: { ...occurrence(), surrenderedNightDates: ["2026-08-02" as CalendarDate] },
+            store: tx,
+          });
+        });
+
+      async function cancelAt(rule: (typeof TIERS)[number]["rule"]) {
+        await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, ...rule } });
+        const { cancelBooking } = await import("@/lib/booking-cancel");
+        const result = await cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+        expect(result.status).toBe(200);
+      }
+
+      beforeAll(async () => {
+        credit = await import("@/lib/member-credit");
+        ledger = await import("@/lib/booking-ledger-balance");
+        ({ planAppliedCreditAllocation } = await import("@/lib/xero-applied-credit-allocation"));
+      });
+
+      afterAll(async () => {
+        await clearCreditRun();
+        await prisma.payment.update({
+          where: { id: PAYMENT_ID },
+          data: { amountCents: 20000, status: "PENDING", source: "INTERNET_BANKING", xeroInvoiceId: XERO_INVOICE_ID, creditAppliedCents: 0 },
+        });
+      });
+
+      it.each(TIERS)("review first, then the REAL cancel at $tier: the cancel tiers the 15000 cents still applied ($totalBackCents cents in all), and the ledger owes nothing", async ({ rule, totalBackCents }) => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("card");
+        const raised = await raiseInOwnTransaction();
+
+        await completeShare(raised.taskId);
+
+        // The share came back as applied credit given back - nothing minted.
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+        const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true } });
+        expect(payment.creditAppliedCents).toBe(15_000);
+        expect(await prisma.memberCredit.count({ where: { sourceBookingModificationId: MODIFICATION_ID } })).toBe(0);
+
+        await cancelAt(rule);
+
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(totalBackCents);
+        expect(await owed()).toBe(0);
+      }, 60_000);
+
+      it.each(TIERS)("the REAL cancel first at $tier, then the review: the share is netted against the restore ($netCents cents given back, $totalBackCents in all), and the ledger owes nothing", async ({ rule, totalBackCents, netCents }) => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("card");
+        const raised = await raiseInOwnTransaction();
+        await cancelAt(rule);
+        const restoredCents = await credit.getMemberCreditBalance(MEMBER_ID);
+
+        await completeShare(raised.taskId);
+
+        expect(await credit.getMemberCreditBalance(MEMBER_ID) - restoredCents).toBe(netCents);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(totalBackCents);
+        expect(await prisma.memberCredit.count({ where: { sourceBookingModificationId: MODIFICATION_ID } })).toBe(0);
+        const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId }, select: { status: true } });
+        expect(task.status).toBe("COMPLETED");
+        // Nothing credited, nothing claimed: no CREDITED event at 100%.
+        const credited = await prisma.bookingEvent.count({ where: { bookingId: BOOKING_ID, type: "CREDITED" } });
+        expect(credited).toBe(netCents > 0 ? 1 : 0);
+        // The stand-in posts what was credited, not the typed $50 - and at 100%,
+        // where nothing was, no stand-in at all.
+        expect(await owed()).toBe(0);
+        const standIns = await prisma.bookingLedgerLine.findMany({
+          where: { bookingId: BOOKING_ID, kind: "AGREED_ADJUSTMENT", anchorId: raised.taskId },
+          select: { amountCents: true },
+        });
+        expect(standIns.map((line) => line.amountCents)).toEqual(netCents > 0 ? [-netCents] : []);
+      }, 60_000);
+
+      it("two reviews of one edit, after the REAL cancel at 50% less $20: each $20 share gives back $10 and the member ends at $100", async () => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("card");
+        const first = await raiseInOwnTransaction();
+        const second = await raiseSibling();
+        expect(second.taskId).not.toBe(first.taskId);
+        await cancelAt(TIERS[1]!.rule);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(8_000);
+
+        await completeShare(first.taskId, 2_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(9_000);
+        // The second neither 409s on a mirror the first lowered nor forgets the
+        // first's give-back.
+        await completeShare(second.taskId, 2_000);
+
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(10_000);
+        expect(await owed()).toBe(0);
+      }, 60_000);
+
+      it("FORCES the ledger-lock interleaving: a deallocation queued by a writer holding the member's ledger lock is re-read by the completion queued behind it, which refuses with the task still OPEN", async () => {
+        await clearCreditRun();
+        await payByCredit("card");
+        const raised = await raiseInOwnTransaction();
+
+        const lockHeld = deferred();
+        const releaseLock = deferred();
+        let holderPid = 0;
+        let holderError: unknown;
+        // A third connection takes the member's credit-ledger key and, under it,
+        // queues an applied-credit deallocation for the payment - what a clamp on
+        // an internet-banking booking commits with its give-back.
+        const holder = lockHolderClient
+          .$transaction(
+            async (tx) => {
+              const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+              holderPid = rows[0]?.pid ?? 0;
+              await credit.lockMemberCreditLedger(MEMBER_ID, tx);
+              await tx.xeroSyncOperation.create({
+                data: {
+                  direction: "OUTBOUND",
+                  entityType: "ALLOCATION",
+                  operationType: "UPDATE",
+                  localModel: "Payment",
+                  localId: PAYMENT_ID,
+                  status: "PENDING",
+                  queueType: "APPLIED_CREDIT_DEALLOCATION",
+                  requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: BOOKING_ID },
+                },
+              });
+              lockHeld.resolve();
+              await releaseLock.promise;
+            },
+            { maxWait: 5_000, timeout: 10_000 },
+          )
+          .catch((error: unknown) => {
+            holderError = error;
+            lockHeld.resolve();
+          });
+        await lockHeld.promise;
+        if (holderError) throw new Error(`The lock-holder connection could not hold the ledger key: ${String(holderError)}`);
+
+        const completion = completeShare(raised.taskId).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await waitForBlockedBy(
+          holderPid,
+          1,
+          "The completion did not queue on the member's credit-ledger key, so its give-back is not serialised with the clamp and the other credit writers (INV-LOCK-001).",
+        ).finally(() => releaseLock.resolve());
+        await holder;
+
+        // It read the fence AFTER the key, not before: a 409 the officer can
+        // retry, and the claim rolled back with everything else.
+        expect(await completion).toMatchObject({ status: 409 });
+        const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId }, select: { status: true } });
+        expect(task.status).toBe("OPEN");
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(20_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+      }, RACE_TEST_TIMEOUT_MS);
+
+      it("a bank-transfer booking paid by credit allocated in Xero: the deallocation and an allocated note for the share; Xero agrees with the app on all three counts, and the inbound sync no longer undoes the give-back", async () => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("ib-allocated");
+        const raised = await raiseInOwnTransaction();
+
+        await completeShare(raised.taskId);
+
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+        const deallocations = await prisma.xeroSyncOperation.findMany({
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
+          select: { id: true, status: true, correlationKey: true },
+        });
+        expect(deallocations).toHaveLength(1);
+        expect(deallocations[0]).toMatchObject({ status: "PENDING" });
+        expect(deallocations[0].correlationKey).toContain("applied-credit-deallocation:15000");
+        expect((await queuedNotes()).map((note) => ({ ...note, id: undefined }))).toEqual([{
+          id: undefined,
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          cents: 5_000,
+          reviewTaskId: raised.taskId,
+          refundMethod: "account-credit",
+          correlationKey: `booking-mod:${MODIFICATION_ID}:review-task:${raised.taskId}:mod-credit-note:5000:v1`,
+        }]);
+        await expectXeroToAgree();
+
+        const { repairAccountCreditAllocationBusinessState } = await import("@/lib/xero-inbound/credit-note-repairs");
+        // An inbound sync while Xero still shows the old $200 allocation: it
+        // waits for the deallocation instead of pulling applied credit back up.
+        await expect(
+          repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents: 20_000 }]),
+        ).rejects.toThrow(/converge it before changing applied credit/);
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+
+        // The worker deallocates in Xero; the next inbound sync reads $150 and
+        // leaves the give-back exactly where it is.
+        await prisma.xeroSyncOperation.update({ where: { id: deallocations[0].id }, data: { status: "COMPLETED" } });
+        await repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents: 15_000 }]);
+
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+        await expectXeroToAgree();
+      }, 60_000);
+
+      it("the reviewer's unpaid example: $200 invoiced, $80 credit allocated, re-priced $50 down, a $30 share - a $50 note, a $30 deallocation, $100 owed on both sides, and a later unpaid cancel clears to nothing", async () => {
+        await clearCreditRun();
+        await payByCredit("ib-allocated", 8_000);
+        await strandSellsFor(15_000);
+        const raised = await raiseInOwnTransaction();
+
+        await completeShare(raised.taskId, 3_000);
+
+        expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } })).finalPriceCents).toBe(15_000);
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(5_000);
+        expect((await queuedNotes()).map((note) => [note.queueType, note.cents])).toEqual([["MODIFICATION_CREDIT_NOTE", 5_000]]);
+        expect((await xeroOnceDrained()).invoiceDueCents).toBe(10_000);
+        await expectXeroToAgree({ priceToo: false });
+
+        await deallocationConverges();
+        await cancelAt(TIERS[0]!.rule);
+
+        // The cancel's own clearing note takes the invoice to nothing open.
+        expect((await xeroOnceDrained()).invoiceDueCents).toBe(0);
+        expect((await xeroOnceDrained()).unmatchedXeroCreditCents).toBe(0);
+      }, 60_000);
+
+      it("two reviews of one edit on a covered bank-transfer booking: two equal $20 notes, one per review, neither folded into the other nor refused by the first's link", async () => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("ib-allocated");
+        const first = await raiseInOwnTransaction();
+        const second = await raiseSibling();
+
+        await completeShare(first.taskId, 2_000);
+        await deallocationConverges();
+        // The first's note has reached Xero and is linked on the anchor.
+        await prisma.xeroObjectLink.create({ data: {
+          localModel: "BookingModification", localId: MODIFICATION_ID, xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "race-3791-first-note", role: "MODIFICATION_CREDIT_NOTE", active: true,
+        } });
+        await completeShare(second.taskId, 2_000);
+
+        // Ordered by review: under the frozen test clock both rows share one createdAt.
+        const byReview = (await queuedNotes()).sort((a, b) => Number(a.reviewTaskId === second.taskId) - Number(b.reviewTaskId === second.taskId));
+        expect(byReview.map((note) => [note.queueType, note.cents, note.reviewTaskId])).toEqual([
+          ["MODIFICATION_CREDIT_NOTE", 2_000, first.taskId],
+          ["MODIFICATION_CREDIT_NOTE", 2_000, second.taskId],
+        ]);
+        await expectXeroToAgree();
+      }, 60_000);
+
+      it("F3: on a covered booking, a review that re-prices leaves an earlier review's agreed give-back standing - Xero and the ledger agree, and owed(b) is zero", async () => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("ib-allocated");
+        const first = await raiseInOwnTransaction();
+        const second = await raiseSibling();
+
+        // Review 1: nothing re-priced, $30 given back - an agreed reduction.
+        await completeShare(first.taskId, 3_000);
+        await deallocationConverges();
+        await expectXeroToAgree();
+
+        // Review 2: the strand now sells for $180, and the share is that $20.
+        await strandSellsFor(18_000);
+        await completeShare(second.taskId, 2_000);
+
+        expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } })).finalPriceCents).toBe(18_000);
+        const live = ledger.bookingLedgerBalance(await ledgerLines());
+        expect(live.adjustedCents, "review 1's agreed give-back is still on the ledger").toBe(-3_000);
+        await expectXeroToAgree();
+        expect(await owed()).toBe(0);
+      }, 60_000);
+
+      it("a card-path booking with an issued invoice: one allocated note for the share, no deallocation, and Xero agrees on the price and on the member's credit", async () => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("card-invoiced");
+        const raised = await raiseInOwnTransaction();
+
+        await completeShare(raised.taskId);
+
+        expect(await prisma.xeroSyncOperation.count({ where: { localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" } })).toBe(0);
+        expect(await queuedNotes()).toEqual([expect.objectContaining({ queueType: "MODIFICATION_CREDIT_NOTE", cents: 5_000, reviewTaskId: raised.taskId })]);
+        // (ii) cannot hold here before the review either: the card path never
+        // allocated this credit against its invoice (reported separately).
+        const xero = await xeroOnceDrained();
+        expect(xero.invoiceNetCents).toBe((await appSays()).ledgerPriceCents);
+        expect(xero.unmatchedXeroCreditCents).toBe(0);
+      }, 60_000);
+
+      it("the REAL cancel first on a bank-transfer booking allocated in Xero, then the review: nothing reopens the cancelled invoice, the given-back $25 takes no note, and a later spend leaves no orphan Xero credit", async () => {
+        await clearCreditRun();
+        await payByCredit("ib-allocated");
+        const raised = await raiseInOwnTransaction();
+        await cancelAt(TIERS[1]!.rule);
+        const before = await xeroOnceDrained();
+
+        await completeShare(raised.taskId);
+
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(10_500);
+        expect(await prisma.xeroSyncOperation.count({ where: { localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" } })).toBe(0);
+        expect(await queuedNotes()).toEqual([]);
+        const after = await xeroOnceDrained();
+        expect(after.invoiceDueCents).toBe(before.invoiceDueCents);
+        expect(after.invoiceDueCents).toBe(0);
+        // The restore and the give-back are both noteless rows, minted a note
+        // when spent: nothing in Xero is left without app credit behind it.
+        expect(after.unmatchedXeroCreditCents).toBe(0);
+      }, 60_000);
     });
   },
 );

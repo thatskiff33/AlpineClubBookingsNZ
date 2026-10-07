@@ -3,7 +3,7 @@
  * 21 Aug 2026).
  *
  * WHY THIS EXISTS. #2979 deleted `scripts/quality/file-size-baseline.txt` and,
- * with it, `npm run quality:budget:update` — the one way to say "yes, this file
+ * with it, `pnpm run quality:budget:update` — the one way to say "yes, this file
  * grows, I mean it". The issue called the result "today's semantics"; it was
  * not. Today there IS an escape, and removing it would leave **283 over-budget
  * files** — most of the modules people work in daily — unable to gain a single
@@ -45,12 +45,10 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "./allowance-dir.mjs";
 
 /** Where a pull request writes its allowances. One file per pull request. */
-export const ALLOWANCE_DIR = "size-allowances.d";
-
-/** Never parsed as an allowance, the same way the changelog compiler skips it. */
-const RESERVED_NAMES = new Set(["readme.md"]);
+export { ALLOWANCE_DIR };
 
 /**
  * A reason has to be a reason. The owner decision is explicit that "a bare
@@ -209,7 +207,7 @@ export function readSizeAllowances(root: string): AllowanceRead {
         (entry) =>
           entry.isFile() &&
           entry.name.toLowerCase().endsWith(".md") &&
-          !RESERVED_NAMES.has(entry.name.toLowerCase()),
+          !isReservedAllowanceName(entry.name),
       )
       .map((entry) => entry.name)
       .sort();
@@ -231,6 +229,10 @@ export function readSizeAllowances(root: string): AllowanceRead {
   const problems: AllowanceProblem[] = [];
   for (const name of names) {
     const source = `${ALLOWANCE_DIR}/${name}`;
+    if (!isSafeAllowanceName(name)) {
+      problems.push({ source, problem: `unsafe allowance filename: ${name}` });
+      continue;
+    }
     let text: string;
     try {
       text = readFileSync(path.join(dir, name), "utf8");

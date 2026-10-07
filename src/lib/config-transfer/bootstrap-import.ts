@@ -15,6 +15,7 @@ import {
 } from "./apply";
 import type { ImportMode, ReadDb } from "./import-types";
 import { formatConfigImportTotals } from "./preview";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * C9 — Config bundle auto-import on boot (ADR-003, disaster-recovery / clone).
@@ -531,8 +532,12 @@ export async function runConfigBootstrapImport(
     // resource caps + safe-path checks) and every category planner
     // (allowlist + DMMF type-checks). A malformed/tampered/oversized bundle
     // surfaces here with no write attempted.
+    // The club's format (#3565), resolved once per boot import, before the
+    // plan and the apply transaction it feeds.
+    const format = await clubFormatValues();
     const plan = await planImpl(db, bytes, {
       mode: BOOTSTRAP_IMPORT_MODE,
+      format,
     });
 
     if (plan.errors.length > 0) {
@@ -600,6 +605,7 @@ export async function runConfigBootstrapImport(
       actorMemberId: CONFIG_BOOTSTRAP_ACTOR,
       expectedFingerprint: plan.fingerprint,
       mode: BOOTSTRAP_IMPORT_MODE,
+      format,
       preApplyBackup: {
         kind: "skip-empty-bootstrap",
         proof: readiness.proof,

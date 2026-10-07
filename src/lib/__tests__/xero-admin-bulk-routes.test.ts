@@ -140,6 +140,7 @@ import { POST as triggerMissingInvoices } from "@/app/api/admin/xero/missing-inv
 import { POST as retryAllFailedOperations } from "@/app/api/admin/xero/operations/retry-all/route";
 import { POST as forceSync } from "@/app/api/admin/xero/force-sync/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function adminSession() {
   return { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
@@ -316,7 +317,7 @@ describe("Xero admin bulk routes", () => {
     expect(mocks.enqueueXeroSyncOperationRetry).toHaveBeenNthCalledWith(2, "op-2", {
       createdByMemberId: "admin-1",
     });
-    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 });
+    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 }, CLUB_FORMAT_TEST);
     expect(mocks.logAudit).toHaveBeenCalledWith({
       action: "XERO_OPERATION_RETRY_ALL",
       category: "xero",
@@ -364,8 +365,45 @@ describe("Xero admin bulk routes", () => {
         preservedStripeRefundCreditNoteLinks: 3,
       },
       message:
-        "Backfilled 1 missing canonical Xero link, deactivated 2 stale canonical links, and preserved 3 live Stripe per-delta refund note links (#2901).",
+        "Backfilled 1 missing canonical Xero link, deactivated 2 stale canonical links, and preserved 3 live per-refund note links (#2901, #3880).",
     });
+  });
+
+  it("force-sync of one booking overrides a resolved-in-Xero mark and audits that it did (#3635)", async () => {
+    mocks.prisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-1",
+        memberId: "member-1",
+        status: "PAID",
+        payment: { id: "payment-1", xeroInvoiceId: null },
+      },
+    ]);
+    mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
+      queueOperationId: "queue-1",
+      message: "Xero booking invoice queued for background processing.",
+      overrodeResolvedInXeroOperationId: "op-resolved",
+    });
+
+    const response = await forceSync(
+      makeJsonRequest("http://localhost/api/admin/xero/force-sync", {
+        syncType: "INVOICE",
+        query: "booking-1",
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(
+      "booking-1",
+      expect.objectContaining({ overrideResolvedInXero: true })
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "XERO_FORCE_SYNC_INVOICE",
+        summary: expect.stringContaining("overriding an officer's resolved-in-Xero mark"),
+        details: expect.stringContaining("op-resolved"),
+        metadata: expect.objectContaining({ overrodeResolvedInXeroOperationId: "op-resolved" }),
+      })
+    );
   });
 
   it("returns a client error when a force-sync member lookup is ambiguous", async () => {

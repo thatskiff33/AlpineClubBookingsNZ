@@ -26,7 +26,7 @@ configure a club is the admin UI at `/admin/setup` and its linked editors
 You can also run the setup wizard once the database is migrated and seeded:
 
 ```bash
-npm run setup:wizard
+pnpm run setup:wizard
 ```
 
 The wizard now **writes the club's configuration to the database**, not to a
@@ -58,7 +58,7 @@ The config loader (`src/config/club.ts`) never throws, so an absent or broken
 - **Malformed `club.json`** (present but invalid JSON or failing schema
   validation) → the app degrades to the built-in `SAFE_DEFAULT_CONFIG` and logs
   a warning. The `club.example.json` fallback is intentionally **skipped** in
-  this case so a broken primary is not silently masked, and `npm run setup:check`
+  this case so a broken primary is not silently masked, and `pnpm run setup:check`
   reports the Club Config step as **blocked**. Fix `config/club.json`.
 - **Absent `club.json`** → falls back to a valid `config/club.example.json`; if
   the example is also absent or malformed, the app boots on
@@ -140,7 +140,7 @@ never overwrites an admin edit. Healing runs **only from a valid primary
 `config/club.json`** — a boot that fell back to the example or the safe default
 (missing/malformed primary) skips healing so a placeholder identity is never
 frozen into the DB, and self-repairs on a later boot once the primary is fixed
-(the manual `npm run config:self-heal` exits non-zero on such a fallback skip).
+(the manual `pnpm run config:self-heal` exits non-zero on such a fallback skip).
 This is what lets later collapse work drop the file/env fallbacks without
 stranding a live deploy. See "Config self-heal on boot" in `docs/DEPLOYMENT.md`,
 `src/lib/config-self-heal.ts` (the runner) and `src/lib/config-self-heal-steps.ts`
@@ -153,7 +153,7 @@ timezone (#2989). The value it copies comes from `TZ` / `NEXT_PUBLIC_TZ`, not fr
 `club.json`, and since #1987 an absent `club.json` is normal for a database-first
 install — so gating it on the file would mean those installs never recorded their
 timezone at all. It therefore runs on every boot regardless of config provenance,
-and it can only ever CREATE the row, never overwrite one. `npm run
+and it can only ever CREATE the row, never overwrite one. `pnpm run
 config:self-heal` now prints the results of the steps that did run even on a
 provenance skip, and still exits non-zero, because a partial run is not a
 success.
@@ -522,7 +522,8 @@ below that count, which caps it (the lower of the two applies, so a lodge may
 have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
 per-lodge `LodgeSettings.capacity`; if that is also unset the lodge resolves to
-**0** (unbookable) and the setup-readiness Club Config check warns.
+**0** (unbookable) and the setup-readiness Club Config check warns, naming every
+active lodge in that state — the default lodge and any additional one (#3407).
 
 Since #1982 the DB is the **sole runtime source** of booking capacity —
 `beds[].capacity` in `config/club.json` is **not** read at runtime. Instead the
@@ -1005,7 +1006,8 @@ once a *second active lodge actually exists*.
 
 ### 2. Create the lodge
 
-On the Lodges page, create the new lodge: name, and optionally its address, door
+On the Lodges page, create the new lodge: its name and its **capacity** (how many
+guests it can sleep — required since #3407), and optionally its address, door
 code, and travel note (the door code and travel note are used in that lodge's
 confirmation and pre-arrival emails; the name and address are also public — the
 contact page and the `{{lodge-name}}` / `{{lodge-address}}` content tokens read
@@ -1016,8 +1018,9 @@ Lodge details** without opening the multi-lodge management UI.
 ### 3. Run the setup wizard
 
 Creating a lodge lands in a guided setup wizard (`/admin/lodges/[id]/setup`):
-identity → rooms/beds → lockers → seasons/rates → chores. Every step is
-skippable, and rooms/beds/lockers support bulk seeding ("8 rooms of 4 beds",
+identity → capacity (Bed Allocation off) or rooms/beds (on) → lockers →
+seasons/rates → chores. Every step is skippable, but the finish step calls the
+lodge ready only when it can take a booking, and rooms/beds/lockers support bulk seeding ("8 rooms of 4 beds",
 "N lockers" with a name prefix) plus copy-from-another-lodge for seasons/rates
 and chores. The lodge configuration hub (`/admin/lodges/[id]`) is the
 "what does this lodge still need?" view and links into each editor pre-filtered
@@ -1026,29 +1029,26 @@ lockers, chores) appear only when that module is enabled.
 
 ### 4. Capacity and the 0-capacity fail-safe (read this first)
 
-**A newly created lodge is unbookable until you give it beds or a capacity
-override.** This is deliberate, and it will look like a bug the first time:
-a lodge with no configured beds and no override resolves to **capacity 0**, so
-the booking flow refuses all bookings at it rather than risk overbooking an
-unconfigured lodge.
+**A lodge with no capacity cannot take a booking.** Since #3407 Add lodge asks
+for the capacity, so a new lodge is bookable from the start. A lodge created
+before that, or one whose capacity was cleared, resolves to **capacity 0**: the
+booking flow refuses every booking there rather than risk overbooking it, the
+refusal says the lodge is not set up for bookings yet, and the member calendar
+shows the same instead of offering a night.
 
-Each lodge's capacity resolves in this order (`getLodgeCapacityStatus`):
+Each lodge's capacity resolves in this order (`getLodgeCapacityStatus`, full
+table in [`docs/CAPACITY_MODEL.md`](docs/CAPACITY_MODEL.md)):
 
-1. Active configured beds, when the Bed Allocation module is on and the lodge
-   has active beds.
-2. Otherwise, the per-lodge **capacity override** on the lodge's
-   `LodgeSettings` (set it on the lodge hub or Admin > Setup). This works even
-   with Bed Allocation off.
-3. Otherwise, the club-config bed total — but **only for the original default
-   lodge**. Any *additional* lodge falls through to 0.
+1. With the Bed Allocation module on and at least one active bed: the active
+   bed count, capped by the lodge's capacity when that is lower.
+2. Otherwise, the lodge's own **capacity** on its `LodgeSettings` (set it on
+   Add lodge, in the setup wizard, on the lodge hub, or under Admin > Setup).
+3. Otherwise **0**, for every lodge including the default. `club.json` is not
+   read at runtime (#1982): the default lodge's capacity is copied into the
+   database from the config bed total once, by the boot-time self-heal.
 
-So to make a new lodge bookable, either configure its beds (Bed Allocation
-module) or set its capacity override. Until then it correctly shows as
-unavailable.
-
-Per-lodge overrides *replace*, they do not merge: setting a lodge's capacity
-override does not add to the club-config total, it substitutes for it at that
-lodge.
+So to make an existing capacity-0 lodge bookable, set its capacity on the lodge
+hub, or give it active beds with the Bed Allocation module on.
 
 ### 5. Bind the kiosk account to the lodge
 
@@ -1253,8 +1253,8 @@ test/demo mode or disabled:
 | `SEED_ADMIN_FIRST_NAME` | Optional first name for the seeded admin; defaults to `Admin`.   |
 | `SEED_ADMIN_LAST_NAME`  | Optional last name for the seeded admin; defaults to `User`.     |
 | `SEED_LODGE_PASSWORD`   | Initial password for the seeded shared lodge kiosk account.      |
-| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `npm run db:seed:demo`.       |
-| `DEMO_SEED_PASSWORD`    | Optional local-only password for `npm run db:seed:demo` users.   |
+| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `pnpm run db:seed:demo`.       |
+| `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
@@ -1284,7 +1284,7 @@ legacy `RESERVE` to Associate, historical `LIFE` to Life, `SCHOOL` to School,
 and `NON_MEMBER` to Non-Member) using create-if-missing assignments. Re-running
 the seed does not overwrite existing seasonal assignments.
 
-`npm run db:seed:demo` is separate from the first-run seed. It is intended only
+`pnpm run db:seed:demo` is separate from the first-run seed. It is intended only
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
@@ -1299,7 +1299,7 @@ password.
 Run this before bootstrapping a new install:
 
 ```bash
-npm run setup:check
+pnpm run setup:check
 ```
 
 The check validates environment variable presence/format, module capability
@@ -1313,6 +1313,11 @@ still surfaces loudly as **blocked**. When the database is not reachable
 (pre-migration), the DB-backed steps are reported as "not checked" and the
 club-config step is a warning that points at `/admin/setup` rather than a hard
 block.
+
+The club-config step also warns when any **active lodge** resolves as not set up
+for bookings (no capacity and no active beds, through the same resolver every
+booking path reads), and lists those lodges by name so each can be given a
+capacity on its configuration page (#3407).
 
 After signing in as an administrator, open `/admin/setup` to review:
 
@@ -1889,9 +1894,9 @@ action; scoped admins cannot merge.
 
 | Variable                           | Description                                                                                          |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `CURRENCY`, `NEXT_PUBLIC_CURRENCY` | **A seed only, since #3563.** The club's currency is now recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Currency & Locale** (`/admin/club-format`); see [`docs/guides/club-format.md`](docs/guides/club-format.md). These variables are read for exactly one purpose: on the first start after upgrading, an installation that has no recorded currency copies the value it is *already effectively using* from here, so nothing about its behaviour changes. **After that the recorded setting is the authority for the SETTING, and editing these variables no longer changes it.** They are not dead configuration yet, and must not be removed: until #3564-#3566 move the display paths onto the recorded setting, every amount and date the site writes still comes from these variables. An operator who unsets `CURRENCY` today gets a site rendering `NZD` while `/admin/club-format` still shows the club's real choice — which is why the admin screen, the guide and this row all say to keep the two in step. `NZD` is the generic New Zealand default and applies only where neither a recorded currency nor these variables say anything. Store a three-letter ISO 4217 code (`NZD`, `CHF`); a symbol or a name is refused. The transitional `APP_CURRENCY` / `APP_STRIPE_CURRENCY` constants still derive from these for the call sites programme #3205 has not migrated yet (#3564-#3566), and #3567 retires them. Changing the setting re-denominates nothing: every stored amount stays the integer cents it was. |
-| `TZ`, `NEXT_PUBLIC_TZ`             | **A seed only, since CT-1 (#2989).** The club's time zone is now recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Time Zone** (`/admin/club-time`); see [`docs/guides/club-time.md`](docs/guides/club-time.md). These variables are read for exactly one purpose: on the first start after upgrading, an installation that has no recorded zone copies the value it is *already effectively using* from here, so nothing about its behaviour changes. After that the recorded setting is the authority and editing these variables does not change the club's civil time. They are **not** the server's own clock policy either — that is the container's business and is deliberately irrelevant to what members see. `Pacific/Auckland` is the generic New Zealand default and applies only where neither a recorded zone nor these variables say anything. Store an IANA identifier naming a place (`Pacific/Auckland`); an abbreviation (`NZT`) or a fixed offset (`+12:00`, `Etc/GMT-12`) is refused. The transitional `APP_TIME_ZONE` constant still derives from these for the display call sites epic #2988 has not migrated yet, and CT-6 retires it. Booking dates remain New Zealand date-only lodge nights unless a feature says otherwise. |
-| `LOCALE`, `NEXT_PUBLIC_LOCALE`     | **A seed only, since #3563**, on exactly the same terms as `CURRENCY` above and edited on the same screen. It decides how numbers and dates are WRITTEN — whether a date reads 14/03/2026 or 3/14/2026 — and is not the language the site is in. Store a BCP 47 language tag (`en-NZ`, `de-CH`): a language subtag of two or three letters, then the country. `en-NZ` is the generic default. Not the same thing as `LANG` / `LC_ALL` below, which are the container's own POSIX locale. |
+| `CURRENCY`                         | **A first-start seed only.** The club's currency is recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Currency & Locale** (`/admin/club-format`); see [`docs/guides/club-format.md`](docs/guides/club-format.md). This variable is read for exactly one purpose: on the first start after upgrading (or of a new install), an installation that has no recorded currency copies it, so nothing about its behaviour changes. **After that nothing reads it** — not an amount on screen or in an email (since #3565 and #3566), not the currency AI spend is counted in, and **since #3567 not the currency card payments are charged in either**: cards are charged in the recorded currency, so what a member is shown and what their card is charged cannot differ. An operator who edits or unsets `CURRENCY` later changes nothing. `NZD` is the generic New Zealand default and applies only where neither a recorded currency nor this variable says anything. Store a three-letter ISO 4217 code with two decimal places (`NZD`, `CHF`); a symbol, a name, or a currency without two decimal places (`JPY`, `KWD`) cannot be chosen in the app. **Upgrading to #3567:** before it, cards were charged in `CURRENCY`, or in `NZD` when `CURRENCY` was unset or empty (the Docker Compose default); after it, cards are charged in the recorded currency. Where the two differ, card charges change currency on deploy — compare the currency of recent payments in the Stripe Dashboard with the Club Currency & Locale page first. An operator who relied on `CURRENCY` to steer card charges must set the currency in the app instead, and make sure the Stripe account and the Xero base currency match it. `NEXT_PUBLIC_CURRENCY` is **no longer read at all** (#3567): an install that set only it is seeded with `NZD`, and the first start logs a warning naming the ignored variable. Changing the setting re-denominates nothing: every stored amount stays the integer cents it was. |
+| `TZ`, `NEXT_PUBLIC_TZ`             | **A seed only, since CT-1 (#2989).** The club's time zone is now recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Time Zone** (`/admin/club-time`); see [`docs/guides/club-time.md`](docs/guides/club-time.md). These variables are read for exactly one purpose: on the first start after upgrading, an installation that has no recorded zone copies the value it is *already effectively using* from here, so nothing about its behaviour changes. After that the recorded setting is the authority and editing these variables does not change the club's civil time. They are **not** the server's own clock policy either — that is the container's business and is deliberately irrelevant to what members see. `Pacific/Auckland` is the generic New Zealand default and applies only where neither a recorded zone nor these variables say anything. Store an IANA identifier naming a place (`Pacific/Auckland`); an abbreviation (`NZT`) or a fixed offset (`+12:00`, `Etc/GMT-12`) is refused. Since #3567 nothing else reads them: the old `APP_TIME_ZONE` constant is gone, and the AI spend budgets count their months in the recorded zone too. Booking dates remain New Zealand date-only lodge nights unless a feature says otherwise. |
+| `LOCALE`                           | **A first-start seed only, since #3563**, on exactly the same terms as `CURRENCY` above and edited on the same screen. `NEXT_PUBLIC_LOCALE` is no longer read at all (#3567); the first start warns if only it is set. It decides how numbers and dates are WRITTEN — whether a date reads 14/03/2026 or 3/14/2026 — and is not the language the site is in. Store a BCP 47 language tag (`en-NZ`, `de-CH`): a language subtag of two or three letters, then the country. `en-NZ` is the generic default. Not the same thing as `LANG` / `LC_ALL` below, which are the container's own POSIX locale. |
 | `LANG`, `LC_ALL`                   | **Pinned in the image to `en_US.UTF-8`, beside `TZ` (#3252).** These are the container's own POSIX locale, which Node's bundled ICU reads to choose the default collation and number/date formats for `localeCompare`, `toLocaleString` and friends when a call names no locale. Before #3252 nothing pinned them, so the resolved locale was whatever the base image happened to provide; `en_US` matches what the unpinned image resolved, so pinning it changes no displayed order or format. Every stored identity (proposal fingerprints, confirm tokens, lock-key order) is locale-proof regardless, through `compareOrdinal` (`INV-EXCEPT-036`), so this pin is defence in depth for display only. Override in `docker-compose.yml`'s `environment:` if a club wants a different display collation; set both, because `LC_ALL` wins over `LANG`. Not the club's time zone (`TZ` above) and not the in-app `LOCALE` formatting setting. |
 | ~~`NEXT_PUBLIC_GA_MEASUREMENT_ID`~~ | **Removed as configuration (#2573).** The GA4 measurement id, the consent-banner mode and the banner wording now live **only** in the database, entered in-app at Admin → Integrations → Google Analytics. Nothing in the app reads the environment variable, there is no fallback to it, and its value is **not** imported automatically — so after deploying this release Google Analytics stays inactive until an authorised admin saves a valid measurement id in-app. Remove the variable from your environment. See the Google Analytics section below. |
 | ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google sign-in). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
@@ -2429,7 +2434,7 @@ question text is ever stored). The whole page 404s while the module is off.
    spending if it can no longer record usage ("can't-meter ⇒ don't-spend"). The
    cap is a deployment-specific control and does **not** travel in a
    config-transfer bundle — a fresh import gets the default.
-4. **If `CURRENCY` / `NEXT_PUBLIC_CURRENCY` is not `NZD`, set the conversion rate** (#3354). AI usage is
+4. **If the club's currency (Admin → Club Currency & Locale) is not `NZD`, set the conversion rate** (#3354; the club's recorded currency since #3566, not `CURRENCY`). AI usage is
    priced in New Zealand dollars; the **Currency for AI spend** card on both AI
    settings pages takes **how many units of the club's currency one New Zealand
    dollar buys** (for example `0.92`), stores it as an integer in parts per
@@ -2437,6 +2442,8 @@ question text is ever stored). The whole page 404s while the module is off.
    the AI help assistant and AI Diagnostics) and shows **when it was last set**,
    because nothing updates it for you. Until it is set, spend is counted as if
    1 NZD = 1 unit of the club's currency. A New Zealand club sees no editor.
+   **Changing the club's currency clears the rate** (#3566), because a rate set
+   for one currency would misprice another's spend: enter it again afterwards.
    Like the caps, the rate is deployment-local and is **not** carried in the
    config-transfer bundle.
 
@@ -2629,14 +2636,14 @@ rate-limited, or temporarily unavailable.
 | `GROUP_CANCEL_RESUME_GRACE_MINUTES`   | Grace before the group-settlement-reaper resumes a crash-interrupted organiser-cancel cleanup (#1236); defaults to 15 minutes. |
 | `WAITLIST_TRANSACTION_RETRY_ATTEMPTS` | Optional waitlist transaction retry count.                                  |
 | `WAITLIST_TRANSACTION_RETRY_DELAY_MS` | Optional waitlist transaction retry delay.                                  |
-| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage. Empty by default. Typically `--max-old-space-size=4096` where a small server's build is OOM-killed. Does NOT affect the running container. |
+| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage, for both the `app` and the `migrate` image builds (#3824). Empty by default. Typically `--max-old-space-size=4096` where a small server's build is OOM-killed. Does NOT affect the running container. |
 | `BACKUP_CRON_SCHEDULE`                | Cron expression for the nightly backup schedule (cron-leader timing).       |
 | `BACKUP_LOCAL_HOST_DIR`               | Host directory bind-mounted into the app container for local database backups. Used only by `docker-compose.yml`; empty uses the `backup_data` named volume instead. Must be owned by uid 1001. |
 | `BACKUP_LOCAL_DIR`                    | Path **inside the container** that mount lands on (default `/backups`). What the app writes to, and the value `/admin/backups` pre-fills. A path saved on that page overrides it. |
 | `AUDIT_ARCHIVE_DATABASE_URL`          | Preferred optional archive database for audit retention.                    |
 | `AUDIT_LOG_ARCHIVE_DATABASE_URL`      | Backward-compatible archive database alias.                                 |
 | `SHADOW_DATABASE_URL`                 | Optional Prisma shadow database URL for migration validation.               |
-| `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `npm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
+| `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `pnpm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
 
 > **Backups are configured in-app, not by environment (#2095).** The S3 bucket,
 > region, access key/secret, retention window, restore-validation shadow
@@ -2708,7 +2715,10 @@ rate-limited, or temporarily unavailable.
 | `BLUE_GREEN_DRAIN_SECONDS`             | Drain window for previous blue/green slot.                            |
 | `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS` | Explicit migration safety override.                                   |
 | `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` | Required explanation when allowing a breaking migration.              |
+| `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED` | Windowed-migration acknowledgement. Set exactly to `1` only after every old web and worker process has stopped and no old database connection remains. The #3413 pending-school-adult write gate requires it as a second, independent acknowledgement. |
+| `PENDING_SCHOOL_ADULTS_ENABLED` | Server-only #3413 write gate. Defaults disabled; set exactly to `1` only after the maintenance-window drain and new-runtime capacity checks. It does nothing without `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`, and `true`, whitespace, or any other value stays disabled. |
 | `MIGRATION_SAFETY_LEDGER`              | Path to the migration safety ledger.                                  |
+| `MIGRATION_LOCK_TIMEOUT_MS`            | How long a migration may wait for a lock before the deploy stops, in milliseconds. Default `5000`; accepted from `100` up to one millisecond under the web slots' `pool_timeout`, which the deploy script derives rather than restates (10 s today, so `9999`). Set on the `migrate` service's connection in `docker-compose.yml`, and refused outside that range at step 3 — the script reads the value out of `docker compose config`, so an overlay that removes or changes the bound is caught too. **`0` is refused, not accepted as "off":** PostgreSQL reads `0` as *wait forever*, which is the exposure the bound exists to remove. The ceiling is the web slots' `pool_timeout` (10 s) — past it a blocked table is already refusing member requests with Prisma `P2024`, so the guard could not fire in time to prevent anything. A migration cancelled here applies nothing and the deploy stops cleanly; recovery is `prisma migrate resolve --rolled-back` then a retry in a quieter window, written out in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` 2.1a. The measurement behind the default is in `docs/CONCURRENCY_AND_LOCKING.md` -> "The migration lock timeout". |
 | `RELEASE_ID`                           | Docker **build** arg, not a runtime setting. Identifies the release, and the public website's fixed CSP script nonce is derived from it (#2352). CI and `scripts/run-production-blue-green-deploy.sh` set it to the deployed commit SHA automatically; `docker-compose.yml` falls back to `GIT_COMMIT_SHA`. If neither is set — a hand-rolled `docker build` — the nonce falls back to a random per-BUILD seed baked into the bundles, which is still one value per release; you only lose the ability to read the deployed revision out of the image. Leave it alone unless you build images by hand — see "Public website page caching" below. |
 | `CONFIG_BUNDLE_IMPORT_PATH`            | Optional. Path to a config-transfer bundle applied non-interactively on boot **only** when the database is empty of non-seed configuration (DR / clone provisioning, ADR-003). Fails closed on a non-empty target, a bad bundle, or an unreadable path, and never blocks startup. See "Config Bundle Auto-Import On Boot (DR / clone)" in `DEPLOYMENT.md`. |
 

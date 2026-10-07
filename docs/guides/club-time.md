@@ -37,7 +37,7 @@ own time. That part is already true.
 Changing the club time zone on this page is a **Full Administrator** job. It
 needs an explicit confirmation, and every such change is written to the audit log
 with who made it and what it was before. (The one other way it can be set is
-`npm run setup:wizard` at the command line, by whoever runs the server. That is not
+`pnpm run setup:wizard` at the command line, by whoever runs the server. That is not
 audited the same way, because there is no signed-in administrator to record.)
 
 ## When you'd use it
@@ -68,7 +68,7 @@ there is nothing to embed. It gets one when the manifest gains the page.)*
    - **From the environment** — nothing has been recorded yet, so the platform is
      still using the `TZ` value the server was started with. This is what an
      installation looks like between an upgrade and its next restart. Restarting
-     the app records it; so does running `npm run config:self-heal`.
+     the app records it; so does running `pnpm run config:self-heal`.
    - **Default** — nothing has been recorded and the server says nothing either,
      so the platform is using `Pacific/Auckland`.
    - **Not usable** — something *is* recorded, but it is not a zone this app can
@@ -179,7 +179,7 @@ authority and changing them does not change the club's time. See
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| The setup checklist says the club time zone is not recorded yet | The installation has been upgraded but not restarted since, so nothing has been written to the settings yet. The zone in use is still correct — it is the one the server was started with | Restart the application, or run `npm run config:self-heal`. Then reload the setup checklist |
+| The setup checklist says the club time zone is not recorded yet | The installation has been upgraded but not restarted since, so nothing has been written to the settings yet. The zone in use is still correct — it is the one the server was started with | Restart the application, or run `pnpm run config:self-heal`. Then reload the setup checklist |
 | The setup checklist warns that the club time zone could not be confirmed | The server's `TZ` names no actual place — `UTC`, `Etc/UTC`, `Etc/GMT-12` — so there was nothing to preserve and `Pacific/Auckland` was recorded instead. The platform is telling you it guessed | If the club is in New Zealand, acknowledge the step and carry on. If it is not, set the club's real zone here — this is the one case where leaving it alone would leave a non-NZ club's times wrong |
 | A time zone will not save: "abbreviations and fixed offsets are not accepted" | The value is not a place — for example `NZST`, `EST`, `+12:00`, or `Etc/GMT-12` | Choose the named zone for the club's location, such as `Pacific/Auckland`. Use the filter box rather than typing an abbreviation |
 | The page says it is available to full administrators only | Your admin account is not a Full Administrator | Ask a Full Administrator to make the change. Everyone with admin access can still see the current zone on the setup checklist |
@@ -195,7 +195,9 @@ authority and changing them does not change the club's time. See
 - [Site & Setup guides index](../adopters/README.md) — the operator hub for
   configuration pages.
 - Sibling guides: [Club Currency & Locale](club-format.md) — the same shape of
-  setting for the club's currency and its number/date format.
+  setting for the club's currency and its number/date format. Unlike this page,
+  every administrator can view that one; only changing it is Full Administrator
+  only.
 - [`CONFIGURATION.md`](../../CONFIGURATION.md) — the `TZ` / `NEXT_PUBLIC_TZ`
   environment variables and what they still do.
 - [`docs/invariants/product-configuration.md`](../invariants/product-configuration.md)

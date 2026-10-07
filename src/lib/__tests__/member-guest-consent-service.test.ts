@@ -73,6 +73,7 @@ const h = vi.hoisted(() => {
     loggerError: vi.fn(),
     loggerWarn: vi.fn(),
     loggerInfo: vi.fn(),
+    queueXero: vi.fn(async () => ({})),
   };
 });
 
@@ -115,6 +116,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: h.settleHostingCoverage,
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
+vi.mock("@/lib/xero-booking-edit-settlement", () => ({ queueXeroBookingEditSettlement: h.queueXero }));
 vi.mock("@/lib/email/member-guest", () => ({
   sendMemberGuestConsentOutcomeEmail: h.sendOutcomeEmail,
   sendMemberGuestConsentExpiredEmail: h.sendExpiredEmail,
@@ -146,6 +148,7 @@ import type { MemberGuestConsentDelegateResolver } from "@/lib/member-guest-dele
 // above and re-exported by the mock.
 import { ApiError } from "@/lib/api-error";
 import { MembershipTypeBookingPolicyError } from "@/lib/membership-type-policy";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.
@@ -291,6 +294,10 @@ function makeWorld(rows: GuestRow[]) {
         if ("consentStatus" in args.where && row.consentStatus !== args.where.consentStatus) {
           return { count: 0 };
         }
+        // #3029 N3/P2: the claim may also pin the member it authorised against.
+        if ("memberId" in args.where && row.memberId !== args.where.memberId) {
+          return { count: 0 };
+        }
         Object.assign(row, args.data);
         return { count: 1 };
       },
@@ -402,9 +409,28 @@ beforeEach(() => {
   h.removeGuest.mockImplementation(async ({ guestId }: { guestId: string }) => {
     world().choreAssignments.delete(guestId);
     world().guests.delete(guestId);
-    return { accountCreditAmountCents: 0 };
+    return removalResult();
   });
 });
+
+/** What the shared removal path returns, with the figures its Xero leg reads (#3809). */
+function removalResult(overrides: Record<string, unknown> = {}) {
+  return {
+    booking: { id: BOOKING },
+    bookingModificationId: "mod-consent-1",
+    hasIssuedXeroInvoice: true,
+    paymentStatus: "SUCCEEDED",
+    priceDiffCents: -5_000,
+    xeroRefundAmountCents: 0,
+    settlementMethod: null,
+    hasSucceededPayment: false,
+    accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
+    xeroAdditionalAmountCents: 0,
+    zeroDollarAutoPaid: false,
+    ...overrides,
+  };
+}
 
 /**
  * A refusal that WRITES FIRST, exactly where the real removal path writes.
@@ -431,6 +457,7 @@ function refuseAfterPartialRemoval(error: Error) {
 describe("respondToMemberGuestConsent — authorization", () => {
   it("lets the target approve, and records that they answered for themselves", async () => {
     const result = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: TARGET,
@@ -462,6 +489,7 @@ describe("respondToMemberGuestConsent — authorization", () => {
     // here would attribute to them an act somebody else performed, and MG4's audit
     // reads exactly this column to say who stood behind the add.
     const result = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: DELEGATE,
@@ -501,6 +529,7 @@ describe("respondToMemberGuestConsent — authorization", () => {
     const seen: { label: string; message: string; status: number }[] = [];
     for (const [label, params] of attempts) {
       const error = await respondToMemberGuestConsent({
+        format: CLUB_FORMAT_TEST,
         ...params,
         action: "APPROVE",
         now: NOW,
@@ -534,6 +563,7 @@ describe("respondToMemberGuestConsent — authorization", () => {
     world().guests.set("g-nonmember", pendingGuest({ id: "g-nonmember", memberId: null }));
     await expect(
       respondToMemberGuestConsent({
+        format: CLUB_FORMAT_TEST,
         bookingId: BOOKING,
         guestId: "g-nonmember",
         actorMemberId: TARGET,
@@ -555,6 +585,7 @@ describe("respondToMemberGuestConsent — DECLINE", () => {
     // reconcile are all inherited from the path a member's own self-removal uses,
     // so a decline and a self-removal cannot diverge.
     const result = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: TARGET,
@@ -587,6 +618,7 @@ describe("respondToMemberGuestConsent — DECLINE", () => {
     // `actorMemberId` stays the truthful actor all the way down, so the booking
     // modification and audit trail name who actually refused.
     await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: DELEGATE,
@@ -607,6 +639,7 @@ describe("respondToMemberGuestConsent — DECLINE", () => {
 describe("the status-guarded claim resolves every race to one winner", () => {
   async function respond(actorMemberId: string, action: "APPROVE" | "DECLINE") {
     return respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId,
@@ -695,7 +728,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     await respond(TARGET, "APPROVE");
     const confirmed = { ...world().guests.get(GUEST)! };
 
-    const result = await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(result).toEqual({ outcome: "ALREADY_RESOLVED" });
     expect(world().guests.get(GUEST)).toEqual(confirmed);
     expect(h.removeGuest).not.toHaveBeenCalled();
@@ -719,6 +752,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     // loser must produce NO removal, NO bed reconcile, NO audit entry and NO
     // email — a second set of those would be a lie told to the booking owner.
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -740,6 +774,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     // into a real occupant, which is the one transition the removal path does not
     // reconcile for free.
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -763,6 +798,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     // D-15: a blocked row needs a human. Logged as a failure rather than as a
     // routine info line somebody would scroll past.
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -799,6 +835,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     world().members.get(TARGET)!.canLogin = false;
 
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -819,6 +856,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     // The contrast case, so the test above is a statement about DELEGATES rather
     // than about the finaliser mailing everybody twice.
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -835,6 +873,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     // in time", blamed them for silence they are not guilty of, and dated it with
     // whenever the email happened to be composed.
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -857,6 +896,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
 
   it("dates a lapse by the deadline the member was given, not by when the mail was written", async () => {
     await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       targetMemberId: TARGET,
@@ -879,6 +919,7 @@ describe("the status-guarded claim resolves every race to one winner", () => {
     h.sendOutcomeEmail.mockRejectedValueOnce(new Error("smtp down"));
     await expect(
       finaliseMemberGuestConsentTransition({
+        format: CLUB_FORMAT_TEST,
         bookingId: BOOKING,
         guestId: GUEST,
         targetMemberId: TARGET,
@@ -946,10 +987,44 @@ function membershipPolicyRefusal() {
   ]);
 }
 
+describe("#3029 P2 — the blocked-claim fallback only claims the member it was about", () => {
+  it("does not mark a row DECLINED when a held-party rewrite hands it to someone else after the rollback", async () => {
+    // The refused removal rolls back, then `recordBlockedConsentTransition` opens
+    // a FRESH transaction. A held-party approval (W14) can rewrite the row to a
+    // different member, still PENDING, in between. Claiming by id + PENDING alone
+    // would record the first member's "No thanks" on the substitute's row.
+    let transactions = 0;
+    world().state.raceHook = () => {
+      transactions += 1;
+      if (transactions === 2) {
+        world().guests.get(GUEST)!.memberId = "m-substitute";
+      }
+    };
+    refuseAfterPartialRemoval(membershipPolicyRefusal());
+
+    const result = await respondToMemberGuestConsent({
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      format: CLUB_FORMAT_TEST,
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+
+    expect(result).toEqual({ outcome: "ALREADY_RESOLVED" });
+    expect(world().guests.get(GUEST)).toMatchObject({
+      memberId: "m-substitute",
+      consentStatus: "PENDING",
+    });
+  });
+});
+
 describe("D-14 — a decline refused, and a row left blocked rather than half-removed", () => {
   async function declineRefusedWith(error: Error) {
     refuseAfterPartialRemoval(error);
     return respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: TARGET,
@@ -1079,6 +1154,7 @@ describe("D-14 — a decline refused, and a row left blocked rather than half-re
     refuseAfterPartialRemoval(new h.BookingGuestRemovalError(REFUSALS.LAST_GUEST, 400));
 
     const result = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: TARGET,
@@ -1111,6 +1187,7 @@ describe("D-14 — a decline refused, and a row left blocked rather than half-re
     refuseAfterPartialRemoval(new h.BookingGuestRemovalError(REFUSALS.LAST_GUEST, 400));
 
     const result = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING,
       guestId: GUEST,
       actorMemberId: TARGET,
@@ -1131,6 +1208,7 @@ describe("D-14 — a decline refused, and a row left blocked rather than half-re
     h.removeGuest.mockRejectedValueOnce(new TypeError("cannot read property of undefined"));
     await expect(
       respondToMemberGuestConsent({
+        format: CLUB_FORMAT_TEST,
         bookingId: BOOKING,
         guestId: GUEST,
         actorMemberId: TARGET,
@@ -1221,7 +1299,7 @@ describe("expireMemberGuestConsent", () => {
     // account and no card refund is ever issued that nobody asked for. This is not
     // a weakening of D-14 — D-14 governs what a GUEST may do, this governs a timer
     // the club configured.
-    const result = await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
 
     expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
     expect(h.removeGuest).toHaveBeenCalledTimes(1);
@@ -1231,6 +1309,37 @@ describe("expireMemberGuestConsent", () => {
     });
   });
 
+  it("elects nothing for a booking the group organiser paid for by card, so the removal goes ahead (#3653)", async () => {
+    // A joiner's booking the organiser paid for by card has ONE disposition, the
+    // organiser's card, and the shared path refuses a credit election for it.
+    // Electing credit here made every such lapse a refusal, leaving the guest
+    // on the booking for ever; the election is the OWNER's account, which is
+    // not where this money goes.
+    Object.assign(world().bookings.get(BOOKING)!, {
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      payment: { source: "STRIPE" },
+    });
+
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+
+    expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
+    expect(h.removeGuest).toHaveBeenCalledTimes(1);
+    expect(h.removeGuest.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
+  });
+
+  it("still elects credit when the organiser settled by Internet Banking (#3653)", async () => {
+    Object.assign(world().bookings.get(BOOKING)!, {
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      payment: { source: "INTERNET_BANKING" },
+    });
+
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+
+    expect(h.removeGuest.mock.calls[0][0]).toMatchObject({ settlementMethod: "credit" });
+  });
+
   it("attributes the removal to the booking OWNER, never to the target", async () => {
     // Nobody acted, so nobody is named as the actor: the booking owner is passed
     // because they are the party whose booking is repriced and who receives the
@@ -1238,7 +1347,7 @@ describe("expireMemberGuestConsent", () => {
     // `cron:member-guest-consent-expiry`. Writing the target's id here would
     // attribute to them a decision they never made — they were silent, which is
     // the whole reason this ran.
-    await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(h.removeGuest.mock.calls[0][0].actorMemberId).toBe(OWNER);
     expect(h.removeGuest.mock.calls[0][0].actorMemberId).not.toBe(TARGET);
   });
@@ -1247,8 +1356,8 @@ describe("expireMemberGuestConsent", () => {
     // An expiry is nobody's decision. A responder id here would make the row
     // classify as DECLINED-shaped rather than EXPIRED, and the two are different
     // facts: somebody refused, versus the clock ran out.
-    h.removeGuest.mockImplementationOnce(async () => ({ accountCreditAmountCents: 0 }));
-    await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    h.removeGuest.mockImplementationOnce(async () => removalResult());
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(world().guests.get(GUEST)).toMatchObject({
       consentStatus: "EXPIRED",
       consentRespondedAt: null,
@@ -1266,7 +1375,7 @@ describe("expireMemberGuestConsent", () => {
       world().guests.get(GUEST)!.consentExpiresAt = new Date(NOW.getTime() + 60 * 60 * 1000);
     };
 
-    const result = await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(result).toEqual({ outcome: "ALREADY_RESOLVED" });
     expect(world().guests.get(GUEST)?.consentStatus).toBe("PENDING");
     expect(h.removeGuest).not.toHaveBeenCalled();
@@ -1277,14 +1386,14 @@ describe("expireMemberGuestConsent", () => {
     // meeting one means something is wrong. The sweep leaves it alone rather than
     // guessing that "no deadline" means "expired".
     world().guests.get(GUEST)!.consentExpiresAt = null;
-    await expect(expireMemberGuestConsent({ guestId: GUEST, now: NOW })).resolves.toEqual({
+    await expect(expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW })).resolves.toEqual({
       outcome: "ALREADY_RESOLVED",
     });
     expect(h.removeGuest).not.toHaveBeenCalled();
   });
 
   it("does nothing for a guest id that does not exist", async () => {
-    await expect(expireMemberGuestConsent({ guestId: "g-nope", now: NOW })).resolves.toEqual({
+    await expect(expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: "g-nope", now: NOW })).resolves.toEqual({
       outcome: "ALREADY_RESOLVED",
     });
   });
@@ -1297,7 +1406,7 @@ describe("expireMemberGuestConsent", () => {
     refuseAfterPartialRemoval(
       new h.BookingGuestRemovalError(REFUSALS.LAST_GUEST, 400),
     );
-    const result = await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
 
     expect(result).toEqual({
       outcome: "BLOCKED",
@@ -1315,7 +1424,7 @@ describe("expireMemberGuestConsent", () => {
     // The repo's declared two-tier order (#1881). This transaction can reprice a
     // booking AND release a bed, so it belongs in both cohorts; taking them in the
     // other order is how a deadlock with cancel/settlement is introduced.
-    await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(world().tx.$executeRaw).toHaveBeenCalled();
     expect(h.acquireLodgeCapacityLock).toHaveBeenCalledTimes(1);
     const globalLockAt = world().tx.$executeRaw.mock.invocationCallOrder[0];
@@ -1328,8 +1437,63 @@ describe("expireMemberGuestConsent", () => {
     // Single-lodge clubs leave `lodgeId` null, and the capacity lock still has to
     // be keyed to something.
     world().bookings.get(BOOKING)!.lodgeId = null as unknown as string;
-    await expireMemberGuestConsent({ guestId: GUEST, now: NOW });
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(h.getDefaultLodgeId).toHaveBeenCalledTimes(1);
     expect(h.acquireLodgeCapacityLock.mock.calls[0][1]).toBe("lodge-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3809 — a consent removal reaches Xero like any other guest removal
+// ---------------------------------------------------------------------------
+describe("#3809: a decline or expiry that lowers the price reaches Xero", () => {
+  it("MUTATION: queues the same edit settlement an ordinary removal queues, give-back included, and tells the owner of it as credit", async () => {
+    h.removeGuest.mockImplementationOnce(async ({ guestId }: { guestId: string }) => {
+      world().guests.delete(guestId);
+      return removalResult({ appliedCreditGivenBackCents: 5_000 });
+    });
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+    expect(outcome).toMatchObject({ outcome: "DECLINED", creditCents: 5_000 });
+
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+
+    expect(h.queueXero).toHaveBeenCalledTimes(1);
+    expect(h.queueXero).toHaveBeenCalledWith(expect.objectContaining({
+      bookingId: BOOKING,
+      bookingModificationId: "mod-consent-1",
+      hasIssuedXeroInvoice: true,
+      priceDiffCents: -5_000,
+      appliedCreditGiveBackCents: 5_000,
+      createdByMemberId: TARGET,
+    }));
+  });
+
+  it("queues nothing for an approval, or for a lost race", async () => {
+    for (const outcome of [{ outcome: "APPROVED" }, { outcome: "ALREADY_RESOLVED" }] as const) {
+      await finaliseMemberGuestConsentTransition({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING,
+        guestId: GUEST,
+        targetMemberId: TARGET,
+        outcome,
+        actorMemberId: TARGET,
+      });
+    }
+    expect(h.queueXero).not.toHaveBeenCalled();
   });
 });

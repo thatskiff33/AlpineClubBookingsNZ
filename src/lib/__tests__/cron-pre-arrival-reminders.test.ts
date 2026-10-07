@@ -39,6 +39,7 @@ import {
   emailWithheldForEnvironment,
 } from "@/lib/__tests__/helpers/email-outcomes";
 import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
   The mailer's outcome shapes come from a shared helper (#3035). The stub used to
@@ -121,7 +122,7 @@ describe("sendPreArrivalReminders", () => {
       expectedArrivalTime: "16:30",
       // #2350: nothing owed on this booking, so the note is not composed.
       outstandingAdditionalAmountCents: 0,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result.sentBookingIds).toEqual(["booking-1"]);
     expect(result.windowStart).toBe("2026-06-11");
     expect(result.windowEndExclusive).toBe("2026-06-15");
@@ -143,6 +144,7 @@ describe("sendPreArrivalReminders", () => {
 
     expect(mockSendPreArrivalReminderEmail).toHaveBeenCalledWith(
       expect.objectContaining({ outstandingAdditionalAmountCents: 21_000 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -161,6 +163,7 @@ describe("sendPreArrivalReminders", () => {
 
     expect(mockSendPreArrivalReminderEmail).toHaveBeenCalledWith(
       expect.objectContaining({ outstandingAdditionalAmountCents: 4_500 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -178,6 +181,7 @@ describe("sendPreArrivalReminders", () => {
 
     expect(mockSendPreArrivalReminderEmail).toHaveBeenCalledWith(
       expect.objectContaining({ outstandingAdditionalAmountCents: 0 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -250,6 +254,7 @@ describe("sendPreArrivalReminders member-guest consent exclusion (D-12, #2307)",
 
     expect(mockSendPreArrivalReminderEmail).toHaveBeenCalledWith(
       expect.objectContaining({ guestCount: 2 }),
+      CLUB_FORMAT_TEST,
     );
   });
 });

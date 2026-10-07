@@ -6,6 +6,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
@@ -73,8 +74,12 @@ async function processWaitlistCronOnce(): Promise<{
   newOffers: number;
   autoCancelled: number;
 }> {
+  // The club's format (#3565), resolved once per run, before the first
+  // transaction; the re-offer emails render with it.
+  const format = await clubFormatValues();
+
   // 1. Expire stale offers and re-offer
-  const { expiredCount, reofferedCount } = await expireStaleOffers();
+  const { expiredCount, reofferedCount } = await expireStaleOffers(format);
 
   // 2. Auto-cancel waitlisted bookings where all dates are in the past.
   // checkOut is @db.Date (the NZ calendar date stored at UTC midnight), so

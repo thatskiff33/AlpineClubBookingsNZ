@@ -24,6 +24,7 @@ import {
   parseInviteAuditDetails,
   shouldDefaultLinkSideEffects,
 } from "@/lib/admin-member-detail-helpers"
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture"
 
 describe("admin-member-detail-helpers", () => {
   describe("getMemberDetailBackLabel", () => {
@@ -169,37 +170,37 @@ describe("admin-member-detail-helpers", () => {
   describe("formatPromoBenefit", () => {
     it("formats percentage", () => {
       expect(
-        formatPromoBenefit({ type: "PERCENTAGE", percentOff: 15, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "PERCENTAGE", percentOff: 15, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("15% off per individual")
       expect(
-        formatPromoBenefit({ type: "PERCENTAGE", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "PERCENTAGE", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("Percentage discount")
     })
 
     it("formats fixed amount as dollars", () => {
       expect(
-        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: 2550, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: 2550, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("$25.50 off per individual")
       expect(
-        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("Fixed discount")
     })
 
     it("formats free nights with correct singular and plural", () => {
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("1 free night per booking")
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 3, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 3, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("3 free nights per booking")
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null }, CLUB_FORMAT_TEST)
       ).toBe("Free nights")
     })
 
     it("appends lifetime cap when set", () => {
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1, lifetimeFreeNightsCap: 4 })
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1, lifetimeFreeNightsCap: 4 }, CLUB_FORMAT_TEST)
       ).toBe("1 free night per booking · 4 lifetime")
     })
   })
@@ -367,14 +368,14 @@ describe("admin-member-detail-helpers", () => {
           currentSeasonYear: 2026,
           currentSeasonTypeName: "Full Member",
           currentSeasonSubscriptionLabel: "Paid",
-        })
+        }, CLUB_FORMAT_TEST)
       ).toBe("2026 - 2027 (Apr-Mar): Full Member · Paid")
       expect(
         formatMemberMembershipPreview({
           currentSeasonYear: 2026,
           currentSeasonTypeName: null,
           currentSeasonSubscriptionLabel: null,
-        })
+        }, CLUB_FORMAT_TEST)
       ).toBe("2026 - 2027 (Apr-Mar): No seasonal type set")
     })
 
@@ -384,14 +385,14 @@ describe("admin-member-detail-helpers", () => {
           creditBalanceCents: 4050,
           promoCodeCount: 1,
           xeroLinked: true,
-        })
+        }, CLUB_FORMAT_TEST)
       ).toBe("Credit $40.50 · 1 promo code · Xero linked")
       expect(
         formatMemberFinancePreview({
           creditBalanceCents: null,
           promoCodeCount: 0,
           xeroLinked: false,
-        })
+        }, CLUB_FORMAT_TEST)
       ).toBe("Credit — · Not linked to Xero")
     })
 
@@ -415,10 +416,10 @@ describe("admin-member-detail-helpers", () => {
         formatMemberHistoryPreview({
           totalBookings: 12,
           lastStay: "2026-07-04T00:00:00.000Z",
-        })
+        }, CLUB_FORMAT_TEST)
       ).toBe("12 bookings · last stay 4 Jul 2026")
       expect(
-        formatMemberHistoryPreview({ totalBookings: 0, lastStay: null })
+        formatMemberHistoryPreview({ totalBookings: 0, lastStay: null }, CLUB_FORMAT_TEST)
       ).toBe("0 bookings")
     })
 
@@ -464,26 +465,26 @@ describe("admin-member-detail-helpers", () => {
     it("renders both spellings of a stored day as the same civil day", () => {
       // Prisma's serialised `Date` and a bare day from a route that encoded it
       // itself. A caller should not have to know which one it is holding.
-      expect(formatMemberCalendarDay("2026-07-04T00:00:00.000Z")).toBe(
+      expect(formatMemberCalendarDay("2026-07-04T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
         "4 Jul 2026"
       )
-      expect(formatMemberCalendarDay("2026-07-04")).toBe("4 Jul 2026")
+      expect(formatMemberCalendarDay("2026-07-04", CLUB_FORMAT_TEST)).toBe("4 Jul 2026")
     })
 
     it("degrades to the fallback rather than throwing on a value it cannot read", () => {
       // These arrive from an API payload with no runtime schema check and render
       // straight into a table row, so a throw here would blank the member page.
-      expect(formatMemberCalendarDay("not-a-date")).toBe("—")
-      expect(formatMemberCalendarDay("")).toBe("—")
+      expect(formatMemberCalendarDay("not-a-date", CLUB_FORMAT_TEST)).toBe("—")
+      expect(formatMemberCalendarDay("", CLUB_FORMAT_TEST)).toBe("—")
       // A day that does not exist is refused rather than rolled forward.
-      expect(formatMemberCalendarDay("2026-02-30")).toBe("—")
+      expect(formatMemberCalendarDay("2026-02-30", CLUB_FORMAT_TEST)).toBe("—")
       // A timestamp with no offset names a wall-clock reading in whichever zone
       // reads it, which is the one thing a stored day must never become.
-      expect(formatMemberCalendarDay("2026-07-04T13:45:00")).toBe("—")
+      expect(formatMemberCalendarDay("2026-07-04T13:45:00", CLUB_FORMAT_TEST)).toBe("—")
     })
 
     it("lets the caller choose what an unreadable value shows", () => {
-      expect(formatMemberCalendarDay("not-a-date", "Not recorded")).toBe(
+      expect(formatMemberCalendarDay("not-a-date", CLUB_FORMAT_TEST, "Not recorded")).toBe(
         "Not recorded"
       )
     })

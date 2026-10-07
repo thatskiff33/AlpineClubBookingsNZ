@@ -10,6 +10,7 @@ import {
   requireCalendarDate,
   requireClubTimeZone,
 } from "../club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /*
   #2264 — owner decision, 2 August 2026.
@@ -58,8 +59,8 @@ const MEMBER_FACING_LONG_DATE_SITES: ReadonlyArray<{
       what the first case in this file pins byte-for-byte.
     */
     mustContain: [
-      "checkIn: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkIn))",
-      "checkOut: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkOut))",
+      "checkIn: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkIn), club.format)",
+      "checkOut: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkOut), club.format)",
     ],
   },
   {
@@ -136,10 +137,10 @@ describe("member-facing dates keep the long spelled-out month (#2264)", () => {
     */
     const instant = new Date("2026-04-15T23:30:00.000Z");
     const auckland = requireClubTimeZone("Pacific/Auckland");
-    expect(formatClubInstantLongDate(instant, auckland)).toBe("16 April 2026");
-    expect(formatClubInstantDate(instant, auckland)).toBe("16 Apr 2026");
-    expect(formatClubInstantLongDate(instant, auckland)).not.toBe(
-      formatClubInstantDate(instant, auckland),
+    expect(formatClubInstantLongDate(instant, auckland, CLUB_FORMAT_TEST)).toBe("16 April 2026");
+    expect(formatClubInstantDate(instant, auckland, CLUB_FORMAT_TEST)).toBe("16 Apr 2026");
+    expect(formatClubInstantLongDate(instant, auckland, CLUB_FORMAT_TEST)).not.toBe(
+      formatClubInstantDate(instant, auckland, CLUB_FORMAT_TEST),
     );
   });
 
@@ -157,10 +158,11 @@ describe("member-facing dates keep the long spelled-out month (#2264)", () => {
       leaving a second way to ask.
     */
     const lodgeNight = requireCalendarDate("2026-04-16");
-    expect(formatClubLongDate(lodgeNight)).toBe("16 April 2026");
+    expect(formatClubLongDate(lodgeNight, CLUB_FORMAT_TEST)).toBe("16 April 2026");
     expect(
       formatClubLongDate(
         calendarDateOfDateOnlyInstant(new Date("2026-04-16T00:00:00.000Z")),
+        CLUB_FORMAT_TEST,
       ),
     ).toBe("16 April 2026");
   });
@@ -181,12 +183,12 @@ describe("member-facing dates keep the long spelled-out month (#2264)", () => {
     */
     const instant = new Date("2026-04-15T23:30:00.000Z");
     expect(
-      bindClubTime(requireClubTimeZone("Pacific/Auckland")).instantLongDate(
+      bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST).instantLongDate(
         instant,
       ),
     ).toBe("16 April 2026");
     expect(
-      bindClubTime(requireClubTimeZone("America/Denver")).instantLongDate(
+      bindClubTime(requireClubTimeZone("America/Denver"), CLUB_FORMAT_TEST).instantLongDate(
         instant,
       ),
     ).toBe("15 April 2026");

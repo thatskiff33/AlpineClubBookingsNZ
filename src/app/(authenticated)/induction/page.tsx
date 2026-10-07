@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { InductionSignOffForm } from "@/components/induction-sign-off-form";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useClubTime } from "@/components/club-time-provider";
 import {
   type AwaitingInductionClient,
   type InductionDetailClient,
@@ -176,6 +177,7 @@ function OwnInduction({
 }: {
   induction: InductionDetailClient;
 }) {
+  const clubTime = useClubTime();
   const signedCount = induction.signOffs.length;
   const isOpen = induction.status === "IN_PROGRESS" || induction.status === "DRAFT";
 
@@ -194,7 +196,7 @@ function OwnInduction({
         </span>
         {induction.completedAt && (
           <span className="text-sm text-muted-foreground">
-            Completed {formatInductionDate(induction.completedAt)}
+            Completed {formatInductionDate(induction.completedAt, clubTime)}
           </span>
         )}
       </div>
@@ -216,7 +218,7 @@ function OwnInduction({
                   )}
                   {signer.emailSentAt && !hasSigned && (
                     <span className="ml-2 text-xs">
-                      (notified {formatInductionDate(signer.emailSentAt)})
+                      (notified {formatInductionDate(signer.emailSentAt, clubTime)})
                     </span>
                   )}
                 </li>
@@ -235,7 +237,7 @@ function OwnInduction({
               <li key={signOff.id}>
                 {signOff.signerName} (
                 {INDUCTION_SIGNER_ROLE_LABELS[signOff.signerRole]}) —{" "}
-                {formatInductionDate(signOff.signedAt)}
+                {formatInductionDate(signOff.signedAt, clubTime)}
               </li>
             ))}
           </ul>

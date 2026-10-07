@@ -36,8 +36,10 @@ import {
   buildDuplicateCaptureRefundStripeKeyPrefix,
 } from "@/lib/payment-recovery-keys";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { findAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   deriveBookingAppliedCreditCents,
+  giveBackAppliedCredit,
   lockMemberCreditLedger,
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
@@ -57,6 +59,7 @@ import {
   sendAdminPaymentFailureAlert,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { formatCents } from "@/lib/utils";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -66,12 +69,22 @@ import {
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
   MANUAL_SETTLE_FROM_PAYMENT_STATUS_LIST,
 } from "@/lib/booking-payment-state";
+import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import {
   bookingHasCapacityOverride,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
+import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import {
+  buildBookingLedgerRows,
+  writeBookingLedgerRows,
+} from "@/lib/booking-ledger-write";
+import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -191,11 +204,14 @@ async function alertRefundFailure({
   paymentIntentId,
   amountCents,
   error,
+  format,
 }: {
   booking: ReconciliationBooking;
   paymentIntentId: string;
   amountCents: number;
   error: unknown;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -206,7 +222,7 @@ async function alertRefundFailure({
     amountCents,
     errorMessage: `Payment succeeded but final capacity claim failed and automatic refund failed: ${errorMessage}`,
     paymentIntentId,
-  }).catch((alertErr) =>
+  }, format).catch((alertErr) =>
     logger.error(
       { err: alertErr, bookingId: booking.id, paymentIntentId },
       "Failed to alert admins about capacity refund failure"
@@ -226,6 +242,8 @@ type StripeSettlementSource = {
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
+  /** #3864: for the applied-credit give-back, resolved before the transaction. */
+  format: ClubFormat;
 };
 
 /**
@@ -668,29 +686,19 @@ async function prepareManualSettlement(
   //     the absence of Xero evidence as WHERE clauses, so a concurrent writer
   //     that moved any of them yields count 0 -> 409 instead of a write whose
   //     third term is stale. That is the real runtime net.
-  //  3. AFTER THE FACT, AND ONLY NARROWLY. `auditIbAppliedCreditStrands`
-  //     (src/lib/ib-hold-clearing-audit.ts) recomputes
-  //     `amountCents + creditAppliedCents - finalPriceCents` over COMMITTED
-  //     data and now reports the uncollected addition beside it, so where it
-  //     DOES report, a residual that is not exactly the uncollected delta is
-  //     visible to an operator. It is the only one of the three that can fire
-  //     at all, because it is not reading back its own writes.
-  //
-  //     It is NOT a general after-the-fact net for this settle, and nothing
-  //     later should be built on the assumption that it is. Its enumeration is
-  //     narrow on three counts:
-  //       * it reports a payment only when that booking still carries
-  //         UN-ALLOCATED applied credit — `deriveIbAppliedCreditStrandFinding`
-  //         returns null on `ledgerAppliedCents <= 0`, and the ledger sum counts
-  //         BOOKING_APPLIED rows with `xeroCreditNoteId: null` only. An ordinary
-  //         "not covered" cash settlement on a booking with no applied credit
-  //         therefore produces NO finding, and its residual is never printed;
-  //       * it scans INTERNET_BANKING payments only; and
-  //       * it is an operator-run script (scripts/audit-ib-hold-clearing.ts),
-  //         not a scheduled job or an alert — nothing fires unless somebody runs
-  //         it and reads the output.
-  //     So (1) and (2) are what actually keep this settle honest; (3) is a
-  //     reading aid for the credit-strand population it already enumerates.
+  //  3. AFTER THE FACT. The booking-ledger census (#3583, `INV-MONEY-037`,
+  //     `pnpm run booking-ledger:census`) reads COMMITTED data and checks what
+  //     this settle wrote against the lines it posted, for every booking:
+  //     `amountCents` against the captures (the CASH_RECORDED line is this
+  //     settled figure), `creditAppliedCents` against the applied credit, and
+  //     the uncollected addition against `max(0, owed(b))` while its ask is
+  //     live. A booking whose figures disagree is listed with both. It is the
+  //     only one of the three that can fire at all, because it is not reading
+  //     back its own writes — and it is an operator-run command, not a
+  //     scheduled job or an alert, so (1) and (2) are what keep this settle
+  //     honest at the moment it runs. It replaced #1620's
+  //     `ib-hold-clearing-audit.ts` strand scan, which reported this residual
+  //     only for internet-banking payments still carrying unallocated credit.
 
   return {
     /** `finalPriceCents - credit`: everything the booking still owes. */
@@ -865,6 +873,15 @@ async function settleBookingPaymentInTransaction(
       throw new Error("Booking not found");
     }
 
+    // #3792 (INV-LOCK-002): the member credit-ledger key third, before the Payment
+    // upsert, the order the inbound credit-note sync takes them in; the capacity
+    // void's restore and the manual settle's ledger read re-enter it. The owner is
+    // NOT immutable: member merge re-points it holding the lodge key, so it is read
+    // from this post-lodge-lock snapshot, and the restore below reuses this id.
+    // #3369: an organisation-owned booking has no member, so no key.
+    const settleCreditLedgerMemberId = bookingOwner(booking).memberId;
+    if (settleCreditLedgerMemberId) await lockMemberCreditLedger(settleCreditLedgerMemberId, tx);
+
     // B5 (#2262): the manual path's third lock tier, every guard-2 refusal and
     // the amount law, all decided from this same post-lock snapshot and all
     // BEFORE the first write below.
@@ -886,8 +903,8 @@ async function settleBookingPaymentInTransaction(
 
     // #1641 — split the captured amount into cash + credit so the mirror invariant
     // `amountCents + creditAppliedCents = finalPriceCents` holds for BOTH a new
-    // effective capture (credit = applied) and a legacy full-price capture
-    // (credit = 0, repaired locally by the audit — never a Xero over-allocation).
+    // effective capture (credit = applied) and a full-price capture (credit = 0,
+    // its applied credit given back below, #3864 — never a Xero over-allocation).
     // This is derived from the captured amount alone; the ledger is only read below
     // when the amount is NOT the full price (to admit the effective capture).
     // The manual path already derived both halves under the MEMBER-CREDIT lock.
@@ -1150,7 +1167,7 @@ async function settleBookingPaymentInTransaction(
             paymentId: payment.id,
             kind: PaymentTransactionKind.PRIMARY,
             status: {
-              in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+              in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
             },
             OR: [
               {
@@ -1264,9 +1281,9 @@ async function settleBookingPaymentInTransaction(
     // A wrong-amount capture (e.g. a stale intent from a since-changed price, #1161)
     // equals neither and is still rejected. Full price is always a legitimate
     // settlement of a full-price booking's invoice, so admitting it can never
-    // under-charge the member; new bookings never mint a full-price intent, so the
-    // leniency does not re-open the double-charge. The ledger read is skipped
-    // entirely for a full-price capture.
+    // under-charge the member. It does not re-open the double-charge only because
+    // the #3864 give-back below returns any credit such a capture leaves spent (an
+    // intent minted before an election was spent can still capture at full price).
     //
     // The manual path has no arriving amount to validate: it DERIVED the
     // effective price under the MEMBER-CREDIT lock in prepareManualSettlement,
@@ -1378,14 +1395,18 @@ async function settleBookingPaymentInTransaction(
         },
       });
 
-      const restoreMemberId = bookingOwner(booking).memberId;
       // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
       // booking has none, so there is no key to take. Passing a null key would
       // either throw inside the helper or degenerate to a shared advisory key,
       // which is an `INV-LOCK` hazard that shows up only under concurrency.
-      if (restoreMemberId) {
-        await restoreCreditFromBooking(restoreMemberId, booking.id, tx);
+      // #3792: the same id the member key above was taken on, never a re-read.
+      if (settleCreditLedgerMemberId) {
+        await restoreCreditFromBooking(settleCreditLedgerMemberId, booking.id, tx);
       }
+      // #3611: the whole charge goes back, so nothing is kept; a booking already
+      // confirmed on the ledger (a mark-paid since reversed) has its stay taken
+      // back, under the lock(1) this settle took first.
+      await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: bookingLodgeId, keptCents: 0, site: "settle:capacity-void" });
 
       // Durable refund debt, ATOMIC with the cancel claim (mirrors the #1349
       // enqueue-then-execute pattern in booking-cancel): freeze the refund
@@ -1534,6 +1555,92 @@ async function settleBookingPaymentInTransaction(
       );
     }
 
+    // #3580 (programme #3527, C1): post the booking's charge lines to the
+    // append-only money ledger, in THIS transaction and under THIS claim, so a
+    // settle that rolls back leaves no line saying it did not. Nothing reads
+    // these rows — the mirror columns are still the answer until C5 (#3584).
+    //
+    // THE SPLIT BELOW IS THE WHOLE POINT, and review of #3580 is why it exists.
+    // An earlier cut wrapped the write in a `try`/`catch` and claimed a posting
+    // failure could never fail the settle. That claim was false for exactly the
+    // failures worth worrying about: once Postgres has refused a statement the
+    // transaction is aborted (`25P02`), and a JavaScript `catch` does not bring
+    // it back — every later statement in this same `tx` would throw, and the
+    // settle would roll back anyway, through the guard meant to prevent it.
+    // This file's neighbours already know that: see
+    // `adult-member-hosting-system-cancellation.ts`, which says in as many
+    // words that there is no `try` there on purpose.
+    //
+    // So the two halves are treated differently, honestly:
+    //
+    //   * BUILDING the rows is pure. A bad plan — a malformed projection, a
+    //     shape the ledger refuses — throws an ordinary JavaScript error with
+    //     no database involved, and THAT is safe to swallow: the settle is
+    //     untouched and the booking simply has no lines, which is a coverage
+    //     gap C4's census (#3583) reports and must drive to zero before any
+    //     read moves.
+    //   * WRITING them is a statement. If Postgres refuses it, this settle is
+    //     already lost and pretending otherwise would only hide why.
+    //
+    // AND IT HAPPENS ONCE PER BOOKING (#3595). A booking can pass the PAID
+    // claim above twice — a mark-paid, its reversal, then a card payment — and
+    // its nights can change in between (a date shift recreates them; a guest
+    // removed and re-added gets a new id), so per-night keys alone would post
+    // the whole charge again under new keys. A booking is confirmed once; what
+    // changes afterwards is a modification (#3582). The question is asked
+    // under this transaction's global `lock(1)`, which serialises every settle,
+    // so it cannot race; and it counts un-keyed lines too, so lines #3580
+    // posted before keys existed fence this settle as well.
+    const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
+    const ledgerRows = alreadyConfirmedOnLedger ? [] : (() => {
+      try {
+        const plan = planConfirmationChargeLines({
+          id: booking.id,
+          lodgeId: booking.lodgeId,
+          totalPriceCents: booking.totalPriceCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          guests: booking.guests,
+        });
+        if (!plan.reconciles) {
+          logger.warn(
+            {
+              bookingId: booking.id,
+              unpricedStrandIds: plan.unpricedStrandIds,
+              postedLines: plan.postings.length,
+            },
+            "Booking ledger: the charge lines for a settled booking do not add up to its final price (#3580)"
+          );
+        }
+        return buildBookingLedgerRows(plan.postings);
+      } catch (error) {
+        logger.error(
+          { err: error, bookingId: booking.id },
+          "Booking ledger: could not build charge lines for a settled booking; the settle stands and the gap is the census's to report (#3580)"
+        );
+        return [];
+      }
+    })();
+    const ledgerInserted = await writeBookingLedgerRows(tx, ledgerRows);
+    // Under the fence every row is new, so a shortfall means a key was already
+    // there — not an error (the write skipped it rather than aborting), but not
+    // something that should happen either, so it is said out loud rather than
+    // discarded (review of #3597).
+    if (ledgerInserted !== ledgerRows.length) {
+      logger.warn(
+        { bookingId: booking.id, planned: ledgerRows.length, inserted: ledgerInserted },
+        "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
+      );
+    }
+
+    // #3581: the manual settle writes its transaction rows and the payment's
+    // columns itself, so it never passes through `reconcilePaymentAggregates`
+    // where every other settlement's ledger lines converge. It runs the same
+    // sync here, after the provenance columns above are written — so its rows
+    // read as cash recorded by an officer (`INV-PAY-001`), not a bank receipt.
+    if (settlement.kind === "manual") {
+      await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    }
+
     // #2576 §9. THE SINGLE SETTLE DOOR IS A CONFIRMING PATH, and §9 names "payment
     // completion" among the routes that must run the shared hosting evaluator
     // immediately before confirmation rather than trusting a quote-time answer.
@@ -1588,6 +1695,39 @@ async function settleBookingPaymentInTransaction(
     // Guarded claim on the exact amount read, so a pay-step consumer racing this
     // writer is never clobbered; see clearStaleCreditElection.
     const staleCreditElectionCents = await clearStaleCreditElection(tx, booking);
+
+    // #3864 (`INV-PAY-024`), the same rule for credit already SPENT: it stays
+    // spent only for what the capture did not cover (the mirror's figure); the
+    // rest goes back through the one give-back, under the member key taken above
+    // (INV-LOCK-002), so a member never pays by card AND by credit (#1641).
+    // Asked only when there IS excess; a Xero deallocation in flight holds it
+    // for an operator rather than failing a captured payment.
+    let givenBackCreditCents = 0;
+    let heldCreditCents = 0;
+    if (settlement.kind === "stripe") {
+      const excessCreditCents = settleCreditLedgerMemberId
+        ? (await deriveBookingAppliedCreditCents(booking.id, tx)) - mirrorCreditAppliedCents
+        : 0;
+      if (excessCreditCents > 0 && (await findAppliedCreditDeallocationFence(payment.id, tx))) {
+        heldCreditCents = excessCreditCents;
+      } else if (settleCreditLedgerMemberId && excessCreditCents > 0) {
+        ({ givenBackCents: givenBackCreditCents } = await giveBackAppliedCredit(
+          {
+            memberId: settleCreditLedgerMemberId,
+            bookingId: booking.id,
+            giveBackCentsOf: (appliedCreditCents) =>
+              appliedCreditCents - mirrorCreditAppliedCents,
+            description: `Applied credit returned: booking ${booking.id.slice(0, 8)} was paid in full by card`,
+            format: settlement.format,
+          },
+          tx
+        ));
+      }
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { creditAppliedCents: mirrorCreditAppliedCents },
+      });
+    }
 
     await reconcileBedAllocationsForBookingWithLodgeLockHeld({
       bookingId: booking.id,
@@ -1759,6 +1899,8 @@ async function settleBookingPaymentInTransaction(
       paymentId: payment.id,
       bumpedBookingIds: [] as string[],
       staleCreditElectionCents,
+      givenBackCreditCents,
+      heldCreditCents,
     };
 }
 
@@ -1767,11 +1909,14 @@ export async function markBookingPaymentSucceeded({
   paymentIntentId,
   amountCents,
   paymentMethodId,
+  format,
 }: {
   bookingId: string;
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
@@ -1779,6 +1924,7 @@ export async function markBookingPaymentSucceeded({
       paymentIntentId,
       amountCents,
       paymentMethodId,
+      format,
     })
   );
 
@@ -1795,27 +1941,46 @@ export async function markBookingPaymentSucceeded({
     throw new Error("Unexpected manual settlement outcome on the Stripe path");
   }
 
-  if (
-    reconciliation.outcome === "paid" &&
-    reconciliation.staleCreditElectionCents != null
-  ) {
+  // #3864: credit given back is reported like an election cleared.
+  const unspentCreditCents =
+    reconciliation.outcome === "paid"
+      ? (reconciliation.staleCreditElectionCents ?? 0) +
+        reconciliation.givenBackCreditCents
+      : 0;
+  if (reconciliation.outcome === "paid" && unspentCreditCents > 0) {
     // #2265 (#2319). Post-commit, outside the transaction: the member paid the
     // full price while holding credit they had asked to spend, so say so on
     // their booking history and put it in front of an operator who can decide
-    // whether to refund the difference. Their balance is untouched either way.
+    // whether to refund the difference. Their balance is whole either way: never
+    // debited, or (#3864) the credit spent on it returned.
     await reportUnappliedCreditElection({
+      format,
       bookingId,
       memberId: bookingOwner(reconciliation.booking).memberId,
       memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
       memberLastName: bookingOwner(reconciliation.booking).member.lastName,
       checkIn: reconciliation.booking.checkIn,
       checkOut: reconciliation.booking.checkOut,
-      electionCents: reconciliation.staleCreditElectionCents,
+      electionCents: unspentCreditCents,
       paidAmountCents: amountCents,
       source: "payment-reconciliation",
       reference: paymentIntentId,
       extraDetails: { paymentIntentId },
+      creditReturnedCents: reconciliation.givenBackCreditCents,
     });
+  }
+  if (reconciliation.outcome === "paid" && reconciliation.heldCreditCents > 0) {
+    // #3864: the give-back waited on a Xero deallocation; an operator returns it.
+    await sendAdminPaymentFailureAlert({
+      memberName: `${bookingOwner(reconciliation.booking).member.firstName} ${bookingOwner(reconciliation.booking).member.lastName}`,
+      checkIn: reconciliation.booking.checkIn,
+      checkOut: reconciliation.booking.checkOut,
+      amountCents: reconciliation.heldCreditCents,
+      errorMessage: `This booking was paid in full by card, but ${formatCents(reconciliation.heldCreditCents, format)} of account credit spent on it could not be returned automatically because a Xero credit update for its payment is still in progress. Return that credit to the member by hand once the update completes.`,
+      paymentIntentId,
+    }, format).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to alert admins about applied credit held on a full-price capture (#3864)")
+    );
   }
 
   if (reconciliation.outcome === "paid") {
@@ -1861,6 +2026,7 @@ export async function markBookingPaymentSucceeded({
     // line and the admin alert below.
     try {
       await refundPaymentTransactions({
+        format,
         paymentId: reconciliation.paymentId,
         amountCents: plannedRefundCents,
         reason: "requested_by_customer",
@@ -1925,7 +2091,7 @@ export async function markBookingPaymentSucceeded({
           paymentIntentId
         ),
         refundFailed: false,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
           "Failed to alert admins about the auto-refunded duplicate capture"
@@ -1975,7 +2141,7 @@ export async function markBookingPaymentSucceeded({
             ? refundError.message
             : String(refundError),
         refundFailed: true,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
           "Failed to alert admins about the failed duplicate-capture refund"
@@ -2038,6 +2204,7 @@ export async function markBookingPaymentSucceeded({
       }
 
       await refundPaymentTransactions({
+        format,
         paymentId: reconciliation.paymentId,
         amountCents: plannedRefundCents,
         reason: "requested_by_customer",
@@ -2111,6 +2278,7 @@ export async function markBookingPaymentSucceeded({
         )
       );
       await alertRefundFailure({
+        format,
         booking: reconciliation.booking,
         paymentIntentId,
         amountCents,
@@ -2283,6 +2451,7 @@ export async function markBookingPaymentManuallySettled({
   expectedAmountCents,
   notifyMember,
   additionalCoverage = null,
+  format,
 }: {
   bookingId: string;
   actingAdminMemberId: string;
@@ -2290,6 +2459,8 @@ export async function markBookingPaymentManuallySettled({
   expectedAmountCents: number;
   notifyMember: boolean;
   additionalCoverage?: ManualAdditionalCoverage | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<ManualBookingSettlementResult> {
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
@@ -2337,6 +2508,7 @@ export async function markBookingPaymentManuallySettled({
   // first cannot cost the event either.
   if (reconciliation.staleCreditElectionCents != null) {
     await reportUnappliedCreditElection({
+      format,
       bookingId,
       memberId: bookingOwner(reconciliation.booking).memberId,
       memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
@@ -2526,7 +2698,7 @@ export async function reverseManualBookingPayment({
         paymentId: payment.id,
         source: PaymentSource.STRIPE,
         status: {
-          in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+          in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
         },
       },
       select: { id: true },
@@ -2787,6 +2959,12 @@ export async function reverseManualBookingPayment({
       restoredAdditionalAmountCents =
         restoredAdditional.count === 1 ? settledAdditional.amountCents : null;
     }
+
+    // #3581: the reversal flipped the manual rows from SUCCEEDED to FAILED
+    // above, so the cash lines the settle posted no longer hold. The same sync
+    // posts their reversals — new lines, the originals untouched, each keyed by
+    // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
+    await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding

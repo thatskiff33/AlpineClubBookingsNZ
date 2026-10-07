@@ -127,6 +127,7 @@ export async function modifyBookingWithLinkedMoveSupport(
       input: args.input,
       ipAddress: args.ipAddress,
       todayAtClub: args.todayAtClub,
+      format: args.format,
       ...(args.hostingCoverageOverride
         ? { hostingCoverageOverride: args.hostingCoverageOverride }
         : {}),

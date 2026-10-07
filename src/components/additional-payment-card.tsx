@@ -6,6 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
+import { useClubFormat } from "@/components/club-format-provider";
+import {
+  isAdditionalPaymentAlreadyMade,
+  isPaymentProcessing,
+} from "@/lib/payment-recovery-contract";
 
 interface AdditionalPaymentCardProps {
   bookingId: string;
@@ -31,12 +36,20 @@ export function AdditionalPaymentCard({
   bookingId,
   additionalAmountCents,
 }: AdditionalPaymentCardProps) {
+  const format = useClubFormat();
   const router = useRouter();
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [askAmountCents, setAskAmountCents] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paymentComplete, setPaymentComplete] = useState(false);
+  // #3641 / #3635: two of the route's 409s are not failures to load, so they
+  // get neither the "still owing" fallback nor the red error — ONE plain
+  // statement. Told apart by the body's `code`, never by the status: the
+  // currency refusal is a 409 too, and it IS an error (the ask is still owing).
+  const [notice, setNotice] = useState<
+    { kind: "paid" | "processing"; message: string } | null
+  >(null);
 
   useEffect(() => {
     let active = true;
@@ -52,10 +65,22 @@ export function AdditionalPaymentCard({
           // cannot refresh its secret must not go on offering the old one.
           setClientSecret(null);
           setAskAmountCents(null);
+          if (isAdditionalPaymentAlreadyMade(data)) {
+            setError(null);
+            setNotice({ kind: "paid", message: data.error });
+            return;
+          }
+          if (isPaymentProcessing(data)) {
+            setError(null);
+            setNotice({ kind: "processing", message: data.error });
+            return;
+          }
+          setNotice(null);
           setError(data.error || "Failed to load payment details");
           return;
         }
         setError(null);
+        setNotice(null);
         // Both from the SAME response, always set together (#3340).
         setClientSecret(data.clientSecret);
         setAskAmountCents(
@@ -65,6 +90,7 @@ export function AdditionalPaymentCard({
         if (!active) return;
         setClientSecret(null);
         setAskAmountCents(null);
+        setNotice(null);
         setError("Failed to load payment details");
       } finally {
         if (active) setLoading(false);
@@ -122,6 +148,17 @@ export function AdditionalPaymentCard({
             <p className="font-medium">Payment successful!</p>
             <p className="mt-1">Your additional payment has been processed.</p>
           </div>
+        ) : notice ? (
+          <div
+            role="status"
+            className={
+              notice.kind === "paid"
+                ? "rounded-md bg-success-3 p-4 text-sm text-success-11"
+                : "rounded-md bg-info-3 p-4 text-sm text-info-11"
+            }
+          >
+            <p>{notice.message}</p>
+          </div>
         ) : (
           <>
             {askAmountCents !== null ? (
@@ -132,7 +169,7 @@ export function AdditionalPaymentCard({
               // the disagreement this change exists to remove.
               <p className="text-sm text-warning-11 mb-4">
                 A recent booking modification means{" "}
-                <strong>{formatCents(askAmountCents)}</strong> is still owing on
+                <strong>{formatCents(askAmountCents, format)}</strong> is still owing on
                 this booking. Please complete payment to finalise the
                 modification.
               </p>
@@ -151,7 +188,7 @@ export function AdditionalPaymentCard({
                 */
                 <p className="text-sm text-warning-11 mb-4">
                   A recent booking modification means{" "}
-                  <strong>{formatCents(additionalAmountCents)}</strong> is still
+                  <strong>{formatCents(additionalAmountCents, format)}</strong> is still
                   owing on this booking according to our records. We could not
                   load the payment form just now — please try again shortly, or
                   contact the club if it keeps happening.

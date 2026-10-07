@@ -160,7 +160,7 @@ the same timestamp.
 ### Rehearsing an epic's deploy
 
 ```bash
-npm run db:rehearse-epic -- --database-url <throwaway> [--base <ref>] [--seed-sql <file>]
+pnpm run db:rehearse-epic --database-url <throwaway> [--base <ref>] [--seed-sql <file>]
 ```
 
 Creates and drops its own scratch database, applies the base ref's migrations,
@@ -194,8 +194,20 @@ condition on whether the diff adds a migration. That is a reasonable thing to
 build later; it is not a reason to skip the rehearsal now.
 
 The full model, including merge authority and the narrow inert-child exception,
-is [`agents/ISSUE_WORKFLOW.md`](agents/ISSUE_WORKFLOW.md) → "An epic reaches
+is [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md) → "An epic reaches
 `main` as ONE merge".
+
+## The lock timeout a `lock_impact_plan` may name
+
+Most rows in [`BLUE_GREEN_MIGRATION_SAFETY.tsv`](BLUE_GREEN_MIGRATION_SAFETY.tsv) end their plan with some form of **"run in the normal deploy window and let the deploy guard stop on lock timeout"**. Eighty do today. That sentence names a real control, and it is worth knowing exactly what it promises, because until [#3377](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3377) it promised something that did not exist — `lock_timeout` was set at no level, so it resolved to `0`, wait forever.
+
+**What it means now.** The `migrate` service connects with `lock_timeout` set (5 s by default, `MIGRATION_LOCK_TIMEOUT_MS`). A migration whose `ALTER TABLE` cannot take `ACCESS EXCLUSIVE` within that window is cancelled — SQLSTATE `55P03`, Prisma `P3018` — having applied nothing, and the deploy stops before cutover with the old colour still serving. It does **not** retry: repeated timeouts mean something is holding locks on a hot table during a deploy window, which is a thing to investigate rather than smooth over.
+
+**What it does not mean.** It is not a licence to migrate a hot table at a busy time. The bound stops the *outage* from being unbounded; it does not stop the deploy from failing, and a deploy that fails at step 13 still costs a window. The rest of the plan — deploy quietly, check for long write transactions first, keep the migrate → cutover gap short — is what makes the guard a backstop rather than the plan.
+
+**Writing a new row.** A plan may name this control freely; it is implemented and proved. It may **not** name a control the repository does not implement: `src/lib/__tests__/blue-green-ledger-named-controls.test.ts` fails the build if a row promises the lock timeout while the wiring is absent, and a new named mitigation needs its own entry there with real evidence behind it. A mitigation named in the artifact an operator reads before a deploy is worse than no mitigation, because it stops them planning for the case.
+
+The measurement behind the 5 s default, both of its bounds, and the recovery an operator runs are in [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-migration-lock-timeout-3377) and [`PRODUCTION_UPGRADE_RUNBOOK.md` §2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
 
 ## Deploy Gate
 
@@ -265,7 +277,7 @@ Run it locally against any throwaway database (the suite creates and drops its o
 
 ```bash
 DATA_MIGRATION_VERIFICATION_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
-  npx vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
+  pnpm exec vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
 ```
 
 Without that variable the real-database checks do not run, but the suite still fails if CI stops running them — and it fails outright inside its own CI job when the variable is missing, so the arrangement that runs the fixtures cannot quietly come undone.

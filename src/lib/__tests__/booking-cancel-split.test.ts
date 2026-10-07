@@ -26,6 +26,13 @@ const mocks = vi.hoisted(() => ({
   recordBookingEvent: vi.fn(),
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
+const appliedCredit = vi.hoisted(() => ({
+  deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
@@ -48,8 +55,12 @@ vi.mock("@/lib/cancellation", () => ({
 vi.mock("@/lib/email", () => ({ sendBookingCancelledEmail: mocks.sendBookingCancelledEmail }));
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
 vi.mock("@/lib/member-credit", () => ({
+  // #3611: the applied rows the kept figure reads; 0 unless a case says otherwise.
+  deriveBookingAppliedCreditCents: appliedCredit.deriveBookingAppliedCreditCents,
   createCancellationCredit: vi.fn(),
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
+  // #3792: the pending and paid claims take the member credit-ledger key.
+  lockMemberCreditLedger: vi.fn().mockResolvedValue(undefined),
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {
@@ -78,6 +89,8 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: vi.fn(),
+  // #3640: the Payment row lock the paid-path claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   markPaymentIntentTransactionFailed: vi.fn(),
   refundPaymentTransactions: vi.fn(),
 }));
@@ -98,6 +111,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("cancelBooking split cascade (#738)", () => {
   beforeEach(() => {
@@ -175,7 +189,7 @@ describe("cancelBooking split cascade (#738)", () => {
     );
     mocks.bookingFindMany.mockResolvedValue([child]);
 
-    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     // The cascade queried for children of the cancelled parent...
@@ -225,6 +239,17 @@ describe("cancelBooking split cascade (#738)", () => {
     expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "child_1" })
     );
+    // #3611: the child's own claim posts its reversals, nothing kept, after the
+    // child's global lock(1).
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1", keptCents: 0, site: "booking-cancel:linked-child" }),
+    );
+    const childPost = cancellationLedger.postCancellationLedgerLines.mock.calls.findIndex(
+      ([arg]) => (arg as { bookingId: string }).bookingId === "child_1",
+    );
+    expect(globalLockOrders[1]).toBeLessThan(
+      cancellationLedger.postCancellationLedgerLines.mock.invocationCallOrder[childPost]!,
+    );
     // #1967: any outstanding guest-portion payment link is revoked inside the
     // same claim transaction, so a link minted between the parent's cancel
     // and the member clicking /pay is dead — a cancelled child can never be
@@ -257,7 +282,7 @@ describe("cancelBooking split cascade (#738)", () => {
     // The outer sweep saw PENDING before waiting for the locks.
     mocks.bookingFindMany.mockResolvedValue([child]);
 
-    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
@@ -306,7 +331,7 @@ describe("cancelBooking split cascade (#738)", () => {
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
 
-    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.reconcileBedAllocationsForBooking).not.toHaveBeenCalledWith(
@@ -335,7 +360,7 @@ describe("cancelBooking split cascade (#738)", () => {
     mocks.txBookingFindUnique.mockResolvedValue(directChild);
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    const result = await cancelBooking("child_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("child_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     // The cascade looks for children of child_1 (there are none); the parent is

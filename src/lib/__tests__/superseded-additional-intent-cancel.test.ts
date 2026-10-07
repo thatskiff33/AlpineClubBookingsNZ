@@ -16,6 +16,7 @@ vi.mock("@/lib/payment-recovery", () => ({
 }));
 
 import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
   #3340 acceptance criterion 3 — A SUPERSEDED PAYMENT INTENT IS NOT LEFT
@@ -62,6 +63,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
     });
 
     const queued = await queueSupersededAdditionalIntentCancellations({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       newPaymentIntentId: "pi_new",
@@ -72,12 +74,13 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
     ]);
     // Durable first: a crash between the two leaves the cron to finish the job.
     expect(order).toEqual(["enqueue", "run"]);
-    expect(mocks.runNow).toHaveBeenCalledWith("operation_1");
+    expect(mocks.runNow).toHaveBeenCalledWith("operation_1", CLUB_FORMAT_TEST);
   });
 
   it("looks only at OTHER outstanding Stripe ADDITIONAL intents", async () => {
     mocks.findMany.mockResolvedValue([]);
     await queueSupersededAdditionalIntentCancellations({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       newPaymentIntentId: "pi_new",
@@ -103,6 +106,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
     // already saved and the recovery cron owns the retry.
     await expect(
       queueSupersededAdditionalIntentCancellations({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1",
         paymentId: "payment_1",
         newPaymentIntentId: "pi_new",
@@ -123,6 +127,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
       .mockResolvedValueOnce({ id: "operation_2" });
 
     await queueSupersededAdditionalIntentCancellations({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       newPaymentIntentId: "pi_new",
@@ -139,6 +144,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
       { id: "tx_no_intent", stripePaymentIntentId: null, amountCents: 6500 },
     ]);
     const queued = await queueSupersededAdditionalIntentCancellations({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       newPaymentIntentId: "pi_new",

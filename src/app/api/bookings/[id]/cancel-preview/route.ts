@@ -7,11 +7,26 @@ import { prisma } from "@/lib/prisma";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
-import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
+import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
+import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import {
+  findGroupCancellationChildDebt,
+  groupCancellationRefundNote,
+  organiserChildCancelBasis,
+} from "@/lib/organiser-child-refund";
+import { clubFormatValues } from "@/lib/club-format-server";
+import {
+  PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
+  readPartPaymentAtCancel,
+} from "@/lib/internet-banking-part-payment-at-cancel";
+import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -62,6 +77,34 @@ export async function GET(
       return NextResponse.json({ error: refusal }, { status: 400 });
     }
 
+    // #3643 (`INV-PAY-107`): an internet banking booking Xero shows partly
+    // paid is cancelled on the paid path, with the policy applied to what was
+    // paid. The preview asks the SAME live question the cancel asks, through
+    // the same reader, so the two cannot disagree except by Xero changing in
+    // between (the cancel reads again). A GET holds no transaction, so the
+    // provider call is safe here. It is bounded twice (D8): a per-user limit on
+    // the existing booking-query limiter, and a one-minute cache per booking,
+    // so reopening the dialog does not spend the tenant's Xero allowance.
+    const isOfficer =
+      hasAdminAccess(session.user) ||
+      hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" });
+    let partPaymentRead = null as Awaited<ReturnType<typeof readPartPaymentAtCancel>>;
+    if (booking.status !== "PENDING") {
+      const limited = await checkRateLimit(
+        rateLimiters.bookingQuery,
+        `cancel-preview:${session.user.id}`,
+      );
+      if (!limited.success) return rateLimitedResponse(limited);
+      partPaymentRead = await readPartPaymentAtCancel(booking, { cached: true });
+    }
+    // DECISION 2: money the app cannot credit — an officer may cancel it as
+    // unpaid (the treasurer settles it by hand); a member is sent to the club.
+    const manualPartPayment = partPaymentRead?.kind === "manual";
+    if (manualPartPayment && !isOfficer) {
+      return NextResponse.json({ error: PART_PAYMENT_MANUAL_MEMBER_REFUSAL }, { status: 409 });
+    }
+    const partPayment = partPaymentRead?.kind === "recognise" ? partPaymentRead : null;
+
     // PENDING bookings — no payment taken. #1491: paid-path eligibility is
     // shared with cancelBooking (SUCCEEDED, or PARTIALLY_REFUNDED with a
     // captured ledger row) so the preview can never show $0 for a cancel
@@ -70,7 +113,7 @@ export async function GET(
     if (
       booking.status === "PENDING" ||
       !booking.payment ||
-      !(await paymentEligibleForPaidCancelPath(booking.payment))
+      (!partPayment && !(await paymentEligibleForPaidCancelPath(booking)))
     ) {
       // #1547: the no-refund / never-captured executed path restores applied
       // credit at 100% (ledger truth, no override) — so the preview must show
@@ -84,10 +127,15 @@ export async function GET(
         },
         _sum: { amountCents: true },
       });
-      const creditRestoredCents = Math.max(
-        0,
-        -(appliedAggregate._sum.amountCents ?? 0)
-      );
+      const appliedCents = Math.max(0, -(appliedAggregate._sum.amountCents ?? 0));
+      // #3809 (F2): a captured payment the cancel cannot refund has its credit
+      // tiered as the cancel tiers it - the same helper, so the two agree.
+      const todayAtClub = (await clubTime()).today();
+      const tiered =
+        booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence(booking.payment))
+          ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment }, todayAtClub })
+          : null;
+      const creditRestoredCents = tiered ? Math.min(tiered.creditToRestoreCents, appliedCents) : appliedCents;
 
       return NextResponse.json({
         refundAmountCents: 0,
@@ -100,12 +148,31 @@ export async function GET(
         totalPaidCents: 0,
         hasPayment: false,
         manualRefund: false,
+        // DECISION 2: say that a recorded payment is left to the treasurer.
+        paymentSettledByHand: manualPartPayment,
       });
     }
 
     const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+    // #3653: a joiner's booking the organiser paid for by card is refunded to
+    // the organiser from what remains after refunds made AND owed - the base
+    // the cancel itself tiers - and from nothing once the organiser's payment
+    // no longer holds money.
+    const organiserCard = paidByOrganiserCard(booking)
+      ? await organiserChildCancelBasis(prisma, booking, booking.payment)
+      : null;
     const preview = calculateCancellationPreview({
-      payment: booking.payment,
+      // #3643: the cash the cancel will record, not the invoice's face value.
+      payment: partPayment
+        ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
+        : organiserCard
+          ? {
+              ...booking.payment,
+              refundedAmountCents: organiserCard.settlement
+                ? organiserCard.committedRefundCents
+                : booking.payment.amountCents,
+            }
+          : booking.payment,
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,
@@ -117,10 +184,34 @@ export async function GET(
       // or from instrumentation, so the request-scoped `server-only` binding is
       // the right reader (`docs/CLUB_TIME_KERNEL.md`).
       todayAtClub: (await clubTime()).today(),
+      // #3809 (`INV-PAY-115`): capped only where the cancel caps it.
+      capAppliedCredit: await bookingReducedThroughCreditGiveBack(booking.id, prisma),
     });
+    // #3653: the organiser's cancellation of the group already owes this
+    // child's refund, so the joiner's cancel behind it returns nothing of its
+    // own and says whose the refund is. Asked through the cancel's own lookup,
+    // so the preview cannot quote a refund the cancel will not make (#1491).
+    const groupDebt = organiserCard?.settlement
+      ? await findGroupCancellationChildDebt(prisma, organiserCard.settlement.id, booking.id)
+      : null;
+    const groupCancellation = groupDebt
+      ? {
+          refundAmountCents: 0,
+          refundPercentage: 0,
+          creditRefundAmountCents: 0,
+          creditRefundPercentage: 0,
+          keptAmountCents: preview.keptAmountCents + preview.refundAmountCents,
+          groupCancellationRefundCents: groupDebt.amountCents,
+          groupCancellationRefundNote: groupCancellationRefundNote(
+            groupDebt.amountCents,
+            await clubFormatValues(),
+          ),
+        }
+      : {};
 
     return NextResponse.json({
       ...preview,
+      ...groupCancellation,
       hasPayment: true,
       // B5 (#2262): this booking was settled in cash / by an off-Xero bank
       // transfer, so cancelling raises a hand-back task an admin pays by hand —
@@ -129,6 +220,10 @@ export async function GET(
       // tier, which is what the executed cancel uses), so preview parity holds;
       // this flag only lets the dialog say honestly what will happen.
       manualRefund: booking.payment.manuallyMarkedPaidAt !== null,
+      // The method the cancel will use whatever is chosen (an internet banking
+      // payment refunds as account credit), from the cancel path's own home,
+      // so the dialog offers only that option.
+      refundMethodForced: forcedCancelRefundMethod(booking.payment.source, organiserCard !== null),
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");

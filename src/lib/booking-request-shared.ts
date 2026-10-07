@@ -34,6 +34,10 @@ import {
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import logger from "@/lib/logger";
 import {
+  bookingGuestDietaryCreateData,
+  type BookingGuestDietaryWrite,
+} from "@/lib/member-dietary-booking-writes";
+import {
   assertMembershipTypeBookingAllowed,
   resolveGuestRateMembershipTypes,
 } from "@/lib/membership-type-policy";
@@ -41,6 +45,7 @@ import { getStayNights } from "@/lib/policies/pricing";
 import { prisma } from "@/lib/prisma";
 import { requiredGuestPriceCents } from "@/lib/required-price-cents";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 /** A held booking's owner failed re-validation and a fresh contact was
  * substituted at conversion (issue #1255 residual-risk decision 1). */
@@ -202,11 +207,12 @@ export function buildApprovalGuestNights(params: {
  * Idempotency guard (#1232 double-charge). Under the per-lodge advisory lock —
  * call this AFTER acquireLodgeCapacityLock and BEFORE the status-claim — observe
  * whether a prior approve already converted this request (a concurrent
- * double-accept, or a retry whose caller re-armed the request to PRICED after it
- * had already converted). If so, return the committed booking + owner ids so the
- * caller replays that conversion instead of creating a second booking; when the
- * status had been re-armed away from CONVERTED, re-assert the true terminal
- * status (we hold the lock). Returns null when no prior conversion exists.
+ * double-approve, or — before #3415, whose acceptance never writes a converted
+ * request — a requester accept retry that re-armed it to PRICED). If so, return
+ * the committed booking + owner ids so the caller replays that conversion
+ * instead of creating a second booking; when the status is not CONVERTED,
+ * re-assert the true terminal status (we hold the lock). Returns null when no
+ * prior conversion exists.
  */
 export async function claimAlreadyConvertedBookingRequest(
   tx: Prisma.TransactionClient,
@@ -275,6 +281,11 @@ export async function buildApprovalGuestCreates(
      * pooled connection while all of that is held: `INV-LOCK-004`.
      */
     today: Date;
+    /**
+     * The club's date format, for the person-night guard's refusal (#3566),
+     * resolved by the caller before its transaction for the reason `today` is.
+     */
+    format: ClubDateFormat;
   }
 ): Promise<HeldBookingGuestInput[]> {
   const {
@@ -287,6 +298,7 @@ export async function buildApprovalGuestCreates(
     adminMemberId,
     heldBookingId,
     today,
+    format,
   } = params;
 
   const unratedGuestCreates = guests.map((guest, index) => {
@@ -378,7 +390,7 @@ export async function buildApprovalGuestCreates(
     // Supplied from outside this transaction (`INV-LOCK-004`) — see the
     // `today` parameter above.
     today,
-  });
+  }, format);
 
   return guestCreates;
 }
@@ -488,10 +500,20 @@ export async function planBookingRequestGuestConsent<
  * only thing that makes "a fifth pipeline cannot be added without answering the
  * question" true rather than aspirational. Pinned by the `@ts-expect-error` case
  * in `src/lib/__tests__/booking-request-guest-nights.test.ts`, which fails
- * `npm run typecheck` if the field ever goes back to optional.
+ * `pnpm run typecheck` if the field ever goes back to optional.
+ *
+ * `dietary` IS REQUIRED for the same reason (#3029, `INV-MOD-059`): the new
+ * row's dietary/allergy snapshot, as `resolveBookingGuestDietary` decided it for
+ * this guest inside the pipeline's transaction. A pipeline that maps guests
+ * straight through (`.map(toPipelineGuestCreateData)`) would hand the array
+ * index here, which does not type-check — so a fifth pipeline cannot skip the
+ * seeding question either.
  */
 export function toPipelineGuestCreateData<Guest extends object>(
-  guest: Guest & MemberGuestConsentGuestFields & { nights: readonly ApprovalGuestNight[] }
+  guest: Guest & MemberGuestConsentGuestFields & { nights: readonly ApprovalGuestNight[] },
+  // `| undefined` so an index read (`writes[i]`) passes straight through; the
+  // spread below refuses a missing decision at runtime (#3029).
+  dietary: BookingGuestDietaryWrite | undefined,
 ): Omit<Guest, keyof MemberGuestConsentGuestFields | "nights"> & {
   nights: { create: ApprovalGuestNight[] };
 } {
@@ -500,6 +522,7 @@ export function toPipelineGuestCreateData<Guest extends object>(
   return {
     ...rest,
     ...(memberGuestConsent ?? {}),
+    ...bookingGuestDietaryCreateData(dietary),
     nights: { create: [...nights] },
   } as unknown as Omit<Guest, keyof MemberGuestConsentGuestFields | "nights"> & {
     nights: { create: ApprovalGuestNight[] };

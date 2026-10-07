@@ -8,7 +8,7 @@ import {
   hasAccessRole,
   hasAdminAccess,
   hasLodgeAccess,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import { bookingOwner } from "@/lib/booking-owner";
 
@@ -86,7 +86,7 @@ export function kioskGroupTripCapabilities(
   return { organiser: privileged, coverSource: privileged };
 }
 
-export type KioskAccessSubject = AccessRoleInput & {
+export type KioskAccessSubject = PrivilegeCheckInput & {
   id: string;
 };
 

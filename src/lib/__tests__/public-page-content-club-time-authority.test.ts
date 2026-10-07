@@ -13,10 +13,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * the ones still in force, so a day out shows a visitor a period the club has
  * finished with — or hides the one it is in.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` — the container's zone, and the only thing
- * `getTodayDateOnly()` ever read — is pinned to `Pacific/Auckland`, which is the
- * answer the replaced helper would have given AND the value this codebase falls
- * back to, so it is the one zone a wrong fix could still pass under. The
+ * DISCRIMINATION. `Pacific/Auckland` — the container's zone by default, which
+ * is what `getTodayDateOnly()` used to read (the environment constant once
+ * pinned to it here was deleted in #3567) — is the answer the replaced helper
+ * would have given AND the value this codebase falls back to, so it is the one zone a wrong fix could still pass under. The
  * persisted club zone is `America/Denver`, behind Greenwich, which is the side
  * the defect shows on. Under the frozen clock (`2026-07-01T00:00:00.000Z`) it is
  * 1 July in Auckland and 30 June in Denver, so the two never agree and no
@@ -34,12 +34,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Inlined literals: `vi.mock` factories hoist above every const in this file.
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
 const PERSISTED_ZONE = "America/Denver";
@@ -79,7 +73,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import {
   loadPublicAnnualFees,
@@ -87,6 +80,7 @@ import {
   loadPublicCancellationPolicy,
   loadPublicJoiningFees,
 } from "@/lib/public-page-content-tokens";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CLUB_DAY_UTC_MIDNIGHT = "2026-06-30T00:00:00.000Z";
 const ENVIRONMENT_DAY_UTC_MIDNIGHT = "2026-07-01T00:00:00.000Z";
@@ -141,13 +135,12 @@ describe("public content loaders take today from the club, not the container (#3
   it("PREMISE: the persisted zone and the environment's give different days", () => {
     // The ANSWERS have to differ, not merely the identifiers — two zones with
     // different names and the same offset would make every case below vacuous.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });
 
   it("bounds the public joining-fee window on the club's day, at UTC midnight", async () => {
-    await loadPublicJoiningFees();
+    await loadPublicJoiningFees(CLUB_FORMAT_TEST);
 
     expect(feeWindowBound("joiningFees").toISOString()).toBe(
       CLUB_DAY_UTC_MIDNIGHT,
@@ -155,7 +148,7 @@ describe("public content loaders take today from the club, not the container (#3
   });
 
   it("bounds the public annual-fee window on the club's day, at UTC midnight", async () => {
-    await loadPublicAnnualFees();
+    await loadPublicAnnualFees(CLUB_FORMAT_TEST);
 
     expect(feeWindowBound("annualFees").toISOString()).toBe(
       CLUB_DAY_UTC_MIDNIGHT,
@@ -167,7 +160,7 @@ describe("public content loaders take today from the club, not the container (#3
     // the container's day it has expired and the visitor sees nothing.
     mocks.periods.mockResolvedValue([periodEndingOnTheClubDay()]);
 
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
 
     expect(policy?.periods.map((period) => period.name)).toEqual(["Winter"]);
   });
@@ -175,7 +168,7 @@ describe("public content loaders take today from the club, not the container (#3
   it("keeps a cancellation-policy period that is still in force on the club's day", async () => {
     mocks.periods.mockResolvedValue([periodEndingOnTheClubDay()]);
 
-    const policy = await loadPublicCancellationPolicy();
+    const policy = await loadPublicCancellationPolicy(CLUB_FORMAT_TEST);
 
     expect(policy?.periods.map((period) => period.name)).toEqual(["Winter"]);
   });
@@ -185,20 +178,20 @@ describe("public content loaders take today from the club, not the container (#3
     // environment read, a value cached across calls. Same clock, same mocks;
     // only the stored zone differs.
     persistClubZone("Pacific/Kiritimati"); // UTC+14 — 1 July, ahead of Auckland
-    await loadPublicJoiningFees();
+    await loadPublicJoiningFees(CLUB_FORMAT_TEST);
     expect(feeWindowBound("joiningFees").toISOString()).toBe(
       ENVIRONMENT_DAY_UTC_MIDNIGHT,
     );
 
     persistClubZone("Pacific/Pago_Pago"); // UTC-11 — still 30 June
-    await loadPublicAnnualFees();
+    await loadPublicAnnualFees(CLUB_FORMAT_TEST);
     expect(feeWindowBound("annualFees").toISOString()).toBe(
       CLUB_DAY_UTC_MIDNIGHT,
     );
   });
 
   it("really asks the ClubTimeSettings row for the zone", async () => {
-    await loadPublicJoiningFees();
+    await loadPublicJoiningFees(CLUB_FORMAT_TEST);
 
     expect(mocks.clubTimeSettings).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "default" } }),

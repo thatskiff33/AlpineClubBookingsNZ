@@ -3,11 +3,7 @@ import {
   STREET_ADDRESS_FIELDS,
   type MemberAddressField,
 } from "@/lib/member-address";
-import {
-  hasAccessRole,
-  hasAdminAccess,
-  hasLodgeAccess,
-} from "@/lib/access-roles";
+import { isAdminOrKioskOnlyRecord } from "@/lib/access-roles";
 
 type MemberProfileConfirmationMode = "self" | "delegated" | "not_allowed";
 
@@ -197,9 +193,11 @@ export function evaluateMemberProfileCompleteness(
   // so it confirms its details like any member — without this, dual-hat
   // admins are permanently canBeBookedAsMember=false and can never be added
   // to their own booking.
-  const confirmationExemptRole =
-    (hasAdminAccess(member) || hasLodgeAccess(member)) &&
-    !hasAccessRole(member, "USER");
+  //
+  // A record classification, not a privilege decision, so it reads the named
+  // classification helper with whatever `canLogin` the caller holds rather
+  // than the privilege checks that require it (#3603).
+  const confirmationExemptRole = isAdminOrKioskOnlyRecord(member);
   const confirmationMode: MemberProfileConfirmationMode =
     member.active === false || confirmationExemptRole
       ? "not_allowed"

@@ -1,7 +1,32 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  renderWithClubFormat as render,
+  screen,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/*
+  RENDERED THROUGH THE SHARED HELPER'S FORMAT-ONLY WRAPPER (#3564).
+  `DisplayScreen` sits under a `ClubFormatProvider` that
+  `src/app/display/page.tsx` mounts, and `useClubFormat()` throws without one.
+
+  IT IS `renderWithClubFormat` RATHER THAN `render`, and the alias is the whole
+  point: the full helper also mounts `ClubTimeProvider`, which production's
+  `/display` does NOT have - the wall carries its zone down a context private
+  to `display-header-clock.tsx`, which is why `/display` sits on the club-time
+  census's providerless list. A suite standing under a provider the real route
+  lacks would let a display module reach for `useClubTime()`, pass here, and
+  throw on an unattended lobby screen. The wrapper's own docblock carries the
+  reasoning.
+
+  The defaults are the shipped New Zealand ones, so every expectation in this
+  file means exactly what it meant before - and, for that same reason, proves
+  nothing about format authority. `display-club-format.test.tsx` is the suite
+  that does.
+*/
 import { DisplayScreen } from "@/app/display/display-screen";
 import { clubIdentity } from "@/config/club-identity";
 

@@ -1,12 +1,12 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Provision the dedicated SELECT-only AI Diagnostics database role (AID-5,
  * #2374; contract in ADR-007).
  *
  *   AI_DIAGNOSTICS_DB_PASSWORD='<a long random secret>' \
- *     npm run diagnostics:provision-role
+ *     pnpm run diagnostics:provision-role
  *
- *   npm run diagnostics:provision-role -- --dry-run     # print the SQL, no connection
+ *   pnpm run diagnostics:provision-role --dry-run     # print the SQL, no connection
  *
  * WHY A SCRIPT AND NOT A MIGRATION. A Prisma migration runs on every deployment
  * and is part of the schema history; a database ROLE is neither. It is cluster

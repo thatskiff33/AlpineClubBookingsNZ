@@ -3,6 +3,7 @@ import {
   adminCreditSyncDriftTemplate,
   type CreditSyncDriftReportEmail,
 } from "@/lib/email-templates/admin-xero-reports";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("adminCreditSyncDriftTemplate", () => {
   const report: CreditSyncDriftReportEmail = {
@@ -30,7 +31,7 @@ describe("adminCreditSyncDriftTemplate", () => {
   };
 
   it("renders the exact BookingApp, Xero and drift amounts and the member/invoice", () => {
-    const html = adminCreditSyncDriftTemplate(report);
+    const html = adminCreditSyncDriftTemplate(report, CLUB_FORMAT_TEST);
 
     // Detailed as to the amount: both sides and the exact drift.
     expect(html).toContain("$120.00"); // BookingApp known credit
@@ -54,7 +55,7 @@ describe("adminCreditSyncDriftTemplate", () => {
           memberName: "<script>alert(1)</script>",
         },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");

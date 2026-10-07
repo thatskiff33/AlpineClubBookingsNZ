@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it } from "vitest";
 
 import { MembershipCancellationBlockerNotice } from "@/components/admin/membership-cancellation-blocker-notice";
@@ -13,6 +13,7 @@ import {
   calendarDateOfSerialisedDbDate,
   formatClubDate,
 } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * The panel a reviewer actually reads before pressing Approve (#2392). Until
@@ -33,6 +34,7 @@ function unpaidInvoice(
     invoiceStatus: "AUTHORISED",
     direction: "receivable",
     amountDueCents: 12050,
+    amountDueTenThousandths: 1205000,
     currency: "NZD",
     dueDate: "2026-06-30",
     xeroUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv-1",
@@ -165,7 +167,7 @@ describe("the cancellation review queue's blocker panel", () => {
       */
       expect(screen.getByRole("listitem").textContent).toBe(
         describeMembershipCancellationBlocker(blocker, {
-          formatDate: (value) => formatClubDate(calendarDateOfSerialisedDbDate(value)),
+          formatDate: (value) => formatClubDate(calendarDateOfSerialisedDbDate(value), CLUB_FORMAT_TEST),
         }),
       );
     });

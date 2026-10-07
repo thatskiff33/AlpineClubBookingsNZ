@@ -762,6 +762,9 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
+        // #3029 S1/N4: an own-account leader's lodge comes from the assignment
+        // covering the requested day, so the row names its lodge.
+        lodgeId: "default-lodge",
         startDate: new Date("2026-04-14T00:00:00.000Z"),
         endDate: new Date("2026-04-16T00:00:00.000Z"),
       },

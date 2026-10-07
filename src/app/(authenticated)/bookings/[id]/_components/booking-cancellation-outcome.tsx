@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatCents } from "@/lib/utils";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
@@ -14,9 +14,11 @@ import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
  */
 export function BookingCancellationOutcome({
   booking,
+  money,
   payment,
 }: {
   booking: BookingDetailRecord;
+  money: BoundClubFormat;
   payment: BookingDetailPayment;
 }) {
   const {
@@ -54,7 +56,7 @@ export function BookingCancellationOutcome({
               <div>
                 <span className="text-muted-foreground">Original payment:</span>{" "}
                 {originalPaymentCaptured && booking.payment
-                  ? formatCents(booking.payment.amountCents)
+                  ? money.cents(booking.payment.amountCents)
                   : "No original payment captured"}
               </div>
 
@@ -64,21 +66,21 @@ export function BookingCancellationOutcome({
                     <span className="text-muted-foreground">
                       Returned to original payment method:
                     </span>{" "}
-                    {formatCents(
+                    {money.cents(
                       cancellationSettlement.refundToOriginalMethodCents
                     )}
                   </div>
 
                   <div>
                     <span className="text-muted-foreground">Held as account credit:</span>{" "}
-                    {formatCents(cancellationSettlement.accountCreditCents)}
+                    {money.cents(cancellationSettlement.accountCreditCents)}
                   </div>
 
                   <div>
                     <span className="text-muted-foreground">
                       Non-refundable amount retained:
                     </span>{" "}
-                    {formatCents(retainedAfterCancellationCents)}
+                    {money.cents(retainedAfterCancellationCents)}
                   </div>
 
                   {cancellationSettlement.restoredAppliedCreditCents > 0 && (
@@ -87,7 +89,7 @@ export function BookingCancellationOutcome({
                         Previously applied credit restored (per the cancellation
                         policy):
                       </span>{" "}
-                      {formatCents(
+                      {money.cents(
                         cancellationSettlement.restoredAppliedCreditCents
                       )}
                     </div>
@@ -99,7 +101,7 @@ export function BookingCancellationOutcome({
                       <span className="text-muted-foreground">
                         Included non-refundable change fees:
                       </span>{" "}
-                      {formatCents(booking.payment.changeFeeCents)}
+                      {money.cents(booking.payment.changeFeeCents)}
                     </div>
                       )
                     : null}
@@ -123,12 +125,12 @@ export function BookingCancellationOutcome({
                   </Badge>
                   {latestRefundAppeal.requestedAmountCents ? (
                     <span className="ml-2 text-muted-foreground">
-                      Requested {formatCents(latestRefundAppeal.requestedAmountCents)}
+                      Requested {money.cents(latestRefundAppeal.requestedAmountCents)}
                     </span>
                   ) : null}
                   {latestRefundAppeal.approvedAmountCents ? (
                     <span className="ml-2 text-muted-foreground">
-                      Approved {formatCents(latestRefundAppeal.approvedAmountCents)}
+                      Approved {money.cents(latestRefundAppeal.approvedAmountCents)}
                     </span>
                   ) : null}
                 </div>

@@ -17,10 +17,12 @@ import {
 } from "@/lib/finance-dashboard-page/model";
 import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
+import type { ClubFormat } from "@/lib/club-format";
 
 export async function buildPricingSensitivityDashboard(
   selection: FinanceDashboardSelection,
   lodgeId: string | null,
+  format: ClubFormat,
 ) {
   const [costs, metrics] = await Promise.all([
     buildFinanceMonthlyPnlSummary({
@@ -28,6 +30,7 @@ export async function buildPricingSensitivityDashboard(
       primary: selection.primary,
       comparison: null,
       currentMonth: selection.currentMonth,
+      format,
     }),
     getFinanceBookingMetrics({
       realized: {
@@ -53,7 +56,7 @@ export async function buildPricingSensitivityDashboard(
   const scenarioData = assumptions.map((occupancy) => {
     const impliedGuestNights = Math.round(capacityBedNights * occupancy);
     return {
-      label: formatPercent(occupancy),
+      label: formatPercent(occupancy, format),
       requiredRate:
         impliedGuestNights > 0
           ? Math.round(costs.amountCents / impliedGuestNights)
@@ -70,7 +73,7 @@ export async function buildPricingSensitivityDashboard(
       comparison: null,
       affectedMetrics:
         "Realized rate, booked revenue less costs, and occupancy scenarios",
-      formatNumber,
+      formatNumber: (value) => formatNumber(value, format),
     });
   // Per-night rates keep cents: they are unit prices where cents are signal.
   const cards: FinanceDashboardKpiCard[] = [
@@ -79,7 +82,7 @@ export async function buildPricingSensitivityDashboard(
       value:
         breakEvenRateCents === null
           ? "Unavailable"
-          : formatCents(breakEvenRateCents),
+          : formatCents(breakEvenRateCents, format),
       description: "Selected-period costs divided by realized guest nights.",
     },
     {
@@ -87,17 +90,17 @@ export async function buildPricingSensitivityDashboard(
       value:
         realizedRateCents === null
           ? "Unavailable"
-          : formatCents(realizedRateCents),
+          : formatCents(realizedRateCents, format),
       description: "Booked revenue divided by realized guest nights.",
     },
     {
       title: "Booked revenue less costs",
-      value: formatSignedDollarsDisplay(bookedRevenueLessCostsCents),
+      value: formatSignedDollarsDisplay(bookedRevenueLessCostsCents, format),
       description: "Booking-system revenue less mapped Xero costs.",
     },
     {
       title: "Realized guest nights",
-      value: formatNumber(guestNights),
+      value: formatNumber(guestNights, format),
       description: "Demand base used by the break-even calculation.",
     },
   ];
@@ -137,8 +140,8 @@ export async function buildPricingSensitivityDashboard(
           "Break-even rates are based on mapped selected-period costs.",
         items: scenarioData.map((scenario) => ({
           label: scenario.label,
-          value: formatCents(scenario.requiredRate),
-          detail: `Revenue at realized rate ${formatDollarsDisplay(scenario.realizedRevenue)}`,
+          value: formatCents(scenario.requiredRate, format),
+          detail: `Revenue at realized rate ${formatDollarsDisplay(scenario.realizedRevenue, format)}`,
         })),
       },
     ],

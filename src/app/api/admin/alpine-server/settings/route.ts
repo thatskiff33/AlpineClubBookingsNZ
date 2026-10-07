@@ -56,7 +56,7 @@ export async function POST(request: Request) {
   // redirection: point it at a host they control, enable the sync, collect the
   // Authorization header. Every other provider pins its endpoint in code, which
   // is why Full-Admin-on-the-key alone was sufficient for them and is not here.
-  if (changingBaseUrl && !isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+  if (changingBaseUrl && !isFullAdmin(guard.session.user)) {
     await createAuditLog({
       action: "alpine_server.settings.base_url_denied",
       category: "security",

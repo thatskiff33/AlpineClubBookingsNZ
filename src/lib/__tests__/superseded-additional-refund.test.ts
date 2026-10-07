@@ -28,6 +28,7 @@ import {
   isSupersededAdditionalRefundEvent,
   SUPERSEDED_ADDITIONAL_REFUND_EVENT_KIND,
 } from "@/lib/superseded-additional-refund-event";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
   #3340 acceptance criterion 5 — A LATE-CAPTURED SUPERSEDED INTENT THAT IS
@@ -107,6 +108,7 @@ describe("reportSupersededPaymentRefund", () => {
     );
 
     await reportSupersededPaymentRefund({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       paymentIntentId: "pi_superseded",
@@ -143,6 +145,7 @@ describe("reportSupersededPaymentRefund", () => {
         refundedAmountCents: 6500,
         amountOwingCents: 36500,
       }),
+      CLUB_FORMAT_TEST,
     );
 
     expect(mocks.sendAdminAlert).toHaveBeenCalledWith(
@@ -153,6 +156,7 @@ describe("reportSupersededPaymentRefund", () => {
         paymentIntentId: "pi_superseded",
         bookingId: "booking_1",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -162,6 +166,7 @@ describe("reportSupersededPaymentRefund", () => {
     );
 
     await reportSupersededPaymentRefund({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       paymentIntentId: "pi_superseded",
@@ -170,6 +175,7 @@ describe("reportSupersededPaymentRefund", () => {
 
     expect(mocks.sendMemberEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountOwingCents: 0 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -196,6 +202,7 @@ describe("reportSupersededPaymentRefund", () => {
     );
 
     await reportSupersededPaymentRefund({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       paymentIntentId: "pi_superseded",
@@ -204,9 +211,11 @@ describe("reportSupersededPaymentRefund", () => {
 
     expect(mocks.sendMemberEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountOwingCents: 19500 }),
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.sendAdminAlert).toHaveBeenCalledWith(
       expect.objectContaining({ amountOwingCents: 19500 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -228,6 +237,7 @@ describe("reportSupersededPaymentRefund", () => {
     );
 
     await reportSupersededPaymentRefund({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       paymentIntentId: "pi_superseded",
@@ -236,6 +246,7 @@ describe("reportSupersededPaymentRefund", () => {
 
     expect(mocks.sendMemberEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountOwingCents: 0 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -243,6 +254,7 @@ describe("reportSupersededPaymentRefund", () => {
     mocks.findBooking.mockRejectedValue(new Error("database unavailable"));
 
     await reportSupersededPaymentRefund({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       paymentIntentId: "pi_superseded",
@@ -270,6 +282,7 @@ describe("reportSupersededPaymentRefund", () => {
 
     await expect(
       reportSupersededPaymentRefund({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1",
         paymentId: "payment_1",
         paymentIntentId: "pi_superseded",

@@ -35,6 +35,7 @@ import {
 import type { RevenueGranularity } from "@/lib/admin-reports";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusLabel } from "@/lib/status-colors";
+import { useClubFormat } from "@/components/club-format-provider";
 
 const PIE_COLORS = ["#3b82f6", "#ef4444"];
 const STATUS_COLORS = ["#22c55e", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#f97316"];
@@ -91,6 +92,7 @@ export function RevenueBarChart({
   data: Array<{ label: string; revenueCents: number; tooltipLabel?: string }>;
   granularity: RevenueGranularity;
 }) {
+  const clubFormat = useClubFormat();
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data}>
@@ -105,13 +107,13 @@ export function RevenueBarChart({
         />
         <YAxis
           tick={{ fontSize: 12 }}
-          tickFormatter={(value) => formatCents(Number(value))}
+          tickFormatter={(value) => formatCents(Number(value), clubFormat)}
         />
         <Tooltip
           labelFormatter={(_value, payload) =>
             payload?.[0]?.payload?.tooltipLabel ?? ""
           }
-          formatter={(value) => [formatCents(Number(value)), "Booked revenue"]}
+          formatter={(value) => [formatCents(Number(value), clubFormat), "Booked revenue"]}
         />
         <Bar dataKey="revenueCents" fill="#22c55e" radius={[4, 4, 0, 0]} />
       </BarChart>

@@ -203,6 +203,7 @@ import {
   verifyBookingRequest,
 } from "@/lib/booking-request";
 import { sendMemberGuestWithdrawnNotifications } from "@/lib/member-guest-consent-notifications";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   fenceMemberFindMany,
   recordingBookingDouble,
@@ -284,7 +285,7 @@ function memberNightConflictError() {
       canSelfRemove: false,
       isSelfGuest: false,
     },
-  ]);
+  ], CLUB_FORMAT_TEST);
 }
 
 const GUESTS = [{ firstName: "Tara", lastName: "Tester", ageTier: "ADULT" as const }];
@@ -374,6 +375,7 @@ describe("booking request settings", () => {
       showPricingToNonMembers: false,
       quoteResponseTtlDays: 14,
       quoteReminderLeadDays: 3,
+      assignSchoolTeachersAsHutLeaders: false,
       attendeeConfirmationLeadDays: 14,
       attendeeConfirmationReminderDays: 3,
     });
@@ -385,6 +387,7 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
+      assignSchoolTeachersAsHutLeaders: true,
       attendeeConfirmationLeadDays: 21,
       attendeeConfirmationReminderDays: 4,
     } as never);
@@ -393,6 +396,7 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
+      assignSchoolTeachersAsHutLeaders: true,
       attendeeConfirmationLeadDays: 14,
       attendeeConfirmationReminderDays: 3,
       adminMemberId: "admin-1",
@@ -405,6 +409,7 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
+      assignSchoolTeachersAsHutLeaders: true,
       attendeeConfirmationLeadDays: 21,
       attendeeConfirmationReminderDays: 4,
     });
@@ -819,9 +824,9 @@ describe("declineBookingRequest", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("declines a PRICED request, emails the requester, and audits the reviewer", async () => {
+  it("declines a PRICED request, clears pending adults, emails the requester, and audits the reviewer", async () => {
     mockedFindUnique
-      .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED }) as never)
+      .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED, pendingAdultCount: 2 }) as never)
       .mockResolvedValueOnce(
         baseRequest({ status: BookingRequestStatus.DECLINED, declineReason: "Fully booked" }) as never
       );
@@ -834,6 +839,9 @@ describe("declineBookingRequest", () => {
     });
 
     expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+    expect(mockedUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: BookingRequestStatus.DECLINED, pendingAdultCount: 0 }),
+    }));
     expect(mockedSendDeclined).toHaveBeenCalledWith(
       expect.objectContaining({ email: "tara@example.com", reason: "Fully booked" })
     );
@@ -1079,6 +1087,7 @@ describe("declineBookingRequest", () => {
       "admin-1",
       "ADMIN",
       "203.0.113.9",
+      CLUB_FORMAT_TEST,
       "card",
       { suppressCustomerNotification: true, requireRequestHold: true }
     );
@@ -1134,6 +1143,7 @@ describe("declineBookingRequest", () => {
         "admin-1",
         "ADMIN",
         "203.0.113.10",
+        CLUB_FORMAT_TEST,
         "card",
         { suppressCustomerNotification: true, requireRequestHold: true }
       );
@@ -1218,6 +1228,7 @@ describe("declineBookingRequest", () => {
       "admin-1",
       "ADMIN",
       "203.0.113.7",
+      CLUB_FORMAT_TEST,
       "card",
       // #1406: opt-in guard (defense-in-depth) so the shared cancel path refuses
       // (409, no side effect) if the hold ever leaves AWAITING_REVIEW.
@@ -1263,6 +1274,7 @@ describe("declineBookingRequest", () => {
       "admin-1",
       "ADMIN",
       "203.0.113.8",
+      CLUB_FORMAT_TEST,
       "card",
       // #1406: opt-in guard (defense-in-depth), see above.
       { suppressCustomerNotification: true, requireRequestHold: true }
@@ -1816,17 +1828,23 @@ describe("approveBookingRequest", () => {
     // booking's Member rows: real production behaviour on this path that was
     // invisible here until #2619, because the double carries no `$queryRaw` and
     // the fence used to hand back an UNLOCKED proof rather than take the lock.
+    //
+    // #3029 F1 adds a third, between them: the in-place guest rewrite locks the
+    // held party's BookingGuest rows FOR UPDATE before reading the dietary
+    // values it keeps or replaces (`lockBookingGuestRowsForUpdate`).
     const rawStatements = vi.mocked(prisma.$executeRaw).mock.calls;
-    expect(rawStatements).toHaveLength(2);
+    expect(rawStatements).toHaveLength(3);
     expect(JSON.stringify(rawStatements[0][0])).toContain(
       "pg_advisory_xact_lock"
     );
+    expect(JSON.stringify(rawStatements[1][0])).toContain('FROM \\"BookingGuest\\"');
+    expect(JSON.stringify(rawStatements[1][0])).toContain("FOR UPDATE");
     // Pin the fence's own statement too. This is the one assertion across the
     // widened suites that would FAIL if the lock were deleted from
     // acquireHostingCoverageQueueParticipantProof — the rest model what the
     // fence reads without asserting that it locked, so without this the seam
     // could be gutted and stay green.
-    expect(JSON.stringify(rawStatements[1][0])).toContain(
+    expect(JSON.stringify(rawStatements[2][0])).toContain(
       "FOR KEY SHARE NOWAIT"
     );
     expect(
@@ -1834,7 +1852,8 @@ describe("approveBookingRequest", () => {
     ).toBeLessThan(mockedAcquireLodgeCapacityLock.mock.invocationCallOrder[0]);
     expect(mockedCheckCapacity).not.toHaveBeenCalled();
     expect(mockedSendApproved).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: "held-lodge" })
+      expect.objectContaining({ lodgeId: "held-lodge" }),
+      CLUB_FORMAT_TEST,
     );
     expect(mockedBookingFindUnique).toHaveBeenNthCalledWith(1, {
       where: { id: "held-1" },
@@ -2061,7 +2080,8 @@ describe("approveBookingRequest", () => {
         checkIn: new Date("2026-08-01T00:00:00.000Z"),
         checkOut: new Date("2026-08-03T00:00:00.000Z"),
         excludeBookingId: undefined,
-      })
+      }),
+      CLUB_FORMAT_TEST
     );
     const guardGuests = mockedAssertNoConflicts.mock.calls[0][1].guests;
     expect(guardGuests).toHaveLength(1);
@@ -2276,7 +2296,8 @@ describe("approveBookingRequest", () => {
 
     expect(mockedAssertNoConflicts).toHaveBeenCalledWith(
       prisma,
-      expect.objectContaining({ excludeBookingId: "held-1" })
+      expect.objectContaining({ excludeBookingId: "held-1" }),
+      CLUB_FORMAT_TEST
     );
     // Reuse path preserves the held booking's guest rows (updates in place) and
     // does not destroy them, so bed allocations survive the accept (issue #1254).

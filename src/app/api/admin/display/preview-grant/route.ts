@@ -19,6 +19,7 @@ import {
   storeDraftPreview,
   DRAFT_PREVIEW_TTL_SECONDS,
 } from "@/lib/lodge-display/draft-preview-store";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Preview grant mint (LTV-036, ADR-003 §5). The authoring pages preview an
 // AUTHORED template inside a `sandbox="allow-scripts"` iframe (opaque origin, no
@@ -127,7 +128,11 @@ export async function POST(req: NextRequest) {
     if (!lodge) {
       return NextResponse.json({ error: "Unknown or inactive lodge" }, { status: 400 });
     }
-    const theme = await getWebsiteThemeRenderState();
+    const [theme, format] = await Promise.all([
+      getWebsiteThemeRenderState(),
+      // The club's date format (#3566), for the {{display-date}} token.
+      clubFormatValues(),
+    ]);
     // buildLayoutRender validates + sanitises again; it cannot throw here (the
     // save contract already passed) but a defensive guard keeps a surprise from
     // 500ing rather than reporting.
@@ -143,7 +148,8 @@ export async function POST(req: NextRequest) {
           footerHtml: draft.footerHtml,
           themeCss: theme.css,
         },
-        state
+        state,
+        format
       );
       nonce = storeDraftPreview(rendered, DRAFT_PREVIEW_TTL_SECONDS);
     } catch {

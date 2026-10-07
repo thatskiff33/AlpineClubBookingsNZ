@@ -4,7 +4,7 @@ import {
   hasAdminAccess,
   isAccessRole,
   type AccessRoleDefinitionLevelFields,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
 
@@ -373,10 +373,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       // Club Format — the one persisted currency and locale (#3563, programme
       // #3205). Registered under support for the same reason as
       // /admin/club-time above: so an unregistered path never falls back to
-      // the overview catch-all and the sidebar's matrix check resolves. The
-      // AREA only decides who can reach the surface; reading AND changing the
-      // club's currency and locale remain Full Admin regardless of area level,
-      // enforced in the route itself.
+      // the overview catch-all. The AREA decides nothing else (#3596): the
+      // page is opened on ADMISSION (`ANY_ADMIN_ADMISSION_PATHS`), and each
+      // API verb carries its own explicit gate — any admin reads, Full Admin writes.
       "/admin/club-format",
       "/api/admin/club-format",
       // Environment safety — whether this installation is the club's live site
@@ -602,13 +601,13 @@ export function mergeAdminPermissionMatrices(
 }
 
 /**
- * AccessRoleInput extended with the matrix a JWT session carries (#1367).
+ * PrivilegeCheckInput extended with the matrix a JWT session carries (#1367).
  * `session.user.accessRoles` is enum-only (definition-backed custom roles
  * have `role: null` and vanish from it), so the auth `jwt` callback embeds
  * the merged matrix computed from the DB-joined member instead, and every
- * session.user-based check reads it here.
+ * session.user-based check reads it here. `canLogin` is required (#3603).
  */
-export type AdminPermissionInput = AccessRoleInput & {
+export type AdminPermissionInput = PrivilegeCheckInput & {
   adminPermissionMatrix?: unknown;
 };
 
@@ -780,24 +779,20 @@ export function getAdminRouteRequirement(
 }
 
 /**
- * Admin paths admitted on ADMISSION rather than on an area (ADR-002 §1, owner-
- * ratified on #2370, 2 August 2026).
+ * Admin paths admitted on ADMISSION rather than on an area: any account with
+ * `view` or better on one admin area may open them. Each is its own owner
+ * decision, never a precedent. `/admin/ai-diagnostics` (ADR-002 §1, ratified
+ * #2370): the shell exposes no evidence — its readiness panel is tiered on
+ * `support:view`, its budget card refuses without it, and every tool re-checks
+ * its own area at invocation. `/admin/club-format` (#3596): any admin may VIEW
+ * the currency and locale, read-only; `PUT /api/admin/club-format` is Full Admin.
  *
- * The AI Diagnostics workspace is the one such surface: "any account that holds
- * `view` or better on at least one admin permission area may open the Diagnostics
- * shell", because the shell exposes no evidence at all — its readiness panel is
- * tiered server-side on `support:view` and its budget card refuses without it,
- * while every tool re-checks its own area freshly at invocation.
- *
- * Its map area stays `overview`, because that is what the sidebar and command
- * palette resolve for the LINK. What changed with #2984 is that "any admitted
- * admin" and `overview:view` stopped being the same set: a finance-only grid now
- * has portal standing and does not hold `overview`, so a rule written as
- * `overview:view` had quietly become a permission carve-out instead of the
- * admission rule the owner ratified. Narrowing admission again remains possible
- * without touching any tool's gate, but requires a fresh owner decision.
+ * The Diagnostics map area stays `overview` (the LINK's area). Since #2984 "any
+ * admitted admin" and `overview:view` are different sets — a finance-only grid
+ * has standing without `overview` — so an `overview:view` rule would be a
+ * carve-out, not the admission rule. Narrowing needs a fresh owner decision.
  */
-export const ANY_ADMIN_ADMISSION_PATHS = ["/admin/ai-diagnostics"] as const;
+export const ANY_ADMIN_ADMISSION_PATHS = ["/admin/ai-diagnostics", "/admin/club-format"] as const;
 
 export function isAnyAdminAdmissionPath(pathname: string): boolean {
   const normalized = normalizePathname(pathname);
@@ -848,12 +843,15 @@ export function canOpenAdminPath(
 /**
  * Matrix-based variant for client components (e.g. the admin sidebar), which
  * receive the precomputed matrix from a server layout instead of raw roles —
- * definitions live in the database and cannot be resolved client-side.
+ * definitions live in the database and cannot be resolved client-side. An
+ * admission path answers as `canOpenAdminPath` does, so a link to it can never
+ * disagree with the page it opens (#3596).
  */
 export function canViewAdminHrefWithMatrix(
   matrix: AdminPermissionMatrix,
   href: string,
 ) {
+  if (isAnyAdminAdmissionPath(href)) return hasAnyAdminAreaFromMatrix(matrix);
   const requirement = getAdminRouteRequirement(href, "GET");
   if (!requirement) return false;
   return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
@@ -928,6 +926,22 @@ export function canAccessRoomsBedsPage(
 export function hasFinanceViewerAccess(input: AdminPermissionInput) {
   return LEVEL_RANK[getAdminPermissionMatrix(input).finance] >= LEVEL_RANK.view;
 }
+
+/**
+ * Who may read the connected Xero organisation's summary — its name, short
+ * code and base currency (#2314, owner decision 2 Aug 2026): an admin holding
+ * the finance area at view or above. `GET /api/admin/xero/organisation` gates
+ * on it (as the same literal, which the #2975 authorisation census reads off the
+ * handler's source; a test pins that the two agree), and so does every server
+ * surface that shows a value from that summary to an admin outside that route
+ * (#3633, the base-currency warning on the Club Currency & Locale page and the
+ * setup-readiness list), so the summary reaches exactly the same people
+ * whichever screen shows it.
+ */
+export const XERO_ORGANISATION_READ_PERMISSION: AdminAccessRequirement = {
+  area: "finance",
+  level: "view",
+};
 
 export function hasFinanceManagerAccess(input: AdminPermissionInput) {
   return getAdminPermissionMatrix(input).finance === "edit";

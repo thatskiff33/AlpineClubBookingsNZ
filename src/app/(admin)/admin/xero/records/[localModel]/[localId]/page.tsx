@@ -4,6 +4,7 @@ import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity
 import { getXeroRecordActivity } from "@/lib/xero-record-activity";
 import { isXeroLocalModel } from "@/lib/xero-record-links";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export default async function XeroRecordActivityPage({
   params,
@@ -19,7 +20,9 @@ export default async function XeroRecordActivityPage({
     notFound();
   }
 
-  const data = await getXeroRecordActivity(localModel, localId, 25);
+  // The club's format (#3565), resolved once per render pass.
+  const format = await clubFormatValues();
+  const data = await getXeroRecordActivity(localModel, localId, format, 25);
   if (!data) {
     notFound();
   }

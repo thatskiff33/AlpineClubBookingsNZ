@@ -7,8 +7,9 @@
 //     404s, because a 403 would confirm the club HAS the feature and merely
 //     disabled it for the caller.
 //   * THE ENVELOPE IS IDENTICAL for "no such member", "inactive member" and
-//     "member found but ineligible". The route never evaluates eligibility at
-//     all, which is what makes that guarantee structural rather than careful.
+//     "member found but ineligible". The route never evaluates booking or
+//     financial eligibility, which makes that guarantee structural rather than
+//     careful; erased accounts are a terminal lifecycle exclusion.
 //   * TURNING THE SETTING OFF TAKES EFFECT WITHOUT A REDEPLOY. A privacy switch
 //     that needs a deploy is not a switch.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,6 +57,7 @@ import {
   MEMBER_GUEST_RESOLVE_AUDIT_ACTION,
   MEMBER_GUEST_SEARCH_AUDIT_ACTION,
 } from "@/lib/member-guest-find-service";
+import { notDeletedAccountWhere } from "@/lib/deleted-account";
 
 const SETTINGS_OFF = {
   approvalRequired: true,
@@ -161,11 +163,12 @@ describe("the email resolve — one envelope, whatever the answer", () => {
     expect(JSON.stringify(missBody)).not.toMatch(/not found|inactive|unpaid|no such/i);
   });
 
-  it("never evaluates eligibility — the query filters on active + age tier and nothing else", async () => {
+  it("never evaluates booking eligibility and excludes deleted accounts canonically", async () => {
     await resolveRoute(resolveRequest({ email: "sam@example.co.nz" }));
     const where = h.memberFindMany.mock.calls[0]![0].where;
-    expect(Object.keys(where).sort()).toEqual(["active", "ageTier", "email"]);
+    expect(Object.keys(where).sort()).toEqual(["AND", "active", "ageTier", "email"]);
     expect(where.active).toBe(true);
+    expect(where.AND).toEqual(notDeletedAccountWhere());
     // The four eligibility facts D-8 exists to hide must not appear in the query
     // at all: if the finder never asks, it cannot leak the answer.
     const serialised = JSON.stringify(where);
@@ -282,16 +285,22 @@ describe("the name search — prefix-only, capped, no count, minors excluded", (
   it("matches from the START of a name, never mid-string", async () => {
     await searchRoute(searchRequest("whit"));
     const where = h.memberFindMany.mock.calls[0]![0].where;
-    expect(JSON.stringify(where)).toContain("startsWith");
-    expect(JSON.stringify(where)).not.toContain("contains");
+    const nameFilter = where.AND.at(-1);
+    expect(JSON.stringify(nameFilter)).toContain("startsWith");
+    expect(JSON.stringify(nameFilter)).not.toContain("contains");
   });
 
   it("splits a spaced query into first-name AND last-name prefixes", async () => {
     await searchRoute(searchRequest("sam whitt"));
     const where = h.memberFindMany.mock.calls[0]![0].where;
     expect(where.AND).toEqual([
-      { firstName: { startsWith: "sam", mode: "insensitive" } },
-      { lastName: { startsWith: "whitt", mode: "insensitive" } },
+      ...notDeletedAccountWhere(),
+      {
+        AND: [
+          { firstName: { startsWith: "sam", mode: "insensitive" } },
+          { lastName: { startsWith: "whitt", mode: "insensitive" } },
+        ],
+      },
     ]);
   });
 

@@ -23,6 +23,7 @@ import {
   loadPaymentLinkRecord,
 } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Re-issue a payment link for an expired-but-payable booking and email the
@@ -39,6 +40,9 @@ import { prisma } from "@/lib/prisma";
 export async function reissuePaymentLinkForToken(
   token: string
 ): Promise<{ emailed: boolean }> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const link = await loadPaymentLinkRecord(token);
   const booking = link.booking;
 
@@ -123,8 +127,8 @@ export async function reissuePaymentLinkForToken(
     } as const,
   };
   const emailOutcome = isSplitGuestLink
-    ? await sendSplitGuestPaymentLinkEmail(emailParams)
-    : await sendBookingRequestApprovedEmail(emailParams);
+    ? await sendSplitGuestPaymentLinkEmail(emailParams, format)
+    : await sendBookingRequestApprovedEmail(emailParams, format);
 
   if (emailOutcome.status === "suppressed") {
     // sendEmail delivered nothing (recipient is SES-suppressed after a prior

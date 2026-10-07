@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle, XCircle } from "lucide-react";
-import { APP_LOCALE } from "@/config/operational";
-import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
+import {
+  formatClubInstantCompactDateTime,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 export function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -16,6 +20,7 @@ export function StatusBadge({ status }: { status: string }) {
     degraded: "bg-warning-3 text-warning-11",
     SKIPPED: "bg-warning-3 text-warning-11",
     skipped: "bg-warning-3 text-warning-11",
+    warning: "bg-warning-3 text-warning-11",
     stale: "bg-warning-3 text-warning-11",
     missing: "bg-warning-3 text-warning-11",
     error: "bg-danger-3 text-danger-11",
@@ -58,36 +63,18 @@ export function formatUptime(seconds: number) {
   return `${minutes}m`;
 }
 
-// #2264: deliberately not `formatNZDateTime` — the health dashboard packs many
-// timestamps into narrow rows, so it drops the year and keeps 2-digit fields.
+// #2264: deliberately not the medium date-time — the health dashboard packs
+// many timestamps into narrow rows, so it drops the year and keeps 2-digit
+// fields. Every value passed here is a real INSTANT — a cron run, a bounce, an
+// escalation — never a calendar day, so it is projected through the club's
+// PERSISTED zone (CT-4, #2870; INV-CONFIG-002).
 //
-// CT-4 (#2870) changed WHICH zone, not the shape. `APP_TIME_ZONE` is the
-// environment's answer; the club's civil-time authority is the persisted
-// `ClubTimeSettings.timeZone` (INV-CONFIG-002), which reaches a `"use client"`
-// file only as data — so the formatter can no longer be a module constant and
-// is memoised per zone instead. The kernel owns the only formatter factory in
-// the tree and would be the right home for this, but `{day, month, hour,
-// minute}` is not one of its house shapes and `src/lib` is a different lane's
-// (reported on #2870 with the other missing shapes).
-//
-// Every value passed here is a real INSTANT — a cron run, a bounce, an
-// escalation — never a calendar day.
-const HEALTH_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function healthFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
-  const cached = HEALTH_FORMATTERS.get(zone);
-  if (cached) return cached;
-  const created = new Intl.DateTimeFormat(APP_LOCALE, {
-    timeZone: zone,
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  HEALTH_FORMATTERS.set(zone, created);
-  return created;
-}
-
+// #3566 moved it onto the kernel's `compactDateTime` house shape, which the
+// stuck-states "generated at" stamp shares. It was a local formatter here,
+// memoised on the locale and zone pair (#3564), and an identical one on that
+// page built from the BUILD's locale, so the two screens could disagree about
+// one moment. The binding now carries both the zone and the club's locale, so
+// a bare locale string can no longer be transposed with `dateStr`.
 export function formatDate(clubTime: BoundClubTime, dateStr: string) {
   // Guarded, unlike the `new Date()` this replaces: a health payload is read
   // from a live system and a row with an unparseable stamp must not blank the
@@ -95,10 +82,17 @@ export function formatDate(clubTime: BoundClubTime, dateStr: string) {
   // host's zone, which is the defect class this epic closes.
   const instant = parseInstant(dateStr);
   if (instant === null) return "unknown";
-  return healthFormatter(clubTime.zone).format(instant);
+  return formatClubInstantCompactDateTime(
+    instant,
+    clubTime.zone,
+    clubTime.format,
+  );
 }
 
-export function formatOptionalDate(clubTime: BoundClubTime, dateStr: string | null) {
+export function formatOptionalDate(
+  clubTime: BoundClubTime,
+  dateStr: string | null,
+) {
   return dateStr ? formatDate(clubTime, dateStr) : "Not recorded";
 }
 
@@ -125,6 +119,7 @@ export function CronError({ error }: { error: string }) {
 }
 
 export function CronResultSummary({ summary }: { summary: Record<string, unknown> }) {
+  const format = useClubFormat();
   const healthSignal = typeof summary.healthSignal === "string" ? summary.healthSignal : null;
   const sizeBytes = typeof summary.sizeBytes === "number" ? summary.sizeBytes : null;
   const minSizeBytes = typeof summary.minSizeBytes === "number" ? summary.minSizeBytes : null;
@@ -144,7 +139,7 @@ export function CronResultSummary({ summary }: { summary: Record<string, unknown
     if (driftBookings > 0) {
       return (
         <span className="text-xs font-medium text-danger-11">
-          {driftBookings} credit drift ({formatCents(totalDriftCents)})
+          {driftBookings} credit drift ({formatCents(totalDriftCents, format)})
         </span>
       );
     }

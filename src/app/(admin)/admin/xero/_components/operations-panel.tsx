@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
 import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
+import { isResolvedInXero } from "@/lib/xero-operation-resolution"
 import { resetXeroOperationsDatasetSearchParams } from "@/lib/admin-dataset-reset-state"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
@@ -32,6 +33,7 @@ import {
 } from "./shared"
 import { xeroSectionId } from "./types"
 import type { XeroOperation } from "./types"
+import { useClubFormat } from "@/components/club-format-provider"
 
 export function OperationsPanel({
   connected,
@@ -103,6 +105,7 @@ export function OperationsPanel({
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
   const [markingNonReplayableOperationId, setMarkingNonReplayableOperationId] = useState<string | null>(null)
   const [resolvingOperationId, setResolvingOperationId] = useState<string | null>(null)
+  const [markingFailedOperationId, setMarkingFailedOperationId] = useState<string | null>(null)
   const [retryingAllFailed, setRetryingAllFailed] = useState(false)
   const [resettingStale, setResettingStale] = useState(false)
 
@@ -325,6 +328,35 @@ export function OperationsPanel({
     }
   }
 
+  const markFailed = async (operationId: string) => {
+    const reason = await prompt({
+      title: "Mark this stuck Xero operation failed?",
+      description:
+        "It has been running far longer than any Xero call takes, so it is stuck rather than in progress. Marking it failed lets you fix the cause and retry it. Check Xero first if it may have created a document.",
+      inputLabel: "Reason",
+      defaultValue: "Stuck running; marked failed from the Xero operations dashboard",
+      confirmLabel: "Mark failed",
+    })
+    if (reason === null) return
+    setMarkingFailedOperationId(operationId)
+    setError("")
+    onMessage("")
+    try {
+      const data = await postJson<{ message?: string }>(
+        `/api/admin/xero/operations/${operationId}/mark-failed`,
+        { reason },
+        "Failed to mark Xero operation failed"
+      )
+      onMessage(data.message || "Xero operation marked failed.")
+      await fetchOperations()
+      onRefreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark Xero operation failed")
+    } finally {
+      setMarkingFailedOperationId(null)
+    }
+  }
+
   const resetStaleRunning = async () => {
     setResettingStale(true)
     setError("")
@@ -354,8 +386,8 @@ export function OperationsPanel({
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
-      Your admin role can view Xero operations but cannot retry, reset, or
-      resolve them.
+      Your admin role can view Xero operations but cannot retry, reset, mark
+      failed, or resolve them.
     </AdminViewOnlySectionBanner>
   )
 
@@ -389,7 +421,7 @@ export function OperationsPanel({
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">
             <li><span className="font-medium">PENDING</span> — queued, waiting for the next sync run. No action needed.</li>
-            <li><span className="font-medium">RUNNING</span> — being sent to Xero now. If it stays running for a long time it is stale — use &ldquo;Reset stale running&rdquo; above.</li>
+            <li><span className="font-medium">RUNNING</span> — being sent to Xero now. If it stays running for a long time it is stale — use &ldquo;Mark failed&rdquo; on the row, or &ldquo;Reset stale running&rdquo; above for all of them.</li>
             <li><span className="font-medium">WAITING_PAYMENT</span> — paused until the related payment settles. No action needed.</li>
             <li><span className="font-medium">SUCCEEDED</span> — completed in Xero. No action needed.</li>
             <li><span className="font-medium">PARTIAL</span> — some steps succeeded; retry to finish the rest.</li>
@@ -440,9 +472,11 @@ export function OperationsPanel({
                 retrying={retryingOperationId === operation.id}
                 markingNonReplayable={markingNonReplayableOperationId === operation.id}
                 resolving={resolvingOperationId === operation.id}
+                markingFailed={markingFailedOperationId === operation.id}
                 onRetry={() => void retryOperation(operation.id)}
                 onMarkNonReplayable={() => void markNonReplayable(operation.id)}
                 onResolve={() => void resolveOperation(operation.id)}
+                onMarkFailed={() => void markFailed(operation.id)}
               />
             ))}
           </div>
@@ -470,9 +504,11 @@ export function OperationItem({
   retrying,
   markingNonReplayable,
   resolving,
+  markingFailed,
   onRetry,
   onMarkNonReplayable,
   onResolve,
+  onMarkFailed,
 }: {
   operation: XeroOperation
   /** Whether the actor may act on the operation (finance edit, #1997). */
@@ -481,14 +517,17 @@ export function OperationItem({
   retrying: boolean
   markingNonReplayable: boolean
   resolving: boolean
+  markingFailed: boolean
   onRetry: () => void
   onMarkNonReplayable: () => void
   onResolve: () => void
+  onMarkFailed: () => void
 }) {
+  const format = useClubFormat()
   // `createdAt` is a real INSTANT: shown in the club's persisted zone, so the
   // same operation reads identically wherever the admin is (CT-4, #2870).
   const clubTime = useClubTime()
-  const resolved = Boolean(operation.manuallyResolvedAt)
+  const resolved = isResolvedInXero(operation)
   const isFailedOrPartial = operation.status === "FAILED" || operation.status === "PARTIAL"
   const [showRaw, setShowRaw] = useState(false)
   const summary = summarizeXeroOperation({
@@ -496,7 +535,7 @@ export function OperationItem({
     operationType: operation.operationType,
     requestPayload: operation.requestPayload,
     responsePayload: operation.responsePayload,
-  })
+  }, format)
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -564,6 +603,14 @@ export function OperationItem({
             <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={onResolve} disabled={resolving}>
               {resolving ? "Resolving..." : "Resolve (fixed in Xero)"}
             </ViewOnlyActionButton>
+          ) : null}
+          {operation.staleRunning ? (
+            <>
+              <p className="text-xs text-muted-foreground">Stuck running: nothing will finish it. Mark it failed, fix the cause, then retry it.</p>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={onMarkFailed} disabled={markingFailed}>
+                {markingFailed ? "Marking..." : "Mark failed"}
+              </ViewOnlyActionButton>
+            </>
           ) : null}
         </div>
       )}

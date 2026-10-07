@@ -196,6 +196,7 @@ export interface MemberDetail {
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;
+  deletedAt: string | null;
   // Member profile photo (MP4, epic #171). photoImageId present ⇒ has a photo;
   // photoUpdatedAt busts the img cache after a replace.
   photoImageId: string | null;
@@ -214,6 +215,11 @@ export interface MemberDetail {
   joinedDate: string | null;
   lifeMemberDate: string | null;
   occupation: string | null;
+  /**
+   * #2941 (INV-PRIV-022): an ABSENT key unless the viewing admin holds
+   * membership access and the club has the dietary field ON.
+   */
+  dietaryRequirements?: string | null;
   createdAt: string;
   canLogin: boolean;
   requiresInduction: boolean;

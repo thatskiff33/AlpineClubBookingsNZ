@@ -510,6 +510,12 @@ model Member {
   passwordHash            String
   forcePasswordChange     Boolean          @default(false)
   passwordChangedAt       DateTime?
+  // #3603: when this member's login last went from on to off. Stamped by the
+  // database trigger "Member_stamp_sessions_revoked_at" on every such write,
+  // whichever path makes it, and backfilled for members whose login was already
+  // off. The token refresh refuses any session issued before it, the same way
+  // it treats passwordChangedAt, so re-enabling login never revives one.
+  sessionsRevokedAt       DateTime?
   lastLoginAt             DateTime?
   twoFactorEnabled        Boolean          @default(false)
   twoFactorMethod         TwoFactorMethod?
@@ -534,6 +540,13 @@ model Member {
   // Free-text occupation. Optional, adult-only, and admin-toggleable via
   // MemberFieldsSettings.showOccupation.
   occupation              String?
+  // Free-text dietary/allergy information (#2941, epic #3021). Optional, any
+  // age tier, admin-toggleable via MemberFieldsSettings.showDietaryRequirements
+  // (default OFF; OFF hides but never clears). Privacy-sensitive: the primary
+  // Prisma client OMITS it globally and only src/lib/member-dietary.ts (and,
+  // to seed a booking guest, its write half) may select it (INV-PRIV-022).
+  // Blank normalises to null; at most 500 characters.
+  dietaryRequirements     String?          @db.VarChar(500)
 
   // Member profile photo (MP1, epic #171). Nullable FK to a MEMBER_PHOTO
   // MediaImage (bytes-in-DB, survives redeploys). Visible to the member (own),
@@ -1950,6 +1963,9 @@ model Booking {
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
   nightAdjustments            BookingGuestNightAdjustment[]
   modifications               BookingModification[]
+  // #3580 (programme #3527, C1): the append-only money ledger. Nothing reads
+  // these rows yet; `docs/design/booking-ledger.md` is the design.
+  ledgerLines                 BookingLedgerLine[]
   changeRequests              BookingChangeRequest[]
   creditsFromCancellation     MemberCredit[]                  @relation("CreditSource")
   creditsApplied              MemberCredit[]                  @relation("CreditApplied")
@@ -1964,6 +1980,9 @@ model Booking {
   // before the requester accepts a quote. Acceptance converts this row rather
   // than creating a duplicate booking.
   heldForBookingRequest       BookingRequest?                 @relation("BookingRequestHeldBooking")
+  // #3413: unnamed adults on a school quote are capacity-only rows. They are
+  // attached to this held booking and never create anonymous BookingGuest rows.
+  pendingAdultReservationNights BookingRequestPendingAdultReservationNight[] @relation("BookingRequestPendingAdultReservationBooking")
   paymentLinks                PaymentLink[]
   // Durable per-transition fact store (issue #740). Unlike AuditLog these rows
   // are never retention-pruned, so booking/payment-link narratives survive.
@@ -2122,6 +2141,17 @@ model BookingGuest {
   // index BookingGuest_pendingConsent_expiresAt_idx (prisma/partial-unique-indexes.tsv
   // — Prisma cannot express a predicated index).
   consentExpiresAt           DateTime?
+  // Dietary/allergy information for THIS stay (#3029, epic #3021). A snapshot
+  // and override, not a mirror: seeded ONCE from the linked member's current
+  // Member.dietaryRequirements when the row is first created (and only while
+  // MemberFieldsSettings.showDietaryRequirements is ON), then independent — a
+  // later profile edit never rewrites it and an edit here never writes back to
+  // the profile (INV-MOD-059). A non-member guest may carry one too. Same
+  // privacy rules as the profile value: the primary Prisma client OMITS it
+  // globally and only src/lib/member-dietary.ts and its write half
+  // (member-dietary-booking-writes.ts) may select or write it by name
+  // (INV-PRIV-022). Blank normalises to null; at most 500 characters.
+  dietaryRequirements        String?   @db.VarChar(500)
   arrivedAt  DateTime?
   departedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -2169,11 +2199,18 @@ enum MemberGuestConsentStatus {
 // draining colour and for history whose origin cannot be proved. The #3275
 // migration trigger recognises only its two transactional officer-repair audit
 // actions. Readers do not act on this value until stage 3 of programme #3272.
+// RATE_DERIVED (#3531 3b, D-3531-2): an EVEN_SPLIT or UNKNOWN row rewritten by
+// the operator-run backfill because the rate table, over the strand as sold,
+// reproduces the strand's stored total to the cent. Exact at individual-night
+// grain; distinct from SOLD so a reader can always tell a derivation from a
+// sale. Written by that script only, after a deploy has fully cut over: a
+// colour whose client predates the value cannot read a row that carries it.
 enum BookingGuestNightPriceSource {
   SOLD
   OFFICER_PRICED
   EVEN_SPLIT
   UNKNOWN
+  RATE_DERIVED
 }
 
 // #3276: what kind of adjustment a BookingGuestNightAdjustment row records.
@@ -2410,6 +2447,9 @@ model BookingRequest {
   teachers           Json?
   // School quote intake preference. GENERAL requests leave this null.
   cateringPreference SchoolCateringPreference?
+  // #3413: adults included in a school quote before their names are supplied.
+  // They are a headcount only; `teachers` remains the real named-adult list.
+  pendingAdultCount Int @default(0)
   // Admin-linked member guests: array of { guestIndex, memberId }. Linked
   // adults are copied into BookingGuest.memberId on hold/acceptance.
   linkedGuestMembers Json?
@@ -2505,6 +2545,7 @@ model BookingRequest {
   acceptedQuote    BookingRequestQuote?  @relation("BookingRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: SetNull)
   quotes           BookingRequestQuote[]
   paymentLinks     PaymentLink[]
+  pendingAdultReservationNights BookingRequestPendingAdultReservationNight[] @relation("BookingRequestPendingAdultReservationRequest")
 
   @@index([status, createdAt])
   @@index([contactEmail])
@@ -2519,6 +2560,33 @@ model BookingRequest {
   // member's non-terminal rows — both are (member, status) lookups.
   @@index([requestedByMemberId, status])
   @@index([organisationId])
+}
+
+// #3413: one capacity-only count for each unnamed-school-adult lodge night.
+// A row exists only while its request's AWAITING_REVIEW booking holds that
+// night. It deliberately has no person, member, contact, price, or provider
+// identity: named adults remain BookingGuest rows.
+model BookingRequestPendingAdultReservationNight {
+  id               String   @id @default(cuid())
+  bookingRequestId String
+  bookingId        String
+  lodgeId          String
+  // NZ lodge night (date-only), matching BookingGuestNight and Booking dates.
+  night            DateTime @db.Date
+  // Number of unnamed ADULT slots reserved for this request on this night.
+  adultCount       Int
+  createdAt        DateTime @default(now())
+
+  bookingRequest BookingRequest @relation("BookingRequestPendingAdultReservationRequest", fields: [bookingRequestId], references: [id], onDelete: Cascade)
+  booking        Booking        @relation("BookingRequestPendingAdultReservationBooking", fields: [bookingId], references: [id], onDelete: Cascade)
+  lodge          Lodge          @relation("BookingRequestPendingAdultReservationLodge", fields: [lodgeId], references: [id], onDelete: Restrict)
+
+  // One request has one count per night; updating the held party replaces that
+  // count in the same globally-then-lodge-locked transaction.
+  @@unique([bookingRequestId, night])
+  // The canonical capacity read sums a lodge's rows over a night window.
+  @@index([lodgeId, night])
+  @@index([bookingId])
 }
 
 // Versioned public booking request quotes. The raw response token is emailed
@@ -2577,6 +2645,9 @@ model BookingRequestSettings {
   showPricingToNonMembers          Boolean  @default(false)
   quoteResponseTtlDays             Int      @default(14)
   quoteReminderLeadDays            Int      @default(3)
+  // Club policy for school-request approval. Existing installations retain
+  // their teacher contacts but do not create hut-leader PIN assignments.
+  assignSchoolTeachersAsHutLeaders Boolean  @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                          String?
@@ -2789,6 +2860,10 @@ model MemberFieldsSettings {
   showTitle         Boolean  @default(true)
   showGender        Boolean  @default(true)
   showOccupation    Boolean  @default(true)
+  // Dietary/allergy field (#2941). Defaults OFF, unlike the three above: it is
+  // special-category data, so a club opts in. OFF hides collection and display
+  // but never clears Member.dietaryRequirements (INV-PRIV-022).
+  showDietaryRequirements Boolean @default(false)
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -2905,9 +2980,21 @@ enum ManualRefundTaskStatus {
 enum ManualRefundTaskKind {
   /// A cash/off-Xero settled booking was cancelled, so the club owes the money
   /// back by hand (B5, #2262 — `booking-cancel.ts`).
+  ///
+  /// #3643: ALSO the kind of a part-payment review
+  /// (`ManualRefundTask.partPaymentReviewPaymentId` set), reused rather than a
+  /// new label for the reason #3639 gives: the previous app version cannot read
+  /// a label it does not know, and it lists this kind with no amount as an item
+  /// it can dismiss but not mark paid back.
   CANCELLED_BOOKING_HAND_BACK
   /// Stripe captured a booking-modification payment against a booking that had
   /// already been deleted (#2700, INV-ADDPAY-036).
+  ///
+  /// #3639: ALSO the kind of a late capture on a cancelled booking held for a
+  /// treasurer's approval (`ManualRefundTask.lateCaptureApprovalIntentId` set),
+  /// either capture kind, deleted or not. Reused rather than a new label so the
+  /// previous app version, which cannot read a label it does not know, renders
+  /// it as the open late-capture question it already understands.
   DELETED_BOOKING_LATE_CAPTURE
   /// The record of a late capture the webhook refunded automatically — money
   /// already back with the member, kept as a notice rather than as work
@@ -2996,6 +3083,10 @@ model ManualRefundTask {
   /// capture policy and an operator closing the task does not get to reprice them,
   /// which the stale-screen guard can only enforce on a row that HAS an amount to
   /// compare against.
+  ///
+  /// #3643: also absent on a part-payment review (`partPaymentReviewPaymentId`
+  /// set), which records money the club settles in Xero, never an amount it
+  /// settles here (migration 20261014010000).
   amountCents Int?
   /// #2797 (owner decision D2, the AUDIT half): what the task was RAISED with.
   /// `amountCents` above carries the live figure and is what the admin confirms;
@@ -3049,6 +3140,37 @@ model ManualRefundTask {
   /// because rows completed before this column existed carry no direction and
   /// must stay legal; it constrains every row written from here on.
   settlementDirection ManualRefundTaskDirection?
+  /// #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): set when this task is a
+  /// late capture on a cancelled booking held for a treasurer's approval, and it
+  /// names that capture's Stripe payment intent. It is the marker (completing
+  /// such a task refunds the card through Stripe, under the automatic refund's
+  /// own keys) and the duplicate fence (unique, so one capture has one approval
+  /// task). NULL on every other row. Only a `DELETED_BOOKING_LATE_CAPTURE` row may
+  /// carry it (`ManualRefundTask_late_capture_approval_kind`, migration
+  /// 20261013010000). The previous app version never selects or writes it.
+  lateCaptureApprovalIntentId String?  @unique
+  /// #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): set when this task is
+  /// the treasurer's review of a payment recorded against an internet banking
+  /// invoice that an officer cancelled as unpaid because the app could not
+  /// hand it back as credit (an organisation's booking, or a payment Xero
+  /// could not size exactly). It names that booking's `Payment` id and is the
+  /// marker and the duplicate fence (unique, so one payment has one review).
+  /// Such a row is a `CANCELLED_BOOKING_HAND_BACK` with NO amount, no raised
+  /// amount and no `paymentId`, closed only by DISMISSED - nothing in the app
+  /// moves money for it (`ManualRefundTask_part_payment_review_shape`,
+  /// migration 20261014010000). Closing it quiets the Xero repair tool's
+  /// manual-review finding for the booking. The previous app version never
+  /// selects or writes it.
+  partPaymentReviewPaymentId String? @unique
+  /// #3643 (`INV-PAY-108`, orchestrator decision 3): on a part-payment review
+  /// only, when the inbound Xero sync learned that the booking's invoice was
+  /// reported PAID, and the invoice's cash in cents at that read. Written once,
+  /// in the sync's own transaction, instead of any automatic credit or
+  /// hand-back: the treasurer decides that cash. Both NULL until then, and set
+  /// together (`ManualRefundTask_part_payment_review_shape`, migration
+  /// 20261014010000). Neither is an amount to hand back.
+  partPaymentReviewXeroPaidAt    DateTime?
+  partPaymentReviewXeroPaidCents Int?
   reason              String                 @db.VarChar(500)
   status              ManualRefundTaskStatus @default(OPEN)
   completedByMemberId String?
@@ -3119,7 +3241,9 @@ model PaymentRefund {
   stripeChargeId         String?
   stripePaymentIntentId  String?
   amountCents            Int
-  currency               String    @default("nzd")
+  /// The currency Stripe refunded in (the charge's own), lower-case. No
+  /// default since #3567: the writer always supplies Stripe's value.
+  currency               String
   status                 String    @default("succeeded")
   reason                 String?
   xeroRefundCreditNoteId String?
@@ -3596,6 +3720,14 @@ model BookingDefaults {
   // later disagrees gets the per-lodge conversion every other singleton on this
   // model is already queued for.
   linkedMoveChargesBothChangeFees Boolean @default(true)
+  // #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): what happens to a genuine
+  // late capture on a cancelled booking — money Stripe took after the cancel.
+  // false (the default, and the behaviour before this column): the webhook refunds
+  // it automatically. true: nothing moves; an OPEN approval task
+  // (`ManualRefundTask.lateCaptureApprovalIntentId`) waits for a treasurer, who
+  // refunds it from the finance queue or keeps it.
+  // Club-wide, because it is how the club handles money, not a lodge's policy.
+  lateCaptureRefundNeedsApproval Boolean @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?
@@ -4682,12 +4814,14 @@ model AiAssistantSettings {
 // (#3354, INV-CONFIG-001), shared by BOTH AI modules (the page-help assistant
 // and AI Diagnostics) — one home, so the two caps can never be priced at two
 // rates. The provider price tables stay in NZD cents; this rate converts each
-// estimate into the club's configured currency (APP_CURRENCY) before it is
-// booked or compared with a cap. Stored as an INTEGER in parts per million
-// (1 NZD = clubUnitsPerNzdMicros / 1_000_000 club units; 920000 = 0.92), so no
-// float or Decimal is ever stored (INV-MONEY). Never read when APP_CURRENCY is
-// NZD (identity); absent for a non-NZD club it is treated as identity and the
-// admin page says the rate is not set. rateSetAt/rateSetByMemberId are shown on
+// estimate into the club's stored currency (ClubFormatSettings.currencyCode,
+// #3566) before it is booked or compared with a cap. Stored as an INTEGER in
+// parts per million (1 NZD = clubUnitsPerNzdMicros / 1_000_000 club units;
+// 920000 = 0.92), so no float or Decimal is ever stored (INV-MONEY). Never read
+// when that currency is NZD (identity); absent for a non-NZD club it is treated
+// as identity and the admin page says the rate is not set. The row records no
+// currency, so changing the club's currency deletes it in the same transaction
+// (#3566), rather than letting one currency's rate price another's spend. rateSetAt/rateSetByMemberId are shown on
 // the settings page because a stale rate drifts silently. rateSetByMemberId is
 // a PLAIN STRING with NO foreign key (audit-only), like updatedByMemberId above.
 model AiSpendCurrencySettings {
@@ -4980,6 +5114,7 @@ model Lodge {
   lockers                  Locker[]
   seasons                  Season[]
   bookings                 Booking[]
+  bookingLedgerLines       BookingLedgerLine[]
   choreTemplates           ChoreTemplate[]
   cancellationPolicies     CancellationPolicy[]
   bookingPeriods           BookingPeriod[]
@@ -4999,6 +5134,9 @@ model Lodge {
   // change requests at this lodge. RESTRICT (below), so a lodge with live
   // reservations cannot be deleted out from under the capacity view.
   policyExceptionReservationNights PolicyExceptionReservationNight[] @relation("PolicyExceptionReservationLodge")
+  // #3413: provisional unnamed-school-adult capacity counts. RESTRICT keeps a
+  // lodge with a live capacity reservation from disappearing under the reader.
+  pendingAdultReservationNights BookingRequestPendingAdultReservationNight[] @relation("BookingRequestPendingAdultReservationLodge")
   newBookingPolicyExceptionRequests NewBookingPolicyExceptionRequest[]
   // #2780 maintenance reports: both are lodge-scoped by a direct NOT NULL
   // lodgeId, and both CASCADE — a deleted lodge takes its fault history and its
@@ -5941,9 +6079,38 @@ model BookingModification {
   booking                 Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   linkedChangeRequests    BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
   creditsFromModification MemberCredit[]         @relation("CreditSourceModification")
+  /// #3402: the single-flight lease on this edit's ONE review-charge request.
+  reviewChargeRaiseClaim  EditReviewChargeRaiseClaim?
 
   @@index([bookingId])
   @@index([memberId])
+}
+
+/// #3402 (`INV-PAY-112`): the lease that makes RAISING one booking edit's
+/// review-charge request single-flight. One row per `BookingModification`,
+/// created on first use. A run must win the claim (an opaque token written by a
+/// guarded `updateMany` while no live token is held) before it calls Stripe, so
+/// two settlements of one edit can no longer both raise the intent and leave the
+/// smaller figure standing. NOT a database lock: each statement autocommits and
+/// nothing is held across the provider call. A token older than the lease is
+/// taken over, which is safe because the derived share total only grows.
+/// Mutable bookkeeping kept OFF `BookingModification`, which is an immutable
+/// record of the edit.
+model EditReviewChargeRaiseClaim {
+  bookingModificationId String    @id
+  /// Opaque token of the run holding the claim; NULL when nobody does.
+  claimToken            String?
+  /// When the holder claimed, renewed when it records its intent. A claim
+  /// older than the lease may be taken over.
+  claimedAt             DateTime?
+  /// What the holder is about to ask Stripe for, recorded before the call and
+  /// cleared on release - the diagnostic trail of a raise the provider refused
+  /// or a holder that died mid-call. Never read as money.
+  intendedAmountCents   Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  bookingModification BookingModification @relation(fields: [bookingModificationId], references: [id], onDelete: Cascade)
 }
 
 // Booking Change Requests (locked same-day/past-night edits needing admin review)
@@ -8227,4 +8394,181 @@ model SchoolMemberClassification {
   member Member @relation("SchoolMemberClassificationMember", fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([classification])
+}
+
+/// ONE BOOKING'S MONEY, AS AN APPEND-ONLY LIST OF POSTED LINES (#3580,
+/// programme #3527 stage 4; design: `docs/design/booking-ledger.md`).
+///
+/// Every money fact about a booking is a line here: what kind of fact, its
+/// sign, its quantity and unit price, which guest strand and which nights,
+/// what event posted it, how it settled, when, and which earlier line it
+/// reverses. Charge lines (a guest-night at a rate, a change fee, a promotion)
+/// and settlement lines (a capture, a receipt, credit applied, a refund) share
+/// the table, because the balance is ONE sum over it.
+///
+/// THE BALANCE IS DERIVED AND NEVER STORED. There is deliberately no running
+/// total and no status column: a stored copy of a derived figure is the defect
+/// this table exists to retire (`INV-PAY-047`'s mirror, and the bug class
+/// #2397 / #2902 / #3170 / #3340 all share).
+///
+/// A LINE IS NEVER UPDATED OR DELETED. A correction is a new line that names
+/// the one it reverses. Application code reaches this table only through
+/// `src/lib/booking-ledger-write.ts`, which exposes creation and nothing else;
+/// `booking-ledger-append-only-census.test.ts` is the guard.
+///
+/// C1 posts charge lines at confirmation and nothing reads them. The reading
+/// switch is C5 (#3584) and the mirror columns go at C7 (#3586).
+model BookingLedgerLine {
+  id String @id @default(cuid())
+
+  bookingId String
+  /// Which half of the booking's money this line is: what the stay COST, what
+  /// SETTLED it, or what a person DECIDED (`INV-MONEY-007`).
+  side      LedgerSide
+  kind      LedgerLineKind
+  /// +1 or -1. Checked in the database, so a zero or a 2 is unrepresentable.
+  sign      Int
+  /// Guest-nights for a `GUEST_NIGHT` line; 1 for everything else.
+  quantity  Int
+  /// The price of ONE unit, always >= 0. The direction lives in `sign`.
+  unitCents Int
+  /// `sign * unitCents * quantity`, checked in the database. Stored rather
+  /// than derived in SQL so a sum is one column read.
+  amountCents Int
+
+  /// CHARGE lines only: whose nights, which nights, at what rate.
+  ///
+  /// A PLAIN COLUMN for the same reason `anchorId` is one: a line outlives the
+  /// rows it was posted from, and a foreign key's `SET NULL` would rewrite a
+  /// posted line when a guest row goes — which is the one thing this table
+  /// does not allow. The strand is resolved by id at render time, and a line
+  /// whose guest is gone still carries `guestNames` (D-3532-3).
+  bookingGuestId       String?
+  nightStart           DateTime? @db.Date
+  /// The morning after the last night this line covers (half-open, as every
+  /// stay range in this schema is — `INV-DATE-010`).
+  nightEndExclusive    DateTime? @db.Date
+  rateMembershipTypeId String?
+  ageTier              AgeTier?
+  /// The guests this line is for, as named when it was posted (owner decision
+  /// D-3532-3): a document rendered from a line reads the same years later.
+  /// A name in an immutable row is corrected by a reversal and a re-post, not
+  /// in place, and `INV-PRIV` retention applies to it as to the guest row.
+  guestNames           String[]
+
+  /// What posted the line — the booking's own confirmation, a modification, a
+  /// review task, a payment transaction, a refund, a member-credit row or a
+  /// cancellation — and that row's id. Not a foreign key: the anchor's model
+  /// varies, and a line outlives rows that are deleted with their booking.
+  anchorKind LedgerAnchorKind
+  anchorId   String
+
+  /// SETTLEMENT lines only: how the money actually moved, as the settlement
+  /// decided it (`INV-PAY-101`) rather than as a reader infers it later.
+  settlementMethod SettlementMethod?
+
+  /// The line this one reverses. Unique, so a line is reversed at most once.
+  reversesLineId String? @unique
+
+  postedAt DateTime @default(now())
+  /// The person whose decision this line records; NULL when the system posted
+  /// it in the ordinary course of a settle or an edit.
+  ///
+  /// A PLAIN COLUMN, NOT A FOREIGN KEY, exactly as `AuditLog.actorMemberId`
+  /// is: an append-only record names the person as data, not as a live
+  /// reference. A foreign key would have to be re-pointed when two members
+  /// merge, and re-pointing is an UPDATE of a line that may never be updated.
+  postedByMemberId String?
+
+  /// What a person reads. Narration only: no reader may take money from it.
+  narration String
+
+  /// THE POSTING'S IDEMPOTENCY KEY (#3595, INV-MONEY-033). Deterministic from
+  /// the event the line records, built only in `booking-ledger-posting-keys.ts`,
+  /// so the same event posted twice produces the same key and the second write
+  /// is a no-op (`ON CONFLICT DO NOTHING`) rather than a duplicate line or a
+  /// refused statement that would abort the caller's transaction. A key makes
+  /// one EVENT idempotent; a booking's confirmation is fenced once per booking
+  /// in the settle as well, because its nights can change between two settles.
+  ///
+  /// Nullable in the DATABASE only, so a draining colour's inserts that omit
+  /// it still succeed; the write door REQUIRES it, so no new code can post
+  /// without one. Postgres treats NULLs as distinct under a unique index.
+  postingKey String? @unique
+
+  lodgeId String @default(dbgenerated("default_lodge_id()"))
+
+  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  /// `Restrict`, not `SetNull`: deleting a line is already forbidden, and a
+  /// cascade that blanked another line's pointer would be that forbidden
+  /// mutation arriving through the database instead of through code.
+  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict)
+  reversedBy BookingLedgerLine? @relation("BookingLedgerReversal")
+  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId, postedAt])
+  @@index([anchorKind, anchorId])
+  @@index([bookingGuestId])
+  @@index([postedByMemberId])
+  @@index([lodgeId])
+}
+
+/// A line prices the stay, moves money, or records a person's decision.
+enum LedgerSide {
+  CHARGE
+  SETTLEMENT
+  ADJUSTMENT
+}
+
+enum LedgerLineKind {
+  /// CHARGE: one guest, one or more nights, one rate tier.
+  GUEST_NIGHT
+  /// CHARGE: the fee an edit charged.
+  CHANGE_FEE
+  /// CHARGE: what the club keeps under the cancellation policy, anchored on
+  /// the CANCELLATION (#3611).
+  CANCELLATION_FEE
+  /// CHARGE, negative: the promotion's adjustment (`INV-MONEY-029`).
+  PROMOTION
+  /// CHARGE, negative: the group discount.
+  GROUP_DISCOUNT
+  /// SETTLEMENT, positive: a card capture.
+  CARD_CAPTURE
+  /// SETTLEMENT, positive: an Internet Banking receipt, Xero-reconciled.
+  BANK_RECEIPT
+  /// SETTLEMENT, positive: account credit consumed (`INV-PAY-002`).
+  CREDIT_APPLIED
+  /// SETTLEMENT, positive: cash or bank transfer recorded by hand
+  /// (`INV-PAY-001`).
+  CASH_RECORDED
+  /// SETTLEMENT, negative: a card refund.
+  CARD_REFUND
+  /// SETTLEMENT, negative: money handed back outside the card rails.
+  BANK_REFUND
+  /// SETTLEMENT, negative: account credit minted to the member.
+  CREDIT_ISSUED
+  /// ADJUSTMENT: a figure a person agreed, with their reason in `narration`.
+  AGREED_ADJUSTMENT
+}
+
+/// What posted a line. The anchor row is where the provider's own identity
+/// lives (`PaymentTransaction.stripePaymentIntentId`, `MemberCredit
+/// .xeroCreditNoteId`); a line never carries a provider id of its own.
+enum LedgerAnchorKind {
+  CONFIRMATION
+  MODIFICATION
+  REVIEW_TASK
+  PAYMENT_TRANSACTION
+  PAYMENT_REFUND
+  MEMBER_CREDIT
+  CANCELLATION
+}
+
+/// How money moved on a settlement line. Stripe and Internet Banking stay
+/// distinct here as everywhere (`INV-PAY-013`).
+enum SettlementMethod {
+  CARD
+  INTERNET_BANKING
+  ACCOUNT_CREDIT
+  CASH
 }

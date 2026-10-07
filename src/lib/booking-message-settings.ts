@@ -14,6 +14,7 @@ import {
 import { loadInternetBankingPaymentSettings } from "@/lib/internet-banking-settings";
 import { formatCents } from "@/lib/utils";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export interface EffectiveBookingMessage {
   key: BookingMessageKey;
@@ -98,6 +99,9 @@ export async function buildBookingMessageGlobalData(): Promise<BookingMessageClu
 }
 
 export async function buildSampleBookingMessageData(): Promise<BookingMessageMergeData> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const [globalData, internetBankingSettings] = await Promise.all([
     buildBookingMessageGlobalData(),
     loadInternetBankingPaymentSettings(),
@@ -110,13 +114,13 @@ export async function buildSampleBookingMessageData(): Promise<BookingMessageMer
     checkIn: "Friday 24 July 2026",
     checkOut: "Sunday 26 July 2026",
     guestCount: "3 guests",
-    amountDue: formatCents(45000),
-    amountPaid: formatCents(45000),
-    refundAmount: formatCents(15000),
-    creditAmount: formatCents(15000),
-    creditRestored: formatCents(5000),
-    retainedAmount: formatCents(30000),
-    changeFee: formatCents(2500),
+    amountDue: formatCents(45000, format),
+    amountPaid: formatCents(45000, format),
+    refundAmount: formatCents(15000, format),
+    creditAmount: formatCents(15000, format),
+    creditRestored: formatCents(5000, format),
+    retainedAmount: formatCents(30000, format),
+    changeFee: formatCents(2500, format),
     paymentReference: "BOOK-ABC123",
     xeroInvoiceNumber: "INV-1234",
     holdUntil: "5:00 PM, 27 July 2026",

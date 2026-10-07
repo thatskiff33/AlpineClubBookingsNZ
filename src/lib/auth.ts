@@ -23,6 +23,7 @@ import {
   hasAccessRole,
   isAccessRole,
   isFullAdmin,
+  sessionAccessRoleClaim,
   type AppAccessRole,
 } from "./access-roles";
 import {
@@ -31,7 +32,10 @@ import {
   sanitizeAdminPermissionMatrix,
   type AdminPermissionMatrix,
 } from "./admin-permissions";
-import { MEMBER_ACCESS_ROLE_SELECT } from "./access-role-definitions";
+import {
+  isLoginRevokedSession,
+  loadSessionMemberSecurity,
+} from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
@@ -66,39 +70,6 @@ const DUMMY_PASSWORD_HASH =
   // compared against to equalise response timing (see comment above).
   "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
 
-const SESSION_MEMBER_SECURITY_SELECT = {
-  role: true,
-  canLogin: true,
-  forcePasswordChange: true,
-  emailVerified: true,
-  passwordChangedAt: true,
-  // #2620: the two markers an approved deletion request writes over the row.
-  // Read on every token refresh so an anonymised member's session dies on their
-  // NEXT request through the same kill-switch a revoking password change uses —
-  // deletion invalidates no token today, so without this a session minted
-  // before the deletion (or after a direct `active` flip) would keep working.
-  // Neither value is ever copied into the token; only the predicate's verdict
-  // is used.
-  email: true,
-  passwordHash: true,
-  twoFactorEnabled: true,
-  twoFactorMethod: true,
-  // Post-login landing preference (#2090), refreshed per request alongside the
-  // security fields so a profile toggle change takes effect on the next request.
-  postLoginLanding: true,
-  // Joined definitions (#1367) so the per-request token refresh can compute
-  // the merged admin-permission matrix over custom and club-edited
-  // definition-backed roles, not just the enum bundles.
-  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
-} as const;
-
-async function loadSessionMemberSecurity(userId: string) {
-  return prisma.member.findUnique({
-    where: { id: userId },
-    select: SESSION_MEMBER_SECURITY_SELECT,
-  });
-}
-
 declare module "next-auth" {
   interface Session {
     user: {
@@ -113,6 +84,8 @@ declare module "next-auth" {
        * custom and club-edited roles (#1367).
        */
       accessRoles: AppAccessRole[];
+      /** Whether the member may sign in (#3603); privilege checks read it. */
+      canLogin: boolean;
       /**
        * Merged admin-permission matrix computed from the DB-joined member at
        * the per-request token refresh (#1367). Authoritative for
@@ -255,10 +228,8 @@ export const authConfig = {
         // restatement of `!member.active`. An approved deletion request
         // anonymises the row and leaves `active: false` as the only barrier, and
         // an admin Reactivate (or a direct column edit) flips exactly that flag.
-        // Refusing on the anonymisation markers means an erased account cannot
-        // sign in even with `active: true`. The sentinel password hash is not a
-        // bcrypt hash so a compare could never match anyway — this is here so a
-        // future credential-restoring path cannot re-open the door silently.
+        // Refusing on the structural-or-reserved-address predicate means an
+        // erased account cannot sign in even with `active: true`.
         // Still burns the dummy compare, so the refusal is timing-identical to
         // an unknown email and cannot be used to enumerate deleted accounts.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
@@ -366,7 +337,7 @@ export const authConfig = {
         // anonymised. Deletion does not revoke outstanding magic-link tokens
         // (Half B of #2620 will), so any unexpired link the erased member was
         // sent stays redeemable the moment `active` goes back to true. Refuse on
-        // the anonymisation markers, independently of `active`.
+        // the canonical deletion predicate, independently of `active`.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
           return null;
         }
@@ -449,7 +420,7 @@ export const authConfig = {
         const session = await auth();
         if (
           session?.user?.id === verifyIntent.memberId &&
-          isFullAdmin({ accessRoles: session.user.accessRoles })
+          isFullAdmin(session.user)
         ) {
           await recordGoogleVerified();
           return "/admin/google/setup?googleVerified=1";
@@ -616,13 +587,12 @@ export const authConfig = {
           const modules = await loadEffectiveModuleFlags();
           const twoFactorRequired = modules.twoFactor === true;
 
-          token.role = member.role;
+          token.role = member.canLogin === false ? "USER" : member.role;
           // role is null for definition-backed custom-role rows, so the
           // accessRoles claim stays enum-only. Custom roles reach the
           // session through adminPermissionMatrix below (#1367).
-          token.accessRoles = member.accessRoles
-            .map(({ role }) => role)
-            .filter(isAccessRole);
+          token.accessRoles = sessionAccessRoleClaim(member);
+          token.canLogin = member.canLogin;
           // #1367: merged admin-permission matrix over the JOINED assignment
           // rows, so definition-backed custom roles and club-edited seeded
           // definitions grant correctly through every session.user-based
@@ -639,11 +609,12 @@ export const authConfig = {
           // #2620: an account an approved deletion request has anonymised holds
           // no session, full stop — whatever `active` currently says. This is the
           // defence-in-depth backstop behind the provider refusals above: it
-          // covers a session minted BEFORE the deletion (nothing revokes tokens
-          // on deletion today) and a session minted after someone flipped
-          // `active` back directly in the database. Same kill-switch as a
-          // revoking password change: auth() nulls any session carrying it, so
-          // every server touch reads as logged-out.
+          // covers a session minted BEFORE the deletion (which also switches
+          // login off, so the login rule below refuses it too) and a session
+          // minted after someone flipped `active` back directly in the
+          // database. Same kill-switch as a revoking password change: auth()
+          // nulls any session carrying it, so every server touch reads as
+          // logged-out.
           const deletedAccountSession = isDeletedAccountRecord(member);
           if (deletedAccountSession) {
             logger.warn(
@@ -651,8 +622,12 @@ export const authConfig = {
               "Invalidating session for a deleted account (#2620)",
             );
           }
+          // #3603: login off, or switched off after this session began; a
+          // token once invalidated stays so (see session-member-security.ts).
           token.sessionInvalidated =
+            token.sessionInvalidated === true ||
             deletedAccountSession ||
+            isLoginRevokedSession(member, sessionIssuedAt, token.id) ||
             (member.passwordChangedAt instanceof Date &&
               member.passwordChangedAt.getTime() > sessionIssuedAt);
           token.twoFactorRequired = twoFactorRequired;
@@ -704,6 +679,8 @@ export const authConfig = {
               typeof role === "string" && isAccessRole(role),
           )
         : [];
+      // #3603: fail closed; only an explicit true from the refresh counts.
+      session.user.canLogin = token.canLogin === true;
       // #1367: the jwt callback above stamps the matrix from the DB-joined
       // member on every request BEFORE this projection runs, so this
       // fallback only fires when that refresh could not run (member row gone,

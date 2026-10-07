@@ -156,6 +156,7 @@ import {
   modifyBookingDatesWithLinkedMoveSupport,
   modifyBookingWithLinkedMoveSupport,
 } from "@/lib/booking-linked-date-move-arms";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const LODGE = "lodge-alpine";
 const OWNER = "member-owner";
@@ -246,6 +247,8 @@ function batchResult(
     additionalAmountCents: Math.max(0, money.additionalAmountCents - waived),
     refundAmountCents: money.refundAmountCents + waived,
     accountCreditAmountCents: money.accountCreditAmountCents,
+    // #3809: none of these bookings was paid with account credit.
+    appliedCreditGivenBackCents: 0,
     requiresSettlementMethod: money.requiresSettlementMethod === true,
     settlementMethod: null,
     additionalPaymentClientSecret: null,
@@ -287,6 +290,7 @@ function args(
     input: { checkIn: "2026-08-20", checkOut: "2026-08-22" },
     ipAddress: "203.0.113.7",
     todayAtClub: "2026-07-01" as never,
+    format: CLUB_FORMAT_TEST,
     ...overrides,
   };
 }

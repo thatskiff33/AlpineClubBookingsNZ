@@ -24,17 +24,35 @@ const mocks = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    booking: {
-      findUnique: vi.fn(),
+vi.mock("@/lib/prisma", () => {
+  const payment = {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+  };
+  return {
+    prisma: {
+      booking: {
+        findUnique: vi.fn(),
+      },
+      payment,
+      // #3638: the mint attaches its intent under lock(1), re-reading the
+      // payment's source first; nothing here has switched to Internet Banking.
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          $executeRaw: vi.fn(),
+          payment: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            upsert: payment.upsert,
+          },
+          // ...and the booking's status, which is still payable.
+          booking: {
+            findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+          },
+        })
+      ),
     },
-    payment: {
-      findUnique: vi.fn(),
-      upsert: vi.fn(),
-    },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
@@ -99,6 +117,7 @@ import {
 // price. It proves the effective figure the fixed card path must charge.
 import { calculateBookingCreditApplication } from "@/lib/policies/booking-route-decisions";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn> };
@@ -164,6 +183,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
   it("mints the Stripe intent at the effective price and mirrors the credit split", async () => {
     // The credit decision booking-create made: 3000 consumed, effective 7000.
     const creditDecision = calculateBookingCreditApplication({
+      format: CLUB_FORMAT_TEST,
       requestedCreditCents: APPLIED_CREDIT_CENTS,
       creditBalanceCents: 5_000,
       finalPriceCents: FINAL_PRICE_CENTS,
@@ -175,7 +195,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
     mockPrisma.booking.findUnique.mockResolvedValue(makeCardBooking());
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_1641",
-      client_secret: "cs_1641",
+      client_secret: "cs_1641", currency: "nzd",
       amount: EFFECTIVE_CENTS,
     });
 
@@ -211,7 +231,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
     mockPrisma.booking.findUnique.mockResolvedValue(makeCardBooking());
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_full",
-      client_secret: "cs_full",
+      client_secret: "cs_full", currency: "nzd",
       amount: FINAL_PRICE_CENTS,
     });
 
@@ -231,6 +251,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
     // to guard defensively if one ever reaches it. Prove the create-time signal:
     expect(
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: FINAL_PRICE_CENTS,
         creditBalanceCents: FINAL_PRICE_CENTS,
         finalPriceCents: FINAL_PRICE_CENTS,
@@ -264,7 +285,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
       id: "pi_existing",
       status: "requires_payment_method",
       amount: EFFECTIVE_CENTS,
-      client_secret: "cs_existing",
+      client_secret: "cs_existing", currency: "nzd",
     });
 
     const res = await createPaymentIntentRoute(makeRequest());
@@ -292,11 +313,11 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
       id: "pi_legacy_full",
       status: "requires_payment_method",
       amount: FINAL_PRICE_CENTS,
-      client_secret: "cs_legacy_full",
+      client_secret: "cs_legacy_full", currency: "nzd",
     });
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "cs_new",
+      client_secret: "cs_new", currency: "nzd",
       amount: EFFECTIVE_CENTS,
     });
 

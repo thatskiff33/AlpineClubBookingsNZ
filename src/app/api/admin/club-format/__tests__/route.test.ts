@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
   The club currency and locale maintenance API (#3563, stage 1 of programme
-  #3205; INV-CONFIG-006), proved against the REAL authorisation guard.
+  #3205; INV-CONFIG-006), proved against the REAL authorisation guard. Since
+  #3596 the two verbs carry DIFFERENT gates — any admitted admin reads, only a
+  Full Admin writes — and the matrix below proves each verb against each kind
+  of caller.
 
   THIS FILE DELIBERATELY DOES NOT MOCK `@/lib/session-guards`, for the reason
   the club-timezone route's test records: a mocked `requireAdmin` cannot tell
   `{ permission: false }` (Full Admin only) from an omitted `permission` (infer
-  `support` from the path) or from `"any-admin"` — the mock answers whatever the
+  `support` from the path) or from `"any-admin"` (anybody admitted to the admin
+  portal) — the mock answers whatever the
   test told it to, so all three gates look identical and the test passes against
   every one. PR #2885 shipped exactly that mistake: 17/17 green, and the 403 it
   existed to remove was still there. So everything below runs the real
@@ -25,6 +29,7 @@ const h = vi.hoisted(() => {
   const delegates = [
     "clubFormatSettings",
     "auditLog",
+    "aiSpendCurrencySettings",
     "member",
     "booking",
     "payment",
@@ -104,6 +109,23 @@ const h = vi.hoisted(() => {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
+// #3566: a saved change re-primes the email seam's cached locale after commit.
+const primeEmail = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/email-templates-club-time", () => ({
+  primeEmailClubTimeZone: primeEmail,
+}));
+// #3567 D2: the read carries the in-flight card payments a currency change
+// would catch. The counts themselves are club-format-in-flight.test.ts's.
+const IN_FLIGHT = {
+  unpaidCardPayments: 2,
+  pendingSavedCardCharges: 1,
+  unansweredSavedCardAttempts: 1,
+  openRecoveryRetries: 0,
+};
+const countInFlight = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-in-flight", () => ({
+  countInFlightCardPayments: countInFlight,
+}));
 vi.mock("next/headers", () => ({
   headers: async () =>
     new Headers({
@@ -193,6 +215,21 @@ function signInWithGrid(grid: Grid) {
   );
 }
 
+/**
+ * A signed-in MEMBER with no admin standing at all — the plain `USER` role, the
+ * way an ordinary club member's session looks.
+ */
+function signInAsMember() {
+  h.auth.mockResolvedValue({
+    user: { id: "member-plain", role: "USER", accessRoles: ["USER"] },
+  });
+  setGuardMember(
+    guardMemberWith([
+      { role: "USER", roleDefinitionId: null, roleDefinition: null },
+    ]),
+  );
+}
+
 function setPersisted(row: unknown) {
   h.root.behaviour.set("clubFormatSettings.findUnique", () => row);
   h.tx.behaviour.set("clubFormatSettings.findUnique", () => row);
@@ -252,6 +289,7 @@ beforeEach(() => {
   delete process.env.NEXT_PUBLIC_LOCALE;
   signInAsFullAdmin();
   setPersisted(PERSISTED_ROW);
+  countInFlight.mockResolvedValue(IN_FLIGHT);
   h.tx.behaviour.set("clubFormatSettings.upsert", (args) => {
     const data = (args as { create: { currencyCode: string; locale: string } })
       .create;
@@ -264,7 +302,71 @@ beforeEach(() => {
   });
 });
 
-describe("GET /api/admin/club-format — Full Admin only", () => {
+/*
+  THE ACCESS MATRIX (#3596): four callers x two verbs, each cell a real request
+  through the real guard. The decision is "any admin may view the club's
+  currency and locale; only a Full Admin may change them", so the non-Full-Admin
+  admin is the row that matters — it is the one cell where the two verbs must
+  disagree. The grid chosen for it is the SHIPPED "Finance Viewer" shape
+  (finance at view, every other area none): the narrowest admin standing there
+  is, holding neither `support` (the area this path resolves to, so an omitted
+  `permission` would refuse it the read) nor `overview`.
+*/
+const VALID_CHANGE = { currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true };
+
+describe("who may read and who may change (#3596)", () => {
+  it("a Full Admin: reads 200, changes 200", async () => {
+    expect((await get()).status).toBe(200);
+    expect((await put(VALID_CHANGE)).status).toBe(200);
+    expect(h.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("an admin who is not a Full Admin: reads 200 with the values, changes 403", async () => {
+    signInWithGrid({ financeLevel: "VIEW" });
+    const read = await get();
+    expect(read.status).toBe(200);
+    const body = (await read.json()) as { state: Record<string, unknown> };
+    expect(body.state.currencyCode).toBe("NZD");
+    expect(body.state.locale).toBe("en-NZ");
+
+    expect((await put(VALID_CHANGE)).status).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a member with no admin standing: reads 403, changes 403", async () => {
+    signInAsMember();
+    expect((await get()).status).toBe(403);
+    expect((await put(VALID_CHANGE)).status).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a signed-out caller: reads 401, changes 401", async () => {
+    h.auth.mockResolvedValue(null);
+    expect((await get()).status).toBe(401);
+    expect((await put(VALID_CHANGE)).status).toBe(401);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("an admin holding every area at edit: reads 200, still cannot change", async () => {
+    // Every area at `edit` is still not Full Admin — Full Admin is the
+    // protected `ADMIN` role, not a level in the grid — so the write refuses
+    // them exactly as it refuses the finance viewer above.
+    signInWithGrid({
+      overviewLevel: "EDIT",
+      bookingsLevel: "EDIT",
+      membershipLevel: "EDIT",
+      financeLevel: "EDIT",
+      lodgeLevel: "EDIT",
+      contentLevel: "EDIT",
+      supportLevel: "EDIT",
+    });
+    expect((await get()).status).toBe(200);
+    expect((await put(VALID_CHANGE)).status).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/admin/club-format — the read", () => {
   it("answers a Full Admin with the persisted pair, its provenance and who set it", async () => {
     const response = await get();
     expect(response.status).toBe(200);
@@ -279,7 +381,21 @@ describe("GET /api/admin/club-format — Full Admin only", () => {
         unusableStoredCurrency: null,
         unusableStoredLocale: null,
       },
+      inFlight: IN_FLIGHT,
     });
+  });
+
+  it("gives the in-flight payment counts to a Full Admin only; another admin gets null (#3567 review)", async () => {
+    signInWithGrid({ financeLevel: "VIEW" });
+    const body = (await (await get()).json()) as { inFlight: unknown };
+    expect(body.inFlight).toBeNull();
+    expect(countInFlight).not.toHaveBeenCalled();
+  });
+
+  it("answers null in-flight counts when they cannot be read, never zero", async () => {
+    countInFlight.mockResolvedValue(null);
+    const body = (await (await get()).json()) as { inFlight: unknown };
+    expect(body.inFlight).toBeNull();
   });
 
   it("reports the environment when nothing is persisted", async () => {
@@ -296,6 +412,7 @@ describe("GET /api/admin/club-format — Full Admin only", () => {
         unusableStoredCurrency: null,
         unusableStoredLocale: null,
       },
+      inFlight: IN_FLIGHT,
     });
   });
 
@@ -322,30 +439,13 @@ describe("GET /api/admin/club-format — Full Admin only", () => {
     expect(body.state.locale).toBe("en-NZ");
   });
 
-  it("refuses an admin holding every area at edit, because none of that is Full Admin", async () => {
-    signInWithGrid({
-      overviewLevel: "EDIT",
-      bookingsLevel: "EDIT",
-      membershipLevel: "EDIT",
-      financeLevel: "EDIT",
-      lodgeLevel: "EDIT",
-      contentLevel: "EDIT",
-      supportLevel: "EDIT",
-    });
-    expect((await get()).status).toBe(403);
-  });
-
-  it("refuses a signed-out caller", async () => {
-    h.auth.mockResolvedValue(null);
-    expect((await get()).status).toBe(401);
-  });
 });
 
 describe("PUT /api/admin/club-format — the write", () => {
   it("refuses a support editor, who the path map alone would admit", async () => {
     signInWithGrid({ supportLevel: "EDIT" });
     expect(
-      (await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true }))
+      (await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true }))
         .status,
     ).toBe(403);
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
@@ -371,6 +471,42 @@ describe("PUT /api/admin/club-format — the write", () => {
       /three-letter currency code/i,
     );
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["JPY", "KWD"])(
+    "refuses %s, a real currency that does not count in hundredths (#3567 D3)",
+    async (currencyCode) => {
+      const response = await put({ currencyCode, locale: "en-NZ", confirmed: true });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toMatch(
+        /two decimal places/i,
+      );
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a currency change without its own tick, and writes nothing (#3567 D2)", async () => {
+    // Card charges follow the currency, so the ordinary confirmation is not enough.
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(
+      /Stripe account and the Xero base currency/,
+    );
+    expect(txDelegatesTouched()).toEqual(["clubFormatSettings"]);
+    expect(h.tx.client.clubFormatSettings.upsert).not.toHaveBeenCalled();
+    expect(h.tx.client.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("judges a currency change against the ENVIRONMENT seed when nothing is persisted", async () => {
+    setPersisted(null);
+    // AUD is what the club is already effectively on, so recording it needs no second tick.
+    expect((await put({ currencyCode: "AUD", locale: "en-AU", confirmed: true })).status).toBe(200);
+    // NZD is a change away from the environment's AUD, so it does.
+    expect((await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true })).status).toBe(400);
+  });
+
+  it("does not ask for the currency tick on a locale-only change", async () => {
+    expect((await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true })).status).toBe(200);
   });
 
   it("refuses an invalid locale BEFORE writing the valid currency beside it", async () => {
@@ -406,6 +542,7 @@ describe("PUT /api/admin/club-format — the write", () => {
       currencyCode: "chf",
       locale: "DE-ch",
       confirmed: true,
+      currencyChangeConfirmed: true,
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -435,7 +572,7 @@ describe("PUT /api/admin/club-format — the write", () => {
   });
 
   it("runs Serializable, because the recorded BEFORE value has to be true", async () => {
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(h.prisma.$transaction.mock.calls[0][1]).toEqual({
       isolationLevel: "Serializable",
     });
@@ -461,20 +598,30 @@ describe("PUT /api/admin/club-format — the write", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("touches EXACTLY two tables, so no stored amount can be rewritten", async () => {
+  it("touches EXACTLY the three tables it names, so no stored amount can be rewritten", async () => {
     /*
       THE CONTRACT THIS ROUTE MAKES. Changing the club's currency re-denominates
       nothing: every amount stays the integer cents it was. A write here
       reaching a payment, a booking or a member would be that promise broken,
       so the assertion is over the whole recorded delegate set rather than over
-      a hand-picked list of things not to call.
+      a hand-picked list of things not to call. The third table is the AI spend
+      rate, which a currency change CLEARS (#3566) — a clear, not a conversion.
     */
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
+    expect(txDelegatesTouched()).toEqual([
+      "aiSpendCurrencySettings",
+      "auditLog",
+      "clubFormatSettings",
+    ]);
+  });
+
+  it("a locale-only change touches only the two tables, and leaves the AI rate", async () => {
+    await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true });
     expect(txDelegatesTouched()).toEqual(["auditLog", "clubFormatSettings"]);
   });
 
   it("audits the before and after pair, and nothing else", async () => {
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     const row = auditedRow();
     expect(row).toMatchObject({
       action: "CLUB_FORMAT_UPDATED",
@@ -511,7 +658,7 @@ describe("PUT /api/admin/club-format — the write", () => {
 
   it("records a null BEFORE when nothing was persisted", async () => {
     setPersisted(null);
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(auditedRow().metadata).toEqual({
       before: null,
       after: { currencyCode: "CHF", locale: "de-CH" },
@@ -526,6 +673,7 @@ describe("PUT /api/admin/club-format — the write", () => {
       currencyCode: "CHF",
       locale: "de-CH",
       confirmed: true,
+      currencyChangeConfirmed: true,
     });
     expect(response.status).toBe(503);
   });
@@ -535,7 +683,108 @@ describe("PUT /api/admin/club-format — the write", () => {
       Object.assign(new Error("relation does not exist"), { code: "P2021" }),
     );
     await expect(
-      put({ currencyCode: "CHF", locale: "de-CH", confirmed: true }),
+      put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true }),
     ).rejects.toThrow(/relation does not exist/);
+  });
+});
+
+/*
+  #3566, owner decision 4: a stored AI spend rate is "how many of the club's
+  currency one NZ dollar buys" and records no currency, so a currency change
+  clears it in this same transaction and records that it did.
+*/
+describe("PUT /api/admin/club-format — a currency change clears the AI spend rate", () => {
+  const STORED_RATE = { clubUnitsPerNzdMicros: 920_000 };
+
+  function auditRows(): Array<Record<string, unknown>> {
+    const create = h.tx.client.auditLog.create as ReturnType<typeof vi.fn>;
+    return create.mock.calls.map(
+      (call) => (call[0] as { data: Record<string, unknown> }).data,
+    );
+  }
+
+  it("deletes the stored rate and audits the clear beside the currency change", async () => {
+    h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
+    expect(response.status).toBe(200);
+    const deleteMany = h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<
+      typeof vi.fn
+    >;
+    expect(deleteMany).toHaveBeenCalledWith({ where: { id: "default" } });
+    const rows = auditRows();
+    expect(rows.map((row) => row.action)).toEqual([
+      "AI_SPEND_CURRENCY_RATE_CLEARED",
+      "CLUB_FORMAT_UPDATED",
+    ]);
+    expect(rows[0]).toMatchObject({
+      category: "admin",
+      entityType: "AiSpendCurrencySettings",
+      entityId: "default",
+      actorMemberId: ACTOR,
+    });
+    expect(rows[0].metadata).toEqual({
+      previousCurrency: "NZD",
+      newCurrency: "CHF",
+      previousClubUnitsPerNzdMicros: 920_000,
+    });
+  });
+
+  it("writes no clear and no extra audit row when no rate was stored", async () => {
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
+    expect(auditRows().map((row) => row.action)).toEqual(["CLUB_FORMAT_UPDATED"]);
+  });
+
+  it("leaves the rate alone on a locale-only change", async () => {
+    h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
+    await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("judges the change against the ENVIRONMENT seed when nothing was persisted", async () => {
+    // The seed is AUD (pinned in beforeEach). Recording AUD for the first time
+    // is not a currency change, so a rate set against it survives.
+    setPersisted(null);
+    h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
+    await put({ currencyCode: "AUD", locale: "en-AU", confirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
+    // And a first save of a DIFFERENT currency does clear it.
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PUT /api/admin/club-format — emails follow a change at once (#3566)", () => {
+  it("re-primes the email cache AFTER the transaction commits, on a real change", async () => {
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
+    expect(response.status).toBe(200);
+    expect(primeEmail).toHaveBeenCalledTimes(1);
+    // After the transaction, never inside it: a read on the module client under
+    // the Serializable transaction would be a second connection mid-save.
+    expect(primeEmail.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.prisma.$transaction.mock.invocationCallOrder[0],
+    );
+    const auditCreate = h.tx.client.auditLog.create as ReturnType<typeof vi.fn>;
+    expect(primeEmail.mock.invocationCallOrder[0]).toBeGreaterThan(
+      auditCreate.mock.invocationCallOrder.at(-1) ?? Infinity,
+    );
+  });
+
+  it("does not re-prime when nothing changed, or when the save lost a race", async () => {
+    await put({ currencyCode: "NZD", locale: "en-NZ", confirmed: true });
+    expect(primeEmail).not.toHaveBeenCalled();
+    h.prisma.$transaction.mockRejectedValueOnce(
+      Object.assign(new Error("could not serialize access"), { code: "P2034" }),
+    );
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
+    expect(primeEmail).not.toHaveBeenCalled();
   });
 });

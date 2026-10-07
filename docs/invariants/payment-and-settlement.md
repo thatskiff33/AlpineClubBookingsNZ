@@ -98,6 +98,37 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   cash-settled (or Xero-inbound-settled) booking is auto-refunded instead of
   silently kept.
 
+## INV-PAY-102
+
+- **Card first, then bank: a booking is never collected by two instruments
+  silently** (#3638).
+- **The Internet Banking switch refuses unless the card intent is retired**
+  (`isCardIntentRetired`): Stripe confirmed the cancel, the intent was already
+  `canceled`, or it succeeded and the local ledger shows it refunded (#1765). A
+  live capture, or a cancel that throws, is a 409 with no payment write and no
+  invoice. Under lock(1) it refuses a payment now pointing at a different
+  intent.
+- **Every card door attaches through `attachMintedCardIntent`** —
+  `create-payment-intent` and `/pay/<token>` — under lock(1), re-reading the
+  payment's source and the booking's status and refusing an Internet Banking or
+  no-longer-payable one. Neither order leaves a live card intent beside an
+  invoice, and no card row flips a switched payment back to STRIPE.
+- **Inbound, a second instrument is raised, never skipped.** Under the settle
+  loop's lock(1), a PRIMARY capture of another source is a conflict on a PAID or
+  COMPLETED booking while it holds net cash, and on a CANCELLED one while the
+  bank cash is new. The bank receipt is recorded and nothing else moves. One
+  admin-only marker per invoice is written IN that transaction, so it commits
+  with the receipt; the unmuteable alert follows the commit, and the marker
+  records it sent, so a crash in between re-sends it once on the retry. Not
+  second instruments: an ADDITIONAL card row, a capture the #1992 refund owns
+  (`INV-PAY-043`), and — on a settled booking — #1765 refund history, a card
+  row refunded before the booking moved to Internet Banking.
+- **A replay on a settled booking changes nothing.** COMPLETED takes the
+  already-paid arm like PAID.
+- Pinned by `switch-to-internet-banking-route.test.ts`,
+  `payment-intent-routes.test.ts`, `payment-link.test.ts` and
+  `issue-3638-second-instrument-conflict.test.ts`.
+
 ## INV-PAY-044
 
 - CANCELLATION yields a durable `ManualRefundTask`, created atomically with the
@@ -209,16 +240,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   the fenced `payment.updateMany` re-asserts the outstanding delta (on BOTH
   answers), the settle-from status, the zero refund history and the absence of
   Xero evidence as WHERE clauses, so a concurrent writer yields count 0 → 409;
-  and (3) AFTER THE FACT, NARROWLY — `auditIbAppliedCreditStrands` recomputes
-  `amountCents + creditAppliedCents - finalPriceCents` over committed data and
-  reports the uncollected addition beside it.
-  **(3) is not a safety net for this settle.** It enumerates a payment only when
-  the booking still carries UN-ALLOCATED applied credit
-  (`deriveIbAppliedCreditStrandFinding` returns null on
-  `ledgerAppliedCents <= 0`), scans INTERNET_BANKING payments only, and is an
-  operator-run script (`scripts/audit-ib-hold-clearing.ts`), not a scheduled job
-  or an alert. Within that population a NEGATIVE `mirrorInvariantDeltaCents`
-  equal-and-opposite to the payment's uncollected addition is not drift.
+  and (3) AFTER THE FACT — the booking-ledger census (`INV-MONEY-037`) checks
+  every booking's `amountCents`, `creditAppliedCents` and uncollected
+  addition against its ledger lines over committed data. **(3) is not a safety
+  net for this settle**: it is an operator-run command, not a scheduled job or
+  an alert.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
   uncollected. A covered extra also writes
@@ -287,7 +313,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
   **THE CENSUS IS A REPORT, NOT A REPAIR.** `bookingLedgerCensusSql` lists every
   live booking with a captured payment whose residual is not zero, and
-  `npm run payments:audit-booking-ledger` runs it read-only. A POSITIVE residual
+  `pnpm run payments:audit-booking-ledger` runs it read-only. A POSITIVE residual
   is money the price says is owed that no ask is collecting; a NEGATIVE one is
   the club holding more than the price, which is the expected shape after a
   policy-retained or credit-settled reduction. Nothing repairs either
@@ -361,6 +387,35 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   non-fail-safe limit in this module: a refund that is accepted and later
   `failed` counts as cash between those two events, bounded by the
   `refundedAmountCents` clamp and corrected by the next run.
+
+## INV-PAY-103
+
+- **A card refund ADDS to a transaction's `refundedAmountCents` exactly the
+  money it newly recorded, through one writer** (#3640). The mirror also counts
+  account-credit settlements, which leave no `PaymentRefund` row, so a
+  `max(stored, card refunds)` formula loses a card refund made after a credit
+  and lets a later cancel pay it out again. `recordStripeRefundsAgainstTransaction`
+  (`src/lib/payment-transactions.ts`) is the only card-refund writer of that
+  column — the inline refund, the `charge.refunded` sync and the
+  superseded-payment recovery. It adds a refund only when its own
+  `ON CONFLICT DO NOTHING` insert recorded it, in a counted status, made no
+  earlier than the second the ledger-writers migration finished on this install
+  (an older one is already in the mirror); it subtracts a counted refund it sees
+  move to failed or cancelled, never below the payment's account credit plus
+  its card refunds still counted (a refund the old formula never added, failing
+  later, takes nothing). Rows, mirror and aggregate commit in one transaction.
+- **Every later write of that column is one compare-and-set**, re-read and
+  retried: the writer above, #1491's fold and `applyLocalRefundAllocation`, which
+  refuses only when headroom is gone. All take the `Payment` row first
+  (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows.
+- Two writers set an organiser-settled child's mirror directly, because the
+  child has no transaction rows: the pre-#3653 group-settlement path
+  (`INV-PAY-031`–`037`) and the organiser child refund executor
+  (`organiser-child-refund-executor.ts`, [`INV-PAY-114`](#inv-pay-114)), which
+  records each Stripe refund's row first.
+- Pinned by `payment-transactions-refunds.test.ts` and
+  `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
+  are listed by `pnpm run payments:audit-refunded-total`, never repaired by code.
 
 ## INV-PAY-002
 
@@ -589,30 +644,99 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Internet Banking defaults are non-holding and no-cutoff. If bed holding is
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
+- Never once the stay has started (#3663): check-in on or before the club's
+  today (`bookingStayHasStarted`) is skipped before any Xero read, counted
+  `skippedStarted` and alerted to finance once, for reconciliation by hand,
+  under the same claim rule as `INV-PAY-109` (`sendAdminAlertOnceEver`). An
+  Internet Banking organiser-pays group with an invoice, past its deadline,
+  follows it too, whatever Xero shows of it ([INV-PAY-105]). Pinned by `internet-banking-payment-cron.test.ts` and
+  `cron-group-settlement-reaper.test.ts`.
 
 ## INV-PAY-017
 
-- The hold-expiry release and its invoice-clearing Xero credit-note outbox row
-  commit in ONE transaction (#1357): the release marks the hold consumed
-  (re-runs skip it), so an intent enqueued post-commit would ride a crash
-  window with no self-heal. The outbox enqueue is a pure local insert — the
-  Xero call itself stays in the outbox worker, outside the transaction. The
-  clearing note is sized like the never-captured cancel path (#1597), NOT the
-  credit-reduced payment amount: the booking invoice is raised at the FULL
-  finalPrice, so the note is `max(0, finalPrice + changeFee − Xero-allocated
-  applied credit)` (only credit already allocated to the invoice AS A XERO
-  credit note — `BOOKING_APPLIED` rows carrying `xeroCreditNoteId` — is
-  subtracted, and the 100% local restore does not double-count: the allocated
-  note stays on the cancelled invoice while the restore re-creates the credit
-  locally, netting out). Since #1620 (allocate-existing, see the invariant below)
-  that term is non-zero for an Internet-Banking booking whose applied credit was
-  allocated to its invoice; before #1620 locally-applied credit never reduced the
-  invoice and the term was always 0. It is gated on an ISSUED
-  invoice: the create-time hold-slots shape is CONFIRMED and booking-create
-  enqueues the invoice only for PAYMENT_PENDING, so that shape reaches release
-  with no invoice and enqueues nothing (a refund note against no invoice was a
-  permanently-failing outbox op pre-#1597). `scripts/audit-ib-hold-clearing.ts`
-  reports invoices under-cleared by the pre-fix sizing (read-only).
+- The hold-expiry release and its invoice-clearing credit-note outbox row
+  commit in ONE transaction (#1357): the release marks the hold consumed, so a
+  post-commit enqueue would ride a crash window with no self-heal. The enqueue
+  is a local insert; the Xero call stays in the outbox worker.
+- **The note clears the booking's invoicing; it is not a refund** (#3535). It
+  is the booking-anchored modification credit note the never-captured cancel
+  path and the repair tool's cancelled-open-invoice arm also raise
+  (`clearsUnpaidInvoice`): no credit-note payment, worded *Invoice cleared -
+  booking not paid* (homed with the refund wordings, [INV-PAY-101]). The
+  builder allocates it across the primary and any supplementary invoice, each
+  up to what Xero says it owes, and creates nothing when they owe less
+  (`xero-clearing-allocations.ts`). A FAILED note is retried, and a PARTIAL one
+  re-allocated, from what its row recorded.
+- **One size**, `unpaidInvoiceClearingAmountCents`: `max(0, finalPrice +
+  changeFee − Xero-allocated applied credit)`, never the credit-reduced payment
+  amount (#1597). Only credit allocated to the invoice as a Xero credit note is
+  subtracted; the 100% local restore does not double-count. Gated on an ISSUED
+  invoice.
+- **Only an unpaid hold is released**: one with any payment against its
+  invoices is kept ([INV-PAY-107]).
+- One note per booking: the enqueue stands down on the booking's active
+  clearing-note link or a live operation with its key; the repair arm while a
+  clearing operation is live or failed, proposes none once late cash retired
+  one, and never auto-retries a shortfall or a note over a recorded part
+  payment ([INV-PAY-107]). The cron never re-selects a released
+  hold, including one released before #3535 with a refund note; the repair tool
+  still can (#3639).
+  `scripts/audit-ib-hold-clearing.ts` counts only allocated clearing
+  (read-only).
+- Pinned by `internet-banking-payment-cron.test.ts`,
+  `invoice-clearing-amount.test.ts`, `xero-refund-method-documents.test.ts`
+  and `xero-operation-retry.test.ts`.
+
+## INV-PAY-107
+
+- **An expired internet-banking hold with any payment against its invoices is
+  kept, not released** (#3643; owner option A, 26 September 2026).
+  Xero is read live before any transaction (primary and supplementary
+  invoices; cash by `classifyXeroInvoiceCashEvidence`). A clean read wins; the
+  inbound sync's `PAYMENT` links (`isRecordedBookingInvoicePayment`, one rule
+  with the #3535 audit) count only when Xero cannot answer, and, for links newer
+  than the read, in the release's re-check, narrowing, not closing, the race;
+  the builder's shortfall refusal backs it.
+- **An unreadable invoice is kept up to seven days past the deadline**
+  (`UNREADABLE_INVOICE_HOLD_BOUND_MS`, shared with [INV-PAY-105]), then
+  released (a 404 counts); a started stay never is ([INV-PAY-016]). Its
+  clearing note waits for the builder to read what the invoices owe.
+- **One admin alert per hold per reason**, claim-guarded: a send that threw is
+  given back, one nobody received retried daily (owed once the hold is gone),
+  and a release's audit row is written regardless. Live reads: 20 a run, 400
+  holds a day.
+- **The cancel path recognises the part payment**: the claim
+  re-checks for payments recorded since its read, records Xero's exact cash as
+  captured, so the policy tiers it as credit, and queues a note for
+  the unpaid rest (*Unpaid balance cleared - booking cancelled*, [INV-PAY-101]).
+  Money it cannot credit (an organisation's, or unsizable) is an officer's
+  unpaid cancel with no note and an alert (DECISION 2); the claim raises one
+  amountless, dismiss-only hand-back task per payment (owner decision, 28
+  September 2026). The preview shares the reader, cached a minute.
+- The repair tool raises manual review, never a queued or retried full
+  clearing note, over a recorded part payment, until that task is closed; a
+  recognised one bypasses [INV-PAY-106]'s skips until its rest note resolves.
+- Pinned by `internet-banking-payment-cron.test.ts`,
+  `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
+  and `xero-booking-repair.test.ts`.
+
+## INV-PAY-108
+
+- **A part payment under review is never handed back twice** (#3643,
+  orchestrator decision 3 within the owner's 28 September 2026 decision).
+  While the review task [INV-PAY-107]'s cancel raises exists, open or
+  dismissed, a PAID event for its invoice makes the inbound sync's late-cash
+  arms (an organisation's hand-back, a member's account credit) size and mint
+  nothing. They find the task by its marker, never by `paymentId`.
+- Instead, in the same transaction, the sync writes onto the task when it
+  learned the invoice was paid and the invoice's cash in cents, once (a replay
+  adds nothing), and reopens a dismissed task; the queue card shows it. An
+  email is attempted too, but it is best-effort: the note is the record
+  (`part-payment-review-cover.ts`).
+- An OPEN task counts as a recorded payment for the Xero repair tool, with or
+  without a local `PAYMENT` link, so it never offers the full clearing note.
+- Pinned by `xero-inbound-reconciliation.test.ts`, `booking-cancel.test.ts`,
+  `xero-booking-repair.test.ts` and `manual-refund-task-constraints.test.ts`.
 
 ## INV-PAY-018
 
@@ -646,28 +770,94 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `--apply --apply-action <key>` (#1491). Rows flattened by the old defect are
   not backfilled.
 
+## INV-PAY-106
+
+- **Nothing later re-decides what a cancellation settled** (#3639). One rule,
+  `classifyCaptureOnCancelledBooking` (`src/lib/cancellation-settled-money.ts`).
+  A decision is a paid-path policy snapshot (recognised by shape, so unpaid
+  auto-cancel and hold-expiry snapshots and the #2262 markers are not), a
+  cancellation credit or a live cancel-refund recovery.
+- **Both late-capture handlers** acknowledge a success notice on a `CANCELLED`
+  booking — no refund, Xero note or status write — when the capture is not
+  known to have landed after the cancel and the cancel recorded a decision, or
+  when any of it was already refunded (`captureRefundState`, which reads the
+  refunded total). "Landed after" is the primary handler's own
+  `cancelled_booking_late_capture` write or a `CANCEL_PAYMENT_INTENT` recovery
+  for the intent. Each writes `booking.payment.late_notice_acknowledged`. A
+  replay after a refund skips the epilogue, so a hard kill mid-epilogue is left
+  to the repair tool. The paid-path `CANCELLED` event commits inside the claim.
+- **A genuine late capture follows the club's setting** (owner decision 26 Sep
+  2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)),
+  including a change payment the superseded-intent hand-off catches: refunded
+  automatically (default) or held as one #2700-kind task per intent, marked by
+  `lateCaptureApprovalIntentId`. Approval is the automatic refund, same Stripe
+  keys; a task of any status owns its capture, and the repair tool offers no
+  refund behind it. A #2700 hand-back is refused once its capture was refunded.
+  Kept money is recorded in Xero (`INV-PAY-110`).
+- **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
+  of every source and skips a payment already carrying a refund or
+  account-credit note, or such an operation queued or failed.
+- Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
+  `payment-recovery.test.ts`, `manual-refund-task.test.ts` and
+  `xero-booking-repair.test.ts`.
+
+## INV-PAY-110
+
+**Related: `INV-PAY-106`** (who decides a late capture) **and `INV-PAY-104`**
+(the change payment's waiting invoice).
+
+- **A kept late capture is recorded as a card receipt** (owner and
+  orchestrator decisions 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
+  an invoice for the GROSS capture, paid from `stripeBankAccount`, both dated
+  the club day of the Stripe charge (`stripe-capture-date.ts`), stored on the
+  row before the send. Keeping is dismissing the #3639 task; one pure
+  `decideLateCapture` (`late-capture-kept-xero-rules.ts`) answers everywhere.
+- **Which document**: a change payment on an invoiced booking keeps its
+  supplementary invoice, also charge-dated; anything else gets a
+  `KEPT_LATE_CAPTURE_INVOICE` anchored on the task, touching neither the
+  booking's invoice nor its clearing note.
+- **Refunds** are the ordinary refund note, owed only once the APP recorded
+  the capture's receipt (`readLateCaptureXeroReceipt`), never because
+  `payment.xeroInvoiceId` exists. Noted per capture (`noteLateCaptureRefunds`),
+  naming its receipt, dated the refund's day. Refunds of a capture without one
+  are outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
+  self-heal never raises them.
+- **The task row is the lock**: the enqueue and the worker's send-time check
+  take it `FOR UPDATE`. A raised invoice's payment is retried whatever the
+  task's status, by the repair tool too. An approval withdraws an unsent row;
+  one already past its check still sends, and its worker notes the refund.
+- **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
+  Its late-capture refund writes the webhook's record first, then notes per
+  capture the same way (#3635).
+- **Resolved in Xero** (`INV-INT-025`): the app neither re-sends it nor notes
+  its refunds; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to.
+- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
+  and the self-heal a day on), `xero-kept-late-capture-invoice.test.ts` and
+  `refund-note-eligible-cash.test.ts`.
+
 ## INV-PAY-019
 
 - Applied account credit is conserved across cancellation (#1547): EVERY
-  `cancelBooking` branch — and the Internet-Banking hold-expiry release
-  (`internet-banking-payment-cron.ts`), the one automatic cancel outside
-  `cancelBooking` — reverses the negative `BOOKING_APPLIED` ledger rows. The
-  never-captured / no-refund branches and the `PENDING` / no-payment branches
+  `cancelBooking` branch — and the automatic cancels (Internet-Banking
+  hold-expiry release, `internet-banking-payment-cron.ts`, and both capacity
+  cancels, #3792) — reverses the negative `BOOKING_APPLIED` ledger rows. The
+  never-captured / no-refund, `PENDING` / no-payment and automatic cancels
   restore at **100%**; the paid path restores the applied slice at the
   cancellation tier (#1164 / D7). Restore idempotency is STRUCTURAL, not
   lock-dependent (#1636): the restore row carries a nullable-unique
-  `restoredFromBookingId`, so at most one restore row per booking can exist
-  regardless of caller lock granularity — a duplicate insert is a
-  `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
+  `restoredFromBookingId`, so at most one restore row per booking can exist —
+  a duplicate insert is a `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
   `(sourceBookingId, type=CANCELLATION_REFUND)`, because three legitimate paths
   (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit
   refund, and the Xero inbound late-cash credit) all write that shape for one
-  booking. Each branch's atomic status flip remains the primary single-flight — the never-captured and `PENDING` branches are status-guarded claim-first under the booking advisory lock too — but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` (e.g. a per-lodge release lock) can no longer double a restore.
+  booking. Each branch's atomic status flip remains the primary single-flight (the never-captured and `PENDING` branches claim first under the booking advisory lock), but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` can no longer double a restore. The inbound
+  credit-note sync leaves a restored booking's ledger alone, alerting instead
+  (#3792).
   A CANCELLED booking may legitimately hold consumed credit with NO restore row
   only when its payment captured money (0%-tier paid cancels write no restore
   row; held-as-credit refunds keep the applied rows) or settled without cash
   (the fully-credit-covered $0 SUCCEEDED payment takes the paid path). The daily
-  credit-reconciliation cron alerts (alert-only, no auto-heal) on any CANCELLED
+  credit-reconciliation cron alerts (no auto-heal) on any CANCELLED
   booking still holding orphaned applied credit, and
   `scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans. The
   cancelled-booking delete guard mirrors this: fully-reversed applied credit
@@ -827,11 +1017,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   mirror aggregates gross captures and the invariant is NET-based:
   `(amountCents − refundedAmountCents) + creditAppliedCents = finalPriceCents`
   at repay settlement. Every capture/reconciliation guard accepts EITHER the
-  effective price OR the full `finalPriceCents` (legacy in-flight intents) and
-  rejects any other amount (create-payment-intent reuse,
-  `stripe-webhook-service`, `payment-reconciliation`, `confirm-payment`) — full
-  price is always a legitimate settlement, and new bookings only mint effective
-  intents. Because a card invoice is raised-and-paid at capture
+  effective price OR the full `finalPriceCents` and rejects any other amount
+  (create-payment-intent reuse, `stripe-webhook-service`,
+  `payment-reconciliation`, `confirm-payment`). A full-price capture gives the
+  applied credit back (`giveBackAppliedCredit`) and mirrors
+  `creditAppliedCents = 0` (#3864). A stored election is spent only once the
+  booking's earlier intent is retired (`retireCardIntentBeforeElection`); a live
+  capture leaves it unspent. Because a card invoice is raised-and-paid at capture
   (`queueXeroInvoiceForPaidBooking` → `createXeroInvoiceForBooking`), the #1620
   fire-after-invoice outbox op is NOT used on card; `createXeroInvoiceForBooking`
   records the NET captured Stripe cash — gross captures − refunds, capped at the
@@ -942,9 +1134,43 @@ operations, and neither covers the other's ground. Change one, check the other.
   grace is measured on the transaction's `updatedAt`, which is NOT immutable in
   the FAILED state: a redelivered `payment_intent.payment_failed` re-writes
   status=FAILED unconditionally, so `@updatedAt` bumps and the grace restarts.
-  This can only DELAY a reap, never trigger one early, and the intent-agnostic
-  14-day `createdAt` sweep is the hard backstop that bounds it (and covers ops
-  whose intent never resolved at all).
+  This can only DELAY a reap, never trigger one early, and the 14-day
+  `createdAt` arm bounds it. Past the grace, whether the op is retired at all is
+  `INV-PAY-104`'s question: a decline is not abandonment.
+
+## INV-PAY-104
+
+**Related: `INV-PAY-029`** (when a failed ask is looked at) **and #3403** (the
+supersession trigger, an open owner decision this rule deliberately leaves as
+it was).
+
+- **A waiting supplementary invoice is retired only when the pay door is
+  closed** (#3641). One door, `resolveAdditionalPaymentDoor`
+  (`additional-payment-chase.ts`): `closed` when the booking no longer names
+  the intent, the intent SUCCEEDED, the booking is deleted or not payable, or
+  Stripe says `canceled` or missing; `captured-at-provider` when Stripe has
+  the money; else `payable`. The secret route serves only `payable` (404, 409;
+  a `processing` intent answers `PAYMENT_PROCESSING`, not paid, #3635); the
+  page card asks its booking half. The reaper
+  (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
+  only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
+  rows never recorded alerts once after three days (`sendAdminAlertOnceEver`,
+  so an alert nobody received is retried, #3635).
+- **Only a kept capture is invoiced.** `lateCaptureRefundState` answers from
+  the #3639 task owning the capture (OPEN undecided, COMPLETED refunded,
+  DISMISSED kept, recorded gross: `INV-PAY-110`), else from the booking
+  (CANCELLED or a supersede recovery refunds; #3403 unchanged). The reaper and
+  `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent` both ask it:
+  refunded retires, undecided stays waiting, kept is released or re-queued. An invoice the capture does not cover
+  is not issued, and an officer is told. A retired row is re-queued from
+  **that row**, the largest ask per change, under
+  `lockSupplementaryInvoiceAnchor`, once; it alerts once where another invoice
+  is linked or queued. One for the same request (its sent payload keeps
+  `paymentIntentId`) covers it, stamped `STALE_WAITING_PAYMENT_COVERED`.
+- Pinned by `xero-operation-outbox.test.ts`, `additional-payment-chase.test.ts`,
+  `fix-mod-payment.test.ts`, `additional-payment-card-gate.test.ts`,
+  `xero-supplementary-invoices.test.ts` and
+  `edit-financial-review-races.realdb.test.ts`.
 
 ## INV-PAY-030
 
@@ -985,6 +1211,8 @@ one, check the other.
 
 ## INV-PAY-034
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - An organiser-cancel group cleanup must be re-drivable after a crash (#1236).
   Cancelling the organiser booking is single-flight, so a re-invoked cancel
   409s and cannot re-enter the joiner cleanup; the `group-settlement-reaper`
@@ -1020,6 +1248,8 @@ one, check the other.
 
 ## INV-PAY-036
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
   Each child's Xero refund credit-note outbox row (integer cents) is enqueued
   **inside the same transaction** as that child's cancel + `refundedAmountCents`
@@ -1034,6 +1264,8 @@ one, check the other.
 
 ## INV-PAY-037
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - A failed settlement refund must stay durably owed (#1351): the frozen plan
   is never nulled, a payment-recovery operation persisted before the inline
   Stripe call retries the refund under the same
@@ -1042,6 +1274,115 @@ one, check the other.
   refund mirror twice — the replay only ever writes a mirror to an
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
+
+## INV-PAY-114
+
+**Related: `INV-PAY-034`, `INV-PAY-036`, `INV-PAY-037`** (the legacy and
+Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
+
+- **A child the organiser paid for by card is refunded out of the group's
+  combined payment, one Stripe refund per child, and nothing is called
+  refunded until Stripe answered** (#3653). An Internet Banking child keeps
+  the ordinary options.
+  - **The debt is written first**, under `lock(1)`: one
+    `PaymentRecoveryOperation` per refund, keyed `organiser_child_refund_*`,
+    amount frozen, counted against the child's payment and the combined
+    capture. An edit over it is refused; a cancellation
+    clamps.
+  - **One disposition, the organiser's card**: no account credit for an edit,
+    a joiner's own cancel or a consent lapse. Every edit door, quote and
+    review charge refuses a price increase.
+  - **The record waits for Stripe.** The `PaymentRefund` (no transaction),
+    mirror, Xero refund note, settlement status and close commit in one
+    `lock(1)` transaction; the edit door raises no modification note. A replay
+    first finds Stripe's refund by key.
+  - **What has gone back** is the larger of the mirror and the child's
+    refund rows (`organiserChildRefundedCents`). A cancellation, organiser's or joiner's,
+    tiers what remains less refunds owed through `cancelRefundableBaseCents`
+    ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A joiner's
+    cancel after a reduction takes the paid path; behind the group's it (and
+    its preview) refunds nothing more; its frozen figures follow the final amount. A
+    pre-#3653 `{childId: cents}` plan and an Internet Banking settlement keep
+    `INV-PAY-034`-`037`.
+  - **Only Stripe evidence raises a child's mirror**: the Xero
+    credit-note repair never takes it past the child's recorded refunds.
+  - **A pending refund that fails** is taken back out by the payments cron
+    and its debt reopened, marked for the recovery audit, due after Stripe's
+    key window.
+  - `pnpm run payments:audit-organiser-child-refunds` lists unbacked mirrors,
+    read-only. Home: `organiser-child-refund.ts` and its executor; proven by
+    `organiser-child-refund.realdb.test.ts`.
+
+## INV-PAY-105
+
+**Related: `INV-PAY-031`** (children total at apply) and **`INV-PAY-035`**
+(the cancellation VOID).
+
+- An organiser-pays group settlement is **bound** to its combined Internet
+  Banking invoice while it waits for it (`isGroupSettlementBoundToInvoice`)
+  (#3642) until it is paid, replaced, cancelled or lapses. It is never
+  switched to card.
+- **A change to the group replaces the invoice** (orchestrator decision under
+  the issue's item 1, which allowed refuse-or-replace). The invoice is read in
+  Xero first: with no payment or credit it is retired and a new one raised at
+  the new total; with any money on it nothing changes and the operators are
+  alerted. A claim for a moved invoice rolls back under `lock(1)`. Asking
+  again unchanged returns the same invoice and keeps the reaper's clock.
+- An invoice is bound only to the current attempt at the settlement's total;
+  anything else is abandoned on arrival: VOID queued, pointer cleared, link
+  kept inactive.
+- **Money on an invoice is never walked away from.** An invoice with any
+  payment or credit is not voided, not released (the group keeps
+  its beds, the owner's #3643 rule) and not replaced; each alerts once per
+  kind. One Xero cannot show is held, with an alert, up to seven days past the
+  deadline; one Xero does not have is never voided. A started stay with an
+  invoice is never released, whatever Xero shows ([INV-PAY-016]). Joiner
+  prices that cannot make the invoice release the binding and alert. A paid
+  invoice settles the group only for the settlement's total read under
+  `lock(1)` while it is still the settlement's invoice; a card capture only
+  while the settlement is still on that intent (otherwise it is refunded).
+- Pinned by `group-settlement.test.ts`, `cron-group-settlement-reaper.test.ts`,
+  `xero-group-settlement-invoices.test.ts`,
+  `xero-group-settlement-invoice-outbox.test.ts`,
+  `xero-group-settlement-invoice-lines.test.ts`,
+  `group-settlement-paid-invoice.test.ts`,
+  `organiser-group-booking-card.test.tsx` and
+  `group-settlement-invoice-binding-races.realdb.test.ts`.
+
+## INV-PAY-109
+
+**Related: `INV-PAY-105`** (the bound invoice) and **`INV-PAY-031`** (children
+total at apply).
+
+- **Once an organiser-pays group's settlement is paid, the organiser is never
+  billed for anyone else, and nobody is left unsettleable** (#3672, owner
+  option B). A member who joins afterwards gets an ordinary member-pays
+  booking. The payer is decided by `organiserPaysForNewJoiner`
+  (`src/lib/group-late-joiner.ts`) and re-decided under `lock(1)` when the
+  booking is written.
+- "Paid" is SUCCEEDED or PARTIALLY_REFUNDED, defined once in
+  `src/lib/group-organiser-paid.ts` for the server and the organiser's card.
+  REFUNDED is unpaid. On a live group PARTIALLY_REFUNDED cannot occur (only
+  the organiser cancel writes it, after CANCELLED), so the settle paths'
+  SUCCEEDED-only replay guards give the same answer.
+- **Every live, unpaid organiser-settled joiner the paid bill missed is
+  switched to member-pays**, started stay or not, in the transaction that
+  marks the settlement paid. Each switch writes a payer-switch booking event
+  in that transaction. The group-settlement reaper applies the same switch
+  to any paid group still holding one, under `lock(1)`.
+- Who is told: a `PAYMENT_PENDING` joiner whose stay has not started
+  (`bookingStayHasStarted`, the club's today) is emailed to pay, at most
+  once. A started stay is not emailed; the treasurer is alerted once per
+  group, linking each joiner's booking. The claim (`sendAdminAlertOnceEver`)
+  is kept once an admin has it or a copy is queued for the email retry cron,
+  held a day when no admin can receive it, and given back only when the send
+  throws first. The
+  reaper retries it from the events of stays not yet ended.
+- Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
+  `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,
+  `booking-split.test.ts`, `group-settlement.test.ts`,
+  `group-bookings-route.test.ts`, `organiser-group-booking-card.test.tsx` and
+  `member-group-join-panel.test.tsx`.
 
 ## INV-PAY-051
 
@@ -1131,11 +1472,11 @@ one, check the other.
 
 - **A Xero refund or credit document names how the money went back, from the
   settlement decision — never inferred from the payment's source** (#3529;
-  owner wording, 20 September 2026). Exactly three wordings exist, each the
-  line description's and the reference's head: *Refund against original credit
-  card*, *Refund requested via internet banking*, *Account Credit*. The one
-  home is `src/lib/xero-refund-method.ts`; its test censuses `src/lib` so
-  nothing else spells them.
+  owner wording, 20 September 2026). Three refund wordings head the line
+  description and reference: *Refund against original credit card*, *Refund
+  requested via internet banking*, *Account Credit*; a fourth, [INV-PAY-017]'s
+  unpaid-invoice clearing, names no refund. Their one home is
+  `src/lib/xero-refund-method.ts`, censused over `src/lib`.
 - **The method travels with the decision.** The cancel path's `refundMethod`,
   the edit-review route (`refundMethodForEditReviewRoute`: card → card,
   hand-settled → internet banking, credit → account credit) and the hand-back
@@ -1155,14 +1496,15 @@ one, check the other.
   `resolveRefundSettlement` is the one reading, shared by the inline and
   repair legs; a note skipped by design (`refundPaymentSkipped`) is never
   re-repaired.
-- **A completed `CANCELLED_BOOKING_HAND_BACK` raises the bank-transfer note**
-  against the booking's invoice — gated on that invoice's id, not
-  `hasIssuedPrimaryXeroInvoice`, false for every cancelled booking. Only
-  #3369's late internet-banking payment has one; a cash settlement has no
-  invoice (#2262) and writes nothing. Cancellation policy is untouched
-  (D2, #3527). Pinned by
+- **On a cancelled booking a completed `CANCELLED_BOOKING_HAND_BACK`, and a
+  review's netted card refund or hand-back (#3880), raise
+  the cancellation's refund note** against the invoice's id,
+  never `hasIssuedPrimaryXeroInvoice` (false here); a cash settlement
+  (#2262) has none. Cancellation policy is untouched (D2,
+  #3527). Pinned by
   `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
-  `xero-operation-retry.test.ts`.
+  `xero-operation-retry.test.ts`,
+  `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
 ## INV-PAY-060
 
@@ -1258,7 +1600,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   canonical Stripe refund for a card capture, made AFTER the commit; the local
   ledger allocation for an internet-banking hand-back; or
   `createBookingModificationCredit` where nothing was captured, whose
-  exactly-once key is the `BookingModification` id. **Which one is a question
+  exactly-once key is the `BookingModification` id; there a share is first
+  applied credit given back (`INV-PAY-113`). **Which one is a question
   about the booking, asked at completion** (#3194): a task carrying no payment id
   re-reads the booking's own payment through `editReviewSettlementPayment`, the
   single derivation the raise sites use too (`editReviewSettlementPaymentId`). A
@@ -1272,8 +1615,72 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   services use. The route is chosen and every refusal raised BEFORE the status
   claim, so a refused completion leaves the task OPEN; the Stripe route writes
   no allocation of its own, because `refundPaymentTransactions` writes it. The
-  completion holds no advisory lock (`docs/CONCURRENCY_AND_LOCKING.md`), so the
-  status claim is the whole single-flight guarantee.
+  completion holds no advisory lock across the Stripe call (since #3582 its
+  `lock(1)` is taken and released inside the transaction;
+  `docs/CONCURRENCY_AND_LOCKING.md`), so the status claim is the whole
+  single-flight guarantee across it.
+
+## INV-PAY-113
+
+- **A review share on a booking with nothing captured is that booking's applied
+  credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
+  per the orchestrator's reading of decision 1).
+  - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
+    clamp's mechanism, the share's and, since #3809, a credit-paid booking's
+    price reduction's (`INV-MOD-011`): the credit-ledger lock, the
+    deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
+    booking in `sourceBookingId`) and the deallocation of an invoice's excess
+    allocated credit (bank transfer or card, #3809). The share lowers the mirror a cancellation tiers.
+  - **Xero agrees with the app**, for an issued invoice: invoice less its
+    reduction notes is the booking's price, Xero's due is the app's owed, and
+    the member's Xero credit, counting noteless rows minted when spent, is the
+    app's. So an invoice-ALLOCATED note takes off the whole reduction
+    (`reviewInvoiceReductionCents`); minted credit takes the unallocated note;
+    a cancelled booking is left alone except for that minted note. Notes are
+    scoped to the review task and wait for the deallocation, failing for an
+    operator retry when it FAILED. A captured payment's share keeps the
+    document rule.
+  - **The ledger posts what was returned**, none at zero; on a covered booking
+    the give-back beyond the re-price is an agreed reduction no re-price
+    reverses (`agreedGiveBackKey`).
+  - **Unpaid** - credit short of the price beyond earlier review give-backs:
+    no more given back than the booking's review re-prices removed.
+  - **Cancelled first**, every route (#3835): netted cumulatively against
+    the cancellation, by what its CANCELLED event froze (tier method, bases,
+    `INV-PAY-115`'s cap, earlier reviews); refused, task OPEN, where the tier
+    does not reproduce it. Untiered money goes first; the capture gets only
+    its part. $200, $50 share: $200, $105, $50 back at 100%, 50% less $20, 0%.
+  - Home: `edit-financial-review-account-credit.ts`,
+    `edit-financial-review-cancel-netting.ts`; proven by
+    `edit-financial-review-{races,captured-cancel}.realdb.test.ts`.
+
+
+## INV-PAY-115
+
+- **A cancellation tiers applied credit capped at what the booking is now worth,
+  money paid first - for a booking reduced through #3809's settlement** (owner
+  decision A: credit-paid members are treated the same as card-paid ones). The
+  card slice's base caps money paid at price plus change fee
+  (`cancelRefundableBaseCents`); the credit slice is what the same cap leaves of
+  the applied credit (`cancelAppliedCreditBaseCents`), tiered by
+  `calculateAppliedCreditRestore`. $200 credit-paid, $5 back on a $50 reduction
+  at 50% less $20, then a cancel at the same tier restores $55: $60 in all, the
+  card-paid figure.
+  - **Only new reductions** (owner decision, 4 Oct 2026, "Cap new reductions
+    only"): the cap applies where an edit's history row records the settlement
+    of applied credit (`bookingReducedThroughCreditGiveBack`,
+    `BookingModification.newData`). A booking reduced before that release tiers
+    all the credit still applied, as before: never short, and up to about $20
+    more than an all-card member at partial tiers. No data change.
+  - **A captured payment the cancel cannot refund** - a reduction refunded the
+    card whole - has its credit tiered the same way, with no card slice, not
+    restored whole (`refundedPaymentCreditRestore`), on a booking reduced
+    through that settlement. Before it, or never captured, it is restored
+    whole, as on main.
+  - The executed cancel, the member's preview and the review's netting
+    (`INV-PAY-113`) use one base; the CANCELLED event freezes it
+    (`appliedCreditBaseCents`), capped or not. Credit kept above the cap counts
+    as kept beyond the policy (design §5.1).
 
 ## INV-PAY-069
 
@@ -1320,8 +1727,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The total is DERIVED from the settled shares, never incremented.** Each
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
-    **neither leg may LOWER what is recorded**. On the Stripe leg that is a
-    refusal, not an atomic claim, and it is why no advisory lock is held.
+    **neither leg may LOWER what is recorded**. On the Stripe leg two runs are
+    ordered by a claim, not a lock ([INV-PAY-112]).
     A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
     the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
@@ -1371,9 +1778,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
     rule is safe only because that sum never decreases, and that monotonicity is
     why this path can refuse a stale lowering with no lock across a provider
-    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). That
-    refusal is not an atomic claim; `syncEditFinancialReviewChargeRequest` says
-    what it does not order.
+    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). Two
+    concurrent raises are ordered by [INV-PAY-112]'s claim, not by it.
   - **A later share reads it off the row, never off the payment**, which mirrors
     this request by then.
   - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
@@ -1387,6 +1793,37 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     refuses a deliberate assertion, so the call-site census refuses it.
   - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
     still live for the replay to read.
+
+## INV-PAY-112
+
+- **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
+  to lower ([INV-PAY-062]) orders nothing between two runs that each derive more
+  than is stored: both raised the intent, and the LAST to land won even when it
+  was smaller.
+  - **Claim before the provider call.** A run must win the edit's
+    `EditReviewChargeRaiseClaim` lease and record its intended amount under that
+    exact token before ANY Stripe call. A loser calls nothing, arms the edit's
+    recovery row and reports `deferred`, which never closes a replay.
+  - **Release, then look again**, raising for a share that committed meanwhile.
+    After `already-paid` the holder looks again only if the recovery row is
+    dead, so each uncollected total is audited ONCE, and a paid request covering
+    every share not at all. A lease lost after a provider call reports
+    `deferred`, never `raised`.
+  - **The backstop runs.** Arming reopens a SUCCEEDED recovery row; the replay's
+    close and hand-back are fenced on its retry time and exact attempt. A
+    terminal FAILED row is not reopened (`INV-PAY-057`).
+  - **The raise writes amounts, never status**, onto a live, uncaptured
+    ADDITIONAL row only: a webhook landing mid-raise stands, and a declined
+    request KEEPS FAILED (still owed, still payable).
+  - **A lease, never a lock**: nothing is held across Stripe and no advisory key
+    is taken; an expired token is taken over, safe because the derived total
+    only grows and a raise is absolute.
+  - **Stated limits**, ordering and interleavings:
+    [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
+  - Home: `edit-financial-review-charge-raise-claim.ts`,
+    `edit-financial-review-charge-sync.ts` and
+    `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
+    `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
 ## INV-PAY-070
 
@@ -1548,11 +1985,10 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   the frozen slices under the stored task-scoped prefix, Stripe answers a repeat
   with the original refund, and the ledger dedupes on refund id.
 - **`applyLocalRefundAllocation` compare-and-sets** on the `refundedAmountCents`
-  it read (#3032): it writes an ABSOLUTE value, so two writers on one
-  `PaymentTransaction` would silently OVERSTATE the refundable headroom, and a
-  review completion allocates against a LIVE booking with no lock. The guard
-  refuses loudly; the completion turns that into a 409 with its transaction
-  rolled back and its task still OPEN.
+  it read (#3032), so two writers on one row cannot OVERSTATE the headroom; a
+  review completion allocates against a LIVE booking with no lock. It retries
+  against the fresh total (#3640) and refuses only when the headroom is gone;
+  the completion turns that into a 409, rolled back, its task still OPEN.
 - **The settlement anchor is the ORIGINAL edit's `BookingModification`** (owner
   decision D-3032-1), carried on `reviewContext.bookingModificationId` and
   deliberately NOT part of the occurrence identity. `MemberCredit.sourceBookingModificationId`
@@ -2341,3 +2777,33 @@ _Split from `INV-PAY-057` (#3220)._
   declined the ask; the club ran out of attempts to raise it, and
   `requested_by_customer` in the club's own Stripe record would misstate a money
   decision.
+
+## INV-PAY-111
+
+**Related: `INV-PAY-101`** (the settlement decision) **and `INV-INT-025`**
+(resolved in Xero).
+
+- **The operation that raised a refund credit note never completes SUCCEEDED
+  without its settling payment or `refundPaymentSkipped`** (orchestrator
+  decision on [#3548](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3548)).
+  The moment Xero returns the note, one transaction records its id on the
+  payment, its covering link (amount, watermark, capture) and its id on the
+  row. A process that dies after that leaves a FAILED row naming its note:
+  coverage counts the note, so nothing re-mints it, and the retry finishes it.
+- **One read-back-then-settle** (`finishRefundCreditNoteSettlement`) serves the
+  builder's own row, the retry and repair leg, and the repair tool. It reads the
+  note back and records what Xero shows (paid, allocated, or part-paid with
+  `refundPaymentRemainingCents`) without a second payment. It skips a note
+  whose own operation was resolved by hand; an unreadable resolved row refuses.
+  Otherwise it pays under the one note-keyed key, dated the note's day. A failed
+  payment re-reads the note, else completes PARTIAL.
+- **What this does not cover, and why.** A replay that a recorded note already
+  covers raised nothing, so it closes SUCCEEDED marked `coveredByExistingNote`,
+  naming the note whose own row carries the outcome. Any failure between Xero
+  committing the note and that transaction (a crash, a lost or timed-out
+  response, a failed save) leaves nothing naming it, so only Xero's key replay
+  (24 hours, `INV-INT-014`) stops a second one. Rows written before #3548
+  are listed by the reconciliation report and the repair tool
+  (`REFUND_CREDIT_NOTE_UNSETTLED`) and settled only by an operator.
+- Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by
+  `xero-refund-note-crash-window.test.ts` and `xero-operation-outbox.test.ts`.

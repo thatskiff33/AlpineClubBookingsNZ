@@ -3,8 +3,8 @@
  * Read a GitHub issue the way it has to be read: body AND every comment, in one
  * command, with the decision state called out.
  *
- *   npm run issue -- 2777
- *   npm run issue -- https://github.com/<owner>/<repo>/issues/2777
+ *   pnpm run issue 2777
+ *   pnpm run issue https://github.com/<owner>/<repo>/issues/2777
  *
  * ## Why this exists
  *
@@ -17,8 +17,8 @@
  * rejected. That happened again on #2777: four unticked options in the body, the
  * owner's decision sitting in a comment from the previous evening.
  *
- * `AGENTS.md` says to read the comments, and the Claude adapter imports that
- * same authority. There is a memory note about it. It kept happening anyway,
+ * `AGENTS.md` says to read the comments, and every agent loads that same
+ * authority. There is a memory note about it. It kept happening anyway,
  * because instructions lose to
  * ergonomics: the cheap command was the incomplete one. This script makes the
  * complete read the cheap one, which is the only version of this rule that has
@@ -280,8 +280,9 @@ export function renderDecisionSummary(assessment) {
       "  !! STALE BODY — DO NOT TRUST THE OPTION LIST ABOVE THE COMMENTS !!",
       "",
       `  The body still offers ${options.unticked.length} unticked option(s), and ${decisionComments.length} comment(s)`,
-      "  record a decision. The body is the stale half. Read the comment(s) listed",
-      "  below before you plan, brief a subagent, or ask the owner anything.",
+      "  appear to record a decision. If the owner wrote it, the body is the stale",
+      "  half. Read the comment(s) listed below, and check each author, before you",
+      "  plan, brief a subagent, or ask the owner anything.",
       "",
       "  Whoever recorded that decision owes this issue a body update:",
       "  docs/agents/ISSUE_WORKFLOW.md -> \"Recording a decision: the body must",
@@ -348,7 +349,7 @@ export function parseIssueArgument(argv) {
     );
   }
   if (positional.length !== 1) {
-    throw new Error("Usage: npm run issue -- <issue-number|issue-url>");
+    throw new Error("Usage: pnpm run issue <issue-number|issue-url>");
   }
   const match = /(?:^|\/|#)(\d{1,7})\s*$/.exec(positional[0]);
   if (!match) {

@@ -39,7 +39,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  *     promotion writer, or it is named below with the reason it records
  *     nothing. A new night writer fails this census until it says which.
  *
- * `npm run test:related` cannot select this file — it reads the tree from disk —
+ * `pnpm run test:related` cannot select this file — it reads the tree from disk —
  * so it is CI-caught by design, like the stage-1 census.
  */
 
@@ -198,6 +198,7 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
 const NIGHT_WRITERS_WITHOUT_PROMOTION = new Map<string, string>([
   ["src/lib/booking-request.ts", "request conversion: an officer's total or an even split, no promotion"],
   ["src/lib/booking-request-shared.ts", "approval night vector: SOLD or EVEN_SPLIT, no promotion"],
+  ["src/lib/school-pending-adult-resolution.ts", "provisional held nights aligned to accepted officer cents via approval night vector; refuses promotion adjustments"],
   [
     "src/lib/stored-night-price-repair-store.ts",
     "an officer prices a night; the settle re-base that follows records the engine's figure over it",

@@ -105,6 +105,9 @@ vi.mock("@/lib/prisma", () => ({
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },
+    // #3451: the own-dependant guard reads the booking owner's parent links (a
+    // READ, so the zero-write suite is unaffected). Nobody here has a dependant.
+    member: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: h.transaction,
   },
 }));
@@ -213,6 +216,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 
 const D = (s: string) => parseDateOnly(s);
@@ -504,7 +508,10 @@ async function runPlanner(
     // stays mid-stay, which is the branch it was added to exercise.
     today: CLUB_TODAY,
   });
-  const plan = await prepareGuestPlan({} as never, {
+  // #3451: the planner's own-dependant guard reads parent links on the
+  // transaction client; nobody in this matrix has a dependant.
+  const plannerTx = { member: { findMany: async () => [] } };
+  const plan = await prepareGuestPlan(plannerTx as never, {
     // #3123 - the SAME club day `resolveTargetDates` was handed above. The
     // planner's person-night guard reads it too, and two days in one plan would
     // be the straddle this issue exists to remove.
@@ -524,6 +531,7 @@ async function runPlanner(
     },
     // #2560: the mode the route resolves for this fixture (Xero module off).
     subscriptionLockoutMode: "NO_BLOCK",
+    format: CLUB_FORMAT_TEST,
   });
   return {
     envelope: [
@@ -1126,8 +1134,11 @@ describe("#2563 the preview, the save and the freeze resolve one party", () => {
       // 6. The adult-supervision (child-safety) rule judges the same party. The
       //    preview does not run the rule — the save does — so what has to match
       //    is its INPUT, checked by evaluating the pure predicate on both.
-      expect(requiresAdultSupervisionReview(route.party!)).toBe(
-        requiresAdultSupervisionReview(planner.party),
+      //    Nobody here needed consent, which the rule now requires to be stated.
+      const noConsent = (rows: Array<{ ageTier: string }>) =>
+        rows.map((row) => ({ ...row, consentStatus: null }));
+      expect(requiresAdultSupervisionReview(noConsent(route.party!))).toBe(
+        requiresAdultSupervisionReview(noConsent(planner.party)),
       );
 
       // 7. Minimum stay is judged over the resolved envelope, or not at all when

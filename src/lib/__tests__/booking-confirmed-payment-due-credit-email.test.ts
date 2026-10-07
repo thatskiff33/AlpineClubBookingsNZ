@@ -85,6 +85,7 @@ import {
   renderTemplateString,
   type EmailTemplateData,
 } from "@/lib/email-message-renderer";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // THE FIXTURE. Every assertion below — the flat token, the composed
 // {{paymentOutcome}} block, the rendered default body, and the hand-built HTML
@@ -139,6 +140,7 @@ async function send(
     CHECK_OUT,
     2,
     30000,
+    CLUB_FORMAT_TEST,
     senderOptions,
   );
   expect(sendEmailMock).toHaveBeenCalledTimes(1);
@@ -275,7 +277,7 @@ describe("#2444 the unpaid confirmation's pay-what-the-invoice-asks sentence", (
     expect(templateData.paymentDueNote).toBe(composed);
     expect(html).toContain(composed);
     expect(
-      bookingConfirmedTemplate("Sam", CHECK_IN, CHECK_OUT, 2, 30000, {
+      bookingConfirmedTemplate("Sam", CHECK_IN, CHECK_OUT, 2, 30000, CLUB_FORMAT_TEST, {
         paymentDue: { reference: "BOOKING-ABC123", invoiceEmailed: true },
       }),
     ).toContain(composed);
@@ -286,7 +288,7 @@ describe("#2444 the unpaid confirmation's pay-what-the-invoice-asks sentence", (
     // (it imports nothing and knows nothing about HTML), exactly as the shared
     // money rows do. The plain-text token must keep the raw reference or a
     // member cannot type it into their banking app.
-    const html = bookingConfirmedTemplate("Sam", CHECK_IN, CHECK_OUT, 2, 30000, {
+    const html = bookingConfirmedTemplate("Sam", CHECK_IN, CHECK_OUT, 2, 30000, CLUB_FORMAT_TEST, {
       paymentDue: { reference: "A&B<1>", invoiceEmailed: false },
     });
 
@@ -665,7 +667,7 @@ describe("#2483 the itemised netting on an unpaid confirmation", () => {
     expect(templateData.paymentDueNote).toBe(composed);
     expect(html).toContain(composed);
     expect(
-      bookingConfirmedTemplate("Sam", CHECK_IN, CHECK_OUT, 2, 30000, {
+      bookingConfirmedTemplate("Sam", CHECK_IN, CHECK_OUT, 2, 30000, CLUB_FORMAT_TEST, {
         paymentDue: { reference: "BOOKING-ABC123", invoiceEmailed: true },
         appliedCredit: CREDIT,
       }),
@@ -803,14 +805,14 @@ describe("#2483 the netting arithmetic", () => {
         outcome: "none",
         creditCents: 0,
         toTransferCents: 30000,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toEqual([{ label: "Total Due", value: "$300.00" }]);
     expect(
       unpaidMoneySummaryRows(30000, {
         outcome: "netted",
         creditCents: 12000,
         toTransferCents: 18000,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toEqual([
       { label: "Booking Total", value: "$300.00" },
       // The value carries its own minus sign, so no body may prefix one.
@@ -823,7 +825,7 @@ describe("#2483 the netting arithmetic", () => {
         outcome: "covered",
         creditCents: 30000,
         toTransferCents: 0,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toEqual([
       { label: "Booking Total", value: "$300.00" },
       { label: "Account credit applied", value: "-$300.00" },
@@ -836,7 +838,7 @@ describe("#2483 the netting arithmetic", () => {
         outcome: "unreconciled",
         creditCents: 0,
         toTransferCents: 0,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toEqual([{ label: "Booking Total", value: "$300.00" }]);
   });
 });

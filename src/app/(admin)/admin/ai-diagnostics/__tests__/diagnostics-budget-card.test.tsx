@@ -15,7 +15,12 @@
  * separately pinned here.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DiagnosticsBudgetCard } from "../_components/diagnostics-budget-card";
@@ -122,6 +127,24 @@ describe("permission is stated, never implied by silence (#2378)", () => {
 });
 
 describe("the server owns the number (#2378 decision 3)", () => {
+  it("steps a supported dollar-prefixed draft and refuses its third decimal", async () => {
+    render(<DiagnosticsBudgetCard moduleEnabled />);
+    const input = await screen.findByTestId("budget-input");
+    fireEvent.change(input, { target: { value: "$25.00" } });
+    fireEvent.change(input, { target: { value: "$25.001" } });
+    expect(input).toHaveProperty("value", "$25.00");
+    fireEvent.click(screen.getByRole("button", { name: "Increase Monthly budget by one dollar" }));
+    expect(input).toHaveProperty("value", "26.00");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveProperty("value", "25.00");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    fireEvent.click(screen.getByTestId("budget-save"));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/admin/ai-diagnostics/settings",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ monthlyBudgetCents: 2600 }) }),
+    ));
+  });
+
   it("shows the month's spend against the budget", async () => {
     render(<DiagnosticsBudgetCard moduleEnabled />);
     expect(await screen.findByText("$3.12 of $25.00")).toBeTruthy();

@@ -11,9 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { APP_CURRENCY } from "@/config/operational";
+import { MoneyInput } from "@/components/ui/money-input";
+import { useClubFormat } from "@/components/club-format-provider";
+import { type ClubDateFormat } from "@/lib/club-time";
 import { formatCents } from "@/lib/pricing";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
   computeMembershipTypeRateGaps,
   seasonRequiresRates,
@@ -111,8 +113,8 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
 // kernel's calendar-date formatter pins "UTC" over that encoding, so the
 // projection is the identity for every club. It used to be read through
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string): string {
-  return formatPayloadCalendarDay(value, value);
+function formatSeasonEdge(value: string, format: ClubDateFormat): string {
+  return formatPayloadCalendarDay(value, format, value);
 }
 
 /*
@@ -145,6 +147,15 @@ function withoutKey(
 }
 
 export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const format = useClubFormat();
+  const { currencyCode } = format;
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [ageTiers, setAgeTiers] = useState<AgeTierSetting[]>(FALLBACK_TIERS);
   const [rateTypes, setRateTypes] = useState<RateType[]>([]);
@@ -771,8 +782,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             )}
           </div>
           <CardDescription>
-            {formatSeasonEdge(season.startDate)} &mdash;{" "}
-            {formatSeasonEdge(season.endDate)}
+            {formatSeasonEdge(season.startDate, format)} &mdash;{" "}
+            {formatSeasonEdge(season.endDate, format)}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -786,7 +797,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             <span className="font-semibold">Flat whole-lodge night rate: </span>
             {season.flatWholeLodgeNightCents != null ? (
               <span className="font-mono">
-                {formatCents(season.flatWholeLodgeNightCents)} per night
+                {formatCents(season.flatWholeLodgeNightCents, format)} per night
               </span>
             ) : (
               <span className="text-muted-foreground">
@@ -818,7 +829,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                             <TableCell>{t.label}</TableCell>
                             <TableCell className="text-right font-mono">
                               {rate
-                                ? `${formatCents(rate.pricePerNightCents)}${rate.fromFlatRate ? " (flat rate)" : ""}`
+                                ? `${formatCents(rate.pricePerNightCents, format)}${rate.fromFlatRate ? " (flat rate)" : ""}`
                                 : "Not set"}
                             </TableCell>
                           </TableRow>
@@ -833,7 +844,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                           <TableRow>
                             <TableCell>All ages (flat)</TableCell>
                             <TableCell className="text-right font-mono">
-                              {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
+                              {rate ? formatCents(rate.pricePerNightCents, format) : "Not set"}
                             </TableCell>
                           </TableRow>
                         );
@@ -1034,7 +1045,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                     </div>
 
                     <div className="space-y-4">
-                      <Label className="text-base font-semibold">Nightly Rates ({APP_CURRENCY})</Label>
+                      <Label className="text-base font-semibold">Nightly Rates ({currencyCode})</Label>
                       <p className="text-sm text-muted-foreground">
                         Set the price per night for each membership type. Types with age
                         groups get a rate per age tier; flat types get a single rate.
@@ -1058,12 +1069,11 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                                         <Label htmlFor={`rate-${key}`} className="text-sm">{t.label}</Label>
                                         <div className="relative">
                                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                                          <Input
+                                          <MoneyInput
                                             id={`rate-${key}`}
-                                            {...MONEY_INPUT_PROPS}
                                             className="pl-7"
                                             value={amountFieldValue(rateDrafts[key], rates[key])}
-                                            onChange={(e) => handleRateChange(key, e.target.value)}
+                                            onValueChange={(value) => handleRateChange(key, value)}
                                             aria-invalid={rateErrors[key] ? true : undefined}
                                             /*
                                               #2685: the error id FIRST, then the
@@ -1097,15 +1107,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                                   <Label htmlFor={`rate-${rateKey(rt.id, FLAT_KEY)}`} className="text-sm">Flat rate (all ages)</Label>
                                   <div className="relative">
                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                                    <Input
+                                    <MoneyInput
                                       id={`rate-${rateKey(rt.id, FLAT_KEY)}`}
-                                      {...MONEY_INPUT_PROPS}
                                       className="pl-7"
                                       value={amountFieldValue(
                                         rateDrafts[rateKey(rt.id, FLAT_KEY)],
                                         rates[rateKey(rt.id, FLAT_KEY)],
                                       )}
-                                      onChange={(e) => handleRateChange(rateKey(rt.id, FLAT_KEY), e.target.value)}
+                                      onValueChange={(value) => handleRateChange(rateKey(rt.id, FLAT_KEY), value)}
                                       aria-invalid={rateErrors[rateKey(rt.id, FLAT_KEY)] ? true : undefined}
                                       aria-describedby={describedByFieldHint(
                                         rateHintId(rt.id),
@@ -1144,7 +1153,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                     */}
                     <div className="space-y-2">
                       <Label htmlFor="flat-whole-lodge-rate" className="text-base font-semibold">
-                        Flat whole-lodge night rate ({APP_CURRENCY}, optional)
+                        Flat whole-lodge night rate ({currencyCode}, optional)
                       </Label>
                       <p className="text-sm text-muted-foreground">
                         A single price per night for the whole building, regardless of how many
@@ -1155,9 +1164,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                       </p>
                       <div className="relative max-w-xs">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                        <Input
+                        <MoneyInput
                           id="flat-whole-lodge-rate"
-                          {...MONEY_INPUT_PROPS}
                           className="pl-7"
                           // The same absence-versus-zero display rule the rate
                           // boxes above use, from its one home: a draft wins,
@@ -1169,7 +1177,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                             flatWholeLodgeDraft ?? undefined,
                             flatWholeLodgeCents,
                           )}
-                          onChange={(e) => handleFlatWholeLodgeChange(e.target.value)}
+                          onValueChange={handleFlatWholeLodgeChange}
                           aria-invalid={flatWholeLodgeError ? true : undefined}
                           aria-describedby={describedByFieldHint(
                             "flat-whole-lodge-rate-hint",

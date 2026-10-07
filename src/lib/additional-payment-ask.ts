@@ -74,6 +74,8 @@
  */
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
+import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** The two `Payment` columns that record the one live ask. */
 export interface AdditionalAskPayment {
@@ -274,10 +276,10 @@ export function sizeReviewChargeAsk({
  * code does. Monotone means a run that has seen MORE settled shares never
  * derives a SMALLER figure, so a stale replay cannot lower a live ask. It does
  * not serialise two runs: the refusal it feeds reads the row and writes it in
- * separate statements with a provider round trip between them, which is a
- * refusal rather than an atomic compare-and-set. What that does and does not
- * guarantee is written out where it happens, in
- * `syncEditFinancialReviewChargeRequest`.
+ * separate statements with a provider round trip between them. Since #3402 two
+ * runs are serialised by the edit's raise claim instead (`INV-PAY-112`,
+ * `edit-financial-review-charge-raise-claim.ts`), and monotonicity is what makes taking
+ * over an abandoned claim safe.
  */
 export function raiseReviewChargeAsk({
   shareTotalCents,
@@ -288,6 +290,21 @@ export function raiseReviewChargeAsk({
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: shareTotalCents,
+    carriedCents: request.carriedAskCents,
+  });
+}
+
+/**
+ * An ask that already exists, re-issued unchanged on a new instrument because
+ * the club's currency changed since it was minted (#3567). The figure and its
+ * carried part come back off the row: nothing new is asked for or absorbed.
+ */
+export function restateAdditionalAsk(request: {
+  amountCents: number;
+  carriedAskCents: number;
+}): AdditionalAsk {
+  return buildAdditionalAsk({
+    ownCents: request.amountCents - request.carriedAskCents,
     carriedCents: request.carriedAskCents,
   });
 }
@@ -450,14 +467,16 @@ export function describeBookingLedgerResidual(params: {
   label: string;
   row: BookingLedgerIdentityRow;
   residualCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const terms = BOOKING_LEDGER_IDENTITY_TERMS.map(
     (term) =>
       `  ${term.sign === 1 ? "+" : "-"} ${term.ts(params.row)}  ${term.label}`,
   ).join("\n");
   return [
     `INV-PAY-047: ${params.label} does not balance.`,
-    `Residual ${params.residualCents} cents is money the price says is owed that no ask is collecting (#3340).`,
+    `Residual ${formatCents(params.residualCents, format)} is money the price says is owed that no ask is collecting (#3340).`,
     terms,
   ].join("\n");
 }

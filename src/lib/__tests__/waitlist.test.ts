@@ -19,6 +19,7 @@ import {
   HOSTING_COVERAGE_RETRY_MESSAGE,
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Pay the module-graph transform cost once, outside any single test's 5s
 // budget: every test dynamic-imports @/lib/waitlist (for mock ordering), and
@@ -465,7 +466,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("booking1");
     expect(mockTx.booking.update).toHaveBeenCalledWith(
@@ -512,7 +513,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("booking1");
     // The policy engine prices with the booking owner's identity, so a
@@ -548,6 +549,7 @@ describe("processWaitlistForDates", () => {
       expect.any(Date),
       "booking1",
       24000,
+      CLUB_FORMAT_TEST,
       // Merged multi-lodge params: these fixtures model pre-migration
       // rows with no lodgeId (club identity fallback); no cross-lodge
       // block for a same-lodge offer.
@@ -639,7 +641,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-08-01"),
       checkOut: new Date("2026-08-03"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("booking1");
     expect(mockTx.bookingGuestNight.deleteMany).toHaveBeenCalledWith({
@@ -733,7 +735,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-08-01"),
       checkOut: new Date("2026-08-03"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("booking1");
     expect(mockTx.bookingGuestNight.createMany).not.toHaveBeenCalled();
@@ -818,7 +820,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-08-01"),
       checkOut: new Date("2026-08-03"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The offer still goes out — the queue place is not lost over this.
     expect(result.offeredBookingId).toBe("booking1");
@@ -875,7 +877,7 @@ describe("processWaitlistForDates", () => {
     await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockTx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -892,6 +894,7 @@ describe("processWaitlistForDates", () => {
       expect.anything(),
       "booking1",
       16000,
+      CLUB_FORMAT_TEST,
       undefined,
       null,
       // #2543's twelfth argument — the unpaid-subscription rate reason. Null:
@@ -941,7 +944,7 @@ describe("processWaitlistForDates", () => {
     await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockRecalculateBookingPromo).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking1" })
@@ -994,7 +997,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The reprice itself completed inside its degrade block; the recorder that
     // follows sits OUTSIDE it, so its refusal is not swallowed into "offer at the
@@ -1039,7 +1042,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("booking1");
     expect(mockTx.promoRedemption.findUnique).not.toHaveBeenCalled();
@@ -1075,7 +1078,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The offer is never blocked by a repricing edge case.
     expect(result.offeredBookingId).toBe("booking1");
@@ -1094,6 +1097,7 @@ describe("processWaitlistForDates", () => {
       expect.anything(),
       "booking1",
       20000,
+      CLUB_FORMAT_TEST,
       undefined,
       null,
       // #2543's twelfth argument — the unpaid-subscription rate reason. Null:
@@ -1125,7 +1129,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBeNull();
   });
@@ -1181,7 +1185,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBeNull();
     // No status write at all: the entry keeps its place in the queue for when
@@ -1229,7 +1233,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-03"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("booking1");
     expect(mockCheckCapacity).toHaveBeenCalledWith(
@@ -1250,7 +1254,7 @@ describe("processWaitlistForDates", () => {
     const result = await processWaitlistForDates({
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-05"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBeNull();
   });
@@ -1346,7 +1350,7 @@ describe("confirmWaitlistOffer", () => {
       new HostingCoverageParticipantRetryError(),
     );
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -1377,7 +1381,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PAYMENT_PENDING");
@@ -1423,7 +1427,7 @@ describe("confirmWaitlistOffer", () => {
       lodgeId: "lodge-1",
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -1461,7 +1465,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PENDING");
@@ -1499,7 +1503,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PAYMENT_PENDING");
@@ -1530,7 +1534,7 @@ describe("confirmWaitlistOffer", () => {
       guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("expired");
@@ -1554,7 +1558,7 @@ describe("confirmWaitlistOffer", () => {
         guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
       });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -1580,7 +1584,7 @@ describe("confirmWaitlistOffer", () => {
       guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m2");
+    const result = await confirmWaitlistOffer("booking1", "m2", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Forbidden");
@@ -1606,7 +1610,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: false });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("no longer available");
@@ -1629,7 +1633,7 @@ describe("confirmWaitlistOffer", () => {
       guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not in WAITLIST_OFFERED");
@@ -1654,7 +1658,7 @@ describe("expireStaleOffers", () => {
       ])
       .mockResolvedValue([]);
 
-    const result = await expireStaleOffers();
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 
     expect(result.expiredCount).toBe(1);
     // The offer's own lodge is locked (not just the default lodge).
@@ -1689,7 +1693,7 @@ describe("expireStaleOffers", () => {
     // moved the offer out of WAITLIST_OFFERED while the cron waited on the lock.
     mockTx.booking.updateMany.mockResolvedValue({ count: 0 });
 
-    const result = await expireStaleOffers();
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 
     // The guarded updateMany claimed nothing, so the offer is not counted as
     // expired and no expiry email/reprocess is queued for it.
@@ -1701,7 +1705,7 @@ describe("expireStaleOffers", () => {
 
     mockTxBookingFindMany.mockResolvedValueOnce([]);
 
-    const result = await expireStaleOffers();
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 
     expect(result.expiredCount).toBe(0);
     expect(result.reofferedCount).toBe(0);
@@ -1741,7 +1745,7 @@ describe("expireStaleOffers", () => {
       nightDetails: [],
     });
 
-    const result = await expireStaleOffers();
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 
     expect(result.expiredCount).toBe(1);
     expect(result.reofferedCount).toBe(0);
@@ -1813,7 +1817,7 @@ describe("expireStaleOffers", () => {
     mockTx.booking.update.mockResolvedValue({});
     mockTx.booking.count.mockResolvedValue(0);
 
-    const result = await expireStaleOffers();
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 
     expect(result.expiredCount).toBe(2);
     // Two independent reprocess passes ran — proving the same-range offers at
@@ -1921,7 +1925,8 @@ describe("waitlist email templates", () => {
       2,
       new Date("2026-07-10"),
       "booking123",
-      10000
+      10000,
+      CLUB_FORMAT_TEST
     );
 
     expect(html).toContain("Spot Has Opened Up");

@@ -59,6 +59,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { normalizePersonFullName } from "@/lib/person-name-normalization";
+import { normalizeMemberIds } from "@/lib/member-id-normalization";
 
 /**
  * The minimum a caller needs from Prisma to answer "who are this member's
@@ -221,8 +222,9 @@ export async function loadBookerDependants(
  * server's entry point. The wizard may call it directly: the only member ids it
  * can put on a row are ones it was handed from the booker's own family list.
  * Every server caller goes through {@link checkOwnDependantIdentity}, which is
- * handed the ids that actually resolved and therefore cannot be fooled by a
- * forged one.
+ * told which ids are member-linked — the ids that resolved, or the claimed ids
+ * ahead of a lookup that refuses any that do not — and therefore cannot be
+ * fooled by a forged one.
  *
  * A row missing either name part mints no key (see `normalizePersonFullName`)
  * and therefore collides with nothing.
@@ -383,22 +385,26 @@ export const DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE =
  * used to be settled by a PRECONDITION — callers had to hand in a party that had
  * already been through `normalizeBookingGuestInputs`, which strips a `memberId`
  * that resolved to nobody — and a precondition spelled out in a comment is one a
- * future edit compiles straight past: hoisting this call above the
- * normalisation, or passing the raw parsed guests because they are in scope and
- * read the same, restored the original defect with the guard present, every test
- * green (`INV-SSOT`, "prefer unrepresentable over policed").
+ * future edit compiles straight past: while the guard read member links off the
+ * rows themselves, hoisting it above the normalisation, or passing the raw
+ * parsed guests, restored the original defect with the guard present, every
+ * test green (`INV-SSOT`, "prefer unrepresentable over policed"). The rows
+ * carry no answer now, so the raw party is safe to pass with the right set.
  *
- * So the caller passes the ids that ACTUALLY resolved to a bookable member —
- * the keys of the linked-member map every server create path already builds —
- * and a row is treated as member-linked only if its id is in that set. The guard
- * no longer depends on anything having happened to the party first. It is a
- * required argument rather than an optional one for the same reason: there is no
- * value it can silently default to that is safe.
+ * So the caller passes the member-linked set explicitly, and a row is treated
+ * as member-linked only if its id is in it. Two sets are sound: the keys of the
+ * linked-member map, after the lookup (the approval); or
+ * {@link claimedMemberPathIds}, before a lookup that refuses every id that does
+ * not resolve (every other door — see there for why that order is required).
+ * The raw party with no set is the one shape that is not, which is why the
+ * argument is required: there is no value it can silently default to that is
+ * safe.
  */
 export function checkOwnDependantIdentity(params: {
   party: ReadonlyArray<DependantIdentityPartyMember>;
   /**
-   * The member ids on this party that resolved to a real, bookable member.
+   * The member ids treated as member-linked: those that resolved, or the
+   * claimed ones ahead of a lookup that refuses any that do not (see above).
    * Anything else on a row is not a member link, whatever the row claims.
    */
   memberPathMemberIds: ReadonlySet<string>;
@@ -439,3 +445,112 @@ export function checkOwnDependantIdentity(params: {
 
   return null;
 }
+
+/**
+ * The member ids a party CLAIMS, for a guard that runs BEFORE the member lookup
+ * (#3451 review, the membership-oracle finding).
+ *
+ * Sound only in that position, and only on a door whose lookup refuses every id
+ * that does not resolve to a bookable member (`resolveLinkedBookingMembersWithBoundary`
+ * does, for every caller): a row claiming an id that does not resolve is then
+ * refused by the lookup whatever the guard said, so treating it as member-linked
+ * here cannot let a free-text dependant through. Running the guard first is what
+ * makes its answer independent of whether some OTHER claimed id is a real member
+ * — after the lookup, its 409 versus the lookup's collapsed refusal told a
+ * prober exactly that.
+ */
+export function claimedMemberPathIds(
+  party: ReadonlyArray<{ memberId?: string | null }>,
+): Set<string> {
+  // The lookup's own normaliser, so the claimed set is the set it resolves.
+  return new Set(normalizeMemberIds(party.map((guest) => guest.memberId)));
+}
+
+/**
+ * The guard's answer, carried out of a service that runs inside a transaction
+ * (#3451). The edit doors resolve their members under the capacity lock, so the
+ * guard runs there too and the route turns this back into the same body the
+ * create route answers with.
+ */
+export class OwnDependantIdentityRefusedError extends Error {
+  constructor(
+    readonly refusal: DependantIdentityRefusal,
+    /**
+     * The member whose dependants these are. Only the code that loaded the
+     * booking knows; the route hands it to {@link dependantIdentitySpeaksOnBehalf}.
+     */
+    readonly ownerMemberId: string | null,
+  ) {
+    super(refusal.error);
+    this.name = "OwnDependantIdentityRefusedError";
+  }
+}
+
+/**
+ * Read the booker's dependants and run {@link checkOwnDependantIdentity} — the
+ * ONE server entry point every door calls (#3451): the create route, both
+ * policy-exception doors and the approval, and the edit doors. So the skip rule
+ * and the read cannot drift between them.
+ *
+ * `memberPathMemberIds` is the set that RESOLVED when the call follows the
+ * member lookup (the approval only), or {@link claimedMemberPathIds} when it
+ * precedes one that refuses every unresolved id: the create route, both
+ * exception-request doors, `modify-quote`, `modify` and the add-guest route
+ * (#3451, #3770) — see there.
+ *
+ * The dependant read is skipped entirely for a party that is all member-linked
+ * and carries no declaration — the common family booking — so the ordinary path
+ * pays nothing. A party with a declaration is still checked when it has no
+ * free-text row, because a declaration that describes no collision is tampering
+ * and is refused rather than ignored.
+ *
+ * `bookerMemberId` is the member the booking is FOR (`bookingOwner(booking)` on
+ * an edit, the on-behalf target on a create) — never the acting officer. `null`
+ * is a booking with no member owner (#3369): nobody's dependants, so nothing to
+ * collide with, and a declaration there is refused as describing nothing.
+ *
+ * Takes `db` rather than importing the client, so a caller inside a transaction
+ * passes `tx` and the read stays on that connection (`INV-LOCK-004`), and so this
+ * module stays importable from the client components above.
+ */
+export async function checkOwnDependantIdentityForParty(
+  db: BookerDependantLookupDb,
+  params: {
+    bookerMemberId: string | null;
+    party: ReadonlyArray<DependantIdentityPartyMember>;
+    memberPathMemberIds: ReadonlySet<string>;
+    declarations?: ReadonlyArray<DependantIdentityDeclaration>;
+  },
+): Promise<DependantIdentityRefusal | null> {
+  const declarations = params.declarations ?? [];
+  const hasFreeTextRow = params.party.some(
+    (guest) =>
+      !guest.memberId?.trim() ||
+      !params.memberPathMemberIds.has(guest.memberId.trim()),
+  );
+  if (!hasFreeTextRow && declarations.length === 0) return null;
+  const dependants = params.bookerMemberId
+    ? await loadBookerDependants(db, params.bookerMemberId)
+    : [];
+  return checkOwnDependantIdentity({
+    party: params.party,
+    memberPathMemberIds: params.memberPathMemberIds,
+    dependants,
+    declarations,
+  });
+}
+
+/**
+ * Is this response code one of the guard's two refusals? The ONE spelling every
+ * client handler keys on (#3451), so the edit panel's quote and save paths cannot
+ * disagree about which refusals put the question back on screen.
+ */
+export function isDependantIdentityRefusalCode(
+  code: unknown,
+): code is DependantIdentityRefusal["code"] {
+  return (
+    code === DEPENDANT_IDENTITY_UNRESOLVED_CODE ||
+    code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
+  );
+}
+

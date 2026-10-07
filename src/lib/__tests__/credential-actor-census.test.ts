@@ -26,8 +26,8 @@
  *
  * Scanned from disk, so `vitest related` cannot reach it from a route change:
  * this is a CI-caught contract by design, like the other census tests here. Run
- * it by name — `npm run test:named -- credential-actor-census` — or print the
- * measurement with `npm run credential:census`.
+ * it by name — `pnpm run test:named credential-actor-census` — or print the
+ * measurement with `pnpm run credential:census`.
  */
 import { describe, expect, it } from "vitest";
 
@@ -39,6 +39,7 @@ import {
 import {
   CREDENTIAL_BOUNDARY_MODULES,
   CREDENTIAL_MUTATORS,
+  TOKEN_MIRROR_BOUNDARY_MODULES,
   describeCredentialActor,
   describeCredentialExpectation,
   scanCredentialActorCensus,
@@ -102,7 +103,7 @@ const HISTORICAL_FIGURE_IS_NOT_RE_MEASURABLE_HERE = true;
 
 function publishersNote(what: string): string {
   return (
-    `${what}\n\nRe-MEASURE rather than increment — run \`npm run credential:census\`. ` +
+    `${what}\n\nRe-MEASURE rather than increment — run \`pnpm run credential:census\`. ` +
     "Then update EVERY place the current population is published:\n" +
     FIGURE_PUBLISHERS.map((where) => `  - ${where}`).join("\n")
   );
@@ -138,7 +139,12 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#8":
     "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
+  // #3454: a Xero client id or secret is written INSIDE the verify-reset's
+  // transaction, so the token destruction it causes commits with it; every
+  // other credential takes the ordinary writer.
   "src/app/api/admin/integrations/credentials/route.ts::POST#0":
+    "setIntegrationCredentialInTransaction admin / any",
+  "src/app/api/admin/integrations/credentials/route.ts::POST#1":
     "setIntegrationCredential admin / any",
   "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
     "setIntegrationCredential system / any",
@@ -175,6 +181,15 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredential system / any",
   "src/lib/xero-config.ts::getOperationalXeroEncryptionKey.value#0":
     "ensureGeneratedCredential system / (not-applicable)",
+  // #3454 — the Xero OAuth token set. The refresh declares the version it read
+  // with the lease; a connect replaces whatever was stored; destroying the
+  // tokens wants them gone whatever they were.
+  "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.storeRemoved#0":
+    "deleteIntegrationCredentialInTransaction (forwarded) params.actor / any",
+  "src/lib/xero-token-store.ts::saveXeroTokens#0":
+    "setIntegrationCredentialInTransaction (forwarded) options.actor / (forwarded) storeExpectation",
+  "src/lib/xero-token-store.ts::saveXeroTokens#1":
+    "setIntegrationCredentialInTransaction (forwarded) options.actor / any",
 };
 
 /**
@@ -212,6 +227,12 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
     "the actor is this helper's own required parameter, supplied by its caller",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
     "the actor is this helper's own required parameter, for the same reason as the Google verify-reset above",
+  "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.storeRemoved#0":
+    "the actor is this helper's own required parameter: the administrator disconnecting, or the one whose credential write caused the verify-reset",
+  "src/lib/xero-token-store.ts::saveXeroTokens#0":
+    "the actor is the token store's own required parameter, the named `xero-token-refresh` job supplied by the API client's refresh; the expectation is the version read with the lease",
+  "src/lib/xero-token-store.ts::saveXeroTokens#1":
+    "the actor is the token store's own required parameter, the connecting administrator supplied by the OAuth callback",
 };
 
 /**
@@ -223,6 +244,27 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
  * entirely, which is the one hole a type cannot close.
  */
 const APPROVED_STORE_BYPASSES: Record<string, string> = {};
+
+/**
+ * Every write to the `XeroToken` mirror (#3454), each reviewed. The token store
+ * is the only module allowed to make one — anywhere else it is a bypass, above —
+ * because the store READS that row as the newer copy when its ciphertext no
+ * longer matches. Two of these are not credential writes and are pinned as such.
+ */
+const TOKEN_MIRROR_WRITES: Record<string, string> = {
+  "src/lib/xero-token-store.ts::claimXeroTokenRefreshLease.claimed#0":
+    "the refresh LEASE claim: writes only `refreshInProgressUntil`, never a token, so it is not a credential write and records no audit row",
+  "src/lib/xero-token-store.ts::releaseXeroTokenRefreshLease#0":
+    "the refresh LEASE release: clears only `refreshInProgressUntil`, likewise not a credential write",
+  "src/lib/xero-token-store.ts::saveXeroTokens.updated#0":
+    "the refresh save's mirror half, in the same transaction as the store write and its audit row",
+  "src/lib/xero-token-store.ts::saveXeroTokens.row#0":
+    "the connect's mirror half (an existing row), in the same transaction as the store write and its audit row",
+  "src/lib/xero-token-store.ts::saveXeroTokens.row#1":
+    "the connect's mirror half (no row yet), likewise",
+  "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.legacy#0":
+    "the delete's mirror half, audited in the same transaction whichever copies existed",
+};
 
 /**
  * A guard against this whole file going vacuous. If the walk ever resolves
@@ -247,12 +289,15 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
   it("resolved a real population, so a clean report means something", () => {
     expect(census().filesScanned).toBeGreaterThan(MINIMUM_FILES_SCANNED);
     expect(census().sites.length).toBeGreaterThanOrEqual(MINIMUM_WRITE_SITES);
-    expect(CREDENTIAL_MUTATORS.length).toBe(3);
+    // Three writers, plus the in-transaction forms of set and delete (#3454).
+    expect(CREDENTIAL_MUTATORS.length).toBe(5);
     // Three modules are exempt from the bypass check because they ARE the
     // implementation: the store, the compare-and-set claim, and the create-only
     // generator. Pinned, because every addition widens the one check that can
     // see a writer which skips the store.
     expect(CREDENTIAL_BOUNDARY_MODULES.length).toBe(3);
+    // One module may write the `XeroToken` mirror (#3454).
+    expect(TOKEN_MIRROR_BOUNDARY_MODULES).toEqual(["src/lib/xero-token-store.ts"]);
   });
 
   it("has NO writer that omits actor context", () => {
@@ -306,6 +351,17 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
 });
 
 describe("credential-actor census: the pinned populations (#2723)", { timeout: 180_000 }, () => {
+  it("pins every write to the XeroToken mirror, and finds none outside the token store (#3454)", () => {
+    expect(
+      ids(census().tokenMirrorWrites),
+      publishersNote(
+        "The token store's writes to the `XeroToken` mirror moved. Each one must " +
+          "keep the mirror and the store copy together; add its row to " +
+          "TOKEN_MIRROR_WRITES with what it writes and why.",
+      ),
+    ).toEqual(Object.keys(TOKEN_MIRROR_WRITES).sort());
+  });
+
   it("pins every mutator call site, with what it declares", () => {
     const measured: Record<string, string> = {};
     for (const site of census().sites) {

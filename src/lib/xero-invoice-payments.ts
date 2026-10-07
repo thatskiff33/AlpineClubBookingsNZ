@@ -2,19 +2,16 @@
  * Stripe-to-Xero payment creation against invoices and credit notes.
  *
  * Records a Stripe payment as a Xero payment against the booking invoice
- * (`createXeroPaymentForInvoice`) and a Stripe refund as a credit-note
- * payment against a previously-created refund credit note
- * (`createXeroRefundPaymentForInvoice`).
+ * (`createXeroPaymentForInvoice`).
  *
- * Also exposes the shared refund-payment builder used by
- * `xero-credit-notes.createXeroCreditNote` when it settles the refund
- * credit note inline.
+ * Also exposes the refund settlement decision and the refund-payment builder
+ * that `xero-refund-note-settlement.ts` settles every refund credit note with
+ * (#3548: one leg, one note-keyed payment key).
  */
 
 import { Payment as XeroPayment } from "xero-node";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
-  buildXeroIdempotencyKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   startXeroSyncOperation,
@@ -101,6 +98,12 @@ interface CreateXeroInvoicePaymentParams {
   role: string;
   createdByMemberId?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * #3635: the payment's Xero date, when the money moved on a day other than
+   * today - a kept late capture is recorded on the day Stripe took it. Absent,
+   * the club's today, as before.
+   */
+  date?: string;
 }
 
 export async function createXeroPaymentForInvoice(
@@ -117,7 +120,7 @@ export async function createXeroPaymentForInvoice(
     // which is still yesterday all New Zealand morning (INV-DATE-019, #2834) —
     // and "the club's" now means the PERSISTED zone rather than the container's
     // `TZ` (CT-5, #2869; INV-CONFIG-002).
-    date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+    date: params.date ?? xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
     reference: params.reference,
   };
 
@@ -180,20 +183,6 @@ export async function createXeroPaymentForInvoice(
   }
 }
 
-interface CreateXeroRefundPaymentParams {
-  paymentId: string;
-  invoiceId: string;
-  creditNoteId: string;
-  refundAmountCents: number;
-  createdByMemberId?: string;
-  /**
-   * How the money went back (`INV-PAY-101`). The repair leg reads it off the
-   * operation it is repairing; absent means the row predates the field, and
-   * the caller has already defaulted it from the payment's source.
-   */
-  refundMethod?: CashRefundMethod;
-}
-
 /**
  * `paymentDate` is an ARGUMENT, not a clock read (CT-5, #2869).
  *
@@ -224,122 +213,4 @@ export function buildRefundCreditNotePayment(params: {
     }),
     isReconciled: false,
   };
-}
-
-// test seam
-export async function createXeroRefundPaymentForInvoice(
-  params: CreateXeroRefundPaymentParams
-): Promise<string> {
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const refundMethod = params.refundMethod ?? "card";
-  // The caller has already decided this note IS settled (`resolveRefundSettlement`),
-  // so a decision that comes back unsettled here is a programming error, not a
-  // treasurer's configuration gap.
-  const settlement = await resolveRefundSettlement({ method: refundMethod, methodRecorded: true });
-  if (settlement.kind !== "record") {
-    throw new Error(`Refund payment requested for a note that is not settled: ${settlement.reason}`);
-  }
-  const payment = buildRefundCreditNotePayment({
-    paymentId: params.paymentId,
-    creditNoteId: params.creditNoteId,
-    refundAmountCents: params.refundAmountCents,
-    bankCode: settlement.bankCode,
-    paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
-    refundMethod,
-  });
-  // Key on the credit note id (#1162): equal-amount refund deltas each settle a
-  // distinct credit note, so amount alone would collide onto one payment key.
-  const idempotencyKey = buildXeroIdempotencyKey(
-    "payment",
-    params.paymentId,
-    "refund-payment",
-    params.refundAmountCents,
-    params.creditNoteId,
-    "v2"
-  );
-  const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "PAYMENT",
-    operationType: "CREATE",
-    localModel: "Payment",
-    localId: params.paymentId,
-    idempotencyKey,
-    correlationKey: idempotencyKey,
-    requestPayload: {
-      payments: [payment],
-      invoiceId: params.invoiceId,
-      creditNoteId: params.creditNoteId,
-    },
-    createdByMemberId: params.createdByMemberId ?? null,
-  });
-
-  try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createPayments(
-          tenantId,
-          { payments: [payment] },
-          undefined,
-          idempotencyKey
-        ),
-      {
-        operation: "createPayments",
-        resourceType: "PAYMENT",
-        workflow: "createXeroRefundPaymentForInvoice",
-        context: `createPayments(refund repair ${params.paymentId})`,
-      }
-    );
-
-    const createdPayment = response.body.payments?.[0];
-    if (!createdPayment?.paymentID) {
-      throw new Error("Failed to create Xero refund payment");
-    }
-    const createdPaymentNumber =
-      createdPayment.creditNoteNumber ??
-      createdPayment.invoiceNumber ??
-      ((
-        createdPayment as unknown as {
-          creditNote?: {
-            creditNoteNumber?: string | null;
-            CreditNoteNumber?: string | null;
-          } | null;
-        }
-      ).creditNote?.creditNoteNumber ??
-        (
-          createdPayment as unknown as {
-            creditNote?: {
-              creditNoteNumber?: string | null;
-              CreditNoteNumber?: string | null;
-            } | null;
-          }
-        ).creditNote?.CreditNoteNumber ??
-        null);
-
-    await completeXeroSyncOperation(operation.id, {
-      responsePayload: response.body,
-      xeroObjectType: "PAYMENT",
-      xeroObjectId: createdPayment.paymentID,
-      xeroObjectNumber: createdPaymentNumber,
-      extraLinks: [
-        {
-          localModel: "Payment",
-          localId: params.paymentId,
-          xeroObjectType: "PAYMENT",
-          xeroObjectId: createdPayment.paymentID,
-          xeroObjectNumber: createdPaymentNumber,
-          role: "REFUND_PAYMENT",
-          metadata: {
-            creditNoteId: params.creditNoteId,
-            invoiceId: params.invoiceId,
-            amountCents: params.refundAmountCents,
-          },
-        },
-      ],
-    });
-
-    return createdPayment.paymentID;
-  } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
-    throw error;
-  }
 }

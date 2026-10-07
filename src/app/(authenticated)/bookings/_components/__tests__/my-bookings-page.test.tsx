@@ -64,6 +64,7 @@ import MyBookingsPage from "@/app/(authenticated)/bookings/page";
 import { reconcileStoredBookingMoney } from "@/lib/booking-money-reconciliation-store";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 
 const VIEWER_ID = "member-M";
 
@@ -85,7 +86,12 @@ function booking(overrides: Record<string, unknown> = {}) {
 
 async function renderPage() {
   const element = await MyBookingsPage();
-  return renderToStaticMarkup(element as ReactElement);
+  // The list the page renders reads the club's format from the provider that
+  // AppProviders mounts in production (#3564); a server page's returned JSX
+  // carries no such shell, so the test supplies it.
+  return renderToStaticMarkup(
+    <ClubFormatTestProvider>{element as ReactElement}</ClubFormatTestProvider>,
+  );
 }
 
 describe("MyBookingsPage split-child nesting discriminator (#1975/#796)", () => {

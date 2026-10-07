@@ -1,51 +1,49 @@
-"use client";
-
-import { useSession } from "next-auth/react";
+import { redirect } from "next/navigation";
 
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
-import { isFullAdmin } from "@/lib/access-roles";
+import { guardAdminLayout } from "@/lib/admin-layout-guard";
+import { CLUB_FORMAT_REACH, CLUB_FORMAT_SERVER_SETTINGS } from "@/lib/club-format-copy";
+import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
 
 /**
- * Club Currency & Locale — the Full-Admin maintenance surface for the two
- * settings that decide how this club's money and dates are written (stage 1 of
- * programme #3205, #3563). INV-CONFIG-006.
+ * Club Currency & Locale — the maintenance surface for the two settings that
+ * decide how this club's money and dates are written (stage 1 of programme
+ * #3205, #3563). INV-CONFIG-006.
  *
- * THE WHOLE SCREEN IS FULL ADMIN, which is why it is shaped like
- * `/admin/club-time`, `/admin/environment` and `/admin/config-transfer` rather
- * than like an ordinary settings section. There is no view tier and no edit
- * tier to distinguish, so there is nothing for `AdminViewOnlySectionBanner` to
- * explain; a support-area admin who reaches the page (the route is registered
- * under `support` so it resolves to a concrete permission area instead of the
- * `overview` catch-all) is told plainly that this one is Full Admin only. The
- * real enforcement is server-side — `requireAdmin({ permission: false })` on
- * both verbs of `/api/admin/club-format` — and this check exists so the screen
- * does not offer an action it knows will be refused.
+ * EVERY ADMIN MAY OPEN IT; ONLY A FULL ADMIN MAY CHANGE IT (owner decision on
+ * #3596). Stage 1 shaped this screen like `/admin/club-time`,
+ * `/admin/environment` and `/admin/config-transfer` — a Full Admin test here
+ * and an "available to full administrators only" panel for everyone else —
+ * and those three still are. This one stopped being their twin on READ access
+ * only: an admin investigating why an amount or a date is written the way it
+ * is can now see the setting that decides it. The layout admits any admitted
+ * admin (`ANY_ADMIN_ADMISSION_PATHS`), so there is no longer a refusal to
+ * render here; the panel resolves Full Admin itself and shows everyone else the
+ * values read-only under the canonical view-only banner. The enforcement is
+ * server-side on both verbs of `/api/admin/club-format` — `"any-admin"` on the
+ * read, Full Admin on the write.
  *
- * THE BLURB SAYS WHAT IS TRUE TODAY, WHICH IS LESS THAN IT WILL SAY. Stage 1
- * records the currency and locale; no production code path reads them yet, so
- * the amounts and dates the site shows still come from the deployment's
- * `CURRENCY` and `LOCALE`. Owner decision D1 on #3205 accepted that in exchange
- * for no throwaway plumbing. Saying otherwise here would have an operator
- * change this setting expecting the screens to follow, and then find they had
- * not — so the panel says so in as many words. The disclaimer goes when the
- * readers arrive (#3564 to #3566): the change that makes the claim true is the
- * change that gets to make it.
+ * THE PAGE RE-RUNS THE ADMIN GUARD for the Xero base-currency warning (#3633).
+ * The base currency comes from the Xero organisation summary, which only a
+ * finance viewer may read (`XERO_ORGANISATION_READ_PERMISSION`), and reading it
+ * can cost a live Xero call. A layout's gate does not stop its page rendering,
+ * so the page runs `guardAdminLayout()` itself (as `ai-diagnostics/page.tsx`
+ * does) and hands the reader the guard's DATABASE-fresh member, never the bare
+ * JWT session: a deactivated account, a pending forced password change or an
+ * unfinished two-factor sign-in is redirected before Xero is asked anything.
+ * `readXeroBaseCurrencyForViewer` then hands everyone outside the finance
+ * audience `null`, and the panel shows no warning.
+ *
+ * THE BLURB SAYS WHAT IS TRUE TODAY. Stage 1 recorded the setting, stage 2
+ * (#3564) moved the browser screens onto it, #3565 every amount and #3566 every
+ * date, email, the AI spend currency and sorting. What it reaches, and the one
+ * thing it does not, is rendered from `@/lib/club-format-copy`, shared with the
+ * confirmation panel and the contextual help so the three cannot disagree.
  */
-export default function ClubFormatPage() {
-  const { data: session } = useSession();
-  const fullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-  });
-
-  if (session && !fullAdmin) {
-    return (
-      <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
-        The club&apos;s currency and locale are available to full administrators
-        only.
-      </div>
-    );
-  }
-
+export default async function ClubFormatPage() {
+  const guard = await guardAdminLayout();
+  if (guard.outcome === "redirect") redirect(guard.destination);
+  const xeroBaseCurrency = await readXeroBaseCurrencyForViewer(guard.member);
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -56,22 +54,12 @@ export default function ClubFormatPage() {
           and not of whoever is looking: a member reading the site from another
           country should see the club&apos;s currency, not their own.
         </p>
+        <p className="text-sm text-muted-foreground">{CLUB_FORMAT_REACH}</p>
         <p className="text-sm text-muted-foreground">
-          These were server settings (<code>CURRENCY</code> and{" "}
-          <code>LOCALE</code>) until now. They were copied here once, and this
-          page is the only thing that changes them from now on — editing them on
-          the server no longer changes <em>this setting</em>.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          <strong>Leave the server settings in place for now.</strong> The
-          screens have not moved across yet: until they do, every amount and
-          date on the site is still written using the server&rsquo;s{" "}
-          <code>CURRENCY</code> and <code>LOCALE</code>. Removing them would
-          make the whole site fall back to New Zealand dollars while this page
-          still shows your choice.
+          {CLUB_FORMAT_SERVER_SETTINGS}
         </p>
       </div>
-      <ClubFormatPanel />
+      <ClubFormatPanel xeroBaseCurrency={xeroBaseCurrency} />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import {
   classifyIssueReportScreenshot,
   type IssueReportScreenshotAccess,
@@ -65,12 +65,12 @@ type LoadedReport = {
  * this file — the detail read and the reply every PATCH action returns. They
  * carry the same payload, so they are the same boundary (`INV-PRIV-021`).
  *
- * `session.user.accessRoles` is what `requireAdmin` just read from the database,
- * not the JWT's own claim, so the Full-Admin half never rests on a stale token.
+ * `session.user` roles and `canLogin` are what `requireAdmin` just read from
+ * the database, so the Full-Admin half never rests on a stale token.
  */
 function screenshotAccessFor(
   report: LoadedReport,
-  user: { accessRoles?: readonly string[] | null },
+  user: { accessRoles?: readonly string[] | null; canLogin: boolean },
 ) {
   return classifyIssueReportScreenshot({
     screenshotOrigin: report.screenshotOrigin,
@@ -78,7 +78,7 @@ function screenshotAccessFor(
     screenshotExpiresAt: report.screenshotExpiresAt,
     screenshotDeletedAt: report.screenshotDeletedAt,
     screenshotDeleteReason: report.screenshotDeleteReason,
-    viewerIsFullAdmin: isFullAdmin({ accessRoles: user.accessRoles ?? [] }),
+    viewerIsFullAdmin: isFullAdmin(sessionPrivilegeInput(user)),
   });
 }
 

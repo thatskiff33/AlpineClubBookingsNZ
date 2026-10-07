@@ -51,11 +51,10 @@ export function shiftDateOnly(dateOnly: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-// Frozen at module load: one "today" per process. The demo seed and the
-// Playwright specs run minutes apart in the same CI job, so they resolve the
-// same NZ date; a run straddling NZ midnight would differ by a day, which the
-// generous >=30-day future / <=-25-day past margins below absorb without
-// changing any fixture's meaning (future stays future, past stays past).
+// Frozen at module load. The stack script captures the club date before seeding
+// and passes it to every seed and Playwright process in this E2E run. Without
+// that shared anchor, a run crossing club midnight can move a Monday-aligned
+// seeded window by a whole week between the seed and its assertions (#3702).
 //
 // THIS IS THE E2E SUITE'S ONE CLOCK READ, the way `src/lib/club-time/clock.ts`
 // is the application's (`INV-CONFIG-002`, `INV-DATE-019`: ask the CLUB's
@@ -69,7 +68,17 @@ export function shiftDateOnly(dateOnly: string, days: number): string {
 // commit that morning. Every civil date a spec derives goes through
 // `relDateOnly` (or `E2E_TODAY_NZ` itself); `e2e-club-day-census.test.ts` is
 // the guard that keeps a hand-rolled `new Date()` from coming back.
-export const E2E_TODAY_NZ = todayDateOnlyNz();
+const fixtureDate = process.env.E2E_FIXTURE_TODAY_NZ;
+if (
+  fixtureDate !== undefined &&
+  (!/^\d{4}-\d{2}-\d{2}$/.test(fixtureDate) ||
+    Number.isNaN(Date.parse(`${fixtureDate}T00:00:00.000Z`)) ||
+    new Date(`${fixtureDate}T00:00:00.000Z`).toISOString().slice(0, 10) !==
+      fixtureDate)
+) {
+  throw new Error("E2E_FIXTURE_TODAY_NZ must be a valid YYYY-MM-DD date");
+}
+export const E2E_TODAY_NZ = fixtureDate ?? todayDateOnlyNz();
 
 // A date `offsetDays` from today (negative = past), as YYYY-MM-DD.
 export function relDateOnly(offsetDays: number): string {

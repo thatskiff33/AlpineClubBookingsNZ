@@ -9,12 +9,16 @@ import SetupForm from "./SetupForm";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
+  isCreditElectionNotApplied,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
+  isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   isRefundedCardTransactionRepaymentRequired,
+  isSwitchedToInternetBanking,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
+  SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 
 const CAPACITY_CANCELLATION_RECOVERY = {
@@ -173,6 +177,29 @@ export default function BookingPaymentWrapper({
             setInitRecoveryError(
               EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
             );
+            return;
+          }
+          // #3638: the booking is being paid by Internet Banking (switched
+          // before or during this request). Not a fault to report, and not
+          // "pay later" either — a card retry would be refused again. The
+          // fixed message from the shared contract, never data.error.
+          if (response.status === 409 && isSwitchedToInternetBanking(data)) {
+            setRecoveryHeading("Paying by Internet Banking");
+            setInitRecoveryError(SWITCHED_TO_INTERNET_BANKING_MESSAGE);
+            return;
+          }
+          // #3567: an earlier payment is still processing. The server's own copy,
+          // not a provider detail, and not an error worth reporting.
+          if (response.status === 409 && isPaymentProcessing(data)) {
+            setRecoveryHeading("Payment being processed");
+            setInitRecoveryError(data.error);
+            return;
+          }
+          // #3864: the member's credit was not spent and the booking is still
+          // payable; they retry. The server's own copy, not a fault to report.
+          if (response.status === 409 && isCreditElectionNotApplied(data)) {
+            setRecoveryHeading("Account credit not applied yet");
+            setInitRecoveryError(data.error);
             return;
           }
           // The raw provider detail (data.error) may leak partial key material;

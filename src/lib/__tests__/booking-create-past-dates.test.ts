@@ -8,6 +8,7 @@
  * OverCapacityConfirmationRequiredError keeps working with `instanceof`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import {
   OverCapacityConfirmationRequiredError,
@@ -121,6 +122,7 @@ import {
   XERO_INVOICE_EMAIL_SEND,
   XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION,
 } from "@/lib/xero-invoice-email-instruction";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — `createConfirmedBooking` is transaction-aware, so its
 // caller resolves the CLUB's day and threads it in. Pinned to the frozen clock's
@@ -256,7 +258,9 @@ function baseInput(
     shouldBePending: hasNonMembers,
     holdDays: 7,
     lodgeId: "lodge-1",
+    guestDietarySeeding: bookingGuestDietarySeeding(false),
     todayAtClub: FIXTURE_CLUB_DAY,
+    format: CLUB_FORMAT_TEST,
     ...overrides,
   };
 }

@@ -36,6 +36,8 @@ vi.mock("@/lib/lodge-auth", () => ({
   checkLodgeAuth: async () => ({ tier: harness.tier }),
   resolveKioskLodgeId: async () => "lodge-a",
   kioskLodgeAuthErrorResponse: () => null,
+  // #3029: the day list asks who the actor is for the dietary grant.
+  getLodgeAuthActorMemberId: () => "actor-1",
 }));
 
 import { GET } from "../route";

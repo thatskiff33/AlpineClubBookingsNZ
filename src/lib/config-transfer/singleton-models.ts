@@ -76,8 +76,9 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "provenance) — instance-local",
   LodgeSettings:
     "per-lodge physical/operational settings (bed capacity, school-group soft cap) " +
-    "keyed to a specific lodge via lodgeId; lodge identity and capacity travel " +
-    "through the lodge-config category's Lodge rows, not this singleton — " +
+    "keyed to a specific lodge via lodgeId; lodge identity travels through the " +
+    "lodge-config category's Lodge rows, and capacity rides in each lodge.json " +
+    "and is written by that importer (#3407), not through this singleton — " +
     "instance-local",
   SetupProgress:
     "deployment-local setup-wizard progress (which steps THIS install has " +
@@ -85,8 +86,9 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "club policy — instance-local",
   AiSpendCurrencySettings:
     "the administrator-set NZD -> club-currency conversion rate for AI spend " +
-    "(#3354), shared by both AI modules; a property of THIS deployment's " +
-    "configured currency (APP_CURRENCY), so a source club's rate has no meaning on " +
+    "(#3354), shared by both AI modules; a property of the club's stored " +
+    "currency (ClubFormatSettings, itself instance-local, #3566) — which is why a " +
+    "currency change clears it — so a source club's rate has no meaning on " +
     "a target and, like the two spend caps it prices against, must never land " +
     "there — a fresh import keeps the target's own rate (or none) — instance-local",
   AiAssistantSettings:

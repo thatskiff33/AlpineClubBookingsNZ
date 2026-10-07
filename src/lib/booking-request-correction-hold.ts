@@ -34,6 +34,7 @@ import {
 import { cancelBooking } from "@/lib/booking-cancel";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** How the request's capacity hold ended up. */
 export type CorrectionHoldOutcome =
@@ -88,7 +89,10 @@ export async function reconcileCorrectedRequestHold(params: {
   holdAffecting: boolean;
   adminMemberId: string;
   ipAddress: string;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<CorrectionHoldOutcome> {
+  const { format } = params;
   if (!params.heldBookingId) return "none";
   if (!params.holdAffecting) return "keptCateringOnly";
 
@@ -116,22 +120,25 @@ export async function reconcileCorrectedRequestHold(params: {
     params.adminMemberId,
     "ADMIN",
     params.ipAddress,
+    format,
     "card",
     {
       // An officer correcting a request, not the requester cancelling a
       // booking: the requester hears about this when the corrected quote
       // arrives, not as a cancellation notice for beds they never knew about.
       suppressCustomerNotification: true,
-      // A requester accept can convert this hold to a live PENDING booking
-      // between the claim above and here. The opt-in guard makes the shared
-      // cancel path refuse rather than clobber it.
+      // The hold can leave AWAITING_REVIEW between the claim above and here
+      // (an officer Release hold or direct cancel). Requester acceptance never
+      // does: it keeps the hold, and an ACCEPTED request is not correctable
+      // (#3415). The opt-in guard makes the shared cancel path refuse rather
+      // than clobber a hold that has moved on.
       requireRequestHold: true,
     },
   );
 
   if (result.status === 409) {
     throw new BookingRequestCorrectionCommittedError(
-      "The correction was saved, but this request's held beds could not be released — the hold may have just been accepted. Open the request and check it before quoting again.",
+      "The correction was saved, but this request's held beds could not be released — the hold was already released, cancelled or changed by someone else. Open the request and check it before quoting again.",
       409,
       false,
     );

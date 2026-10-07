@@ -36,6 +36,7 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import {
   OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
@@ -91,6 +92,7 @@ import {
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -124,13 +126,18 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
+import {
+  resolveBookingGuestDietarySeeding,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import type { ClubFormat } from "@/lib/club-format";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -220,6 +227,7 @@ type BatchModificationTransactionResult =
     supersededPrimaryPaymentIntents: { length: number };
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
+    appliedCreditGivenBackCents: number;
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -251,6 +259,8 @@ export type BatchModificationResponse = {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   /**
@@ -453,6 +463,12 @@ interface BatchModificationPreparation {
   readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
   readonly xeroLockDates: XeroLockDateFacts;
+  /**
+   * #3029 (`INV-MOD-059`): whether a guest this edit ADDS, or a placeholder it
+   * links to a member, is seeded from the member's dietary/allergy profile —
+   * the field toggle, a settings read that belongs out here with the others.
+   */
+  readonly guestDietarySeeding: BookingGuestDietarySeeding;
 }
 
 /**
@@ -518,15 +534,16 @@ async function prepareBookingBatchModification(options: {
       options.adminOverride.requestedCheckIn,
     );
   }
-  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates] =
+  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding] =
     await Promise.all([
       loadMemberGuestAddPolicy(),
       resolveSubscriptionLockoutMode(),
       resolveXeroLockDateFacts(options.candidateCheckIns, {
         audience: options.audience,
       }),
+      resolveBookingGuestDietarySeeding(),
     ]);
-  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates };
+  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding };
 }
 
 /**
@@ -618,6 +635,7 @@ export async function modifyBookingBatch({
   input,
   ipAddress,
   todayAtClub,
+  format,
   tx: callerTx,
   hostingReconcile,
   waiveChangeFee,
@@ -681,6 +699,12 @@ export async function modifyBookingBatch({
    * two todays here would be a batch edit priced against itself.
    */
   todayAtClub: CalendarDate;
+  /**
+   * The club's currency and locale (#3565), resolved by the caller before it
+   * opened ANY transaction, for exactly the reason `todayAtClub` above is: this
+   * service renders money inside a transaction that may be the caller's.
+   */
+  format: ClubFormat;
   /**
    * Caller-supplied transaction (#2525). When present, the modification runs
    * inside it — so an atomic approve-and-execute can release a policy-exception
@@ -1173,6 +1197,7 @@ export async function modifyBookingBatch({
       // locks this transaction holds (`INV-LOCK-004`). The planner hands it to
       // the person-night guard, whose self-removal window is member-facing.
       today: clubTodayDateOnly,
+      format,
       // #2543 — read before the transaction opened (like `memberGuestPolicy`), so
       // the planner's refusals and the paid-up-adult requirement branch on the
       // same mode `modify-quote` previewed, and no settings read happens under
@@ -1201,6 +1226,7 @@ export async function modifyBookingBatch({
             memberId: link.memberId,
             firstName: name?.firstName ?? null,
             lastName: name?.lastName ?? null,
+            ageTier: name?.ageTier ?? null,
             consentColumns: guestPlan.guestMemberLinkColumns.get(link.guestId),
           },
         ];
@@ -1595,6 +1621,10 @@ export async function modifyBookingBatch({
         pricingResult.kind === "priced"
           ? pricingResult.otherLodgeRatedGuestIds
           : new Set<string>(),
+      // #3029 (`INV-MOD-059`): resolved with the rest of the pre-transaction
+      // work, so an added linked member is seeded and a placeholder newly
+      // linked to a member is filled only if empty.
+      guestDietarySeeding: preparation.guestDietarySeeding,
     });
 
     // #3276: AFTER `applyGuestChanges`, which is the last night write — the
@@ -1609,6 +1639,7 @@ export async function modifyBookingBatch({
       }
       let created = 0;
       await recordBookingNightAdjustments(tx, {
+        format,
         bookingId,
         guestIds: pricingResult.guestNightRates.map(
           (guest) => guest.bookingGuestId ?? createdGuests[created++]?.id ?? null,
@@ -1637,6 +1668,8 @@ export async function modifyBookingBatch({
       changeFeeCents,
       settlementOptions,
       settlementMethod: input.settlementMethod,
+      todayAtClub,
+      format,
     });
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -1644,6 +1677,7 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
+      format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       reviewUpdate: guestPlan.reviewUpdate,
@@ -1741,10 +1775,10 @@ export async function modifyBookingBatch({
      * price are exactly what landed - no index alignment with the plan's
      * ordering to get wrong. A parked or price-preserving edit stores none.
      */
-    const priceLines =
+    const { priceLines, sides: pricingSides } =
       parked || promoFiguresStubbedHere
-        ? null
-        : await computeModificationPriceLines(
+        ? { priceLines: null, sides: null }
+        : await computeModificationPricing(
             { bookingId, site: "batch-modify" },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
@@ -1762,22 +1796,22 @@ export async function modifyBookingBatch({
                 },
               });
               const existingPromoCode = booking.promoRedemption?.promoCode?.code ?? null;
-              return diffBookingPricing(
-                  pricingSideFromStoredGuests(booking.guests, {
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode: existingPromoCode,
-                  }),
-                  pricingSideFromWrittenGuests(writtenGuests, {
-                    promoAdjustmentCents: promo.newPromoAdjustmentCents,
-                    promoCode: promo.promoRemoved
-                      ? null
-                      : promo.promoChanged
-                        ? (input.promoCode?.trim() || existingPromoCode)
-                        : existingPromoCode,
-                  }),
-                  priceDiffCents,
-                );
+              return {
+                before: pricingSideFromStoredGuests(booking.guests, {
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode: existingPromoCode,
+                }),
+                after: pricingSideFromWrittenGuests(writtenGuests, {
+                  promoAdjustmentCents: promo.newPromoAdjustmentCents,
+                  promoCode: promo.promoRemoved
+                    ? null
+                    : promo.promoChanged
+                      ? (input.promoCode?.trim() || existingPromoCode)
+                      : existingPromoCode,
+                }),
+              };
             },
+            priceDiffCents,
             logger,
           );
 
@@ -1876,6 +1910,7 @@ export async function modifyBookingBatch({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.
@@ -1908,6 +1943,19 @@ export async function modifyBookingBatch({
         changeFeeCents,
         ...(priceLines ? { priceLines } : {}),
       },
+    });
+
+    // #3582: the same before and after, per night, on the booking ledger —
+    // under the `lock(1)` this transaction took first. A parked or
+    // price-preserving edit posts nothing (`INV-MOD-040`); a parked edit's
+    // review closure does.
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: pricingSides,
+      site: "batch-modify",
     });
 
     /**
@@ -1962,6 +2010,13 @@ export async function modifyBookingBatch({
         booking.payment?.id,
       );
     }
+    // #3653: an organiser-settled child's refund debt, before this edit commits.
+    await reserveOrganiserChildModificationRefund(tx, {
+      plan: payments.organiserChildRefund,
+      bookingId,
+      payment: booking.payment,
+      bookingModificationId: bookingModification.id,
+    });
 
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
@@ -2084,6 +2139,8 @@ export async function modifyBookingBatch({
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
+      appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
+      organiserChildRefund: payments.organiserChildRefund,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       guestNameUpdates,
@@ -2243,6 +2300,7 @@ export async function modifyBookingBatch({
     });
 
     const stripeRefundId = await executeBookingModificationRefund({
+      format,
       bookingId,
       result,
       metadataReason: "batch_modification",
@@ -2254,6 +2312,7 @@ export async function modifyBookingBatch({
 
     const { additionalPaymentClientSecret, additionalPaymentIntentId } =
       await createModificationAdditionalPaymentIntent({
+        format,
         bookingId,
         result,
         reason: "batch_modify_price_increase",
@@ -2279,6 +2338,7 @@ export async function modifyBookingBatch({
       result,
       additionalPaymentIntentId,
       linkedChangeRequestId,
+      format,
     });
 
     return {
@@ -2287,6 +2347,7 @@ export async function modifyBookingBatch({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
@@ -2330,6 +2391,7 @@ export async function modifyBookingBatch({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
@@ -2359,6 +2421,7 @@ async function dispatchBatchPostTransactionSideEffects({
   result,
   additionalPaymentIntentId,
   linkedChangeRequestId,
+  format,
 }: {
   bookingId: string;
   actorMemberId: string;
@@ -2366,9 +2429,11 @@ async function dispatchBatchPostTransactionSideEffects({
   result: BatchModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
   linkedChangeRequestId: string | null;
+  /** The club's format (#3565), resolved before the edit's transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   // #3530: what that figure is made of, line by line and in dollars.
-  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
   const auditDetails = {
     datesChanged: result.datesChanged,
     oldGuestCount: result.oldGuestCount,
@@ -2460,6 +2525,9 @@ async function dispatchBatchPostTransactionSideEffects({
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    // #3653: the organiser child refund raises the one note, after Stripe.
+    organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
@@ -2559,6 +2627,7 @@ async function dispatchBatchPostTransactionSideEffects({
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     additionalAmountCents: result.additionalAmountCents,
     additionalPaymentMethod:
       result.additionalAmountCents > 0 &&
@@ -2578,7 +2647,7 @@ async function dispatchBatchPostTransactionSideEffects({
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
     lodgeId: result.booking.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId },
       "Failed to send batch modification email",

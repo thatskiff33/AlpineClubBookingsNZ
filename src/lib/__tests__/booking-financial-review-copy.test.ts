@@ -15,6 +15,7 @@ import {
 } from "@/lib/booking-financial-review-copy";
 import { resolveBookingNarrative } from "@/lib/booking-narrative";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * #3194 (epic #2797): THE SURFACES CANNOT COME TO DISAGREE.
@@ -34,7 +35,7 @@ import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
  * reworded alone.
  */
 
-const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
+const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
 const PAYABLE_BOOKING = {
   status: "CONFIRMED",
@@ -70,7 +71,7 @@ function narrative(financialReviewPending: boolean) {
     booking: PAYABLE_BOOKING,
     events: [],
     financialReviewPending,
-  });
+  }, CLUB_FORMAT_TEST);
 }
 
 function paidNarrative(financialReviewPending: boolean) {
@@ -79,7 +80,7 @@ function paidNarrative(financialReviewPending: boolean) {
     booking: PAID_BOOKING,
     events: PAID_EVENTS,
     financialReviewPending,
-  });
+  }, CLUB_FORMAT_TEST);
 }
 
 /**
@@ -215,7 +216,7 @@ describe("financial-review copy has one home", () => {
         booking: { ...PAYABLE_BOOKING, status: "WAITLISTED" },
         events: [],
         financialReviewPending: true,
-      }).nextStep,
+      }, CLUB_FORMAT_TEST).nextStep,
     ).toContain(FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK);
   });
 

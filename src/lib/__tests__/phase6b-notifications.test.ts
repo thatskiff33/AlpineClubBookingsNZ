@@ -982,4 +982,20 @@ describe("Email templates - Phase 6b", () => {
     expect(html).toContain("https://go.xero.com/Contacts/View/contact_1");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });
+
+  it("adminXeroReconciliationReportTemplate lists unsettled refund credit notes only when the report counts them (#3548)", async () => {
+    const { adminXeroReconciliationReportTemplate } = await import("@/lib/email-templates/admin-xero-reports");
+    const summary = {
+      missingMemberContactLinks: 0, missingPaymentInvoiceLinks: 0, missingPaymentRefundCreditNoteLinks: 0,
+      missingSubscriptionInvoiceLinks: 0, mismatchedCanonicalLinks: 0, staleCanonicalLinks: 0,
+      duplicateActiveCanonicalLinks: 0, overCoveredStripeRefundPayments: 0, stalePendingOperations: 0,
+      recentFailedOperations: 0, recentPartialOperations: 0, unsupportedPartialOperations: 0,
+      repeatedFailureCorrelations: 0, failedInboundEvents: 0, issueCategoryCount: 1, issueTotalCount: 3,
+    };
+    const base = { generatedAt: new Date("2026-04-13T10:00:00Z"), lookbackHours: 24, stalePendingMinutes: 30, repeatedFailures: [], unsupportedPartials: [] };
+    const withCount = adminXeroReconciliationReportTemplate({ ...base, summary: { ...summary, unsettledRefundCreditNotes: 3 } } as never);
+    expect(withCount).toContain("Refund credit notes left unsettled");
+    const without = adminXeroReconciliationReportTemplate({ ...base, summary } as never);
+    expect(without).not.toContain("Refund credit notes left unsettled");
+  });
 });

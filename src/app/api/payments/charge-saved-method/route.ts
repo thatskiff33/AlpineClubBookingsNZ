@@ -44,6 +44,8 @@ import {
 } from "@/lib/saved-card-charge-settle";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -91,6 +93,9 @@ export async function POST(request: NextRequest) {
     bookingId: string;
   } | null = null;
 
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   try {
     // This endpoint is called by internal cron or admin
     isAuthorizedCron = isValidCronSecret(
@@ -166,6 +171,9 @@ export async function POST(request: NextRequest) {
     // (read-key -> lock -> re-read, docs/CONCURRENCY_AND_LOCKING.md).
     const lodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
     const previousRange = { checkIn: booking.checkIn, checkOut: booking.checkOut };
+
+    // #3567: refused before the claim, the attempt row or any Stripe call.
+    if (chargeCurrencyRefusal(format)) return NextResponse.json({ error: CURRENCY_REFUSED }, { status: 409 });
 
     // Claim-first (#1418, the cron's `resolveHoldWindowUnderLock` and the admin
     // route's charge branch): claim PENDING -> CONFIRMED under both locks
@@ -289,7 +297,7 @@ export async function POST(request: NextRequest) {
           amountCents: booking.finalPriceCents,
           errorMessage: claimErr.message,
           paymentIntentId: claimErr.paymentIntentId ?? "N/A",
-        }).catch((alertErr) =>
+        }, format).catch((alertErr) =>
           logger.error(
             { err: alertErr, bookingId },
             "Failed to send admin payment failure alert"
@@ -398,6 +406,7 @@ export async function POST(request: NextRequest) {
     // catch below, so the next attempt is fresh.
     chargeAttempted = true;
     const paymentIntent = await chargeSavedCardAttempt({
+      format,
       attempt: claim.attempt,
       bookingId,
       memberId: bookingOwner(booking).memberId,
@@ -432,6 +441,7 @@ export async function POST(request: NextRequest) {
         );
       }
       const reconciliation = await markBookingPaymentSucceeded({
+        format,
         bookingId,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
@@ -501,7 +511,7 @@ export async function POST(request: NextRequest) {
         amountCents,
         errorMessage: account,
         paymentIntentId: paymentIntent.id,
-      }).catch(() => {});
+      }, format).catch(() => {});
       // Say what actually happened. Before #3267 this branch answered
       // `success: true` with the intent's status, which read as a capture.
       return NextResponse.json(
@@ -564,7 +574,7 @@ export async function POST(request: NextRequest) {
         amountCents: attemptAlertContext.amountCents,
         errorMessage: readStripeErrorFields(error).message,
         paymentIntentId: "N/A",
-      }).catch((alertError) =>
+      }, format).catch((alertError) =>
         logger.error(
           { err: alertError, bookingId: attemptAlertContext?.bookingId },
           "Failed to send admin payment failure alert",
@@ -578,7 +588,7 @@ export async function POST(request: NextRequest) {
         ...capturedPaymentContext,
         errorMessage:
           "The saved-method charge succeeded but booking finalisation was deferred by a concurrent member change. The Stripe webhook will retry; review manually if it remains pending.",
-      }).catch((alertError) =>
+      }, format).catch((alertError) =>
         logger.error(
           { err: alertError, paymentIntentId: capturedPaymentIntentId },
           "Failed to alert admins about captured saved-method charge awaiting finalisation",
@@ -591,7 +601,7 @@ export async function POST(request: NextRequest) {
         ...capturedPaymentContext,
         errorMessage:
           "The saved-method charge succeeded, but the booking status could not be confirmed after a local error. Check the booking and payment status before retrying any charge.",
-      }).catch((alertError) =>
+      }, format).catch((alertError) =>
         logger.error(
           { err: alertError, paymentIntentId: capturedPaymentIntentId },
           "Failed to alert admins about a captured saved-method charge with unconfirmed booking status",

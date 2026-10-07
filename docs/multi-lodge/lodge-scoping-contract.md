@@ -21,6 +21,7 @@ sequencing):
 | `Booking` | direct `lodgeId` | denormalised for capacity/availability query performance; always matches the room's lodge when a room is assigned. `waitlistOfferedLodgeId` (nullable) names the alternate lodge of a live cross-lodge waitlist offer (ADR-004) and never changes the entry's own lodge |
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |
+| `BookingRequestPendingAdultReservationNight` | direct `lodgeId` | unnamed SCHOOL adult capacity, one count per request/night; always matches the held booking's immutable lodge, released with that hold (#3413) |
 | `GroupBooking` | via organiser `Booking` | one group = one lodge (ADR-001 open question 1) |
 | `ChoreTemplate` | direct `lodgeId` | roster generation filters by lodge |
 | `LodgeSettings` | per-lodge row | converted from singleton |
@@ -577,7 +578,7 @@ new ADR:
   one `id = "default"` row. The two AI modules are club-wide paid products with
   one credential and one monthly cap apiece, and the rate that turns the NZD
   provider price table into the club's configured currency is a property of
-  the deployment (one `APP_CURRENCY`), not of a building. A per-lodge rate
+  the deployment (one club currency), not of a building. A per-lodge rate
   would have nothing to mean, because no lodge is billed for AI separately.
 - Member message board (`ClubPost`, `ClubPostImage`, `ClubPostReport`, the
   `commsPortal` module): a post carries no `lodgeId`, decided as D-C1 on epic
@@ -656,7 +657,12 @@ record the outcome here when decided:
   or linked to the same lodge → code defaults; a legacy row linked elsewhere
   is never inherited, so one lodge's values cannot leak to another.
   `LodgeSettings` retains its existing first-write compatibility behavior and
-  `hutLeaderLookaheadDays` remains a club-wide knob on its legacy row.
+  `hutLeaderLookaheadDays` remains a club-wide knob on its legacy row. A config
+  import that carries a lodge's `capacity` (#3407) writes the lodge's own row,
+  or the legacy row only when that row is already linked to this lodge; it
+  never claims an unlinked legacy row, because that row serves every lodge
+  without an own row. A new own row carries across the soft cap an unlinked
+  legacy row was serving the lodge.
   `BedAllocationSettings` reads the same compatibility chain, but its admin
   API always requires one active lodge: a write updates `default` only when no
   lodge-id row exists and that legacy row is already linked to this lodge;
@@ -706,11 +712,12 @@ each lodge's cap plus a top-level default for the single-lodge case).
 ## Capacity Configuration
 
 Each lodge's capacity resolves in this order (`getLodgeCapacityStatus`):
-active configured beds when the Bed Allocation module is on, else the
-per-lodge `LodgeSettings.capacity` override, else the club-config bed
-total for the default lodge only (additional lodges resolve to 0 until
-beds or an override exist, so an unconfigured lodge can never be
-overbooked). The per-lodge override is editable in core lodge config on
+active configured beds when the Bed Allocation module is on (capped by the
+lodge's own capacity when that is lower), else the per-lodge
+`LodgeSettings.capacity`, else 0 for every lodge, default included —
+`club.json` is not a runtime fallback since #1982, so an unconfigured lodge
+can never be overbooked. A lodge is created with its own `LodgeSettings`
+row carrying the capacity Add lodge asked for (#3407). The per-lodge override is editable in core lodge config on
 the lodge hub (`/admin/lodges/[id]`) regardless of the Bed Allocation
 module, and on `/admin/setup`. Public and admin booking surfaces cap
 guests against the _selected_ lodge's capacity (the public booking-request

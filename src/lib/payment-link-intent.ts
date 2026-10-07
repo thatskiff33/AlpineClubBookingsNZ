@@ -5,27 +5,25 @@
  * capacity revalidation as the session-gated payment-intent route. Token
  * resolution and the refusal vocabulary it throws stay in `payment-link.ts`.
  */
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentSource, PaymentStatus } from "@prisma/client";
 import {
   bookingOwner,
   bookingOwnerProviderMetadata,
 } from "@/lib/booking-owner";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import {
-  findPaymentTransactionByIntentId,
-  upsertPaymentIntentTransaction,
-} from "@/lib/payment-transactions";
+import { attachMintedCardIntent } from "@/lib/card-intent-attach";
+import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import {
   NOT_PAYABLE_MESSAGE,
+  PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
   PaymentLinkError,
   REVOKED_LINK_MESSAGE,
   USED_LINK_MESSAGE,
@@ -40,6 +38,14 @@ import {
   getPaymentIntent,
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
+import {
+  PAYMENT_PROCESSING_CODE,
+  PAYMENT_PROCESSING_MESSAGE,
+  SWITCHED_TO_INTERNET_BANKING_BODY,
+} from "@/lib/payment-recovery-contract";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -83,6 +89,19 @@ class UnconsumedCreditElectionError extends Error {
   }
 }
 
+/**
+ * #3638 (`INV-PAY-102`): the shared switched-to-Internet-Banking refusal
+ * (`SWITCHED_TO_INTERNET_BANKING_BODY`, one definition for both card doors),
+ * carried as a PaymentLinkError so the route sends its code with the message.
+ */
+function switchedToInternetBankingError() {
+  return new PaymentLinkError(
+    SWITCHED_TO_INTERNET_BANKING_BODY.error,
+    409,
+    SWITCHED_TO_INTERNET_BANKING_BODY.code,
+  );
+}
+
 export type PaymentLinkIntentResult =
   | { type: "alreadyPaid" }
   | { type: "clientSecret"; clientSecret: string; paymentIntentId: string };
@@ -100,6 +119,11 @@ export type PaymentLinkIntentResult =
 export async function createPaymentIntentForPaymentLink(
   token: string
 ): Promise<PaymentLinkIntentResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
+  // #3567: refused before the link is resolved or anything is written.
+  if (chargeCurrencyRefusal(format)) throw new PaymentLinkError(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE, 409);
   const link = await resolvePaymentLink(token);
   const booking = link.booking;
 
@@ -109,6 +133,14 @@ export async function createPaymentIntentForPaymentLink(
 
   if (!isPayableByLink(booking.status)) {
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
+
+  // #3638 — a booking switched to Internet Banking has an emailed invoice; a
+  // card payment beside it is the double collection `INV-PAY-102` forbids.
+  // Checked here with no lock, and again under lock(1) where the intent is
+  // attached, for a switch that commits in between.
+  if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
+    throw switchedToInternetBankingError();
   }
 
   // Reuse or reconcile an existing PaymentIntent before creating a new one
@@ -130,14 +162,10 @@ export async function createPaymentIntentForPaymentLink(
       // must lead to a fresh repayment intent.
       let refundedHistory: boolean;
       try {
-        const pointedTransaction = await findPaymentTransactionByIntentId({
+        refundedHistory = await isRefundedPaymentIntentHistory({
           paymentIntentId: existingIntent.id,
+          paymentStatus: booking.payment.status,
         });
-        refundedHistory = pointedTransaction
-          ? pointedTransaction.status === PaymentStatus.REFUNDED ||
-            pointedTransaction.status === PaymentStatus.PARTIALLY_REFUNDED
-          : booking.payment.status === PaymentStatus.REFUNDED ||
-            booking.payment.status === PaymentStatus.PARTIALLY_REFUNDED;
       } catch (error) {
         logger.error(
           { err: error, bookingId: booking.id },
@@ -166,6 +194,7 @@ export async function createPaymentIntentForPaymentLink(
         try {
           if (booking.payment.status !== PaymentStatus.SUCCEEDED) {
             const reconciliation = await markBookingPaymentSucceeded({
+              format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,
               amountCents: existingIntent.amount,
@@ -203,10 +232,16 @@ export async function createPaymentIntentForPaymentLink(
       }
     }
 
+    // #3567: an old-currency intent still `processing` is never superseded — its
+    // cancellation fails and a fresh intent would charge the member twice.
+    if (repaySupersededIntentId === null && intentCurrencyDiffers(existingIntent, format) && staleIntentAction(existingIntent) === "in_flight") {
+      throw new PaymentLinkError(PAYMENT_PROCESSING_MESSAGE, 409, PAYMENT_PROCESSING_CODE);
+    }
     if (
       repaySupersededIntentId === null &&
       existingIntent.status !== "canceled" &&
-      existingIntent.amount !== booking.finalPriceCents
+      // #3567: minted in another currency is superseded like a stale amount.
+      (existingIntent.amount !== booking.finalPriceCents || intentCurrencyDiffers(existingIntent, format))
     ) {
       // The booking was modified after this intent was minted (#1161): a
       // stale client_secret would capture the old total. Queue the stale
@@ -216,6 +251,7 @@ export async function createPaymentIntentForPaymentLink(
           bookingId: booking.id,
           paymentId: booking.payment.id,
           newFinalPriceCents: booking.finalPriceCents,
+          ...(intentCurrencyDiffers(existingIntent, format) ? { wrongCurrencyPaymentIntentId: existingIntent.id } : {}),
         });
       }
     } else if (
@@ -348,11 +384,11 @@ export async function createPaymentIntentForPaymentLink(
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: err.electionCents,
-      errorMessage: `This booking still has a saved account-credit choice of ${formatCents(err.electionCents)} on it, so the payment link declined to take a card payment: charging through the link would bill the full price and ignore the credit, and a public link must not spend a member's credit balance on its own authority. Nothing was charged and the saved choice is untouched. Ask the member to pay from their own bookings page, where the credit is applied and the card is charged only the remainder.`,
+      errorMessage: `This booking still has a saved account-credit choice of ${formatCents(err.electionCents, format)} on it, so the payment link declined to take a card payment: charging through the link would bill the full price and ignore the credit, and a public link must not spend a member's credit balance on its own authority. Nothing was charged and the saved choice is untouched. Ask the member to pay from their own bookings page, where the credit is applied and the card is charged only the remainder.`,
       // No intent exists — nothing was minted — so give the officer the booking
       // reference to search on instead.
       paymentIntentId: booking.id,
-    }).catch((alertErr) =>
+    }, format).catch((alertErr) =>
       logger.error(
         { err: alertErr, bookingId: booking.id },
         "Failed to alert admins about a payment link refused for an unconsumed credit election"
@@ -376,8 +412,8 @@ export async function createPaymentIntentForPaymentLink(
   });
 
   const paymentIntent = await createPaymentIntent({
+    format,
     amountCents: booking.finalPriceCents,
-    currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,
     metadata: {
       bookingId: booking.id,
@@ -392,30 +428,34 @@ export async function createPaymentIntentForPaymentLink(
       : `pl_pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
   });
 
-  const payment = await prisma.payment.upsert({
-    where: { bookingId: booking.id },
-    create: {
-      bookingId: booking.id,
+  // #3638 (`INV-PAY-102`): attached under lock(1) after re-reading the
+  // payment's source and the booking's status — see the shared helper. A
+  // refused intent is cancelled there and its secret never leaves the server.
+  const attached = await attachMintedCardIntent({
+    bookingId: booking.id,
+    paymentIntentId: paymentIntent.id,
+    payableStatuses: PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
+    paymentCreate: {
       amountCents: booking.finalPriceCents,
       stripeCustomerId: customer.id,
-      status: PaymentStatus.PENDING,
     },
-    update: {
+    paymentUpdate: {
+      stripeCustomerId: customer.id,
+    },
+    transaction: {
+      amountCents: booking.finalPriceCents,
+      reason: repaySupersededIntentId
+        ? "payment_link_repay_after_refund"
+        : "payment_link_booking_payment",
       stripeCustomerId: customer.id,
     },
   });
-
-  await upsertPaymentIntentTransaction({
-    paymentId: payment.id,
-    kind: PaymentTransactionKind.PRIMARY,
-    paymentIntentId: paymentIntent.id,
-    amountCents: booking.finalPriceCents,
-    status: PaymentStatus.PROCESSING,
-    reason: repaySupersededIntentId
-      ? "payment_link_repay_after_refund"
-      : "payment_link_booking_payment",
-    stripeCustomerId: customer.id,
-  });
+  if (attached === "switchedToInternetBanking") {
+    throw switchedToInternetBankingError();
+  }
+  if (attached === "notPayable") {
+    throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
 
   if (!paymentIntent.client_secret) {
     throw new PaymentLinkError("Unable to start the payment. Please try again.", 500);

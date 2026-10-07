@@ -170,6 +170,16 @@ day colours *are* lodge days, the panel spells that difference out on screen;
 the hut-leader assignment calendar is night-based throughout, so there is no
 difference to explain there and it says nothing.
 
+### Dietary and allergy notes on the day list
+
+When the club collects **Dietary/allergy information**, each present guest's
+note for that stay appears under their name — only while a hut leader (their
+own account, or their PIN unlock on this device) or a full admin is using the
+kiosk. The plain lodge screen, a staying guest and an admin's preview of a
+kiosk account never receive the notes at all; the server leaves them out of
+what it sends. See [Hut Leaders](hut-leaders.md#dietary-and-allergy-notes-on-the-kiosk)
+for the shared-device caveat.
+
 ### Group Trips on the day list
 
 **Audience: operator.**

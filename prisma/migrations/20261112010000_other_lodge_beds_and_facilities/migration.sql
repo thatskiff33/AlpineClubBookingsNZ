@@ -8,7 +8,7 @@
 -- rewritten and existing lodges read as "no" / empty until the next download.
 --
 -- DESTRUCTIVE PART: DROP COLUMN "bookingPath". That column was added by
--- 20261006010000_add_other_lodge_details_and_amenities (#50), which has not
+-- 20261006020000_add_other_lodge_details_and_amenities (#50), which has not
 -- shipped on its own: the two travel in one release, so the colour draining at
 -- cutover predates #50 and never names the column. A colour that DOES name it
 -- (a #50-only build) would fail every OtherLodge read, so the ledger row is

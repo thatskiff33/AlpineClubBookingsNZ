@@ -275,6 +275,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Duplicate capture auto-refunded: {{memberName}}",
     "defaultBody": "Duplicate Card Capture Auto-Refunded\n\n{{refundOutcomeNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nDuplicate Stripe PI: {{paymentIntentId}}\nRecovery operation: {{operation}}\n\nView Payments: {{reviewUrl}}"
   },
+  // #3663 (`INV-PAY-016`): an expired internet banking hold left alone
+  // because the stay has started - reconcile by hand.
+  "admin-internet-banking-hold-started-stay": {
+    "defaultSubject": "Overdue internet-banking hold on a stay that has started",
+    "defaultBody": "Overdue Internet Banking Hold on a Stay That Has Started\n\nThis booking's internet banking payment deadline passed without the app seeing it paid, but its check-in has already arrived, so it was NOT cancelled automatically. The invoice amount below is the amount on the invoice, before any payment the app has not seen: the member may already have paid part or all of it by bank transfer. Check the bank account and Xero for the member's transfer and record it, or cancel the booking by hand.\n\nBooking: {{bookingReference}} ({{bookingId}})\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nHold deadline: {{holdUntil}}\nInvoice amount: {{amountOwing}}\n\nView Payments: {{reviewUrl}}"
+  },
   "admin-superseded-payment-refund": {
     "defaultSubject": "Superseded payment auto-refunded: {{memberName}}",
     "defaultBody": "Superseded Payment Auto-Refunded\n\nA member paid a charge that a later booking change had already replaced. The capture has been refunded in full automatically - no action is needed unless the amount owing below looks wrong.\n\nThe member has been emailed an explanation naming the refund and the corrected amount owing.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{refundedAmount}}\nStill owing: {{amountOwing}}\nSuperseded Stripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}"
@@ -282,6 +288,20 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   "admin-manual-settlement-conflict": {
     "defaultSubject": "Cash settlement vs Xero payment — reconcile: {{memberName}}",
     "defaultBody": "Cash Settlement vs Xero Payment - Reconcile By Hand\n\nThis booking looks paid TWICE: once as a cash / off-Xero settlement recorded here, and again by a payment Xero now reports against its invoice. Nothing further has been written - please reconcile.\n\nAn admin recorded this booking's payment manually (cash, or a bank transfer that never reached Xero). Xero has since reported the booking's invoice as PAID. The system stopped rather than settling it a second time or minting member credit, so the two records now disagree and only a person can decide which money is real.\n\nCheck whether the Xero payment is genuinely separate funds - a second payment that needs refunding - or the same money reaching Xero late. Reverse the manual settlement, or refund the duplicate, whichever is true.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nBooking status: {{status}}\nAmount recorded as cash: {{amount}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nView Payments: {{reviewUrl}}"
+  },
+  // #3643 (`INV-PAY-107`): the hold-expiry job could not simply release an
+  // expired hold - money may be paid against its invoice, or Xero is unreadable.
+  "admin-internet-banking-hold-kept": {
+    "defaultSubject": "Internet banking hold needs attention: {{memberName}}",
+    "defaultBody": "Internet Banking Hold Needs Attention\n\n{{holdKeptNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}} ({{bookingId}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nHold deadline: {{holdUntil}}\nPaid so far: {{paidAmount}}\nStill owing: {{amountOwing}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nView Payments: {{reviewUrl}}"
+  },
+  "admin-late-capture-held": {
+    "defaultSubject": "Late payment held for approval: {{memberName}}",
+    "defaultBody": "Late Payment Held for Approval\n\nA card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.\n\nOpen the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount held: {{amount}}\n\nView Payments: {{reviewUrl}}"
+  },
+  "admin-second-instrument-settlement-conflict": {
+    "defaultSubject": "Booking may have been paid twice — card and Xero: {{memberName}}",
+    "defaultBody": "Booking May Have Been Paid Twice - Card and Xero\n\nA card payment and an Internet Banking payment have both been recorded against this booking. Nothing was refunded or credited automatically - please reconcile.\n\n{{secondInstrumentConflictNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nBooking status: {{status}}\nInvoice amount: {{amount}}\nCard payment still held: {{paidAmount}}\nStripe PI: {{paymentIntentId}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
   },
   "admin-manual-refund-task": {
     "defaultSubject": "Manual refund needed - cash booking cancelled: {{memberName}}",
@@ -493,6 +513,16 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   "group-join-settled": {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
     "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  // #3672 (`INV-PAY-109`): paid-group joiners switched to paying for
+  // themselves mid-stay, for the treasurer to collect by hand.
+  "admin-group-joiner-started-stay": {
+    "defaultSubject": "Group joiners mid-stay now pay for themselves",
+    "defaultBody": "Group Joiners Mid-Stay Now Pay for Themselves\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Each booking is now the joiner's own to pay. Their stay has already started, so they were not emailed about it. Collect payment from them by hand, then open each joiner's booking below and record it with Record manual payment under Admin tools. They can also pay by card from their own booking.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nGroup check-in: {{checkIn}}\n\nJoiners:\n{{joinerBookingLinks}}\n\nOpen the organiser's booking: {{organiserBookingUrl}}"
+  },
+  "group-join-pay-self": {
+    "defaultSubject": "Please pay for your place — {{CLUB_NAME}}",
+    "defaultBody": "Please Pay For Your Place\n\nHi {{firstName}}, {{organiserName}} has paid for their group's stay at {{CLUB_NAME}}'s lodge. You joined after that payment was prepared, so your place was not included in it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nYour place is not confirmed until you pay for it yourself. Open your booking to pay.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
   },
   "group-settlement-expired": {
     "defaultSubject": "Your group payment expired — {{CLUB_NAME}}",

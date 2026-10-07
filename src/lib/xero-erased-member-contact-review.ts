@@ -80,13 +80,10 @@
  * Xero, so both belong here. The school transfer and the three non-erasure
  * retirements have neither record and drop out.
  *
- * **NOT the anonymisation markers.** `isDeletedAccountRecord` is the canonical
- * predicate for "does this row look erased", and `INV-LIFE-015` says in as many
- * words that it is a strong signal rather than a schema invariant: the
- * membership-application MAP branch overwrites both markers, so a mapped-over
- * row stops being recognisable — while the contact the erasure orphaned is no
- * less orphaned for it. And the markers cannot speak for a hard delete at all,
- * because there is no row left to carry them.
+ * **NOT the live-row deletion predicate.** `isDeletedAccountRecord` is the
+ * canonical guard wherever a Member row still exists. This review instead
+ * needs durable evidence of the event that orphaned the contact, including a
+ * hard delete where no Member row remains, so it reads the approved decision.
  *
  * ## WHY "NO LOCAL HOME" IS ASKED OF BOTH COLUMNS
  *
@@ -280,8 +277,8 @@ export async function getErasedMemberXeroContactReview(options?: {
 
   /*
     FILTER TWO — and the member was ERASED, proved from the decision rather
-    than inferred from what the row looks like now. The header says why the
-    anonymisation markers are deliberately not what is read here.
+    than inferred from what a surviving row looks like now. The header says why
+    the durable decision is deliberately read here.
   */
   const orphanedMemberIds = [...new Set(orphaned.map((row) => row.memberId))];
   const [anonymisations, hardDeletes] = await Promise.all([

@@ -13,6 +13,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { formatAuditMetadataJson } from "@/lib/audit-metadata-amounts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
@@ -45,9 +46,13 @@ import {
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { memberName } from "@/lib/member-serialization";
-import { APP_LOCALE } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
-import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
+import {
+  formatClubInstantDateTimeWithSeconds,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
 
 type AuditFacets = {
   eventTypes: string[];
@@ -78,36 +83,26 @@ const emptyFacets: AuditFacets = {
   severities: [],
 };
 
-// #2264: not one of the shared house shapes on purpose — the audit trail keeps
-// seconds, so entries logged within the same minute stay orderable. Owner
-// decision: do not migrate this to the shared date-time shape
-// (`formatClubInstantDateTime`, once `formatNZDateTime`), which drops seconds.
-// CT-4 (#2870): an audit stamp is a real INSTANT and is projected through the
-// club's PERSISTED zone (INV-CONFIG-002), which a `"use client"` file receives
-// as data — so the formatter is memoised per zone rather than frozen at module
-// scope against APP_TIME_ZONE.
-const AUDIT_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function auditFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
-  const cached = AUDIT_FORMATTERS.get(zone);
-  if (cached) return cached;
-  const created = new Intl.DateTimeFormat(APP_LOCALE, {
-    timeZone: zone,
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  AUDIT_FORMATTERS.set(zone, created);
-  return created;
-}
-
+// #2264: the audit trail keeps seconds, so entries logged within the same
+// minute stay orderable. Owner decision: do not migrate this to the medium
+// date-time shape (`formatClubInstantDateTime`, once `formatNZDateTime`), which
+// drops them. An audit stamp is a real INSTANT, projected through the club's
+// PERSISTED zone (CT-4, #2870; INV-CONFIG-002).
+//
+// #3566 gave the kernel a `dateTimeSeconds` house shape for it, the identical
+// options this page used to build into a local formatter (memoised on the
+// locale and zone pair since #3564), so the stamp is byte-identical and the
+// kernel is again the only place a date formatter is built. The binding carries
+// the club's locale, so there is no bare locale string left to transpose with
+// `value`.
 function formatDateTime(clubTime: BoundClubTime, value: string) {
   const instant = parseInstant(value);
   if (instant === null) return value;
-  return auditFormatter(clubTime.zone).format(instant);
+  return formatClubInstantDateTimeWithSeconds(
+    instant,
+    clubTime.zone,
+    clubTime.format,
+  );
 }
 
 function titleCase(value: string) {
@@ -377,6 +372,7 @@ function MemberSearchFilter({
 
 export default function AuditLogPage() {
   const clubTime = useClubTime();
+  const clubFormat = useClubFormat();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [eventType, setEventType] = useState(searchParams.get("eventType") || "all");
@@ -1055,7 +1051,7 @@ export default function AuditLogPage() {
                                       Metadata
                                     </p>
                                     <pre className="max-h-72 overflow-auto rounded-md bg-card p-3 leading-relaxed text-muted-foreground">
-                                      {JSON.stringify(entry.metadata, null, 2)}
+                                      {formatAuditMetadataJson(entry.metadata, clubFormat)}
                                     </pre>
                                   </div>
                                 ) : null}

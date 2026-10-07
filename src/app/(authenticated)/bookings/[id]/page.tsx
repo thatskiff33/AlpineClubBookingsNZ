@@ -17,6 +17,7 @@ import { BookingLinkedPartySections } from "./_components/booking-linked-party-s
 import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusBanners } from "./_components/booking-status-banners";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
+import { BookingGuestDietaryCard } from "./_components/booking-guest-dietary-card";
 import { loadBookingDetail } from "./_lib/load-booking-detail";
 import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
 import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
@@ -35,6 +36,7 @@ import {
   dateOnlyInstantOf,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
+import { clubFormat } from "@/lib/club-format-server";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -45,6 +47,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 // than a hand-rolled filter. Folding it into the import below would satisfy the
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
+import { loadBookingDetailGuestDietary } from "./_lib/booking-detail-guest-dietary";
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
@@ -56,6 +59,11 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "consent", label: "Consent" },
   { id: "non-member-guests", label: "Non-member Guests" },
   { id: "group", label: "Group Booking" },
+  // #3029: booking administrators only, and filtered out server-side for
+  // everybody else like "Bed Allocation" below — see `guestDietary`. Declared
+  // here because the card renders straight after the linked-party sections
+  // (which hold "non-member-guests" and "group") and before stay preferences.
+  { id: "dietary", label: "Dietary/Allergy" },
   { id: "arrival", label: "Arrival Time" },
   { id: "room-request", label: "Room Request" },
   /*
@@ -99,6 +107,7 @@ export default async function BookingDetailPage({
     which are calendar days and take no zone at all (INV-DATE-010).
   */
   const club = await clubTime();
+  const money = await clubFormat();
   // #3123 — the club's today, as the UTC-midnight instant a `@db.Date` bound
   // round-trips through, derived from the SAME binding this page already holds.
   // THE ONLY RESOLUTION OF THE CLUB'S DAY ON THIS PAGE: it is threaded into
@@ -139,7 +148,12 @@ export default async function BookingDetailPage({
     bookingLodgeEmailSettings,
   });
 
-  const history = await loadBookingDetailHistory({ booking, club, viewer });
+  const history = await loadBookingDetailHistory({
+    booking,
+    club,
+    viewer,
+    format: money.format,
+  });
 
   // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
   // night range, never elapsed milliseconds divided by 24 hours: across a DST
@@ -228,10 +242,17 @@ export default async function BookingDetailPage({
   const messages = renderBookingDetailMessages({
     booking,
     club,
+    money,
     modules,
     bookingMessages,
     bookingLodgeEmailSettings,
     payment,
+  });
+
+  const guestDietary = await loadBookingDetailGuestDietary({
+    sessionUserId: session.user.id,
+    booking,
+    viewer,
   });
 
   const adminTools = await loadBookingDetailAdminTools({
@@ -254,7 +275,7 @@ export default async function BookingDetailPage({
   const showCancellationInfo = canCancel && !isDeleted;
   const cancellationSchedule =
     showCancellationInfo && originalPaymentCaptured
-      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn))
+      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn), money.format)
       : undefined;
   const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
 
@@ -263,7 +284,8 @@ export default async function BookingDetailPage({
       <SectionNav
         sections={BOOKING_SECTIONS.filter(
           (section) =>
-            section.id !== "bed-allocation" || showBedAllocationPanel,
+            (section.id !== "bed-allocation" || showBedAllocationPanel) &&
+            (section.id !== "dietary" || guestDietary !== null),
         )}
         className="mb-6 lg:mb-0"
       />
@@ -303,6 +325,7 @@ export default async function BookingDetailPage({
       <BookingStatusBanners
         booking={booking}
         club={club}
+        money={money}
         viewer={viewer}
         access={access}
         party={party}
@@ -327,10 +350,19 @@ export default async function BookingDetailPage({
 
       <BookingLinkedPartySections
         booking={booking}
+        money={money}
         viewer={viewer}
         party={party}
         bookingLodgeEmailSettings={bookingLodgeEmailSettings}
       />
+
+      {guestDietary && (
+        <BookingGuestDietaryCard
+          bookingId={booking.id}
+          guests={guestDietary.guests}
+          canEdit={guestDietary.canEdit}
+        />
+      )}
 
       <BookingReviewNotices
         booking={booking}
@@ -349,6 +381,7 @@ export default async function BookingDetailPage({
       <BookingPaymentCards
         booking={booking}
         club={club}
+        money={money}
         viewer={viewer}
         access={access}
         party={party}
@@ -369,6 +402,7 @@ export default async function BookingDetailPage({
 
       <BookingCancellationOutcome
         booking={booking}
+        money={money}
         payment={payment}
       />
 

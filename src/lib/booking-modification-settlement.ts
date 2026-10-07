@@ -5,17 +5,19 @@ import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import logger from "@/lib/logger";
 import {
   enqueueAdditionalPaymentIntentRecovery,
   enqueueBookingModificationRefundRecovery,
   processPaymentRecoveryOperations,
+  runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
 import {
   buildAdditionalIntentRecoveryIdempotencyKey,
   buildBookingModificationRefundMetadata,
+  buildOrganiserChildModificationRefundKey,
 } from "@/lib/payment-recovery-keys";
+import { prisma } from "@/lib/prisma";
 import {
   PartialRefundError,
   refundPaymentTransactions,
@@ -25,9 +27,17 @@ import {
   createPaymentIntent,
   findOrCreateCustomer,
 } from "@/lib/stripe";
+import type { ClubFormat } from "@/lib/club-format";
+import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
+  /**
+   * #3653: non-null when the refund comes out of a group organiser's combined
+   * card payment; its debt was written under the edit's
+   * `BookingModification` key (`reserveOrganiserChildModificationRefund`).
+   */
+  organiserChildRefund: { amountCents: number } | null;
   paymentId: string | null;
   /**
    * WHAT THIS EDIT ASKS FOR, AND WHAT ASKING FOR IT WILL ABSORB (#3371).
@@ -105,6 +115,7 @@ export async function drainSupersededPrimaryIntents({
 }
 
 export async function executeBookingModificationRefund({
+  format,
   bookingId,
   result,
   metadataReason,
@@ -112,6 +123,7 @@ export async function executeBookingModificationRefund({
   failureMessage,
   recoveryFailureMessage,
 }: {
+  format: ClubFormat;
   bookingId: string;
   result: BookingModificationPaymentContext;
   metadataReason: string;
@@ -123,8 +135,24 @@ export async function executeBookingModificationRefund({
     return undefined;
   }
 
+  // #3653: an organiser-settled child's edit wrote its refund debt before it
+  // committed (`reserveOrganiserChildModificationRefund`). Run THAT row now; the
+  // child has no transaction of its own for the path below to refund. A row
+  // that is missing is logged, never replaced by the ordinary path, which would
+  // find nothing to refund and close its own recovery as done.
+  if (result.organiserChildRefund) {
+    const debt = await prisma.paymentRecoveryOperation.findUnique({
+      where: { idempotencyKey: buildOrganiserChildModificationRefundKey(result.bookingModificationId) },
+      select: { id: true },
+    });
+    if (debt) await runPaymentRecoveryOperationNow(debt.id, format);
+    else logger.error({ bookingId }, "Organiser child refund debt missing after the edit committed (#3653)");
+    return undefined;
+  }
+
   try {
     const refundResult = await refundPaymentTransactions({
+      format,
       paymentId: result.paymentId,
       amountCents: result.pendingRefundAmountCents,
       // #1507: build the Stripe metadata from the shared helper so a recovery
@@ -220,6 +248,7 @@ export async function createModificationAdditionalPaymentIntent({
   idempotencyKey,
   recoveryIdempotencyKey,
   failureMessage,
+  format,
 }: {
   bookingId: string;
   result: BookingModificationPaymentContext;
@@ -239,6 +268,8 @@ export async function createModificationAdditionalPaymentIntent({
    */
   recoveryIdempotencyKey?: string;
   failureMessage: string;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<{
   additionalPaymentClientSecret: string | undefined;
   additionalPaymentIntentId: string | undefined;
@@ -248,6 +279,38 @@ export async function createModificationAdditionalPaymentIntent({
     !result.hasSucceededPayment ||
     !result.paymentId
   ) {
+    return {
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    };
+  }
+
+  // Durable retry (#1096): a price increase with no instrument to collect it
+  // must never be lost. One spelling for both ways a mint can fail below.
+  const paymentId = result.paymentId;
+  const keepTheDebt = () =>
+    enqueueAdditionalPaymentIntentRecovery({
+      bookingId,
+      paymentId,
+      idempotencyKey:
+        recoveryIdempotencyKey ??
+        buildAdditionalIntentRecoveryIdempotencyKey(result.bookingModificationId),
+      amountCents: result.additionalAsk.amountCents,
+      stripeIdempotencyKey: idempotencyKey,
+      // #3181: the EDIT's answer, frozen here because this is the last moment it
+      // is known. The replay reads it back rather than re-deriving one.
+      hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    }).catch((enqueueErr) =>
+      logger.error({ err: enqueueErr, bookingId }, "Failed to enqueue additional PaymentIntent recovery"),
+    );
+
+  // #3567: refused before the customer lookup and the mint, but the DEBT is kept
+  // (re-review): the recovery row is written, and the recovery runner leaves it
+  // unclaimed until an administrator sets a currency cards can be charged in.
+  const chargeRefusal = chargeCurrencyRefusal(format);
+  if (chargeRefusal) {
+    logger.error({ bookingId, currencyCode: chargeRefusal.currencyCode }, `${failureMessage}: ${chargeRefusal.message}`);
+    await keepTheDebt();
     return {
       additionalPaymentClientSecret: undefined,
       additionalPaymentIntentId: undefined,
@@ -266,8 +329,8 @@ export async function createModificationAdditionalPaymentIntent({
     }
 
     const pi = await createPaymentIntent({
+      format,
       amountCents: result.additionalAsk.amountCents,
-      currency: APP_STRIPE_CURRENCY,
       customerId,
       metadata: {
         bookingId,
@@ -311,6 +374,7 @@ export async function createModificationAdditionalPaymentIntent({
     });
 
     await queueSupersededAdditionalIntentCancellations({
+      format,
       bookingId,
       paymentId: result.paymentId,
       newPaymentIntentId: pi.id,
@@ -327,29 +391,9 @@ export async function createModificationAdditionalPaymentIntent({
     };
   } catch (piErr) {
     logger.error({ err: piErr, bookingId }, failureMessage);
-    // Durable retry (#1096): a transient Stripe failure must not leave the
-    // recorded price increase with no instrument to collect it. The recovery
-    // cron re-creates the intent with this same modification-scoped Stripe
-    // idempotency key, so route retry and cron retry can never double-mint.
-    await enqueueAdditionalPaymentIntentRecovery({
-      bookingId,
-      paymentId: result.paymentId,
-      idempotencyKey:
-        recoveryIdempotencyKey ??
-        buildAdditionalIntentRecoveryIdempotencyKey(
-          result.bookingModificationId,
-        ),
-      amountCents: result.additionalAsk.amountCents,
-      stripeIdempotencyKey: idempotencyKey,
-      // #3181: the EDIT's answer, frozen here because this is the last moment it
-      // is known. The replay reads it back rather than re-deriving one.
-      hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-    }).catch((enqueueErr) =>
-      logger.error(
-        { err: enqueueErr, bookingId },
-        "Failed to enqueue additional PaymentIntent recovery",
-      ),
-    );
+    // The recovery cron re-creates the intent with this same modification-scoped
+    // Stripe idempotency key, so route retry and cron retry never double-mint.
+    await keepTheDebt();
     return {
       additionalPaymentClientSecret: undefined,
       additionalPaymentIntentId: undefined,

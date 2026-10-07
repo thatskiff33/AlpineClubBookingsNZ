@@ -30,7 +30,8 @@ import {
   MessageSquare,
   Users,
 } from "lucide-react";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
@@ -87,7 +88,10 @@ import { checkCapacity } from "@/lib/capacity";
   which day a moment falls on (INV-DATE-019).
 */
 
-function formatPromoBenefitSummary(promo: AvailablePromoCode) {
+function formatPromoBenefitSummary(
+  promo: AvailablePromoCode,
+  money: BoundClubFormat,
+) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
       ? `${promo.percentOff}% off per individual`
@@ -96,7 +100,7 @@ function formatPromoBenefitSummary(promo: AvailablePromoCode) {
 
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off per individual`
+      ? `${money.cents(promo.valueCents)} off per individual`
       : "Fixed discount";
   }
 
@@ -109,7 +113,7 @@ function formatPromoBenefitSummary(promo: AvailablePromoCode) {
 
   if (promo.type === "FIXED_NIGHTLY_PRICE") {
     return promo.fixedNightlyPriceCents !== null
-      ? `${formatCents(promo.fixedNightlyPriceCents)} per eligible night`
+      ? `${money.cents(promo.fixedNightlyPriceCents)} per eligible night`
       : "Fixed nightly price";
   }
 
@@ -196,6 +200,7 @@ export default async function DashboardPage() {
   // step is whole CALENDAR days rather than 86 400 000 ms so a DST transition
   // cannot move it.
   const club = await clubTime();
+  const money = await clubFormat();
   const todayDate = club.today();
   const today = dateOnlyInstantOf(todayDate);
   const tomorrow = dateOnlyInstantOf(addCalendarDays(todayDate, 1));
@@ -556,16 +561,18 @@ export default async function DashboardPage() {
               <div className="text-lg font-semibold">
                 {formatClubDayMonth(
                   calendarDateOfDateOnlyInstant(nextStay.checkIn),
+                  club.format,
                 )}
                 {" — "}
                 {formatClubDayMonth(
                   calendarDateOfDateOnlyInstant(nextStay.checkOut),
+                  club.format,
                 )}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {nextStay._count.guests} guest
                 {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
-                {formatCents(nextStay.finalPriceCents)}
+                {money.cents(nextStay.finalPriceCents)}
               </p>
               {nextStayOccupancy ? (
                 <OccupancyMeter
@@ -595,7 +602,7 @@ export default async function DashboardPage() {
           title="Account Credit"
         >
           <div className="text-3xl font-bold">
-            {formatCents(creditBalanceCents)}
+            {money.cents(creditBalanceCents)}
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {creditBalanceCents > 0
@@ -610,7 +617,7 @@ export default async function DashboardPage() {
           title="Payment Owed"
         >
           <div className="text-3xl font-bold">
-            {formatCents(paymentOwed.totalCents)}
+            {money.cents(paymentOwed.totalCents)}
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {paymentOwed.totalCents > 0
@@ -642,7 +649,7 @@ export default async function DashboardPage() {
                     className="flex items-baseline gap-2 text-sm"
                   >
                     <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">
-                      {formatClubDayMonth(club.calendarDateOf(event.startsAt))}
+                      {formatClubDayMonth(club.calendarDateOf(event.startsAt), club.format)}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-foreground">
                       {event.title}
@@ -681,7 +688,7 @@ export default async function DashboardPage() {
             {firstPromoCode ? (
               <p className="mt-2 break-words text-xs font-medium text-foreground">
                 {firstPromoCode.code} ·{" "}
-                {formatPromoBenefitSummary(firstPromoCode)}
+                {formatPromoBenefitSummary(firstPromoCode, money)}
               </p>
             ) : null}
           </SummaryLinkCard>
@@ -856,21 +863,24 @@ export default async function DashboardPage() {
                       <p className="font-medium text-sm">
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkIn),
+                          club.format,
                         )}
                         {" — "}
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkOut),
+                          club.format,
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}
-                        {formatCents(booking.finalPriceCents)}
+                        {money.cents(booking.finalPriceCents)}
                         {booking.draftExpiresAt && (
                           <span className="text-warning-11 ml-2">
                             Expires{" "}
                             {formatClubDayMonth(
                               club.calendarDateOf(booking.draftExpiresAt),
+                              club.format,
                             )}
                           </span>
                         )}
@@ -949,16 +959,18 @@ export default async function DashboardPage() {
                       <p className="font-medium text-sm">
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkIn),
+                          club.format,
                         )}
                         {" — "}
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkOut),
+                          club.format,
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}
-                        {formatCents(booking.finalPriceCents)}
+                        {money.cents(booking.finalPriceCents)}
                       </p>
                     </div>
                     <Badge

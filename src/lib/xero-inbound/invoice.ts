@@ -22,6 +22,8 @@ import { writeXeroInboundAuditLogs } from "./audit";
 import { resolveMemberIdsForContact } from "./contact";
 import { refreshLinkedSubscriptionsForInvoice, syncLinkedPaymentInvoiceMetadata } from "./payment";
 import { syncGroupSettlementForPaidInvoice, syncInternetBankingPaymentsForPaidInvoice } from "./invoice-paid-effects";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 function buildSkippedInvoiceReconciliation(
   reason: string
@@ -57,6 +59,12 @@ async function buildSeasonYearFromInvoice(invoice: Invoice): Promise<number> {
 
 export async function reconcileXeroInvoice(
   invoiceId: string,
+  /**
+   * The club's format (#3565), resolved once by the job that walks the events
+   * or the changed invoices — a paid invoice can email a confirmation and write
+   * audit lines with amounts in them.
+   */
+  format: ClubFormat,
   options?: { skipSubscriptionRefresh?: boolean }
 ) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -160,9 +168,13 @@ export async function reconcileXeroInvoice(
   const internetBankingPaymentSync =
     await syncInternetBankingPaymentsForPaidInvoice(
       invoice,
-      linkedPaymentIds
+      linkedPaymentIds,
+      format,
     );
-  const groupSettlementSync = await syncGroupSettlementForPaidInvoice(invoice);
+  const groupSettlementSync = await syncGroupSettlementForPaidInvoice(
+    invoice,
+    format,
+  );
 
   const linkedSubscriptionIds = relatedLinks
     .filter(
@@ -264,6 +276,9 @@ export async function reconcileXeroInvoice(
 export async function runIncrementalInvoiceReconciliation(options: {
   membershipReconciliation: IncrementalMembershipReconciliationResult | null;
 }): Promise<IncrementalInvoiceReconciliationResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const changedInvoiceIds =
     options.membershipReconciliation?.changedInvoiceIds ?? [];
   if (changedInvoiceIds.length === 0) {
@@ -281,7 +296,7 @@ export async function runIncrementalInvoiceReconciliation(options: {
     processed += 1;
 
     try {
-      await reconcileXeroInvoice(invoiceId, { skipSubscriptionRefresh: true });
+      await reconcileXeroInvoice(invoiceId, format, { skipSubscriptionRefresh: true });
       succeeded += 1;
     } catch (error) {
       failed += 1;

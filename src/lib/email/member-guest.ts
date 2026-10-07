@@ -31,6 +31,7 @@ import { sendEmail, type EmailSendOutcome } from "./core";
 import type { BookingEmailRecipient } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The six member-guest emails (epic #2305, MG2 #2307 and MG4 #2309).
@@ -307,6 +308,7 @@ export interface SendMemberGuestConsentOutcomeEmailParams
 
 export async function sendMemberGuestConsentOutcomeEmail(
   params: SendMemberGuestConsentOutcomeEmailParams,
+  format: ClubFormat,
 ): Promise<EmailSendOutcome> {
   const settings = await loadEmailMessageSettingsForLodge(params.lodgeId);
   const copy = composeMemberGuestConsentOutcome({
@@ -315,7 +317,7 @@ export async function sendMemberGuestConsentOutcomeEmail(
     checkIn: params.checkIn,
     checkOut: params.checkOut,
     outcome: params.outcome,
-  });
+  }, format);
 
   return sendEmail({
     to: params.email,

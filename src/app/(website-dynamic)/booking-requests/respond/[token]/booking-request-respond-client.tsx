@@ -14,8 +14,10 @@ import {
   formatClubDate,
   parseInstant,
   type BoundClubTime,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface QuoteOption {
   id: string;
@@ -24,8 +26,9 @@ interface QuoteOption {
   totalCents: number;
   guestBreakdown: Array<{
     guestIndex: number;
-    firstName: string;
-    lastName: string;
+    kind?: "NAMED" | "PENDING_ADULT";
+    firstName?: string;
+    lastName?: string;
     ageTier: string;
     isMember: boolean;
     nightCount: number;
@@ -49,6 +52,12 @@ interface QuoteContext {
   guestCount: number;
   message: string | null;
   expiresAt: string;
+  accepted: boolean;
+  acceptedQuoteOptionId: string | null;
+  acceptedPriceCents: number | null;
+  declinedAfterAcceptance: boolean;
+  declineReason: string | null;
+  declinedAt: string | null;
   options: QuoteOption[];
 }
 
@@ -73,7 +82,7 @@ type Action = "ACCEPT" | "CANCEL" | "MODIFY" | "QUERY";
  * not the string "Invalid Date", which only `toLocaleDateString` produces — so
  * this fallback is a FIX rather than a preserved behaviour.
  */
-function formatStayDay(value: string): string {
+function formatStayDay(value: string, format: ClubDateFormat): string {
   // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
   // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
   // `TypeError` out of the guard that exists to stop a throw. The premise above
@@ -83,7 +92,7 @@ function formatStayDay(value: string): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
   } catch {
     return value;
   }
@@ -113,6 +122,7 @@ function formatQuoteExpiry(value: string, club: BoundClubTime): string {
 }
 
 export function BookingRequestRespondClient({ token }: { token: string }) {
+  const format = useClubFormat();
   /*
     The quote's `expiresAt` is a real INSTANT, so it has no civil date and time
     until a zone is chosen — the club's PERSISTED one, delivered to this browser
@@ -147,7 +157,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
         } else if (res.ok) {
           setContext(data);
           setContextLoadedAt(Date.now());
-          setSelectedOptionId(data.options?.[0]?.id ?? null);
+          setSelectedOptionId(data.acceptedQuoteOptionId ?? data.options?.[0]?.id ?? null);
           setState("ready");
         } else {
           setError(data.error || "Unable to load this quote.");
@@ -166,6 +176,10 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
   const selectedOption = useMemo(
     () => context?.options.find((option) => option.id === selectedOptionId) ?? null,
     [context, selectedOptionId],
+  );
+  const acceptedOption = useMemo(
+    () => context?.options.find((option) => option.id === context.acceptedQuoteOptionId) ?? null,
+    [context],
   );
 
   const expiresInLabel = useMemo(() => {
@@ -213,7 +227,17 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
         throw new Error(data.error || "Unable to send your response.");
       }
       if (data.outcome === "accepted") {
-        setResult("Quote accepted. We have sent the next steps by email.");
+        const acceptedOptionId = data.acceptedQuoteOptionId ?? selectedOptionId;
+        setSelectedOptionId(acceptedOptionId);
+        setContext((current) => current ? {
+          ...current,
+          accepted: true,
+          acceptedQuoteOptionId: acceptedOptionId,
+          acceptedPriceCents: data.priceCents ?? current.acceptedPriceCents,
+          declinedAfterAcceptance: false,
+          declineReason: null,
+          declinedAt: null,
+        } : current);
       } else if (data.outcome === "cancelled") {
         setResult("Quote cancelled. We have let the booking team know.");
       } else if (data.outcome === "modification_requested") {
@@ -267,6 +291,24 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="font-medium">{result}</p>
           </div>
+        ) : context.accepted ? (
+          <>
+            <div className="flex gap-3 text-success-11">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : "Your quote has been accepted."}</p>
+                <p className="text-sm text-muted-foreground">{context.declinedAfterAcceptance ? context.declineReason || "Please contact the club if you would like to discuss other dates." : "The booking team will review it before confirming your stay. Your places remain held while they review it."}</p>
+                {context.declinedAfterAcceptance && context.declinedAt ? (
+                  <p className="text-sm text-muted-foreground">Declined {formatQuoteExpiry(context.declinedAt, clubTime)}</p>
+                ) : null}
+              </div>
+            </div>
+            <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">
+              <p><span className="text-muted-foreground">Dates:</span> {formatStayDay(context.checkIn, format)} to {formatStayDay(context.checkOut, format)}</p>
+              <p><span className="text-muted-foreground">Guests:</span> {context.guestCount}</p>
+              <p><span className="text-muted-foreground">Accepted total:</span> {acceptedOption ? formatCents(acceptedOption.totalCents, format) : context.acceptedPriceCents !== null ? formatCents(context.acceptedPriceCents, format) : "Recorded"}</p>
+            </div>
+          </>
         ) : (
           <>
             <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">
@@ -284,8 +326,8 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               ) : null}
               <p>
                 <span className="text-muted-foreground">Dates:</span>{" "}
-                {formatStayDay(context.checkIn)} to{" "}
-                {formatStayDay(context.checkOut)}
+                {formatStayDay(context.checkIn, format)} to{" "}
+                {formatStayDay(context.checkOut, format)}
               </p>
               <p>
                 <span className="text-muted-foreground">Guests:</span>{" "}
@@ -329,13 +371,15 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="font-medium">{option.label}</p>
-                        <Badge variant="secondary">{formatCents(option.totalCents)}</Badge>
+                        <Badge variant="secondary">{formatCents(option.totalCents, format)}</Badge>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1">
                         {option.guestBreakdown.map((guest) => (
                           <Badge key={guest.guestIndex} variant="outline">
-                            {guest.firstName} {guest.lastName}:{" "}
-                            {formatCents(guest.totalCents)}
+                            {guest.kind === "PENDING_ADULT"
+                              ? "Adult name pending"
+                              : `${guest.firstName} ${guest.lastName}`}:{" "}
+                            {formatCents(guest.totalCents, format)}
                           </Badge>
                         ))}
                       </div>

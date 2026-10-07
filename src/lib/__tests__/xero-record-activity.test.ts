@@ -71,6 +71,7 @@ vi.mock("@/lib/xero-operation-retry", () => ({
 }));
 
 import { getXeroRecordActivity } from "@/lib/xero-record-activity";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("getXeroRecordActivity", () => {
   beforeEach(() => {
@@ -156,7 +157,7 @@ describe("getXeroRecordActivity", () => {
       },
     ]);
 
-    const result = await getXeroRecordActivity("Booking", "book_1", 25);
+    const result = await getXeroRecordActivity("Booking", "book_1", CLUB_FORMAT_TEST, 25);
 
     expect(result).not.toBeNull();
     expect(result?.scopeRecords).toEqual(
@@ -239,7 +240,7 @@ describe("getXeroRecordActivity", () => {
     });
     mocks.findManyOperations.mockResolvedValue([]);
 
-    const result = await getXeroRecordActivity("ManualRefundTask", "task_2", 10);
+    const result = await getXeroRecordActivity("ManualRefundTask", "task_2", CLUB_FORMAT_TEST, 10);
 
     expect(result).not.toBeNull();
     // The SCOPE is the task alone, so the page shows this ask's own operations
@@ -275,7 +276,7 @@ describe("getXeroRecordActivity", () => {
     });
     mocks.findManyOperations.mockResolvedValue([]);
 
-    const result = await getXeroRecordActivity("Member", "mem_1", 10);
+    const result = await getXeroRecordActivity("Member", "mem_1", CLUB_FORMAT_TEST, 10);
 
     expect(result).not.toBeNull();
     expect(result?.scopeRecords).toEqual(

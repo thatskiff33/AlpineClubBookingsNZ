@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
+import { MemberDietaryRequirementsField } from "@/components/member-dietary-requirements-field";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
@@ -51,6 +52,8 @@ interface ProfileFormProps {
     postalPostalCode: string;
     postalCountry: string;
     occupation?: string;
+    /** Present only while the club has the dietary field ON (#2941). */
+    dietaryRequirements?: string;
     lodgeScreenPhoneOptIn?: boolean;
   };
   editable?: boolean;
@@ -62,6 +65,7 @@ interface ProfileFormProps {
   submitLabel?: string;
   ageTier?: string;
   showOccupation?: boolean;
+  showDietaryRequirements?: boolean;
 }
 
 export function ProfileForm({
@@ -75,6 +79,7 @@ export function ProfileForm({
   submitLabel = "Save Changes",
   ageTier,
   showOccupation = false,
+  showDietaryRequirements = false,
 }: ProfileFormProps) {
   const router = useRouter();
   /*
@@ -115,6 +120,11 @@ export function ProfileForm({
     occupation: member.occupation ?? "",
     lodgeScreenPhoneOptIn: member.lodgeScreenPhoneOptIn ?? false,
   });
+  // Kept outside `form` so the request body carries the key ONLY while the
+  // club has the field ON (#2941); the server ignores it while OFF regardless.
+  const [dietaryRequirements, setDietaryRequirements] = useState(
+    member.dietaryRequirements ?? "",
+  );
   const [sameAsPhysical, setSameAsPhysical] = useState(() =>
     shouldDefaultPostalSameAsPhysical({
       streetAddressLine1: member.streetAddressLine1,
@@ -160,6 +170,7 @@ export function ProfileForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
+          ...(showDietaryRequirements ? { dietaryRequirements } : {}),
           postalSameAsPhysical: sameAsPhysical,
         }),
       });
@@ -331,6 +342,21 @@ export function ProfileForm({
             Optional. Your occupation for club records.
           </p>
         </div>
+      ) : null}
+
+      {showDietaryRequirements ? (
+        <MemberDietaryRequirementsField
+          id="dietaryRequirements"
+          audience="self"
+          className={readOnlyInputClassName}
+          disabled={saving}
+          readOnly={readOnly}
+          value={dietaryRequirements}
+          onChange={(value) => {
+            if (readOnly) return;
+            setDietaryRequirements(value);
+          }}
+        />
       ) : null}
 
       <MemberAddressFields

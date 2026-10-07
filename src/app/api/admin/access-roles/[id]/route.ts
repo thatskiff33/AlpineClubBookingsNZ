@@ -55,7 +55,7 @@ export async function PATCH(
   // Role definitions grant permissions, so managing them is Full-Admin-only
   // — the area-based route requirement cannot express this, and a custom
   // role could otherwise widen itself.
-  if (!isFullAdmin({ accessRoles: session.user.accessRoles })) {
+  if (!isFullAdmin(session.user)) {
     return fullAdminOnlyResponse();
   }
 
@@ -159,7 +159,7 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  if (!isFullAdmin({ accessRoles: session.user.accessRoles })) {
+  if (!isFullAdmin(session.user)) {
     return fullAdminOnlyResponse();
   }
 

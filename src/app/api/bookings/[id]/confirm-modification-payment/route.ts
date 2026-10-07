@@ -11,12 +11,13 @@ import {
   findPaymentTransactionByIntentId,
   markPaymentIntentTransactionSucceeded,
 } from "@/lib/payment-transactions";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import {
-  kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
-} from "@/lib/xero-operation-outbox";
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
+} from "@/lib/xero-supplementary-invoice-late-capture";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -86,12 +87,8 @@ export async function POST(
       return NextResponse.json({ error: "Payment transaction not found" }, { status: 404 });
     }
 
-    if (
-      paymentTransaction.status === "SUCCEEDED" ||
-      paymentTransaction.status === "PARTIALLY_REFUNDED" ||
-      paymentTransaction.status === "REFUNDED"
-    ) {
-      const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    if (isCapturedTransactionStatus(paymentTransaction.status)) {
+      const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
         paymentIntentId
       );
       if (released.released > 0) {
@@ -200,7 +197,7 @@ export async function POST(
       );
     }
 
-    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       pi.id
     );
     if (released.released > 0) {

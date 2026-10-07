@@ -22,7 +22,7 @@ import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
-import { APP_LOCALE } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   formatStayDateOrNull,
@@ -32,6 +32,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
+import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 
 /**
  * A redemption's "Redeemed" stamp — a real INSTANT, read in the club's
@@ -153,8 +154,15 @@ interface PromoSummary {
 // The truncation notice asks an operator to compare two five-figure counts, so
 // they are grouped the way the rest of the site groups numbers (and the way the
 // operator guide states the cap): "10,000 of 12,345", not "10000 of 12345".
-function formatCount(value: number): string {
-  return value.toLocaleString(APP_LOCALE);
+//
+// The locale is the club's RECORDED one, not the build's (#3564;
+// INV-CONFIG-006). It was the build-time constant, which is `undefined` in the
+// published image, so a club whose numbers group `12 345` or `12.345` was shown
+// `12,345` here. It is a parameter rather than a hook read because this is a
+// plain helper outside any component; the locale comes first so a transposed
+// call cannot type-check.
+function formatCount(locale: string, value: number): string {
+  return value.toLocaleString(locale);
 }
 
 // A downloaded file outlives the on-screen notice, so a capped export (#2244)
@@ -223,6 +231,8 @@ export function PromoRedemptionsPanel({
   onBack: () => void;
 }) {
   const clubTime = useClubTime();
+  const format = useClubFormat();
+  const { locale } = format;
   const { lodges } = useLodgeOptions("admin");
   const multiLodge = lodges.length > 1;
 
@@ -452,14 +462,14 @@ export function PromoRedemptionsPanel({
         {exportTruncation ? (
           <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
             <p className="font-medium">
-              Incomplete export: {formatCount(exportTruncation.rowCount)} of{" "}
-              {formatCount(exportTruncation.matchedRowCount)} matching
+              Incomplete export: {formatCount(locale, exportTruncation.rowCount)} of{" "}
+              {formatCount(locale, exportTruncation.matchedRowCount)} matching
               redemptions
             </p>
             <p className="mt-1">
-              A single export is capped at {formatCount(exportTruncation.limit)}{" "}
+              A single export is capped at {formatCount(locale, exportTruncation.limit)}{" "}
               rows, so the downloaded file holds only the{" "}
-              {formatCount(exportTruncation.rowCount)} most recent. Do not
+              {formatCount(locale, exportTruncation.rowCount)} most recent. Do not
               reconcile discounts from it as though it were complete — narrow
               the redeemed-date range (or the lodge) and export each window
               separately to cover every row.
@@ -496,10 +506,10 @@ export function PromoRedemptionsPanel({
         />
         <StatTile
           title="Total discounted"
-          value={formatCents(totals?.filtered.discountCents ?? 0)}
+          value={formatCents(totals?.filtered.discountCents ?? 0, format)}
           subtitle={
             filterActive
-              ? `${formatCents(totals?.all.discountCents ?? 0)} all-time`
+              ? `${formatCents(totals?.all.discountCents ?? 0, format)} all-time`
               : "Sum of discounts applied"
           }
         />
@@ -702,7 +712,7 @@ export function PromoRedemptionsPanel({
                       </TableCell>
                       <TableCell>
                         <Link
-                          href={`/admin/bookings/${row.booking.id}`}
+                          href={buildBookingDetailPath(row.booking.id)}
                           className="font-mono text-sm text-primary hover:underline"
                         >
                           {row.booking.reference}
@@ -710,22 +720,22 @@ export function PromoRedemptionsPanel({
                       </TableCell>
                       <TableCell>{row.booking.lodgeName}</TableCell>
                       <TableCell>
-                        <div>{formatStayDateOrNull(row.booking.checkIn) ?? row.booking.checkIn}</div>
+                        <div>{formatStayDateOrNull(row.booking.checkIn, format) ?? row.booking.checkIn}</div>
                         <div className="text-xs text-muted-foreground">
-                          to {formatStayDateOrNull(row.booking.checkOut) ?? row.booking.checkOut} ·{" "}
+                          to {formatStayDateOrNull(row.booking.checkOut, format) ?? row.booking.checkOut} ·{" "}
                           {row.booking.nights} night
                           {row.booking.nights === 1 ? "" : "s"}
                         </div>
                       </TableCell>
                       <TableCell>{row.eligibleGuestCount ?? "-"}</TableCell>
                       <TableCell>
-                        {formatCents(row.discountCents)}
+                        {formatCents(row.discountCents, format)}
                         {/* A fixed nightly price ABOVE the guest's normal rate
                             raises the price: a real use with no discount, so
                             it must not be mistaken for a benefit-free row. */}
                         {row.priceAdjustmentCents > 0 ? (
                           <div className="text-xs text-muted-foreground">
-                            +{formatCents(row.priceAdjustmentCents)} price
+                            +{formatCents(row.priceAdjustmentCents, format)} price
                           </div>
                         ) : null}
                       </TableCell>
@@ -749,7 +759,7 @@ export function PromoRedemptionsPanel({
                                     {allocation.name}
                                   </span>
                                   <span className="text-muted-foreground">
-                                    {formatCents(allocation.discountCents)}
+                                    {formatCents(allocation.discountCents, format)}
                                     {allocation.freeNightsUsed > 0
                                       ? ` · ${allocation.freeNightsUsed} free night${
                                           allocation.freeNightsUsed === 1 ? "" : "s"

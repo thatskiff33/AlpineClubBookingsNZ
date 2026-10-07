@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -12,6 +13,7 @@ import {
   planStrandNightPriceReconcile,
   recordStrandNightPriceReconcile,
 } from "@/lib/stored-night-price-strand-reconcile";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * #3214 (epic #2797): an officer records what one guest strand's nights sold
@@ -105,6 +107,9 @@ export async function POST(
     );
   }
 
+  // The club's format (#3565), resolved once per request, before the transaction.
+  const format = await clubFormatValues();
+
   try {
     /*
       ONE TRANSACTION: plan, write, audit. The plan's re-reads have to see the
@@ -115,6 +120,7 @@ export async function POST(
     */
     await prisma.$transaction(async (tx) => {
       const plan = await planStrandNightPriceReconcile({
+        format,
         bookingId: id,
         bookingGuestId: parsed.data.bookingGuestId,
         entries: parsed.data.nightPrices,
@@ -144,7 +150,7 @@ export async function POST(
     );
   }
 
-  revalidatePath("/bookings/[id]", "page");
+  revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
   return NextResponse.json({
     message:
       "Recorded what those nights sold for. What the stay is worth is unchanged.",

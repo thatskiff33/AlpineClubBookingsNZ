@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { NextRequest } from "next/server";
 
 // --- Mocks ---
@@ -29,6 +30,13 @@ const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
 
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => {
@@ -77,8 +85,7 @@ vi.mock("@/lib/prisma", () => ({
     member: { count: mockMemberCount, findUnique: mockFindUnique, findMany: mockFindMany },
     familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
-    // #1982: default lodge capacity is a self-healed DB override (the route's
-    // getDefaultLodgeCapacity guest-count guard reads it off the singleton).
+    // #1982: a lodge's capacity is a self-healed DB override.
     lodgeSettings: { findUnique: async () => ({ capacity: 29 }) },
   },
 }));
@@ -209,6 +216,7 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { BookingModifyReviewJustificationRequiredError } from "@/lib/booking-modify-validation";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedModifyBatch = vi.mocked(modifyBookingBatch);
 
@@ -850,6 +858,18 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     const body = await res.json();
     expect(body.priceDiffCents).toBe(20000); // 30000 - 10000
     expect(body.changeFeeCents).toBe(0);
+    // #3582: the same edit, per night, on the booking ledger, anchored on the
+    // history row it just wrote and inside its transaction.
+    expect(vi.mocked(postModificationLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: tx,
+        bookingId: "bk1",
+        // The written row itself, so its own figures are the ledger's (#3740 SSOT F5).
+        bookingModification: await vi.mocked(tx.bookingModification.create).mock.results[0]!.value,
+        site: "date-change",
+        sides: expect.objectContaining({ before: expect.any(Object), after: expect.any(Object) }),
+      }),
+    );
   });
 
   it("writes the moved range's night rows at the amounts it priced (#3031)", async () => {
@@ -1606,7 +1626,13 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 400 when the add-guests request exceeds lodge capacity in one payload", async () => {
+    // #3407 review: the refusal comes from the booking's OWN lodge, inside the
+    // transaction under its capacity lock. The payload pre-check that used to
+    // answer this before the booking was loaded measured the DEFAULT lodge and
+    // is gone; this pins that the real rule still refuses and writes nothing.
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const tx = makeTx(makeBooking());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
     const guests = Array.from({ length: 30 }, (_, index) => ({
       firstName: `Guest${index}`,
       lastName: "Overflow",
@@ -1622,9 +1648,9 @@ describe("POST /api/bookings/[id]/guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect(body.error).toBe("Invalid input");
-    expect(body.details.fieldErrors.guests?.[0]).toBeDefined();
-    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(body.error).toBe("A booking cannot exceed 29 guests");
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
   });
 
   it("returns 404 for nonexistent booking", async () => {
@@ -2275,6 +2301,14 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       expect.objectContaining({
         data: expect.objectContaining({ modificationType: "GUEST_REMOVE" }),
       })
+    );
+    // #3582: the removal's own lines, per night, inside its transaction.
+    expect(vi.mocked(postModificationLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: tx,
+        bookingModification: await vi.mocked(tx.bookingModification.create).mock.results[0]!.value,
+        site: "guest-removal",
+      }),
     );
 
     await Promise.resolve();
@@ -3012,6 +3046,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         additionalAmountCents: 2000,
         additionalPaymentMethod: "STRIPE",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3050,6 +3085,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         additionalAmountCents: 2000,
         additionalPaymentMethod: "STRIPE",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3116,6 +3152,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         additionalAmountCents: 2000,
         additionalPaymentMethod: "INTERNET_BANKING",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 });
@@ -3142,7 +3179,8 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+      appliedCreditGivenBackCents: 0,
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
     expect(html).toContain("Dates Changed");
@@ -3169,7 +3207,8 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+      appliedCreditGivenBackCents: 0,
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
     expect(html).toContain("New Guests");
@@ -3195,7 +3234,8 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+      appliedCreditGivenBackCents: 0,
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
     expect(html).toContain("$50.00");
@@ -3220,7 +3260,8 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+      appliedCreditGivenBackCents: 0,
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
     expect(html).toContain("additional payment");
@@ -3248,7 +3289,8 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+      appliedCreditGivenBackCents: 0,
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("additional Internet Banking payment");
     expect(html).toContain("INV-1001");
@@ -3275,7 +3317,8 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+      appliedCreditGivenBackCents: 0,
+    }, CLUB_FORMAT_TEST);
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
   });

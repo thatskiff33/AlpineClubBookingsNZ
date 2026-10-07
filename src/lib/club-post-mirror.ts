@@ -473,7 +473,7 @@ export async function runMirrorSync(
     };
   }
 
-  // The version check, BEFORE the claim (#49, `INV-INT-025`): every call this
+  // The version check, BEFORE the claim (#49, `INV-INT-026`): every call this
   // pass would make - registerPushTarget, pullSharedPostSync,
   // fetchSharedPostImage - goes through the gate in resolveConnection, so a
   // mismatch would refuse the first of them anyway; asking here is what keeps

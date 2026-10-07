@@ -2,6 +2,10 @@
 
 # dependencies
 /node_modules
+# This repository installs with pnpm (#3673); an npm lockfile is always a
+# mistake, so it can never be committed by accident. CI also refuses one.
+/package-lock.json
+/npm-shrinkwrap.json
 /.pnp
 .pnp.*
 .yarn/*
@@ -21,7 +25,7 @@
 /out/
 
 # Generated build artifacts (AID-3 deployed-code knowledge bundle, #2372).
-# Regenerated deterministically pre-build by `npm run diagnostics:bundle`; never
+# Regenerated deterministically pre-build by `pnpm run diagnostics:bundle`; never
 # committed (a source-excerpt bundle would conflict on every source PR).
 /.artifacts/
 
@@ -31,7 +35,11 @@
 # misc
 .DS_Store
 *.pem
-.claude/
+# Claude Code local state is ignored at any depth; only the repository's
+# shared subagent roles (.claude/agents/ at the root) are tracked.
+*/**/.claude/
+.claude/*
+!.claude/agents/
 
 # debug
 npm-debug.log*

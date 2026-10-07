@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
-import { isFullAdmin } from "@/lib/access-roles";
+import { useFullAdminEditAccess } from "@/hooks/use-admin-area-edit-access";
 
 /**
  * Derives the Stripe setup wizard's server truth (#2082) — the `context` the
@@ -78,16 +77,11 @@ export function useStripeWizardContext(serverConfig: StripeWizardServerConfig): 
   loading: boolean;
   refresh: () => void;
 } {
-  const { data: session, status: sessionStatus } = useSession();
   // Tri-state: `undefined` until the session resolves (#2324). Reading an
   // unresolved session as `false` made every step's Full-Admin notice appear
-  // and then vanish for an actual Full Admin.
-  const isFull =
-    sessionStatus === "loading"
-      ? undefined
-      : session
-        ? isFullAdmin({ accessRoles: session.user?.accessRoles ?? [] })
-        : false;
+  // and then vanish for an actual Full Admin. The shared hook is the one home
+  // for that reading (#3596); it answers `false` for a signed-out session too.
+  const isFull = useFullAdminEditAccess();
 
   const [loading, setLoading] = useState(true);
   const [credentials, setCredentials] = useState<

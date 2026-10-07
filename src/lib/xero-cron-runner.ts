@@ -4,6 +4,7 @@ import {
   type CronJobRunStatus,
   type RecordCronJobRunInput,
 } from "@/lib/cron-job-run";
+import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import logger from "@/lib/logger";
 import { isXeroDailyMembershipRefreshEnabled } from "@/lib/xero-feature-flags";
 import {
@@ -20,6 +21,7 @@ import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const XERO_CRON_TASKS = [
   "memberships",
@@ -167,25 +169,15 @@ async function runRecordedXeroTask<T>({
   work: () => Promise<T> | T;
   recordCronRun: (input: RecordCronJobRunInput) => Promise<void> | void;
 }): Promise<T> {
-  const startedAt = new Date();
-  try {
-    const result = await work();
-    await recordCronRun({
-      jobName: XERO_CRON_JOB_NAMES[task],
-      startedAt,
-      status: cronStatusForResult(result),
-      resultSummary: resultSummaryFor(result),
-    });
-    return result;
-  } catch (error) {
-    await recordCronRun({
-      jobName: XERO_CRON_JOB_NAMES[task],
-      startedAt,
-      status: "FAILURE",
-      error: toErrorMessage(error),
-    });
-    throw error;
-  }
+  const outcome = await runRecordedCronTask({
+    jobName: XERO_CRON_JOB_NAMES[task],
+    work,
+    recordCronRun,
+    statusFor: cronStatusForResult,
+    summaryFor: resultSummaryFor,
+  });
+  if (!outcome.ok) throw outcome.error;
+  return outcome.result;
 }
 
 function emptyPayload(task: string, connected = false): XeroCronRunnerPayload {
@@ -260,6 +252,10 @@ export async function runXeroCronTaskList(
     } as XeroCronRunnerPayload & { skipped: true; reason: string };
   }
 
+  // The club's format (#3565), resolved once per run and passed to the three
+  // tasks that render money — the retry worker, the reconciliation report and
+  // the credit-sync check — never per row.
+  const format = await clubFormatValues();
   const connected = await isConnected();
   payload.connected = connected;
 
@@ -298,7 +294,7 @@ export async function runXeroCronTaskList(
           work: async () =>
             connected
               ? await (taskDependencies.processQueuedXeroOperationRetries ??
-                  processQueuedXeroOperationRetries)()
+                  processQueuedXeroOperationRetries)(undefined, format)
               : { skipped: true, reason: "Xero not connected" },
         });
       } else if (task === "inbound") {
@@ -331,9 +327,9 @@ export async function runXeroCronTaskList(
         payload.reconciliationReport = await runRecordedXeroTask({
           task,
           recordCronRun,
-          work:
-            taskDependencies.sendXeroReconciliationReport ??
-            sendXeroReconciliationReport,
+          work: () =>
+            (taskDependencies.sendXeroReconciliationReport ??
+              sendXeroReconciliationReport)(format),
         });
       } else {
         // credit-sync (#2501): reconcile stamped applied credit against Xero's
@@ -346,7 +342,7 @@ export async function runXeroCronTaskList(
           work: async () =>
             connected
               ? await (taskDependencies.reconcileXeroCreditSync ??
-                  reconcileXeroCreditSync)()
+                  reconcileXeroCreditSync)(format)
               : { skipped: true, reason: "Xero not connected" },
         });
       }

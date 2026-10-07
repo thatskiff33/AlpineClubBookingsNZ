@@ -22,6 +22,7 @@ import {
 } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -1639,6 +1640,7 @@ describe("bed-allocation removal race DB safety guard (#2594)", () => {
             ACTOR_ID,
             "ADMIN",
             "127.0.0.1",
+            CLUB_FORMAT_TEST,
             "card",
             {
               suppressCustomerNotification: true,
@@ -1687,6 +1689,7 @@ describe("bed-allocation removal race DB safety guard (#2594)", () => {
             ACTOR_ID,
             "ADMIN",
             "127.0.0.1",
+            CLUB_FORMAT_TEST,
             "card",
             {
               suppressCustomerNotification: true,

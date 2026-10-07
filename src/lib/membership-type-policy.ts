@@ -14,7 +14,7 @@ import {
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_STATUS,
   MEMBER_GUEST_NOT_ADDABLE_CODE,
 } from "@/lib/member-guest-refusal";
-import { BUILT_IN_MEMBERSHIP_TYPES, defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
+import { BUILT_IN_MEMBERSHIP_TYPES, defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   peekSubscriptionLockoutMode,
@@ -343,7 +343,7 @@ export async function resolveMembershipTypePoliciesForMembers(
   ];
   const fallbackTypes = fallbackKeys.length > 0
     ? await db.membershipType.findMany({
-        where: { key: { in: fallbackKeys } },
+        where: storedRoleDefaultMembershipTypeWhere(fallbackKeys),
         select: {
           id: true,
           key: true,
@@ -432,6 +432,12 @@ function buildMembershipTypeBookingPolicyMessage(
   // losing that actionable sentence while a cross-family guest is in the party.
   // That is rare, recoverable (remove the guest and the detailed message
   // returns), and much cheaper than the alternative.
+  //
+  // NOT ON THE CREATE ROUTE (owner decision, issue #3770 comment 5946598639, `INV-GUEST-020`):
+  // `POST /api/bookings` asks the policy about the booker and their family
+  // BEFORE it resolves any beyond-family member, so there a family block is
+  // answered first and in full, and only a block on the stranger reaches this
+  // collapse.
   if (blocks.some((block) => block.crossFamily)) {
     return MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE;
   }

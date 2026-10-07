@@ -425,6 +425,14 @@ describe("#2550 never blocks a stay", () => {
      * confirmation or roster decision passes through it.
      */
     "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
+    /*
+     * #3029 S2: the booking dietary write half asks whether a renamed guest is
+     * the same person, and a generated placeholder being NAMED is — so an
+     * officer's note on "School Child 3" survives the child being named. It
+     * decides only whether a dietary note is kept; no stay, check-in,
+     * confirmation or roster decision passes through it.
+     */
+    "src/lib/member-dietary-booking-writes.ts",
   ]);
 
   function walk(dir: string, files: string[] = []): string[] {

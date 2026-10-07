@@ -65,6 +65,7 @@ import {
   getTodayDateOnly,
 } from "@/lib/date-only";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -304,6 +305,7 @@ describe("modifyBookingBatch (issue #1697)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "b1",
         actor,
@@ -327,6 +329,7 @@ describe("modifyBookingBatch (issue #1697)", () => {
   it("rejects shift mode before the guard is ever consulted (shift never reaches recalculate machinery)", async () => {
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "b1",
         actor,
@@ -348,6 +351,7 @@ describe("modifyBookingBatch (issue #1697)", () => {
   it("never consults the OVERRIDE guard for a standard (non-override) edit", async () => {
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "b1",
         actor,
@@ -365,6 +369,7 @@ describe("modifyBookingBatch ordinary-edit narrow guard (issue #1729)", () => {
     h.bookingFindUnique.mockResolvedValue(guardedLightBooking());
 
     const error = await modifyBookingBatch({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "b1",
       actor: memberActor,
@@ -389,6 +394,7 @@ describe("modifyBookingBatch ordinary-edit narrow guard (issue #1729)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "b1",
         actor: memberActor,
@@ -403,6 +409,7 @@ describe("modifyBookingBatch ordinary-edit narrow guard (issue #1729)", () => {
   it("never reads the booking for an identity-only edit (guest name fixes stay unguarded)", async () => {
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "b1",
         actor: memberActor,
@@ -426,6 +433,7 @@ describe("modifyBookingBatch ordinary-edit narrow guard (issue #1729)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "b1",
         actor: memberActor,

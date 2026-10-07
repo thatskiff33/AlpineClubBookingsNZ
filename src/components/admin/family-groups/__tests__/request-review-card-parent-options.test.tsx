@@ -3,6 +3,7 @@
 // Testing Library directly rather than the club-time harness, for the reason
 // `request-review-card-age.test.tsx` states: the card takes its binding as a
 // prop and consumes no provider (CT-4, #2870).
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
@@ -29,7 +30,7 @@ import type {
 afterEach(cleanup);
 
 /** The harness default zone; the option list this file asserts carries no date. */
-const CLUB_TIME = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE));
+const CLUB_TIME = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE), CLUB_FORMAT_TEST);
 
 const noopHandlers = {
   onSelectMember: vi.fn(),

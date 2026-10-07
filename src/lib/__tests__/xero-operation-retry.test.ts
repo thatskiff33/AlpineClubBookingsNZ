@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueBooking: vi.fn(),
   findFirstPaymentTransaction: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
+  failXeroSyncOperation: vi.fn(),
   buildXeroContactUpdatePayload: vi.fn(),
   shouldRepairXeroContactNameOrder: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
@@ -28,7 +29,9 @@ const mocks = vi.hoisted(() => ({
   createUnappliedXeroCreditNote: vi.fn(),
   createUnappliedXeroCreditNoteForModification: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
-  createXeroRefundPaymentForInvoice: vi.fn(),
+  findManyXeroObjectLink: vi.fn().mockResolvedValue([]),
+  // #3548: the one read-back-then-settle the repair leg hands a note to.
+  finishRefundCreditNoteSettlement: vi.fn().mockResolvedValue({ refundPaymentErr: null }),
   allocateCreditNoteToInvoice: vi.fn(),
   checkMembershipStatus: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
@@ -57,6 +60,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
+    },
+    // #3535: a PARTIAL clearing note's repair skips targets already allocated.
+    xeroObjectLink: {
+      findMany: mocks.findManyXeroObjectLink,
     },
   },
 }));
@@ -88,7 +95,7 @@ vi.mock("@/lib/xero", () => ({
   createUnappliedXeroCreditNoteForModification:
     mocks.createUnappliedXeroCreditNoteForModification,
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
-  createXeroRefundPaymentForInvoice: mocks.createXeroRefundPaymentForInvoice,
+  finishRefundCreditNoteSettlement: mocks.finishRefundCreditNoteSettlement,
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
   checkMembershipStatus: mocks.checkMembershipStatus,
 }));
@@ -110,20 +117,26 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
   return {
     ...actual,
     completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+    failXeroSyncOperation: mocks.failXeroSyncOperation,
   };
 });
 
 import {
   getXeroOperationRetryMeta,
+  retryAbandonedItsClaim,
   retryXeroSyncOperation,
+  XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
+import { RESOLVED_IN_XERO_RETRY_REASON } from "@/lib/xero-operation-resolution";
 import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -139,9 +152,105 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     responsePayload: null,
     xeroObjectId: null,
     xeroObjectNumber: null,
+    manuallyResolvedAt: null,
     ...overrides,
   };
 }
+
+const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
+
+describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ["a failed booking invoice", {}],
+    ["a failed booking invoice update", { operationType: "UPDATE" }],
+    [
+      "a failed group settlement invoice",
+      {
+        localModel: "GroupBookingSettlement",
+        localId: "settlement_1",
+        queueType: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+      },
+    ],
+  ])("refuses %s the officer resolved, whatever else would allow it", (_label, overrides) => {
+    const live = makeOperation(overrides);
+    // The control: the same row unresolved is retryable, so only the mark
+    // can be what refuses it.
+    expect(getXeroOperationRetryMeta(live).supported).toBe(true);
+    expect(getXeroOperationRetryMeta({ ...live, manuallyResolvedAt: RESOLVED_AT })).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+  });
+
+  it.each([
+    ["allocation", XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE, "ALLOCATE"],
+    ["deallocation", XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE, "UPDATE"],
+  ])(
+    "an applied-credit %s resolved before this release stays retryable, so its fence can converge (#3635 N2)",
+    async (_label, queueType, operationType) => {
+      const resolvedBeforeRelease = makeOperation({
+        entityType: "ALLOCATION",
+        operationType,
+        localModel: "Payment",
+        localId: "pay_1",
+        queueType,
+        requestPayload: { queueType, bookingId: "book_1", paymentId: "pay_1" },
+        manuallyResolvedAt: RESOLVED_AT,
+      });
+      expect(getXeroOperationRetryMeta(resolvedBeforeRelease)).toEqual({
+        supported: true,
+        reason: null,
+      });
+      mocks.findUniqueOperation.mockResolvedValue(resolvedBeforeRelease);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: expect.stringContaining("Queued applied-credit"),
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) })
+      );
+    }
+  );
+
+  it("retryXeroSyncOperation re-reads the row and 409s a resolved one without claiming it or calling Xero", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({ manuallyResolvedAt: RESOLVED_AT }));
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBeInstanceOf(XeroOperationResolvedInXeroError);
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)
+    ).rejects.toMatchObject({ status: 409, message: RESOLVED_IN_XERO_RETRY_REASON });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+
+  it("a resolve landing between the read and the claim makes the claim lose (no mint)", async () => {
+    // The read saw the row unresolved; the claim's `manuallyResolvedAt: null`
+    // guard is what matches nothing once the officer's mark has landed.
+    // First read: unresolved. The re-read after the lost claim: resolved.
+    mocks.findUniqueOperation
+      .mockResolvedValueOnce(makeOperation())
+      .mockResolvedValueOnce({ manuallyResolvedAt: RESOLVED_AT });
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+
+    // The resolved error, not "claimed by another retry", so the drain closes
+    // its queued row CANCELLED rather than FAILED.
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+});
 
 describe("getXeroOperationRetryMeta", () => {
   it("marks failed payment invoice operations as retryable", () => {
@@ -379,6 +488,80 @@ describe("getXeroOperationRetryMeta", () => {
   });
 });
 
+// #3535: a FAILED booking-anchored invoice-clearing note (hold expiry, the
+// never-captured cancel, the repair re-queue) was refused by the retry screen,
+// leaving the unpaid invoice open with no way back.
+describe("booking-anchored clearing note retries (#3535)", () => {
+  const clearingOperation = (requestPayload: Record<string, unknown>, queueType: string | null = "MODIFICATION_CREDIT_NOTE") =>
+    makeOperation({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      queueType,
+      requestPayload,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it("marks a failed clearing note retryable from its queued or its executed payload", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation({
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_7",
+          refundAmountCents: 15000,
+          bookingModificationId: null,
+          clearsUnpaidInvoice: true,
+        })
+      )
+    ).toEqual({ supported: true, reason: null });
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation(
+          { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+          null
+        )
+      )
+    ).toEqual({ supported: true, reason: null });
+  });
+
+  it("refuses a booking-anchored row with no recorded amount", () => {
+    expect(
+      getXeroOperationRetryMeta(clearingOperation({ queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_7" }))
+        .supported
+    ).toBe(false);
+  });
+
+  it("replays the recorded amount and keeps the clearing wording", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      clearingOperation(
+        { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        null
+      )
+    );
+    mocks.createXeroCreditNoteForModification.mockResolvedValue("cn_7");
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero invoice-clearing credit note creation." });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      bookingId: "booking_7",
+      refundAmountCents: 15000,
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      clearsUnpaidInvoice: true,
+      format: CLUB_FORMAT_TEST,
+    });
+    const [params] = mocks.createXeroCreditNoteForModification.mock.calls[0]!;
+    expect(params).not.toHaveProperty("refundMethod");
+  });
+});
+
 describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -436,7 +619,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({ message: "Retried Xero refund credit note creation." });
 
     // Delta mode re-entered: the watermark is threaded through (the value is
@@ -463,7 +646,7 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
       createdByMemberId: "admin_1",
@@ -489,7 +672,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({ message: "Retried Xero refund credit note creation." });
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
@@ -497,6 +680,56 @@ describe("retryXeroSyncOperation", () => {
       repairExistingLink: true,
       watermarkCents: 0,
     });
+  });
+
+  it("MUTATION (#3880 F2): an inline row (no queue type) re-enters delta mode from the watermark its payload recorded", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: null,
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+          allocation: { invoiceId: "inv_1", amount: 30 },
+          refundMethod: "internet-banking",
+          reviewTaskId: "task_review",
+          watermarkCents: 8000,
+          perDelta: true,
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 8000,
+      refundMethod: "internet-banking",
+      reviewTaskId: "task_review",
+    });
+  });
+
+  it("MUTATION (#3880 F2): an inline row with a review task and no recorded watermark is still a delta run", async () => {
+    // Single-note mode would call the cancellation's note this review refund's
+    // cover, or raise a `v1` note that later hides the cancellation's own.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: null,
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+          allocation: { invoiceId: "inv_1", amount: 30 },
+          refundMethod: "internet-banking",
+          reviewTaskId: "task_review",
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, expect.objectContaining({ watermarkCents: 0, reviewTaskId: "task_review" }));
   });
 
   it("replays a queued-shape account-credit note op (#1354)", async () => {
@@ -513,10 +746,10 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({ message: "Retried Xero account-credit note creation." });
 
-    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, {
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
@@ -528,7 +761,7 @@ describe("retryXeroSyncOperation", () => {
     mocks.createXeroInvoiceForBooking.mockResolvedValue("inv_1");
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero booking invoice creation.",
     });
@@ -537,7 +770,12 @@ describe("retryXeroSyncOperation", () => {
     // fence (RUNNING is in its in-flight set) for the whole execution, and the
     // threaded syncOperationId means completion lands on THIS row.
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      // #3635: a resolve landing after the read makes the claim lose.
+      where: {
+        id: "op_123",
+        status: { in: ["FAILED", "PARTIAL"] },
+        manuallyResolvedAt: null,
+      },
       data: { status: "RUNNING", startedAt: expect.any(Date) },
     });
     expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("book_123", {
@@ -557,12 +795,80 @@ describe("retryXeroSyncOperation", () => {
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toMatchObject({
       status: 409,
       message: expect.stringContaining("already claimed"),
     });
     expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+
+  it("returns the claimed original to FAILED when the invoice handler throws before it owns completion (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    const refusal = new Error("Matched Xero contact is already linked to another member");
+    // The clock moves while the handler runs, as it does in production: the
+    // frozen clock would otherwise make a fresh `new Date()` at abandon time
+    // indistinguishable from the claim's own stamp.
+    mocks.createXeroInvoiceForBooking.mockImplementation(async () => {
+      vi.setSystemTime(new Date(Date.now() + 1_000));
+      throw refusal;
+    });
+    mocks.failXeroSyncOperation.mockResolvedValue({ id: "op_123", status: "FAILED" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBe(refusal);
+
+    // The abandon is guarded on THIS claim: still RUNNING, still the instant
+    // the claim stamped - so a row the handler already completed stays put.
+    const claimData = mocks.updateManyOperation.mock.calls[0][0].data;
+    expect(claimData.status).toBe("RUNNING");
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+    const [abandonedId, abandonedError, , abandonOptions] =
+      mocks.failXeroSyncOperation.mock.calls[0];
+    expect(abandonedId).toBe("op_123");
+    expect(abandonedError).toBe(refusal);
+    expect(abandonOptions).toEqual({ onlyIfRunningSince: claimData.startedAt });
+    expect(abandonOptions.onlyIfRunningSince).toBe(claimData.startedAt);
+    expect(abandonOptions.onlyIfRunningSince.getTime()).toBeLessThan(Date.now());
+    // ...and the REQUEUE drain may say the original is back to FAILED.
+    expect(retryAbandonedItsClaim(refusal)).toBe(true);
+  });
+
+  it("does not report an abandon that matched nothing (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    const refusal = new Error("Handler closed the row itself, then threw");
+    mocks.createXeroInvoiceForBooking.mockRejectedValue(refusal);
+    // The guarded abandon found the row no longer this RUNNING claim.
+    mocks.failXeroSyncOperation.mockResolvedValue(null);
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBe(refusal);
+    expect(retryAbandonedItsClaim(refusal)).toBe(false);
+  });
+
+  it("still reports the handler's own error when the abandon write itself fails (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    const refusal = new Error("Missing hut fees account code");
+    mocks.createXeroInvoiceForBooking.mockRejectedValue(refusal);
+    mocks.failXeroSyncOperation.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBe(refusal);
+  });
+
+  it("does not abandon anything when the invoice handler completes (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.createXeroInvoiceForBooking.mockResolvedValue("inv_1");
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("reports the manual mark-paid abandon honestly instead of a false 'Retried' success (#2262 H3)", async () => {
@@ -573,7 +879,7 @@ describe("retryXeroSyncOperation", () => {
     mocks.createXeroInvoiceForBooking.mockResolvedValue(null);
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: expect.stringContaining("No invoice was created"),
     });
@@ -588,7 +894,7 @@ describe("retryXeroSyncOperation", () => {
     mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero booking invoice update.",
     });
@@ -608,7 +914,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero joining fee invoice creation.",
     });
@@ -665,7 +971,7 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.updateXeroContact).toHaveBeenCalledWith(
       "xero_contact_1",
@@ -734,7 +1040,7 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.updateXeroContact).toHaveBeenCalledWith(
       "xero_contact_current",
@@ -773,7 +1079,7 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.updateXeroContact).toHaveBeenCalledWith(
       "xero_contact_1",
@@ -814,7 +1120,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" }),
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" }),
     ).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining("do not replay the stored contact payload"),
@@ -838,7 +1144,7 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_123", 1234, {
       createdByMemberId: "admin_1",
@@ -864,12 +1170,12 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero account-credit note creation.",
     });
 
-    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_123", 2345, {
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_123", 2345, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
@@ -890,9 +1196,10 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 500,
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       priceDiffCents: 2500,
       changeFeeCents: 500,
@@ -950,13 +1257,14 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message:
         "Retried the second Xero supplementary invoice for a settled booking-review share.",
     });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       // THE SHARE, NEVER THE TOTAL, on the replay as on the original.
       priceDiffCents: 3000,
@@ -996,7 +1304,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toThrow(/cannot be replayed from this screen/);
     expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
   });
@@ -1026,7 +1334,7 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 1000,
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1066,7 +1374,7 @@ describe("retryXeroSyncOperation", () => {
       createdAt: new Date("2026-07-01T00:00:00Z"),
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
       expect.objectContaining({ recordPayment: false })
@@ -1095,7 +1403,7 @@ describe("retryXeroSyncOperation", () => {
       createdAt: new Date("2026-07-01T00:00:00Z"),
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
       expect.objectContaining({ recordPayment: true })
@@ -1127,7 +1435,7 @@ describe("retryXeroSyncOperation", () => {
     });
     mocks.findFirstPaymentTransaction.mockResolvedValue(null);
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1165,7 +1473,7 @@ describe("retryXeroSyncOperation", () => {
     });
     mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn_1" });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
       expect.objectContaining({ recordPayment: true })
@@ -1188,7 +1496,7 @@ describe("retryXeroSyncOperation", () => {
     });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toThrow("no longer has a billable Xero delta");
     expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
   });
@@ -1210,9 +1518,10 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 1000,
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       priceDiffCents: -500,
       changeFeeCents: 1000,
@@ -1241,12 +1550,13 @@ describe("retryXeroSyncOperation", () => {
     });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero modification credit note creation.",
     });
 
     expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       refundAmountCents: 2500,
       bookingModificationId: "mod_123",
@@ -1279,7 +1589,7 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 0,
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 2500 })
@@ -1306,7 +1616,7 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 0,
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 2500 })
@@ -1339,12 +1649,13 @@ describe("retryXeroSyncOperation", () => {
     });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero modification account-credit note creation.",
     });
 
     expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       paymentId: "pay_123",
       refundAmountCents: 3750,
       bookingModificationId: "mod_account",
@@ -1375,7 +1686,7 @@ describe("retryXeroSyncOperation", () => {
       payment: { id: "pay_123" },
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1404,15 +1715,76 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 500,
     });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       refundAmountCents: 500,
       bookingModificationId: "mod_mixed_net",
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
+  });
+
+  it("MUTATION: #3791 - rebuilds a review task's share under its own task-scoped keys", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_review",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "book_123",
+          refundAmountCents: 1000,
+          bookingModificationId: "mod_review",
+          reviewTaskId: "task_7",
+          refundMethod: "account-credit",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 1000, reviewTaskId: "task_7", refundMethod: "account-credit" }),
+    );
+  });
+
+  it("MUTATION: #3791 - retries a FAILED review account note on a PARKED anchor from its executed payload, never from the anchor's zero net", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_parked",
+        queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+        // The shape `createUnappliedXeroCreditNote` leaves after it ran.
+        requestPayload: {
+          creditNotes: [{ type: "ACCRECCREDIT" }],
+          refundAmountCents: 2500,
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          bookingId: "book_123",
+          paymentId: "pay_123",
+          bookingModificationId: "mod_parked",
+          reviewTaskId: "task_9",
+        },
+      })
+    );
+    // The parked edit moved no money of its own.
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 0, changeFeeCents: 0 });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay_123", refundAmountCents: 2500, bookingModificationId: "mod_parked", reviewTaskId: "task_9" }),
+    );
   });
 
   it("refuses to rebuild a modification credit note when the signed net is not a reduction (#1356)", async () => {
@@ -1431,7 +1803,7 @@ describe("retryXeroSyncOperation", () => {
     });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toThrow("no longer has a refundable Xero delta");
     expect(mocks.createXeroCreditNoteForModification).not.toHaveBeenCalled();
   });
@@ -1450,7 +1822,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Repaired Xero booking invoice payment recording.",
     });
@@ -1495,7 +1867,7 @@ describe("retryXeroSyncOperation", () => {
 
     // ...and not performed if invoked anyway.
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toThrow();
     expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
   });
@@ -1514,7 +1886,7 @@ describe("retryXeroSyncOperation", () => {
 
     expect(getXeroOperationRetryMeta(withheldPartial).supported).toBe(false);
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toThrow();
     expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
   });
@@ -1537,7 +1909,7 @@ describe("retryXeroSyncOperation", () => {
 
     expect(getXeroOperationRetryMeta(withheldAtCreation).supported).toBe(false);
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).rejects.toThrow();
     expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
   });
@@ -1555,7 +1927,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Repaired Xero booking invoice payment recording.",
     });
@@ -1578,7 +1950,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Repaired Xero supplementary invoice payment recording.",
     });
@@ -1613,7 +1985,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Marked zero-total Xero booking invoice as repaired without payment recording.",
     });
@@ -1656,14 +2028,16 @@ describe("retryXeroSyncOperation", () => {
     );
     mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
-    expect(mocks.createXeroRefundPaymentForInvoice).toHaveBeenCalledWith(
+    expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
+        operationId: "op_123",
         paymentId: "pay_123",
         creditNoteId: "cn_123",
-        refundAmountCents: 1234,
+        originalInvoiceId: "inv_123",
         refundMethod: "internet-banking",
+        refundMethodRecorded: true,
       })
     );
   });
@@ -1684,18 +2058,13 @@ describe("retryXeroSyncOperation", () => {
     );
     mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
-    expect(mocks.createXeroRefundPaymentForInvoice).not.toHaveBeenCalled();
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_123",
-      expect.objectContaining({
-        status: "SUCCEEDED",
-        responsePayload: expect.objectContaining({
-          refundPaymentSkipped: true,
-          refundPaymentSkipReason: expect.stringContaining("no Bank Transfer Refunds Account is configured"),
-        }),
-      })
+    // The settlement decision (unsettled while no account is chosen) runs
+    // inside the shared leg, pinned in xero-refund-note-crash-window.test.ts;
+    // the repair hands it the method the row recorded.
+    expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", refundMethodRecorded: true })
     );
   });
 
@@ -1721,14 +2090,12 @@ describe("retryXeroSyncOperation", () => {
     );
     mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
-    expect(mocks.createXeroRefundPaymentForInvoice).not.toHaveBeenCalled();
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_123",
-      expect.objectContaining({
-        responsePayload: expect.objectContaining({ refundPaymentSkipped: true }),
-      })
+    // A method nobody recorded, read off an internet-banking payment: the
+    // shared leg's `resolveRefundSettlement` leaves it unsettled.
+    expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", refundMethodRecorded: false })
     );
   });
 
@@ -1748,9 +2115,16 @@ describe("retryXeroSyncOperation", () => {
     );
     mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
 
-    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
 
-    expect(mocks.createXeroRefundPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.finishRefundCreditNoteSettlement).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({ refundPaymentSkipped: true, refundPaymentSkipReason: "unset" }),
+      })
+    );
   });
 
   it("repairs partial refund credit note follow-up actions", async () => {
@@ -1777,7 +2151,7 @@ describe("retryXeroSyncOperation", () => {
     mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Repaired Xero refund credit note follow-up actions.",
     });
@@ -1787,31 +2161,36 @@ describe("retryXeroSyncOperation", () => {
       where: { id: "pay_123" },
       data: { xeroRefundCreditNoteId: "cn_123" },
     });
-    expect(mocks.createXeroRefundPaymentForInvoice).toHaveBeenCalledWith({
-      paymentId: "pay_123",
-      invoiceId: "inv_123",
-      creditNoteId: "cn_123",
-      refundAmountCents: 1234,
-      createdByMemberId: "admin_1",
-      // `INV-PAY-101`: a pre-#3529 row carries no method, and this payment's
-      // source is Stripe, so the repair settles it as the card refund it was.
-      refundMethod: "card",
-    });
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_123",
+    expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "SUCCEEDED",
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: "cn_123",
-        responsePayload: expect.objectContaining({
-          allocation: null,
-          allocationSkipped: true,
-          allocationSkipReason:
-            "Refund credit notes are settled via a credit-note payment instead of invoice allocation.",
-          refundPaymentError: null,
-        }),
+        operationId: "op_123",
+        paymentId: "pay_123",
+        originalInvoiceId: "inv_123",
+        creditNoteId: "cn_123",
+        // `INV-PAY-101`: a pre-#3529 row carries no method, and this payment's
+        // source is Stripe, so the repair settles it as the card refund it was.
+        refundMethod: "card",
+        refundMethodRecorded: false,
       })
     );
+  });
+
+  it("surfaces a payment that fails in the shared leg, which has already left the row PARTIAL (#3548)", async () => {
+    mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE" });
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_123",
+        requestPayload: { allocation: { invoiceId: "inv_123", amount: 12.34 } },
+        responsePayload: {},
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+    mocks.finishRefundCreditNoteSettlement.mockResolvedValueOnce({ refundPaymentErr: new Error("Xero 503") });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toThrow("Xero 503");
   });
 
   it("repairs failed refund credit note creates from the existing Xero credit note", async () => {
@@ -1835,7 +2214,7 @@ describe("retryXeroSyncOperation", () => {
     mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Repaired Xero refund credit note follow-up actions.",
     });
@@ -1846,21 +2225,13 @@ describe("retryXeroSyncOperation", () => {
       where: { id: "pay_123" },
       data: { xeroRefundCreditNoteId: "cn_legacy_123" },
     });
-    expect(mocks.createXeroRefundPaymentForInvoice).toHaveBeenCalledWith({
-      paymentId: "pay_123",
-      invoiceId: "inv_legacy_123",
-      creditNoteId: "cn_legacy_123",
-      refundAmountCents: 10,
-      createdByMemberId: "admin_1",
-      refundMethod: "card",
-    });
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_123",
+    expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "SUCCEEDED",
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: "cn_legacy_123",
-        xeroObjectNumber: "CN-123",
+        operationId: "op_123",
+        paymentId: "pay_123",
+        originalInvoiceId: "inv_legacy_123",
+        creditNoteId: "cn_legacy_123",
+        refundMethod: "card",
       })
     );
   });
@@ -1882,7 +2253,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Repaired Xero modification credit note allocation.",
     });
@@ -1900,6 +2271,77 @@ describe("retryXeroSyncOperation", () => {
     );
   });
 
+  // #3535: a clearing note planned across the primary and a supplementary
+  // invoice replays exactly that plan, skipping the target already allocated.
+  it("repairs a partial clearing note across its recorded invoices, skipping one already allocated", async () => {
+    mocks.findManyXeroObjectLink.mockResolvedValueOnce([
+      { metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 30000 } },
+      // A different note's allocation to the same invoice does not count.
+      { metadata: { creditNoteId: "cn_other", invoiceId: "inv_supp", amountCents: 11000 } },
+    ]);
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Booking",
+        localId: "booking_7",
+        xeroObjectId: "cn_clear",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 41000,
+          clearsUnpaidInvoice: true,
+          allocations: [
+            { invoiceId: "inv_primary", amountCents: 30000 },
+            { invoiceId: "inv_supp", amountCents: 11000 },
+          ],
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Repaired Xero modification credit note allocation." });
+
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith("cn_clear", "inv_supp", 11000, {
+      localModel: "Booking",
+      localId: "booking_7",
+      role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+      createdByMemberId: "admin_1",
+    });
+  });
+
+  // #3535: a plan whose invoice id was redacted into storage is refused, never
+  // replayed against "[REDACTED]".
+  it("refuses to replay a clearing note's plan when an invoice id in it was redacted", async () => {
+    const redactedPlan = makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      xeroObjectId: "cn_clear",
+      requestPayload: {
+        invoiceId: "inv_primary",
+        refundAmountCents: 41000,
+        allocations: [
+          { invoiceId: "inv_primary", amountCents: 30000 },
+          { invoiceId: "[REDACTED]", amountCents: 11000 },
+        ],
+      },
+    });
+    expect(getXeroOperationRetryMeta(redactedPlan)).toEqual({
+      supported: false,
+      reason: expect.stringContaining("redacted invoice id"),
+    });
+    mocks.findUniqueOperation.mockResolvedValue(redactedPlan);
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toThrow(/redacted invoice id/);
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+  });
+
   it("replays membership cancellation credit note creation using the stored request payload", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -1915,7 +2357,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
       message: "Retried Xero membership cancellation credit note creation.",
     });
@@ -1926,6 +2368,176 @@ describe("retryXeroSyncOperation", () => {
       participantId: "participant_1",
       createdByMemberId: "admin_1",
       syncOperationId: "op_123",
+    });
+  });
+
+  // #3635: a kept late capture's invoice goes back to the outbox from its
+  // queued payload, which its worker keeps beside the request it sent.
+  it("returns a failed or partial kept late-capture invoice to the outbox with its queued payload", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    for (const status of ["FAILED", "PARTIAL"] as const) {
+      mocks.updateManyOperation.mockReset();
+      const operation = makeOperation({
+        status,
+        localModel: "ManualRefundTask",
+        localId: "task_kept",
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+      });
+      expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+      mocks.findUniqueOperation.mockResolvedValue(operation);
+      mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Queued the kept-payment Xero invoice for retry.",
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
+      });
+    }
+
+    // Unreadable cents are never guessed.
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          localModel: "ManualRefundTask",
+          localId: "task_kept",
+          queueType: "KEPT_LATE_CAPTURE_INVOICE",
+          requestPayload: { ...queued, capturedCents: null },
+        }),
+      ).supported,
+    ).toBe(false);
+  });
+
+  // #3635 composition (`INV-INT-025`): a kept late-capture invoice an officer
+  // recorded by hand in Xero is never re-run - refused on read, and a resolve
+  // landing between the read and the requeue makes the claim lose.
+  it("never re-runs a kept late-capture invoice resolved in Xero", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    const kept = makeOperation({
+      localModel: "ManualRefundTask",
+      localId: "task_kept",
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+    });
+    const resolved = { ...kept, manuallyResolvedAt: RESOLVED_AT };
+    expect(getXeroOperationRetryMeta(resolved)).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(resolved);
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+
+    mocks.findUniqueOperation
+      .mockReset()
+      .mockResolvedValueOnce(kept)
+      .mockResolvedValueOnce({ ...resolved });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+  });
+
+  // #3642: the combined group invoice's rows go back to the outbox; a failed
+  // abandon VOID used to be terminal, with no Retry and no alert.
+  it("returns a failed group settlement VOID to the outbox with its queued payload", async () => {
+    const payload = {
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      settlementId: "settle_1",
+      xeroInvoiceId: "inv_1",
+    };
+    const operation = makeOperation({
+      operationType: "UPDATE",
+      localModel: "GroupBookingSettlement",
+      localId: "settle_1",
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      requestPayload: payload,
+    });
+    expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+    mocks.findUniqueOperation.mockResolvedValue(operation);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Queued the group settlement invoice operation for retry.",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      data: expect.objectContaining({ status: "PENDING", requestPayload: payload }),
+    });
+  });
+
+  it("rebuilds a failed group settlement CREATE's queued payload, which its worker overwrote", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+        requestPayload: { invoices: [{ type: "ACCREC" }] },
+      })
+    );
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      data: expect.objectContaining({
+        status: "PENDING",
+        requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: "settle_1" },
+      }),
+    });
+  });
+
+  it("refuses to retry a group settlement operation that is not FAILED, or was already requeued", async () => {
+    const running = makeOperation({
+      status: "PARTIAL",
+      localModel: "GroupBookingSettlement",
+      localId: "settle_1",
+      queueType: "GROUP_SETTLEMENT_INVOICE",
+    });
+    expect(getXeroOperationRetryMeta(running).supported).toBe(false);
+
+    mocks.findUniqueOperation.mockResolvedValue({ ...running, status: "FAILED" });
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("answers 409, not a uniqueness 500, when the organiser already queued the same attempt again (#3642 D6)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+      })
+    );
+    mocks.updateManyOperation.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+    );
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
     });
   });
 
@@ -1944,11 +2556,15 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
     ).resolves.toEqual({ message: "Queued applied-credit allocation retry." });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      // No resolved guard: applied-credit rows are retry-only (#3635 N2).
+      where: {
+        id: "op_123",
+        status: { in: ["FAILED", "PARTIAL"] },
+      },
       data: {
         status: "PENDING",
         startedAt: null,
@@ -1983,8 +2599,8 @@ describe("retryXeroSyncOperation", () => {
 
     await expect(
       Promise.all([
-        retryXeroSyncOperation("child_op_1", { createdByMemberId: "admin_1" }),
-        retryXeroSyncOperation("child_op_1", { createdByMemberId: "admin_2" }),
+        retryXeroSyncOperation("child_op_1", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" }),
+        retryXeroSyncOperation("child_op_1", CLUB_FORMAT_TEST, { createdByMemberId: "admin_2" }),
       ]),
     ).rejects.toThrow("Retry the serialized parent applied-credit operation parent_op_1");
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
@@ -2012,7 +2628,7 @@ describe("retryXeroSyncOperation", () => {
       );
 
       await expect(
-        retryXeroSyncOperation("legacy_child_1", {
+        retryXeroSyncOperation("legacy_child_1", CLUB_FORMAT_TEST, {
           createdByMemberId: "admin_1",
         }),
       ).rejects.toThrow(
@@ -2041,7 +2657,7 @@ describe("retryXeroSyncOperation", () => {
     );
 
     await expect(
-      retryXeroSyncOperation("repair_allocation_1", {
+      retryXeroSyncOperation("repair_allocation_1", CLUB_FORMAT_TEST, {
         createdByMemberId: "admin_1",
       }),
     ).resolves.toEqual({ message: "Retried Xero credit note allocation." });
@@ -2068,7 +2684,7 @@ describe("retryXeroSyncOperation", () => {
         checkpoint: { allocationIds: ["alloc-1"] },
       },
     }));
-    await expect(retryXeroSyncOperation("op_123")).resolves.toEqual({
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
       message: "Queued applied-credit deallocation retry.",
     });
     expect(mocks.deallocateExcessAppliedCreditForBooking).not.toHaveBeenCalled();
@@ -2091,8 +2707,8 @@ describe("retryXeroSyncOperation", () => {
       .mockResolvedValueOnce({ count: 0 });
 
     const results = await Promise.allSettled([
-      retryXeroSyncOperation("op_123"),
-      retryXeroSyncOperation("op_123"),
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST),
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST),
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
@@ -2111,7 +2727,7 @@ describe("retryXeroSyncOperation", () => {
         bookingId: "b1",
       },
     }));
-    await expect(retryXeroSyncOperation("op_123")).resolves.toEqual({
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
       message: "Queued applied-credit deallocation retry.",
     });
   });
@@ -2123,7 +2739,7 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await expect(retryXeroSyncOperation("op_123")).rejects.toMatchObject({
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
       name: "XeroOperationRetryError",
       status: 400,
     } satisfies Partial<XeroOperationRetryError>);

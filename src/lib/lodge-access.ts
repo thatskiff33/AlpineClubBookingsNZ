@@ -100,6 +100,21 @@ export class AmbiguousKioskLodgeError extends Error {
 }
 
 /**
+ * A hut leader signed in with their own account asked for a day none of their
+ * assignments covers (#3029 S1). Denied with a 403 rather than served the
+ * default lodge, whose guest list is somebody else's operational data.
+ */
+export class KioskLodgeUnresolvedError extends Error {
+  status: number;
+
+  constructor(message = "You are not the hut leader at any lodge on this date.") {
+    super(message);
+    this.name = "KioskLodgeUnresolvedError";
+    this.status = 403;
+  }
+}
+
+/**
  * How a lodge-operational (kiosk) account is bound to a lodge via STAFF grants:
  * - "none": zero grants. The caller falls back to the club's default lodge,
  *   preserving single-lodge behaviour.

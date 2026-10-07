@@ -17,10 +17,14 @@ import { NextRequest } from "next/server";
   The unit suite `src/lib/__tests__/booking-dependant-identity.test.ts` owns the
   rule itself. This file owns the WIRING: that the route re-resolves the booker's
   dependants from authenticated data rather than from anything the client sent,
-  that it runs on the NORMALISED party so a forged member link cannot walk past
-  it, that it runs before any create service, and that an authorised on-behalf
-  create is guarded TOO — against the dependants of the member the booking is
-  for, never the officer's own.
+  that it runs BEFORE the member lookup against the claimed ids (#3770) while the
+  lookup still refuses a forged member link, that it runs before any create
+  service, and that an authorised on-behalf create is guarded TOO — against the
+  dependants of the member the booking is for, never the officer's own.
+
+  It also owns the #3770 ordering contract for the route's other input-only
+  refusals: each answers the same whether a beyond-family member id in the party
+  is real or nobody, because each runs before the lookup.
 */
 
 const h = vi.hoisted(() => ({
@@ -39,6 +43,26 @@ const h = vi.hoisted(() => ({
   getEffectiveXeroLockDate: vi.fn(),
   resolveOptionalActiveLodgeId: vi.fn().mockResolvedValue("lodge-1"),
   resolveLinkedBookingMembersWithBoundary: vi.fn(),
+  normalizeGuestStayRanges: vi.fn((guests: unknown[]) => guests),
+  getLodgeCapacity: vi.fn(),
+  validateMinimumStay: vi.fn(),
+  checkInternetBankingLeadTime: vi.fn(),
+  resolveSubscriptionLockoutMode: vi.fn(),
+  requiresPaidSubscription: vi.fn(),
+  promoCodeFindUnique: vi.fn(),
+  workPartyEventFindUnique: vi.fn(),
+  computeMemberGuestBoundary: vi.fn(),
+  assertCanBeBooked: vi.fn(),
+  findConflicts: vi.fn(),
+  assertMembershipType: vi.fn(),
+  findUnpaid: vi.fn(),
+  evalNonMember: vi.fn(),
+  evalHosting: vi.fn(),
+  lodgeAccessFindMany: vi.fn(),
+  lodgeRoomFindUnique: vi.fn(),
+  planConsent: vi.fn(),
+  checkCapacity: vi.fn(),
+  holdDecision: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -71,6 +95,13 @@ vi.mock("@/lib/prisma", () => ({
     // authenticated member id rather than from anything in the request body.
     member: { findUnique: h.memberFindUnique, findMany: h.memberFindMany },
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
+    // #3770 R2: the booker's lodge restrictions, read before the lookup.
+    memberLodgeAccess: { findMany: h.lodgeAccessFindMany },
+    lodgeRoom: { findUnique: h.lodgeRoomFindUnique },
+    // #3770: the pre-lookup owner-subscription and promo/working-bee checks.
+    memberSubscription: { findFirst: vi.fn().mockResolvedValue(null) },
+    promoCode: { findUnique: h.promoCodeFindUnique },
+    workPartyEvent: { findUnique: h.workPartyEventFindUnique },
     minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     clubTimeSettings: {
@@ -83,10 +114,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/booking-guests", async () => {
-  // `normalizeBookingGuestInputs` is the REAL one. It is what strips a
-  // `memberId` that did not resolve and forces `isMember: false` — the step that
-  // makes a forged client assertion irrelevant — so mocking it out would make
-  // the tampering cases below prove nothing.
+  // Partial: the real error classes and `memberGuestCrossFamilyRefusal`, so the
+  // collapsed bodies compared below are the real ones. Since #3770 the guard runs
+  // before the lookup on the claimed ids, so a forged member link is refused by
+  // the lookup (mocked here to refuse as the real one does), not by
+  // `normalizeBookingGuestInputs`.
   const actual = (await vi.importActual(
     "@/lib/booking-guests",
   )) as typeof import("@/lib/booking-guests");
@@ -94,31 +126,31 @@ vi.mock("@/lib/booking-guests", async () => {
     ...actual,
     resolveLinkedBookingMembersWithBoundary:
       h.resolveLinkedBookingMembersWithBoundary,
-    assertLinkedBookingMembersCanBeBooked: vi.fn().mockResolvedValue(undefined),
+    computeMemberGuestBoundary: h.computeMemberGuestBoundary,
+    assertLinkedBookingMembersCanBeBooked: h.assertCanBeBooked,
   };
 });
 vi.mock("@/lib/member-guest-add-policy", () => ({
+  // Member guests ON: the #3770 suites are about a beyond-family member that
+  // can resolve. The module-off order has its own case.
   loadMemberGuestAddPolicy: vi
     .fn()
-    .mockResolvedValue({ wideningEnabled: false }),
+    .mockResolvedValue({ wideningEnabled: true }),
   matchMemberGuestNotificationRows: () => [],
-  planMemberGuestConsentWrites: ({ guests }: { guests: unknown[] }) => ({
-    guests,
-    entriesByMemberId: new Map(),
-  }),
+  planMemberGuestConsentWrites: (args: { guests: unknown[] }) => h.planConsent(args),
 }));
 vi.mock("@/lib/member-guest-probe-guard", () => ({
   handleMemberGuestAddRefusal: vi.fn().mockResolvedValue(undefined),
-  memberGuestAddThrottleHook: () => undefined,
+  memberGuestAddThrottleHook: () => async () => undefined,
   MemberGuestAddThrottledError: class extends Error {},
   startMemberGuestRefusalClock: () => 0,
 }));
 vi.mock("@/lib/booking-guest-stay-range-input", () => ({
-  normalizeGuestStayRanges: (guests: unknown[]) => guests,
+  normalizeGuestStayRanges: h.normalizeGuestStayRanges,
   BookingGuestStayRangeValidationError: class extends Error {},
 }));
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
-  findBookingMemberNightConflicts: vi.fn().mockResolvedValue([]),
+  findBookingMemberNightConflicts: h.findConflicts,
   BookingMemberNightConflictError: class extends Error {
     conflicts: unknown[] = [];
   },
@@ -128,39 +160,71 @@ vi.mock("@/lib/lodges", () => ({
   resolveOptionalActiveLodgeId: h.resolveOptionalActiveLodgeId,
   resolvePolicyRowsForLodge: () => [],
 }));
+// #3770 R4: the route's full-lodge pre-flight, read before the outsider lookup.
+vi.mock("@/lib/capacity", () => ({
+  checkCapacityForGuestRanges: h.checkCapacity,
+}));
 vi.mock("@/lib/lodge-capacity", () => ({
-  getLodgeCapacity: vi.fn().mockResolvedValue(30),
+  getLodgeCapacity: h.getLodgeCapacity,
 }));
 vi.mock("@/lib/membership-type-policy", () => ({
-  assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
+  assertMembershipTypeBookingAllowed: h.assertMembershipType,
   getMembershipTypeBookingPolicyErrorBody: (e: { message: string }) => ({
     error: e.message,
   }),
   MembershipTypeBookingPolicyError: class extends Error {
     status = 400;
   },
-  requiresPaidSubscriptionForMemberForBooking: vi.fn().mockResolvedValue(false),
+  requiresPaidSubscriptionForMemberForBooking: h.requiresPaidSubscription,
+}));
+vi.mock("@/lib/member-subscription-eligibility", async (importActual) => ({
+  ...((await importActual()) as object),
+  resolveSubscriptionLockoutMode: h.resolveSubscriptionLockoutMode,
+}));
+vi.mock("@/lib/booking-policies", async (importActual) => ({
+  ...((await importActual()) as object),
+  validateMinimumStay: h.validateMinimumStay,
 }));
 vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
-  findUnpaidMemberGuests: vi.fn().mockResolvedValue([]),
+  findUnpaidMemberGuests: h.findUnpaid,
+}));
+// #3770: the two rules a beyond-family adult can satisfy, driven directly.
+vi.mock("@/lib/subscription-lockout-enforcement", async (importActual) => ({
+  ...((await importActual()) as object),
+  evaluateNonMemberPricingRequirements: h.evalNonMember,
+  buildPaidUpAdultRefusalBody: () => ({
+    code: "PAID_UP_ADULT_MEMBER_REQUIRED",
+    error: "This booking needs a paid-up adult member.",
+  }),
+}));
+vi.mock("@/lib/adult-member-hosting-proposed", () => ({
+  evaluateProposedAdultMemberHosting: h.evalHosting,
+}));
+vi.mock("@/lib/adult-member-hosting-refusal", async (importActual) => ({
+  ...((await importActual()) as object),
+  buildAdultMemberHostingRefusalBody: () => ({
+    code: "ADULT_MEMBER_HOSTING_REQUIRED",
+    error: "No adult member is staying on some nights.",
+    violations: [],
+  }),
 }));
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldPolicy: vi
     .fn()
     .mockResolvedValue({ enabled: false, holdDays: 0, source: "default" }),
 }));
-vi.mock("@/lib/policies/booking-route-decisions", () => ({
-  calculateBookingHoldDecision: () => ({
-    shouldBePending: false,
-    status: "PAYMENT_PENDING",
-  }),
+// Partial: `decideBookingSplit` is the real one — it is what the #3770 full-lodge
+// pre-flight shares with the create service. The hold decision is driven.
+vi.mock("@/lib/policies/booking-route-decisions", async (importActual) => ({
+  ...((await importActual()) as object),
+  calculateBookingHoldDecision: h.holdDecision,
   toGroupDiscountConfig: () => ({}),
 }));
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/internet-banking-settings", () => ({
-  checkInternetBankingLeadTime: () => ({ allowed: true }),
+  checkInternetBankingLeadTime: h.checkInternetBankingLeadTime,
   loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),
 }));
 vi.mock("@/lib/xero-token-store", () => ({
@@ -170,6 +234,11 @@ vi.mock("@/lib/xero-organisation", () => ({
   getXeroLockDates: vi.fn().mockResolvedValue(null),
   getEffectiveXeroLockDate: h.getEffectiveXeroLockDate,
   getXeroFinancialYearEndMonth: vi.fn(async () => null),
+}));
+// #3029: the route reads the dietary seeding toggle before any create service
+// runs; the real module reaches access-role definitions this file mocks.
+vi.mock("@/lib/member-dietary-booking-writes", () => ({
+  resolveBookingGuestDietarySeeding: vi.fn(async () => ({ seedFromProfile: false })),
 }));
 vi.mock("@/lib/booking-create", async () => {
   const actual = (await vi.importActual(
@@ -182,7 +251,9 @@ vi.mock("@/lib/booking-create", async () => {
     RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS:
       actual.RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
     BookingLodgeError: class extends Error {},
-    BookingPromoError: class extends Error {},
+    // The real class: the route's #3770 promo pre-check throws it from
+    // `booking-create-promo.ts`, which imports it from the types module.
+    BookingPromoError: actual.BookingPromoError,
     BookingReviewJustificationRequiredError: class extends Error {},
   };
 });
@@ -200,6 +271,46 @@ import {
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
   DIFFERENT_PERSON_SAME_NAME,
 } from "@/lib/booking-dependant-identity";
+import {
+  BookingGuestValidationError,
+  memberGuestCrossFamilyRefusal,
+} from "@/lib/booking-guests";
+import { MembershipTypeBookingPolicyError } from "@/lib/membership-type-policy";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
+import { BookingGuestStayRangeValidationError } from "@/lib/booking-guest-stay-range-input";
+
+/** The neutral answers for every #3770 pre-lookup check: nothing refuses. */
+function setPreLookupDefaults() {
+  // #3770 lookup phases: nobody named is beyond the family, every guard passes.
+  h.computeMemberGuestBoundary.mockResolvedValue({
+    scopeByMemberId: new Map(),
+    beyondFamilyMemberIds: [],
+  });
+  h.assertCanBeBooked.mockResolvedValue(undefined);
+  h.findConflicts.mockResolvedValue([]);
+  h.assertMembershipType.mockResolvedValue(undefined);
+  h.findUnpaid.mockResolvedValue([]);
+  h.evalNonMember.mockResolvedValue(null);
+  h.evalHosting.mockResolvedValue(null);
+  h.lodgeAccessFindMany.mockResolvedValue([]);
+  h.lodgeRoomFindUnique.mockResolvedValue(null);
+  h.checkCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+  // Inside the non-member hold window (or no hold): no split, the whole party counts.
+  h.holdDecision.mockReturnValue({ shouldBePending: false, status: "PAYMENT_PENDING" });
+  // Consent planning passes rows through: an outsider is as present as the
+  // club's notify-only mode makes them. A case about approval-required consent
+  // marks them PENDING itself.
+  h.planConsent.mockImplementation(({ guests }: { guests: unknown[] }) => ({
+    guests,
+    entriesByMemberId: new Map(),
+  }));
+  h.validateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
+  h.checkInternetBankingLeadTime.mockReturnValue({ allowed: true });
+  h.resolveSubscriptionLockoutMode.mockResolvedValue("NO_BLOCK");
+  h.requiresPaidSubscription.mockResolvedValue(false);
+  h.promoCodeFindUnique.mockResolvedValue(null);
+  h.workPartyEventFindUnique.mockResolvedValue(null);
+}
 
 // Fixed future nights relative to the repository's frozen clock
 // (2026-07-01), per `docs/TESTING.md`. Never derived from the real calendar.
@@ -266,6 +377,10 @@ beforeEach(() => {
   });
   h.isXeroConnected.mockResolvedValue(false);
   h.getEffectiveXeroLockDate.mockReturnValue(null);
+  h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+  h.getLodgeCapacity.mockResolvedValue(30);
+  h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+  setPreLookupDefaults();
   h.createConfirmedBooking.mockResolvedValue({
     type: "created",
     booking: { id: "b-new", status: "PAID", guests: [] },
@@ -278,6 +393,99 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/*
+  #3770 — the two worlds every status-independence case compares. A beyond-family
+  member id X is named; the boundary (read from the booker's family groups alone)
+  says so in both. The family half of the party resolves normally in both. Only
+  the lookup of X differs: a real, bookable member, or the collapsed refusal the
+  real lookup gives an id with nobody behind it.
+*/
+const MEMBER_X = "member-x";
+const PROMO_MODULES_ON = {
+  xeroIntegration: false,
+  bedAllocation: false,
+  internetBankingPayments: false,
+  memberGuests: false,
+  promoCodes: true,
+  workParties: false,
+};
+/** A live, unrestricted percentage code; each case overrides what it is about. */
+function promoCodeRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "promo-1",
+    code: "SUMMER",
+    type: "PERCENT_OFF",
+    active: true,
+    internal: false,
+    validFrom: null,
+    validUntil: null,
+    bookingStartFrom: null,
+    bookingStartUntil: null,
+    maxRedemptionsTotal: null,
+    currentRedemptions: 0,
+    maxUniqueMembersTotal: null,
+    maxUsesPerMember: null,
+    lifetimeFreeNightsCap: null,
+    membersOnly: false,
+    memberGuestsOnly: false,
+    assignedMembersOnlyOwnNights: false,
+    lodges: [],
+    assignments: [],
+    ...overrides,
+  };
+}
+function familyMemberRow(id: string) {
+  return { id, ageTier: "ADULT", firstName: id, lastName: "Family" };
+}
+function arrangeLookup(xIsReal: boolean, xAgeTier: "ADULT" | "CHILD" = "ADULT") {
+  // The boundary names X beyond the family whenever the party names X.
+  h.computeMemberGuestBoundary.mockImplementation(
+    async (_db: unknown, _booker: unknown, ids: readonly string[]) =>
+      ids.includes(MEMBER_X)
+        ? { scopeByMemberId: new Map([[MEMBER_X, "BEYOND_FAMILY"]]), beyondFamilyMemberIds: [MEMBER_X] }
+        : { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+  );
+  h.resolveLinkedBookingMembersWithBoundary.mockImplementation(
+    async (_db: unknown, _booker: unknown, ids: Array<string | null | undefined>) => {
+      const named = ids.filter((id): id is string => Boolean(id));
+      if (named.includes(MEMBER_X)) {
+        if (!xIsReal) throw memberGuestCrossFamilyRefusal([MEMBER_X]);
+        return {
+          members: new Map([
+            [MEMBER_X, { id: MEMBER_X, ageTier: xAgeTier, firstName: "Grace", lastName: "Hopper" }],
+          ]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [MEMBER_X] },
+        };
+      }
+      return {
+        members: new Map(named.map((id) => [id, familyMemberRow(id)])),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+      };
+    },
+  );
+}
+const X_ARRANGEMENTS = [
+  ["X is a real member", () => arrangeLookup(true)],
+  ["X is nobody", () => arrangeLookup(false)],
+] as const;
+/** Stay ranges as the real normaliser returns them: date-only instants. */
+function datedStayRanges(guests: unknown[]) {
+  return (guests as Array<Record<string, unknown>>).map((guest) => ({
+    ...guest,
+    ...(typeof guest.stayStart === "string"
+      ? {
+          stayStart: new Date(`${guest.stayStart}T00:00:00.000Z`),
+          stayEnd: new Date(`${guest.stayEnd as string}T00:00:00.000Z`),
+        }
+      : {}),
+  }));
+}
+function lookupNamedX() {
+  return h.resolveLinkedBookingMembersWithBoundary.mock.calls.some(
+    (call: unknown[]) => (call[2] as Array<string | undefined>).includes(MEMBER_X),
+  );
+}
 
 describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
   it("refuses the original defect before any booking is written", async () => {
@@ -390,10 +598,14 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
   });
 
   describe("a client cannot talk its way past it", () => {
-    it("catches a row whose member id resolved to nobody — the forged member link", async () => {
-      // The client asserts the row is already on the member path. The boundary
-      // resolver returns no such member, so `normalizeBookingGuestInputs` strips
-      // the id and the row is the free-text guest it really was.
+    it("leaves a forged member link to the member lookup, which refuses it", async () => {
+      // #3770: the guard runs before the lookup and takes the claimed id at its
+      // word; the lookup is what refuses an id with nobody behind it (the real
+      // one throws for any id that does not resolve), so the row never reaches
+      // the guest split either way.
+      h.resolveLinkedBookingMembersWithBoundary.mockRejectedValue(
+        new BookingGuestValidationError("Linked member is inactive or not found", 400),
+      );
       const res = await POST(
         makeRequest({
           guests: [
@@ -408,8 +620,9 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
         }),
       );
 
-      expect(res.status).toBe(409);
-      expect((await res.json()).code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Linked member is inactive or not found" });
+      expect(h.resolveLinkedBookingMembersWithBoundary).toHaveBeenCalled();
       expectNoBookingWritten();
     });
 
@@ -706,6 +919,646 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
         "DEPENDANT_IDENTITY_DECLARATION_INVALID",
       );
       expectNoBookingWritten();
+    });
+  });
+
+  /*
+    #3770 — THE MEMBERSHIP-EXISTENCE ORACLE ON THE CREATE ROUTE. A party naming
+    another family's member id X beside an input that is refused anyway must get
+    the SAME response whether X is a real, bookable member or nobody. "Nobody"
+    is refused by the lookup with D-8's collapsed refusal (#2388), so each
+    refusal below runs BEFORE the lookup and never reaches it.
+  */
+  describe("input-only refusals answer the same whether a claimed id resolves (#3770)", () => {
+    const X = {
+      firstName: "Grace",
+      lastName: "Hopper",
+      ageTier: "ADULT" as const,
+      isMember: true,
+      memberId: "member-x",
+    };
+    const KIRI = { firstName: "Kiri", lastName: "Ngata", ageTier: "ADULT" as const, isMember: false };
+    const arrangements = X_ARRANGEMENTS;
+
+    const refusals: Array<[string, () => Record<string, unknown>, number]> = [
+      ["the own-dependant question", () => ({ guests: [X, ...OWN_DEPENDANT_AS_FREE_TEXT] }), 409],
+      ["a malformed stay range", () => {
+        h.normalizeGuestStayRanges.mockImplementationOnce(() => {
+          throw new BookingGuestStayRangeValidationError(
+            "Guest 2: Date In and Date Out are both required.",
+          );
+        });
+        return { guests: [X, KIRI] };
+      }, 400],
+      ["a check-in in the past", () => ({
+        guests: [X, KIRI],
+        checkIn: "2026-06-01",
+        checkOut: "2026-06-03",
+      }), 400],
+      ["a missing lodge", () => ({ guests: [X, KIRI], lodgeId: undefined }), 400],
+      ["an unknown lodge", () => {
+        h.resolveOptionalActiveLodgeId.mockResolvedValue(null);
+        return { guests: [X, KIRI] };
+      }, 400],
+      ["the guest-count cap", () => {
+        h.getLodgeCapacity.mockResolvedValue(1);
+        return { guests: [X, KIRI] };
+      }, 400],
+      ["the booker's own unpaid subscription", () => {
+        h.resolveSubscriptionLockoutMode.mockResolvedValue("HARD_BLOCK");
+        h.requiresPaidSubscription.mockResolvedValue(true);
+        return { guests: [X, KIRI] };
+      }, 403],
+      ["a stay shorter than the minimum", () => {
+        h.validateMinimumStay.mockResolvedValue({
+          valid: false,
+          violations: [
+            {
+              reasonCode: "MINIMUM_STAY",
+              policyId: "pol_min",
+              policyVersion: 1,
+              policyName: "Weekend minimum",
+              resolvedScope: { kind: "CLUB_WIDE", lodgeId: null, effectiveLodgeId: "lodge-1" },
+              affectedNights: ["2026-08-01"],
+              exceptionEligible: true,
+              capacityMode: "HOLD",
+              message: "min stay",
+              triggerDay: "Saturday",
+              minimumNights: 3,
+              actualNights: 2,
+              requirements: { kind: "MINIMUM_STAY", minimumNights: 3, actualNights: 2, triggerDays: [6] },
+            },
+          ],
+        });
+        return { guests: [X, KIRI] };
+      }, 400],
+      ["Internet Banking at a club without it", () => ({
+        guests: [X, KIRI],
+        paymentMethod: "internet_banking",
+      }), 400],
+      ["Internet Banking inside its cutoff", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: true,
+          bedAllocation: false,
+          internetBankingPayments: true,
+          memberGuests: false,
+        });
+        h.checkInternetBankingLeadTime.mockReturnValue({
+          allowed: false,
+          unavailableReason: "Too close to check-in",
+          minimumDaysBeforeCheckIn: 7,
+          checkIn: CHECK_IN,
+        });
+        return { guests: [X, KIRI], paymentMethod: "internet_banking" };
+      }, 400],
+      ["an unknown promo code", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: false,
+          internetBankingPayments: false,
+          memberGuests: false,
+          promoCodes: true,
+          workParties: false,
+        });
+        return { guests: [X, KIRI], promoCode: "ZZZZ" };
+      }, 400],
+      ["a working-bee event that does not exist", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: false,
+          internetBankingPayments: false,
+          memberGuests: false,
+          promoCodes: false,
+          workParties: true,
+        });
+        return { guests: [X, KIRI], workPartyEventId: "nope" };
+      }, 400],
+      // #3770 R1: a guest who arrived yesterday on a booking that checks in
+      // tomorrow — the stay the service would refuse as in the past.
+      ["a guest whose own stay starts in the past", () => {
+        h.normalizeGuestStayRanges.mockImplementation(datedStayRanges);
+        return {
+          guests: [X, { ...KIRI, stayStart: "2026-06-30", stayEnd: "2026-07-03" }],
+          checkIn: "2026-07-02",
+          checkOut: "2026-07-03",
+        };
+      }, 400],
+      // #3770 R2: the booker may not book this lodge.
+      ["a lodge the booker is restricted from", () => {
+        h.lodgeAccessFindMany.mockResolvedValue([{ lodgeId: "some-other-lodge" }]);
+        return { guests: [X, KIRI] };
+      }, 403],
+      // #3770 R3: a room from another lodge.
+      ["a requested room at another lodge", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: true,
+          internetBankingPayments: false,
+          memberGuests: false,
+        });
+        h.lodgeRoomFindUnique.mockResolvedValue({ id: "room-1", lodgeId: "lodge-2" });
+        return { guests: [X, KIRI], requestedRoomId: "room-1" };
+      }, 400],
+      ["a code that needs guest selection with none chosen", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue(PROMO_MODULES_ON);
+        h.promoCodeFindUnique.mockResolvedValue(
+          promoCodeRow({ assignments: [{ memberId: "someone-else" }] }),
+        );
+        return { guests: [X, KIRI], promoCode: "SUMMER" };
+      }, 400],
+      ["a code assigned to somebody else", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue(PROMO_MODULES_ON);
+        h.promoCodeFindUnique.mockResolvedValue(
+          promoCodeRow({ assignments: [{ memberId: "someone-else" }] }),
+        );
+        return { guests: [X, KIRI], promoCode: "SUMMER", promoGuestIndexes: [1] };
+      }, 400],
+    ];
+
+    it.each(refusals)("%s", async (_label, arrangeRequest, status) => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const [, arrangeLookup] of arrangements) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: false,
+          internetBankingPayments: false,
+          memberGuests: false,
+        });
+        setPreLookupDefaults();
+        arrangeLookup();
+        const res = await POST(makeRequest(arrangeRequest()));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(h.resolveLinkedBookingMembersWithBoundary).not.toHaveBeenCalled();
+        expectNoBookingWritten();
+      }
+
+      expect(responses[0]?.status).toBe(status);
+      expect(responses[0]).toEqual(responses[1]);
+    });
+  });
+
+  /*
+    #3770 — THE FAMILY IS JUDGED BEFORE ANY BEYOND-FAMILY MEMBER IS RESOLVED (owner
+    decision, 2 Oct 2026, issue comment 5946598639). A refusal about the booker's
+    own family must read the same whether a named beyond-family X is real or
+    nobody, so it runs before X is looked up — which reverses, on this door, the
+    "cross-family refusal wins" order the guards keep elsewhere.
+  */
+  // #3770 delta review, D1: the services judge a promo against the stay ENVELOPE
+  // (#713), which a guest starting early widens; so must the pre-check.
+  it("judges a promo window against the stay envelope, not the requested dates", async () => {
+    h.loadEffectiveModuleFlags.mockResolvedValue(PROMO_MODULES_ON);
+    h.normalizeGuestStayRanges.mockImplementation(datedStayRanges);
+    // Valid for stays starting BEFORE 1 Aug (exclusive). The request asks for
+    // 1 Aug, but Kiri arrives on 31 Jul, so the stay starts in the window.
+    h.promoCodeFindUnique.mockResolvedValue(
+      promoCodeRow({ bookingStartUntil: new Date("2026-08-01T00:00:00.000Z") }),
+    );
+
+    const res = await POST(
+      makeRequest({
+        guests: [
+          {
+            firstName: "Kiri",
+            lastName: "Ngata",
+            ageTier: "ADULT",
+            isMember: false,
+            stayStart: "2026-07-31",
+            stayEnd: CHECK_OUT,
+          },
+        ],
+        promoCode: "SUMMER",
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+  });
+
+  describe("family refusals answer the same whether a beyond-family id resolves (#3770)", () => {
+    const X = { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT" as const, isMember: true, memberId: MEMBER_X };
+    const FAMILY = { firstName: "fam-1", lastName: "Family", ageTier: "ADULT" as const, isMember: true, memberId: "fam-1" };
+    const hasFamily = (guests: Array<{ memberId?: string | null }>) =>
+      guests.some((guest) => guest.memberId === "fam-1");
+
+    const familyRefusals: Array<[string, () => void, number]> = [
+      ["the family profile gate", () => {
+        h.assertCanBeBooked.mockImplementation(async (_db: unknown, members: Map<string, unknown>) => {
+          if (members.has("fam-1")) {
+            throw new BookingGuestValidationError("Some member guests need their details completed.", 403);
+          }
+        });
+      }, 403],
+      ["an own-family night clash", () => {
+        h.findConflicts.mockImplementation(async (_db: unknown, { guests }: { guests: Array<{ memberId?: string | null }> }) =>
+          hasFamily(guests) ? [{ memberId: "fam-1" }] : []);
+      }, 409],
+      ["a family membership-type block", () => {
+        h.assertMembershipType.mockImplementation(async (_db: unknown, { guests }: { guests: Array<{ memberId?: string | null }> }) => {
+          if (hasFamily(guests)) throw new MembershipTypeBookingPolicyError([]);
+        });
+      }, 400],
+      ["an unpaid family member", () => {
+        h.resolveSubscriptionLockoutMode.mockResolvedValue("HARD_BLOCK");
+        h.findUnpaid.mockImplementation(async (_db: unknown, { guests }: { guests: Array<{ memberId?: string | null }> }) =>
+          hasFamily(guests)
+            ? [{ memberId: "fam-1", name: "fam-1 Family", status: "UNPAID", invoiceUrl: null, invoiceNumber: null }]
+            : []);
+      }, 403],
+    ];
+
+    it.each(familyRefusals)("%s", async (_label, arrangeRefusal, status) => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const [, arrange] of X_ARRANGEMENTS) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrange();
+        arrangeRefusal();
+        const res = await POST(makeRequest({ guests: [FAMILY, X] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedX()).toBe(false);
+        expectNoBookingWritten();
+      }
+
+      expect(responses[0]?.status).toBe(status);
+      expect(responses[0]).toEqual(responses[1]);
+    });
+
+    /*
+      The two rules a beyond-family adult can satisfy. Judged on the whole party
+      once X is known; if they still fail with X named, the answer is the
+      lookup's collapsed refusal, never their own message.
+    */
+    const paidUpViolation = { reasonCode: "PAID_UP_ADULT_MEMBER", message: "paid-up" };
+    const hostingViolation = { reasonCode: "ADULT_MEMBER_HOSTING", consequence: "ENFORCED", message: "hosting" };
+    const namesX = (rows: Array<{ memberId?: string | null }>) =>
+      rows.some((row) => row.memberId === MEMBER_X);
+
+    const KID = { firstName: "Kid", lastName: "Ngata", ageTier: "CHILD" as const, isMember: false };
+    /** A hosting violation shaped as the service's reconciler raises it. */
+    const SERVICE_HOSTING_VIOLATION = {
+      ...hostingViolation,
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      policyId: "pol_host",
+      policyVersion: 1,
+      affectedNights: ["2026-08-01"],
+      capacityMode: "HOLD",
+      exceptionEligible: true,
+    } as never;
+    const policyFailures: Array<[string, () => void, Record<string, unknown>, (xIsReal: boolean) => void]> = [
+      ["paid-up adult", () => h.evalNonMember.mockResolvedValue({ violation: paidUpViolation }),
+        { guests: [FAMILY, X] }, (real) => arrangeLookup(real)],
+      ["hosting", () => h.evalHosting.mockResolvedValue(hostingViolation),
+        { guests: [FAMILY, X] }, (real) => arrangeLookup(real)],
+      // #3770 F1: a member cannot skip the check by sending an officer's reason.
+      ["hosting, with a member-supplied reason", () => h.evalHosting.mockResolvedValue(hostingViolation),
+        { guests: [FAMILY, X], adultMemberHostingReason: "trust me" }, (real) => arrangeLookup(real)],
+      // #3770 F1, the race path: the service's own refusal collapses too.
+      ["hosting, refused inside the create service", () =>
+        h.createConfirmedBooking.mockRejectedValue(
+          new AdultMemberHostingRequiredError(SERVICE_HOSTING_VIOLATION),
+        ),
+        { guests: [FAMILY, X] }, (real) => arrangeLookup(real)],
+      // #3770 N1: the same mapping in the draft and waitlist catches.
+      ["hosting, refused inside the draft service", () =>
+        h.createDraftBooking.mockRejectedValue(new AdultMemberHostingRequiredError(SERVICE_HOSTING_VIOLATION)),
+        { guests: [FAMILY, X], draft: true }, (real) => arrangeLookup(real)],
+      ["hosting, refused inside the waitlist service", () => {
+        h.createConfirmedBooking.mockResolvedValue({ type: "capacity_exceeded", fullNights: [] });
+        h.createWaitlistedBooking.mockRejectedValue(new AdultMemberHostingRequiredError(SERVICE_HOSTING_VIOLATION));
+      },
+        { guests: [FAMILY, X], waitlist: true }, (real) => arrangeLookup(real)],
+      // #3770 F2: minors with no adult, where X is the only possible adult.
+      ["adult supervision", () => undefined,
+        { guests: [KID, X] }, (real) => arrangeLookup(real, "CHILD")],
+    ];
+    it.each(policyFailures)("a %s failure that X does not cure answers like the lookup", async (
+      _label,
+      arrangeFailure,
+      body,
+      arrangeWorld,
+    ) => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        const arrange = () => arrangeWorld(xIsReal);
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrange();
+        arrangeFailure();
+        const res = await POST(makeRequest(body));
+        responses.push({ status: res.status, body: await res.text() });
+      }
+
+      expect(responses[0]?.status).toBe(403);
+      expect(responses[0]).toEqual(responses[1]);
+    });
+
+    // The evaluator counts only an operationally PRESENT adult (D-12). An outsider
+    // is present only where the club does not ask outsiders to consent first.
+    const curedOnlyByPresentX = async (
+      _db: unknown,
+      { participants }: { participants: Array<{ memberId?: string | null; operationallyPresent?: boolean }> },
+    ) =>
+      participants.some((row) => row.memberId === MEMBER_X && row.operationallyPresent !== false)
+        ? { violation: null }
+        : { violation: paidUpViolation };
+
+    it("books when a present beyond-family adult is the paid-up adult the party needs (notify-only consent)", async () => {
+      arrangeLookup(true);
+      h.evalNonMember.mockImplementation(curedOnlyByPresentX);
+
+      const res = await POST(makeRequest({ guests: [FAMILY, X] }));
+
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not let a PENDING outsider cure it, and answers like the lookup", async () => {
+      arrangeLookup(true);
+      h.evalNonMember.mockImplementation(curedOnlyByPresentX);
+      h.planConsent.mockImplementation(({ guests }: { guests: Array<{ memberId?: string | null }> }) => ({
+        guests: guests.map((guest) =>
+          guest.memberId === MEMBER_X
+            ? { ...guest, memberGuestConsent: { consentStatus: "PENDING" } }
+            : guest,
+        ),
+        entriesByMemberId: new Map(),
+      }));
+
+      const res = await POST(makeRequest({ guests: [FAMILY, X] }));
+
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("MEMBER_GUEST_NOT_ADDABLE");
+      expectNoBookingWritten();
+    });
+
+    // #3770 R4 (owner decision: "Check 'full' first"): a full lodge is answered
+    // before the outsider is looked up, from the member half of the party.
+    it("answers a full lodge the same whether X resolves", async () => {
+      const full = {
+        available: false,
+        minAvailable: 0,
+        nightDetails: [{ date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: 0, requested: 2, capacity: 30, wholeLodgeBlocked: false, custodianHeld: false }],
+      };
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        h.checkCapacity.mockResolvedValue(full);
+        const res = await POST(makeRequest({ guests: [FAMILY, X, KID] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedX()).toBe(false);
+        expectNoBookingWritten();
+        // Inside the hold window nothing splits: the whole party is counted (B1).
+        const ranges = h.checkCapacity.mock.calls[0]?.[3] as unknown[];
+        expect(ranges).toHaveLength(3);
+      }
+
+      expect(responses[0]).toEqual(responses[1]);
+      expect(responses[0]?.status).toBe(409);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("CAPACITY_EXCEEDED");
+    });
+
+    // #3770 B1: the pre-flight counts the rows the SERVICE will count. Inside the
+    // hold window nothing splits, so padding the party with non-members cannot
+    // slip a too-big booking past it while only the member half is measured.
+    const KIRI = { firstName: "Kiri", lastName: "Ngata", ageTier: "ADULT" as const, isMember: false };
+    const twoBedsLeft = async (
+      _lodge: unknown,
+      _in: unknown,
+      _out: unknown,
+      ranges: unknown[],
+    ) =>
+      ranges.length > 2
+        ? {
+            available: false,
+            minAvailable: 0,
+            nightDetails: [{ date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: 2, requested: ranges.length, capacity: 30, wholeLodgeBlocked: false, custodianHeld: false }],
+          }
+        : { available: true, minAvailable: 2, nightDetails: [] };
+
+    it("answers a party padded with non-members the same whether X resolves", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        h.checkCapacity.mockImplementation(twoBedsLeft);
+        const res = await POST(makeRequest({ guests: [X, KIRI, KID] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedX()).toBe(false);
+        expectNoBookingWritten();
+      }
+      expect(responses[0]).toEqual(responses[1]);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("CAPACITY_EXCEEDED");
+    });
+
+    it("still admits a booking that will split when its member half fits", async () => {
+      arrangeLookup(true);
+      h.checkCapacity.mockImplementation(twoBedsLeft);
+      // Beyond the hold window: the non-members become the provisional child,
+      // which holds no beds, so only the member half (FAMILY + X) is counted.
+      h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
+      const res = await POST(makeRequest({ guests: [FAMILY, X, KIRI, KID] }));
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
+    });
+
+    it("discards a justification when an adult other than X is known, as the service does", async () => {
+      // FAMILY and KIRI are adults the service counts as present, so adult
+      // supervision cannot trip and the booking still splits: only the member
+      // half (FAMILY + X) is counted, and it fits.
+      arrangeLookup(true);
+      h.checkCapacity.mockImplementation(twoBedsLeft);
+      h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
+      const res = await POST(
+        makeRequest({ guests: [FAMILY, X, KIRI, KID], memberReviewJustification: "x" }),
+      );
+      expect(res.status).toBe(201);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
+    });
+
+    it("counts the whole party when a justification is sent and no adult is known without X (held)", async () => {
+      // Children only, plus X: whether the booking is held for review depends on
+      // X, so the justification is taken as held and the whole party counted.
+      arrangeLookup(true);
+      h.checkCapacity.mockImplementation(async (_l: unknown, _i: unknown, _o: unknown, ranges: unknown[]) =>
+        ranges.length > 1
+          ? { available: false, minAvailable: 0, nightDetails: [] }
+          : { available: true, minAvailable: 1, nightDetails: [] });
+      h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
+      const res = await POST(
+        makeRequest({ guests: [KID, X], memberReviewJustification: "x" }),
+      );
+      expect(res.status).toBe(409);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
+    });
+
+    it("does not ask the pre-flight for a draft, a waitlist join or a family-only party", async () => {
+      arrangeLookup(true);
+      for (const body of [
+        { guests: [FAMILY, X], draft: true },
+        { guests: [FAMILY, X], waitlist: true },
+        { guests: [FAMILY] },
+      ]) {
+        await POST(makeRequest(body));
+      }
+      expect(h.checkCapacity).not.toHaveBeenCalled();
+    });
+
+    // #3770, owner decision "only agreed adults count": a PENDING outsider adult
+    // is not the responsible adult for the member's children.
+    const markXPending = () =>
+      h.planConsent.mockImplementation(({ guests }: { guests: Array<{ memberId?: string | null }> }) => ({
+        guests: guests.map((guest) =>
+          guest.memberId === MEMBER_X
+            ? { ...guest, memberGuestConsent: { consentStatus: "PENDING" } }
+            : guest,
+        ),
+        entriesByMemberId: new Map(),
+      }));
+
+    it("refuses children plus a pending outsider adult, with no justification, like the lookup", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        markXPending();
+        const res = await POST(makeRequest({ guests: [KID, X] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expectNoBookingWritten();
+      }
+      expect(responses[0]).toEqual(responses[1]);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("MEMBER_GUEST_NOT_ADDABLE");
+    });
+
+    it("passes children plus a pending outsider adult WITH a justification on to the service, for review", async () => {
+      arrangeLookup(true);
+      markXPending();
+      const res = await POST(
+        makeRequest({ guests: [KID, X], memberReviewJustification: "Grandad is coming" }),
+      );
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking.mock.calls[0]?.[0]).toMatchObject({
+        memberReviewJustification: "Grandad is coming",
+      });
+    });
+
+    it("counts a notify-only outsider adult (written CONFIRMED) as the adult", async () => {
+      arrangeLookup(true);
+      h.planConsent.mockImplementation(({ guests }: { guests: Array<{ memberId?: string | null }> }) => ({
+        guests: guests.map((guest) =>
+          guest.memberId === MEMBER_X
+            ? { ...guest, memberGuestConsent: { consentStatus: "CONFIRMED" } }
+            : guest,
+        ),
+        entriesByMemberId: new Map(),
+      }));
+      const res = await POST(makeRequest({ guests: [KID, X] }));
+      expect(res.status).toBe(201);
+    });
+
+    it("counts a family adult as before", async () => {
+      const res = await POST(makeRequest({ guests: [KID, FAMILY] }));
+      expect(res.status).toBe(201);
+    });
+
+    it("leaves adult supervision to the create service when nobody beyond the family is named", async () => {
+      const res = await POST(makeRequest({ guests: [KID] }));
+
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+    });
+
+    // #3770 F4: with member guests switched off, a beyond-family id is refused
+    // first, as before the redesign — that refusal never depended on X.
+    it("refuses a beyond-family id before the family checks when member guests are off", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        const resolveForWorld = h.resolveLinkedBookingMembersWithBoundary.getMockImplementation();
+        h.resolveLinkedBookingMembersWithBoundary.mockImplementation(
+          async (db: unknown, booker: unknown, ids: string[], options: { memberGuestWideningEnabled?: boolean }) => {
+            if (!options.memberGuestWideningEnabled && ids.includes(MEMBER_X)) {
+              throw new BookingGuestValidationError("Invalid guest member reference", 403, {
+                code: "GUEST_MEMBER_NOT_ALLOWED",
+              });
+            }
+            return resolveForWorld?.(db, booker, ids, options);
+          },
+        );
+        const { loadMemberGuestAddPolicy } = await import("@/lib/member-guest-add-policy");
+        vi.mocked(loadMemberGuestAddPolicy).mockResolvedValueOnce({ wideningEnabled: false } as never);
+        h.findConflicts.mockResolvedValue([{ memberId: "fam-1" }]);
+        const res = await POST(makeRequest({ guests: [FAMILY, X] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(h.findConflicts).not.toHaveBeenCalled();
+      }
+
+      expect(responses[0]).toEqual(responses[1]);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("GUEST_MEMBER_NOT_ALLOWED");
+    });
+
+    it("books when a beyond-family adult is the host the party needs", async () => {
+      arrangeLookup(true);
+      h.evalHosting.mockImplementation(async (_db: unknown, { guests }: { guests: Array<{ memberId?: string | null }> }) =>
+        namesX(guests) ? null : hostingViolation);
+
+      const res = await POST(makeRequest({ guests: [FAMILY, X] }));
+
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the detailed paid-up refusal when nobody beyond the family is named", async () => {
+      h.evalNonMember.mockResolvedValue({ violation: paidUpViolation });
+
+      const res = await POST(makeRequest({ guests: [FAMILY] }));
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("PAID_UP_ADULT_MEMBER_REQUIRED");
+    });
+
+    it("keeps the detailed hosting refusal when nobody beyond the family is named", async () => {
+      h.evalHosting.mockResolvedValue(hostingViolation);
+
+      const res = await POST(makeRequest({ guests: [FAMILY] }));
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("ADULT_MEMBER_HOSTING_REQUIRED");
     });
   });
 });

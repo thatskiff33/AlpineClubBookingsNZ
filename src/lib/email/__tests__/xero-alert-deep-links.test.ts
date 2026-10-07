@@ -62,6 +62,7 @@ import {
   sendAdminXeroRepeatedFailureAlert,
 } from "@/lib/email/admin-alerts-finance";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /** What a stored `xeroObjectUrl` holds: no organisation named. */
 const GENERIC_URL = buildXeroInvoiceUrl("inv-1");
@@ -87,10 +88,11 @@ describe("sendAdminManualSettlementConflictAlert", () => {
   };
 
   it("stamps the organisation on the invoice link in body and template", async () => {
-    await sendAdminManualSettlementConflictAlert(data);
+    await sendAdminManualSettlementConflictAlert(data, CLUB_FORMAT_TEST);
 
     expect(h.settlementTemplate).toHaveBeenCalledWith(
       expect.objectContaining({ xeroInvoiceUrl: SCOPED_URL }),
+      CLUB_FORMAT_TEST,
     );
     expect(h.sendToAdmins).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -102,10 +104,11 @@ describe("sendAdminManualSettlementConflictAlert", () => {
   it("leaves the link generic when no short code is available", async () => {
     h.getXeroOrgShortCode.mockResolvedValue(null);
 
-    await sendAdminManualSettlementConflictAlert(data);
+    await sendAdminManualSettlementConflictAlert(data, CLUB_FORMAT_TEST);
 
     expect(h.settlementTemplate).toHaveBeenCalledWith(
       expect.objectContaining({ xeroInvoiceUrl: GENERIC_URL }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -114,7 +117,7 @@ describe("sendAdminManualSettlementConflictAlert", () => {
   // hold the previous organisation for up to 12 hours. A screen re-renders; an
   // email is stamped forever, so send time confirms the organisation live.
   it("confirms the organisation with Xero rather than trusting the cache", async () => {
-    await sendAdminManualSettlementConflictAlert(data);
+    await sendAdminManualSettlementConflictAlert(data, CLUB_FORMAT_TEST);
 
     expect(h.getXeroOrgShortCode).toHaveBeenCalledWith({ confirmLive: true });
   });
@@ -128,10 +131,11 @@ describe("sendAdminManualSettlementConflictAlert", () => {
     await sendAdminManualSettlementConflictAlert({
       ...data,
       xeroInvoiceUrl: FOREIGN_URL,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(h.settlementTemplate).toHaveBeenCalledWith(
       expect.objectContaining({ xeroInvoiceUrl: GENERIC_URL }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -139,10 +143,11 @@ describe("sendAdminManualSettlementConflictAlert", () => {
     await sendAdminManualSettlementConflictAlert({
       ...data,
       xeroInvoiceUrl: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(h.settlementTemplate).toHaveBeenCalledWith(
       expect.objectContaining({ xeroInvoiceUrl: null }),
+      CLUB_FORMAT_TEST,
     );
     expect(h.sendToAdmins).toHaveBeenCalledWith(
       expect.objectContaining({

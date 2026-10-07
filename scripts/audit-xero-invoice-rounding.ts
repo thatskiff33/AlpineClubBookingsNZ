@@ -11,12 +11,12 @@
  * SAFE USAGE — run against a NON-PRODUCTION copy of the database:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run xero:audit-invoice-rounding
+ *     pnpm run xero:audit-invoice-rounding
  *
  * Exclude invoices issued after you deployed the #1231 fix (they are already
  * correct in Xero) with --issued-before:
  *
- *   ... npm run xero:audit-invoice-rounding -- --issued-before 2026-07-04
+ *   ... pnpm run xero:audit-invoice-rounding --issued-before 2026-07-04
  *
  * A candidate is a LOCAL-data match only. Before treating one as a real error,
  * confirm in Xero that the invoice is still live (not voided/credited/
@@ -24,6 +24,7 @@
  */
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 import {
   formatRoundingAuditReport,
   scanXeroInvoiceRoundingDrift,
@@ -32,7 +33,7 @@ import {
 
 function printUsage() {
   console.log(`Usage:
-  DATABASE_URL=<non-prod copy> npm run xero:audit-invoice-rounding -- [options]
+  DATABASE_URL=<non-prod copy> pnpm run xero:audit-invoice-rounding [options]
 
 Options:
   --issued-before <YYYY-MM-DD>  Only scan invoices whose payment.createdAt is
@@ -110,6 +111,8 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // The club's format (#3565), read once before the scan.
+  const format = await getClubFormat();
   const result = await scanXeroInvoiceRoundingDrift(
     prisma as unknown as RoundingAuditPrismaClient,
     {
@@ -119,7 +122,7 @@ async function main() {
     }
   );
 
-  console.log(formatRoundingAuditReport(result));
+  console.log(formatRoundingAuditReport(result, format));
 
   if (args.json) {
     console.log("");

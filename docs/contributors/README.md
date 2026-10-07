@@ -11,12 +11,12 @@ is required reading to deploy the product.
 ## Start here
 
 **Automated agents:** [`../../AGENTS.md`](../../AGENTS.md) is the contract and
-the only entry point you need. It carries the always-read core, the routing
+the only entry point you need and the only file read every time. It carries the routing
 table that names what to read for the change you are about to make, the safety
 rules, the orchestration model, and the merge gate. Read it first and let its
-routing table bring you back here.
-[`../../CLAUDE.md`](../../CLAUDE.md) is the compact Claude Code adapter over the
-same contract.
+routing table bring you back here. It is the only agent rules file: Codex
+loads it directly and Claude Code loads it through the one-line `CLAUDE.md`
+import.
 
 **Humans:** read [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) for local
 setup, the development rules and the pull-request contract, then
@@ -63,6 +63,10 @@ in. Cite rules by id, never by line number.
   times turn into each other: the calendar-date / instant / club-local-scheduled
   distinction, where the club's zone comes from, and why a wall time may not
   exist or may exist twice.
+- [`../CLUB_FORMAT_KERNEL.md`](../CLUB_FORMAT_KERNEL.md) — the one place an
+  amount, a proportion or a count becomes a string: where the club's currency
+  and locale come from, the bound API a server and a browser both call, and the
+  migration window while the call sites move.
 - [`../CAPACITY_MODEL.md`](../CAPACITY_MODEL.md) — how each lodge's bookable
   capacity is decided in every configuration.
 - [`../CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md) — the
@@ -101,6 +105,9 @@ in. Cite rules by id, never by line number.
   non-production browser and Lighthouse checks.
 - [`../LOAD_TESTING.md`](../LOAD_TESTING.md) — the k6 HTTP load harness in
   [`../../load/`](../../load/README.md), its thresholds, and its safety rails.
+- [`../reviews/2026-09-26-money-path-sweep-may-june-2026.md`](../reviews/2026-09-26-money-path-sweep-may-june-2026.md)
+  — the #3341 sweep of the unreviewed May–June 2026 money-path pull requests:
+  the defect class, a verdict per PR, and the defects it filed.
 
 ## Security
 
@@ -111,9 +118,9 @@ in. Cite rules by id, never by line number.
   design.
 - [`../../SECURITY.md`](../../SECURITY.md) — the public disclosure policy.
   Report a suspected vulnerability privately, never in an issue or pull request.
-- [`../../REVIEW.md`](../../REVIEW.md) — a **historical** record: the
-  production-hardening review of 15 July 2026, written at remediation altitude
-  against `origin/main @ 297216a7`. It is a point-in-time report, not a live
+- [`../reviews/2026-07-15-production-hardening.md`](../reviews/2026-07-15-production-hardening.md)
+  — a **historical** record: the production-hardening review of 15 July 2026,
+  written at remediation altitude against `origin/main @ 297216a7`. It is a point-in-time report, not a live
   list of open defects; each finding names the issue that tracks it, and that
   issue is where the current status lives.
 
@@ -137,22 +144,27 @@ in. Cite rules by id, never by line number.
   tracked-only, bounded code/import/Prisma context locator shared by Codex and
   Claude Code.
 - [`../agents/CODEX_WORKFLOW.md`](../agents/CODEX_WORKFLOW.md) — the operating
-  guide for Codex agents, including the Windows worktree runtime and
-  dependency preflight, and lane-owned Docker teardown with the report-only
-  `npm run stale-containers` debris check.
+  guide for agent lanes, including the worktree runtime and dependency
+  preflight (Windows and Linux/WSL), and lane-owned Docker teardown with the report-only
+  `pnpm run stale-containers` debris check.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
-  contracts: the human-first issue-body order, the four-question test for
-  whether work is an atomic epic at all (and how an epic differs from a
-  programme, a standalone issue and a GitHub Project), how an epic ships from
-  its integration branch, claiming, recording a decision, and what never goes
-  in a public artifact.
+  contracts: the human-first issue-body order, reading the whole thread,
+  claiming, recording a decision, the ready comment, and what never goes in a
+  public artifact.
+- [`../agents/EPIC_PLAYBOOK.md`](../agents/EPIC_PLAYBOOK.md) — the
+  four-question test for whether work is an atomic epic at all (and how an
+  epic differs from a programme, a standalone issue and a GitHub Project), how
+  an epic ships from its integration branch, and running a multi-issue wave.
+- [`../agents/MODELS.md`](../agents/MODELS.md) — the current models, the
+  cost-aware defaults, and when to escalate.
 - [`../agents/CODEX_PROMPTS.md`](../agents/CODEX_PROMPTS.md) — invocation
   prompts, and the [skill definitions](../agents/codex/skills/README.md) they
   draw on.
 - [`../agents/PROFILE_GUIDE.md`](../agents/PROFILE_GUIDE.md) — execution
   profiles, and the [profile definitions](../agents/codex/profiles/README.md).
 - [`../agents/SUBAGENT_GUIDE.md`](../agents/SUBAGENT_GUIDE.md) — when to spawn a
-  subagent and how to brief one.
+  subagent and how to brief one; the role definitions live in
+  `.claude/agents/` and `.codex/agents/`.
 - [`../agents/REVIEW_SEVERITY.md`](../agents/REVIEW_SEVERITY.md) — the review
   severity scale.
 - [`../agents/PROMPT_INJECTION_GUIDE.md`](../agents/PROMPT_INJECTION_GUIDE.md) —
@@ -165,6 +177,11 @@ Larger subsystems keep their own hub, and each links back here.
 - **Operational Xero** — [`../xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md):
   the module map, the reconciliation-ledger data model, and sequence diagrams
   for the outbound, inbound and repair flows.
+- **The booking ledger (design)** —
+  [`../design/booking-ledger.md`](../design/booking-ledger.md): the append-only
+  `BookingLedgerLine` design from programme #3527 — the model, every money
+  event's posting rule, the projection guard, the cut-over order, and the
+  invariant gap analysis (#3532). A design, not yet an implementation.
 - **Finance dashboard** —
   [`../finance-dashboard/README.md`](../finance-dashboard/README.md): reporting
   contracts, architecture decisions, data contracts, and the test plan.

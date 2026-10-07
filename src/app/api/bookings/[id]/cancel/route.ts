@@ -18,6 +18,7 @@ import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const cancelBookingParamsSchema = z.object({
   id: z.string().min(1),
@@ -95,11 +96,15 @@ export async function POST(
       );
     }
 
+    // The club's format (#3565), resolved once, before any transaction or
+    // lock below — never per amount and never inside a transaction.
+    const format = await clubFormatValues();
     const result = await cancelBooking(
       parsedParams.data.id,
       session.user.id,
       authorizationRoleFromAccessRoles(session.user),
       getClientIp(request),
+      format,
       parsed.data.refundMethod,
       {
         // Issue #1313 (owner-approved option A2): a Booking Officer

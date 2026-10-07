@@ -7,7 +7,12 @@ const mocks = vi.hoisted(() => ({
   isFullAdmin: vi.fn(),
   setIntegrationCredential: vi.fn(),
   createAuditLog: vi.fn(),
-  deleteXeroTokens: vi.fn(),
+  // #3454: the Xero verify-reset runs the credential write and the token
+  // destruction in ONE transaction; this double runs the write it is handed.
+  withXeroVerifyReset: vi.fn(
+    async (_params: unknown, work: (tx: unknown) => Promise<unknown>) =>
+      work({ transaction: "xero-verify-reset" }),
+  ),
   clearStripeWebhookVerified: vi.fn(),
   loggerError: vi.fn(),
   findMany: vi.fn(),
@@ -34,6 +39,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/integration-credentials")),
   setIntegrationCredential: mocks.setIntegrationCredential,
+  // The in-transaction write is the same writer with the caller's `tx`, so the
+  // same double serves both and every assertion below reads either.
+  setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
 }));
 vi.mock("@/lib/stripe-config", () => ({
   STRIPE_PROVIDER: "stripe",
@@ -48,7 +56,12 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
   getAuditRequestContext: () => ({ id: null, ipAddress: "1.2.3.4", userAgent: "test" }),
 }));
-vi.mock("@/lib/xero-token-store", () => ({ deleteXeroTokens: mocks.deleteXeroTokens }));
+// PARTIAL: which keys reset the tokens is the token store's rule, so the real
+// predicate decides; only the database-touching reset is replaced.
+vi.mock("@/lib/xero-verify-reset", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-verify-reset")),
+  withXeroVerifyReset: mocks.withXeroVerifyReset,
+}));
 vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError } }));
 
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
@@ -142,10 +155,20 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(write.request).toBeDefined();
   });
 
-  it("applies verify-reset (drops Xero tokens) on a client-credential write", async () => {
+  it("applies verify-reset (drops Xero tokens) on a client-credential write, in the write's transaction", async () => {
     asFullAdmin();
     await POST(makeRequest({ provider: "xero", key: "client_secret", value: SECRET_VALUE }));
-    expect(mocks.deleteXeroTokens).toHaveBeenCalledTimes(1);
+    expect(mocks.withXeroVerifyReset).toHaveBeenCalledTimes(1);
+    expect(mocks.withXeroVerifyReset.mock.calls[0][0]).toMatchObject({
+      actor: { kind: "admin", memberId: "admin-1" },
+      causedByCredential: "xero:client_secret",
+    });
+    // The credential write ran INSIDE the reset's transaction (#3454): it was
+    // handed the transaction client the reset opened.
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+    expect(mocks.setIntegrationCredential.mock.calls[0][0].tx).toEqual({
+      transaction: "xero-verify-reset",
+    });
   });
 
   it("does NOT drop Xero tokens when only the webhook key changes", async () => {
@@ -158,7 +181,7 @@ describe("POST /api/admin/integrations/credentials", () => {
       updatedAt: new Date(),
     });
     await POST(makeRequest({ provider: "xero", key: "webhook_key", value: "hook" }));
-    expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+    expect(mocks.withXeroVerifyReset).not.toHaveBeenCalled();
   });
 
   it("applies Stripe verify-reset (drops the webhook-verified marker) on any Stripe write", async () => {
@@ -185,7 +208,7 @@ describe("POST /api/admin/integrations/credentials", () => {
       mocks.setIntegrationCredential.mock.calls[0][0].request,
     );
     // Cross-provider isolation: a Stripe write never touches Xero tokens.
-    expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+    expect(mocks.withXeroVerifyReset).not.toHaveBeenCalled();
   });
 
   it("forgets the owned-lodge list when the Alpine Central Server key is replaced (#52)", async () => {
@@ -240,7 +263,7 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(res.status).toBe(200);
     expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
     // No verify-reset side-effect for anthropic (no verified marker exists).
-    expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+    expect(mocks.withXeroVerifyReset).not.toHaveBeenCalled();
     expect(mocks.clearStripeWebhookVerified).not.toHaveBeenCalled();
     const json = await res.json();
     expect(JSON.stringify(json)).not.toContain("sk-ant-xxx");

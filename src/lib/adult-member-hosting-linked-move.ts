@@ -19,6 +19,7 @@ import {
   linkedMoveAllBookingsPhrase,
   type HostingCoverageLinkedMoveBooking,
 } from "@/lib/hosting-coverage-linked-move-client";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The LINKED MOVE: what a member is offered when moving one of their bookings
@@ -318,7 +319,7 @@ function describeBooking(booking: LinkedMoveBooking): string {
  * supervision rule is what compelled the move, so the sentence has to say which
  * answer this club gave.
  */
-export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote): string {
+export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: ClubFormat): string {
   const [first] = quote.linked;
   if (!first) {
     return (
@@ -369,7 +370,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote): string {
     settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,
     linkedCount: count,
-  });
+  }, format);
 
   return (
     `${opening} Move ${linkedMoveAllBookingsPhrase(count)} together? ` +
@@ -394,6 +395,8 @@ export interface LinkedMoveSettledBooking {
   additionalAmountCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back - money coming back as well. */
+  appliedCreditGivenBackCents: number;
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
   /** What the cancellation policy KEPT of this booking's reduction, in cents. */
@@ -598,9 +601,9 @@ export function combineLinkedMoveQuote(input: {
     // member chose once for both. Summing the two is right rather than
     // double-counting: exactly one of them is non-zero per booking, because
     // `calculateModificationSettlementOptions` routes a given reduction down one
-    // path or the other, never both.
+    // path or the other, never both; credit given back (#3809) adds to either.
     combinedRefundCents: sum(
-      (r) => r.refundAmountCents + r.accountCreditAmountCents,
+      (r) => r.refundAmountCents + r.accountCreditAmountCents + r.appliedCreditGivenBackCents,
     ),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
     // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is
@@ -644,11 +647,8 @@ export class SameOwnerCoverageLinkedMoveRequiredError extends ApiError {
   /** Bound to the stranded set alone; the key `LEAVE_UNCOVERED` must return. */
   readonly declineStateKey: string;
 
-  constructor(
-    quote: LinkedMoveQuote,
-    keys: { acceptStateKey: string; declineStateKey: string },
-  ) {
-    super(formatLinkedMoveOfferMessage(quote), 409);
+  constructor(quote: LinkedMoveQuote, keys: { acceptStateKey: string; declineStateKey: string }, format: ClubFormat) {
+    super(formatLinkedMoveOfferMessage(quote, format), 409);
     this.name = "SameOwnerCoverageLinkedMoveRequiredError";
     this.quote = quote;
     this.acceptStateKey = keys.acceptStateKey;

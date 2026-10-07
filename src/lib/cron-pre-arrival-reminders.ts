@@ -8,6 +8,7 @@ import { sendPreArrivalReminderEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const PRE_ARRIVAL_REMINDER_DAYS = 3;
 
@@ -26,6 +27,9 @@ export interface PreArrivalReminderResult {
 }
 
 export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = new Date();
   const windowStart = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   const windowEndExclusive = addDaysDateOnly(
@@ -117,7 +121,7 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
         })
           ? booking.payment?.additionalAmountCents ?? 0
           : 0,
-      });
+      }, format);
       /*
         THE CLAIM ABOVE IS THE ONLY THING THAT WILL EVER SELECT THIS BOOKING
         (#3035). It stamps `preArrivalReminderSentAt` BEFORE the send, and the

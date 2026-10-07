@@ -12,6 +12,9 @@ import type { ClubIdentity } from "@/config/club-identity-types";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
+import { LodgeNotSetUpNotice } from "@/components/lodge-not-set-up-notice";
+import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
 
 interface RequestGuest {
   firstName: string;
@@ -37,6 +40,7 @@ function emptyGuest(): RequestGuest {
  * fallback (#1982 R1).
  */
 export function BookingRequestForm({ club }: { club: ClubIdentity }) {
+  const format = useClubFormat();
   const ageTierOptions = useAgeTierOptions();
   /*
     THE EARLIEST SELECTABLE LODGE NIGHT IS THE CLUB'S TODAY (CT-4, #2870; epic
@@ -118,6 +122,9 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
   const selectedLodge = lodges.find((lodge) => lodge.id === lodgeId) ?? null;
   const effectiveCapacity =
     selectedLodge?.capacity ?? defaultLodgeCapacity ?? club.lodgeCapacity;
+  // #3407: a lodge with no capacity quotes no "/0 max"; it says it is not set
+  // up yet, and the request cannot be sent (the server would refuse it).
+  const lodgeNotSetUp = !isLodgeSetUpForBookings(effectiveCapacity);
 
   // The quote refetch is keyed on the serialized guest list, not the array
   // identity: `validGuests` is a fresh filter result every render, so using it
@@ -383,7 +390,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">
-                Guests ({guests.length}/{effectiveCapacity} max)
+                Guests{lodgeNotSetUp ? null : ` (${guests.length}/${effectiveCapacity} max)`}
               </h3>
               <Button
                 type="button"
@@ -453,7 +460,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
                 "Calculating indicative price..."
               ) : indicativePriceCents != null ? (
                 <p>
-                  Indicative price: <span className="font-semibold">{formatCents(indicativePriceCents)}</span>
+                  Indicative price: <span className="font-semibold">{formatCents(indicativePriceCents, format)}</span>
                   {" "}— the final price will be confirmed by the club.
                 </p>
               ) : (
@@ -473,7 +480,8 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
             />
           </div>
 
-          <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
+          <LodgeNotSetUpNotice show={lodgeNotSetUp} />
+          <Button type="submit" disabled={submitting || lodgeNotSetUp} className="w-full sm:w-auto">
             {submitting ? "Submitting..." : showPricing ? "Request to Book" : "Request for Price"}
           </Button>
         </form>

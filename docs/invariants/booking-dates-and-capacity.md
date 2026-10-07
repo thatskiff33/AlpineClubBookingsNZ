@@ -660,19 +660,17 @@ derivation).
 - **Where the zone those formatters pin comes from is a different invariant.**
   Since CT-1 (#2989) it is the persisted `ClubTimeSettings.timeZone`, read
   through `getClubTimeZone()` — `INV-CONFIG-002` in
-  [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
-  the transitional constant `src/lib/date-only.ts` and the module-level
-  formatters still read; do not conclude from it that the environment is the
-  club's civil-time authority. Naming the environment's zone is `INV-DATE-029`.
+  [`product-configuration.md`](product-configuration.md). The environment is
+  not the club's civil-time authority; #3567 deleted the transitional
+  `APP_TIME_ZONE`. Naming the environment's zone is `INV-DATE-029`.
 
 ### INV-DATE-029
 
 - **CT-6 (#2991) closed the recurrence path and counted the remainder.** Naming
   the environment's zone — `process.env.TZ`, `NEXT_PUBLIC_TZ`, or an
   `APP_TIME_ZONE` import — is a lint error under `src/**` outside a named
-  nine-file ratchet, of which two are structural (the config module that defines
-  it and CT-1's seed reader) and seven are measured callers each carrying the
-  issue that blocks them. What a selector cannot express is counted instead:
+  ratchet that began at nine files and since #3567 holds one, CT-1's seed
+  reader. What a selector cannot express is counted instead:
   `club-time-escape-hatch-census.test.ts` counts the call sites that still let a
   zone-defaulting `@/lib/date-only` helper take the environment's answer. Every
   ceiling there is TIGHT — equal to the live count, with no deliberate slack — so
@@ -688,8 +686,9 @@ derivation).
   `formatClubInstantLongDate` (or a binding's `instantLongDate`) for a moment —
   is reserved for the MEMBER-FACING surfaces the owner asked to keep it on
   (#2264): booking messages and the emails built from them, the lodge and
-  hut-leader instruction "last updated" stamps, and the generated report cover.
-  Admin and internal screens use the medium shape (`formatClubDate` /
+  hut-leader instruction "last updated" stamps, and the generated report cover
+  — plus the induction record's dates, long since #2256 and on the kernel's
+  shape since #3566 rather than a local formatter. Admin and internal screens use the medium shape (`formatClubDate` /
   `formatClubInstantDate`). Until #3123 these were `formatNZLongDate` and
   `formatNZDate` on the retired `nzst-date` adapter; the rule is about the SHAPE,
   not the spelling, and the shape is byte-identical.
@@ -779,8 +778,8 @@ derivation).
   default lodge's `LodgeSettings.capacity` is backfilled from the config bed
   total by the boot-time self-heal, and any lodge (default or additional) with
   neither configured beds nor a capacity is unbookable rather than overbookable
-  until it is set up (the setup-readiness Club Config check warns on a
-  default lodge left at 0).
+  until it is set up (the setup-readiness Club Config check warns on
+  every active lodge left at 0, #3407).
 - The arithmetic itself has **one home**, `src/lib/lodge-effective-capacity.ts`
   (`INV-SSOT-001`): the resolver, the partner-headroom formula
   (`INV-CAP-031`) and the save bounds all live there, and the admin lodge
@@ -808,6 +807,15 @@ derivation).
   cancelled. Because #737's member-priority bumping only ever touched
   non-holding PENDING rows, an accepted-but-unpaid quote can no longer be bumped
   by a later member booking — this is the intended capacity-priority change.
+
+- A SCHOOL quote can hold adults whose names are pending (#3413). Each one
+  consumes one bed per NZ date-only lodge night through
+  `BookingRequestPendingAdultReservationNight`, in addition to named guest
+  nights. Every canonical occupancy and availability read counts both terms.
+  The rows exist only with the request's held `AWAITING_REVIEW` booking; cancelling
+  that hold removes them in the same locked transaction. Naming a real adult
+  under global then lodge locks replaces one count with one named guest-night
+  set atomically. Conversion refuses any unresolved count or reservation.
 
 ### INV-CAP-005
 

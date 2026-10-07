@@ -18,6 +18,7 @@
 //     "it wrote the wrong thing" is not something a passing quote can reveal.
 // For those, reading the source is not a shortcut; it is the only honest test.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -393,7 +394,8 @@ describe("every widened call site also collapses its refusals", () => {
   // The pairing is the point: a site that widens without marking would answer a
   // stranger's occupancy, subscription status or profile in full detail.
   const WIDENED_SITES = [
-    "src/app/api/bookings/route.ts",
+    // #3770: the create route (and both exception doors) resolve through it.
+    "src/lib/member-guest-family-first.ts",
     "src/app/api/bookings/quote/route.ts",
     "src/app/api/bookings/[id]/guests/route.ts",
     "src/app/api/bookings/[id]/modify-quote/route.ts",
@@ -510,6 +512,7 @@ describe("applyGuestChanges persists the planned consent columns", () => {
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: NEW_CHECK_IN,
         newCheckOut: NEW_CHECK_OUT,
@@ -545,6 +548,7 @@ describe("applyGuestChanges persists the planned consent columns", () => {
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: NEW_CHECK_IN,
         newCheckOut: NEW_CHECK_OUT,

@@ -40,6 +40,7 @@ vi.mock("@/lib/email/core", () => ({ sendEmail }));
 
 import { bookingModifiedTemplate } from "@/lib/email-templates/booking";
 import { sendBookingModifiedEmail } from "@/lib/email/booking";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const OLD_CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const OLD_CHECK_OUT = new Date("2026-08-05T00:00:00.000Z");
@@ -65,6 +66,7 @@ function params(overrides: Record<string, unknown> = {}) {
     // explicitly: this is the "no review is open" email every case below is
     // measured against, not an absence the compiler filled in.
     financialReviewPending: false,
+    appliedCreditGivenBackCents: 0,
     ...overrides,
   };
 }
@@ -81,7 +83,7 @@ function senderParams(overrides: Record<string, unknown> = {}) {
 /** The flat body's `{{paymentNote}}` value, as the sender composed it. */
 async function paymentNoteFromSender(overrides: Record<string, unknown> = {}) {
   sendEmail.mockClear();
-  await sendBookingModifiedEmail(senderParams(overrides));
+  await sendBookingModifiedEmail(senderParams(overrides), CLUB_FORMAT_TEST);
   const [call] = sendEmail.mock.calls as unknown as [
     [{ templateData: { paymentNote: string } }],
   ];
@@ -94,9 +96,10 @@ beforeEach(() => {
 
 describe("an unresolved adjustment no longer sends a silent money section (#3033)", () => {
   it("the HTML template says the amount is coming, where it used to say nothing", async () => {
-    const silent = bookingModifiedTemplate(params());
+    const silent = bookingModifiedTemplate(params(), CLUB_FORMAT_TEST);
     const honest = bookingModifiedTemplate(
       params({ financialReviewPending: true }),
+      CLUB_FORMAT_TEST,
     );
 
     // The pre-#3033 behaviour, kept as the control: with no positive amount in
@@ -117,7 +120,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     const note = await paymentNoteFromSender({ financialReviewPending: true });
 
     expect(note).not.toContain("$");
-    expect(bookingModifiedTemplate(params({ financialReviewPending: true }))).not.toMatch(
+    expect(bookingModifiedTemplate(params({ financialReviewPending: true }), CLUB_FORMAT_TEST)).not.toMatch(
       /\$0\.00/,
     );
   });
@@ -141,7 +144,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     */
     const overrides = { financialReviewPending: true, additionalAmountCents: 4500 };
     const note = await paymentNoteFromSender(overrides);
-    const html = bookingModifiedTemplate(params(overrides));
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
 
     expect(note).toMatch(/working out what that change means/i);
     expect(note).toMatch(/An additional payment of \$45\.00 is required/);
@@ -173,7 +176,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     ]) {
       const overrides = { financialReviewPending: true, ...moved };
       const note = await paymentNoteFromSender(overrides);
-      const html = bookingModifiedTemplate(params(overrides));
+      const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
 
       // The honest half stays: the club is still working the amount out.
       expect(note).toMatch(/working out what that change means/i);
@@ -200,7 +203,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     expect(await paymentNoteFromSender(overrides)).toMatch(
       /nothing has been refunded or charged/i,
     );
-    expect(bookingModifiedTemplate(params(overrides))).toMatch(
+    expect(bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST)).toMatch(
       /nothing has been refunded or charged/i,
     );
   });
@@ -234,7 +237,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
       `bookingModifiedTemplate:financialReviewPendingWithPayment` in the
       rendered-email corpus.
     */
-    const html = bookingModifiedTemplate(params(overrides));
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
 
     expect(html).toMatch(/working out what that change means/i);
     expect(html).toMatch(
@@ -282,5 +285,31 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     expect(await paymentNoteFromSender({ additionalAmountCents: 4500 })).toMatch(
       /An additional payment of \$45\.00 is required/,
     );
+  });
+});
+
+/*
+  #3809: a change that gave back applied credit says so, in the HTML email and
+  in the flat body's {{paymentNote}} alike - and beside a card refund on a
+  booking paid by card and credit, since both are true.
+*/
+describe("#3809: applied credit given back is named in the Booking Modified email", () => {
+  const SENTENCE = "$50.00 of the account credit used for this booking has been returned to your account credit.";
+
+  it("MUTATION: the HTML email and the flat body both state the amount, as account credit", async () => {
+    expect(bookingModifiedTemplate(params({ appliedCreditGivenBackCents: 5000 }), CLUB_FORMAT_TEST)).toContain(SENTENCE);
+    expect(await paymentNoteFromSender({ appliedCreditGivenBackCents: 5000 })).toBe(SENTENCE);
+  });
+
+  it("composes with a card refund rather than replacing it", async () => {
+    const note = await paymentNoteFromSender({ refundAmountCents: 10000, appliedCreditGivenBackCents: 5000 });
+
+    expect(note).toMatch(/A refund of \$100\.00 has been processed/);
+    expect(note).toContain(SENTENCE);
+  });
+
+  it("is absent where nothing came back", async () => {
+    expect(await paymentNoteFromSender({})).not.toContain("returned to your account credit");
+    expect(bookingModifiedTemplate(params(), CLUB_FORMAT_TEST)).not.toContain("returned to your account credit");
   });
 });

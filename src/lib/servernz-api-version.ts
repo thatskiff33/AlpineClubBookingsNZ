@@ -1,6 +1,6 @@
 /**
  * The Alpine Central Server API version this site was built for, and the ONE
- * rule for comparing versions (#49, `INV-INT-025`, `INV-SSOT`).
+ * rule for comparing versions (#49, `INV-INT-026`, `INV-SSOT`).
  *
  * The server publishes a single `major.minor` number for the whole `/api/v1`
  * contract (other lodges, the message board, push registration). This site

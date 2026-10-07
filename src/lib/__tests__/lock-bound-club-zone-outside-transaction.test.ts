@@ -62,7 +62,7 @@ import { blankLiterals } from "./support/strip-comments";
  *    `new Date()` — passes rule 1 perfectly.
  * 3. **No legacy environment-zone helper anywhere in the set.** `INV-CONFIG-002`:
  *    the day must come from the persisted setting, and `getTodayDateOnly()` /
- *    `APP_TIME_ZONE` are how it came from the container instead. ESLint's
+ *    the environment zone are how it came from the container instead. ESLint's
  *    `NO_ENVIRONMENT_ZONE_IMPORT` arm covers the import; this covers the call.
  * 4. **Both of the populations above are DERIVED from the tree, not
  *    remembered.** Which spellings open a transaction, and which files call the
@@ -237,6 +237,10 @@ const PURE_CALLEES = [
   // while the global money key and the lodge capacity key are both held. It takes
   // the day its callers already resolved outside their own transactions.
   "src/lib/booking-linked-date-move-service.ts",
+  // #3640's payment-ledger writers. They run inside the caller's transaction
+  // whenever they are handed one (`withStoreTransaction`) - the cancel claim's,
+  // with `lock(1)` held - so they resolve no club day at all.
+  "src/lib/payment-transactions.ts",
 ] as const;
 
 /**
@@ -380,12 +384,15 @@ const PRE_TRANSACTION_RESOLVER_HOMES: Readonly<
   "src/lib/booking-exception-approval.ts": ["resolveNewBookingExecutionParams"],
 };
 
-/** The legacy environment-zone spellings this issue retires. */
+/**
+ * The legacy environment-zone spellings this issue retires. The config constant
+ * itself was on this list until #3567 deleted its module, which no production
+ * file can now import.
+ */
 const ENVIRONMENT_ZONE_SPELLINGS = [
   "getTodayDateOnly(",
   "normalizeDateOnlyForTimeZone(",
   "todayDateOnlyForTimeZone(",
-  "APP_TIME_ZONE",
 ] as const;
 
 function read(file: string): string {
@@ -457,11 +464,24 @@ const PRODUCTION_SOURCES: ReadonlyMap<string, string> = new Map(
  * parameters include a function-typed one returns exactly these two. Re-run that
  * scan whenever a transaction helper is added — a wrapper this list has not heard
  * of is a span this file cannot see into.
+ *
+ * `withStoreTransaction(` is the third (#3640, `db-transaction.ts`): the
+ * payment-ledger writers commit a card refund's rows, its mirror
+ * compare-and-set and the payment aggregate together, inside the caller's
+ * transaction or one of their own. The scan below named its predecessor the day
+ * it was written, which is the point of deriving the set.
  */
 const TRANSACTION_OPENERS = [
   "$transaction(",
   "withOptionalTransaction(",
   "withBoundedReadOnlyTransaction(",
+  "withStoreTransaction(",
+  // #3462: Mark failed runs its caller's audit callback inside its transaction.
+  "markStaleRunningXeroOperationFailed(",
+  // #3454: the credential store's composition point, and the Xero verify-reset
+  // that composes a credential write with the token destruction it causes.
+  "withCredentialTransaction(",
+  "withXeroVerifyReset(",
 ] as const;
 
 /**
@@ -540,11 +560,15 @@ function spansForOpener(
 
 /**
  * The callback-opening wrappers whose ENCLOSING FUNCTION is inside a transaction
- * whenever a caller supplies one. Today that is `withOptionalTransaction`, whose
- * whole reason for existing is that the caller may already have opened the
- * transaction (#2525).
+ * whenever a caller supplies one: `withOptionalTransaction`, whose whole reason
+ * for existing is that the caller may already have opened the transaction
+ * (#2525), and its sibling `withStoreTransaction` (#3640), which joins the
+ * transaction its `store` already is.
  */
-const CALLER_TRANSACTION_WRAPPERS = ["withOptionalTransaction("] as const;
+const CALLER_TRANSACTION_WRAPPERS = [
+  "withOptionalTransaction(",
+  "withStoreTransaction(",
+] as const;
 
 /** Column-0 declarations, which is where this codebase's exported services live. */
 const TOP_LEVEL_DECLARATION =
@@ -1020,7 +1044,7 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
 
     expect(
       offenders,
-      "`getTodayDateOnly()` and friends default their zone to `APP_TIME_ZONE`, " +
+      "`getTodayDateOnly()` and friends defaulted their zone to the environment's, " +
         "the container's, which is the defect #3123 exists to remove " +
         "(`INV-CONFIG-002`). These seven modules are at zero and may not " +
         "regrow; the census ceiling in " +
@@ -1041,16 +1065,19 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
     // The caller-transaction scanner is separately losable: it keys on a
     // DIFFERENT needle and on a different boundary heuristic, so a renamed
     // wrapper or a reformat that moves a declaration off column 0 would leave
-    // its rule passing over nothing. Two files in the tree hand a caller
+    // its rule passing over nothing. Files in the tree hand a caller
     // transaction to `withOptionalTransaction` — `booking-create.ts` and
-    // `booking-batch-modification-service.ts` — and the derived population is
-    // what finds them, with the lists above agreeing that both are classified.
+    // `booking-batch-modification-service.ts` — or to `withStoreTransaction`
+    // (`payment-transactions.ts`, #3640), and the derived population is what
+    // finds them, with the lists above agreeing that each is classified.
     const callerSpans = CALLER_TRANSACTION_POPULATION.flatMap((file) =>
       callerTransactionSpans(read(file)),
     );
-    expect(callerSpans.length).toBeGreaterThanOrEqual(2);
+    expect(callerSpans.length).toBeGreaterThanOrEqual(3);
     for (const span of callerSpans) {
-      expect(span.body).toContain("withOptionalTransaction(");
+      expect(
+        CALLER_TRANSACTION_WRAPPERS.some((wrapper) => span.body.includes(wrapper)),
+      ).toBe(true);
       expect(span.body.length).toBeGreaterThan(200);
     }
 

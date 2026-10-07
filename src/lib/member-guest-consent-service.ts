@@ -31,8 +31,19 @@ import type {
   MemberGuestDelegateAnswer,
   MemberGuestStillOnBookingReason,
 } from "@/lib/member-guest-email-notes";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import {
+  fillBookingGuestDietaryFromProfileIfEmpty,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import type { ClubFormat } from "@/lib/club-format";
+import {
+  guestRemovalXeroSettlement,
+  queueGuestRemovalXeroSettlement,
+  type GuestRemovalXeroSettlement,
+} from "@/lib/booking-guest-removal-xero";
 
 /**
  * The member-guest consent state machine ("+ Add Member Guest", epic #2305,
@@ -98,8 +109,8 @@ export type MemberGuestConsentOutcome =
    * email quotes it to the booking owner, so a second calculation here would be a
    * second chance to tell them the wrong number.
    */
-  | { outcome: "DECLINED"; removed: true; creditCents: number }
-  | { outcome: "EXPIRED"; removed: true; creditCents: number }
+  | { outcome: "DECLINED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
+  | { outcome: "EXPIRED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
   /** Claimed, but the guest is still on the booking and an admin must act. */
   | {
       outcome: "BLOCKED";
@@ -237,9 +248,20 @@ async function claimConsentTransition(
   next: "CONFIRMED" | "DECLINED" | "EXPIRED",
   respondedByMemberId: string | null,
   now: Date,
+  /**
+   * #3029 N3: the member the caller authorised against, read before the
+   * locks. Matching it here means a row whose occupant was rewritten in place
+   * in between (a held-party approval) cannot be claimed on the strength of the
+   * old member's answer. Omitted by the paths that read the row under the lock.
+   */
+  expectedMemberId?: string,
 ): Promise<boolean> {
   const claimed = await tx.bookingGuest.updateMany({
-    where: { id: guestId, consentStatus: "PENDING" },
+    where: {
+      id: guestId,
+      consentStatus: "PENDING",
+      ...(expectedMemberId ? { memberId: expectedMemberId } : {}),
+    },
     data:
       next === "EXPIRED"
         ? // An expiry is nobody's decision, so it records no responder: that is
@@ -313,8 +335,10 @@ async function removeClaimedConsentGuest(
      * per-lodge capacity key.
      */
     today: Date;
+    /** The club's format (#3565), resolved with `today` and for the same reason. */
+    format: ClubFormat;
   },
-): Promise<{ removed: true; creditCents: number }> {
+): Promise<{ removed: true; creditCents: number; xeroSettlement: GuestRemovalXeroSettlement }> {
   try {
     const result = await removeBookingGuestInTransaction({
       tx,
@@ -323,6 +347,7 @@ async function removeClaimedConsentGuest(
       actorMemberId: params.actorMemberId,
       actorRole: "MEMBER",
       today: params.today,
+      format: params.format,
       ...(params.settlementMethod ? { settlementMethod: params.settlementMethod } : {}),
       consentAuthority: {
         kind: params.kind,
@@ -330,7 +355,14 @@ async function removeClaimedConsentGuest(
         targetMemberId: params.targetMemberId,
       },
     });
-    return { removed: true, creditCents: result.accountCreditAmountCents ?? 0 };
+    // #3809: credit given back of what the booking had applied is account
+    // credit the owner receives too, and the removal reaches Xero after commit
+    // (`finaliseMemberGuestConsentTransition`) like any other removal.
+    return {
+      removed: true,
+      creditCents: (result.accountCreditAmountCents ?? 0) + result.appliedCreditGivenBackCents,
+      xeroSettlement: guestRemovalXeroSettlement(result),
+    };
   } catch (err) {
     const refusal = consentRemovalRefusalMessage(err);
     if (refusal !== null) {
@@ -364,11 +396,26 @@ async function recordBlockedConsentTransition(params: {
   respondedByMemberId: string | null;
   now: Date;
   refusal: ConsentRemovalRefusal;
+  /**
+   * The member the refused removal was about. This claim runs in a fresh
+   * transaction after the rollback, so a held-party approval may have rewritten
+   * the row to someone else in between (#3029 P2); matching the member keeps
+   * that other person's row from being claimed on this one's answer.
+   */
+  expectedMemberId: string;
 }): Promise<MemberGuestConsentOutcome> {
-  const { db, guestId, status, respondedByMemberId, now, refusal } = params;
+  const { db, guestId, status, respondedByMemberId, now, refusal, expectedMemberId } =
+    params;
 
   const claimed = await db.$transaction((tx) =>
-    claimConsentTransition(tx, guestId, status, respondedByMemberId, now),
+    claimConsentTransition(
+      tx,
+      guestId,
+      status,
+      respondedByMemberId,
+      now,
+      expectedMemberId,
+    ),
   );
   if (!claimed) return { outcome: "ALREADY_RESOLVED" };
 
@@ -395,6 +442,8 @@ export async function respondToMemberGuestConsent(params: {
   guestId: string;
   actorMemberId: string;
   action: MemberGuestConsentAction;
+  /** The club's format (#3565), resolved by the route before any transaction. */
+  format: ClubFormat;
   now?: Date;
   delegateResolver?: MemberGuestConsentDelegateResolver;
   db?: typeof prisma;
@@ -404,15 +453,17 @@ export async function respondToMemberGuestConsent(params: {
     guestId,
     actorMemberId,
     action,
+    format,
     now = new Date(),
     delegateResolver = familyAdultDelegateResolver,
     db = prisma,
   } = params;
 
-  // Authorization runs on an unlocked read. It is re-asserted implicitly under
-  // the lock by the status-guarded claim (a row that changed hands cannot be
-  // claimed), and the guest's memberId is immutable, so nothing an attacker can
-  // race changes the answer.
+  // Authorization runs on an unlocked read, and it is re-asserted under the
+  // lock by the status-guarded claim. The guest's memberId is NOT immutable: a
+  // held-party approval rewrites a row's occupant in place (#3029 N3). So the
+  // claim below matches the member authorised here as well as the pending
+  // status — a row that changed hands in between cannot be claimed at all.
   const guest = (await db.bookingGuest.findUnique({
     where: { id: guestId },
     select: {
@@ -480,6 +531,10 @@ export async function respondToMemberGuestConsent(params: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  // #3029 S5 — the dietary seeding toggle, read here for the same reason. A
+  // member guest's profile note is NOT copied onto the row while their consent
+  // is pending; granting it below fills the row, if still empty (`INV-MOD-059`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     return await db.$transaction(async (tx) => {
@@ -510,8 +565,15 @@ export async function respondToMemberGuestConsent(params: {
           "CONFIRMED",
           actorMemberId,
           now,
+          targetMemberId,
         );
         if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
+        // The member has now agreed to be on this booking: fill their row from
+        // their CURRENT profile note, only if it is still empty and only while
+        // the field is on, through this transaction (#3029 S5).
+        await fillBookingGuestDietaryFromProfileIfEmpty(tx, guestDietarySeeding, [
+          { guestId, memberId: targetMemberId },
+        ]);
         await enqueueHostingCoverageReevaluationForMember(
           targetMemberId,
           tx,
@@ -530,6 +592,7 @@ export async function respondToMemberGuestConsent(params: {
         "DECLINED",
         actorMemberId,
         now,
+        targetMemberId,
       );
       if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
 
@@ -546,12 +609,14 @@ export async function respondToMemberGuestConsent(params: {
         actorMemberId,
         kind: "CONSENT_DECLINE",
         today: clubTodayDateOnly,
+        format,
       });
 
       return {
         outcome: "DECLINED",
         removed: true,
         creditCents: removal.creditCents,
+        xeroSettlement: removal.xeroSettlement,
       } as const;
     });
   } catch (err) {
@@ -563,6 +628,7 @@ export async function respondToMemberGuestConsent(params: {
       respondedByMemberId: actorMemberId,
       now,
       refusal: err,
+      expectedMemberId: targetMemberId,
     });
   }
 }
@@ -584,10 +650,12 @@ export async function respondToMemberGuestConsent(params: {
  */
 export async function expireMemberGuestConsent(params: {
   guestId: string;
+  /** The club's format (#3565), resolved by the sweep before any transaction. */
+  format: ClubFormat;
   now?: Date;
   db?: typeof prisma;
 }): Promise<MemberGuestConsentOutcome> {
-  const { guestId, now = new Date(), db = prisma } = params;
+  const { guestId, format, now = new Date(), db = prisma } = params;
 
   // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
   // opens. Inside it this path holds `pg_advisory_xact_lock(1)` and the
@@ -600,6 +668,9 @@ export async function expireMemberGuestConsent(params: {
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
 
+  // The member the expiry was judged for, read under the lock below; the
+  // blocked-claim fallback runs after the rollback and must match it (#3029 P2).
+  let expiringMemberId: string | null = null;
   try {
     return await db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -612,13 +683,15 @@ export async function expireMemberGuestConsent(params: {
           consentStatus: true,
           consentExpiresAt: true,
           bookingId: true,
-          booking: { select: { id: true, lodgeId: true, memberId: true } },
+          // #3653: and whether the organiser paid for it by card (below).
+          booking: { select: { id: true, lodgeId: true, memberId: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } } },
         },
       });
 
       if (!guest || guest.memberId === null || guest.consentStatus !== "PENDING") {
         return { outcome: "ALREADY_RESOLVED" } as const;
       }
+      expiringMemberId = guest.memberId;
 
       await acquireLodgeCapacityLock(
         tx,
@@ -666,18 +739,27 @@ export async function expireMemberGuestConsent(params: {
         // writing it here would attribute to them an act they did not take.
         actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
-        settlementMethod: "credit",
+        // #3653: D-15's credit election is the OWNER's account. A booking the
+        // group organiser paid for by card has one disposition instead - the
+        // organiser's card - and electing credit there is refused, which would
+        // leave the lapsed guest on the booking for ever. It falls through.
+        ...(paidByOrganiserCard(guest.booking) ? {} : { settlementMethod: "credit" as const }),
         today: clubTodayDateOnly,
+        format,
       });
 
       return {
         outcome: "EXPIRED",
         removed: true,
         creditCents: removal.creditCents,
+        xeroSettlement: removal.xeroSettlement,
       } as const;
     });
   } catch (err) {
     if (!(err instanceof ConsentRemovalRefusal)) throw err;
+    // A refusal is only raised after the row was read under the lock, so the
+    // member is always known here; rethrow rather than claim without it.
+    if (expiringMemberId === null) throw err;
     return recordBlockedConsentTransition({
       db,
       guestId,
@@ -687,6 +769,7 @@ export async function expireMemberGuestConsent(params: {
       respondedByMemberId: null,
       now,
       refusal: err,
+      expectedMemberId: expiringMemberId,
     });
   }
 }
@@ -734,6 +817,8 @@ export async function finaliseMemberGuestConsentTransition(params: {
   outcome: MemberGuestConsentOutcome;
   /** The member who acted, or null for the sweep. */
   actorMemberId: string | null;
+  /** The club's format (#3565), resolved by the caller before any transaction. */
+  format: ClubFormat;
   /** `cron:member-guest-consent-expiry` for the sweep; undefined for a person. */
   actorLabel?: string;
   /**
@@ -750,6 +835,7 @@ export async function finaliseMemberGuestConsentTransition(params: {
     targetMemberId,
     outcome,
     actorMemberId,
+    format,
     actorLabel,
     consentExpiresAt,
   } = params;
@@ -802,7 +888,24 @@ export async function finaliseMemberGuestConsentTransition(params: {
     await settleHostingCoverageAfterCommit({ bookingId });
   }
 
+  // #3809: a decline or expiry REMOVED the guest, repriced the booking and
+  // settled the reduction - a refund, minted credit, applied credit given back.
+  // Xero hears of it exactly as of any other guest removal, through the same
+  // leg, or its invoice keeps the old price and the give-back's deallocation
+  // leaves an amount due the app does not have. Best-effort, after the commit.
+  if ((outcome.outcome === "DECLINED" || outcome.outcome === "EXPIRED") && outcome.xeroSettlement) {
+    try {
+      await queueGuestRemovalXeroSettlement(outcome.xeroSettlement, {
+        createdByMemberId: actorMemberId ?? undefined,
+        additionalPaymentIntentId: null,
+      });
+    } catch (err) {
+      logger.error({ err, bookingId, guestId }, "Failed to queue Xero settlement for a member-guest consent removal");
+    }
+  }
+
   await notifyMemberGuestConsentOutcome({
+    format,
     bookingId,
     guestId,
     targetMemberId,
@@ -1002,7 +1105,10 @@ async function notifyMemberGuestConsentOutcome(params: {
   actorMemberId: string | null;
   /** The deadline as recorded on the row; see `finaliseMemberGuestConsentTransition`. */
   consentExpiresAt?: Date | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
+  const { format } = params;
   const { bookingId, guestId, targetMemberId, outcome, actorMemberId, consentExpiresAt } =
     params;
   if (outcome.outcome === "ALREADY_RESOLVED") return;
@@ -1096,7 +1202,7 @@ async function notifyMemberGuestConsentOutcome(params: {
           lodgeId: booking.lodgeId,
           guest,
           outcome: emailOutcome,
-        });
+        }, format);
       } catch (err) {
         logger.error(
           { err, bookingId, guestId },

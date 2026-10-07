@@ -12,12 +12,12 @@
  *
  * IT PROVES THE SHIPPED SQL. The role is created here by running
  * `buildAiDiagnosticsRoleSql` — the exact statement list
- * `npm run diagnostics:provision-role` executes for an operator — not a
+ * `pnpm run diagnostics:provision-role` executes for an operator — not a
  * hand-written fixture. A test fixture that re-declared its own grants would
  * prove nothing about what operators run.
  *
  * SAFETY ENVELOPE, the same as the sibling harnesses. OFF by default and a no-op
- * in ordinary `npm test`:
+ * in ordinary `pnpm test`:
  *   - The proof describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`; otherwise
  *     it is `describe.skip` and never imports `pg` or connects to anything.
  *   - It reads ONLY `CONCURRENCY_RACE_DATABASE_URL` and requires a loopback host,
@@ -37,10 +37,10 @@
  *     -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=concurrency_race_1881 \
  *     -p 127.0.0.1:55442:5432 postgres:16-alpine
  *   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
- *     npx prisma migrate deploy
+ *     pnpm exec prisma migrate deploy
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
- *     npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
+ *     pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
  */
 import { readFileSync } from "node:fs";
 
@@ -349,7 +349,7 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
       );
       expect(
         credentialTable.rows[0]?.present,
-        'The privilege proof needs the schema deployed — run `npx prisma migrate deploy` against CONCURRENCY_RACE_DATABASE_URL first (CI does this in the "Migrate dedicated advisory-lock race database" step).',
+        'The privilege proof needs the schema deployed — run `pnpm exec prisma migrate deploy` against CONCURRENCY_RACE_DATABASE_URL first (CI does this in the "Migrate dedicated advisory-lock race database" step).',
       ).toBe(true);
 
       for (const table of [GRANTED_TABLE, WRITABLE_TABLE, UNGRANTED_TABLE]) {
@@ -1129,8 +1129,9 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
     it.each([
       // The two credential surfaces, named individually because they are the ones
       // ADR-007 §1 puts permanently out of scope. `IntegrationCredential` holds
-      // encrypted provider secrets; `XeroToken` holds PLAINTEXT Xero OAuth access
-      // and refresh tokens. No tool pack may ever grant either.
+      // encrypted provider secrets and, since #3454, the Xero OAuth token set;
+      // `XeroToken` holds the same tokens, encrypted, for the blue-green window.
+      // No tool pack may ever grant either.
       ["IntegrationCredential", `SELECT * FROM public."IntegrationCredential" LIMIT 1`],
       ["XeroToken", `SELECT * FROM public."XeroToken" LIMIT 1`],
     ])("cannot read the credential store %s", async (_label, sql) => {

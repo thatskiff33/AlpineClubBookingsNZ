@@ -142,6 +142,11 @@ describe("general cron runner", () => {
           cancelledChildBookings: 0,
           scannedInterruptedCancels: 0,
           resumedInterruptedCancels: 0,
+          heldForInvoicePayment: 0,
+          heldForUnreadableInvoice: 0,
+          heldForStartedStay: 0,
+          releasedToMemberPays: 0,
+          startedStayAlerts: 0,
         })),
         // #2553: the abandoned policy-exception capacity-hold reaper.
         reapExpiredPolicyExceptionHolds: vi.fn(async () => ({
@@ -211,6 +216,11 @@ describe("general cron runner", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
+      releasedToMemberPays: 0,
+      startedStayAlerts: 0,
     });
     expect(result.policyExceptionHoldReap).toEqual({
       scanned: 2,
@@ -333,6 +343,11 @@ describe("general cron runner", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
+      releasedToMemberPays: 0,
+      startedStayAlerts: 0,
     }));
     const sendSchoolAttendeeConfirmationPrompts = vi.fn(async () => ({
       scanned: 0,

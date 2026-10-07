@@ -54,7 +54,11 @@ describe("public layout config cache", () => {
     mocks.revalidateTag.mockClear();
   });
 
-  it("uses independent short-lived tagged caches for non-security config", () => {
+  it("uses independent short-lived tagged caches for non-security config", async () => {
+    // Vitest 5 clears mock histories before each test, including calls made
+    // while statically imported modules were evaluated during collection.
+    vi.resetModules();
+    await import("@/lib/public-layout-config");
     expect(mocks.unstableCache.mock.calls).toEqual([
       [mocks.capacity, ["public-layout-default-lodge-capacity"], {
         tags: [PUBLIC_LAYOUT_CACHE_TAGS.capacity], revalidate: 15,

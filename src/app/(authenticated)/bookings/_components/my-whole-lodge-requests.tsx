@@ -10,7 +10,8 @@ import type {
   MyWholeLodgeRequestItem,
   MyWholeLodgeRequestStatus,
 } from "@/lib/member-whole-lodge-requests";
-import { formatStayDate } from "@/lib/club-time";
+import { formatStayDate, type ClubDateFormat } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /*
   #2263 — "My requests" on My bookings.
@@ -43,10 +44,10 @@ const STATUS_BADGE_CLASS: Record<MyWholeLodgeRequestStatus, string> = {
 const DECLINED_COPY =
   "The booking officer was not able to offer the whole lodge for those dates. Give them a call if you would like to talk through other options.";
 
-function formatRange(checkIn: string, checkOut: string) {
+function formatRange(checkIn: string, checkOut: string, format: ClubDateFormat) {
   // Serialised `@db.Date` lodge nights: `formatStayDate` is the kernel's one
   // home for decoding and formatting them (#3507; INV-DATE-010).
-  return `${formatStayDate(checkIn)} – ${formatStayDate(checkOut)}`;
+  return `${formatStayDate(checkIn, format)} – ${formatStayDate(checkOut, format)}`;
 }
 
 export function MyWholeLodgeRequests({
@@ -54,6 +55,7 @@ export function MyWholeLodgeRequests({
 }: {
   requests: MyWholeLodgeRequestItem[];
 }) {
+  const format = useClubFormat();
   const router = useRouter();
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +110,7 @@ export function MyWholeLodgeRequests({
             <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1">
                 <p className="font-medium">
-                  {formatRange(request.checkIn, request.checkOut)}
+                  {formatRange(request.checkIn, request.checkOut, format)}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Whole lodge · about {request.headcount}{" "}

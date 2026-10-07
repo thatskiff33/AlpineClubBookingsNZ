@@ -9,14 +9,14 @@ criteria instead of vibes.
 
 ## Safety rules — read before anything else
 
-Quoted from [`AGENTS.md`](../AGENTS.md) → Safety Rules, which govern this
-harness exactly as they govern every other tool in the repo:
+Quoted from [`AGENTS.md`](../AGENTS.md) → Safety, which governs this
+harness exactly as it governs every other tool in the repo:
 
-> - Do not use production credentials, production databases, production
->   backups, live Stripe, live Xero, live SES, live Sentry, or live provider
->   webhooks for exploratory work.
-> - Do not run browser automation, DAST, load tests, or broad endpoint
->   scanning against a live deployment without a written test window.
+> - Never use production credentials, databases or backups, or live Stripe, Xero,
+>   SES, Sentry or provider webhooks, for exploratory work.
+> - No dev servers in shared, staging or production checkouts unless the owner
+>   asks; no browser automation, DAST, load tests or endpoint scanning against a
+>   live deployment without a written test window.
 
 In concrete terms for this harness:
 
@@ -64,12 +64,12 @@ The same staging compose stack the Playwright e2e suite uses (see
 
 ```bash
 cp .env.staging.example .env.staging   # first time only
-npm run test:e2e:prepare               # up + migrate + demo-seed the stack
+pnpm run test:e2e:prepare               # up + migrate + demo-seed the stack
 ```
 
 That publishes the app at **`http://localhost:3001`**, Postgres at
 `127.0.0.1:5433` (never 5432), and Mailpit at `127.0.0.1:8025`. Tear it all
-down afterwards with `npm run test:e2e:down` (removes the volume — the
+down afterwards with `pnpm run test:e2e:down` (removes the volume — the
 bookings a load run created go with it).
 
 The demo seed provides the test accounts. All demo personas share the
@@ -110,7 +110,7 @@ It is deliberately **not** an npm dependency and never runs in CI.
 ## Scenarios
 
 All four live in `load/scenarios/` and share `load/lib/` (guard, config,
-login helper). Convenience wrappers exist in `package.json` (`npm run
+login helper). Convenience wrappers exist in `package.json` (`pnpm run
 load:public` etc.) — they only pass through to `k6 run` and abort on the
 guard unless the env above is set.
 
@@ -198,7 +198,7 @@ Bookings use a non-member child guest plus an explicit review justification.
 That follows the real child-only policy into `AWAITING_REVIEW`, a
 capacity-holding state, and **touches no payment provider**. It can enqueue an
 admin-review email, which the throwaway stack captures in Mailpit. Reset the
-stack (`npm run test:e2e:down && npm run test:e2e:prepare`) between contention
+stack (`pnpm run test:e2e:down && pnpm run test:e2e:prepare`) between contention
 runs so each run starts from a known-empty night.
 
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
@@ -307,4 +307,4 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   module disabled for load personas (the default seed state) or logins will
   park at `/login/verify`.
 - k6 scripts are ES modules executed by k6's own runtime — they are not part
-  of the app bundle, `npm test`, or CI, and `k6` is not a dependency.
+  of the app bundle, `pnpm test`, or CI, and `k6` is not a dependency.

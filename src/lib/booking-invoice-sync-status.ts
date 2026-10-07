@@ -11,6 +11,7 @@ import {
   type XeroInvoiceEmailFailureCause,
 } from "@/lib/xero-booking-invoice-outcome";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import {
   isStaleRunningXeroOperation,
   XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
@@ -330,7 +331,7 @@ export function classifyBookingInvoiceSyncFault(
     exclude these rows; a warning on the booking that kept shouting after the
     override would make the override useless exactly where it is most needed.
   */
-  if (operation.manuallyResolvedAt) return null;
+  if (isResolvedInXero(operation)) return null;
 
   /*
     A RUNNING row is the outbox working normally — until it is not. The worker
@@ -340,9 +341,7 @@ export function classifyBookingInvoiceSyncFault(
     the one the stuck-state dashboard and the operator's reset already use, so a
     booking and the club-wide count cannot disagree about the same row.
   */
-  const stalled =
-    operation.status === "RUNNING" &&
-    isStaleRunningXeroOperation(operation.startedAt, context.now);
+  const stalled = isStaleRunningXeroOperation(operation, context.now);
 
   if (
     !stalled &&

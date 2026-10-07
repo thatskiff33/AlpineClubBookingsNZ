@@ -6,22 +6,31 @@
 // behavior-preserving-move rule; that one-off extraction constraint no
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
+import {
+  isClearingAllocationShortfall,
+  partialClearingNoteIsIncomplete,
+} from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type {
   BookingClassificationContext,
   BookingXeroRepairAction,
   BookingXeroRepairBookingSummary,
   MutableFinding,
+  XeroOperationRecord,
 } from "./xero-booking-repair-types";
 import {
   getCapturedRepairTransactions,
   getOutstandingCapturedRefundAmountCents,
   getOutstandingRepairTransactions,
+  hasCapturedRepairPayment,
   planEditReviewChargeInvoicePayment,
 } from "./xero-booking-repair-payments";
 import {
   getBlockingOperation,
+  toRetryableOperationMatch,
   isStuckOperation,
+  paymentNoteAnswersInvoice,
   resolveObjectFromCandidates,
 } from "./xero-booking-repair-object-resolution";
 import {
@@ -40,10 +49,12 @@ import {
 import {
   addAction,
   addFinding,
+  addUnsettledRefundCreditNoteFindings,
   addXeroAmountMismatchFinding,
   buildBookingSummary,
   buildLinkRepairAction,
   buildManualReviewAction,
+  addResolvedInXeroFinding,
   buildRetryAction,
   recoverStoredXeroAmountCents,
 } from "./xero-booking-repair-findings";
@@ -53,11 +64,62 @@ import {
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
+import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
+import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
+import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
+import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
+  XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
+import { canonicalRefundNoteCandidates } from "@/lib/xero-refund-note-status";
+import {
+  decideLateCapture,
+  keptLateCaptureInvoiceAsked,
+  bookingHasPrimaryXeroInvoice,
+  keptLateCaptureRecordRoute,
+} from "@/lib/late-capture-kept-xero-rules";
+
+/**
+ * #3643: a booking's invoice-clearing credit note create that still stands -
+ * not retired (CANCELLED) and not marked resolved in Xero by an officer (the
+ * operations resolve route). The officer's mark is read through
+ * `isResolvedInXero`, the one home of "resolved means done" (#3635,
+ * `INV-INT-025`); the recognised part payment's rest asks this.
+ */
+function isOutstandingClearingNoteCreate(operation: XeroOperationRecord): boolean {
+  return (
+    operation.entityType === "CREDIT_NOTE" &&
+    operation.operationType === "CREATE" &&
+    operation.status !== "CANCELLED" &&
+    !isResolvedInXero(operation)
+  );
+}
+
+/** A live clearing allocation: reported, never retried here or queued beside. */
+function addBlockedClearingAllocationFinding(
+  findings: MutableFinding[],
+  operation: XeroOperationRecord
+) {
+  addFinding(findings, {
+    code: "BLOCKED_BY_XERO_OPERATION",
+    severity: "warning",
+    summary: ["FAILED", "PARTIAL"].includes(operation.status)
+      ? "A Xero invoice-clearing allocation operation failed and is not retried here - resolve it by hand so the cancelled unpaid booking's invoice closes."
+      : isStuckOperation(operation)
+        ? "A pending or running Xero invoice-clearing allocation operation looks stuck."
+        : "A Xero invoice-clearing allocation operation is already pending or running.",
+    safeToAutoApply: false,
+    details: { operationId: operation.id, operationStatus: operation.status },
+    actionKeys: [],
+  });
+}
 
 export function classifyBookingContext(
   context: BookingClassificationContext
@@ -204,10 +266,10 @@ export function classifyBookingContext(
         "INVOICE",
         "CREATE"
       );
-      if (blockingOperation && blockingOperation.retryMeta.supported) {
+      if (blockingOperation?.kind === "retryable") {
         const action = addAction(
           actionMap,
-          buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+          buildRetryAction(booking.id, blockingOperation)
         );
         addFinding(findings, {
           code: "BLOCKED_BY_XERO_OPERATION",
@@ -222,6 +284,10 @@ export function classifyBookingContext(
           },
           actionKeys: [action.key],
         });
+      } else if (blockingOperation?.kind === "resolved") {
+        // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
+        // queued beside, but reported (decision 2), so a wrong resolve can be seen.
+        addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "invoice");
       } else if (blockingOperation) {
         const summary = isStuckOperation(blockingOperation.operation)
           ? "A pending or running Xero booking invoice operation looks stuck."
@@ -307,10 +373,10 @@ export function classifyBookingContext(
       "UPDATE"
     );
 
-    if (blockingOperation && blockingOperation.retryMeta.supported) {
+    if (blockingOperation?.kind === "retryable") {
       const action = addAction(
         actionMap,
-        buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+        buildRetryAction(booking.id, blockingOperation)
       );
       addFinding(findings, {
         code: "BLOCKED_BY_XERO_OPERATION",
@@ -324,6 +390,10 @@ export function classifyBookingContext(
         },
         actionKeys: [action.key],
       });
+    } else if (blockingOperation?.kind === "resolved") {
+      // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
+      // queued beside, but reported (decision 2), so a wrong resolve can be seen.
+      addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "invoice update", { modificationId: latestDateChangingModification.id });
     } else if (blockingOperation) {
       const summary = isStuckOperation(blockingOperation.operation)
         ? "A pending or running Xero primary invoice update looks stuck."
@@ -482,10 +552,10 @@ export function classifyBookingContext(
           primaryInvoiceEditTiming.outcome !== "invoice-preceded-edit"
             ? primaryInvoiceEditTiming
             : null;
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -683,6 +753,10 @@ export function classifyBookingContext(
               actionKeys: [action.key],
             });
           }
+        } else if (blockingOperation.kind === "resolved") {
+          // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
+          // queued beside, but reported (decision 2), so a wrong resolve can be seen.
+          addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "supplementary invoice", { modificationId: modification.id });
         } else {
           // #1356: a live-but-not-retryable operation (WAITING_PAYMENT parked
           // on its additional Stripe payment, or pending/running/unsupported)
@@ -770,11 +844,55 @@ export function classifyBookingContext(
       // Captured money via the payment status OR the transaction ledger —
       // ledger-first states (a SUCCEEDED capture row under a still-PENDING
       // aggregate status) must count as captured for the policy split below.
+      // Deliberately Stripe-only in its ledger half, unlike
+      // `hasCapturedRepairPayment` (#3639): this split routes card refunds.
       const paymentHasCapturedMoney =
         hasCapturedPayment(payment) || capturedPaymentTransactions.length > 0;
+      // #3809: applied credit given back always has an allocated note of its
+      // own, under its own scope, checked here; the edit's own note is read
+      // below without it, so neither hides the other or stands in for it.
+      const giveBackNote = scopedGiveBackNote({ newData: modification.newData, operations: modificationOperations });
+      if (giveBackNote) {
+        const blocking = getBlockingOperation(giveBackNote.operations, "CREDIT_NOTE", "CREATE");
+        if (blocking?.kind === "retryable") {
+          const action = addAction(actionMap, buildRetryAction(booking.id, blocking));
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: `A failed or partial Xero give-back credit note operation is blocking modification ${modification.id}.`,
+            safeToAutoApply: true,
+            details: { modificationId: modification.id, operationId: blocking.operation.id, operationStatus: blocking.operation.status },
+            actionKeys: [action.key],
+          });
+        } else if (!blocking && !giveBackNote.operations.some(isSuccessfulXeroOperation)) {
+          const action = addAction(actionMap, {
+            key: `queue:give-back-note:${modification.id}`,
+            bookingId: booking.id,
+            type: "QUEUE_MODIFICATION_CREDIT_NOTE",
+            description: "Queue the missing Xero credit note for the applied credit a booking modification gave back.",
+            safeToAutoApply: true,
+            payload: {
+              bookingId: booking.id,
+              bookingModificationId: modification.id,
+              refundAmountCents: giveBackNote.givenBackCents,
+              refundMethod: "account-credit",
+              reviewTaskId: APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE,
+            },
+          });
+          addFinding(findings, {
+            code: "MISSING_MODIFICATION_CREDIT_NOTE",
+            severity: "critical",
+            summary: "A booking modification gave back applied credit, but no Xero credit note for it exists.",
+            safeToAutoApply: true,
+            details: { modificationId: modification.id, refundAmountCents: giveBackNote.givenBackCents, refundAmountSource: "recorded-give-back" },
+            actionKeys: [action.key],
+          });
+        }
+      }
+      const { links: noteLinks, operations: noteOperations } = withoutGiveBackNote(modificationLinks, modificationOperations);
       const modificationCreditNote = resolveObjectFromCandidates({
-        links: modificationLinks,
-        operations: modificationOperations,
+        links: noteLinks,
+        operations: noteOperations,
         xeroObjectType: "CREDIT_NOTE",
         role: "MODIFICATION_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
@@ -822,8 +940,8 @@ export function classifyBookingContext(
       // note totals. A stored amount outside (0, abs(net)] is inconsistent
       // and is ignored.
       const storedEvidence = recoverStoredXeroAmountCents({
-        links: modificationLinks,
-        operations: modificationOperations,
+        links: noteLinks,
+        operations: noteOperations,
         xeroObjectType: "CREDIT_NOTE",
         role: "MODIFICATION_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
@@ -840,23 +958,30 @@ export function classifyBookingContext(
         storedEvidence.amountCents <= refundDueCents
           ? storedEvidence
           : null;
-      const expectedCreditNoteCents =
-        storedSettlement?.amountCents ?? refundDueCents;
+      // #3809: with nothing captured, a paid booking's reduction settled as
+      // applied credit given back, as the edit's history row records
+      // (`recordedCreditGiveBack`), and the give-back's note is its own,
+      // scoped, checked above. The edit has no note of its own to repair: the
+      // whole reduction would credit the invoice for money the policy kept.
+      if (!modificationCreditNote && !paymentHasCapturedMoney && recordedCreditGiveBack(modification.newData)) {
+        continue;
+      }
+      const expectedCreditNoteCents = storedSettlement?.amountCents ?? refundDueCents;
       const expectedAmountSource = storedSettlement?.source ?? "net-amount";
 
       if (!modificationCreditNote) {
         const blockingOperation = getBlockingOperation(
-          modificationOperations,
+          noteOperations,
           "CREDIT_NOTE",
           "CREATE",
           // A pending ACCOUNT-credit-note op must not mask the genuinely
           // missing invoice-applied note behind a blocked finding.
           { payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE }
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -931,6 +1056,10 @@ export function classifyBookingContext(
               actionKeys: [action.key],
             });
           }
+        } else if (blockingOperation.kind === "resolved") {
+          // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
+          // queued beside, but reported (decision 2), so a wrong resolve can be seen.
+          addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "modification credit note", { modificationId: modification.id });
         } else {
           // #1427 (the #1356 third-arm rule): a live-but-not-retryable
           // credit-note operation must surface as blocked — silence here
@@ -962,8 +1091,8 @@ export function classifyBookingContext(
           bookingId: booking.id,
           expectedAmountCents: expectedCreditNoteCents,
           resolved: modificationCreditNote,
-          links: modificationLinks,
-          operations: modificationOperations,
+          links: noteLinks,
+          operations: noteOperations,
           xeroObjectType: "CREDIT_NOTE",
           role: "MODIFICATION_CREDIT_NOTE",
           entityType: "CREDIT_NOTE",
@@ -1011,8 +1140,8 @@ export function classifyBookingContext(
         }
 
         const allocation = resolveObjectFromCandidates({
-          links: modificationLinks,
-          operations: modificationOperations,
+          links: noteLinks,
+          operations: noteOperations,
           xeroObjectType: "ALLOCATION",
           role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
           entityType: "ALLOCATION",
@@ -1021,14 +1150,14 @@ export function classifyBookingContext(
 
         if (!allocation) {
           const blockingOperation = getBlockingOperation(
-            modificationOperations,
+            noteOperations,
             "ALLOCATION",
             "ALLOCATE"
           );
-          if (blockingOperation && blockingOperation.retryMeta.supported) {
+          if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
-              buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+              buildRetryAction(booking.id, blockingOperation)
             );
             addFinding(findings, {
               code: "BLOCKED_BY_XERO_OPERATION",
@@ -1105,6 +1234,10 @@ export function classifyBookingContext(
                 actionKeys: [action.key],
               });
             }
+          } else if (blockingOperation.kind === "resolved") {
+            // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
+            // queued beside, but reported (decision 2), so a wrong resolve can be seen.
+            addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "credit-note allocation", { modificationId: modification.id });
           } else {
             // #1427 third arm: a live-but-not-retryable allocation operation
             // must block, not be re-queued beside it — evidence-sized
@@ -1190,9 +1323,8 @@ export function classifyBookingContext(
 
   const refundCreditNote = payment
     ? resolveObjectFromCandidates({
-        fieldObjectId: payment.xeroRefundCreditNoteId,
-        links: paymentLinks,
-        operations: paymentOperations,
+        // #3880 F1: never a per-refund note, as the field or as a conflict with it.
+        ...canonicalRefundNoteCandidates(payment.xeroRefundCreditNoteId, paymentLinks, paymentOperations),
         xeroObjectType: "CREDIT_NOTE",
         role: "REFUND_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
@@ -1248,6 +1380,7 @@ export function classifyBookingContext(
     });
   }
 
+  if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations);
   if (payment && refundCreditNote) {
     const refundAmountCents = getCashCancellationRefundCandidateCents(booking);
     if (refundAmountCents !== null && refundAmountCents > 0) {
@@ -1274,13 +1407,74 @@ export function classifyBookingContext(
     }
   }
 
+  // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
+  // was released retires the pending clearing note (`retirePendingClearingNote`
+  // cancels its queued MODIFICATION_CREDIT_NOTE create), so the arm below skips
+  // the booking - but the operator is still told why no note exists. The ONE
+  // home of this finding (#3535's copy inside the arm was removed at the sync,
+  // delta D2). The evidence that cash arrived is either arm's own write: the
+  // member arm settles the payment and records its account-credit note; the
+  // organisation arm settles nothing and raises a hand-back task instead
+  // (#3643 F2, the population #3535's in-arm copy used to catch). The row is
+  // the one `retirePendingClearingNote` writes: a CANCELLED create stamped with
+  // the clearing note's queue type.
+  const cashRetiredClearingNote = Boolean(
+    booking.status === "CANCELLED" &&
+    payment &&
+    primaryInvoice &&
+    (hasCapturedRepairPayment(payment) ||
+      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) ||
+      context.cancelledBookingHandBackPaymentIds.has(payment.id)) &&
+    bookingOperations.some(
+      (operation) =>
+        operation.entityType === "CREDIT_NOTE" &&
+        operation.operationType === "CREATE" &&
+        operation.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE &&
+        operation.status === "CANCELLED"
+    )
+  );
+  if (cashRetiredClearingNote && payment && primaryInvoice) {
+    addFinding(findings, {
+      code: "MANUAL_REVIEW_REQUIRED",
+      severity: "info",
+      summary:
+        "Cash arrived for this booking after its hold was released, so its invoice-clearing credit note was retired and none is owed - no action.",
+      safeToAutoApply: false,
+      details: { paymentId: payment.id, invoiceId: primaryInvoice.objectId },
+      actionKeys: [],
+    });
+  }
+
+  // #3643 delta D2: the cancel path recorded Xero's part payment as the
+  // payment's receipt (a SUCCEEDED internet banking row) and, in the same
+  // transaction, queued a clearing note for the unpaid rest - only when Xero
+  // showed a rest owed. While that note is outstanding the booking enters the
+  // arm below, where it is only ever manual review, never a full-size queue or
+  // retry (`INV-PAY-107`). F1: no rest note (paid in full at the cancel), or
+  // one an officer marked resolved in Xero (the rest cleared by hand), means
+  // nothing is owed, and the ordinary skips apply.
+  const partPaymentRecognised = (payment?.transactions ?? []).some(
+    (transaction) => transaction.reason === PART_PAYMENT_RECOGNISED_REASON
+  );
+  const recognisedRestOwed =
+    partPaymentRecognised && bookingOperations.some(isOutstandingClearingNoteCreate);
+
+  // #3639: this arm clears an invoice nobody paid; `hasCapturedRepairPayment`
+  // and `paymentNoteAnswersInvoice` are the two things it asks first - except
+  // for #3643's recognised part payment whose rest is still owed, above.
   if (
     booking.status === "CANCELLED" &&
     payment &&
-    capturedPaymentTransactions.length === 0 &&
+    !cashRetiredClearingNote &&
+    (recognisedRestOwed ||
+      (!hasCapturedRepairPayment(payment) &&
+        !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations))) &&
     primaryInvoice
   ) {
-    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
+    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
+      booking,
+      context.xeroAllocatedAppliedCreditCents
+    );
     if (clearingAmountCents > 0) {
       const cancellationCreditNote = resolveObjectFromCandidates({
         links: bookingLinks,
@@ -1297,10 +1491,107 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        // The officer's "resolved in Xero" mark on the refused or failed note
+        // (#3643, #3635 `INV-INT-025`): the clearing was done by hand, so
+        // nothing is reported, retried or re-queued - the same rule as
+        // `recognisedRestOwed` above.
+        const blockingNoteResolvedInXero = blockingOperation?.kind === "resolved";
+        // #3643: a payment the inbound sync recorded against the primary or
+        // any supplementary invoice (the only local trace of a part payment).
+        const recordedInvoicePayments = [
+          ...paymentLinks,
+          ...[...context.modificationLinksById.values()].flat(),
+        ].filter(isRecordedBookingInvoicePayment);
+        // #3643 (`INV-PAY-108`, task-queue review F2): an OPEN part-payment review is the
+        // cancel's own durable proof that money was recorded against the
+        // invoice, even with no local PAYMENT link.
+        const openPartPaymentReview = Boolean(
+          payment && context.openPartPaymentReviewPaymentIds.has(payment.id)
+        );
+        const invoicePaymentRecorded =
+          recordedInvoicePayments.length > 0 ||
+          partPaymentRecognised ||
+          openPartPaymentReview;
+        // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2
+        // cancel raised a hand-back task for the payment, and a treasurer has
+        // dismissed it (the only way a review closes) - settled in Xero by hand.
+        const partPaymentReviewClosed = Boolean(
+          payment && context.closedPartPaymentReviewPaymentIds.has(payment.id)
+        );
+        if (blockingNoteResolvedInXero || partPaymentReviewClosed) {
+          // Nothing owed: an officer cleared the invoice by hand.
+          if (blockingOperation?.kind === "resolved") {
+            // #3635 decision 2: reported, never re-run.
+            addResolvedInXeroFinding(
+              findings,
+              blockingOperation.resolvedOperation,
+              "invoice-clearing credit note"
+            );
+          }
+        } else if (
+          blockingOperation &&
+          isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
+        ) {
+          // #3535: the invoices owe less than the note - retrying changes
+          // nothing until a person looks, so it is never a safe auto-retry.
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildManualReviewAction(
+              booking.id,
+              "The invoice-clearing credit note was refused because the booking's invoices owe less than it (part of the booking may have been paid) - review it by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "An invoice-clearing credit note was refused because the booking's invoices owe less than it - review by hand; it is not retried automatically.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (
+          invoicePaymentRecorded &&
+          (!blockingOperation || blockingOperation.kind === "retryable")
+        ) {
+          // #3643 (`INV-PAY-107`): Xero recorded a payment against this
+          // booking's invoices, so they owe less than a full-size clearing
+          // note. Queueing or retrying one would be refused as a shortfall at
+          // best; the part payment is money only a person can place (refund,
+          // credit, or keep), so it is manual review, never an auto-apply.
+          const action = addAction(
+            actionMap,
+            buildManualReviewAction(
+              booking.id,
+              "Xero records a payment against this cancelled booking's invoice, so a full invoice-clearing credit note would over-clear it - decide the part payment (refund, credit, or keep) and clear the rest by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "A cancelled booking's invoice has a payment recorded against it, so its clearing credit note is not queued or retried automatically - review by hand.",
+            safeToAutoApply: false,
+            details: {
+              paymentId: payment?.id ?? null,
+              invoiceId: primaryInvoice.objectId,
+              clearingAmountCents,
+              operationId: blockingOperation?.operation.id ?? null,
+              // DECISION 2 on #3643: name the payment a person has to place.
+              recordedPayments: recordedInvoicePayments.map((link) => ({
+                xeroPaymentId: link.xeroObjectId,
+                metadata: link.metadata,
+              })),
+            },
+            actionKeys: [action.key],
+          });
+        } else if (blockingOperation?.kind === "retryable") {
+          const action = addAction(
+            actionMap,
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -1325,6 +1616,8 @@ export function classifyBookingContext(
             payload: {
               bookingId: booking.id,
               refundAmountCents: clearingAmountCents,
+              // #3535 (`INV-PAY-017`): the note clears an unpaid invoice.
+              clearsUnpaidInvoice: true,
             },
           });
           addFinding(findings, {
@@ -1340,8 +1633,87 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else {
+          // #3535: a live or failed clearing operation the retry helper cannot
+          // replay must still be SEEN - silence here left an unpaid invoice open
+          // with nothing in the report (the #1356 third-arm rule).
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: ["FAILED", "PARTIAL"].includes(blockingOperation.operation.status)
+              ? "A Xero invoice-clearing credit note operation failed and cannot be auto-retried - resolve it by hand so the cancelled unpaid booking's invoice closes."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero invoice-clearing credit note operation looks stuck."
+                : "A Xero invoice-clearing credit note operation is already pending or running.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              retryUnsupportedReason: blockingOperation.retryMeta.reason,
+            },
+            actionKeys: [],
+          });
         }
       } else {
+        // #3535: a note whose own operation went PARTIAL did not finish its
+        // allocations. Its row records the plan (one invoice, or the primary
+        // and supplementary invoices a clearing note is spread across), so the
+        // retry replays exactly that - a fresh allocation sized here would be
+        // the note's whole amount against the primary invoice alone.
+        const partialNoteOperation = bookingOperations.find(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            operation.status === "PARTIAL" &&
+            operation.xeroObjectId === cancellationCreditNote.objectId
+        );
+        // #3635 (`INV-INT-025`): an officer who resolved the PARTIAL note in
+        // Xero finished its allocations by hand. That is done: no retry, and no
+        // fresh allocation queued below, which would be a second one beside
+        // the officer's.
+        const partialNoteResolvedInXero = Boolean(
+          partialNoteOperation && isResolvedInXero(partialNoteOperation)
+        );
+        // Only while a planned invoice still has no allocation link from this
+        // note: a repaired PARTIAL row stays PARTIAL, so its status alone
+        // would report a whole note as broken forever.
+        const partialNoteRetry =
+          partialNoteOperation &&
+          partialClearingNoteIsIncomplete(
+            partialNoteOperation.requestPayload,
+            cancellationCreditNote.objectId,
+            bookingLinks.filter(
+              (link) =>
+                link.xeroObjectType === "ALLOCATION" &&
+                link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+            )
+          )
+            ? toRetryableOperationMatch(partialNoteOperation)
+            : null;
+        // The note's own amount, as its create recorded it (#3643): the cancel
+        // wrote a recognised booking's rest - Xero's amount due at the read -
+        // as the note's `refundAmountCents`, so the allocation reads back that
+        // same figure rather than the full clearing amount. A stored figure
+        // outside (0, clearingAmountCents] is ignored, as the modification arm
+        // does; without one only an unrecognised (full-size) note falls back.
+        const storedNoteAmount = recoverStoredXeroAmountCents({
+          links: bookingLinks,
+          operations: bookingOperations,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_CREDIT_NOTE",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          objectId: cancellationCreditNote.objectId,
+          payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+        });
+        const allocationAmountCents =
+          storedNoteAmount &&
+          storedNoteAmount.amountCents > 0 &&
+          storedNoteAmount.amountCents <= clearingAmountCents
+            ? storedNoteAmount.amountCents
+            : partPaymentRecognised
+              ? null
+              : clearingAmountCents;
         const allocation = resolveObjectFromCandidates({
           links: bookingLinks,
           operations: bookingOperations,
@@ -1350,16 +1722,48 @@ export function classifyBookingContext(
           entityType: "ALLOCATION",
           operationType: "ALLOCATE",
         });
-        if (!allocation) {
+        if (partialNoteResolvedInXero) {
+          // Done by hand in Xero: nothing retried or queued. The note itself
+          // exists, so there is no missing document to report - but a separate
+          // live allocation row is still seen (Xero review F8): a resolved row
+          // never outranks a live one. Report-only, because the officer
+          // allocated by hand and a retry could allocate twice.
+          const liveAllocation = getBlockingOperation(
+            bookingOperations,
+            "ALLOCATION",
+            "ALLOCATE"
+          );
+          if (liveAllocation && liveAllocation.kind !== "resolved") {
+            addBlockedClearingAllocationFinding(findings, liveAllocation.operation);
+          }
+        } else if (partialNoteOperation && partialNoteRetry) {
+          const action = addAction(
+            actionMap,
+            buildRetryAction(booking.id, partialNoteRetry)
+          );
+          addFinding(findings, {
+            code: "MISSING_CREDIT_NOTE_ALLOCATION",
+            severity: "critical",
+            summary:
+              "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
+            safeToAutoApply: true,
+            details: {
+              bookingId: booking.id,
+              creditNoteId: cancellationCreditNote.objectId,
+              operationId: partialNoteOperation.id,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (!allocation) {
           const blockingOperation = getBlockingOperation(
             bookingOperations,
             "ALLOCATION",
             "ALLOCATE"
           );
-          if (blockingOperation && blockingOperation.retryMeta.supported) {
+          if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
-              buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+              buildRetryAction(booking.id, blockingOperation)
             );
             addFinding(findings, {
               code: "BLOCKED_BY_XERO_OPERATION",
@@ -1371,6 +1775,35 @@ export function classifyBookingContext(
                 operationId: blockingOperation.operation.id,
                 operationStatus: blockingOperation.operation.status,
               },
+              actionKeys: [action.key],
+            });
+          } else if (blockingOperation?.kind === "resolved") {
+            // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
+            // queued beside, but reported (decision 2), so a wrong resolve can be seen.
+            addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "invoice-clearing allocation");
+          } else if (blockingOperation?.kind === "blocked") {
+            // #3635: a live allocation (pending, running, or failed and not
+            // retryable) is reported, never queued beside - the #1356/#1427
+            // third-arm rule the modification allocation arm follows.
+            addBlockedClearingAllocationFinding(findings, blockingOperation.operation);
+          } else if (allocationAmountCents === null) {
+            // #3643: a recognised booking's note covers only the rest, and no
+            // stored figure says how much - a full-size allocation would
+            // over-clear, so a person allocates it.
+            const action = addAction(
+              actionMap,
+              buildManualReviewAction(
+                booking.id,
+                "The unpaid-rest clearing credit note exists but is not allocated, and its amount is not recorded - allocate it to the invoice by hand."
+              )
+            );
+            addFinding(findings, {
+              code: "MANUAL_REVIEW_REQUIRED",
+              severity: "manual_review",
+              summary:
+                "A part-paid cancelled booking's clearing credit note is not allocated and its amount is not recorded - allocate it by hand.",
+              safeToAutoApply: false,
+              details: { bookingId: booking.id, creditNoteId: cancellationCreditNote.objectId },
               actionKeys: [action.key],
             });
           } else {
@@ -1386,7 +1819,7 @@ export function classifyBookingContext(
                 localId: booking.id,
                 creditNoteId: cancellationCreditNote.objectId,
                 invoiceId: primaryInvoice.objectId,
-                amountCents: clearingAmountCents,
+                amountCents: allocationAmountCents,
                 role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
               },
             });
@@ -1400,7 +1833,7 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 creditNoteId: cancellationCreditNote.objectId,
                 invoiceId: primaryInvoice.objectId,
-                amountCents: clearingAmountCents,
+                amountCents: allocationAmountCents,
               },
               actionKeys: [action.key],
             });
@@ -1456,39 +1889,219 @@ export function classifyBookingContext(
     });
   }
 
+  // #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): a late capture a
+  // treasurer KEPT is recorded by its own kept-capture invoice for the GROSS
+  // capture, paid from Stripe on the capture day, anchored on its approval task
+  // and queued by the dismissal: the booking's own payment, and a change
+  // payment on a booking Xero never invoiced (`keptLateCaptureRecordRoute`).
+  // Where none was asked for (the keep predates #3635, or a reopen withdrew
+  // it), this queues it automatically - the pass re-reads the task under its
+  // row lock before queueing. A failed one is retried. The same decision as the
+  // dismissal (`decideLateCapture`, `late-capture-kept-xero-rules.ts`).
+  if (booking.status === "CANCELLED" && payment) {
+    for (const transaction of capturedPaymentTransactions) {
+      if (!transaction.stripePaymentIntentId) continue;
+      const kept = context.keptLateCaptures.get(transaction.stripePaymentIntentId);
+      if (!kept) continue;
+      if (
+        keptLateCaptureRecordRoute({
+          captureKind: transaction.kind,
+          bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
+            paymentXeroInvoiceId: payment.xeroInvoiceId,
+            paymentLinks,
+          }),
+        }) !== "kept-invoice"
+      ) {
+        continue;
+      }
+      const { recordCents } = decideLateCapture({
+        taskStatus: "DISMISSED",
+        bookingStatus: booking.status,
+        superseded: false,
+        capture: transaction,
+      });
+      if (recordCents === 0) continue;
+      if (keptLateCaptureInvoiceAsked(kept.operations)) {
+        const blockingOperation = getBlockingOperation(kept.operations, "INVOICE", "CREATE");
+        if (blockingOperation?.kind === "resolved") {
+          // `INV-INT-025`: an officer recorded it by hand in Xero; reported,
+          // never re-run, and never queued again (a resolved row is "asked").
+          addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "kept-payment invoice", {
+            paymentIntentId: transaction.stripePaymentIntentId,
+          });
+        } else if (blockingOperation?.kind === "retryable") {
+          const action = addAction(actionMap, buildRetryAction(booking.id, blockingOperation));
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary:
+              "A failed or partial Xero invoice for a late payment a treasurer kept needs retrying.",
+            safeToAutoApply: true,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              paymentIntentId: transaction.stripePaymentIntentId,
+            },
+            actionKeys: [action.key],
+          });
+        }
+        continue;
+      }
+      const action = addAction(actionMap, {
+        key: `queue:kept-late-capture-invoice:${kept.taskId}`,
+        bookingId: booking.id,
+        type: "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+        description:
+          "Queue the Xero invoice, paid from the Stripe account on the capture day, that records a late card payment a treasurer kept.",
+        safeToAutoApply: true,
+        payload: {
+          manualRefundTaskId: kept.taskId,
+          bookingId: booking.id,
+          paymentIntentId: transaction.stripePaymentIntentId,
+          capturedCents: recordCents,
+          capturedAt: kept.raisedAt.toISOString(),
+        },
+      });
+      addFinding(findings, {
+        code: "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+        severity: "critical",
+        summary:
+          "A treasurer kept a late card payment on this cancelled booking, and Xero has no invoice for it.",
+        safeToAutoApply: true,
+        details: {
+          paymentId: payment.id,
+          manualRefundTaskId: kept.taskId,
+          paymentIntentId: transaction.stripePaymentIntentId,
+          captureKind: transaction.kind,
+          capturedCents: recordCents,
+        },
+        actionKeys: [action.key],
+      });
+    }
+  }
+
+  // #3635 round-3 N1/R5: every approval task, whatever its status now.
+  //  - A kept invoice raised in Xero whose Stripe payment was never recorded
+  //    (PARTIAL) is retried even after a reopen and approval: the cash was
+  //    really taken, and the retry records only the payment.
+  //  - A kept invoice an officer recorded by hand and resolved in Xero gets no
+  //    refund note from the app; once its capture is refunded, an officer is
+  //    told to record that refund by hand as well. Report-only.
+  if (booking.status === "CANCELLED" && payment) {
+    for (const transaction of capturedPaymentTransactions) {
+      if (!transaction.stripePaymentIntentId) continue;
+      const lateTask = context.lateCaptureTasks.get(transaction.stripePaymentIntentId);
+      if (!lateTask) continue;
+      const keptInvoice = getBlockingOperation(lateTask.operations, "INVOICE", "CREATE", {
+        payloadQueueType: XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+      });
+      if (keptInvoice?.kind === "resolved") {
+        if (transaction.refundedAmountCents > 0) {
+          addFinding(findings, {
+            code: "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
+            severity: "warning",
+            summary:
+              "A late card payment an officer recorded by hand in Xero was refunded. The app raises no refund credit note for it: record the refund by hand in Xero too.",
+            safeToAutoApply: false,
+            details: {
+              paymentId: payment.id,
+              manualRefundTaskId: lateTask.taskId,
+              paymentIntentId: transaction.stripePaymentIntentId,
+              refundedCents: transaction.refundedAmountCents,
+              operationId: keptInvoice.resolvedOperation.id,
+            },
+            actionKeys: [],
+          });
+        }
+        continue;
+      }
+      if (
+        lateTask.status !== "DISMISSED" &&
+        keptInvoice?.kind === "retryable" &&
+        keptInvoice.operation.status === "PARTIAL"
+      ) {
+        const action = addAction(actionMap, buildRetryAction(booking.id, keptInvoice));
+        addFinding(findings, {
+          code: "BLOCKED_BY_XERO_OPERATION",
+          severity: "warning",
+          summary:
+            "A Xero invoice for a late card payment was raised but its Stripe payment was never recorded.",
+          safeToAutoApply: true,
+          details: {
+            operationId: keptInvoice.operation.id,
+            operationStatus: keptInvoice.operation.status,
+            paymentIntentId: transaction.stripePaymentIntentId,
+          },
+          actionKeys: [action.key],
+        });
+      }
+    }
+  }
+
   if (
     booking.status === "CANCELLED" &&
     payment &&
     outstandingCapturedRefundAmountCents > 0
   ) {
     // #1491 (owner decision): a cancel that RECORDED a refund decision
-    // deliberately retained the remainder as the cancellation-policy
-    // penalty. Correct books ⇒ no finding (the #1427 account-credit-settled
-    // precedent: never nag forever on correct books). The decision artifacts,
-    // any of: the CANCELLED event's policy snapshot (written by every
-    // paid-path cancel, including 0%-tier retentions; unpaid-branch cancels
-    // carry no snapshot), a cancellation credit (credit path), or a LIVE
-    // booking-cancel refund recovery operation (card path, frozen inside the
-    // claim transaction — a terminally FAILED op is a decision whose money
-    // never moved, so it does NOT suppress the finding; the recovery
-    // exhaustion alert and this finding both stay loud). Without such a
-    // record the state cannot be distinguished from a genuine late capture,
-    // so the finding stays but is NEVER auto-applied — an operator confirms
-    // which it is before any refund moves. Known residual: a genuine late
-    // capture on a booking that ALSO had a paid-path cancel is masked by
+    // deliberately retained the remainder as the cancellation-policy penalty,
+    // so correct books get no finding (the #1427 precedent). Which artefacts
+    // count is `isCancellationRefundDecisionRecorded`, shared with the Stripe
+    // webhook since #3639. Without one, a late capture and a retention look
+    // alike, so the finding stays but is NEVER auto-applied. Known residual: a
+    // late capture on a booking that ALSO had a paid-path cancel is masked by
     // that cancel's artifact; the #1350 durable intent-cancellation recovery
     // and the webhook superseded-intent hook own that population.
-    const cancellationRefundDecisionRecorded =
-      (booking.events ?? []).some((event) => event.snapshot !== null) ||
-      getCancellationCreditAmountCents(booking) > 0 ||
-      context.cancellationRefundRecoveryOperations.some(
-        (operation) => operation.status !== "FAILED"
+    // #3638's second-instrument conflict marker is excluded with #2262's two
+    // by `isManualSettlementMarkerEvent`, inside the shared rule.
+    const cancellationRefundDecisionRecorded = isCancellationRefundDecisionRecorded({
+      bookingId: booking.id,
+      cancelledEvents: booking.events ?? [],
+      creditsFromCancellation: booking.creditsFromCancellation,
+      cancellationRefundRecoveryOperations: context.cancellationRefundRecoveryOperations,
+    });
+    // #3639 review F3: a capture a treasurer-approval task owns (held or kept)
+    // is decided, so it is left out; nothing is offered for refund behind it.
+    const heldOutstanding = capturedPaymentTransactions.filter(
+      (transaction) =>
+        transaction.stripePaymentIntentId !== null &&
+        context.lateCaptureApprovalIntentIds.has(transaction.stripePaymentIntentId)
+    );
+    const unheldOutstandingCents =
+      outstandingCapturedRefundAmountCents -
+      heldOutstanding.reduce(
+        (sum, t) => sum + Math.max(t.amountCents - t.refundedAmountCents, 0),
+        0
       );
-    if (!cancellationRefundDecisionRecorded) {
-      const lateCaptureTransactions = capturedPaymentTransactions.filter(
-        (transaction) => transaction.amountCents > transaction.refundedAmountCents
+    const lateCaptureTransactions = capturedPaymentTransactions.filter(
+      (transaction) =>
+        transaction.amountCents > transaction.refundedAmountCents &&
+        !heldOutstanding.includes(transaction)
+    );
+    // #3639 delta D1: the refund is PINNED to the unheld captures, slice by
+    // slice, so no newest-first allocation can ever reach a held capture's money.
+    // A legacy payment (no ledger rows, so no ids) cannot have a held capture —
+    // approval tasks are raised on ledger rows — and keeps the derived refund.
+    const pinnable = lateCaptureTransactions.every((transaction) => transaction.id !== null);
+    const lateCaptureAllocation: { paymentTransactionId: string; amountCents: number }[] = [];
+    let unallocatedCents = Math.max(unheldOutstandingCents, 0);
+    for (const transaction of [...lateCaptureTransactions].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    )) {
+      if (!pinnable || transaction.id === null || unallocatedCents <= 0) break;
+      const sliceCents = Math.min(
+        transaction.amountCents - transaction.refundedAmountCents,
+        unallocatedCents
       );
-      const refundAmountCents = outstandingCapturedRefundAmountCents;
+      lateCaptureAllocation.push({ paymentTransactionId: transaction.id, amountCents: sliceCents });
+      unallocatedCents -= sliceCents;
+    }
+    const refundAmountCents = pinnable
+      ? lateCaptureAllocation.reduce((sum, slice) => sum + slice.amountCents, 0)
+      : heldOutstanding.length === 0
+        ? Math.max(unheldOutstandingCents, 0)
+        : 0;
+    if (!cancellationRefundDecisionRecorded && refundAmountCents > 0) {
       const action = addAction(actionMap, {
         key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
         bookingId: booking.id,
@@ -1500,6 +2113,7 @@ export function classifyBookingContext(
           bookingId: booking.id,
           paymentId: payment.id,
           refundAmountCents,
+          allocation: pinnable ? lateCaptureAllocation : null,
           invoiceId: primaryInvoice?.objectId ?? null,
         },
       });
@@ -1538,12 +2152,15 @@ export function classifyBookingContext(
         const blockingOperation = getBlockingOperation(
           paymentOperations,
           "CREDIT_NOTE",
-          "CREATE"
+          "CREATE",
+          // #3635: an operation on the payment's REFUND note must not answer
+          // for the account-credit note - least of all a resolved one.
+          { payloadQueueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE }
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -1557,6 +2174,9 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else if (blockingOperation?.kind === "resolved") {
+          // #3635 decision 2: done by hand in Xero; reported, never re-run.
+          addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "account-credit note");
         } else if (!blockingOperation) {
           const action = addAction(actionMap, {
             key: `queue:account-credit-note:${payment.id}:${cancellationCreditAmountCents}`,
@@ -1586,7 +2206,10 @@ export function classifyBookingContext(
       }
     }
 
-    if (primaryInvoice && !refundCreditNote) {
+    // #3880 round 3: no canonical note, but notes - a bank payment's
+    // per-refund ones - already answer every cent a note may: nothing is
+    // missing, and nothing is ambiguous.
+    if (primaryInvoice && !refundCreditNote && context.refundNoteUncoveredCents !== 0) {
       const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking);
       if (cashCancellationRefundCents === null) {
         const action = addAction(
@@ -1613,12 +2236,22 @@ export function classifyBookingContext(
         const blockingOperation = getBlockingOperation(
           paymentOperations,
           "CREDIT_NOTE",
-          "CREATE"
+          "CREATE",
+          // #3635: the account-credit note's operation must not answer for it.
+          { payloadQueueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        // #3635: never more than a note may still answer (the one gap reader,
+        // `readRefundCreditNoteGap`). A refund of a late capture Xero never
+        // received, or cash a resolved note covers, is no gap, so it raises no
+        // recurring critical finding.
+        const refundNoteAskCents = Math.min(
+          cashCancellationRefundCents,
+          context.refundNoteUncoveredCents ?? cashCancellationRefundCents
+        );
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -1632,9 +2265,12 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
-        } else if (!blockingOperation) {
+        } else if (blockingOperation?.kind === "resolved") {
+          // #3635 decision 2: done by hand in Xero; reported, never re-run.
+          addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "refund credit note");
+        } else if (!blockingOperation && refundNoteAskCents > 0) {
           const action = addAction(actionMap, {
-            key: `queue:refund-credit-note:${payment.id}:${cashCancellationRefundCents}`,
+            key: `queue:refund-credit-note:${payment.id}:${refundNoteAskCents}`,
             bookingId: booking.id,
             type: "QUEUE_REFUND_CREDIT_NOTE",
             description:
@@ -1642,7 +2278,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             payload: {
               paymentId: payment.id,
-              refundAmountCents: cashCancellationRefundCents,
+              refundAmountCents: refundNoteAskCents,
             },
           });
           addFinding(findings, {
@@ -1653,7 +2289,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             details: {
               paymentId: payment.id,
-              refundAmountCents: cashCancellationRefundCents,
+              refundAmountCents: refundNoteAskCents,
             },
             actionKeys: [action.key],
           });

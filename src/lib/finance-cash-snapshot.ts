@@ -1,12 +1,14 @@
 import {
+  type BoundClubTime,
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
   formatClubDate,
   parseInstant,
   requireStoredCalendarDay,
-  type BoundClubTime,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { parseProviderReportAmountToCents } from "@/lib/money-provider-amount";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Parser for stored BANK_BALANCES finance snapshots. The dashboard's
@@ -81,7 +83,8 @@ export interface ParsedCashSnapshot {
 
 export function parseCashSnapshot(
   club: BoundClubTime,
-  snapshot: FinanceCashSnapshotRecord
+  snapshot: FinanceCashSnapshotRecord,
+  format: ClubFormat,
 ): ParsedCashSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
 
@@ -99,10 +102,14 @@ export function parseCashSnapshot(
 
   return {
     snapshotId: snapshot.id,
-    snapshotLabel: storedSnapshotDay(snapshot.asOfDate),
-    sourceWindow: formatSnapshotWindow(snapshot.periodStart, snapshot.periodEnd),
+    snapshotLabel: storedSnapshotDay(snapshot.asOfDate, format),
+    sourceWindow: formatSnapshotWindow(
+      snapshot.periodStart,
+      snapshot.periodEnd,
+      format,
+    ),
     totalBalanceCents,
-    totalBalance: formatCents(totalBalanceCents),
+    totalBalance: formatCents(totalBalanceCents, format),
     accountCount: accounts.length,
     sourceUpdatedAtLabel: formatSourceUpdatedAt(club, snapshot.sourceUpdatedAt),
     accounts,
@@ -280,20 +287,24 @@ function readRowAmountCents(row: FinanceSnapshotReportRow) {
   return null;
 }
 
-function formatSnapshotWindow(periodStart: Date | null, periodEnd: Date | null) {
+function formatSnapshotWindow(
+  periodStart: Date | null,
+  periodEnd: Date | null,
+  format: ClubDateFormat,
+) {
   if (!periodStart && !periodEnd) {
     return "Snapshot period not recorded";
   }
 
   if (!periodStart) {
-    return `Through ${storedSnapshotDay(periodEnd!)}`;
+    return `Through ${storedSnapshotDay(periodEnd!, format)}`;
   }
 
   if (!periodEnd) {
-    return `From ${storedSnapshotDay(periodStart)}`;
+    return `From ${storedSnapshotDay(periodStart, format)}`;
   }
 
-  return `${storedSnapshotDay(periodStart)} to ${storedSnapshotDay(periodEnd)}`;
+  return `${storedSnapshotDay(periodStart, format)} to ${storedSnapshotDay(periodEnd, format)}`;
 }
 
 /**
@@ -306,7 +317,7 @@ function formatSnapshotWindow(periodStart: Date | null, periodEnd: Date | null) 
  * throws instead of quietly answering with its UTC day — which would be right
  * for a club east of Greenwich and wrong for one west of it.
  */
-function storedSnapshotDay(value: Date): string {
+function storedSnapshotDay(value: Date, format: ClubDateFormat): string {
   return formatClubDate(
     calendarDateOfDateOnlyInstant(
       requireStoredCalendarDay(value, {
@@ -316,6 +327,7 @@ function storedSnapshotDay(value: Date): string {
           "FinanceSnapshot.asOfDate, .periodStart and .periodEnd are all @db.Date columns.",
       }),
     ),
+    format,
   );
 }
 

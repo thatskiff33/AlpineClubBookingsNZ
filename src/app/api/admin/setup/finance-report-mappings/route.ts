@@ -7,6 +7,7 @@ import {
   saveFinanceReportMappings,
 } from "@/lib/finance-report-mappings";
 import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { loadFinanceAccessMember } from "@/lib/finance-auth";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -68,7 +69,9 @@ export async function GET() {
     return guard.response;
   }
 
-  const state = await getFinanceReportMappingsState();
+  // The club's format (#3565), resolved once per request and passed down.
+  const format = await clubFormatValues();
+  const state = await getFinanceReportMappingsState(format);
   return NextResponse.json(state);
 }
 
@@ -92,6 +95,9 @@ export async function PUT(request: NextRequest) {
       { status: 400 },
     );
   }
+
+  // The club's format (#3565), resolved once per request, before the save.
+  const format = await clubFormatValues();
 
   try {
     await saveFinanceReportMappings(parsed.data);
@@ -132,5 +138,5 @@ export async function PUT(request: NextRequest) {
   revalidatePath("/admin/setup");
   revalidatePath("/admin/setup/finance");
 
-  return NextResponse.json(await getFinanceReportMappingsState());
+  return NextResponse.json(await getFinanceReportMappingsState(format));
 }

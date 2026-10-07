@@ -621,6 +621,24 @@ caught by a count contract in `field-hint.test.tsx`: `useFieldHint(`,
 `.fieldProps` and `.hintProps` must occur the same number of times across
 `src/`.
 
+**A person-entered money amount uses `MoneyInput`.**
+`src/components/ui/money-input.tsx` is the controlled text field for dollars
+and cents: it preserves invalid text for the caller's visible validation, refuses
+a third fractional digit, and supplies accessible controls that adjust one whole
+dollar. It delegates exact cents conversion to the canonical parsers in
+`src/lib/money-input.ts`; callers pass their draft through `value` and
+`onValueChange`, use `allowNegative` only for genuine signed adjustments, and
+retain existing `FieldHint` ids through `aria-describedby`. This keeps
+`INV-MONEY-001` and `INV-MONEY-003` at one input boundary rather than recreating
+editing rules in each admin form. Seed an existing cents amount with
+`formatCentsPlain`; the `money-input-component-guard` rejects a return to the
+older `MONEY_INPUT_PROPS` spread.
+
+A caller with an existing accepted prefix shares its draft normalizer with
+`normalizeDraft`; both precision filtering and stepping then use the same syntax
+as save, while the text remains visible. The Diagnostics budget's tolerated
+dollar prefix is one such case. A supplied `error` is announced before hints.
+
 **Placeholder ink is its own token.** `--placeholder-foreground` is declared in
 every scope that restates `--muted-foreground` — a `var()`-bearing custom
 property is substituted on the element that DECLARES it and then inherits as
@@ -1109,8 +1127,7 @@ action" beside a Retry: the sentence and the link label are read off the same
 decision.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
-for new or modified sections; `AGENTS.md` → Change Discipline and its routing
-table both send you here for it, and this page is where it is stated in full).
+for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
 A section
 renders read-only on mount and stages every change behind a per-section Edit →
 Save/Cancel step: no individual control auto-persists on toggle, Cancel reverts
@@ -1145,24 +1162,24 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **97 components render a banner, and
-308 of the 362 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **98 components render a banner, and
+ 315 of the 370 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 308 split by WHICH rule
-covers them: **274** pass the literal
+test currently pins, which is the only authority.) Those 315 split by WHICH rule
+covers them: **281** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
-remaining **54 controls across 30 files deliberately keep the per-button
+remaining **55 controls across 30 files deliberately keep the per-button
 default** (`describeReason` left at `true`), in three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
   a separate accessibility container — focus is trapped and the page behind is
   commonly inert — so a banner rendered in the page body does not reach them.
-  (10 controls across 5 files, including the confirmed bed-allocation move
+  (11 controls across 5 files, including the confirmed bed-allocation move
   dialog, which the test enumerates by name; three further
   controls of this shape live in files counted under the next bucket, see
   there.)
@@ -1608,18 +1625,29 @@ and the boxes can already be out of date. What keeps stale display from becoming
 a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
-The rule binds sections that are NEW
-or MODIFIED, so four pre-existing surfaces are acknowledged divergents it does
-not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
-older staged-but-ungated settings forms, and the age-tier and notification
-settings panels — the last two were previously written up as blanket exemptions
-"because they are list sections", which is no longer the reason: list sections
-are in scope (see the per-row shape below), those two simply have not been
-touched since. Booking Policies has NO divergent left. Every settings control in
-the area now stages behind a per-card Edit → Save/Cancel: the **Show indicative
-pricing** checkbox in `public-booking-requests-section.tsx` stopped persisting on
-change in #2162, and the two timing cards beside it (quote window / reminder
-lead, and the school-attendee prompts) — always editable with a dirty-gated Save
+The rule binds sections that are NEW or MODIFIED. Known departures that this
+rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
+toggles), the older staged-but-ungated settings forms, the age-tier and
+notification settings panels, and two capacity cards. The last two panels were
+previously written up as blanket exemptions "because they are list sections";
+that is no longer the reason: list sections are in scope (see the per-row shape
+below), and these panels have not yet been brought onto the pattern. The
+capacity cards were touched in #2724 but remain explicit, owner-accepted
+departures under #3441: `/admin/lodges/[id]` edits one per-lodge capacity field
+without Edit/Cancel and enables Save only when the value differs from the saved
+value; the setup `LodgeCapacityCard` edits capacity, hut-leader lookahead and
+school soft-cap fields without Edit/Cancel, and its Save is not dirty-gated.
+Once a lodge is selected, its own disabled prop checks loading or saving.
+Both retain a view-only banner and a permission-gated Save button. This
+inventory names known departures; it is not a measured assertion that the
+entire admin tree has no others. New or modified
+settings sections still owe the staged pattern unless an explicit decision
+records an exception. Booking Policies has NO divergent left. Every settings
+control in that area now stages behind a per-card Edit → Save/Cancel: the
+**Show indicative pricing** checkbox in `public-booking-requests-section.tsx`
+stopped persisting on change in #2162, and the two timing cards beside it
+(quote window / reminder lead, and the school-attendee prompts) — always
+editable with a dirty-gated Save
 and no Edit or Cancel until then — were Edit-gated in #2166 on the owner's
 decision. The only direct writes left in the area are discrete ACTIONS rather
 than staged fields: row-level Activate/Deactivate and Delete on the
@@ -2382,21 +2410,30 @@ shipped preset the lodge names it needs to label a payment. Entering the shell
 now buys nothing: `guardAdminLayout` still requires the **requested path's** own
 area, every `/api/admin` route still clears `requireAdmin` against its own area
 and level, and the sidebar and command palette still filter item by item through
-`canViewAdminHrefWithMatrix`. A finance-only administrator reaches the shell and
-Finance and nothing else. The callers that may legitimately ask this question are
+`canViewAdminHrefWithMatrix`. That function answers an `ANY_ADMIN_ADMISSION_PATHS`
+entry with the same any-one-area rule `canOpenAdminPath` applies to the page, so
+a link and the page it opens cannot disagree (#3596); the fee console's OR rule
+still reaches the sidebar through its own `orAccess` flag. A finance-only administrator reaches the shell and
+Finance and nothing else, apart from the surfaces an owner decision opened to
+every administrator by name — the lodge names, the AI Diagnostics shell, and a
+read-only view of the club's currency and locale (#3596) — each pinned in the
+proof test below. The callers that may legitimately ask this question are
 the nav bar's Admin link, the admin-notification recipient roster,
-`requireAdmin`'s explicit `permission: "any-admin"`, and ADR-002 §1's admission
-surface — and a caller reasoning "they cleared the shell, therefore they may see
+`requireAdmin`'s explicit `permission: "any-admin"`, and the admission paths
+below — and a caller reasoning "they cleared the shell, therefore they may see
 X" is a privilege escalation as written.
 `src/lib/__tests__/admin-route-authorization-proof.test.ts` proves the negative by
 attempting every discovered admin page and `/api/admin` route as that user,
 through the real guards.
 
 **"May this person open this admin path" has ONE implementation**
-(`canOpenAdminPath`, #2975): the route map's own area requirement, plus the two
+(`canOpenAdminPath`, #2975): the route map's own area requirement, plus the
 adjudicated special cases — the consolidated fee console, admitted on view of
-either `bookings` or `finance` (#1933), and the AI Diagnostics workspace,
-admitted on ADMISSION rather than on an area (ADR-002 §1, owner-ratified #2370).
+either `bookings` or `finance` (#1933); Rooms & Beds, on view of either `lodge`
+or `bookings` (#2937); and the pages admitted on ADMISSION rather than on an
+area, `ANY_ADMIN_ADMISSION_PATHS`: the AI Diagnostics workspace (ADR-002 §1,
+owner-ratified #2370) and the club currency and locale page, which any admin
+may view and only a Full Admin may change (#3596).
 `guardAdminLayout` step 6 and `/api/help/chat`'s surface downgrade both call it.
 The composition had been written out four times before that, and the fee rule had
 two different spellings between the copies;
@@ -2416,9 +2453,9 @@ read-only, while every mutation (cancel, pay, modify, notes, delete, and the
 Full-Admin-only Admin tools card) stays gated on booking ownership or Full
 Admin (issue #1289). `requireAdmin()` infers the
 requested admin path and HTTP method from proxy headers and enforces
-view/edit requirements centrally, selecting assignment rows with their
-definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in
-`src/lib/access-role-definitions.ts`); the admin layout precomputes the
+view/edit requirements centrally, selecting `canLogin` and the assignment rows
+with their definitions joined (`MEMBER_PRIVILEGE_CHECK_SELECT` in
+`src/lib/access-role-definitions.ts`, #3603); the admin layout precomputes the
 matrix server-side and passes it to the sidebar, because definitions cannot
 resolve client-side. Member-facing surfaces that gate on `session.user`
 (the `/bookings/[id]` detail page and the widened member-facing booking APIs
@@ -2433,6 +2470,19 @@ to every holder on their next request — `requireAdmin()` and the layouts
 re-read roles and definitions from the database, and the session-embedded
 matrix is itself recomputed from that same database join per request rather
 than trusted from an old token.
+
+**Switching off a member's login switches off all of their access (#3603,
+`INV-LIFE-092`).** The privilege checks (`hasAdminAccess`, `isFullAdmin`,
+`hasPrivilegedAccess`, `hasLodgeAccess`, `authorizationRoleFromAccessRoles`,
+`hasAccessRole` for any privileged role, and every matrix check) require
+`canLogin`, so a member read that forgets it does not compile;
+`session.user.canLogin` carries it on a session. The database trigger
+`Member_stamp_sessions_revoked_at` records `Member.sessionsRevokedAt` whenever
+login goes from on to off, and the token refresh refuses any session issued
+before it, exactly as it refuses one issued before `passwordChangedAt`. Because
+that time is stored on the server, switching login back on never revives an
+earlier session. A hut leader's PIN is a separate assignment credential,
+governed by `active`.
 
 The seven areas and what each governs (from `ADMIN_PERMISSION_AREAS`, with the
 notable members that live under a broader-sounding prefix called out):
@@ -2610,7 +2660,7 @@ a side effect of tightening their nonce.
 `src/app/(public)/layout.tsx` declares `export const dynamic = "force-dynamic"` for
 its whole group, and that line is measured rather than tidy: the `auth()` call it no
 longer makes was what kept those routes out of build-time prerendering, and without
-a replacement `npm run build` fails on an `Error occurred prerendering page` for one
+a replacement `pnpm run build` fails on an `Error occurred prerendering page` for one
 of the group's routes — a build has no database, and the layout's `headers()` read
 happens only after its own database reads have resolved, too late to bail out first.
 (The build error used to name `/booking-requests`; that page and `/school-bookings`
@@ -2965,7 +3015,14 @@ alerted, and waitlists are processed. Held Internet Banking bookings are
 released by the payment cron when their hold expiry passes unpaid; the release
 cancels the booking, fails the pending payment, queues invoice-clearing
 credit-note work, emails the member, records history/audit, and processes
-waitlists.
+waitlists. A hold whose invoice Xero shows any payment against is kept instead
+and admins are alerted once; one Xero cannot read is kept up to seven days past
+the deadline, and never released once its stay has started (`INV-PAY-016`,
+which an Internet Banking organiser-pays group with an invoice follows too,
+whatever Xero shows of it). Cancelling a
+part-paid booking records the Xero
+cash as captured, so the cancellation policy applies to it (#3643,
+`INV-PAY-107`).
 
 ### Finance reporting
 
@@ -3097,7 +3154,7 @@ reference):
 ```mermaid
 flowchart TD
     Leader["app cron-leader<br/>(CRON_ENABLED=true)"]
-    Leader --> Q15["Every 15 min<br/>payment-recovery, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
+    Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
     Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-reconciliation-report,<br/>xero-credit-sync-check"]
@@ -3116,7 +3173,10 @@ flowchart TD
 | `school-attendee-confirmations` | Every 3 hours | Prompt school contacts to confirm their attendee list before check-in (#1101): first email `attendeeConfirmationLeadDays` before arrival, re-sent every `attendeeConfirmationReminderDays` with a fresh tokenized link until confirmed or check-in |
 | `placeholder-guest-name-reminders` | Every 3 hours | Chase a member whole-lodge booking whose party is still "Guest 1..N" (#2550). Uses the same `attendeeConfirmationLeadDays` / `attendeeConfirmationReminderDays` settings as the school prompt, escalating to a DAILY final reminder from two days before check-in through the morning of arrival (the window deliberately includes the arrival day), and stops as soon as every guest is named. No token and no public page — the member edits their own guests behind their login. Visibility only: it never withholds check-in, confirmation, or roster generation |
 | `hosting-coverage-reevaluation` | Every 3 hours | Drain the bounded hosting-coverage queue (#2576). Every path that can change adult-member qualification records the owner, lodge and exact nights to re-examine inside its own transaction, and drains that inline right after committing; this sweep is the BACKSTOP and authority on completion. Each claimed item re-reads committed facts inside a short transaction so its transaction-scoped owner lock protects incident reconciliation, never a lodge-wide sweep; email runs after that commit under an expiring delivery lease, is stamped only after success, and failed delivery is retryable. It opens, updates or resolves one urgent compliance incident per booking, never changes booking status, and exposes unresolved rows in the Booking Officer's `/admin/bookings` queue. |
-| `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents |
+| `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents. First task of the payments cycle (`src/lib/payments-cron-runner.ts`), which the cron leader and `POST /api/cron/payments` both call (#3663); each of its four tasks is error-isolated and records its own run |
+| `internet-banking-hold-release` | Every 15 minutes | Release an Internet Banking booking whose payment hold deadline has passed unpaid: cancel the booking, free its beds, fail the pending payment and clear its unpaid invoice. A stay that has started (check-in on or before the club's today) is never cancelled: it is counted `skippedStarted` and finance is alerted once (`INV-PAY-016`). A hold that throws is retried next run and the run records a `warning` admin cron health shows. Second task of the payments cycle |
+| `xero-waiting-invoice-reaper` | Every 15 minutes | Settle a booking change's `WAITING_PAYMENT` Xero invoice that has waited past 14 days: keep it while the payment can still be made, release it if the payment was captured, retire it only once closed. Third task of the payments cycle |
+| `late-capture-held-alert` | Every 15 minutes | Re-announce a card payment captured after its booking was cancelled and held for a treasurer's approval, while it is still waiting, when nobody has received its alert yet (#3635). Fourth task of the payments cycle; the once-ever claim makes a delivered alert a no-op |
 | `waitlist-processor` | Every 30 minutes | Expire offers and advance waitlist |
 | `email-retry` | Every 30 minutes | Retry failed email sends |
 | `xero-outbox` | Every 15 minutes | Process queued Xero outbox operations |
@@ -3171,8 +3231,9 @@ When the `(authenticated)` or `(admin)` layout guard is about to redirect to
 
 - **`no-cookie`** — normal anonymous visit: a `debug`-level pino line only.
   No `AuditLog` row, no Sentry event, no reference code.
-- **`session-invalidated`** — the session decoded but the password-change
-  revocation gate nulled it: pino `info` plus a durable `AuditLog` row
+- **`session-invalidated`** — the session decoded but a revocation gate nulled
+  it (a newer password, a deleted account, or login switched off — #2620,
+  #3603): pino `info` plus a durable `AuditLog` row
   (`action=auth.bounce`, `category=auth`, retention
   `diagnostic_high_volume`) capturing `memberId`, session issuance, the
   revoking change time, and their delta. No Sentry.
@@ -3225,7 +3286,7 @@ memory. It does this through a deterministic, versioned **knowledge bundle**
 overlay) source of the deployed commit, with per-file content hashes, sensitivity
 tags, symbols, and a bounded, individually-hashed excerpt index.
 
-The bundle is generated inside the Docker builder by `npm run diagnostics:bundle`
+The bundle is generated inside the Docker builder by `pnpm run diagnostics:bundle`
 (`docs/` and `.git` are dropped from the runtime image, so the commit SHA is
 injected at build time via `GIT_COMMIT_SHA`), traced into `.next/standalone`, and
 copied into the runner. It is:
@@ -3297,7 +3358,7 @@ refused unless the server itself confirms it holds no superuser, `CREATEDB`,
 `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, database `TEMPORARY`/`CREATE`, schema
 `CREATE`, file-reading function privilege, or escalating predefined-role
 membership. Provisioning is an operator step
-(`npm run diagnostics:provision-role`), not a migration: a database role is cluster
+(`pnpm run diagnostics:provision-role`), not a migration: a database role is cluster
 state, needs a secret the schema must never contain, and its `SELECT` allowlist is
 declared in public code so "which tables can Diagnostics read" is answerable by
 reading one file. The delivered support, booking/membership and finance packs
@@ -3436,6 +3497,6 @@ maintenance surface. `TZ` / `NEXT_PUBLIC_TZ` seed it once, at the first boot aft
 an upgrade, through `clubTimeZoneSelfHealStep` — which is the one self-heal step
 registered as **not** requiring a primary `config/club.json`, because the value it
 copies comes from the environment rather than from that file. The
-`APP_TIME_ZONE` constant in `src/config/operational.ts` is transitional: epic
-#2988's later children migrate the display call sites off it and CT-6 retires
-it.
+transitional `APP_TIME_ZONE` constant is gone: #3567 deleted
+`src/config/operational.ts` once its last readers (the AI metering month keys)
+moved onto the stored zone.

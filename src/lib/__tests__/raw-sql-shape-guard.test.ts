@@ -59,6 +59,10 @@ const SCANNED_DIRS = ["src", "scripts", "prisma"];
  * an opt-out below.
  */
 const RAW_READ_INVENTORY: Record<string, number> = {
+  // The #3531 rate-derived backfill's refusal to run before its enum value
+  // exists: one `EXISTS` over `pg_enum`, which no Prisma model exposes, and its
+  // one boolean is schema-decoded through `decodeRawRows` before it decides.
+  "scripts/backfill-night-prices-from-rates.ts": 1,
   // The Sentry/observability bootstrap's connectivity probe. `SELECT 1` returns
   // one anonymous column that nothing reads; the call is awaited purely to see
   // whether the database answers at all.
@@ -71,6 +75,11 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // or the read-modify-write race it exists to close reopens. Its result goes
   // through `decodeRawRows`.
   "src/lib/rate-limit.ts": 1,
+  // The booking-ledger census's one figure no Prisma model exposes:
+  // `pg_stat_user_tables`' insert/update/delete counts for the ledger table,
+  // reported as information beside the gate (#3583). Its row is schema-decoded
+  // through `decodeRawRows`.
+  "src/lib/booking-ledger-projection-census-store.ts": 1,
   // The non-blocking adult-hosting policy-set lock reads the one boolean
   // returned by `pg_try_advisory_xact_lock`; the row is schema-decoded before
   // the worker decides whether it may proceed.
@@ -90,6 +99,14 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // parameterised on those two (`INV-SSOT-001`). A second copy would be a second
   // place for the `AS "locked"` alias or the decoder to drift.
   "src/lib/adult-member-hosting-coverage-lock.ts": 1,
+  // #3640: when this install's refund-ledger writers arrived - the
+  // `finished_at` of the migration that shipped them. No Prisma model covers
+  // `_prisma_migrations`, so it is read raw, and its one timestamp is
+  // schema-decoded before the card-refund writer decides whether a refund
+  // predates the ledger (`INV-PAY-103`). TWO reads since the delta review
+  // (D4): a `to_regclass` boolean first, also decoded, because naming the
+  // table on a `db push` database that lacks it would abort the transaction.
+  "src/lib/payment-transactions.ts": 2,
 };
 
 /**

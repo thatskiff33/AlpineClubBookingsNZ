@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AppProvidersClient } from "@/components/app-providers-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
@@ -30,6 +31,31 @@ import { clubTimeZone } from "@/lib/club-time/server";
  * `club-time-provider.tsx` has the full reasoning, and
  * `club-time-provider-mount-census.test.tsx` is the guard that keeps the claim
  * true as route groups come and go.
+ *
+ * ## And, since #3564, the club's CURRENCY AND LOCALE come the same way
+ *
+ * Stage 2 of programme #3205 put `ClubFormatSettings` behind the same seam, for
+ * the same reason and through the same two mount points: `NEXT_PUBLIC_CURRENCY`
+ * and `NEXT_PUBLIC_LOCALE` are inlined at BUILD time into an image that serves
+ * every club, so a browser that reads them sees `undefined` and falls back to
+ * New Zealand. `club-format-provider.tsx` has the reasoning and
+ * `club-format-provider-mount-census.test.tsx` is its guard.
+ *
+ * BOTH READS HAPPEN ONCE PER RENDER PASS, side by side, AND BOTH ARE MEMOISED.
+ * `clubTimeZone()` has been request-memoised with React `cache()` since CT-4.
+ * This component read the club's format through the raw `getClubFormat()` until
+ * #3565, because stage 1's reader deliberately cached nothing and recorded that
+ * the caching contract belonged to this stage, "where the hot per-format call
+ * sites arrive". #3565 chose it — React `cache()`, in
+ * `club-format-server.ts` — so the wait is over and this component takes
+ * `clubFormatValues()` like everything else.
+ *
+ * THAT IS NOT A TIDY-UP. React `cache()` memoises per FUNCTION IDENTITY, so a
+ * page that renders an amount through `clubFormat()` while this component calls
+ * `getClubFormat()` directly holds two memo entries that never share, and reads
+ * the same one-row table twice in one render pass. The values are what the
+ * browser seam needs; `clubFormatValues()` is the reader that hands them over
+ * and is the same memo `clubFormat()` builds its binding from.
  */
 
 interface AppProvidersProps {
@@ -43,10 +69,13 @@ export async function AppProviders({
   clubIdentity,
   nonce,
 }: AppProvidersProps) {
+  const [zone, format] = await Promise.all([clubTimeZone(), clubFormatValues()]);
   return (
     <AppProvidersClient
       clubIdentity={clubIdentity}
-      clubTimeZone={await clubTimeZone()}
+      clubTimeZone={zone}
+      clubCurrencyCode={format.currencyCode}
+      clubLocale={format.locale}
       nonce={nonce}
     >
       {children}

@@ -17,6 +17,7 @@ import {
   paragraph,
 } from "./layout";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- Waitlist templates ----
 
@@ -52,6 +53,7 @@ export function waitlistOfferTemplate(
   // Price the member pays on confirmation (repriced at offer time, #1035;
   // the offered lodge's quote for cross-lodge offers).
   priceCents: number,
+  format: ClubFormat,
   // Cross-lodge offer (ADR-004): names the alternate lodge; the member
   // confirms lodge and price explicitly. Null renders same-lodge offers.
   crossLodgeOffer?: { lodgeName: string | null } | null,
@@ -60,7 +62,7 @@ export function waitlistOfferTemplate(
   // verbatim from the shared policy sentence — it names nobody and no amount, so
   // it is safe in an email a family member may open. Null renders exactly as
   // before.
-  subscriptionMemberRateNotice?: string | null
+  subscriptionMemberRateNotice?: string | null,
 ): string {
   const lodgeLabel = crossLodgeOffer?.lodgeName ?? "another of our lodges";
   return layout(`
@@ -85,7 +87,7 @@ export function waitlistOfferTemplate(
       { label: "Guests", value: String(guestCount) },
       {
         label: crossLodgeOffer ? "Price at this lodge" : "Price",
-        value: formatCents(priceCents),
+        value: formatCents(priceCents, format),
       },
     ])}
     ${

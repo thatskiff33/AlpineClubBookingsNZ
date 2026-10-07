@@ -15,7 +15,7 @@ import {
 
 /**
  * Every `(public)` route stays per-request, declared here for the whole group
- * (#2352 slice 1). MEASURED, not tidiness: without this line `npm run build`
+ * (#2352 slice 1). MEASURED, not tidiness: without this line `pnpm run build`
  * fails.
  *
  * This group is out of #2352's scope by decision — `/login` permanently (D7), and

@@ -24,6 +24,7 @@ import {
 import { SITE_CONTENT_KEYS } from "@/lib/page-content";
 import { SiteContentKey } from "@prisma/client";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Hardening behaviours: plan-time validation errors that BLOCK apply, the
 // fingerprint binding (bundle bytes / mode / selection / resolutions), the
@@ -129,7 +130,7 @@ describe("plan-time validation blocks apply", () => {
     const zip = lodgeBundle({
       seasonsCsv: "name,type,startDate,endDate,active\nWinter,WINTER,2026-06-01,,true\n",
     });
-    const plan = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/endDate/);
     // The invalid row is excluded from the plan items.
     expect(plan.categories.flatMap((c) => c.items).some((i) => i.entity === "season")).toBe(false);
@@ -139,7 +140,7 @@ describe("plan-time validation blocks apply", () => {
     const zip = lodgeBundle({
       seasonsCsv: "name,type,startDate,endDate,active\nWinter,WNITER,2026-06-01,2026-09-01,true\n",
     });
-    const plan = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/WNITER.*WINTER/);
   });
 
@@ -148,7 +149,7 @@ describe("plan-time validation blocks apply", () => {
       seasonsCsv: "name,type,startDate,endDate,active\nWinter,WINTER,2026-06-01,2026-09-01,true\n",
       ratesCsv: "seasonName,membershipTypeKey,ageTier,pricePerNightCents\nWinter,FULL,ADULT,4S50\n",
     });
-    const plan = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/pricePerNightCents.*4S50/);
   });
 
@@ -159,7 +160,7 @@ describe("plan-time validation blocks apply", () => {
     const plan = await buildImportPlan(
       lodgeDb({ seasons: [EXISTING_SEASON] }),
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors).toEqual([]);
     const season = plan.categories.flatMap((c) => c.items).find((i) => i.entity === "season");
@@ -173,7 +174,7 @@ describe("plan-time validation blocks apply", () => {
     const plan = await buildImportPlan(
       lodgeDb({ seasons: [EXISTING_SEASON] }),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     expect(plan.errors.length).toBeGreaterThan(0);
   });
@@ -264,6 +265,7 @@ function pagesApplyHarness(bundle: Uint8Array) {
       manifest,
       mode: "overwrite" as const,
       resolutions: new Map<string, string>(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
       notes: { doorCodesWritten: [] as string[] },
@@ -274,7 +276,7 @@ function pagesApplyHarness(bundle: Uint8Array) {
 describe("site-content page hardening (slug/path/headerText)", () => {
   it("flags an invalid page slug as a row error and excludes the row", async () => {
     const zip = pagesBundle([{ ...BASE_PAGE, slug: "Bad Slug", path: "/bad" }]);
-    const plan = await buildImportPlan(pagesDb([]), zip, { mode: "merge" });
+    const plan = await buildImportPlan(pagesDb([]), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(
       /pages\.csv row 2: slug — "Bad Slug" is not a valid page slug/,
     );
@@ -285,7 +287,7 @@ describe("site-content page hardening (slug/path/headerText)", () => {
     const zip = pagesBundle([
       { ...BASE_PAGE, slug: "admin/settings", path: "/admin/settings" },
     ]);
-    const plan = await buildImportPlan(pagesDb([]), zip, { mode: "merge" });
+    const plan = await buildImportPlan(pagesDb([]), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/slug — .*reserved route segment/);
     expect(plan.categories.flatMap((c) => c.items)).toEqual([]);
   });
@@ -303,7 +305,7 @@ describe("site-content page hardening (slug/path/headerText)", () => {
       const zip = pagesBundle([
         { ...BASE_PAGE, slug, path: `/${slug}`, menuTitle: "" },
       ]);
-      const plan = await buildImportPlan(pagesDb([]), zip, { mode: "merge" });
+      const plan = await buildImportPlan(pagesDb([]), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
 
       expect(plan.errors).toEqual([]);
       const items = plan.categories.flatMap((c) => c.items);
@@ -323,7 +325,7 @@ describe("site-content page hardening (slug/path/headerText)", () => {
     const plan = await buildImportPlan(
       pagesDb([{ id: "p1", ...BASE_PAGE }]),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     expect(plan.errors).toEqual([]);
     expect(plan.categories[0].items[0].action).toBe("unchanged");
@@ -349,7 +351,7 @@ describe("site-content page hardening (slug/path/headerText)", () => {
     const plan = await buildImportPlan(
       pagesDb([{ id: "p1", ...BASE_PAGE, headerText: "<p>Hi</p>" }]),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     expect(plan.errors).toEqual([]);
     expect(plan.categories[0].items[0].action).toBe("unchanged");
@@ -380,7 +382,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const negative = await buildImportPlan(
       pagesDb([]),
       pagesBundle([{ ...BASE_PAGE, sortOrder: -5 }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(negative.errors.join(" ")).toMatch(
       /pages\.csv row 2: sortOrder — must be between 0 and 9999/,
@@ -390,7 +392,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const tooBig = await buildImportPlan(
       pagesDb([]),
       pagesBundle([{ ...BASE_PAGE, sortOrder: 10000 }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(tooBig.errors.join(" ")).toMatch(/sortOrder — must be between 0 and 9999/);
   });
@@ -401,7 +403,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
       pagesBundle([
         { ...BASE_PAGE, title: "T".repeat(121), caption: "C".repeat(121) },
       ]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors.join(" ")).toMatch(/title — must be at most 120 characters/);
     expect(plan.errors.join(" ")).toMatch(/caption — must be at most 120 characters/);
@@ -410,13 +412,13 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const blank = await buildImportPlan(
       pagesDb([]),
       pagesBundle([{ ...BASE_PAGE, title: "" }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(blank.errors.join(" ")).toMatch(/title — must not be blank/);
     const kept = await buildImportPlan(
       pagesDb([{ id: "p1", ...BASE_PAGE }]),
       pagesBundle([{ ...BASE_PAGE, title: "" }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(kept.errors).toEqual([]);
   });
@@ -426,7 +428,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const plan = await buildImportPlan(
       pagesDb([]),
       pagesBundle([{ ...BASE_PAGE, slug: "a".repeat(81), path: `/${"a".repeat(81)}` }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors.join(" ")).toMatch(/slug — must be at most 80 characters/);
   });
@@ -441,7 +443,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
           contentHtml: "y".repeat(200001),
         },
       ]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors.join(" ")).toMatch(/headerText — must be at most 20000 characters/);
     expect(plan.errors.join(" ")).toMatch(/contentHtml — must be at most 200000 characters/);
@@ -452,7 +454,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const home = await buildImportPlan(
       pagesDb([{ id: "home-1", ...HOME_PAGE }]),
       pagesBundle([{ ...HOME_PAGE, published: false }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(home.errors.join(" ")).toMatch(
       /published — page "home" cannot be hidden from the public site/,
@@ -461,7 +463,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const about = await buildImportPlan(
       pagesDb([{ id: "p1", ...BASE_PAGE }]),
       pagesBundle([{ ...BASE_PAGE, published: false }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(about.errors.join(" ")).toMatch(/page "about" cannot be hidden/);
   });
@@ -471,7 +473,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const moved = await buildImportPlan(
       pagesDb([{ id: "home-1", ...HOME_PAGE }]),
       pagesBundle([{ ...HOME_PAGE, sortOrder: 50 }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(moved.errors.join(" ")).toMatch(
       /sortOrder — menu order for system page "home" is fixed at 1/,
@@ -482,7 +484,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const roundTrip = await buildImportPlan(
       pagesDb([{ id: "home-1", ...HOME_PAGE }]),
       pagesBundle([HOME_PAGE]),
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     expect(roundTrip.errors).toEqual([]);
     expect(roundTrip.categories[0].items[0].action).toBe("unchanged");
@@ -491,7 +493,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const normalised = await buildImportPlan(
       pagesDb([{ id: "home-1", ...HOME_PAGE }]),
       pagesBundle([{ ...HOME_PAGE, sortOrder: 1 }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(normalised.errors).toEqual([]);
     expect(normalised.categories[0].items[0].action).toBe("update");
@@ -516,7 +518,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const legacy = await buildImportPlan(
       pagesDb([{ id: "p1", ...BASE_PAGE, title: "About Us  ", caption: "Caption" }]),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     expect(legacy.errors).toEqual([]);
     expect(legacy.categories[0].items[0].action).toBe("update");
@@ -527,7 +529,7 @@ describe("site-content page caps + system-page protections (admin route parity)"
     const converged = await buildImportPlan(
       pagesDb([{ id: "p1", ...BASE_PAGE, caption: "Caption" }]),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     expect(converged.errors).toEqual([]);
     expect(converged.categories[0].items[0].action).toBe("unchanged");
@@ -546,7 +548,7 @@ describe("site-content keyed cap (admin route parity)", () => {
       siteContentBundle([
         { key: "FOOTER_BLURB", contentHtml: "y".repeat(200001) },
       ]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors.join(" ")).toMatch(
       /site-content\.csv row 2: contentHtml — must be at most 200000 characters/,
@@ -564,7 +566,7 @@ describe("site-content keyed cap (admin route parity)", () => {
       siteContentBundle([
         { key: "FOOTER_BLURB", contentHtml: "y".repeat(200000) },
       ]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors).toEqual([]);
     const item = plan.categories
@@ -628,7 +630,7 @@ describe("site-content keyed key validation (admin route parity)", () => {
     const plan = await buildImportPlan(
       db,
       siteContentBundle([{ key: "BOGUS", contentHtml: "nope" }]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.errors.join(" ")).toMatch(
       /site-content\.csv row 2: key — "BOGUS" is not a recognised site-content key/,
@@ -651,7 +653,7 @@ describe("site-content keyed key validation (admin route parity)", () => {
         { key: "BOGUS", contentHtml: "nope" },
         { key: "FOOTER_BLURB", contentHtml: "hello" },
       ]),
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     // Bogus row (data row 1 → file row 2) errors; the run does not throw.
     expect(plan.errors.join(" ")).toMatch(
@@ -735,6 +737,7 @@ function siteContentApplyHarness(bundle: Uint8Array) {
       manifest,
       mode: "overwrite" as const,
       resolutions: new Map<string, string>(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
       notes: { doorCodesWritten: [] as string[] },
@@ -745,19 +748,19 @@ function siteContentApplyHarness(bundle: Uint8Array) {
 describe("fingerprint binding", () => {
   it("differs by mode, bundle bytes, and selection", async () => {
     const zip = lodgeBundle({});
-    const merge = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
-    const overwrite = await buildImportPlan(lodgeDb(), zip, { mode: "overwrite" });
+    const merge = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+    const overwrite = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
     expect(merge.fingerprint).not.toBe(overwrite.fingerprint);
 
     // Same keys, different bytes (travelNote differs) → different fingerprint.
     const zip2 = lodgeBundle({
       lodgeJson: { slug: "main", name: "Main Lodge", active: true, travelNote: "edited", isDefault: false },
     });
-    const other = await buildImportPlan(lodgeDb(), zip2, { mode: "merge" });
+    const other = await buildImportPlan(lodgeDb(), zip2, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(other.fingerprint).not.toBe(merge.fingerprint);
 
     // Deterministic for identical inputs.
-    const again = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
+    const again = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(again.fingerprint).toBe(merge.fingerprint);
   });
 });
@@ -767,7 +770,7 @@ describe("door-code disclosure", () => {
     const zip = lodgeBundle({
       lodgeJson: { slug: "main", name: "Main Lodge", active: true, doorCode: "4271", isDefault: false },
     });
-    const plan = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(lodgeDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.doorCodeChanges).toEqual(["main"]);
     expect(
       plan.categories.flatMap((c) => c.warnings).join(" "),
@@ -783,13 +786,14 @@ describe("match picker (key-weak renames)", () => {
     const db = () => lodgeDb({ seasons: [EXISTING_SEASON] });
 
     // Unresolved: the unmatched bundle row offers "Winter" as a candidate.
-    const plan = await buildImportPlan(db(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(db(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const item = plan.categories.flatMap((c) => c.items).find((i) => i.entity === "season");
     expect(item?.action).toBe("create");
     expect(item?.candidates?.[0]).toMatchObject({ id: "season-1" });
 
     // Resolved: the row becomes an update (rename) of the matched season.
     const resolved = await buildImportPlan(db(), zip, {
+      format: CLUB_FORMAT_TEST,
       mode: "merge",
       resolutions: [{ entity: "season", key: "main/Winter 2026", matchId: "season-1" }],
     });
@@ -838,7 +842,7 @@ describe("xero item identity is null-honest", () => {
       ],
       ["xero-config"],
     );
-    const plan = await buildImportPlan(db, zip, { mode: "merge" });
+    const plan = await buildImportPlan(db, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const item = plan.categories.flatMap((c) => c.items).find((i) => i.entity === "xero-item-code-mapping");
     // The blank ageTier/entranceFeeCategory cells match the existing null row →
     // unchanged, NOT a duplicate create.
@@ -871,8 +875,8 @@ describe("xero target-org binding", () => {
         },
       }) as unknown as ReadDb;
 
-    const disconnected = await buildImportPlan(dbWithTenant(null), zip, { mode: "merge" });
-    const connected = await buildImportPlan(dbWithTenant("org-a"), zip, { mode: "merge" });
+    const disconnected = await buildImportPlan(dbWithTenant(null), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+    const connected = await buildImportPlan(dbWithTenant("org-a"), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(connected.fingerprint).not.toBe(disconnected.fingerprint);
   });
 });
@@ -952,7 +956,7 @@ describe("media plan validation", () => {
       mediaImage: { findMany: vi.fn().mockResolvedValue([]) },
       xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
     } as unknown as ReadDb;
-    const plan = await buildImportPlan(db, zip, { mode: "merge" });
+    const plan = await buildImportPlan(db, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/over the .*image limit/i);
 
     // Malformed media-map: a trailing comma is a plan-time ERROR, not an
@@ -969,7 +973,7 @@ describe("media plan validation", () => {
       ],
       ["site-content"],
     );
-    const plan2 = await buildImportPlan(db, badMap, { mode: "merge" });
+    const plan2 = await buildImportPlan(db, badMap, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan2.errors.join(" ")).toMatch(/media-map\.json is not valid JSON/i);
   });
 });
@@ -1166,10 +1170,11 @@ describe("import-side category selection", () => {
         xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
       }) as unknown as ReadDb;
 
-    const all = await buildImportPlan(db(), zip, { mode: "merge" });
+    const all = await buildImportPlan(db(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(all.selectedCategories).toEqual(["committee", "xero-config"]);
 
     const committeeOnly = await buildImportPlan(db(), zip, {
+      format: CLUB_FORMAT_TEST,
       mode: "merge",
       selectedCategories: ["committee"],
     });

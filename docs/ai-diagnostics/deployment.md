@@ -41,7 +41,7 @@ content. A deployment populates a **configured location** with a **typed shape**
 - **Location.** By default `config/diagnostics-knowledge.json` — the conventional,
   git-ignored, hard-excluded slot. A fork may point elsewhere by setting
   `DIAGNOSTICS_KNOWLEDGE_CONFIG_PATH` in the build environment. The file is read by
-  `npm run diagnostics:bundle` **in the Docker builder**, exactly like the allowlist
+  `pnpm run diagnostics:bundle` **in the Docker builder**, exactly like the allowlist
   overlay, so the overlay content is baked into that build's bundle. Changing it
   needs a rebuild.
 - **Shape.** The same file that carries the allowlist overlay (`include` /
@@ -176,14 +176,14 @@ Ordinary parameters such as `sslmode` and `connection_limit` are unaffected.
 ### Provisioning
 
 ```bash
-AI_DIAGNOSTICS_DB_PASSWORD='<a long random secret>' npm run diagnostics:provision-role
+AI_DIAGNOSTICS_DB_PASSWORD='<a long random secret>' pnpm run diagnostics:provision-role
 ```
 
 Preview the exact statements without connecting (the password literal is replaced
 with a placeholder, so nothing secret is printed):
 
 ```bash
-npm run diagnostics:provision-role -- --dry-run
+pnpm run diagnostics:provision-role --dry-run
 ```
 
 The script needs a connection that may create roles: the application's own
@@ -315,7 +315,7 @@ The script also does not create the database, the app role, or any view.
 The allowlist lives in `SELECT_GRANTS` (`src/lib/diagnostics/tools/provision-role.ts`),
 in public code, so "which relations — and which columns of them — can Diagnostics
 read" is answerable by reading one file. As of AID-6B (#2376) it names
-**twenty-six** relations and **243 columns**, and **every one of them is granted by
+**twenty-six** relations and **244 columns**, and **every one of them is granted by
 column, never wholesale**:
 
 | Relation | Granted | Read by |
@@ -332,7 +332,7 @@ column, never wholesale**:
 | `public."XeroInboundEvent"` | 9 columns | the webhook timeline |
 | `public."XeroObjectLink"` | 10 columns | the Xero invoice and contact linkage tools |
 | `public."XeroSyncOperation"` | 17 columns | the Xero invoice and contact linkage tools |
-| `public."Member"` | **23 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Member"` | **24 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `deletedAt` is a deleted-account predicate only; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
 | `public."Booking"` | 25 columns | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
 | `public."Lodge"` | **2 columns**: `id`, `name` | the booking search, a member's booking involvement |
 | `public."BookingGuest"` | 15 columns (a guest's given and family name included; consent responder and expiry are classifier inputs only) | booking party state, guest counts, member-booking involvement and double-sharing evidence |
@@ -367,7 +367,7 @@ public."WebhookLog": id, source, eventType, eventId, status, durationMs, created
 public."XeroInboundEvent": id, eventCategory, eventType, resourceId, correlationKey, status, eventCreatedAt, processedAt, createdAt
 public."XeroObjectLink": id, localModel, localId, xeroObjectType, xeroObjectId, xeroObjectNumber, role, active, createdAt, updatedAt
 public."XeroSyncOperation": id, direction, operationType, localModel, localId, status, attemptCount, replayable, lastErrorCode, xeroObjectType, xeroObjectId, xeroObjectNumber, manuallyResolvedAt, startedAt, completedAt, createdAt, updatedAt
-public."Member": id, email, firstName, lastName, ageTier, active, canLogin, cancelledAt, archivedAt, joinedDate, lifeMemberDate, requiresInduction, hutLeaderEligible, parentMemberId, secondaryParentId, familyGroupId, billingFamilyGroupId, phoneAreaCode, phoneNumber, phoneCountryCode, xeroContactId, createdAt, updatedAt
+public."Member": id, email, deletedAt, firstName, lastName, ageTier, active, canLogin, cancelledAt, archivedAt, joinedDate, lifeMemberDate, requiresInduction, hutLeaderEligible, parentMemberId, secondaryParentId, familyGroupId, billingFamilyGroupId, phoneAreaCode, phoneNumber, phoneCountryCode, xeroContactId, createdAt, updatedAt
 public."Booking": id, memberId, lodgeId, status, checkIn, checkOut, totalPriceCents, discountCents, promoAdjustmentCents, finalPriceCents, creditElectionCents, hasNonMembers, nonMemberHoldUntil, parentBookingId, draftExpiresAt, requiresAdminReview, adminReviewStatus, adultMemberHostingReviewStatus, waitlistPosition, wholeLodgeHold, adminCapacityHoldAt, capacityOverriddenAt, deletedAt, createdAt, updatedAt
 public."Lodge": id, name
 public."BookingGuest": id, bookingId, firstName, lastName, ageTier, isMember, memberId, stayStart, stayEnd, priceCents, consentStatus, consentRequestedAt, consentRespondedAt, consentRespondedByMemberId, consentExpiresAt
@@ -385,8 +385,9 @@ public."FamilyGroup": id, name
 <!-- ai-diagnostics-exact-grants:end -->
 
 Every other relation in the schema is unreadable — including `IntegrationCredential`
-(encrypted provider secrets), `XeroToken`, which stores **plaintext** Xero OAuth
-access and refresh tokens, and `FamilyGroupJoinRequest`, which carries requester
+(encrypted provider secrets, and since #3454 the Xero OAuth token set), `XeroToken`,
+which holds the same Xero OAuth access and refresh tokens, encrypted, for the
+blue-green window, and `FamilyGroupJoinRequest`, which carries requester
 free text and children's dates of birth. The first two are permanently out of scope
 under ADR-007 §1 and no tool pack may grant them.
 
@@ -416,7 +417,7 @@ ran — the finance pack's suite built a correctly-keyed set of granted columns 
 never passed it to an assertion. `provision-role.test.ts` now reconciles the
 allowlist against **every registered statement in both directions**, with
 `alias -> relation` resolved per statement, and pins the census (twenty-six
-relations, 243 columns) so this page and the pack pages cannot drift from it again.
+relations, 244 columns) so this page and the pack pages cannot drift from it again.
 
 **And the same property is now proved a second time against PostgreSQL itself.**
 The real-database suite
@@ -445,8 +446,8 @@ The operator CLI prints the declared grants, columns and all, on every run and o
 `--dry-run`.
 
 **Upgrading to the AID-6B release is a two-step operation: deploy, then re-run
-`npm run diagnostics:provision-role`.** This release adds thirteen relations and
-widens `Member` from two columns to twenty-three, so until it is re-run the
+`pnpm run diagnostics:provision-role`.** This release adds thirteen relations and
+widens `Member` from two columns to twenty-four, so until it is re-run the
 *previous* release's grants no longer match the declared allowlist and **every
 SQL-backed tool refuses, by design**.
 
@@ -496,15 +497,15 @@ still safe.** The module ships **default-off**; every tool reads only through th
 dedicated **SELECT-only** role, verified least-privilege against the server on a
 one-minute clock; and turning the product on is an explicit **owner action** —
 enable the module, store the dedicated key, set a positive budget, and run
-`npm run diagnostics:provision-role`. Until an operator does all four, the ask route
+`pnpm run diagnostics:provision-role`. Until an operator does all four, the ask route
 refuses before a provider is ever contacted (readiness is fail-closed), and every
 tool call refuses independently of readiness because the credential gate is the
 control. Enabling the module alone authorises no spend and no read.
 
 So on an upgrade the **grant is still the production change to reason about**: after
-`npm run diagnostics:provision-role`, `ai_diagnostics_ro` holds SELECT on the
+`pnpm run diagnostics:provision-role`, `ai_diagnostics_ro` holds SELECT on the
 thirteen relations AID-6B added and on a `Member` widened from two columns to
-twenty-three. The difference from the earlier note is only that a provisioned,
+twenty-four. The difference from the earlier note is only that a provisioned,
 enabled deployment can now *use* that grant through the shipped UI — which is the
 whole point of the release — rather than holding it against a feature that cannot
 yet reach it.
@@ -514,7 +515,7 @@ yet reach it.
 A tool pack (AID-6A/B/C) that needs a new relation adds its grant to `SELECT_GRANTS`
 in the same pull request as the tool — by **column** unless every column of the
 relation is appropriate diagnostics evidence. Upgrading to that release is therefore a
-two-step operation: deploy, then **re-run `npm run diagnostics:provision-role`**.
+two-step operation: deploy, then **re-run `pnpm run diagnostics:provision-role`**.
 ADR-007's deliberate friction is exactly this — a new relation becoming readable by
 Diagnostics is a visible, reviewed, operator action, not a side effect.
 
@@ -544,7 +545,7 @@ every restriction at the same time.
 | `not_configured` | `AI_DIAGNOSTICS_DATABASE_URL` is not set. Nothing was contacted. | Provision the role and set the variable. |
 | `misconfigured` | Set, but unusable as configured: not a valid `postgres://` URL, no username, it names the **same role** as `DATABASE_URL`, or it carries one of the refused query parameters above. | Fix the connection string; it must be the dedicated role, with no overriding parameters. |
 | `unverified` | Set, but the server could not be asked — unreachable host, bad password, connection limit, or no answer inside the probe deadline. The role is **not** trusted. | Fix connectivity or credentials, then re-check. |
-| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant. | Re-run `npm run diagnostics:provision-role`, then re-check readiness. |
+| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant. | Re-run `pnpm run diagnostics:provision-role`, then re-check readiness. |
 | `over_privileged` | Reachable, and the role holds a privilege ADR-007 forbids, can read an undeclared relation or column, or is not the configured role. | Re-run provisioning and investigate privilege drift. If the role name does not match `current_user`, fix the string. |
 | `verified` | The server itself confirmed the named role is a non-superuser that can only `SELECT`, and only from the declared allowlist. | Nothing. |
 
@@ -586,11 +587,11 @@ docker run -d --name aid5-pg -e POSTGRES_USER=postgres \
   -p 127.0.0.1:55442:5432 postgres:16-alpine
 
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
-  npx prisma migrate deploy
+  pnpm exec prisma migrate deploy
 
 RUN_CONCURRENCY_RACE_TESTS=1 \
 CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
-  npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
+  pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
 ```
 
 The suite refuses to run against port 5432, a non-loopback host, or a database

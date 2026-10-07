@@ -15,8 +15,8 @@ import { withTimeZone } from "./timezone";
  *
  * `divergentClubZone` is imported by suites in several lanes of this epic and by
  * the shared premise proof, and its whole value is one condition: the zone it
- * returns must differ from BOTH wrong answers — `APP_TIME_ZONE`'s (what an
- * implementation reading the environment gives) and the host's own resolved
+ * returns must differ from BOTH wrong answers — the environment's (what an
+ * implementation reading `TZ` gives) and the host's own resolved
  * zone's (what `getFullYear`/`getMonth`/`getDate` give). A review lens measured
  * that dropping the host half of that condition killed **0 of 124**: every
  * importing suite carried on passing while the chooser was free to hand back a
@@ -28,24 +28,16 @@ import { withTimeZone } from "./timezone";
  *
  * The gap is invisible on this repository's default configuration, and that is
  * the point rather than an inconvenience: with `TZ` unset on a New Zealand
- * machine the host and `APP_TIME_ZONE` resolve to the SAME zone, so the two
- * halves of the condition are the same test and dropping one changes nothing. To
- * separate them the two rivals have to disagree, which means pinning
- * `APP_TIME_ZONE` — and it is read once at module load, so only a module mock can
- * move it.
- *
- * `@/config/operational` has exactly four exports, so the mock is cheap to keep
- * complete. It is file-scoped, which is why this is its own file: the chooser
- * docblock now beside it in this same module notes that
- * mocking that module inside a COMPONENT suite changes what the file's other
- * tests see, because `APP_LOCALE` and `APP_CURRENCY` reach money and date
- * formatting in the same render graph. Here the graph is one helper.
+ * machine the host and the environment's zone resolve to the SAME zone, so the
+ * two halves of the condition are the same test and dropping one changes
+ * nothing. To separate them the two rivals have to disagree, which means pinning
+ * `ENVIRONMENT_CLUB_ZONE` — and it is read once at module load, so only a module
+ * mock can move it. It has its own one-export module (it was `APP_TIME_ZONE` in
+ * the `src/config/operational.ts` #3567 deleted), so the mock touches nothing
+ * else.
  */
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "Pacific/Kiritimati",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
+vi.mock("./environment-club-zone", () => ({
+  ENVIRONMENT_CLUB_ZONE: "Pacific/Kiritimati",
 }));
 
 const { chooseDivergentClubZone, divergentClubZone, expectClubTimeZonePremise } =
@@ -159,7 +151,7 @@ describe("divergentClubZone tolerates a host zone no club could choose", () => {
 });
 
 describe("expectClubTimeZonePremise", () => {
-  it("fails with an environment explanation when APP_TIME_ZONE is not New Zealand", () => {
+  it("fails with an environment explanation when the environment zone is not New Zealand", () => {
     // The mock above pins a non-New-Zealand zone, so the premise guard must
     // refuse — and its message must say this is the environment rather than the
     // dating bug the calling suite describes.

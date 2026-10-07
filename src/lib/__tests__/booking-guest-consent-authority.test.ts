@@ -33,6 +33,13 @@
 // file deliberately does not repeat that money math; it tests the gate.
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: vi.fn(),
   checkCapacityForGuestRanges: vi.fn(),
@@ -106,8 +113,11 @@ vi.mock("@/lib/payment-recovery", () => ({
   queueRefundRecoveryOperation: vi.fn().mockResolvedValue(undefined),
   getStripePaymentMethodId: vi.fn().mockReturnValue(null),
 }));
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: vi.fn().mockResolvedValue([]),
+// #3341 (`INV-OPS-015`): the ADDITIONAL supersede stays REAL. This file asserts
+// the edit's ask (`additionalAmountCents`), and a stubbed supersede is how #3340's
+// sizing defect stayed green; the removals here never mint, so it never runs.
+vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
@@ -163,6 +173,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const BOOKING = "bk-1";
 const OWNER = "m-owner";
@@ -486,6 +497,7 @@ async function remove(
   },
 ) {
   return removeBookingGuestInTransaction({
+    format: CLUB_FORMAT_TEST,
     today: CLUB_TODAY_DATE_ONLY,
     tx: tx as never,
     bookingId: BOOKING,
@@ -1373,6 +1385,7 @@ describe("the self-removal window is judged on the day the caller supplies (#312
     const booking = futureStayBooking();
     const tx = makeTx(booking as ReturnType<typeof makeBooking>);
     return removeBookingGuestInTransaction({
+      format: CLUB_FORMAT_TEST,
       today,
       tx: tx as never,
       bookingId: BOOKING,

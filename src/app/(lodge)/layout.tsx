@@ -32,12 +32,17 @@ export default async function LodgeLayout({
     where: { id: session.user.id },
     select: {
       active: true,
+      // #3603: the signed-in account (a kiosk or staff login) must still be
+      // allowed to sign in. A hut leader's PIN is a separate assignment
+      // credential governed by `active`, checked by the PIN-session reader,
+      // and is not affected by this.
+      canLogin: true,
       forcePasswordChange: true,
       twoFactorEnabled: true,
     },
   });
 
-  if (!member?.active) {
+  if (!member?.active || member.canLogin === false) {
     redirect("/login");
   }
 

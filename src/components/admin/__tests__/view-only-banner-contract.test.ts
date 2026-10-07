@@ -27,7 +27,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
   wait on, so its wall time scales with how many other vitest workers are
   competing for the box — not with anything about the tree it is checking.
 
-  Standalone the whole file runs in about 3s. Inside a full `npm test` on a
+  Standalone the whole file runs in about 3s. Inside a full `pnpm test` on a
   loaded machine the same work measured 24s for the file and 5.4s for its
   slowest test, which tripped vitest's 5s default: a red suite with no defect
   behind it. The suite-level hoisting further down cut the real cost (6.5s -> 3s
@@ -328,6 +328,25 @@ const FIGURES = {
    * finance queue renders no `AdminViewOnlySectionBanner` at all, so each of its
    * buttons explains its own view-only state.
    *
+   * 362 -> 364 (#3596): the club currency and locale page's Change and Save,
+   * now that any admin may view it and only a Full Admin may change it. Cancel
+   * is a plain Button, as on the Retention section, and is only reachable once
+   * Change has opened the editor. MEASURED by re-running this census.
+   *
+   * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
+   * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
+   * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
+   * booking behavior for a drifted key-resolved built-in. MEASURED.
+   * 366 -> 367 (#3462): the Xero operations panel's per-row Mark failed on a
+   * stale running operation. MEASURED.
+   *
+   * 367 -> 368 (#3407): the lodge setup wizard's new Capacity step adds its
+   * Save and continue. Back and Skip are plain Buttons. MEASURED.
+   *
+   * 368 -> 370 (#3416): the School Teacher Hut-Leader Assignments card adds
+   * Edit and Save. Cancel remains a plain Button because it only discards the
+   * staged choice. MEASURED by re-running this census.
+   *
    * 362 -> 364 (#50): the Other lodges panel's amenities editor adds two —
    * **Add amenity** and the per-row **Remove amenity**. Both pass
    * `describeReason={!ancestorRendersViewOnlyBanner}` like the panel's existing
@@ -339,7 +358,7 @@ const FIGURES = {
    * Edit my Lodge, vouched the same way. Net two fewer. MEASURED by re-running
    * this census.
    */
-  callSites: 362,
+  callSites: 370,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -361,13 +380,22 @@ const FIGURES = {
    *
    * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
    *
+   * 308 -> 310 (#3596): so do the club currency and locale page's two.
+   *
+   * 310 -> 311 (#2941): so does Member Fields' new Edit.
+   *
+   * 311 -> 312 (#3462): so does the Xero operations panel's Mark failed.
+   * 312 -> 313 (#3407): so does the setup wizard's Capacity Save and continue.
+   * 313 -> 315 (#3416): the new school-teacher policy card heads itself under
+   * the existing section banner, so its Edit and Save opt out.
+   *
    * 308 -> 310 (#50): so do the Other lodges panel's two amenity controls,
    * vouched rather than static (the banner is in the Lodges page, not the panel).
    *
    * 310 -> 308 (#52): three of the panel's vouched opt-outs go (Add, Edit,
    * Delete) and one arrives (Edit my Lodge).
    */
-  optOuts: 308,
+  optOuts: 315,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -412,8 +440,26 @@ const FIGURES = {
    *
    * 272 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
    * file with its own banner, so its two are static rather than vouched.
+   *
+   * 274 -> 276 (#3596): the club currency and locale panel heads its own file
+   * with its own banner, so its Change and Save are static. Like the Video
+   * meetings pair above, both also pass `ADMIN_FULL_ADMIN_ONLY_ACTION_REASON`,
+   * and for the same reason: the banner already names Full Admin, and a future
+   * render outside this file would still state the narrower rule.
+   *
+   * 276 -> 277 (#2941): Member Fields' Edit sits in the same file as the page's
+   * own banner, beside the Save that was already static.
+   *
+   * 277 -> 278 (#3462): the Xero operations panel's Mark failed sits in the same
+   * file as that panel's own banner, beside its Retry and Resolve.
+   * 278 -> 279 (#3407): the setup wizard's Capacity Save and continue sits in
+   * the same file as the wizard's own banner, beside its sibling steps' static
+   * opt-outs.
+   *
+   * 279 -> 281 (#3416): the school-teacher card's Edit and Save sit in the
+   * same file as its section banner.
    */
-  staticOptOuts: 274,
+  staticOptOuts: 281,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -444,9 +490,10 @@ const FIGURES = {
    *
    * 53 -> 54 in 29 -> 30 files (#3498): the finance queue's reopen card, which
    * is a new file and heads no banner - the same shape as the settle card it
-   * sits beside, where each button explains its own view-only state.
+    * sits beside, where each button explains its own view-only state.
+    * 54 -> 55 (#3408): the Membership Types repair button keeps its own reason.
    */
-  exceptions: 54,
+   exceptions: 55,
   exceptionFiles: 30,
   /**
    * The remainder bucket: neither a member detail card nor dialog-only.
@@ -492,8 +539,12 @@ const FIGURES = {
    * mounted above its loading early-return. Its sibling on the same lodge — the
    * lobby display card — keeps its own, because the two are separate sections
    * on separate sub-pages and neither is ever rendered inside the other.
+   *
+   * 97 -> 98 (#3596): the club currency and locale panel, which #3563 built
+   * without one because every visitor was a Full Admin. #3596 gave it a view
+   * tier. Mounted in all three of its branches (load failed, loading, loaded).
    */
-  bannerComponents: 97,
+  bannerComponents: 98,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
@@ -1713,7 +1764,8 @@ describe("view-only section banner coverage (#2160)", () => {
       // the wrong permission — and an admin with membership edit but finance
       // view-only would get no banner at all.
       memberDetailCards: { controls: 4, files: 1 },
-      separateA11yContainer: { controls: 10, files: 5 },
+       // #3408 adds one repair control to the Membership Types editor.
+       separateA11yContainer: { controls: 11, files: 5 },
       // +1 control / +1 file vs 20/11: the #2259 "No emails" switch; then
       // +4 controls / +1 file: the four #2249 display-wizard step controls,
       // which the shell's render-callback indirection put out of reach of both
@@ -1751,6 +1803,7 @@ describe("view-only section banner coverage (#2160)", () => {
       "docs/ARCHITECTURE.md": [
         `${f.bannerComponents} components render a banner, and ${f.optOuts} of the ${f.callSites} ViewOnlyActionButton call sites opt out`,
         `${f.staticOptOuts} pass the literal describeReason={false}`,
+        `Those ${f.optOuts} split by WHICH rule`,
         `and ${f.vouchedOptOuts} pass describeReason={!${VOUCH_PROP}}`,
         `${f.renderSiteVouchedOptOuts} by a parent's own JSX render site (#2168), ${f.shellVouchedOptOuts} by the guided-setup shell (#2324)`,
         `${f.exceptions} controls across ${f.exceptionFiles} files deliberately keep the per-button default`,

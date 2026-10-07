@@ -255,19 +255,20 @@ this property is pinned by unit tests over the helper instead
 Cancellation approval does NOT clear `MemberAccessRole` rows,
 `financeAccessLevel`, or the legacy `role` column (#2383, confirming existing
 behaviour). Archive approval, deletion anonymisation, and bulk deactivate all
-leave them too. **`active: false` is the load-bearing flag**, not
-`canLogin: false`: `requireAdmin` (`src/lib/session-guards.ts`) rejects an
-inactive member, and it does not select `canLogin` at all, while
-`getAdminPermissionMatrix` zeroes the matrix only on an explicit
-`canLogin === false` — pass it a row set without that field and the full bundle
-resolves. De-logined accounts that still hold live rows therefore exist today
-(the login-holder transfer again), so nothing may be built on "no login means no
-permissions". The dormant rows are what keep the account inside the
-canLogin-blind `memberHoldsPrivilegedRole` guard for any later archive, and
-deleting them on cancellation would be novel and would weaken that later guard.
-The corollary is a hard constraint on any future work: **a path that reactivates
-a member who kept privileged roles would silently restore every one of them.**
-Any path that is added must clear or re-grant the roles deliberately.
+leave them too. **The rows stay, dormant behind `active` and `canLogin`:**
+`requireAdmin` (`src/lib/session-guards.ts`) rejects an inactive member, and
+since #3603 every privilege check requires `canLogin` and resolves nothing for a
+login-disabled member (INV-LIFE-092). Cancellation and archive write both flags
+false, so such an account holds no access. De-logined accounts that still hold
+the rows exist (the login-holder transfer leaves them), so nothing may be built
+on "no login means no rows". The dormant rows are what keep the account inside
+the canLogin-blind `memberHoldsPrivilegedRole` and `memberHoldsFullAdminRole`
+guards for any later archive, merge or hard delete, and deleting them on
+cancellation would be novel and would weaken those guards. The corollary is a
+hard constraint on any future work: **a path that reactivates a member, or
+switches their login back on, while they kept privileged roles would silently
+restore every one of them.** Any path that is added must clear or re-grant the
+roles deliberately.
 
 ## INV-LIFE-013
 
@@ -283,64 +284,97 @@ two refuses **three** states, with a 409 naming which:
   nothing in the application writes `cancelledAt: null` or `archivedAt: null`, so
   those two states are terminal.
 - **Deleted** — a member an approved deletion request has anonymised (#2620).
-  This one is NOT covered by the `cancelledAt`/`archivedAt` refusal and was
+  This state is NOT covered by the `cancelledAt`/`archivedAt` refusal and was
   wrongly documented here as if it were. Anonymisation
-  (`POST /api/admin/deletion-requests/[id]`) sets `active: false` but stamps
-  **neither** flag, so a deleted account passed both guards, and `active` is
-  exactly what bulk Reactivate flips. Because anonymisation also retains
-  `canLogin`, `googleSub`, `emailVerified` and the second factor, `active: false`
-  was the only thing between the erased person and a working session carrying
-  their retained admin roles — and a deleted row is `active: false,
-  cancelledAt: null`, i.e. squarely inside the members list's **Inactive**
-  lifecycle filter, so an officer undoing a mistaken bulk deactivate could
-  restore one without intending to. Deletion is recognised by the anonymisation
-  markers it writes — the `DELETED_ACCOUNT` password-hash sentinel and the
-  `@deleted.invalid` address — through the single shared predicate
-  `isDeletedAccountRecord` (`src/lib/deleted-account.ts`). Every path that must
-  recognise a deleted account consults that one predicate; a second copy of the
-  marker test is the drift the module exists to prevent.
+  (`POST /api/admin/deletion-requests/[id]`) stamps neither flag. Before #2620,
+  it therefore passed both guards and `active: false` was the only thing between
+  an erased person and a working session carrying retained access roles.
+  Both reactivation paths now consult the canonical
+  `isDeletedAccountRecord` predicate defined in INV-LIFE-015; a second marker
+  test would recreate the drift this shared predicate prevents.
 
 ## INV-LIFE-014
 
 Reactivation refusal is not the whole defence for a deleted account, because it
 protects only the application's own write paths. **A deleted account yields no
 session even with `active: true`** (#2620): all three sign-in providers refuse on
-the same predicate, independently of `active` — password and magic-link
-`authorize` return null (the password path still burns its dummy bcrypt compare,
-so the refusal stays timing-identical to an unknown email), and
-`resolveGoogleProfile` returns `refused`. The Google path is the one that most
-needs it: it resolves on `googleSub` alone, never on email, and anonymisation
-does not clear `googleSub`. Behind all three, the per-request token refresh in
-the `jwt` callback sets `sessionInvalidated` for a deleted member, so `auth()`
-nulls the session on the member's next request — which also covers a session
-minted *before* the deletion, since deletion revokes no tokens today. The
-members list surfaces the state as a distinct "Deleted" lifecycle chip and takes
-the row out of bulk selection, so the mistake is hard to make as well as
+`isDeletedAccountRecord` (INV-LIFE-015), independently of `active`. The guarantee
+includes an adopter-era erased row carrying only the reserved address and no
+`deletedAt` value. Password and magic-link `authorize` return null (the
+password path still burns its dummy bcrypt compare, so the refusal stays
+timing-identical to an unknown email), and `resolveGoogleProfile` returns
+`refused`. Behind all three, the per-request token refresh in the `jwt` callback
+sets `sessionInvalidated` for a deleted member, so `auth()` nulls the session on
+the member's next request. This also covers a session minted before deletion.
+The members list surfaces the state as a distinct "Deleted" lifecycle chip and
+takes the row out of bulk selection, so the mistake is hard to make as well as
 refused.
 
 ## INV-LIFE-015
 
-The marker predicate is a strong signal, not a schema invariant: it holds because
-the anonymisation write is the only producer of either marker and nothing else
-clears them. One path does overwrite both — the membership-application approval
-MAP branch (`src/lib/nomination.ts`) rewrites `email` to the applicant's real
-address and, on the non-login→login promotion, writes a fresh `passwordHash` — so
-a mapped-over deleted row stops being recognisable as one. That path writes no
-`active`, so it cannot itself mint a session for an inactive member. Stamping
-`cancelledAt` (or a dedicated `deletedAt`) at anonymisation time would make the
-state structural instead of inferred; it is deliberately still open, because it
-would also change how deleted members appear in every lifecycle filter and count.
+Deletion is structural. Approved anonymisation stamps `Member.deletedAt` in the
+same transaction and row write as the erased identity fields; rollback therefore
+removes the marker with the rest of an unsuccessful anonymisation. The one
+canonical predicate, `isDeletedAccountRecord` (`src/lib/deleted-account.ts`),
+recognises either that timestamp or a reserved `@deleted.invalid` address.
+
+The address arm is permanent compatibility, not a backfill bridge. This generic
+product cannot assume that every adopter has backfilled rows erased before
+`deletedAt` existed; removing the arm would make such a row ordinary and break
+INV-LIFE-014's no-session guarantee. The membership-application MAP preview and
+approval paths apply the same predicate and refuse an erased target before they
+can overwrite its identity or login fields, so an erased row cannot be reused as
+a different member. The programme deliberately added no historical backfill or
+unresolved state; the owner decision and rationale are recorded in
+[#2718](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2718#issuecomment-5744458659).
 
 ## INV-LIFE-016
 
-The same fact constrains session-authenticated routes: cancellation neither
-clears the rows nor invalidates the JWT (`auth()` invalidates only on
-`passwordChangedAt`, and re-stamps `token.accessRoles` from the retained rows on
-every request), so any route that resolves admin access from a member row must
-re-read `active` rather than trusting the rows. `requireAdmin` does; the display
-preview branch of `GET /api/display/state` did not, and now does (#2383) — it
-was unreachable before, because a cancelled member could not previously hold an
-`ADMIN` row.
+The same fact constrains session-authenticated routes: cancellation clears no
+rows, and the per-request token refresh re-reads the retained ones. Cancellation
+also writes `canLogin: false`, so the refresh now ends that session
+(INV-LIFE-092), but any route that resolves admin access from a member row must
+still re-read `active` and `canLogin` rather than trusting the rows.
+`requireAdmin` does; the display preview branch of `GET /api/display/state` did
+not, and now does (#2383) — it was unreachable before, because a cancelled
+member could not previously hold an `ADMIN` row.
+
+## INV-LIFE-092
+
+A member whose `canLogin` is false holds no access and keeps no session,
+whatever access-role rows it still stores (#3603). Every sign-in provider
+already refuses such a member; this rule covers a session minted before the
+switch-off.
+
+**The type:** `hasAdminAccess`, `isFullAdmin`, `hasPrivilegedAccess`,
+`hasLodgeAccess`, `authorizationRoleFromAccessRoles`, `hasAccessRole` for any
+privileged role, and every `AdminPermissionInput` matrix check take a
+`PrivilegeCheckInput`, on which `canLogin` is required, so a gate whose member
+read forgot it does not compile. Select it with `MEMBER_PRIVILEGE_CHECK_SELECT`;
+a session carries it as `session.user.canLogin`. **The gates:** `requireAdmin`,
+the finance loader, the lodge kiosk gate, help-chat and both member-facing
+layouts re-read it; `requireActiveSessionUser` refuses the member outright.
+**The session:** the database trigger `Member_stamp_sessions_revoked_at` stamps
+`Member.sessionsRevokedAt` on every true-to-false write, whichever path makes
+it, and the token refresh in `src/lib/auth.ts` refuses any session issued
+before that time, as it does one issued before `passwordChangedAt`. The time
+lives on the row, so re-enabling login never revives such a session, whatever
+cookie is replayed; members already off at upgrade are backfilled. The refresh
+also refuses while `canLogin` is false, empties the role claims, and keeps a
+token it invalidated invalidated, for a sign-in racing the switch-off or clock
+skew; signing in clears that.
+
+A hut leader's PIN is a separate assignment credential, governed by `active`
+rather than by this rule: hut leaders can be members who never had a login.
+
+Record-classification helpers (`resolveAccessRoles`, `hasAccessRole` for `USER`
+or `ORG`, `isAdminOrKioskOnlyRecord`, `deriveUserType`) keep an optional
+`canLogin`. A blocker that must see a dormant role says so by name:
+`memberHoldsPrivilegedRole` and `memberHoldsFullAdminRole` ignore `canLogin`,
+so a login-disabled Full Admin still cannot be merged away or hard-deleted
+(INV-LIFE-012). Guard tests project fixtures through the query's `select`
+(`honourSelect`), because a fixture carrying an unselected field is how the gap
+went unseen.
 
 ## INV-LIFE-017
 
@@ -668,6 +702,15 @@ changes require a guarded admin preview and reasoned audit record. Existing
 future bookings are not automatically repriced by a type change, and raw
 subscription, payment, and Xero history must remain intact even when the
 effective subscription status is `NOT_REQUIRED`.
+
+## INV-LIFE-093
+
+`FULL` and `NON_MEMBER` are resolved by key during booking, even when archived.
+Neither may be archived or have its booking behavior changed away from its
+built-in value. An already archived row may be reactivated, and an already
+changed booking behavior may be restored to that built-in value. Setup readiness
+warns until an officer repairs either condition; deployment does not silently
+rewrite existing rows. Other membership types keep their normal editing rules.
 
 ## INV-LIFE-020
 

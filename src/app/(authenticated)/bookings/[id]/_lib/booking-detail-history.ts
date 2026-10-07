@@ -2,6 +2,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
 import type { BoundClubTime } from "@/lib/club-time";
+import type { ClubFormat } from "@/lib/club-format";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
 import { loadRateMembershipLabelResolver } from "@/lib/rate-membership-label";
 import {
@@ -12,6 +13,7 @@ import {
   asDuplicateCaptureRefundSnapshot,
   isDuplicateCaptureRefundEvent,
 } from "@/lib/duplicate-capture-refund-event";
+import { settlementMarkerTimelineEntries } from "@/lib/manual-settlement-reversal-event";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
@@ -31,10 +33,13 @@ export async function loadBookingDetailHistory({
   booking,
   club,
   viewer,
+  format,
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
   viewer: BookingDetailViewer;
+  /** The club's format (#3565), resolved once by the page and threaded here. */
+  format: ClubFormat;
 }) {
   const { canSeeAdminTools } = viewer;
   const bookingAuditLogs = await prisma.auditLog.findMany({
@@ -130,7 +135,7 @@ export async function loadBookingDetailHistory({
         snapshot: event.snapshot,
       })
     ),
-  });
+  }, format);
 
   // #2008 — the #1992 duplicate-capture auto-refund is an ADMIN-ONLY history
   // entry: it never enters the shared member/guest narrative, and only admin
@@ -147,6 +152,14 @@ export async function loadBookingDetailHistory({
             asDuplicateCaptureRefundSnapshot(event.snapshot)
               ?.duplicatePaymentIntentId ?? null,
         }))
+    : [];
+
+  // #3638 — the settlement markers (#2262's reversal and reciprocal fence,
+  // #3638's second instrument) are admin-only for the same reason, and gated the
+  // same way: the data feed, not just the render. They are the durable record
+  // an admin reconciles from, so this timeline is where they are seen.
+  const settlementMarkers = canSeeAdminTools
+    ? settlementMarkerTimelineEntries(bookingEvents)
     : [];
 
   // #3530: an edit's itemised lines name each guest's rate category with the
@@ -184,12 +197,13 @@ export async function loadBookingDetailHistory({
     refundRequests: booking.refundRequests,
     auditLogs: bookingAuditLogs,
     duplicateCaptureRefunds,
+    settlementMarkers,
     // #3033: the same flag the banner above is built from, so the timeline's
     // priced modification row and the banner cannot disagree about whether this
     // booking's money is settled.
     financialReviewPending,
     rateLabels,
-  });
+  }, format);
 
   return {
     financialReviewPending,

@@ -3,6 +3,7 @@ import "server-only";
 import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * WHAT A REVIEW CHARGE ABSORBED FROM THE ASK ITS MINT RETIRED, told to a person
@@ -38,10 +39,13 @@ export function measureCarriedAskShortfall({
   derivedTotalCents,
   requestedTotalCents,
   carriedAskCents,
+  format,
 }: {
   derivedTotalCents: number;
   requestedTotalCents: number | null;
   carriedAskCents: number;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): {
   requestedForThisEditCents: number | null;
   shortfallCents: number | null;
@@ -57,7 +61,7 @@ export function measureCarriedAskShortfall({
         : Math.max(derivedTotalCents - requestedForThisEditCents, 0),
     carriedSentence:
       carriedAskCents > 0
-        ? ` Note that ${formatCents(requestedTotalCents ?? 0)} was asked for in total, because ${formatCents(carriedAskCents)} of an earlier change's unpaid extra was carried into this request when it was raised. That carried money is not part of this change's reviews and is not part of the amount above.`
+        ? ` Note that ${formatCents(requestedTotalCents ?? 0, format)} was asked for in total, because ${formatCents(carriedAskCents, format)} of an earlier change's unpaid extra was carried into this request when it was raised. That carried money is not part of this change's reviews and is not part of the amount above.`
         : "",
   };
 }
@@ -78,6 +82,7 @@ export async function recordCarriedEditReviewChargeBalance({
   memberId,
   shareTotalCents,
   carriedCents,
+  format,
 }: {
   bookingId: string;
   bookingModificationId: string;
@@ -86,6 +91,8 @@ export async function recordCarriedEditReviewChargeBalance({
   shareTotalCents: number;
   /** The other change's unpaid balance, now folded into the same request. */
   carriedCents: number;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   logger.info(
     { bookingId, bookingModificationId, shareTotalCents, carriedCents },
@@ -101,8 +108,8 @@ export async function recordCarriedEditReviewChargeBalance({
       category: "payment",
       severity: "info",
       outcome: "success",
-      summary: `This booking change's payment request carried ${formatCents(carriedCents)} still unpaid from an earlier change`,
-      details: `An admin settled a booking-change review as money the member owes the club, and the reviews for that change come to ${formatCents(shareTotalCents)}. The member already had ${formatCents(carriedCents)} outstanding from an earlier change on this booking, and raising a new request cancels the old one - so the new request asks for both together, ${formatCents(shareTotalCents + carriedCents)}. Nothing has been written off and nothing needs collecting by hand. The earlier change's own request no longer appears against it, which is expected: the money moved onto this one rather than disappearing.`,
+      summary: `This booking change's payment request carried ${formatCents(carriedCents, format)} still unpaid from an earlier change`,
+      details: `An admin settled a booking-change review as money the member owes the club, and the reviews for that change come to ${formatCents(shareTotalCents, format)}. The member already had ${formatCents(carriedCents, format)} outstanding from an earlier change on this booking, and raising a new request cancels the old one - so the new request asks for both together, ${formatCents(shareTotalCents + carriedCents, format)}. Nothing has been written off and nothing needs collecting by hand. The earlier change's own request no longer appears against it, which is expected: the money moved onto this one rather than disappearing.`,
       metadata: {
         bookingModificationId,
         shareTotalCents,

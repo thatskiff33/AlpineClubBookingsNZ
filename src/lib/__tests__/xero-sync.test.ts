@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   txPaymentFindUnique: vi.fn(),
   txLinkUpdateMany: vi.fn(),
   txLinkUpsert: vi.fn(),
+  txLinkFindUnique: vi.fn(),
+  txLinkFindMany: vi.fn(),
+  operationUpdate: vi.fn(),
+  operationUpdateMany: vi.fn(),
+  operationFindUniqueOrThrow: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -33,6 +38,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.operationFindFirst,
       count: mocks.operationCount,
       create: mocks.operationCreate,
+      update: mocks.operationUpdate,
+      updateMany: mocks.operationUpdateMany,
+      findUniqueOrThrow: mocks.operationFindUniqueOrThrow,
     },
     $transaction: mocks.transaction,
   },
@@ -54,6 +62,13 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
   };
 });
 
+// The repeated-failure notifier is imported lazily by the fail/complete writers;
+// a cold dynamic import of its real module chain could exceed the 5s test
+// timeout (#3752 composed review). Nothing here asserts on it.
+vi.mock("@/lib/xero-hardening", () => ({
+  maybeNotifyXeroRepeatedFailure: vi.fn(),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
@@ -65,6 +80,8 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   buildXeroPayloadHash,
+  completeXeroSyncOperation,
+  failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   recordXeroInboundEvent,
   sanitizeForJson,
@@ -277,6 +294,30 @@ describe("findCanonicalPaymentRefundCreditNote", () => {
     });
   });
 
+  it("MUTATION (#3880): a per-refund note is never the payment's canonical one - not by the payment field, its refund payment, its create or its link", async () => {
+    mocks.paymentFindUnique.mockResolvedValue({ xeroRefundCreditNoteId: "cn_review" });
+    mocks.linkFindMany.mockImplementation(async ({ where }: any) => {
+      if (where?.role === "REFUND_CREDIT_NOTE") {
+        return [
+          { xeroObjectId: "cn_review", xeroObjectNumber: "CN-R", metadata: { perDelta: true } },
+          { xeroObjectId: "cn_single", xeroObjectNumber: "CN-S", metadata: { amountCents: 500 } },
+        ];
+      }
+      if (where?.role === "REFUND_PAYMENT") return [{ metadata: { creditNoteId: "cn_review" } }];
+      return [];
+    });
+    mocks.operationFindFirst.mockResolvedValue(null);
+
+    await expect(findCanonicalPaymentRefundCreditNote("payment_1")).resolves.toEqual({
+      xeroObjectId: "cn_single",
+      xeroObjectNumber: "CN-S",
+      source: "link",
+    });
+    expect(mocks.operationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ xeroObjectId: { not: null, notIn: ["cn_review"] } }) }),
+    );
+  });
+
   it("falls back to the latest succeeded credit note create when no durable link exists yet", async () => {
     mocks.linkFindMany.mockImplementation(async ({ where }: any) => {
       if (where?.role === "REFUND_CREDIT_NOTE") {
@@ -301,6 +342,8 @@ describe("upsertXeroObjectLink", () => {
     vi.clearAllMocks();
     mocks.txLinkUpdateMany.mockResolvedValue({ count: 1 });
     mocks.txLinkUpsert.mockResolvedValue({ id: "link_1" });
+    mocks.txLinkFindUnique.mockResolvedValue(null);
+    mocks.txLinkFindMany.mockResolvedValue([]);
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         payment: {
@@ -309,9 +352,89 @@ describe("upsertXeroObjectLink", () => {
         xeroObjectLink: {
           updateMany: mocks.txLinkUpdateMany,
           upsert: mocks.txLinkUpsert,
+          findUnique: mocks.txLinkFindUnique,
+          findMany: mocks.txLinkFindMany,
         },
       })
     );
+  });
+
+  describe("#3880: a non-Stripe payment's per-refund notes", () => {
+    it("MUTATION: a review's per-refund note on a bank-transfer payment stays active and retires none of its siblings", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_first" });
+
+      await upsertXeroObjectLink({
+        localModel: "Payment",
+        localId: "payment_1",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_second",
+        role: "REFUND_CREDIT_NOTE",
+        metadata: { amountCents: 1000, watermarkCents: 2000, perDelta: true },
+      });
+
+      expect(mocks.txLinkUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ active: true }), update: expect.objectContaining({ active: true }) }),
+      );
+    });
+
+    it("MUTATION: a covering write with no metadata keeps a stored per-refund note active", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: null });
+      mocks.txLinkFindMany.mockResolvedValue([{ xeroObjectId: "cn_first", metadata: { amountCents: 1000, perDelta: true } }]);
+
+      await upsertXeroObjectLink({ localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_first", role: "REFUND_CREDIT_NOTE" });
+
+      expect(mocks.txLinkUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.txLinkUpsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ active: true }) }));
+    });
+
+    it("MUTATION (F1): a field an older writer pointed at a per-refund note is no canonical note - the cancellation's note, re-read, stays active", async () => {
+      // H ($50, the cancellation's hand-back) beside D ($30, a review's), with the
+      // field on D: before the fix H's inbound re-read was written INACTIVE.
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_review" });
+      mocks.txLinkFindMany.mockResolvedValue([
+        { xeroObjectId: "cn_review", metadata: { amountCents: 3000, perDelta: true } },
+        { xeroObjectId: "cn_handback", metadata: { amountCents: 5000 } },
+      ]);
+
+      await upsertXeroObjectLink({
+        localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_handback", role: "REFUND_CREDIT_NOTE",
+        metadata: { status: "AUTHORISED", total: 50 }, mergeMetadata: true,
+      });
+
+      expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ active: true }), update: expect.objectContaining({ active: true }) }),
+      );
+      expect(mocks.txLinkUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ xeroObjectId: { not: "cn_handback", notIn: ["cn_review"] } }) }),
+      );
+    });
+
+    it("MUTATION (F1): with the field on a per-refund note, the cancellation's note's refund payment link stays active", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_review" });
+      mocks.txLinkFindMany.mockResolvedValue([{ xeroObjectId: "cn_review", metadata: { perDelta: true } }]);
+
+      await upsertXeroObjectLink({
+        localModel: "Payment", localId: "payment_1", xeroObjectType: "PAYMENT", xeroObjectId: "pay_handback", role: "REFUND_PAYMENT",
+        metadata: { creditNoteId: "cn_handback" },
+      });
+
+      expect(mocks.txLinkUpsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ active: true }) }));
+    });
+
+    it("MUTATION: the payment's one canonical note retires older single notes but never a per-refund one", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_canonical" });
+      mocks.txLinkFindMany.mockResolvedValue([
+        { xeroObjectId: "cn_review", metadata: { perDelta: true } },
+        { xeroObjectId: "cn_old", metadata: { amountCents: 500 } },
+      ]);
+
+      await upsertXeroObjectLink({ localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_canonical", role: "REFUND_CREDIT_NOTE" });
+
+      expect(mocks.txLinkUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ xeroObjectId: { not: "cn_canonical", notIn: ["cn_review"] } }) }),
+      );
+    });
   });
 
   it("merges inbound metadata over the outbound per-delta keys when mergeMetadata is set (#1354)", async () => {
@@ -412,6 +535,7 @@ describe("upsertXeroObjectLink", () => {
         active: true,
         xeroObjectId: {
           not: "cn_canonical",
+          notIn: [],
         },
       },
       data: {
@@ -797,5 +921,174 @@ describe("startXeroSyncOperation", () => {
     expect(
       (createArg.data.requestPayload as { queueType?: string }).queueType
     ).toBeUndefined();
+  });
+
+  // #3535: a handler that opens its own row with an execution-shape payload
+  // names the queue type explicitly; the payload's own value still wins.
+  it("takes an explicit queueType only when the payload names none (#3535)", async () => {
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_retry",
+      requestPayload: { invoiceId: "inv_1", refundAmountCents: 15000 },
+      queueType: "MODIFICATION_CREDIT_NOTE",
+    });
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_retry",
+      requestPayload: { queueType: "REFUND_CREDIT_NOTE" },
+      queueType: "MODIFICATION_CREDIT_NOTE",
+    });
+
+    expect(mocks.operationCreate.mock.calls[0][0].data.queueType).toBe("MODIFICATION_CREDIT_NOTE");
+    expect(mocks.operationCreate.mock.calls[1][0].data.queueType).toBe("REFUND_CREDIT_NOTE");
+    expect(mocks.operationCreate.mock.calls[0][0].data).not.toHaveProperty("requestPayload.queueType");
+  });
+});
+
+// #3635 round-3 N5: the outbox's catch runs after its handler, and an approval
+// can withdraw a kept row in between; that withdrawal stands.
+describe("failXeroSyncOperation keepCancelled", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.operationCount.mockResolvedValue(0);
+  });
+
+  it("leaves a CANCELLED row as it is and answers null", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
+    ).resolves.toBeNull();
+    expect(mocks.operationUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_kept", status: { not: "CANCELLED" } },
+        data: expect.objectContaining({ status: "FAILED" }),
+      })
+    );
+    expect(mocks.operationUpdate).not.toHaveBeenCalled();
+  });
+
+  it("fails any other row as before", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_kept", status: "FAILED" });
+    await expect(
+      failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
+    ).resolves.toMatchObject({ status: "FAILED" });
+  });
+});
+
+// #3462: a retry that claimed the original RUNNING abandons the claim when its
+// handler throws early - but only its own claim, never a row the handler
+// already completed or a later claim re-stamped.
+describe("failXeroSyncOperation onlyIfRunningSince", () => {
+  const claimedAt = new Date("2026-07-01T00:00:00.000Z");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.operationCount.mockResolvedValue(0);
+  });
+
+  it("fails the row only while it is still this claim, and answers the failed row", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_1", status: "FAILED" });
+    await expect(
+      failXeroSyncOperation("op_1", new Error("contact refused"), undefined, {
+        onlyIfRunningSince: claimedAt,
+      })
+    ).resolves.toMatchObject({ status: "FAILED" });
+    expect(mocks.operationUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_1", status: "RUNNING", startedAt: claimedAt },
+        data: expect.objectContaining({
+          status: "FAILED",
+          lastErrorMessage: "contact refused",
+        }),
+      })
+    );
+    expect(mocks.operationUpdate).not.toHaveBeenCalled();
+  });
+
+  it("cannot be handed both write guards at once", () => {
+    // Compile-time: the two guards are one discriminated option (#3462), so
+    // one can never be silently dropped in favour of the other. The call is
+    // never made; `pnpm run typecheck` is the assertion.
+    const typeOnly = () =>
+      failXeroSyncOperation("op_1", new Error("boom"), undefined, {
+        keepCancelled: true,
+        // @ts-expect-error keepCancelled and onlyIfRunningSince are exclusive
+        onlyIfRunningSince: claimedAt,
+      });
+    expect(typeof typeOnly).toBe("function");
+  });
+
+  it("leaves a row the handler already completed as it is and answers null", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      failXeroSyncOperation("op_1", new Error("late throw"), undefined, {
+        onlyIfRunningSince: claimedAt,
+      })
+    ).resolves.toBeNull();
+    expect(mocks.operationUpdate).not.toHaveBeenCalled();
+    expect(mocks.operationFindUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("records the operator message in place of the error's own, still redacted", async () => {
+    // The operator message embeds the provider's raw error text, so the
+    // override must pass through the same redaction as the error's own.
+    mocks.operationUpdate.mockResolvedValue({ id: "op_2", status: "FAILED" });
+    await failXeroSyncOperation("op_2", new Error("raw"), undefined, {
+      lastErrorMessage:
+        "Retry of Xero operation op_1 failed: Authorization: Bearer live-token.",
+    });
+    const recorded = mocks.operationUpdate.mock.calls[0][0].data.lastErrorMessage;
+    expect(recorded).toContain("Retry of Xero operation op_1 failed");
+    expect(recorded).toContain("Bearer [REDACTED]");
+    expect(recorded).not.toContain("live-token");
+  });
+});
+
+// #3548 round 3 (R2-6): the loser of two concurrent refund-note legs never
+// writes PARTIAL over the winner's SUCCEEDED.
+describe("completeXeroSyncOperation keepSucceeded", () => {
+  function store(count: number) {
+    return {
+      xeroSyncOperation: {
+        updateMany: vi.fn().mockResolvedValue({ count }),
+        update: vi.fn(),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "op_note", status: "PARTIAL" }),
+      },
+    };
+  }
+
+  it("leaves a SUCCEEDED row as it is, writes no link, and answers null", async () => {
+    const tx = store(0);
+    await expect(
+      completeXeroSyncOperation(
+        "op_note",
+        { status: "PARTIAL", extraLinks: [{ localModel: "Payment", localId: "p", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn", role: "REFUND_CREDIT_NOTE" }] },
+        { store: tx as never, keepSucceeded: true },
+      ),
+    ).resolves.toBeNull();
+    expect(tx.xeroSyncOperation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_note", status: { not: "SUCCEEDED" } },
+        data: expect.objectContaining({ status: "PARTIAL" }),
+      }),
+    );
+    expect(tx.xeroSyncOperation.update).not.toHaveBeenCalled();
+    expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
+  });
+
+  it("completes any other row as before", async () => {
+    const tx = store(1);
+    await expect(
+      completeXeroSyncOperation("op_note", { status: "PARTIAL" }, { store: tx as never, keepSucceeded: true }),
+    ).resolves.toMatchObject({ status: "PARTIAL" });
+    expect(tx.xeroSyncOperation.update).not.toHaveBeenCalled();
   });
 });

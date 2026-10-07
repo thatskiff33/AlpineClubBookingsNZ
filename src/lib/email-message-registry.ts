@@ -9,9 +9,11 @@ import {
   bookingPaymentDueNote,
   checkoutDayChoreNote,
   duplicateCaptureRefundOutcomeParagraph,
+  internetBankingHoldKeptParagraph,
   lateCaptureAutoRefundLeadParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCaptureHandBackConflictSubjectLabel,
+  secondInstrumentConflictOutcomeParagraph,
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
 } from "@/lib/email-message-notes";
@@ -60,6 +62,15 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // gated by the adminPaymentFailure notification preference at send time, like
   // its siblings.
   "admin-duplicate-capture-refund",
+  // #3672: paid-group joiners switched to paying for themselves mid-stay, for
+  // the treasurer to collect by hand. sendToAdmins on the adminPaymentFailure
+  // preference like its reconcile-by-hand siblings; not delivery-locked,
+  // because no money moved.
+  "admin-group-joiner-started-stay",
+  // #3663: an expired internet banking hold left alone because the stay has
+  // started. sendToAdmins on the adminPaymentFailure preference like its
+  // reconcile-by-hand siblings; not delivery-locked, because no money moved.
+  "admin-internet-banking-hold-started-stay",
   // B5 (#2262): the reciprocal fence's conflict alert and the cash-cancellation
   // hand-back task alert. Both ship via sendToAdmins, so admin audience, and
   // both are operator nudges rather than money movers — the conflict alert
@@ -69,6 +80,20 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // notification preference at send time, like their siblings.
   "admin-manual-settlement-conflict",
   "admin-manual-refund-task",
+  // #3643: an expired internet banking hold kept because money may be paid
+  // against its invoice. sendToAdmins on the adminPaymentFailure preference like
+  // its reconcile-by-hand siblings; not delivery-locked, because no money moved
+  // and the booking is still visibly held.
+  "admin-internet-banking-hold-kept",
+  // #3639 (delta D7): a late capture held for a treasurer's approval. Same
+  // channel and preference as the hand-back task alert: a nudge for a durable
+  // task, moving no money, so not delivery-locked.
+  "admin-late-capture-held",
+  // #3638: the second-instrument conflict — a card payment and a Xero payment
+  // on one booking. Admin audience, sent through the unmuteable sender and
+  // delivery-locked below, because the system refunds nothing on its own and
+  // this mail is the only thing that pulls a person to reconcile it.
+  "admin-second-instrument-settlement-conflict",
   // #2761: the alert for an automatically refunded late capture on a cancelled
   // booking. Ships to admins, so admin audience — but through the unmuteable
   // sender rather than sendToAdmins, because it reports an automatic MONEY
@@ -178,6 +203,11 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // thing that pulls a person to reconcile real money, so it must not be
   // silenceable club-wide any more than its sibling.
   "admin-late-capture-hand-back-conflict",
+  // #3638: the same lock for the same reason as #2774 — this alert says the
+  // club may hold the price twice (a card payment and a Xero payment on one
+  // booking), and nothing is refunded or credited automatically, so muting it
+  // club-wide would leave the money with nobody to reconcile it.
+  "admin-second-instrument-settlement-conflict",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -526,10 +556,33 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  // #3672: the organiser's booking, and each waiting joiner linked to the
+  // booking whose admin tools record their payment.
+  "admin-group-joiner-started-stay": [
+    "bookingReference",
+    "joinerBookingLinks",
+    "organiserBookingUrl",
+  ],
+  // #3663: the booking and the payments board are what the treasurer acts on.
+  "admin-internet-banking-hold-started-stay": ["bookingReference", "memberName", "reviewUrl"],
   // B5 (#2262): memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
   "admin-manual-refund-task": ["memberName", "reviewUrl"],
+  // #3643: {{holdKeptNote}} is the instruction - part-paid, paid in full,
+  // unreadable and released-while-unreadable need different next steps.
+  "admin-internet-banking-hold-kept": ["memberName", "reviewUrl", "holdKeptNote"],
+  "admin-late-capture-held": ["memberName", "bookingId", "amount", "reviewUrl"],
+  // #3638: {{secondInstrumentConflictNote}} is the sentence that differs
+  // between a live booking and a cancelled one — what the card money already
+  // did, and so what the treasurer does next — and {{xeroObjectUrl}} is the
+  // invoice they reconcile against.
+  "admin-second-instrument-settlement-conflict": [
+    "memberName",
+    "reviewUrl",
+    "secondInstrumentConflictNote",
+    "xeroObjectUrl",
+  ],
   // #2761: memberName and reviewUrl as its siblings, plus the two tokens that
   // carry WHICH of the two populations this was. An override that drops
   // {{bookingStateLabel}} or {{refundOutcomeNote}} leaves an operator unable to
@@ -793,11 +846,35 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "On duplicate-capture adjudication — rare; once per distinct duplicate capture that is auto-refunded",
   },
+  "admin-internet-banking-hold-started-stay": {
+    triggerSummary:
+      "An internet banking hold reached its deadline unpaid, but the booking's check-in had already arrived, so the booking was left alone for the treasurer to reconcile by hand",
+    frequency:
+      "Once per payment, from the 15-minute payments cycle, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
   "admin-manual-settlement-conflict": {
     triggerSummary:
       "Xero reported a booking's invoice PAID for a booking this system had already recorded as settled in cash or by an off-Xero bank transfer, so the club may be holding the same money twice",
     frequency:
       "On the inbound reciprocal fence firing — rare; throttled per payment and invoice by a cross-instance cooldown so webhook replays do not re-send",
+  },
+  "admin-internet-banking-hold-kept": {
+    triggerSummary:
+      "An internet banking hold reached its deadline, but Xero showed money paid against the booking's invoice, or the invoice could not be read - so the booking was kept, or, still unreadable seven days after the deadline, released (a stay that has started is never released)",
+    frequency:
+      "At most once per hold for each reason - part-paid, paid in full but not yet synced, unreadable, and released while still unreadable - guarded by a cross-instance claim that is given back when the email could not be delivered",
+  },
+  "admin-late-capture-held": {
+    triggerSummary:
+      "A card payment went through after its booking was cancelled and the club has a treasurer approve these refunds, so it was held on the payments board instead of refunded",
+    frequency:
+      "Once per late payment held - claim-guarded, so a Stripe redelivery or a retry does not re-send",
+  },
+  "admin-second-instrument-settlement-conflict": {
+    triggerSummary:
+      "Xero reported a booking's Internet Banking invoice PAID after a card payment had already settled it, so the club may be holding the price twice",
+    frequency:
+      "On the inbound second-instrument check firing — rare; throttled per payment and invoice by a cross-instance cooldown so webhook replays do not re-send",
   },
   "admin-manual-refund-task": {
     triggerSummary:
@@ -1063,6 +1140,17 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
+  },
+  "admin-group-joiner-started-stay": {
+    triggerSummary:
+      "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
+    frequency:
+      "Once per group, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
+  "group-join-pay-self": {
+    triggerSummary:
+      "Organiser-pays group settlement was paid without a joiner on it, so the joiner now pays for their own place (#3672). Only a joiner awaiting payment whose stay has not started",
+    frequency: "At most once per joiner booking the paid settlement did not cover; the booking's payer-switch event is the record",
   },
   "group-settlement-expired": {
     triggerSummary:
@@ -1372,6 +1460,9 @@ export function sampleValue(token: string): string {
   // That is deliberately the arm an operator is likelier to receive - the fence
   // fires whenever the hand-completion had already committed - and the
   // refund-went-out-anyway arm is the sender's other branch.
+  if (token === "holdKeptNote") {
+    return internetBankingHoldKeptParagraph("part-paid");
+  }
   if (token === "handBackConflictNote") {
     return lateCaptureHandBackConflictOutcomeParagraph(false);
   }
@@ -1380,6 +1471,11 @@ export function sampleValue(token: string): string {
   // disagree. The refund-went-out-anyway arm is the sender's other branch.
   if (token === "handBackConflictLabel") {
     return lateCaptureHandBackConflictSubjectLabel(false);
+  }
+  // #3638: previewed as the live-booking arm — the double payment the alert is
+  // named for; the cancelled-booking arm is the sender's other branch.
+  if (token === "secondInstrumentConflictNote") {
+    return secondInstrumentConflictOutcomeParagraph("settled");
   }
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);
@@ -1789,6 +1885,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "issueCategoryCount",
   "issueReportUrl",
   "issueTotalCount",
+  "joinerBookingLinks",
   "joinerCount",
   "latestErrorMessage",
   "latestErrorNote",
@@ -1831,6 +1928,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // the pre-arrival reminder; empty when nothing is owed, so the body never
   // carries a dangling claim (the {{doorCodeNote}} convention).
   "outstandingAdditionalNote",
+  // #3672: the organiser's booking detail page, for the mid-stay joiner alert.
+  "organiserBookingUrl",
   "organiserName",
   "originalRecipient",
   "originalTemplateName",
@@ -1900,6 +1999,10 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // sender supplies the finished sentence rather than the facts behind it.
   "lateCaptureLeadNote",
   "handBackConflictNote",
+  // #3643: why an expired internet banking hold was kept, not released.
+  "holdKeptNote",
+  // #3638: the second-instrument alert's live-versus-cancelled sentence.
+  "secondInstrumentConflictNote",
   // #2774: the same direction as a SUBJECT-length phrase, so the withheld and
   // paid-twice arms cannot collapse into one claim when an admin saves the template
   // — the {{bookingStateLabel}} construction (#2761), plus the subject requirement

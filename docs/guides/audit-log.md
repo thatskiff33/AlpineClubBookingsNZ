@@ -84,6 +84,37 @@ and machine `action`, the actor, the affected member (subject), the entity, and
 primary drill-down links. Expanding a row reveals the request ID, IP, user
 agent, **retention class**, raw details, and JSON metadata.
 
+### Amounts read as amounts (#3533)
+
+Money is stored as a whole number of cents — `2275`, not `22.75` — because
+storing it any other way is how rounding errors get in
+([`INV-MONEY-003`](../invariants/money.md)). That is right for the database and
+wrong for a screen, so until this release an officer reconstructing a booking's
+money read `"refundAmountCents": 2275` in the metadata panel and sentences like
+`Manual refund task for 50% of 8450 cents`, and converted each one in their
+head. A misread by a factor of a hundred was easy.
+
+Now:
+
+- **Every sentence a person reads states the amount**: `$84.50`, never
+  `8450 cents`. That covers the audit trail's own details, operator report
+  lines, cron summaries and error messages.
+- **The metadata panel annotates every cents key** with the amount beside it —
+  `"refundAmountCents": 2275,  // $22.75`. The stored number is still there,
+  unchanged and still the thing repair and census tooling reads; the comment is
+  a display annotation added by the screen, not a value in the database.
+
+Nothing about the stored rows changed, and the two halves age differently
+because of it:
+
+- **A sentence is baked in when the row is written**, so entries written
+  before this release still read `8450 cents` for ever. A written audit row is
+  never rewritten ([`INV-OPS-012`](../invariants/operations.md)) — the trail
+  would stop being a trail if it were.
+- **The metadata annotation is added when you look**, so it applies to every
+  entry however old. An entry from last year shows `// $22.75` beside its
+  stored `2275` the next time it is expanded.
+
 ### Very large entries, and the older ones that look broken (#2704)
 
 Some entries record structured evidence — a before-and-after snapshot, a list of
@@ -461,7 +492,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-484 now record a category, measured on every build rather than estimated.
+495 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -483,7 +514,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 484 places does it —
+platform’s own recording step, which is how every one of the 495 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -714,6 +745,32 @@ that the subject member may see it on their own timeline — as the **generic
 event only**. A member's view shows the summary and never the source member ids,
 the metadata, the request id or any drill-down; those stay on the admin screen.
 Retention is **standard** (the normal audit archive lifecycle).
+
+### Xero connection and two-factor entries (#3454)
+
+Changes to two stored secrets are recorded under **Security**. Each entry is
+written in the same database transaction as the change, so an entry cannot exist
+for a change that did not happen, and a change cannot happen without its entry.
+
+| Action | Written when | Who it names |
+| --- | --- | --- |
+| `integration.credential.set` on `xero-oauth:token-set` | Xero is connected (`cause: oauth-connect`), or its access token is refreshed automatically (`cause: token-refresh`) | The connecting administrator, or **System** with `systemActor: xero-token-refresh` |
+| `integration.credential.deleted` on `xero-oauth:token-set` | Xero is disconnected (`cause: oauth-disconnect`), or the tokens are destroyed because somebody saved a new Xero client id or secret (`cause: verify-reset`) | The administrator |
+| `security.two_factor.enrolled` | A member turns on two-factor sign-in | The member themself |
+| `security.two_factor.recovery_codes_replaced` | A member replaces their recovery codes, which invalidates every unused one | The member themself |
+| `security.two_factor.cleared` | An account erasure clears a member's second factor | The administrator who approved the erasure |
+
+**Finding out why the Xero connection broke.** A verify-reset entry carries
+`causedByCredential` (for example `xero:client_secret`). It shares a request ID
+with the `integration.credential.set` entry for that credential, because both
+were one save. No entry stores a token, a secret or any part of one. Expect a
+refresh entry roughly every half hour while Xero is in use.
+
+**What the member sees.** An enrolment appears on the member's own activity
+history as the event, its time and who did it. It declares no member-facing text
+(see "What a member reads on their own timeline" above), and it never shows the
+stored details. An erasure's clear concerns an account that no longer has a
+login.
 
 ### Member-guest entries (#2308 / #2388)
 

@@ -32,6 +32,8 @@ import {
 } from "@/lib/stored-night-price-repair";
 
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import type { ClubFormat } from "@/lib/club-format";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The route enforces the real cap - without this the officer can type past a
 // limit the screen never mentions and gets back a generic refusal.
@@ -92,8 +94,8 @@ const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
  * price - a comped night - and an absence is not a price at all. The finance
  * queue's evidence block makes the same distinction for the same reason.
  */
-function formatStoredNightPrice(priceCents: number | null): string {
-  return priceCents === null ? "no stored price" : formatCents(priceCents);
+function formatStoredNightPrice(priceCents: number | null, format: ClubFormat): string {
+  return priceCents === null ? "no stored price" : formatCents(priceCents, format);
 }
 
 /**
@@ -113,6 +115,7 @@ function StrandNightPriceForm({
   offer: StrandNightPriceOffer;
   canEdit: boolean | undefined;
 }) {
+  const format = useClubFormat();
   const router = useRouter();
   const [inputs, setInputs] = useState<Readonly<Record<string, string>>>({});
   const [note, setNote] = useState("");
@@ -146,12 +149,13 @@ function StrandNightPriceForm({
       : unreadableDates !== null
         ? {
             ok: false,
-            message: nightPriceRepairUnreadableMessage(unreadableDates),
+            message: nightPriceRepairUnreadableMessage(unreadableDates, format),
             // The ONE definition of what the nights must come to, shared with
             // the checker rather than restated for this branch.
             targetCents: unpricedNightTargetCents(offer.summary, 0),
           }
         : checkStoredNightPriceRepair({
+            format,
             summary: offer.summary,
             entries,
             deltaCents: 0,
@@ -211,7 +215,7 @@ function StrandNightPriceForm({
         {offer.storedByDate
           .map(
             (night) =>
-              `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents)}`,
+              `${formatClubDate(night.date, format)} ${formatStoredNightPrice(night.priceCents, format)}`,
           )
           .join(" · ")}
       </p>
@@ -225,7 +229,7 @@ function StrandNightPriceForm({
         // known from the moment the section renders.
         targetKnown
         check={check}
-        explanation={unreconciledStrandExplanation(offer.summary)}
+        explanation={unreconciledStrandExplanation(offer.summary, format)}
         legend="What did this guest's nights sell for?"
         disabled={submitting || canEdit !== true}
       />

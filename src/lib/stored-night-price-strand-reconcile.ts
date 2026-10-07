@@ -17,6 +17,7 @@ import {
 import { OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER } from "@/lib/edit-financial-review";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import type { ClubFormat } from "@/lib/club-format";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 import { storedNightPricesByKey } from "@/lib/stored-night-price-write";
 import {
@@ -295,11 +296,14 @@ export async function planStrandNightPriceReconcile({
   bookingGuestId,
   entries,
   store,
+  format,
 }: {
   bookingId: string;
   bookingGuestId: string;
   entries: readonly RecordedNightPrice[];
   store: Prisma.TransactionClient;
+  /** The club's format (#3565), resolved by the caller before any transaction. */
+  format: ClubFormat;
 }): Promise<StrandNightPriceReconcilePlan> {
   const booking = await store.booking.findUnique({
     where: { id: bookingId },
@@ -355,6 +359,7 @@ export async function planStrandNightPriceReconcile({
   const check = checkStoredNightPriceRepair({
     summary: offer.summary,
     entries,
+    format,
     // Nothing is being settled here, so nothing moves what the stay is worth.
     deltaCents: 0,
   });

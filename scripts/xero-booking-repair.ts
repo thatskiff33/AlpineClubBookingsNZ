@@ -2,14 +2,15 @@ import "dotenv/config";
 import { formatBookingXeroRepairHumanSummary, runBookingXeroRepair } from "../src/lib/xero-booking-repair";
 import { prisma } from "../src/lib/prisma";
 import { parseRepairScopeDay } from "../src/lib/xero-booking-repair-utils";
+import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
-  npm run xero:booking-repair -- --dry-run
-  npm run xero:booking-repair -- --booking <bookingId> --dry-run
-  npm run xero:booking-repair -- --apply
-  npm run xero:booking-repair -- --from <YYYY-MM-DD> --to <YYYY-MM-DD> --apply
-  npm run xero:booking-repair -- --apply --apply-action <actionKey>
+  pnpm run xero:booking-repair --dry-run
+  pnpm run xero:booking-repair --booking <bookingId> --dry-run
+  pnpm run xero:booking-repair --apply
+  pnpm run xero:booking-repair --from <YYYY-MM-DD> --to <YYYY-MM-DD> --apply
+  pnpm run xero:booking-repair --apply --apply-action <actionKey>
 
 --apply-action executes ONE not-safeToAutoApply action you have verified from
 a prior dry-run report (repeatable; exact action key match; requires --apply).
@@ -138,7 +139,9 @@ async function main() {
     throw new Error("--apply-action requires --apply.");
   }
 
-  const report = await runBookingXeroRepair({
+  // The club's format (#3565), resolved once per run.
+  const format = await getClubFormat();
+  const report = await runBookingXeroRepair(format, {
     apply: args.apply,
     applyActionKeys: args.applyActionKeys,
     scope: {

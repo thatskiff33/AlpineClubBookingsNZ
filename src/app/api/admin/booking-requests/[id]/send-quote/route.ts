@@ -12,6 +12,7 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { schoolChildCountsSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function POST(
   req: NextRequest,
@@ -87,7 +88,7 @@ export async function POST(
     // double-book (issue #1158). Return them as actionable 409s, not a 500.
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, await clubFormatValues()),
         { status: 409 },
       );
     }

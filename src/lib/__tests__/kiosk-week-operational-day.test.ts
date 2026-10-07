@@ -33,6 +33,8 @@ vi.mock("@/lib/lodge-auth", () => ({
   checkLodgeAuth: lodgeAuthMocks.checkLodgeAuth,
   resolveKioskLodgeId: lodgeAuthMocks.resolveKioskLodgeId,
   kioskLodgeAuthErrorResponse: vi.fn(() => null),
+  // #3029: the day list asks who the actor is for the dietary grant.
+  getLodgeAuthActorMemberId: vi.fn(() => "actor-1"),
 }));
 
 import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";

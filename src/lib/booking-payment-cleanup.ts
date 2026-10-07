@@ -10,6 +10,7 @@ import {
   enqueuePaymentIntentCancellationRecovery,
   runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type SupersededPrimaryPaymentIntent = {
   paymentTransactionId: string;
@@ -32,6 +33,12 @@ export async function queueSupersededPrimaryIntentCancellations(
     bookingId: string;
     paymentId: string;
     newFinalPriceCents: number;
+    /**
+     * #3567: a pending intent minted in a currency the club no longer charges
+     * in. It is superseded whatever its amount — an equal amount is no reason to
+     * keep an intent that would charge the old currency.
+     */
+    wrongCurrencyPaymentIntentId?: string | null;
   },
 ): Promise<SupersededPrimaryPaymentIntent[]> {
   const pendingPrimaryTransactions = await tx.paymentTransaction.findMany({
@@ -46,7 +53,15 @@ export async function queueSupersededPrimaryIntentCancellations(
       // at the old amount, and capturing it charges the member the wrong
       // total (#1161). Price->0 supersedes every positive pending intent,
       // which is the pre-#1161 behaviour unchanged.
-      amountCents: { gt: 0, not: options.newFinalPriceCents },
+      ...(options.wrongCurrencyPaymentIntentId
+        ? {
+            amountCents: { gt: 0 },
+            OR: [
+              { amountCents: { not: options.newFinalPriceCents } },
+              { stripePaymentIntentId: options.wrongCurrencyPaymentIntentId },
+            ],
+          }
+        : { amountCents: { gt: 0, not: options.newFinalPriceCents } }),
     },
     select: {
       id: true,
@@ -107,6 +122,8 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
   bookingId: string;
   paymentId: string;
   newPaymentIntentId: string;
+  /** The club's format (#3565), resolved once by the caller and handed to each immediate run. */
+  format: ClubFormat;
 }): Promise<{ paymentTransactionId: string; paymentIntentId: string }[]> {
   const pendingAdditional = await prisma.paymentTransaction.findMany({
     where: {
@@ -146,7 +163,7 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
     // The durable row above is the guarantee; this is latency only (#3340).
     // `runPaymentRecoveryOperationNow` never throws, so a Stripe failure here
     // leaves precisely the pre-#3340 arrangement.
-    const immediate = await runPaymentRecoveryOperationNow(operation.id).catch(
+    const immediate = await runPaymentRecoveryOperationNow(operation.id, options.format).catch(
       (err) => {
         logger.error(
           {

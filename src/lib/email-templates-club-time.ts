@@ -92,6 +92,35 @@
  * NOTHING: the last good value stands, or the environment fallback does — which
  * is the answer `getClubTimeZone()` would have given for an absent row anyway.
  *
+ * ## The club's date FORMAT rides in the same cache (#3566)
+ *
+ * Stage 4 of programme #3205 made every date rendering take the club's locale,
+ * and the owner decided (#3566, decision 2) that emails learn it exactly the way
+ * they learn the zone: from this cache, primed at boot and refreshed on the same
+ * five-minute TTL. So none of the three hundred email date calls changed, and an
+ * email's zone and its date format always come from the same place. The locale
+ * is read with `loadPersistedClubFormatSettings()`, which answers `null` for an
+ * absent or unreadable row — the same contract as the zone reader — and a
+ * stored locale the runtime refuses is treated as absent. The cold answer is the
+ * environment seed resolved through `resolveClubFormat`, frozen at module load
+ * for the reason the zone's is.
+ *
+ * THE STATED COST, which the owner accepted: the cache refreshes only when it
+ * is READ, so `/api/admin/club-format` calls `primeEmailClubTimeZone()` after its
+ * save commits (the Site Style save does the same for the palette) and the
+ * process that took the save follows at once. Another running process — a
+ * blue/green twin — still serves its old locale to the first email it renders
+ * after its TTL lapses, and refreshes behind it; the MONEY in that email follows
+ * at once, because its format is handed in by the sender (#3565). And the
+ * compiler does not check this path — a template reaches the format through
+ * this accessor, not through an argument. `email-render-equivalence.test.ts`
+ * pins the New Zealand defaults byte for byte, and a de-CH render in
+ * `email-templates-club-time.test.ts` proves the dates really do follow.
+ *
+ * The two fields are committed INDEPENDENTLY: a read that finds a zone and no
+ * usable locale keeps the zone and leaves the locale on its last good value, and
+ * the reverse. Neither half of a partial answer is thrown away.
+ *
  * ## The honest limit
  *
  * There is no render gate. `renderEmailHtml()` (in `email-theme.ts`, which
@@ -107,12 +136,18 @@ import {
   bindClubTime,
   calendarDateOfDateOnlyInstant,
   formatClubDate,
+  formatClubLongWeekdayDate,
   requireClubTimeZone,
   requireStoredCalendarDay,
   type BoundClubTime,
+  type CalendarDate,
+  type ClubDateFormat,
   type ClubTimeZone,
   type Instant,
 } from "@/lib/club-time";
+import { normaliseClubLocale } from "@/lib/club-format";
+import { resolveStoredClubFormat } from "@/lib/club-format-env";
+import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { resolveClubTimeZone } from "@/lib/club-time-zone";
 import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 import { readPersistedClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -133,12 +168,19 @@ const FAILED_READ_COOLDOWN_MS = 30_000;
  * The environment seed's answer, resolved once at module load. See "The two
  * states" above for why this is frozen rather than read per call.
  */
-const ENVIRONMENT_FALLBACK: BoundClubTime = bindClubTime(
-  requireClubTimeZone(
-    resolveClubTimeZone(null, readEnvironmentClubTimeZoneSeed()),
-  ),
+const ENVIRONMENT_ZONE: ClubTimeZone = requireClubTimeZone(
+  resolveClubTimeZone(null, readEnvironmentClubTimeZoneSeed()),
 );
+/** The environment seed's locale, resolved once, for the same reason. */
+const ENVIRONMENT_LOCALE: string = resolveStoredClubFormat(null).locale;
+const ENVIRONMENT_FALLBACK: BoundClubTime = bindClubTime(ENVIRONMENT_ZONE, {
+  locale: ENVIRONMENT_LOCALE,
+});
 
+/** The last persisted zone and locale read, each `null` until one is. */
+let persistedZone: ClubTimeZone | null = null;
+let persistedLocale: string | null = null;
+/** The binding over whatever of the two is known, rebuilt on each commit. */
 let persisted: BoundClubTime | null = null;
 /** When the last attempt that did not FAIL completed (0 = never attempted). */
 let attemptedAt = 0;
@@ -163,15 +205,25 @@ type ClubTimeZoneReadOutcome = "committed" | "absent" | "failed";
 
 async function readAndCommitClubTimeZone(): Promise<ClubTimeZoneReadOutcome> {
   let zone: ClubTimeZone | null;
+  let locale: string | null;
   try {
-    zone = await readPersistedClubTimeZoneOutsideRequest();
+    const [readZone, readFormat] = await Promise.all([
+      readPersistedClubTimeZoneOutsideRequest(),
+      loadPersistedClubFormatSettings(),
+    ]);
+    zone = readZone;
+    locale = normaliseClubLocale(readFormat?.locale);
   } catch {
-    // The reader swallows its own database error; this is belt and braces so a
-    // boot prime can never fail a server start.
+    // Both readers swallow their own database errors; this is belt and braces
+    // so a boot prime can never fail a server start.
     return "failed";
   }
-  if (zone === null) return "absent";
-  persisted = bindClubTime(zone);
+  if (zone === null && locale === null) return "absent";
+  if (zone !== null) persistedZone = zone;
+  if (locale !== null) persistedLocale = locale;
+  persisted = bindClubTime(persistedZone ?? ENVIRONMENT_ZONE, {
+    locale: persistedLocale ?? ENVIRONMENT_LOCALE,
+  });
   return "committed";
 }
 
@@ -200,7 +252,8 @@ async function refreshEmailClubTimeZone(): Promise<void> {
 }
 
 /**
- * Read the persisted club timezone and, if there is one, make it the answer.
+ * Read the persisted club timezone and date format and, for each one that is
+ * there, make it the answer.
  *
  * The boot warm point, mirroring `primeEmailPalette()`. Never throws, and never
  * commits anything but a real persisted value — see "What a failed read does".
@@ -272,7 +325,23 @@ export function emailCalendarDay(value: Date): string {
           "emailClubDate, which reads it in the club's persisted zone.",
       }),
     ),
+    emailClubTime().format,
   );
+}
+
+/**
+ * "Thursday, 16 April 2026" — a CALENDAR DAY in the spelled-out weekday form,
+ * in the club's locale and consulting no zone.
+ *
+ * The chore-roster email's date (#2256), which used to call
+ * `toLocaleDateString("en-NZ", …)` and so wrote every club's roster the New
+ * Zealand way; it held the tree's only file-wide date-lint exemption for it.
+ * #3566 moved it onto the kernel's `longWeekdayDate` house shape — the identical
+ * options bag, so a New Zealand club's subject line and body are byte-identical
+ * — and took the exemption away.
+ */
+export function emailLongWeekdayCalendarDay(date: CalendarDate): string {
+  return formatClubLongWeekdayDate(date, emailClubTime().format);
 }
 
 /**
@@ -315,9 +384,16 @@ export function emailClubTimeZoneForTests(): ClubTimeZone {
   return emailClubTime().zone;
 }
 
+/** Test hook: the date format the templates are rendering in right now. */
+export function emailClubDateFormatForTests(): ClubDateFormat {
+  return emailClubTime().format;
+}
+
 /** Test hook: return the cache to its cold, environment-seeded state. */
 export function __resetEmailClubTimeZoneForTests(): void {
   persisted = null;
+  persistedZone = null;
+  persistedLocale = null;
   attemptedAt = 0;
   refreshing = false;
   failedAt = 0;

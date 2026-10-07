@@ -34,6 +34,7 @@ import { DEFAULT_FAMILY_BILLING_MODE } from "@/lib/authoritative-fees";
 import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Delegate names touched by the club-settings category.
 const SINGLETON_DELEGATES = [
@@ -150,6 +151,7 @@ describe("config-transfer club-settings", () => {
 
   it("normalises an older legacy singleton file's missing priority to the canonical order", async () => {
     const plan = await clubSettingsImporter.plan({
+      format: CLUB_FORMAT_TEST,
       db: stubDb({
         bedAllocationSettings: {
           autoAllocationEnabled: false,
@@ -177,8 +179,92 @@ describe("config-transfer club-settings", () => {
     ]);
   });
 
+  it.each(["merge", "overwrite"] as const)(
+    "keeps the target teacher policy when an older bundle omits it (%s)",
+    async (mode) => {
+      const current = {
+        ...DEFAULT_BOOKING_REQUEST_SETTINGS,
+        assignSchoolTeachersAsHutLeaders: true,
+      };
+      const files = new Map([
+        [
+          "club-settings/booking-request-settings.json",
+          strToU8(JSON.stringify({
+            quoteResponseTtlDays: 30,
+          })),
+        ],
+      ]);
+      const plan = await clubSettingsImporter.plan({
+        format: CLUB_FORMAT_TEST,
+        db: stubDb({ bookingRequestSettings: current }),
+        files,
+        manifest: {} as never,
+        mode,
+        resolutions: new Map(),
+      });
+      expect(plan.errors).toEqual([]);
+      expect(plan.items).toEqual([{
+        entity: "booking-request-settings",
+        key: "default",
+        action: "update",
+        changedFields: ["quoteResponseTtlDays"],
+      }]);
+
+      const { tx, delegates } = stubTx({ bookingRequestSettings: current });
+      await clubSettingsImporter.apply(applyCtx(tx, files, mode));
+      expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { quoteResponseTtlDays: 30 },
+        }),
+      );
+    },
+  );
+
+  it("exports and imports an enabled school teacher policy", async () => {
+    const { zip } = await buildConfigExport({
+      db: stubDb({
+        bookingRequestSettings: {
+          ...DEFAULT_BOOKING_REQUEST_SETTINGS,
+          assignSchoolTeachersAsHutLeaders: true,
+        },
+      }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    const settingsFile = "club-settings/booking-request-settings.json";
+    const sourceSettings = JSON.parse(strFromU8(files.get(settingsFile)!));
+    expect(sourceSettings.assignSchoolTeachersAsHutLeaders).toBe(true);
+
+    const settingsOnly = new Map([[settingsFile, files.get(settingsFile)!]]);
+    const plan = await clubSettingsImporter.plan({
+      format: CLUB_FORMAT_TEST,
+      db: stubDb({ bookingRequestSettings: DEFAULT_BOOKING_REQUEST_SETTINGS }),
+      files: settingsOnly,
+      manifest: {} as never,
+      mode: "merge",
+      resolutions: new Map(),
+    });
+    expect(plan.errors).toEqual([]);
+    expect(plan.items[0]?.changedFields).toEqual(["assignSchoolTeachersAsHutLeaders"]);
+
+    const { tx, delegates } = stubTx({
+      bookingRequestSettings: DEFAULT_BOOKING_REQUEST_SETTINGS,
+    });
+    await clubSettingsImporter.apply(applyCtx(tx, settingsOnly, "merge"));
+    expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ assignSchoolTeachersAsHutLeaders: true }),
+      }),
+    );
+  });
+
   it("rejects an invalid priority in the legacy singleton during the dry-run", async () => {
     const plan = await clubSettingsImporter.plan({
+      format: CLUB_FORMAT_TEST,
       db: stubDb({}),
       files: new Map([
         [
@@ -260,7 +346,7 @@ describe("config-transfer club-settings", () => {
     expect(email.supportEmail).toBe("s@x.nz");
 
     // Import round-trips: an absent target plans a create carrying facebookUrl.
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const identityItem = plan.categories[0].items.find(
       (i) => i.entity === "club-identity-settings",
     );
@@ -273,7 +359,7 @@ describe("config-transfer club-settings", () => {
     const target = stubDb({
       clubModuleSettings: { ...MODULES, bedAllocation: false },
     });
-    const plan = await buildImportPlan(target, zip, { mode: "merge" });
+    const plan = await buildImportPlan(target, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const items = plan.categories[0].items;
     const modules = items.find((i) => i.entity === "club-module-settings");
     const email = items.find((i) => i.entity === "email-message-setting");
@@ -345,7 +431,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
   it("passes the select through on plan", async () => {
     const { zip } = await exportBundle(false);
     const target = stubDb({ clubModuleSettings: MODULES });
-    await buildImportPlan(target, zip, { mode: "merge" });
+    await buildImportPlan(target, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const findUnique = (
       target as unknown as { clubModuleSettings: { findUnique: ReturnType<typeof vi.fn> } }
     ).clubModuleSettings.findUnique;
@@ -375,6 +461,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
       manifest: {} as unknown as ApplyContext["manifest"],
       mode: "merge",
       resolutions: new Map(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "test-actor",
       imageRemap: new Map(),
       notes: { doorCodesWritten: [] },
@@ -414,6 +501,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
       manifest: {} as unknown as ApplyContext["manifest"],
       mode: "merge",
       resolutions: new Map(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "test-actor",
       imageRemap: new Map(),
       notes: { doorCodesWritten: [] },
@@ -585,6 +673,7 @@ function applyCtx(
     manifest: {} as unknown as ApplyContext["manifest"],
     mode,
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     actorMemberId: "test-actor",
     imageRemap: new Map(),
     notes: { doorCodesWritten: [] },
@@ -631,6 +720,10 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // charging a fee the source club charges.
       linkedMoveChargesBothChangeFees:
         DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+      // #3639: an unsaved club refunds late captures automatically, and exports
+      // that answer rather than switching a target install to treasurer approval.
+      lateCaptureRefundNeedsApproval:
+        DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,
@@ -694,7 +787,7 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     const plan = await buildImportPlan(
       stubDb({ bookingRequestSettings: targetRow }),
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     const item = plan.categories[0].items.find(
       (i) => i.entity === "booking-request-settings",
@@ -762,7 +855,7 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
 
   it("previews that same no-op as Unchanged rather than promising a New row", async () => {
     const { zip } = await exportFromUnsavedClub();
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const items = new Map(
       plan.categories[0].items.map((i) => [i.entity, i]),
     );
@@ -830,7 +923,7 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       generatedAt: "2026-07-08T00:00:00.000Z",
     });
 
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.categories[0].items.map((i) => i.entity)).toEqual([
       "group-discount-setting",
     ]);
@@ -880,7 +973,7 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
     const plan = await buildImportPlan(
       stubDb({ membershipLockoutSettings: target }),
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     const item = plan.categories[0].items.find(
       (i) => i.entity === "membership-lockout-settings",
@@ -929,7 +1022,7 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
     const plan = await buildImportPlan(
       stubDb({ membershipLockoutSettings: target }),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     const item = plan.categories[0].items.find(
       (i) => i.entity === "membership-lockout-settings",
@@ -1027,7 +1120,7 @@ describe("#2200 portable singletons export/import and stay schema-bound", () => 
     expect(readJson(files, "login-security-setting")).toEqual(saved);
 
     // Absent target → create.
-    const createPlan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const createPlan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(
       createPlan.categories[0].items.find((i) => i.entity === "login-security-setting")?.action,
     ).toBe("create");
@@ -1037,7 +1130,7 @@ describe("#2200 portable singletons export/import and stay schema-bound", () => 
     const plan = await buildImportPlan(
       stubDb({ loginSecuritySetting: target }),
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     const item = plan.categories[0].items.find(
       (i) => i.entity === "login-security-setting",
@@ -1292,7 +1385,7 @@ describe("D-18: the two open-search privacy toggles never travel", () => {
     const plan = await buildImportPlan(
       stubDb({ memberGuestSettings: { ...DEFAULT_MEMBER_GUEST_SETTINGS } }),
       zip,
-      { mode: "overwrite" },
+      { format: CLUB_FORMAT_TEST, mode: "overwrite" },
     );
     const item = plan.categories
       .flatMap((category) => category.items)
@@ -1363,7 +1456,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
         invoiceDueDays: bad,
         familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
       });
-      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
       expect(plan.errors.join(" ")).toMatch(/invoiceDueDays — .*out of range.*1–365/);
     }
   });
@@ -1373,7 +1466,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       invoiceDueDays: 45,
       familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors).toEqual([]);
   });
 
@@ -1382,7 +1475,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       invoiceDueDays: 30,
       familyBillingMode: "NOT_A_MODE",
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(
       /familyBillingMode — .*is not a valid FamilyBillingMode/,
     );
@@ -1397,7 +1490,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       requireSymbol: false,
       magicLinkTtlMinutes: 15,
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/minPasswordLength — null is not allowed/);
   });
 
@@ -1411,7 +1504,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       annualFees: false,
       showBookNow: true,
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/membershipTypes — null is not allowed/);
   });
 
@@ -1424,7 +1517,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       nonMemberHoldDays: 7,
       waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldEnabled — null is not allowed/,
     );
@@ -1439,7 +1532,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       textFallbackEnabled: true,
       useFeeScheduleItemCodes: false,
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors).toEqual([]);
   });
 
@@ -1451,7 +1544,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
         textFallbackEnabled: true,
         useFeeScheduleItemCodes: false,
       });
-      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
       expect(plan.errors.join(" ")).toMatch(
         /financialYearEndMonthOverride — .*out of range.*1–12/,
       );
@@ -1465,7 +1558,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
         summerOnly: true,
         enabled: false,
       });
-      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
       expect(plan.errors.join(" ")).toMatch(
         /minGroupSize — .*out of range.*2–200/,
       );
@@ -1478,7 +1571,7 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       nonMemberHoldDays: 366,
       waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
     });
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
@@ -1544,7 +1637,7 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
       const plan = await buildImportPlan(
         stubDb({ membershipLockoutSettings: targetOnNonMemberPricing }),
         zip,
-        { mode },
+        { format: CLUB_FORMAT_TEST, mode },
       );
       const item = plan.categories[0].items.find(
         (i) => i.entity === "membership-lockout-settings",
@@ -1636,7 +1729,7 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
     const plan = await buildImportPlan(
       stubDb({ membershipLockoutSettings: targetOnNonMemberPricing }),
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.categories[0].errors.join(" ")).toContain("mode");
   });
@@ -1656,7 +1749,7 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
     const plan = await buildImportPlan(
       stubDb({ membershipLockoutSettings: targetOnNonMemberPricing }),
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     expect(plan.categories[0].errors.join(" ")).toMatch(
       /mode — "HRD_BLOCK" is not a valid SubscriptionLockoutMode/,
@@ -1680,7 +1773,7 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
         textFallbackEnabled: true,
         useFeeScheduleItemCodes: false,
       });
-      const plan = await buildImportPlan(stubDb({}), zip, { mode });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode });
       expect(plan.categories[0].errors.join(" ")).toMatch(
         /mode — null is not allowed \(required setting\)/,
       );
@@ -1701,7 +1794,7 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
       },
       "0.13.1",
     );
-    const plan = await buildImportPlan(stubDb({}), zip, { mode: "overwrite" });
+    const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
     expect(plan.errors).toEqual([]);
     expect(plan.categories[0].errors).toEqual([]);
   });

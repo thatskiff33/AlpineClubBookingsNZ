@@ -349,7 +349,25 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 // below is where that judgement is made, once, in writing, per file — exactly
 // the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
 const CENTS_DISPLAY_MESSAGE =
-  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. A raw CSV or JSON export cell, and an amount prefixed with a provider's own currency code, are formatCentsPlain's output too. Only a genuinely different output, one neither helper returns, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason that names the difference in terms a reader can check against the code. The list is checked by cents-display-guard.test.ts. Never an eslint-disable comment.";
+
+// #3533 — the OTHER way a person is shown the storage form: not a bad
+// division, but no division at all. `${refundAmountCents} cents` in an audit
+// `details` string, a thrown Error, a repair report line or a cron summary
+// hands a booking officer "8450 cents" to convert in their head, and a
+// factor-of-a-hundred misread is easy. A census on 20 Sep 2026 found 26 of
+// them under `src/`, seven in `booking-cancel.ts` alone.
+//
+// The selector keys on a template quasi that BEGINS WITH A SPACE and then the
+// word: in `` `${x} cents` `` the second quasi's raw value is exactly
+// `" cents"`, and a leading space can only come from text that follows an
+// interpolation. That is what keeps `` `cents: ${x}` `` — a label, not an
+// amount — out of it, and it is why the space is load-bearing rather than
+// cosmetic, and why the word must not run on into a longer noun
+// (`" cents-per-night rows"` is a row count, not an amount). The negative
+// fixtures in `cents-in-prose-guard.test.ts` pin every one of those shapes.
+const CENTS_IN_PROSE_MESSAGE =
+  "INV-SSOT-001 / #3533/#3589: do not write `${someCents} cents` or `${someCents}c` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as a formatted currency value — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils with the club's resolved format. The STORED value stays integer cents; this is about the sentence. Bare `${someCents}` without a unit is covered only in the six scoped operator-message sources by operator-cents-message-census.test.ts; classify new cent-valued aliases there. Writing a raw numeric export cell? Emit the number alone (formatCentsPlain from @/lib/utils) without the unit word; the rule only fires when `cents` or `c` follows the amount. No exemption list lifts this rule: CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs covers only the toFixed arithmetic, and cents-in-prose-guard.test.ts proves the prose rule still fires in every file on it. Never an eslint-disable comment.";
 
 const CENTS_DISPLAY_RESTRICTIONS = [
   {
@@ -360,7 +378,53 @@ const CENTS_DISPLAY_RESTRICTIONS = [
 ];
 
 /**
- * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
+ * ITS OWN GROUP, and that is the whole point of the separation.
+ *
+ * The first cut appended this selector to `CENTS_DISPLAY_RESTRICTIONS`, which
+ * made it inherit that group's exemptions at the time - ten files excused for
+ * seeding an editable input's plain value, writing a raw export cell or
+ * prefixing a Xero invoice's currency, none of which is a reason to write the
+ * storage form into a sentence. (#3399 retired all ten; only the canonical
+ * definition in `src/lib/utils.ts` is still listed.) That is exactly the
+ * hazard this file warns about two groups above for the raw-SQL set and again
+ * for the money set: an exemption written for one rule silently lifting
+ * another it was never weighed against. Review of #3533 caught it before it
+ * shipped; keeping the array separate is what makes the mistake unavailable
+ * rather than merely noticed.
+ *
+ * It has no file-wide exemption. The rounding-drift report has one reviewed
+ * dual-format annotation; its exact file overrides only the c-suffix arm with
+ * a selector that excludes that function's direct return (see below).
+ */
+const CENTS_IN_PROSE_C_SUFFIX_SELECTOR =
+  'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^c(?![-\\w])/i]';
+const CENTS_IN_PROSE_RESTRICTIONS = [
+  {
+    selector:
+      'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^ cents(?![-\\w])/i]',
+    message: CENTS_IN_PROSE_MESSAGE,
+  },
+  {
+    selector: CENTS_IN_PROSE_C_SUFFIX_SELECTOR,
+    message: CENTS_IN_PROSE_MESSAGE,
+  },
+];
+
+// #3589: this replacement is installed only on the rounding-audit path. The
+// diagnostic deliberately shows formatted currency plus signed raw-cent drift;
+// another file with a same-named function still receives the global arm.
+const ROUNDING_AUDIT_C_SUFFIX_RESTRICTION = {
+  selector: `${CENTS_IN_PROSE_C_SUFFIX_SELECTOR}:not(FunctionDeclaration[id.name="formatDriftCents"] > BlockStatement > ReturnStatement > TemplateLiteral > TemplateElement)`,
+  message: CENTS_IN_PROSE_MESSAGE,
+};
+
+/** Bare selectors, for `cents-in-prose-guard.test.ts`, same mirror as above. */
+export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
+/**
+ * The one arm as a bare selector array, for `cents-display-guard.test.ts` —
  * same reason `MONEY_GUARD_ARMS` is exported above: the suite resolves the
  * REAL config and checks the resolved rule still carries every selector this
  * array declares, so a copy nobody kept in sync cannot pass while the config
@@ -375,14 +439,16 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // was found in three files at the merge base (the fee sections, the joining
 // fee preview, the public content tokens) that #3302's toFixed arm above
 // structurally cannot see (there is no division to match), and two of them
-// sat on that arm's editable-input exemption. This is therefore its OWN
-// group, on the mandatory set, so
+// sat on that arm's editable-input exemption (retired in #3399). This is
+// therefore its OWN group, on the mandatory set, so
 // `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does not lift
-// it: an exemption written for seeding an input's plain value never excused a
-// hard-coded locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
-// pass `APP_LOCALE` and `APP_CURRENCY`, both Identifiers, so they pass without
-// an exemption list — which is the point: there is no legitimate literal
-// locale or currency code in `src/`.
+// it: an exemption from the toFixed arithmetic never excuses a hard-coded
+// locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
+// pass identifiers off the club's resolved format — `APP_LOCALE` and
+// `APP_CURRENCY` until #3565, `format.locale` and `format.currencyCode`
+// through `@/lib/club-format-intl` since — so they pass without an exemption
+// list, which is the point: there is no legitimate literal locale or currency
+// code in `src/`.
 //
 // Two arms, each with the shape it does and does not see stated in
 // `cents-display-guard.test.ts`. Both match `Intl.NumberFormat` whether or not
@@ -392,11 +458,137 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // aliased constructor, `Intl["NumberFormat"]`, or `toLocaleString(...)` — the
 // guard is a structural check on the one shape this codebase has actually
 // written, not a proof that no other shape exists.
+// INV-CONFIG-006 / #3566 — the club's FORMAT is a required argument, and this
+// arm keeps it one (#3628 review, finding B7).
+//
+// The compiler is the census for a missing format only while the parameter is
+// REQUIRED. A `format: ClubDateFormat = { locale: "en-NZ" }` default, a
+// `format = CLUB_FORMAT_TEST`, or a `format?: ClubFormat` would make every
+// caller that forgets the club's format compile again — silently, in a wrapper
+// such as `season-label.ts` that the `@ts-expect-error` locks in
+// `house-shapes.test.ts` and `club-format-kernel.test.ts` never call. So a
+// default value (an `AssignmentPattern`) or an optional marker on ANY parameter
+// typed `ClubDateFormat` or `ClubFormat`, anywhere in `src/`, is refused. On the
+// mandatory set, so no block can lift it. Branding the type was the
+// alternative and was not taken: every test fixture and every server reader
+// would need to mint the brand, for no protection this arm does not give.
+//
+// WHAT IT SEES (widened in the #3628 re-review). A club-format type reference
+// (`ClubDateFormat`, `ClubFormat`, or qualified `ct.ClubDateFormat`) that IS the
+// annotation, or sits in it as a union / intersection member, an array element,
+// or a generic argument (`Readonly<ClubDateFormat>`, `Readonly<X | null>`,
+// `Array<ClubFormat>`) — on:
+//  - a parameter with a DEFAULT (`format: ClubDateFormat | undefined = NZ`);
+//  - an OPTIONAL identifier: a function parameter, an interface-method or
+//    function-type parameter (`format?: ClubDateFormat | null`);
+//  - an OPTIONAL property signature, so an options object cannot carry it
+//    optionally (`opts: { format?: ClubDateFormat }`), nor a class field;
+//  - an optional TUPLE element, so a rest tuple cannot
+//    (`...rest: [ClubDateFormat?]`, `...rest: [format?: ClubDateFormat]`);
+//  - a DESTRUCTURED default on a property named `format` / `clubFormat` /
+//    `dateFormat` (`({ format = NZ }: Options)`) — by NAME, because a selector
+//    cannot follow `Options` to its declaration; the optional-property arm is
+//    what refuses `format?:` on that declaration.
+// The annotation is walked by explicit CHILD paths, not a descendant `:has`, on
+// purpose: an optional property whose type is a FUNCTION taking a required
+// format (`sendAlert?: (report, format: ClubFormat) => Promise<void>`, in
+// `xero-credit-sync-checker.ts`) keeps that format required, and a descendant
+// match would refuse it. That function's own parameters are still judged,
+// by the optional-identifier arm, so `(format?: ClubFormat) => void` is caught.
+// What a selector cannot see is a type ALIAS (`type F = ClubDateFormat;
+// (format?: F)`), which needs type resolution; `club-format-required-guard.test.ts`
+// backs that with a census refusing any alias of a club format outside the
+// kernel's own definition.
+const CLUB_FORMAT_TYPE_NAME = "/^Club(?:Date)?Format$/";
+const CLUB_FORMAT_REF = `TSTypeReference:matches([typeName.name=${CLUB_FORMAT_TYPE_NAME}], [typeName.right.name=${CLUB_FORMAT_TYPE_NAME}])`;
+/** Where, below an annotation's root, a club-format reference still makes that annotation "a club format". */
+const CLUB_FORMAT_ANNOTATION_PATHS = [
+  CLUB_FORMAT_REF,
+  `TSUnionType > ${CLUB_FORMAT_REF}`,
+  `TSIntersectionType > ${CLUB_FORMAT_REF}`,
+  `TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSUnionType > TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSTypeOperator > TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSTypeReference > TSTypeParameterInstantiation > ${CLUB_FORMAT_REF}`,
+  `TSTypeReference > TSTypeParameterInstantiation > TSUnionType > ${CLUB_FORMAT_REF}`,
+  `TSUnionType > TSTypeReference > TSTypeParameterInstantiation > ${CLUB_FORMAT_REF}`,
+];
+/** `head > path` for every annotation path, as one comma-list selector. */
+const clubFormatAnnotated = (head) =>
+  CLUB_FORMAT_ANNOTATION_PATHS.map((path) => `${head} > ${path}`).join(", ");
+const CLUB_FORMAT_REQUIRED_MESSAGE =
+  "INV-CONFIG-006 / #3566: a `ClubDateFormat` / `ClubFormat` parameter is REQUIRED — no default value and no `?`. A default is the ambient-locale shape the owner declined on #3566 and #3565: it lets a caller that forgot the club's format compile. Take the format from the caller (clubTime().format / clubFormatValues() on the server, useClubTime().format / useClubFormat() in the browser).";
+const CLUB_FORMAT_PARAMETER_RESTRICTIONS = [
+  clubFormatAnnotated("AssignmentPattern > Identifier.left > TSTypeAnnotation"),
+  clubFormatAnnotated("Identifier[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("TSPropertySignature[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("PropertyDefinition[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("TSOptionalType"),
+  clubFormatAnnotated("TSNamedTupleMember[optional=true]"),
+  "ObjectPattern > Property[key.name=/^(?:format|clubFormat|dateFormat)$/] > AssignmentPattern",
+].map((selector) => ({ selector, message: CLUB_FORMAT_REQUIRED_MESSAGE }));
+
+/**
+ * The #3566 required-format arm as bare selector strings, for
+ * `club-format-required-guard.test.ts` — read from HERE, never copied.
+ */
+export const CLUB_FORMAT_GUARD_ARMS = {
+  requiredParameter: CLUB_FORMAT_PARAMETER_RESTRICTIONS.map((entry) => entry.selector),
+};
+
+// INV-CONFIG-006 / #3567 — NOTHING IMPORTS `@/config/operational`. #3566 banned
+// importing `APP_LOCALE` / `APP_CURRENCY` from it (#3628 review, finding B9);
+// #3567 retired the last two exports, `APP_STRIPE_CURRENCY` and `APP_TIME_ZONE`,
+// and DELETED the file. The arm now refuses any import of that path, so a
+// recreated file starts out unreachable: the club's currency, locale and time
+// zone are its stored settings, and the environment only seeds them.
+//
+// A `no-restricted-syntax` arm on the mandatory set rather than
+// `no-restricted-imports`, for the reason the environment-zone note above gives:
+// flat config REPLACES a rule's options, and `src/lib/xero-*` sets its own
+// `no-restricted-imports`, so an import rule would be silently lifted for the
+// modules that write Xero documents. Every spelling of the module path is
+// matched, and a namespace import, a default import and a re-export are refused
+// too. Tests are outside it (they are outside `no-restricted-syntax`
+// altogether); `app-currency-import-census.test.ts` walks them instead.
+// The module path, however spelled: `@/config/operational`,
+// `../config/operational`, `@/config/./operational`, `@/config//operational`,
+// `@/config/operational.js` (round 2 of the #3628 review). A template literal
+// (`import(`@/config/${name}`)`) or a `require` cannot always be read to its
+// value, so any template mentioning `config` or `operational` in a dynamic
+// import or `require` is refused outright. What no selector can follow — a
+// computed module name, a `createRequire` alias — is backstopped by the
+// word-level census in `app-currency-import-census.test.ts`: none of the four
+// retired names anywhere in `src/` code, tests included, comments stripped. The
+// browser-import census in `client-server-boundary-census.test.ts` protects the
+// path in the client graph as well.
+// Case-insensitive, and the module as a path SEGMENT: with or without an
+// extension, a trailing slash, `/index` or anything beneath it (#3567 review).
+const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?(?:\\/.*)?$/i";
+const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/i]";
+const RETIRED_FORMAT_CONSTANT_MESSAGE =
+  "INV-CONFIG-006 / #3567: do not import @/config/operational. #3567 deleted it with its four constants (APP_CURRENCY, APP_LOCALE, APP_STRIPE_CURRENCY, APP_TIME_ZONE). The club's currency and locale are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma; card charges take the currency from the format stripe.ts already requires; the club's time zone is clubTimeZone() / clubTime() from @/lib/club-time/server or readClubTimeZoneOutsideRequest(). The environment is a seed only (club-format-env.ts, club-time-zone-env.ts).";
+const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
+  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}]`,
+  `ExportNamedDeclaration[source.value=${OPERATIONAL_MODULE}]`,
+  `ExportAllDeclaration[source.value=${OPERATIONAL_MODULE}]`,
+  `ImportExpression[source.value=${OPERATIONAL_MODULE}]`,
+  `ImportExpression[source.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
+  `CallExpression[callee.name="require"][arguments.0.value=${OPERATIONAL_MODULE}]`,
+  `CallExpression[callee.name="require"][arguments.0.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
+  `TSExternalModuleReference[expression.value=${OPERATIONAL_MODULE}]`,
+].map((selector) => ({ selector, message: RETIRED_FORMAT_CONSTANT_MESSAGE }));
+
+/** The #3566/#3567 retired-module arm as bare selectors, read by its guard test. */
+export const RETIRED_FORMAT_CONSTANT_ARMS = RETIRED_FORMAT_CONSTANT_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
 const CURRENCY_LOCALE_MESSAGE =
-  "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; both read APP_LOCALE and APP_CURRENCY. A genuinely new rendering shape is added to one of those two modules, built from APP_LOCALE, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
+  "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; since #3565 both TAKE the club's resolved format, which a server caller gets from clubFormat() and a browser caller from bindClubFormat. A genuinely new rendering SHAPE is declared in @/lib/club-format-intl beside the others, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
 
 const CURRENCY_CODE_MESSAGE =
-  "INV-CONFIG-001 / #3325: do not pass a literal currency code (`currency: \"NZD\"`) to Intl.NumberFormat — the currency is the club's configuration (APP_CURRENCY), not this codebase's. Use formatCents / formatSignedCents from @/lib/utils or formatDollarsDisplay from @/lib/finance-format, which read it; a formatter in a foreign currency (a Xero invoice's own) takes that currency as a variable, never a literal. There is no exemption list for this rule and no eslint-disable.";
+  "INV-CONFIG-001 / #3325: do not pass a literal currency code (`currency: \"NZD\"`) to Intl.NumberFormat — the currency is the club's configuration (APP_CURRENCY), not this codebase's. Use formatCents / formatSignedCents from @/lib/utils or formatDollarsDisplay from @/lib/finance-format, which take it; a formatter in a foreign currency (a Xero invoice's own) takes that currency as a variable, never a literal. There is no exemption list for this rule and no eslint-disable.";
 
 const INTL_NUMBER_FORMAT =
   ':matches(NewExpression, CallExpression)[callee.object.name="Intl"][callee.property.name="NumberFormat"]';
@@ -426,7 +618,7 @@ export const CURRENCY_LOCALE_GUARD_ARM = CURRENCY_LOCALE_RESTRICTIONS.map(
  * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
  * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
  * writing why hand-rolled `(cents / 100).toFixed(n)` is allowed there.
- * `money-cents-guard.test.ts` reads THIS array and fails an entry with no
+ * `cents-display-guard.test.ts` reads THIS array and fails an entry with no
  * reason, and separately fails if a listed file no longer contains the
  * pattern — an exemption is deleted when its cause is, never left "for now".
  */
@@ -436,69 +628,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
     reason:
       "The canonical definition. `formatCentsPlain`'s own body IS this arithmetic — every other file is sent here to call it rather than write it again.",
   },
-  {
-    files: [
-      "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx",
-      "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
-      "src/components/admin/booking-policies/cancellation-rules-editor.tsx",
-      "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
-      "src/components/admin/joining-fee-preview.tsx",
-      "src/components/admin/manual-refund-task-queue.tsx",
-    ],
-    reason:
-      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it. The refund-requests page left this list in #2932: its `<input max>` went with the browser number control it belonged to, and its prefill now compares integer cents and renders once through `formatCentsPlain`. The hut-fees section left it in #2938: its flat whole-lodge box was the last hand-rolled copy in that file and now seeds through `amountFieldValue`, which renders the same cents through `formatCentsPlain`.',
-  },
-  {
-    files: [
-      "src/app/(admin)/admin/reports/page.tsx",
-      "src/lib/finance-legacy-dashboard-export.ts",
-      "src/lib/promo-redemptions-csv.ts",
-    ],
-    reason:
-      "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
-  },
-  {
-    files: ["src/lib/membership-cancellation-blocker-messages.ts"],
-    reason:
-      "Formats an amount in a Xero invoice's OWN currency, which the club's configured formatCents structurally cannot do — the currency varies per call and is deliberately not APP_CURRENCY (see formatBlockerAmount's own docblock).",
-  },
-];
-
-/**
- * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
- * members (declared below) — `finance-legacy-dashboard-export.ts`
- * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
- * and `membership-cancellation-blocker-messages.ts`
- * (`membership-cancellation-*`); `internet-banking-payment-cron.ts` left the
- * list with #3325. Those three already take the broader
- * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
- * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
- * rather than the ordinary exemption block's plain
- * `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)`. Matching a
- * glob family against a literal path is a real pattern match, not a Set
- * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
- * than computed; `cents-display-guard.test.ts` checks the resolved config at
- * each of these three paths carries the money-MODULE arm, not the narrow one,
- * precisely so a hand-verified list cannot go stale silently.
- */
-const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
-  "src/lib/finance-legacy-dashboard-export.ts",
-  "src/lib/promo-redemptions-csv.ts",
-  "src/lib/membership-cancellation-blocker-messages.ts",
-];
-
-/**
- * The one `CENTS_DISPLAY_EXEMPTIONS` file that is ALSO a `DATE_FNS_ADAPTER_FILES`
- * member: it already drops `DATE_FNS_RESTRICTIONS` (CT-6, #2991) via its own
- * block, so the block that additionally drops `CENTS_DISPLAY_RESTRICTIONS` for
- * it has to replicate THAT swap too, for the same flat-config-replaces-not-merges
- * reason as `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` above. Found by `npm run lint`
- * actually going red the first time this file's exemption was wired as an
- * ordinary one — proof this kind of overlap is exactly the failure mode that
- * reading glob text instead of asking ESLint misses.
- */
-const CENTS_DISPLAY_DATE_FNS_OVERLAP = [
-  "src/app/(admin)/admin/reports/page.tsx",
 ];
 
 // Where a bare `x * 100` is money by construction.
@@ -883,14 +1012,41 @@ const NO_ENVIRONMENT_ZONE_ENV_READ = [
   'VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=/^(TZ|NEXT_PUBLIC_TZ)$/]',
 ].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
 
-// Importing the environment zone by name. `@/config/operational` exports it as
-// a plain string, so nothing downstream of the import can tell it from a club
+// Importing the environment zone by name. `@/config/operational` exported it as
+// a plain string, so nothing downstream of the import could tell it from a club
 // zone — which is how 133 call sites came to take it as a default without one
-// review noticing.
+// review noticing. #3567 deleted the module; these stay so a recreated one
+// cannot hand the zone out again.
 const NO_ENVIRONMENT_ZONE_IMPORT = [
   'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.name="APP_TIME_ZONE"]',
   'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.value="APP_TIME_ZONE"]',
 ].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
+
+// INV-CONFIG-006 / #3567 review — the ENVIRONMENT's currency and locale, read
+// anywhere but the one seed reader. `CURRENCY` / `LOCALE` seed the stored
+// `ClubFormatSettings` row once; `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE`
+// are not read at all. A new reader of any of the four is a second authority for
+// what the club charges and shows, so the same three spellings the zone arm
+// closes are closed here, and `club-format-env.ts` is the one file exempt.
+const ENVIRONMENT_FORMAT_ENV = "/^(CURRENCY|LOCALE|NEXT_PUBLIC_CURRENCY|NEXT_PUBLIC_LOCALE)$/";
+const ENVIRONMENT_FORMAT_MESSAGE =
+  "INV-CONFIG-006 / #3567: The environment's currency and locale are not the club's. `CURRENCY` / `LOCALE` seed the stored ClubFormatSettings row once, in club-format-env.ts, and `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE` are not read at all. Read the club's format with clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, or getClubFormat() in a src/lib module that already imports @/lib/prisma; card charges take the currency from stripeChargeCurrency(format).";
+const ENVIRONMENT_FORMAT_RESTRICTIONS = [
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.name=${ENVIRONMENT_FORMAT_ENV}]`,
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.value=${ENVIRONMENT_FORMAT_ENV}]`,
+  `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.name=${ENVIRONMENT_FORMAT_ENV}]`,
+  `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=${ENVIRONMENT_FORMAT_ENV}]`,
+  // A template-literal key, process.env[`CURRENCY`] (#3567 re-review). An alias
+  // (`const env = process.env; env.CURRENCY`) is past any selector; the
+  // word-level census in app-currency-import-census.test.ts closes that.
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.type="TemplateLiteral"]:has(TemplateElement[value.raw=${ENVIRONMENT_FORMAT_ENV}])`,
+].map((selector) => ({ selector, message: ENVIRONMENT_FORMAT_MESSAGE }));
+
+/** The one file allowed to read the environment's currency and locale. */
+const ENVIRONMENT_FORMAT_ADAPTER_FILES = ["src/lib/club-format-env.ts"];
+
+/** The environment-format arm as bare selectors, read by its guard test. */
+export const ENVIRONMENT_FORMAT_ARMS = ENVIRONMENT_FORMAT_RESTRICTIONS.map((entry) => entry.selector);
 
 const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
 
@@ -971,7 +1127,6 @@ const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
  */
 const DATE_FNS_ADAPTER_FILES = [
   "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
-  "src/app/(admin)/admin/reports/page.tsx",
   "src/app/(admin)/admin/reports/_components/report-charts.tsx",
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
@@ -991,12 +1146,6 @@ export const DATE_FNS_ADAPTERS = [
     uses: "formatDistanceToNow",
     reason:
       "The same relative-duration hint on a password action, zone-independent for the same reason.",
-  },
-  {
-    file: "src/app/(admin)/admin/reports/page.tsx",
-    uses: "format",
-    reason:
-      "The admin report date-series surface #2870's ledger carries as an open residual. Migrating it is a report-shape change, not a formatter swap, so it is scoped there rather than re-scoped here.",
   },
   {
     file: "src/app/(admin)/admin/reports/_components/report-charts.tsx",
@@ -1030,12 +1179,13 @@ export const DATE_FNS_ADAPTERS = [
  * `club-time-boundary-census.test.ts` reads this record rather than keeping a
  * copy that drifts out of step with the config that ships.
  *
- * THIS LIST IS A RATCHET AND IT ONLY SHRINKS. Two entries are structural — the
- * environment has to be read somewhere for the setup wizard to offer it — and
- * the rest are callers CT-6 measured and could not migrate without threading a
- * club zone through a surface belonging to another issue. Each names what is
- * blocking it. Adding a file here re-opens the class the guard exists to close,
- * so the census test asserts the list has not grown.
+ * THIS LIST IS A RATCHET AND IT ONLY SHRINKS. One entry is left, and it is
+ * structural — the environment has to be read somewhere for the setup wizard to
+ * offer it. #3567 took the last three away: it deleted `src/config/operational.ts`
+ * (which defined `APP_TIME_ZONE`) and moved the two AI metering month keys
+ * (`ai-assistant-usage.ts`, `ai-diagnostics-usage.ts`) onto the club's stored
+ * zone. Adding a file here re-opens the class the guard exists to close, so the
+ * census test asserts the list has not grown.
  *
  * IT SHRANK AGAIN IN #3126, and by the route this list prefers. The last entry
  * to leave, `src/lib/member-merge-field-kinds.ts`, was excused so a client
@@ -1063,39 +1213,13 @@ export const DATE_FNS_ADAPTERS = [
  * again it would still belong in its own block rather than on this list: listing
  * it twice would give it two matching blocks, the later of which silently wins.
  */
-const ENVIRONMENT_ZONE_ADAPTER_FILES = [
-  "src/config/operational.ts",
-  "src/lib/club-time-zone-env.ts",
-  "src/lib/ai-assistant-usage.ts",
-  "src/lib/ai-diagnostics-usage.ts",
-  "src/lib/induction-display.ts",
-];
+const ENVIRONMENT_ZONE_ADAPTER_FILES = ["src/lib/club-time-zone-env.ts"];
 
 export const ENVIRONMENT_ZONE_ADAPTERS = [
   {
-    file: "src/config/operational.ts",
-    reason:
-      "STRUCTURAL. The one read of `process.env.TZ` in the tree, and the definition of APP_TIME_ZONE itself. CT-1 (#2989) kept it as the SEED the setup wizard offers and the self-heal step backfills the persisted row from, so it has to exist somewhere.",
-  },
-  {
     file: "src/lib/club-time-zone-env.ts",
     reason:
-      "STRUCTURAL. CT-1's seed reader (#2989): exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
-  },
-  {
-    file: "src/lib/ai-assistant-usage.ts",
-    reason:
-      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the five below.",
-  },
-  {
-    file: "src/lib/ai-diagnostics-usage.ts",
-    reason:
-      "The same internal metering month key for the diagnostics budget, in the same shape and blocked on the same thing.",
-  },
-  {
-    file: "src/lib/induction-display.ts",
-    reason:
-      "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
+      "STRUCTURAL. CT-1's seed reader (#2989), and since #3567 the one read of `process.env.TZ` in the tree: exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
   },
 ];
 
@@ -1174,10 +1298,9 @@ export const DATE_GUARD_ARMS = {
 // handing it to callers as a default is not, in any file.
 //
 // WHICH NAMES ARE ON THE LIST. `INV-SSOT-003` names them, and this array is that
-// rule's implementation rather than a second opinion about it: the
-// `@/config/operational` exports naming a club-facing authority —
-// `APP_TIME_ZONE` and `APP_LOCALE` — plus the environment variables behind the
-// zone, `TZ` and `NEXT_PUBLIC_TZ`.
+// rule's implementation rather than a second opinion about it: the names the
+// deleted `@/config/operational` exported for a club-facing authority — kept so
+// a revival is refused on sight — plus the environment variables behind them.
 //
 // The zone is the measured case. The club's civil time is the
 // `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989), and
@@ -1215,17 +1338,16 @@ export const DATE_GUARD_ARMS = {
 //     the worked example of an exclusion written WITH a trigger, which is the
 //     only kind that does not rot into a permanent hole.
 //
-//     One thing the old note said remains true and unfixed here: two admin
-//     display formatters hardcode `currency: "NZD"` and `schema.prisma` gives
-//     `PaymentTransaction.currency` a `"nzd"` column default. A third, found
-//     in #3563's review and named here so #3567 is planned from a complete
-//     list: `normalizeRefundCurrency` in `src/lib/payment-transactions.ts`
-//     falls back `(currency ?? APP_STRIPE_CURRENCY)` and writes the result to
-//     that same column. It is the same defect in a shape this arm cannot see
-//     - the arm anchors on `AssignmentPattern`, and a `??` in a function body
-//     is a `LogicalExpression` - so it is invisible rather than excluded.
-//     Those are a separate defect this arm is not the instrument for; #3567 is
-//     the stage that takes them.
+//     The old note also named three defects this arm is not the instrument
+//     for, and #3567 took all three: the admin display formatters that
+//     hardcoded `currency: "NZD"` read the club's format; the `"nzd"` column
+//     default — on `PaymentRefund.currency`, which this note used to misname
+//     `PaymentTransaction.currency` (that table has no currency column) — is
+//     dropped by migration 20261012010000; and `normalizeRefundCurrency` in
+//     `src/lib/payment-transactions.ts` no longer falls back
+//     `(currency ?? APP_STRIPE_CURRENCY)`. That fallback was invisible to this
+//     arm rather than excluded — a `??` in a function body is a
+//     `LogicalExpression`, not an `AssignmentPattern`.
 //   * `process.env.<anything else>` as a default, which `INV-SSOT-003`'s prose
 //     describes more broadly than this arm implements. MEASURED, rather than
 //     assumed, and re-measured for #3126's review because the first measurement
@@ -2513,8 +2635,12 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
   ...CENTS_DISPLAY_RESTRICTIONS,
+  ...CENTS_IN_PROSE_RESTRICTIONS,
   ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
+  ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
+  ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
+  ...ENVIRONMENT_FORMAT_RESTRICTIONS,
 ];
 
 /**
@@ -2536,7 +2662,7 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     files: DATE_FNS_ADAPTER_FILES,
     omits: DATE_FNS_RESTRICTIONS,
     reason:
-      "The seven files still importing `date-fns`, measured by CT-6 (#2991). Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
+      "The files still importing `date-fns`, measured by CT-6 (#2991) at seven and six since #3566 moved the reports page off it. Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
   },
   {
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
@@ -2545,10 +2671,16 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
       "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. #3126 then took `src/lib/member-merge-field-kinds.ts` off by deleting the `= APP_TIME_ZONE` DEFAULT the exemption had been covering (`INV-SSOT-003`) — an exemption written for a READ should never have excused a default, and `AUTHORITY_DEFAULT_RESTRICTIONS` is on the mandatory set precisely so no entry here can excuse one again. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
   },
   {
+    files: ENVIRONMENT_FORMAT_ADAPTER_FILES,
+    omits: ENVIRONMENT_FORMAT_RESTRICTIONS,
+    reason:
+      "The seed reader for the club's currency and locale (#3563; #3567 review): the one module whose job is to read CURRENCY / LOCALE once, for the first-boot backfill and the no-row fallback, and to warn when only a retired NEXT_PUBLIC_ twin is set. Every other file reads the stored setting.",
+  },
+  {
     files: ["prisma/**/*.{ts,tsx}"],
     omits: DATE_ONLY_ENCODING_RESTRICTIONS,
     reason:
-      "The seed and fixture files synthesise date STRINGS for a throwaway database rather than reading a domain column (#2684), and `prisma/e2e-fixtures.ts` is contractually a pure constants module — importing `@/lib/date-only` would pull `@/config/operational` into a file whose whole point is that it imports nothing. `scripts/` gets no such exemption: it carries the full set.",
+      "The seed and fixture files synthesise date STRINGS for a throwaway database rather than reading a domain column (#2684), and `prisma/e2e-fixtures.ts` is contractually a pure constants module — importing `@/lib/date-only` would pull a module graph into a file whose whole point is that it imports nothing. `scripts/` gets no such exemption: it carries the full set.",
   },
   {
     files: MONEY_DOMAIN_MODULES,
@@ -2561,6 +2693,12 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     omits: MONEY_CENTS_RESTRICTIONS,
     reason:
       "The two reviewed money boundaries (#2685). They own the conversion every other file is sent here to use, so they are the one place allowed to write it; each carries its own written reason on MONEY_GUARD_EXEMPTIONS above.",
+  },
+  {
+    files: ["src/lib/xero-invoice-rounding-audit.ts"],
+    omits: [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
+    reason:
+      "#3589: the money-domain conversion arm remains replaced by its stricter counterpart, and the global c-suffix arm is replaced only here by the same arm excluding formatDriftCents's direct dual-format return. The formatter deliberately pairs currency with signed raw-cent drift; every other function and file remains guarded.",
   },
 ];
 
@@ -2751,14 +2889,12 @@ const eslintConfig = defineConfig([
     //   * `src/lib/date-only.ts` — the helper module itself, the sanctioned home
     //     for the date-only encoding. `src/lib/nzst-date.ts` sat beside it until
     //     CT-2 (#2990) took its exemption away and #3123 deleted the file.
-    //   * `src/lib/email-templates/chores.ts` — `formatChoreRosterDate`
-    //     (#2256): the chore-roster long-weekday subject line and body must stay
-    //     byte-identical, and the helper is shared with `src/lib/email/chores.ts`.
-    //     Flat config cannot scope a rule to one function, so the exemption is
-    //     still file-wide — but the file is now the 88-line chore-template
-    //     module rather than the 5,000-line template monolith (#2689), which is
-    //     as narrow as flat config allows. New date rendering in it must still
-    //     use the helpers.
+    //   * `src/lib/email-templates/chores.ts` USED TO BE HERE, for the
+    //     chore-roster date (#2256), and #3566 took the exemption away: the
+    //     roster now renders the kernel's `longWeekdayDate` house shape through
+    //     the email seam, in the club's locale rather than a hard-coded `en-NZ`,
+    //     so the file needs no exemption at all. `date-only.ts` is now the only
+    //     file-wide DATE-rule exclusion.
     //   * the three Number-formatting files — a narrowed block, NOT an `off`:
     //     they keep both date restrictions and drop only `toLocaleString`.
     //   * `src/lib/xero-invoice-helpers.ts` — ISO payload dates for the Xero
@@ -2810,6 +2946,19 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // The seed reader for the club's currency and locale is the one file that
+    // may read CURRENCY / LOCALE and the retired NEXT_PUBLIC_ twins (#3567
+    // review). Only that group is dropped; the rendering arms are re-stated for
+    // the reason the block above gives.
+    files: ENVIRONMENT_FORMAT_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        ENVIRONMENT_FORMAT_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
     // The raw-SQL guard (#2289) is NOT an `src/`-only rule, even though the date
     // rules above are. Operator CLIs and seed/migration helpers are where
     // hand-written SQL is most likely — Prisma cannot express a bulk correlated
@@ -2850,8 +2999,8 @@ const eslintConfig = defineConfig([
     // `prisma/e2e-fixtures.ts` synthesise date STRINGS for a throwaway database
     // rather than reading a domain column, and `e2e-fixtures.ts` declares itself
     // "a pure constants module: no Playwright, no Prisma, no `server-only`
-    // imports" — importing `@/lib/date-only` would pull `@/config/operational`
-    // into a module whose whole contract is that it imports nothing.
+    // imports" — importing `@/lib/date-only` would pull a module graph into a
+    // module whose whole contract is that it imports nothing.
     //
     // Dropped BY NAME, and recorded on `SRC_RESTRICTION_EXEMPTIONS`, so every
     // other guard — raw SQL, money, the zoned-formatter rule, anything added
@@ -2859,30 +3008,6 @@ const eslintConfig = defineConfig([
     files: ["prisma/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-syntax": operatorSeedRestrictedSyntax(),
-    },
-  },
-  {
-    // The one documented format exclusion left.
-    // Flat config replaces a rule's whole option list rather than merging it, so
-    // this block re-states the mandatory restrictions (#2289, #2684) instead of
-    // switching `no-restricted-syntax` off outright: the file contains no raw
-    // SQL and no hand-written date truncation, and the exemption it needs is
-    // from the toLocale* DATE-RENDERING rules only. Same reasoning in the
-    // Number-formatting block below.
-    //
-    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE, was taken off in CT-2
-    // (#2990), and no longer exists at all: #3123 deleted it. It held the six
-    // frozen `Intl.DateTimeFormat` constants the club's rendering seam was built
-    // from, then delegated every one of them to `@/lib/club-time` and so needed
-    // no exemption. Recorded because the sequence is the rule: an adapter loses
-    // its exemption when it stops formatting, and is deleted when its last
-    // caller moves — it is never left exempt "for now". The census in
-    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the other
-    // half: it refuses an `Intl.DateTimeFormat` in the remaining adapter, and
-    // refuses the deleted file coming back.
-    files: ["src/lib/email-templates/chores.ts"],
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntax(),
     },
   },
   {
@@ -2985,17 +3110,15 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
-    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` and
-    // `CENTS_DISPLAY_DATE_FNS_OVERLAP` below. Drops only the new group by
-    // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
-    // `src/**` block's own addition, not part of the mandatory set), so
-    // nothing else these files were guarded against is lifted with it.
-    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
-      (file) =>
-        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file) &&
-        !CENTS_DISPLAY_DATE_FNS_OVERLAP.includes(file),
-    ),
+    // #3302 — CENTS_DISPLAY_EXEMPTIONS. Drops only the new group by name,
+    // plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic `src/**`
+    // block's own addition, not part of the mandatory set), so nothing else
+    // these files were guarded against is lifted with it. #3399 retired the
+    // separate block for exempt files that were also `MONEY_DOMAIN_MODULES`
+    // members, because none remains; a new exemption in a money-domain family
+    // needs that block back (restating `MONEY_MODULE_RESTRICTIONS`), or this
+    // one would silently hand it the narrow money arm.
+    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files),
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
@@ -3004,34 +3127,16 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #3302 — `CENTS_DISPLAY_DATE_FNS_OVERLAP`: the one exempted file that is
-    // ALSO a `DATE_FNS_ADAPTER_FILES` member, so it already drops
-    // `DATE_FNS_RESTRICTIONS` via its own block. Replicated here for the same
-    // flat-config-replaces reason as the money-domain overlap below — `npm run
-    // lint` caught this one going red before this block existed.
-    files: CENTS_DISPLAY_DATE_FNS_OVERLAP,
+    // #3589: preserve the deliberate dual-format drift annotation in this one
+    // file and direct return only. Flat config replaces an earlier rule, so
+    // restate the Xero money-domain arm and every other mandatory restriction.
+    files: ["src/lib/xero-invoice-rounding-audit.ts"],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...DATE_FNS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
-        ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the three exempted files
-    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*`, `*promo*`,
-    // `membership-cancellation-*` respectively), so they already
-    // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
-    // one. Replicated here rather than re-derived, because flat config
-    // replaces a matching block's rule wholesale and this block must win for
-    // these three paths without silently reverting them to the narrow money
-    // arm the block above would otherwise leave them with.
-    files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...MONEY_CENTS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
+        [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
         ...DATE_RENDERING_RESTRICTIONS,
         ...MONEY_MODULE_RESTRICTIONS,
+        ROUNDING_AUDIT_C_SUFFIX_RESTRICTION,
       ),
     },
   },
@@ -3073,7 +3178,7 @@ const eslintConfig = defineConfig([
     // what this rule exists to stop needing.
     //
     // "No escape" USED to be an overclaim, because an inline ESLint disable
-    // directive naming the rule is exactly one: `npm run lint` is bare
+    // directive naming the rule is exactly one: `pnpm run lint` is bare
     // `eslint`, `noInlineConfig` is not set, and 37 files in this tree already
     // carry directives for other rules. The residual was bounded for a
     // construct that genuinely fails to parse — the coverage gate catches those
@@ -3103,7 +3208,7 @@ const eslintConfig = defineConfig([
     // `/.artifacts/` non-source, so nothing here is ever committed or built,
     // and `docs/agents/SCOPED_CONTEXT.md` describes it as ignored, local,
     // bounded context. Linting it made an interrupted agent's half-written
-    // mutation harness the only "error" in an unrelated lane's `npm run lint`
+    // mutation harness the only "error" in an unrelated lane's `pnpm run lint`
     // — a wrong signal at the exact moment the next agent is reconstructing
     // state. The ignore is the whole directory rather than today's harness
     // extension, so the next harness cannot bring the problem back.

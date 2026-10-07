@@ -7,12 +7,13 @@ description: Security planning and review workflow for AlpineClubBookingsNZ. Use
 
 ## Read First
 
-- `AGENTS.md`
-- `docs/agents/CODEX_WORKFLOW.md`
+- `AGENTS.md`, and the rows of its routing table that match the surfaces you
+  touch.
+- For a routed reference doc (`docs/SECURITY-ATTACK-SURFACE.md`), read its
+  headings first, then only the section that matches; never the whole file.
 - `docs/agents/REVIEW_SEVERITY.md`
 - `docs/agents/PROMPT_INJECTION_GUIDE.md`
-- `docs/SECURITY-ATTACK-SURFACE.md`
-- `docs/DOMAIN_INVARIANTS.md` — the invariant index; then the domain files this
+- The invariant domain files this
   review actually needs: `docs/invariants/analytics-and-privacy.md`
   (`INV-PRIV`), `docs/invariants/operations.md` (`INV-OPS`), and
   `docs/invariants/membership-lifecycle.md` (`INV-LIFE`)
@@ -30,6 +31,8 @@ description: Security planning and review workflow for AlpineClubBookingsNZ. Use
   providers.
 - Do not publish sensitive exploit details in public issues.
 - Do not edit files unless the human explicitly asks for a scoped fix.
+- Do not merge or close anything; merges follow `AGENTS.md` "Completion and
+  Merge".
 
 ## Expected Output
 

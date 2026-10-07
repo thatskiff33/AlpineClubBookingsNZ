@@ -18,7 +18,10 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 // re-implemented (MG4 #2309). The first cut of this panel wrote its own copy of
 // both and the two immediately disagreed about an admin add — see
 // `predictMemberGuestConsent`'s note on `actorKind`.
-import { predictMemberGuestConsent } from "@/app/(authenticated)/book/_components/member-guest-preview";
+import {
+  partyNeedsSupervisionJustification,
+  predictMemberGuestConsent,
+} from "@/app/(authenticated)/book/_components/member-guest-preview";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
@@ -43,6 +46,15 @@ import { AdminOverrideCard } from "@/components/edit-booking/admin-override-card
 import { ChangeRequestCard } from "@/components/edit-booking/change-request-card";
 import { EditDatesCard } from "@/components/edit-booking/edit-dates-card";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";
+import { EditDependantIdentityQuestion } from "@/components/edit-booking/edit-dependant-identity-question";
+import { useEditDependantIdentity } from "@/components/edit-booking/hooks/use-edit-dependant-identity";
+import {
+  isDependantIdentityRefusalCode,
+} from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentitySpeaksOnBehalf,
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
@@ -89,20 +101,6 @@ import {
   usePromoSelectionState,
 } from "@/components/edit-booking/hooks/use-promo-selection";
 import { useReviewJustificationLatch } from "@/components/edit-booking/hooks/use-review-justification-latch";
-
-// #2104: mirror of requiresAdultSupervisionReview (src/lib/booking-review.ts).
-// Inlined (not imported) to match the create wizard's client-side predicate
-// (use-booking-wizard.ts:180-187) and keep server-leaning modules out of the
-// client bundle. The server remains the enforcer; this only drives the UI.
-function editTripsAdultSupervisionReview(
-  guests: Array<{ ageTier: string }>,
-): boolean {
-  const hasAdult = guests.some((g) => g.ageTier === "ADULT");
-  const hasMinor = guests.some(
-    (g) => g.ageTier === "CHILD" || g.ageTier === "YOUTH" || g.ageTier === "INFANT",
-  );
-  return hasMinor && !hasAdult;
-}
 
 /**
  * The edit-booking panel's shell: the pending edit's state, the mutations, and
@@ -194,11 +192,11 @@ export function EditBookingPanel({
     null,
   );
 
-  const { familyMembers, familyMembersLoaded, partnerCandidates } =
-    useBookingFamilyOptions({
-      bookingId: booking.id,
-      viewerRole: booking.viewerRole,
-    });
+  const familyOptions = useBookingFamilyOptions({
+    bookingId: booking.id,
+    viewerRole: booking.viewerRole,
+  });
+  const { familyMembers, familyMembersLoaded, partnerCandidates } = familyOptions;
   const availablePromoCodes = useAvailablePromoCodes(booking.viewerRole);
 
   // #2266: account credit. `useCredit` is seeded from the stored election
@@ -540,6 +538,22 @@ export function EditBookingPanel({
     ]
   );
   const guestNamesChanged = guestNameUpdates.length > 0;
+  // #3451 (`INV-GUEST-019`): an ADDED guest, or an existing one RENAMED, named
+  // as one of the owner's recorded dependants is asked about, as create asks.
+  const dependantIdentity = useEditDependantIdentity({
+    addedGuests,
+    setAddedGuests,
+    renamedGuests: renamedGuestsForDependantCheck(
+      booking.guests,
+      guestNameUpdates,
+      [...removedGuestIds],
+    ),
+    replaceRenamedGuest: (guestId, familyMember) => {
+      handleRemoveGuest(guestId);
+      handleAddFamilyMember(familyMember);
+    },
+    ...familyOptions,
+  });
   // A night toggle in the grid (issue #713) is a change even when it leaves the
   // guest's overall envelope unchanged (e.g. switching off a middle night).
   const guestNightsChanged =
@@ -747,6 +761,10 @@ export function EditBookingPanel({
     if (guestNameUpdates.length > 0) {
       body.guestUpdates = guestNameUpdates;
     }
+    // #3451: only the answers that still describe a live collision travel.
+    if (dependantIdentity.declarationsPayload) {
+      body.dependantIdentityDeclarations = dependantIdentity.declarationsPayload;
+    }
     // Other Lodges epic: the other-club rate election, sent only when this edit
     // actually proposes a change to it — an unchanged election must not travel,
     // or every ordinary edit would re-assert it and re-reprice those guests.
@@ -797,6 +815,7 @@ export function EditBookingPanel({
     return body;
   }, [
     addedGuests,
+    dependantIdentity.declarationsPayload,
     booking.checkIn,
     booking.checkOut,
     checkIn,
@@ -869,6 +888,7 @@ export function EditBookingPanel({
     setExceptionOfferState,
     setSaveOverCapacityNights,
     setSettlementMethod,
+    onDependantIdentityRefusal: dependantIdentity.handleRefusal,
   });
 
   const {
@@ -1167,9 +1187,11 @@ export function EditBookingPanel({
   // #2104: does the post-edit guest set (remaining + added) leave minors with no
   // adult? The server (resolveModifyReviewUpdate) only demands a written reason
   // on the FIRST trip, so an already-flagged/reviewed booking never re-prompts.
-  const postEditTripsReview = editTripsAdultSupervisionReview([
-    ...remainingGuests.map((g) => ({ ageTier: g.ageTier })),
-    ...addedGuests.map((g) => ({ ageTier: g.ageTier })),
+  // The server's own rule (#3770): a kept row states its stored consent, an
+  // added row the consent its add will produce.
+  const postEditTripsReview = partyNeedsSupervisionJustification([
+    ...remainingGuests,
+    ...addedGuests,
   ]);
   const bookingAlreadyUnderReview =
     Boolean(booking.requiresAdminReview) && (booking.adminReviewStatus ?? null) !== null;
@@ -1296,6 +1318,10 @@ export function EditBookingPanel({
           : "The request could not be sent. Try again.",
       ) as Error & { code?: string };
       if (typeof data?.code === "string") failure.code = data.code;
+      // #3451: put the own-dependant question back, as the quote and save do.
+      if (isDependantIdentityRefusalCode(data?.code)) {
+        dependantIdentity.handleRefusal(data.code);
+      }
       throw failure;
     }
     return {
@@ -1491,6 +1517,11 @@ export function EditBookingPanel({
           // the request — subject, as always, to the shared rule's own gates.
           recordExceptionOffer(readExceptionOffer(data));
           return;
+        }
+        // #3451: put the own-dependant question back (and re-read the list it
+        // is drawn from); the server's sentence is shown as the save error.
+        if (isDependantIdentityRefusalCode(data.code)) {
+          dependantIdentity.handleRefusal(data.code);
         }
         setSaveError(data.error || "Failed to save changes");
         // Every other refusal goes through the same shared rule, which answers null
@@ -1761,6 +1792,23 @@ export function EditBookingPanel({
           onAdd: handleAddGuest,
           onCancel: () => setShowAddForm(false),
         }}
+        dependantIdentityQuestion={
+          <EditDependantIdentityQuestion
+            bookingId={booking.id}
+            speaksOnBehalf={dependantIdentitySpeaksOnBehalf({
+              actorIsAdmin: actingAsAdmin,
+              // The owner's own panel, whatever their role (#3451 review):
+              // ownership, as the server decides it.
+              actorId: booking.viewerIsBookingOwner
+                ? bookingOwner(booking).memberId
+                : undefined,
+              ownerMemberId: bookingOwner(booking).memberId ?? null,
+            })}
+            answers={dependantIdentity}
+            familyMembers={familyMembers}
+            party={[...remainingGuests, ...addedGuests]}
+          />
+        }
       />
 
       {/* Promo Code */}
@@ -1966,7 +2014,7 @@ export function EditBookingPanel({
                 saving ||
                 quoteLoading ||
                 !quote ||
-                !capacityOk ||
+                !capacityOk || Boolean(quote.chargeRefusal) /* #3653 */ ||
                 (settlementRequired && !settlementMethod) ||
                 (linkedMoveSettlementRequired &&
                   linkedMoveChoice === "MOVE_BOTH" &&

@@ -8,7 +8,6 @@ import {
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_LOCALE } from "@/config/operational";
 
 /*
   #2930: the calendar no longer reads the club-identity bed count. That figure is
@@ -22,6 +21,7 @@ import { APP_LOCALE } from "@/config/operational";
 
 import { BookingCalendar } from "@/components/booking-calendar";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /*
   Navigating with the calendar's own Prev button keeps the assertions
@@ -45,13 +45,13 @@ import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
   `now.get*()` reader below keeps working unchanged and returns the club's
   year/month/day in any host zone.
 */
-const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE)).today();
+const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE), CLUB_FORMAT_TEST).today();
 const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
 const now = new Date(clubYear, clubMonth - 1, clubDay);
 
 function monthLabelPrefix(monthsBack: number, day: number) {
   const date = new Date(now.getFullYear(), now.getMonth() - monthsBack, day);
-  return date.toLocaleDateString(APP_LOCALE, {
+  return date.toLocaleDateString(CLUB_FORMAT_TEST.locale, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -61,7 +61,7 @@ function monthLabelPrefix(monthsBack: number, day: number) {
 
 function monthHeading(monthsBack: number) {
   return new Date(now.getFullYear(), now.getMonth() - monthsBack, 1).toLocaleDateString(
-    APP_LOCALE,
+    CLUB_FORMAT_TEST.locale,
     { month: "long", year: "numeric" },
   );
 }

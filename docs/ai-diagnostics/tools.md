@@ -106,7 +106,8 @@ pack returns one, and the member summary reports only whether a number is on fil
 That is a code-enforced guarantee rather than a server-enforced one, which is
 exactly the distinction this page exists to state. Everything else in the schema is unreadable
 by the diagnostics role, including `IntegrationCredential` (encrypted provider
-secrets) and `XeroToken` (**plaintext** OAuth access and refresh tokens), both
+secrets, including the Xero OAuth token set since #3454) and `XeroToken` (the
+same OAuth access and refresh tokens, encrypted, kept for the blue-green window), both
 permanently out of scope under ADR-007 §1. And so is every other column of the
 twenty-six: the grants are by column, so `SELECT "ipAddress" FROM "AuditLog"`,
 `SELECT "dateOfBirth" FROM "Member"`, `SELECT "notes" FROM "Booking"` and

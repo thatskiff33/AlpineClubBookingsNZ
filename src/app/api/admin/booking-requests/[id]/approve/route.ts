@@ -19,6 +19,7 @@ import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function POST(
   req: NextRequest,
@@ -171,6 +172,9 @@ export async function POST(
         priceCents: result.priceCents,
         invoiceMode: result.invoiceMode,
         teacherCount: result.teacherCount,
+        teacherHutLeaderAssignmentsCreated:
+          result.teacherHutLeaderAssignmentsCreated,
+        alreadyConverted: result.alreadyConverted,
         // Overlapping capacity-holding bookings when an exclusive whole-lodge
         // hold was set at approval (issue #119); the officer resolves them
         // manually (decision 1). Empty when no hold was set or nights are clear.
@@ -207,7 +211,7 @@ export async function POST(
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, await clubFormatValues()),
         { status: 409 },
       );
     }

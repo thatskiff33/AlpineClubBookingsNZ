@@ -82,6 +82,42 @@ describe("redact-sensitive-json", () => {
     );
   });
 
+  // #3535: a Xero id is a UUID, and one whose first or last segment is all
+  // digits read as a "phone number" - a stored invoice id came back
+  // "[REDACTED]". The two ids below are the delta review's probe shapes (first
+  // segment all digits; last segment all digits), completed to full UUIDs.
+  it("never redacts a UUID-shaped identifier for its digit segments", () => {
+    const firstSegmentDigits = "12345678-ab12-4cde-8f01-23456789abcd";
+    const lastSegmentDigits = "0a1b2c3d-4e5f-4a6b-8c7d-021234567890";
+    expect(
+      redactSensitiveRecord({
+        invoiceId: firstSegmentDigits,
+        allocations: [{ invoiceId: lastSegmentDigits }],
+      })
+    ).toEqual({
+      invoiceId: firstSegmentDigits,
+      allocations: [{ invoiceId: lastSegmentDigits }],
+    });
+    expect(redactSensitiveText(`invoice ${lastSegmentDigits}`)).toBe(
+      `invoice ${lastSegmentDigits}`
+    );
+  });
+
+  it("still redacts a genuine phone or card-like number, alone or beside a UUID", () => {
+    // The same digits as the UUID's last segment, standing alone, are a number.
+    expect(redactSensitiveJson({ note: "021234567890" })).toEqual({ note: "[REDACTED]" });
+    expect(redactSensitiveJson({ card: "411111111111111" })).toEqual({ card: "[REDACTED]" });
+    expect(
+      redactSensitiveJson({
+        note: "invoice 12345678-ab12-4cde-8f01-23456789abcd, call 0211234567",
+      })
+    ).toEqual({ note: "[REDACTED]" });
+    // An email whose local part is a UUID is still an email.
+    expect(
+      redactSensitiveJson({ note: "12345678-ab12-4cde-8f01-23456789abcd@example.test" })
+    ).toEqual({ note: "[REDACTED]" });
+  });
+
   it("still redacts standalone phone-like numbers on generic fields", () => {
     expect(redactSensitiveJson({ note: "call 021234567 today" })).toEqual({
       note: "[REDACTED]",
@@ -733,7 +769,7 @@ describe("redact-sensitive-json", () => {
   });
 
   // #2683 review finding 6. These were DOCUMENTED as a known gap. A gap in a
-  // redactor is work, not a note (AGENTS.md §6). `memberName` in particular is
+  // redactor is work, not a note (AGENTS.md "Residual risks are resolved in the PR"). `memberName` in particular is
   // first-party — composed in at least six server routes — and had been filed
   // as "Xero's own"; `City` is a CSV export header.
   describe("composed person names and bare address keys", () => {

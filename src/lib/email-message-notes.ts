@@ -229,6 +229,72 @@ export function lateCaptureHandBackConflictOutcomeParagraph(
     : "The money has NOT been sent back a second time, and that is deliberate. An operator had already marked the hand-back task for this capture as paid back by hand, which records a refund in the club's ledger, so sending Stripe's automatic refund on top of it would have paid the member twice. The automatic refund was withheld instead. Check that the hand-back really happened and covers the whole amount — if it did not, the capture is still sitting at Stripe and has to be refunded from there.";
 }
 
+/** #3643: why the hold-expiry job is telling the treasurer about a hold. */
+export type InternetBankingHoldKeptReason =
+  | "part-paid"
+  | "part-paid-manual"
+  | "paid-in-full"
+  | "unreadable"
+  | "released-unreadable"
+  | "cancelled-payment-recorded";
+
+/**
+ * #3643 (`INV-PAY-107`) — the paragraph that says what the hold-expiry job did
+ * with an expired hold it could not simply release, shared by the hand-built
+ * HTML and the `{{holdKeptNote}}` token (the #2268 rule: one editable body,
+ * six situations that need different instructions). `part-paid` is for a
+ * member's booking whose payment Xero sizes exactly — the only case the app's
+ * cancel can credit; `part-paid-manual` covers an organisation's booking and a
+ * payment Xero could not size (#3643 delta D5).
+ */
+export function internetBankingHoldKeptParagraph(
+  reason: InternetBankingHoldKeptReason,
+): string {
+  if (reason === "part-paid") {
+    return "This booking's internet banking hold reached its deadline, but Xero shows part of its invoice already paid, so the booking was NOT cancelled and its beds are still held. Nothing has been refunded or credited. Either wait for the member to pay the rest — the booking is marked paid once Xero shows the invoice fully paid — or cancel the booking in the app: the cancellation records the part payment as money received, applies the club's cancellation policy to it and returns the refundable share as account credit, and clears only what the invoice still owes.";
+  }
+  if (reason === "part-paid-manual") {
+    return "This booking's internet banking hold reached its deadline, but Xero shows money paid against its invoice, so the booking was NOT cancelled and its beds are still held. Nothing has been refunded or credited. The app cannot hand this payment back as account credit — the booking belongs to an organisation, or Xero could not give the amount exactly. Either wait for the rest to be paid, or have an officer cancel the booking in the app: it is then cancelled as unpaid, with no refund, no credit and the invoice left open, and you settle the payment and clear the rest of the invoice by hand in Xero. The Xero repair tool lists the booking for review.";
+  }
+  if (reason === "cancelled-payment-recorded") {
+    return "This internet banking booking has been cancelled, but Xero shows money paid against its invoice that the app could not hand back as account credit — the booking belongs to an organisation, or Xero could not give the amount exactly. It was cancelled as unpaid: no refund or credit was given and the invoice was left open. Settle the payment (refund, credit or keep it) and clear the rest of the invoice by hand in Xero; the Xero repair tool lists the booking for review.";
+  }
+  if (reason === "paid-in-full") {
+    return "This booking's internet banking hold reached its deadline, and Xero shows its invoice paid in full, but the payment has not reached the app from the Xero sync yet. The booking was NOT cancelled and its beds are still held. The next Xero sync should mark it paid; if it is still unpaid in the app after a day, check the Xero sync.";
+  }
+  if (reason === "unreadable") {
+    return "This booking's internet banking hold reached its deadline, but its invoice could not be read from Xero (Xero may be disconnected, or the invoice may no longer exist there), so nobody can tell whether the member has paid anything. The booking was NOT cancelled and its beds are still held. The job tries again on every run and releases the hold itself once Xero shows the invoice unpaid. If it still cannot be read seven days after the hold deadline, the hold is released and you will get one more email; if the check-in date comes first, it is left for you to reconcile.";
+  }
+  return "This booking's invoice still could not be read from Xero seven days after its hold deadline, so its internet banking hold has now been released: the booking is cancelled, its beds are free, and the member has been emailed. The credit note that clears the invoice is only created once Xero can be read and shows the invoice still owes it; if the member had paid anything, the note is refused and appears in the Xero repair tool for review. Check the invoice in Xero.";
+}
+
+/**
+ * #3638 — the paragraph that says what happened when Xero reported an Internet
+ * Banking invoice paid on a booking that also carries a captured card payment.
+ *
+ * Three arms, because the card money did three different things and the
+ * treasurer does something different for each: on a live booking it settled
+ * the booking (the price may have been paid twice); on a cancelled booking the
+ * cancellation settled it under the club's policy; or (#1765) it had been
+ * refunded before the booking moved to Internet Banking, and the booking was
+ * cancelled before this bank payment arrived, so nothing was paid twice but
+ * the bank money has nowhere to go. Shared between the hand-built HTML and the
+ * `{{secondInstrumentConflictNote}}` token (#2268): the flat editable body has
+ * no conditional syntax.
+ */
+export function secondInstrumentConflictOutcomeParagraph(
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund",
+): string {
+  switch (conflictKind) {
+    case "cancelledAfterCard":
+      return "This booking was paid by card and later cancelled, and Xero now reports its Internet Banking invoice paid as well. The cancellation already settled the card payment under the club's policy; the bank payment has been recorded against the booking, and nothing was credited or refunded for it automatically. Check in Xero whether it is separate money from the member, then return it or hold it as their account credit.";
+    case "cancelledAfterRefund":
+      return "This booking's earlier card payment was refunded before it moved to Internet Banking, and the booking was then cancelled. Xero now reports its Internet Banking invoice paid, so this bank payment arrived after the cancellation. Nothing was paid twice, but the bank payment has been recorded against the cancelled booking and nothing was credited or refunded for it automatically. Check in Xero that it is the member's money, then return it or hold it as their account credit.";
+    case "settled":
+      return "This booking may have been paid TWICE. A card payment had already settled it, and Xero now reports its Internet Banking invoice paid as well. The bank payment has been recorded against the booking; nothing was refunded or credited automatically. Check in Xero whether that payment is separate money from the member (then agree with them which payment to refund) or the card money matched to the invoice by hand.";
+  }
+}
+
 /**
  * #2268 — the outcome-dependent lead paragraph of the recurring split-settlement
  * alert, shared by the hand-built HTML below and the `{{settlementActionNote}}`
@@ -562,4 +628,19 @@ export function bookingBumpedRebookAction(
   return recipientCanBookOnline
     ? { label: "Book Again", path: "/book" }
     : { label: "Contact the Club", path: "/contact" };
+}
+
+/**
+ * #3792 — why a cancelled booking's applied account credit came back: tiered by
+ * the cancellation policy (the member's own cancel), or in full (a cancel the
+ * member did not choose: capacity, an expired internet banking hold). The
+ * sentence after the amount, shared by the HTML template and the
+ * `{{creditRestoredMessage}}` token so the two cannot drift.
+ */
+export type CreditRestoredBasis = "cancellation-policy" | "in-full";
+
+export function creditRestoredSentenceTail(basis: CreditRestoredBasis): string {
+  return basis === "in-full"
+    ? " of previously applied account credit has been restored to your account in full."
+    : " of previously applied account credit has been restored to your account (per the cancellation policy).";
 }

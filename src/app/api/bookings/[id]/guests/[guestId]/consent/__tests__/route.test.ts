@@ -204,6 +204,18 @@ beforeEach(() => {
   h.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   h.removeBookingGuestInTransaction.mockResolvedValue({
     accountCreditAmountCents: 4500,
+    // #3809: the figures the removal's Xero leg reads.
+    appliedCreditGivenBackCents: 0,
+    booking: { id: BOOKING_ID },
+    bookingModificationId: "mod-consent",
+    hasIssuedXeroInvoice: false,
+    paymentStatus: null,
+    priceDiffCents: -4500,
+    xeroRefundAmountCents: 0,
+    settlementMethod: "credit",
+    hasSucceededPayment: false,
+    xeroAdditionalAmountCents: 0,
+    zeroDollarAutoPaid: false,
   });
   h.canRespondForTarget.mockResolvedValue(false);
   h.resolveNotificationRecipients.mockResolvedValue([]);
@@ -430,7 +442,8 @@ describe("APPROVE", () => {
     // idempotency story (two delegates answering at once resolve to one winner).
     expect(h.guestUpdateMany).toHaveBeenCalledTimes(1);
     const claim = h.guestUpdateMany.mock.calls[0][0];
-    expect(claim.where).toEqual({ id: GUEST_ID, consentStatus: "PENDING" });
+    // #3029 N3: the claim also matches the member authorised before the locks.
+    expect(claim.where).toEqual({ id: GUEST_ID, consentStatus: "PENDING", memberId: TARGET_ID });
     expect(claim.data).toMatchObject({
       consentStatus: "CONFIRMED",
       consentRespondedByMemberId: TARGET_ID,

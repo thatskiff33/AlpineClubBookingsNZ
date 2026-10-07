@@ -3,7 +3,7 @@
 // client components. API responses serialise dates to strings, so the client
 // shapes below use string dates.
 
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import type { BoundClubTime } from "@/lib/club-time";
 
 export type InductionStatus = "DRAFT" | "IN_PROGRESS" | "COMPLETED" | "VOIDED";
 export type InductionKind =
@@ -106,18 +106,23 @@ export interface AwaitingInductionClient {
 // the member/admin induction screens, the server's for the print page. An
 // induction sign-off timestamped 2026-04-15T23:30Z is 16 April in New Zealand
 // but 15 April in UTC, so the signed-on date on a legal-ish record could differ
-// per viewer. The zone (and locale) now come from the app config, exactly like
-// formatNZDate. The "long" style is deliberate on these records and is kept.
-const INDUCTION_DATE_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  dateStyle: "long",
-});
-
-export function formatInductionDate(value: string | null): string | null {
+// per viewer. The "long" style is deliberate on these records and is kept.
+//
+// #3566 took the last configuration read out of it. It was a module-level
+// formatter frozen at import to `APP_LOCALE` and `APP_TIME_ZONE` — the build's
+// locale and the container's zone, never the club's — and both callers are
+// `"use client"`, so it could not have asked for the persisted values. It now
+// takes the caller's `BoundClubTime` (from `useClubTime()`), whose
+// `instantLongDate` is the kernel's `longDate` house shape: the identical
+// `dateStyle: "long"`, in the club's persisted zone and locale.
+export function formatInductionDate(
+  value: string | null,
+  clubTime: BoundClubTime,
+): string | null {
   if (!value) return null;
   const parsed = new Date(value);
   // Intl throws RangeError on an invalid Date, so guard rather than crash a
   // client component on a malformed API value.
   if (Number.isNaN(parsed.getTime())) return null;
-  return INDUCTION_DATE_FORMATTER.format(parsed);
+  return clubTime.instantLongDate(parsed);
 }

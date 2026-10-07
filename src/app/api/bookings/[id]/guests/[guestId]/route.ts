@@ -21,7 +21,7 @@ import {
   sendBookingModifiedEmail,
 } from "@/lib/email";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { guestRemovalXeroSettlement, queueGuestRemovalXeroSettlement } from "@/lib/booking-guest-removal-xero";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -51,6 +51,7 @@ import {
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function DELETE(
   request: NextRequest,
@@ -134,10 +135,14 @@ export async function DELETE(
   // for a club behind Greenwich the container's timezone would refuse a
   // self-removal a whole day early.
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
+        format,
         tx,
         bookingId,
         guestId,
@@ -227,6 +232,7 @@ export async function DELETE(
     // helper scopes the idempotency key to this modification and enqueues
     // durable recovery on failure (issue #818).
     const stripeRefundId = await executeBookingModificationRefund({
+      format,
       bookingId,
       result,
       metadataReason: "guest_removed_price_decrease",
@@ -247,6 +253,7 @@ export async function DELETE(
     // invoice below, unchanged).
     const { additionalPaymentClientSecret, additionalPaymentIntentId } =
       await createModificationAdditionalPaymentIntent({
+        format,
         bookingId,
         result,
         reason: "guest_removal_price_increase",
@@ -256,7 +263,7 @@ export async function DELETE(
       });
 
     // Audit log. #3530: what the figure is made of, line by line and in dollars.
-    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
     logAudit({
       action: "booking.modify.guests.remove",
       memberId: session.user.id,
@@ -296,30 +303,10 @@ export async function DELETE(
       ipAddress,
     });
 
-    void queueXeroBookingEditSettlement({
-      bookingId,
-      bookingModificationId: result.bookingModificationId,
+    // #3809: the one guest-removal Xero leg, shared with the consent doors.
+    void queueGuestRemovalXeroSettlement(guestRemovalXeroSettlement(result), {
       createdByMemberId: session.user.id,
-      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-      originalPaymentStatus: result.paymentStatus,
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: 0,
-      datesChanged: false,
-      // Policy-limited settlement amount + method so a captured-payment
-      // reduction issues the correct (card vs credit) modification credit
-      // note; an unpaid issued invoice falls back to the full delta inside
-      // classifyXeroBookingEditSettlement when this is null.
-      settlementAmountCents: result.xeroRefundAmountCents,
-      settlementMethod: result.settlementMethod,
-      refundedThroughStripe: result.hasSucceededPayment,
-      // A Stripe-collected increase must not double-bill through Xero: hold
-      // the supplementary invoice's payment recording on the Stripe intent,
-      // exactly as the batch flow does.
-      requiresAdditionalStripePayment:
-        result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
-      additionalPaymentIntentId,
-      createPrimaryInvoiceWhenMissing:
-        result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+      additionalPaymentIntentId: additionalPaymentIntentId ?? null,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );
@@ -358,6 +345,7 @@ export async function DELETE(
         changeFeeCents: 0,
         refundAmountCents: result.refundAmountCents,
         accountCreditAmountCents: result.accountCreditAmountCents,
+        appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
         // #2390: same words as the edit preview and the booking history when a
         // usage cap stopped the promotion reaching somebody on this booking.
         promoCoverageNote: result.promoCoverage?.message ?? null,
@@ -389,7 +377,7 @@ export async function DELETE(
             : result.hasIssuedXeroInvoice && result.additionalAmountCents > 0
               ? "INTERNET_BANKING"
               : undefined,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );
     }

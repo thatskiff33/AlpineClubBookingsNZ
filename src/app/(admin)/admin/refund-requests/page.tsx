@@ -21,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
@@ -32,10 +31,12 @@ import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
-import { parseInstant, type BoundClubTime } from "@/lib/club-time"
+import { parseInstant, type BoundClubTime, type ClubDateFormat } from "@/lib/club-time"
 import { formatPayloadCalendarDay } from "../_lib/calendar-day"
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { MoneyInput } from "@/components/ui/money-input"
+import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents, formatCentsPlain } from "@/lib/utils"
+import { useClubFormat } from "@/components/club-format-provider"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -131,11 +132,12 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
 // A booking's check-in/check-out is a CALENDAR DATE — a `@db.Date` column the
 // API serialises as UTC midnight. It takes no zone; reading it through one
 // named the night before for any club behind UTC (INV-DATE-019).
-function formatStayDay(value: string) {
-  return formatPayloadCalendarDay(value)
+function formatStayDay(value: string, format: ClubDateFormat) {
+  return formatPayloadCalendarDay(value, format)
 }
 
 export default function RefundRequestsPage() {
+  const format = useClubFormat()
   const clubTime = useClubTime()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -490,29 +492,29 @@ export default function RefundRequestsPage() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Check-in:</span>{" "}
-                            {formatStayDay(req.booking.checkIn)}
+                            {formatStayDay(req.booking.checkIn, format)}
                           </div>
                           <div>
                             <span className="text-muted-foreground">Check-out:</span>{" "}
-                            {formatStayDay(req.booking.checkOut)}
+                            {formatStayDay(req.booking.checkOut, format)}
                           </div>
                           {payment && (
                             <>
                               <div>
                                 <span className="text-muted-foreground">Paid:</span>{" "}
-                                {formatCents(payment.amountCents)}
+                                {formatCents(payment.amountCents, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Remaining:</span>{" "}
-                                {formatCents(maxRefundable)}
+                                {formatCents(maxRefundable, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">To card:</span>{" "}
-                                {formatCents(settlement?.refundToOriginalMethodCents ?? 0)}
+                                {formatCents(settlement?.refundToOriginalMethodCents ?? 0, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">As credit:</span>{" "}
-                                {formatCents(settlement?.accountCreditCents ?? 0)}
+                                {formatCents(settlement?.accountCreditCents ?? 0, format)}
                               </div>
                             </>
                           )}
@@ -521,14 +523,14 @@ export default function RefundRequestsPage() {
                         {settlement && settlement.restoredAppliedCreditCents > 0 && (
                           <p className="text-sm text-muted-foreground">
                             Restored prior credit:{" "}
-                            {formatCents(settlement.restoredAppliedCreditCents)}
+                            {formatCents(settlement.restoredAppliedCreditCents, format)}
                           </p>
                         )}
 
                         {req.requestedAmountCents && (
                           <p className="text-sm">
                             <span className="text-muted-foreground">Requested amount:</span>{" "}
-                            <strong>{formatCents(req.requestedAmountCents)}</strong>
+                            <strong>{formatCents(req.requestedAmountCents, format)}</strong>
                           </p>
                         )}
 
@@ -546,7 +548,7 @@ export default function RefundRequestsPage() {
                             {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
                               <p className="text-sm">
                                 <span className="text-muted-foreground">Refunded:</span>{" "}
-                                <strong>{formatCents(req.approvedAmountCents)}</strong>
+                                <strong>{formatCents(req.approvedAmountCents, format)}</strong>
                               </p>
                             )}
                             {req.adminNotes && (
@@ -580,11 +582,10 @@ export default function RefundRequestsPage() {
                           <div className="border-t pt-4 mt-3 space-y-3">
                             <div className="space-y-2">
                               <Label htmlFor="approvedAmount">Refund Amount ($)</Label>
-                              <Input
+                              <MoneyInput
                                 id="approvedAmount"
-                                {...MONEY_INPUT_PROPS}
                                 value={approvedAmount}
-                                onChange={(e) => setApprovedAmount(e.target.value)}
+                                onValueChange={setApprovedAmount}
                                 disabled={!canEditFinance}
                                 title={
                                   !canEditFinance
@@ -594,7 +595,7 @@ export default function RefundRequestsPage() {
                                 className="w-40"
                               />
                               <p className="text-xs text-muted-foreground">
-                                Max refundable: {formatCents(maxRefundable)}
+                                Max refundable: {formatCents(maxRefundable, format)}
                               </p>
                             </div>
                             <div className="space-y-2">
@@ -711,7 +712,7 @@ export default function RefundRequestsPage() {
                               }
                             >
                               {request.amountCents > 0 ? "+" : ""}
-                              {formatCents(request.amountCents)}
+                              {formatCents(request.amountCents, format)}
                             </span>
                           </div>
                           <div>

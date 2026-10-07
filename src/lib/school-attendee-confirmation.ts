@@ -12,6 +12,10 @@ import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendSchoolAttendeeConfirmationEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import {
+  bookingGuestDietaryUpdateData,
+  planGuestRenameDietary,
+} from "@/lib/member-dietary-booking-writes";
 import { prisma } from "@/lib/prisma";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -370,12 +374,28 @@ export async function applySchoolAttendeeConfirmation({
     });
   }
 
+  // #3029 S2 (`INV-MOD-059`): a placeholder being named, or a spelling fix,
+  // keeps the row's dietary note; a rename to somebody else clears it, so the
+  // next child on the row never inherits the previous one's allergy. The same
+  // same-occupant rule the modification rename uses.
+  const guestsById = new Map(booking.guests.map((guest) => [guest.id, guest]));
+  const renameDietary = planGuestRenameDietary(
+    resolvedUpdates.flatMap((update) => {
+      const row = guestsById.get(update.guestId);
+      return row ? [{ guestId: update.guestId, previous: row, next: update }] : [];
+    }),
+  );
+
   const confirmed = Boolean(confirm);
   await prisma.$transaction(async (tx) => {
     for (const update of resolvedUpdates) {
       await tx.bookingGuest.update({
         where: { id: update.guestId },
-        data: { firstName: update.firstName, lastName: update.lastName },
+        data: {
+          firstName: update.firstName,
+          lastName: update.lastName,
+          ...bookingGuestDietaryUpdateData(renameDietary(update.guestId)),
+        },
       });
     }
     if (confirmed) {

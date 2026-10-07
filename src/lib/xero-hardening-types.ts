@@ -100,12 +100,21 @@ export interface XeroReconciliationReport {
      * outbox caps an over-covered payment's next note at zero silently.
      */
     overCoveredStripeRefundPayments: number;
+    /** #3548: refund notes with no settlement on record, or part-settled in Xero. */
+    unsettledRefundCreditNotes: number;
     stalePendingOperations: number;
     recentFailedOperations: number;
     recentPartialOperations: number;
     unsupportedPartialOperations: number;
     repeatedFailureCorrelations: number;
     failedInboundEvents: number;
+    /**
+     * #3635 (`INV-INT-025`): failed or partial operations in the lookback
+     * window that an officer resolved in Xero. Not an issue and not counted in
+     * the failure figures above; the repair tool reports each at info level.
+     * Report data only: the emailed digest does not show it.
+     */
+    resolvedInXeroOperations: number;
     issueCategoryCount: number;
     issueTotalCount: number;
   };
@@ -141,8 +150,9 @@ export interface XeroCanonicalLinkCleanupResult {
   keptActiveLinks: number;
   deactivatedLinks: number;
   /**
-   * Active Stripe per-delta REFUND_CREDIT_NOTE links the source-aware cleanup
-   * deliberately left alone (#2901, INV-ADDPAY-020). Observability only.
+   * Active per-refund REFUND_CREDIT_NOTE links the source-aware cleanup
+   * deliberately left alone: every Stripe delta (#2901, INV-ADDPAY-020) and any
+   * link stamped per-refund (#3880). Observability only; the name predates #3880.
    */
   preservedStripeRefundCreditNoteLinks: number;
   byCategory: {

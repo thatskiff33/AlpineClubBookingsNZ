@@ -6,7 +6,9 @@
  * The family boundary is `src/lib/email/admin-alerts-finance.ts`. The two
  * SCHEDULED reconciliation reports from the same sender live in
  * `./admin-xero-reports` — split off for size, and because a report renders a
- * whole tabular document rather than a single alert.
+ * whole tabular document rather than a single alert. The expired internet
+ * banking hold alert (#3643) lives in `./admin-internet-banking`, split off for
+ * size.
  */
 import { escapeHtml } from "./escape";
 import {
@@ -25,6 +27,7 @@ import {
   lateCaptureAutoRefundOutcomeParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCapturePaymentLabel,
+  secondInstrumentConflictOutcomeParagraph,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
 import {
@@ -32,6 +35,7 @@ import {
   emailCalendarDayOrUnknown,
   emailClubDateTime,
 } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
@@ -74,7 +78,9 @@ export function adminPaymentFailureTemplate(data: {
    * uses it.
    */
   paymentIntentId: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Payment Failed")}
     ${alertBox("A payment has failed and may require manual attention.", "warning")}
@@ -82,7 +88,7 @@ export function adminPaymentFailureTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDayOrUnknown(data.checkIn) },
       { label: "Check-out", value: emailCalendarDayOrUnknown(data.checkOut) },
-      { label: "Amount", value: formatCents(data.amountCents) },
+      { label: "Amount", value: formatCents(data.amountCents, format) },
       { label: "Error", value: escapeHtml(data.errorMessage) },
       { label: "Reference", value: escapeHtml(data.paymentIntentId) },
     ])}
@@ -123,7 +129,9 @@ export function adminSupersededPaymentRefundTemplate(data: {
   amountOwingCents: number;
   paymentIntentId: string;
   bookingUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Superseded Payment Auto-Refunded")}
     ${alertBox(
@@ -135,8 +143,8 @@ export function adminSupersededPaymentRefundTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Amount refunded", value: formatCents(data.refundedAmountCents) },
-      { label: "Still owing", value: formatCents(data.amountOwingCents) },
+      { label: "Amount refunded", value: formatCents(data.refundedAmountCents, format) },
+      { label: "Still owing", value: formatCents(data.amountOwingCents, format) },
       { label: "Superseded Stripe PI", value: escapeHtml(data.paymentIntentId) },
     ])}
     ${button("Open Booking", data.bookingUrl)}
@@ -154,7 +162,9 @@ export function adminDuplicateCaptureRefundTemplate(data: {
   errorMessage?: string | null;
   reviewUrl: string;
   refundFailed: boolean;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const settledBy = data.settledPaymentIntentId
     ? escapeHtml(data.settledPaymentIntentId)
     : "another capture";
@@ -186,7 +196,7 @@ export function adminDuplicateCaptureRefundTemplate(data: {
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       {
         label: data.refundFailed ? "Amount to refund" : "Amount refunded",
-        value: formatCents(data.amountCents),
+        value: formatCents(data.amountCents, format),
       },
       { label: "Duplicate Stripe PI", value: escapeHtml(data.paymentIntentId) },
       { label: "Settled by", value: settledBy },
@@ -239,7 +249,9 @@ export function adminLateCaptureAutoRefundTemplate(data: {
    */
   captureKind: "modification" | "primary";
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   // #2773: sentence-initial, so the shared label is capitalised here and nowhere
   // else — the label itself stays a bare noun phrase for mid-sentence use.
   const paymentLabel = lateCapturePaymentLabel(data.captureKind);
@@ -275,7 +287,7 @@ export function adminLateCaptureAutoRefundTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Amount refunded", value: formatCents(data.amountCents) },
+      { label: "Amount refunded", value: formatCents(data.amountCents, format) },
       {
         label: "Booking status",
         value: data.bookingDeleted
@@ -339,7 +351,9 @@ export function adminLateCaptureHandBackConflictTemplate(data: {
   handBackAmountCents: number | null;
   refundSent: boolean;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const paymentLabel = lateCapturePaymentLabel(data.captureKind);
   return layout(`
     ${heading(
@@ -365,13 +379,13 @@ export function adminLateCaptureHandBackConflictTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Amount captured", value: formatCents(data.amountCents) },
+      { label: "Amount captured", value: formatCents(data.amountCents, format) },
       ...(data.handBackAmountCents === null
         ? []
         : [
             {
               label: "Recorded as paid back by hand",
-              value: formatCents(data.handBackAmountCents),
+              value: formatCents(data.handBackAmountCents, format),
             },
           ]),
       {
@@ -407,7 +421,9 @@ export function adminManualSettlementConflictTemplate(data: {
   xeroInvoiceNumber: string | null;
   xeroInvoiceUrl: string | null;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Cash Settlement vs Xero Payment — Reconcile By Hand")}
     ${alertBox(
@@ -426,7 +442,7 @@ export function adminManualSettlementConflictTemplate(data: {
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Booking status", value: escapeHtml(data.bookingStatus) },
-      { label: "Amount recorded as cash", value: formatCents(data.amountCents) },
+      { label: "Amount recorded as cash", value: formatCents(data.amountCents, format) },
       {
         label: "Xero invoice",
         value: data.xeroInvoiceNumber
@@ -439,6 +455,75 @@ export function adminManualSettlementConflictTemplate(data: {
         ? button("Open the invoice in Xero", data.xeroInvoiceUrl)
         : ""
     }
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+// ---- #3638: Admin Alert — card payment and Xero payment on one booking ----
+//
+// The second-instrument conflict (`INV-PAY-102`). A card payment settled the
+// booking and Xero then reported its Internet Banking invoice paid too, so the
+// club may hold the price twice. Its OWN template, not the generic payment-
+// failure mail it first shipped as: nothing failed, and "Payment Failed" is the
+// subject an operator skims past (#2761's finding). The booking and the Xero
+// invoice are both one click away, because reconciling it needs both.
+export function adminSecondInstrumentSettlementConflictTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  bookingId: string;
+  bookingStatus: string;
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund";
+  /** The Internet Banking payment's amount — what the invoice asked for. */
+  invoiceAmountCents: number;
+  /** The card money still held after refunds. */
+  cardHeldCents: number;
+  cardPaymentIntentId: string | null;
+  xeroInvoiceNumber: string | null;
+  xeroInvoiceUrl: string | null;
+  bookingUrl: string;
+  reviewUrl: string;
+},
+  format: ClubFormat,
+): string {
+  return layout(`
+    ${heading("Booking May Have Been Paid Twice — Card and Xero")}
+    ${alertBox(
+      "A card payment and an Internet Banking payment have both been recorded against this booking. Nothing was refunded or credited automatically — please reconcile.",
+      "warning"
+    )}
+    ${
+      // The SAME sentence the {{secondInstrumentConflictNote}} token renders
+      // (#2268 convention).
+      paragraph(secondInstrumentConflictOutcomeParagraph(data.conflictKind))
+    }
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Booking status", value: escapeHtml(data.bookingStatus) },
+      { label: "Invoice amount", value: formatCents(data.invoiceAmountCents, format) },
+      { label: "Card payment still held", value: formatCents(data.cardHeldCents, format) },
+      {
+        label: "Stripe PI",
+        value: data.cardPaymentIntentId
+          ? escapeHtml(data.cardPaymentIntentId)
+          : "unknown",
+      },
+      {
+        label: "Xero invoice",
+        value: data.xeroInvoiceNumber
+          ? escapeHtml(data.xeroInvoiceNumber)
+          : "unknown",
+      },
+    ])}
+    ${
+      data.xeroInvoiceUrl
+        ? button("Open the invoice in Xero", data.xeroInvoiceUrl)
+        : ""
+    }
+    ${button("Open Booking", data.bookingUrl, { sameOrigin: true })}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
   `);
 }
@@ -456,7 +541,9 @@ export function adminManualRefundTaskTemplate(data: {
   bookingId: string;
   reason: string;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Manual Refund Needed — Cash Booking Cancelled")}
     ${alertBox(
@@ -474,8 +561,27 @@ export function adminManualRefundTaskTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
-      { label: "Amount to refund", value: formatCents(data.refundAmountCents) },
+      { label: "Amount to refund", value: formatCents(data.refundAmountCents, format) },
       { label: "Reason", value: escapeHtml(data.reason) },
+    ])}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+// ---- #3639: Admin Alert — late capture held for a treasurer (once per payment; the task is the record) ----
+export function adminLateCaptureHeldTemplate(data: {
+  memberName: string; checkIn: Date; checkOut: Date; amountCents: number; bookingId: string; reviewUrl: string;
+}, format: ClubFormat): string {
+  return layout(`
+    ${heading("Late Payment Held for Approval")}
+    ${alertBox("A card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.", "warning")}
+    ${paragraph("Open the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Amount held", value: formatCents(data.amountCents, format) },
     ])}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
   `);
@@ -567,7 +673,9 @@ export function adminRefundRequestTemplate(data: {
   requestedAmountCents: number | null;
   paidAmountCents: number;
   refundedAmountCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const remaining = data.paidAmountCents - data.refundedAmountCents;
   return layout(`
     ${heading("Refund Appeal Submitted")}
@@ -576,10 +684,10 @@ export function adminRefundRequestTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Paid", value: formatCents(data.paidAmountCents) },
-      { label: "Already Refunded", value: formatCents(data.refundedAmountCents) },
-      { label: "Remaining", value: formatCents(remaining) },
-      ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents) }] : []),
+      { label: "Paid", value: formatCents(data.paidAmountCents, format) },
+      { label: "Already Refunded", value: formatCents(data.refundedAmountCents, format) },
+      { label: "Remaining", value: formatCents(remaining, format) },
+      ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents, format) }] : []),
     ])}
     ${alertBox(escapeHtml(data.reason), "info")}
     ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}

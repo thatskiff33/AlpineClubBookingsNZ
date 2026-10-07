@@ -1,7 +1,6 @@
 import {
   BookingStatus,
   CreditType,
-  PaymentStatus,
   type Prisma,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -11,8 +10,13 @@ import logger from "@/lib/logger";
 import { markPaymentIntentTransactionFailed } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
+import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -43,12 +47,6 @@ export type DeleteBookingResult =
 type BookingForDelete = NonNullable<
   Awaited<ReturnType<typeof loadBookingForDelete>>
 >;
-
-const CAPTURED_PAYMENT_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
 
 export async function deleteBooking(input: {
   bookingId: string;
@@ -198,7 +196,7 @@ type SoftDeleteOutcome = {
  * owner is sitting on the Stripe payment page for a modification. Deletion does
  * not touch Stripe, so the PaymentIntent stays live and the member can still
  * pay. `getCancelledBookingDeleteBlockers` cannot prevent it: that gate counts
- * CAPTURED PaymentTransactions (`CAPTURED_PAYMENT_STATUSES`) and a
+ * captured PaymentTransactions (`CAPTURED_TRANSACTION_STATUS_LIST`) and a
  * `SUCCEEDED` additional payment, so an intent that has NOT yet captured is
  * exactly the state it permits — and exactly the state that can capture a
  * moment later. Cancelling the intent is what actually shuts the window.
@@ -270,11 +268,14 @@ async function cancelInFlightPaymentIntentsAfterSoftDelete(
 
   for (const paymentIntentId of intentIds) {
     try {
-      const { canceled } = await cancelPaymentIntentIfCancellableWithResult(
+      const result = await cancelPaymentIntentIfCancellableWithResult(
         paymentIntentId
       );
 
-      if (!canceled) {
+      // #3638: the same "is it dead?" answer booking cancellation reads, so an
+      // intent that was already cancelled at Stripe has its local row closed
+      // here too instead of being left PROCESSING.
+      if (!isPaymentIntentCancelConfirmed(result)) {
         logger.info(
           { bookingId, paymentIntentId },
           "Soft-deleted booking: PaymentIntent was not in a cancellable state, left as-is"
@@ -322,6 +323,9 @@ async function softDeleteCancelledBookingInTransaction(
   actor: BookingDeleteActor,
   reason: string
 ): Promise<SoftDeleteOutcome> {
+  // The club's format (#3565), for a blocker's credit figure: read before the
+  // transaction and its global lock, never inside them.
+  const format = await clubFormatValues();
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const booking = await loadBookingForDelete(tx, bookingId);
@@ -348,7 +352,7 @@ async function softDeleteCancelledBookingInTransaction(
       };
     }
 
-    const blockers = await getCancelledBookingDeleteBlockers(tx, booking);
+    const blockers = await getCancelledBookingDeleteBlockers(tx, booking, format);
     if (blockers.length > 0) {
       return {
         result: {
@@ -483,7 +487,8 @@ async function loadBookingForDelete(db: BookingDeleteDb, bookingId: string) {
 
 async function getCancelledBookingDeleteBlockers(
   tx: Prisma.TransactionClient,
-  booking: BookingForDelete
+  booking: BookingForDelete,
+  format: ClubFormat,
 ) {
   const blockers: BookingDeleteBlocker[] = [];
   const paymentId = booking.payment?.id;
@@ -511,7 +516,7 @@ async function getCancelledBookingDeleteBlockers(
           where: {
             paymentId,
             OR: [
-              { status: { in: Array.from(CAPTURED_PAYMENT_STATUSES) } },
+              { status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
               { refundedAmountCents: { gt: 0 } },
             ],
           },
@@ -592,7 +597,7 @@ async function getCancelledBookingDeleteBlockers(
     "member_credit",
     `Member credit history exists (${memberCreditRows.length} row${
       memberCreditRows.length === 1 ? "" : "s"
-    }, net ${formatCents(creditNetCents)})`,
+    }, net ${formatCents(creditNetCents, format)})`,
     memberCreditRows.length > 0 && !creditFullyRestored ? memberCreditRows.length : 0
   );
   addBlocker(
@@ -670,7 +675,7 @@ function hasCapturedOrCreditedPayment(
   }
 
   return (
-    CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
+    isCapturedPaymentStatus(payment.status) ||
     payment.refundedAmountCents > 0 ||
     // #1547: the applied-credit mirror no longer blocks once the ledger proves
     // that applied credit was fully reversed (net-zero, reversal-only, no Xero

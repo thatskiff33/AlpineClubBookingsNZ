@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
-import { isFullAdmin } from "@/lib/access-roles";
+import { useFullAdminEditAccess } from "@/hooks/use-admin-area-edit-access";
 
 /**
  * Derives the Xero setup wizard's server truth (#2080) — the `context` the
@@ -90,6 +89,14 @@ export interface XeroWizardContext {
    */
   orgName: string | null;
   /**
+   * The connected organisation's base currency (`NZD`), or null when unknown
+   * (#3633). Read off the same organisation response as {@link orgName}, and
+   * kept on the same terms: a failed re-check keeps the last one we read. The
+   * connect step compares it with the club's currency and warns when they
+   * differ, because Xero books every invoice in its base currency.
+   */
+  orgBaseCurrency: string | null;
+  /**
    * Why the organisation could not be CONFIRMED, or null when it was (#2394).
    * The connect step shows the "Confirming the organisation name…" placeholder
    * only while this is null and a read is in flight; any settled failure
@@ -124,6 +131,12 @@ export interface XeroWizardContext {
    * dropped inside the hook instead (see the in-flight ref in `load`).
    */
   orgLoading: boolean;
+  /**
+   * The currency cards are charged in, resolved on the server, or null when no
+   * card can be charged (#3633). The connect step compares the organisation's
+   * base currency with this.
+   */
+  clubChargeCurrencyCode: string | null;
   /** Webhook delivery URL to paste into the Xero portal ({origin}/api/webhooks/xero). */
   webhookDeliveryUrl: string;
   /**
@@ -152,6 +165,7 @@ interface StatusResponse {
 }
 interface OrgResponse {
   name?: string | null;
+  baseCurrency?: string | null;
   readFailure?: {
     kind?: string;
     rateLimit?: string | null;
@@ -245,6 +259,11 @@ export interface XeroWizardServerConfig {
   webhookDeliveryUrl: string;
   /** Public-HTTPS, non-localhost origin (webhooks can actually validate here). */
   webhooksVerifiable: boolean;
+  /**
+   * The currency cards are charged in (`clubChargeCurrencyCode` over
+   * `clubFormatValues()`), or null when none can be (#3633).
+   */
+  clubChargeCurrencyCode: string | null;
 }
 
 export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
@@ -252,16 +271,11 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
   loading: boolean;
   refresh: () => void;
 } {
-  const { data: session, status: sessionStatus } = useSession();
   // Tri-state: `undefined` until the session resolves (#2324). Reading an
   // unresolved session as `false` made every step's Full-Admin notice appear
-  // and then vanish for an actual Full Admin.
-  const isFull =
-    sessionStatus === "loading"
-      ? undefined
-      : session
-        ? isFullAdmin({ accessRoles: session.user?.accessRoles ?? [] })
-        : false;
+  // and then vanish for an actual Full Admin. The shared hook is the one home
+  // for that reading (#3596); it answers `false` for a signed-out session too.
+  const isFull = useFullAdminEditAccess();
 
   const [loading, setLoading] = useState(true);
   const [credentials, setCredentials] = useState<
@@ -274,6 +288,7 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
   const [connected, setConnected] = useState(false);
   const [needsReentry, setNeedsReentry] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
+  const [orgBaseCurrency, setOrgBaseCurrency] = useState<string | null>(null);
   const [orgError, setOrgError] = useState<XeroOrgReadError | null>(null);
   const [orgErrorAt, setOrgErrorAt] = useState<number | null>(null);
   const [orgErrorAttempts, setOrgErrorAttempts] = useState(0);
@@ -371,9 +386,19 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
         if (orgRes.ok) {
           const data = (await orgRes.json()) as OrgResponse;
           const name = data.name ?? null;
+          // Trust nothing off the wire (#3633): a non-string is "unknown".
+          const baseCurrency =
+            typeof data.baseCurrency === "string" && data.baseCurrency.trim()
+              ? data.baseCurrency
+              : null;
           // Never blank a name on a failure: the server already serves the last
           // known one, and losing it would be a regression on top of a blip.
           if (name) setOrgName(name);
+          // The base currency follows the same rule. A SUCCESSFUL read replaces
+          // it outright, null included, so an organisation that stops reporting
+          // one stops being warned about.
+          if (!data.readFailure) setOrgBaseCurrency(baseCurrency);
+          else if (baseCurrency) setOrgBaseCurrency(baseCurrency);
           if (data.readFailure) {
             // Reported EVEN WITH a name (#2394 review, F4). The name that
             // arrives beside a failure is the last one we read, served out of a
@@ -421,6 +446,7 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
         // Positively not connected: there is no organisation to name and
         // nothing to report.
         setOrgName(null);
+        setOrgBaseCurrency(null);
         clearOrgFailure();
       } else {
         // The status read failed, so we never learned whether Xero is
@@ -475,10 +501,12 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
     connected,
     needsReentry,
     orgName,
+    orgBaseCurrency,
     orgError,
     orgErrorAt,
     orgErrorAttempts,
     orgLoading,
+    clubChargeCurrencyCode: serverConfig.clubChargeCurrencyCode,
     webhookDeliveryUrl: serverConfig.webhookDeliveryUrl,
     webhooksVerifiable: serverConfig.webhooksVerifiable,
     webhookVerified,

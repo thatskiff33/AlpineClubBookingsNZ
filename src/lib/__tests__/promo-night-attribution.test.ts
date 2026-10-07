@@ -15,6 +15,7 @@ import {
   type PromoApplicationSubject,
 } from "@/lib/promo";
 import type { PromoUsageClient } from "@/lib/promo-usage-counts";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
@@ -157,7 +158,7 @@ async function attribute(
     allocations: discount.allocations,
     priceAdjustmentCents: discount.priceAdjustmentCents,
     context: "attribution fixture",
-  });
+  }, CLUB_FORMAT_TEST);
   for (const target of targets) {
     if (target.scope === "night") expect(target.stayDate).toBeInstanceOf(Date);
     else expect(target.stayDate).toBeNull();
@@ -359,7 +360,7 @@ describe("INV-MONEY-029: what each promotion took off each night or guest (#3276
         allocations: result.allocations,
         priceAdjustmentCents: result.priceAdjustmentCents,
         context: "cap fixture",
-      }),
+      }, CLUB_FORMAT_TEST),
     ).not.toThrow();
   });
 

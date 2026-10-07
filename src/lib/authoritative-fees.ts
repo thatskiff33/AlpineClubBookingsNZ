@@ -7,6 +7,8 @@ import type {
 } from "@prisma/client";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export const MEMBERSHIP_FEE_BILLING_BASES = [
   "PER_MEMBER",
@@ -94,7 +96,9 @@ export function validateFeeComponents(input: {
   components: FeeComponentInput[];
   amountCents: number;
   billingBasis: MembershipFeeBillingBasis;
-}) {
+},
+  format: ClubFormat,
+) {
   const { components, amountCents, billingBasis } = input;
   if (billingBasis === "NO_INVOICE") {
     if (components.length > 0) {
@@ -116,7 +120,7 @@ export function validateFeeComponents(input: {
   const sum = components.reduce((total, component) => total + component.amountCents, 0);
   if (sum !== amountCents) {
     throw new FeeScheduleValidationError(
-      `Fee components must sum to the fee amount (${amountCents} cents); the supplied components sum to ${sum} cents.`,
+      `Fee components must sum to the fee amount (${formatCents(amountCents, format)}); the supplied components sum to ${formatCents(sum, format)}.`,
     );
   }
 }

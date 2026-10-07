@@ -97,6 +97,9 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // what is stored, and #2859 fixes what is stored.
   dateOfBirth: "calendarDay",
   occupation: "plain", // `String?` (schema.prisma:517)
+  // `String? @db.VarChar(500)` (#2941): free text, attached by the engine from
+  // the one dietary door (`INV-PRIV-022`).
+  dietaryRequirements: "plain",
   // `DateTime? @db.Date` (schema.prisma:573) since #2872. Same calendar-day
   // writers as `joinedDate`:
   // `^\d{4}-\d{2}-\d{2}$` -> `new Date` (admin-members-service.ts:1465,

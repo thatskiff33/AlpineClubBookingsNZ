@@ -52,7 +52,7 @@ import {
  *     word, the last section asserts what each declared file actually reads the
  *     link FOR.
  *
- * `npm run test:related` cannot select this file: it reads the tree from disk
+ * `pnpm run test:related` cannot select this file: it reads the tree from disk
  * and has no import edge to what it scans, so like the other censuses in this
  * directory it is CI-caught by design.
  */
@@ -62,6 +62,9 @@ const SCHEMA = readFileSync(join(REPO, "prisma", "schema.prisma"), "utf8");
 
 /** The column this stage adds to each of the two existing tables. */
 const ADDED_COLUMN = "organisationId";
+// #3413 adds this independently of the organisation rollout. Keep the original
+// pre-stage column order proof while acknowledging the reviewed later field.
+const LATER_REQUEST_COLUMNS = ["pendingAdultCount"];
 
 /**
  * `Booking`'s scalar columns as the PRE-STAGE schema declared them, in order.
@@ -309,7 +312,7 @@ describe("#3366: the organisation records exist and are reachable", () => {
 });
 
 describe("#3366: no existing query changes its result", () => {
-  it("adds exactly one column to Booking and one to BookingRequest", () => {
+  it("adds only the organisation links and the reviewed later request columns", () => {
     expect(
       columns("Booking").filter((c) => !PRE_STAGE_BOOKING_COLUMNS.includes(c)),
     ).toEqual([ADDED_COLUMN]);
@@ -317,7 +320,7 @@ describe("#3366: no existing query changes its result", () => {
       columns("BookingRequest").filter(
         (c) => !PRE_STAGE_BOOKING_REQUEST_COLUMNS.includes(c),
       ),
-    ).toEqual([ADDED_COLUMN]);
+    ).toEqual([...LATER_REQUEST_COLUMNS, ADDED_COLUMN]);
   });
 
   it("leaves every pre-stage Booking column present, in the same order", () => {
@@ -327,7 +330,7 @@ describe("#3366: no existing query changes its result", () => {
   });
 
   it("leaves every pre-stage BookingRequest column present, in the same order", () => {
-    expect(columns("BookingRequest").filter((c) => c !== ADDED_COLUMN)).toEqual(
+    expect(columns("BookingRequest").filter((c) => c !== ADDED_COLUMN && !LATER_REQUEST_COLUMNS.includes(c))).toEqual(
       PRE_STAGE_BOOKING_REQUEST_COLUMNS,
     );
   });
@@ -337,7 +340,7 @@ describe("#3366: no existing query changes its result", () => {
       representativeRow(columns("Booking").filter((c) => c !== ADDED_COLUMN)),
     ).toBe(representativeRow(PRE_STAGE_BOOKING_COLUMNS));
     expect(
-      representativeRow(columns("BookingRequest").filter((c) => c !== ADDED_COLUMN)),
+      representativeRow(columns("BookingRequest").filter((c) => c !== ADDED_COLUMN && !LATER_REQUEST_COLUMNS.includes(c))),
     ).toBe(representativeRow(PRE_STAGE_BOOKING_REQUEST_COLUMNS));
   });
 
@@ -400,7 +403,7 @@ describe("#3366: no existing query changes its result", () => {
  * and still has to be argued for — which is the whole value the stage-1 census
  * had.
  *
- * `npm run test:related` cannot select this file: it reads the tree from disk
+ * `pnpm run test:related` cannot select this file: it reads the tree from disk
  * and has no import edge to what it scans, so like the other censuses in this
  * directory it is CI-caught by design.
  */

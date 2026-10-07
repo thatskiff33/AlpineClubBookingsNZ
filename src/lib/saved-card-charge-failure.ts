@@ -37,10 +37,12 @@ import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { detachPaymentMethod } from "./stripe";
 import { readStripeErrorFields, stripeErrorApiType } from "./stripe-errors";
+import { isLocalChargeRefusal } from "./stripe-charge-currency";
 import {
   sendAdminPaymentFailureAlert,
   sendSavedCardChargeFailedEmail,
 } from "./email";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type SavedCardChargeFailureReason =
   /** Stripe rejected the payment method itself; no retry can change that. */
@@ -63,6 +65,10 @@ export interface SavedCardChargeFailureEvidence {
 
 export type SavedCardChargeFailureClassification =
   | ({ outcome: "retry" } & SavedCardChargeFailureEvidence)
+  // #3567 re-review: refused HERE before Stripe was called (the club's currency,
+  // the minimum). Not the card's fault and not transient: the cron alerts on the
+  // refusal cadence rather than every run, and never retires the card.
+  | ({ outcome: "local_refusal" } & SavedCardChargeFailureEvidence)
   | ({
       outcome: "terminal";
       reason: SavedCardChargeFailureReason;
@@ -159,6 +165,8 @@ export function classifySavedCardChargeFailure(
   };
   const param = fields.param;
   const message = fields.message;
+
+  if (isLocalChargeRefusal(err)) return { outcome: "local_refusal", ...evidence };
 
   if (evidence.stripeType === "invalid_request_error") {
     const codeNamesPaymentMethod =
@@ -374,7 +382,10 @@ export async function retireAndEscalateUnusableSavedCard(params: {
   failure: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>;
   /** Whether `releaseChargeClaim` succeeded; false changes the alert's wording. */
   claimReleased: boolean;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
+  const { format } = params;
   const { booking, failure } = params;
   const { clearedPaymentRows, clearedLedgerRows } = await retireUnusableSavedCard({
     paymentMethodId: params.paymentMethodId,
@@ -424,7 +435,7 @@ export async function retireAndEscalateUnusableSavedCard(params: {
         claimReleased: params.claimReleased,
       }),
       paymentIntentId: params.paymentIntentId,
-    });
+    }, format);
   } catch (alertErr) {
     logger.error(
       { err: alertErr, bookingId: booking.id, job: "confirmPendingBookings" },

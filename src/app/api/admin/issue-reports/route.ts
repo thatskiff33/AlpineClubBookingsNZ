@@ -106,11 +106,9 @@ export async function GET(request: NextRequest) {
   // Decided once for the whole page rather than per row: it is the same caller
   // for every row, and re-deriving it inside the map would invite a future
   // reader to think it could differ (#2703).
-  // `session.user.accessRoles` is what `requireAdmin` just read from the
-  // database, not the JWT's own claim.
-  const viewerFullAdmin = isFullAdmin({
-    accessRoles: admin.session.user.accessRoles ?? [],
-  });
+  // `session.user.accessRoles` and `canLogin` are what `requireAdmin` just
+  // read from the database, not the JWT's own claim.
+  const viewerFullAdmin = isFullAdmin(admin.session.user);
   const where =
     status === "ALL"
       ? {}

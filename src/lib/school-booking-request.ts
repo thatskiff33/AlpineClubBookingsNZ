@@ -61,6 +61,8 @@ import {
   BOOKING_REQUEST_VERIFICATION_TTL_MS,
   BookingRequestError,
   buildMemberWholeLodgePlaceholderGuests,
+  getBookingRequestSettings,
+  HELD_BOOKING_GUEST_ORDER_BY,
   isMemberWholeLodgeRequest,
   linkedGuestMemberMap,
   parseBookingRequestGuests,
@@ -100,6 +102,10 @@ import {
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 import logger from "@/lib/logger";
+import {
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
 // #2483: the club's own applied-credit total, so the admin's hand-written
 // invoice asks for the same figure the member's confirmation does.
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
@@ -117,6 +123,7 @@ import {
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
+import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -128,7 +135,15 @@ import {
   sameSchoolGuestList,
   unchangedSchoolGuestPrefixLength,
 } from "@/lib/school-booking-constants";
-import { nameField } from "@/lib/zod-helpers";
+import {
+  schoolTeacherSchema,
+  storedSchoolTeacherListSchema,
+} from "@/lib/school-teacher-schema";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+
+// Keep the existing route import surface while the schema lives in one module.
+export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
@@ -157,7 +172,7 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
     : await getDefaultLodgeCapacity();
   if (input.guestCount > lodgeCapacity) {
     throw new BookingRequestError(
-      `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A school booking cannot exceed the lodge capacity of ${limit} guests`),
       input.status
     );
   }
@@ -167,14 +182,6 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
 // ---------------------------------------------------------------------------
 // Input shapes
 // ---------------------------------------------------------------------------
-
-export const schoolTeacherSchema = z.object({
-  firstName: nameField(),
-  lastName: nameField(),
-  // PIN email goes here when present; otherwise it falls back to the school
-  // contact email at approval time.
-  email: z.string().email().max(200).optional().nullable(),
-});
 
 type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
 
@@ -264,7 +271,7 @@ export function generateSchoolGuests(input: {
 }
 
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
-  const parsed = z.array(schoolTeacherSchema).safeParse(raw);
+  const parsed = storedSchoolTeacherListSchema.safeParse(raw);
   if (!parsed.success) {
     throw new BookingRequestError("Stored school teachers are invalid", 500);
   }
@@ -276,6 +283,10 @@ function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
 }
 
 /** What a school request's party is, once the officer's numbers are applied. */
+export type SchoolPartyParticipant =
+  | { kind: "NAMED"; ageTier: AgeTier; guest: BookingRequestGuest }
+  | { kind: "PENDING_ADULT"; ageTier: "ADULT" };
+
 export interface SchoolGuestResolution {
   /** The preserved named teachers/parent helpers, in stored order. */
   teachers: StoredTeacher[];
@@ -283,6 +294,9 @@ export interface SchoolGuestResolution {
   storedGuests: BookingRequestGuest[];
   /** The list to price, hold and convert against: regenerated, or the stored one. */
   guests: BookingRequestGuest[];
+  /** Anonymous adults are calculation entries, never stored guest identities. */
+  party: SchoolPartyParticipant[];
+  pendingAdultCount: number;
   /** The caller supplied child counts. */
   overridden: boolean;
   /** The resolved list differs from the stored one, so persisting it changes the party. */
@@ -333,6 +347,8 @@ export interface SchoolGuestResolution {
 export async function resolveSchoolGuestOverride(input: {
   /** The stored request row; only its two guest-shaped columns are read. */
   request: { teachers: unknown; guests: unknown };
+  /** The request's explicit anonymous ADULT count; never inferred from names. */
+  pendingAdultCount: number;
   /** The officer's adjusted bulk child counts, or undefined for "as submitted". */
   childCounts?: SchoolChildCounts;
   /**
@@ -356,12 +372,22 @@ export async function resolveSchoolGuestOverride(input: {
   const guests = input.childCounts
     ? generateSchoolGuests({ teachers, childCounts: input.childCounts })
     : storedGuests;
+  if (!Number.isSafeInteger(input.pendingAdultCount) || input.pendingAdultCount < 0) {
+    throw new BookingRequestError("Stored pending adult count is invalid", 500);
+  }
+  const party: SchoolPartyParticipant[] = [
+    ...guests.map((guest) => ({ kind: "NAMED" as const, ageTier: guest.ageTier, guest })),
+    ...Array.from({ length: input.pendingAdultCount }, () => ({
+      kind: "PENDING_ADULT" as const,
+      ageTier: "ADULT" as const,
+    })),
+  ];
   if (guests.length === 0) {
     throw new BookingRequestError("At least one guest is required", 422);
   }
   if (overridden) {
     await assertSchoolGuestsWithinLodgeCapacity({
-      guestCount: guests.length,
+      guestCount: party.length,
       lodgeId: input.lodgeId,
       status: 422,
     });
@@ -392,6 +418,8 @@ export async function resolveSchoolGuestOverride(input: {
     teachers,
     storedGuests,
     guests,
+    party,
+    pendingAdultCount: input.pendingAdultCount,
     overridden,
     changed,
   };
@@ -706,6 +734,8 @@ type ApproveSchoolBookingRequestOutcome =
       priceCents: number;
       invoiceMode: "xero" | "manual";
       teacherCount: number;
+      teacherHutLeaderAssignmentsCreated: boolean;
+      alreadyConverted: boolean;
       /**
        * Existing capacity-holding bookings that overlap the approved booking's
        * nights when an exclusive whole-lodge hold was set at approval
@@ -720,8 +750,8 @@ type ApproveSchoolBookingRequestOutcome =
 interface TeacherCreationPlan {
   teacher: StoredTeacher;
   email: string;
-  pin: string;
-  hutLeaderPin: string;
+  pin: string | null;
+  hutLeaderPin: string | null;
 }
 
 /**
@@ -729,10 +759,11 @@ interface TeacherCreationPlan {
  * the lodge capacity lock (and, when converting an existing hold, the global
  * lifecycle lock first): create the non-login school Member, a CONFIRMED
  * Booking that holds capacity, a PENDING INTERNET_BANKING Payment, the bulk
- * guests, and a non-login Member + HutLeaderAssignment per teacher. After the
- * commit, queue the Xero invoice (emailed to the school) or, when the Xero
- * module is off, notify admins to invoice manually; PIN emails are sent to the
- * teachers.
+ * guests, and a non-login Member per teacher. The booking-policy setting
+ * sampled for this conversion decides whether those teacher records also get
+ * HutLeaderAssignments and PIN emails. After the commit, queue the Xero invoice
+ * (emailed to the school) or, when the Xero module is off, notify admins to
+ * invoice manually.
  */
 export async function approveSchoolBookingRequest(input: {
   requestId: string;
@@ -755,6 +786,9 @@ export async function approveSchoolBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveSchoolBookingRequestOutcome> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -767,13 +801,28 @@ export async function approveSchoolBookingRequest(input: {
   }
   if (
     request.status !== BookingRequestStatus.VERIFIED &&
-    request.status !== BookingRequestStatus.PRICED
+    request.status !== BookingRequestStatus.PRICED &&
+    request.status !== BookingRequestStatus.ACCEPTED
   ) {
     throw new BookingRequestError(
       "Only verified school booking requests can be approved",
       409
     );
   }
+  if (request.pendingAdultCount > 0) {
+    throw new BookingRequestError(
+      `Name the ${request.pendingAdultCount} pending adult${request.pendingAdultCount === 1 ? "" : "s"} before approving this school request.`,
+      409,
+    );
+  }
+
+  // A policy edit affects later approvals, never one conversion halfway through.
+  // Read outside the transaction: this transaction holds global -> lodge locks
+  // and must not add a settings read on a second connection while they are held
+  // (INV-LOCK-001, INV-LOCK-002).
+  const assignTeachersAsHutLeaders = (
+    await getBookingRequestSettings()
+  ).assignSchoolTeachersAsHutLeaders;
 
   // A held booking has already materialised the request's null/default lodge
   // semantics into an immutable concrete Booking.lodgeId. Read only that lock
@@ -798,6 +847,7 @@ export async function approveSchoolBookingRequest(input: {
   // approving. See `resolveSchoolGuestOverride`.
   const { teachers, guests } = await resolveSchoolGuestOverride({
     request,
+    pendingAdultCount: request.pendingAdultCount,
     childCounts: input.guestOverride?.childCounts,
     lodgeId: approvalLodgeId,
     // The STORED blob, because that is the map applied positionally against the
@@ -852,12 +902,12 @@ export async function approveSchoolBookingRequest(input: {
   const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const teacherPlans: TeacherCreationPlan[] = await Promise.all(
     teachers.map(async (teacher) => {
-      const pin = generateHutLeaderPin();
+      const pin = assignTeachersAsHutLeaders ? generateHutLeaderPin() : null;
       return {
         teacher,
         email: teacher.email || request.contactEmail,
         pin,
-        hutLeaderPin: await hashHutLeaderPin(pin),
+        hutLeaderPin: pin ? await hashHutLeaderPin(pin) : null,
       };
     })
   );
@@ -906,6 +956,7 @@ export async function approveSchoolBookingRequest(input: {
       firstName: string;
       pin: string;
     }>;
+    teacherContactMemberIds: string[];
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
     displacedMemberGuestIds: string[];
     ownerSubstitution:
@@ -933,6 +984,9 @@ export async function approveSchoolBookingRequest(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
+  // transaction for the same reason (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -957,6 +1011,16 @@ export async function approveSchoolBookingRequest(input: {
       if (!lockedRequest) {
         throw new BookingRequestError("Booking request not found", 404);
       }
+      const residualPendingRows = typeof tx.bookingRequestPendingAdultReservationNight?.findMany === "function"
+        ? await tx.bookingRequestPendingAdultReservationNight.findMany({
+            where: { bookingRequestId: request.id },
+            select: { id: true },
+            take: 1,
+          })
+        : [];
+      if (lockedRequest.pendingAdultCount > 0 || residualPendingRows.length > 0) {
+        throw new BookingRequestError("Name every pending adult and reconcile the held beds before approving this school request.", 409);
+      }
 
       // A concurrent successful approval legitimately changes updatedAt (and
       // may change the held pointer). Recognise its durable converted ids under
@@ -975,6 +1039,7 @@ export async function approveSchoolBookingRequest(input: {
           // school and queued its invoice.
           organisation: null,
           teacherAssignments: [],
+          teacherContactMemberIds: [],
           ownerSubstitution: null,
           alreadyConverted: true as const,
           // A replay wrote no rows and owes no mail.
@@ -1004,7 +1069,8 @@ export async function approveSchoolBookingRequest(input: {
       if (
         request.type !== BookingRequestType.SCHOOL ||
         (request.status !== BookingRequestStatus.VERIFIED &&
-          request.status !== BookingRequestStatus.PRICED)
+          request.status !== BookingRequestStatus.PRICED &&
+          request.status !== BookingRequestStatus.ACCEPTED)
       ) {
         throw new BookingRequestError(
           "This booking request has already been processed",
@@ -1021,11 +1087,15 @@ export async function approveSchoolBookingRequest(input: {
         /** Null since #3369 when the held booking is owned by an Organisation. */
         memberId: string | null;
         status: BookingStatus;
+        checkIn: Date;
+        checkOut: Date;
+        discountCents: number;
+        promoAdjustmentCents: number;
       } | null = null;
       if (request.heldBookingId) {
         held = await tx.booking.findUnique({
           where: { id: request.heldBookingId },
-          select: { id: true, lodgeId: true, memberId: true, status: true },
+          select: { id: true, lodgeId: true, memberId: true, status: true, checkIn: true, checkOut: true, discountCents: true, promoAdjustmentCents: true },
         });
         if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
           throw new BookingRequestError("Held booking is no longer available", 409);
@@ -1041,6 +1111,36 @@ export async function approveSchoolBookingRequest(input: {
         }
       }
 
+      // Previously anonymous adults were inserted before children on the
+      // request but appended to held rows. Prove their original accepted
+      // ordinals before any claim, then keep prices and row identities together.
+      let acceptedHeldPrices: ReturnType<typeof planAcceptedSchoolHeldPrices> | null = null;
+      let acceptedHeldOrder: Array<{ id: string; rateMembershipTypeId: string | null }> | null = null;
+      if (request.status === BookingRequestStatus.ACCEPTED &&
+          (request.acceptedQuoteId || request.acceptedQuoteSnapshot ||
+           request.acceptedPriceCents != null || request.acceptedQuoteOptionId != null || request.acceptedAt != null)) {
+        const accepted = await readAcceptedSchoolTerms(request, held, guests.length);
+        if (accepted.guestBreakdown.some((entry) => entry.kind === "PENDING_ADULT")) {
+          const heldGuests = await tx.bookingGuest.findMany({
+            where: { bookingId: held!.id },
+            select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true,
+              rateMembershipTypeId: true, stayStart: true, stayEnd: true, nights: { select: { id: true, stayDate: true, priceCents: true } } },
+            orderBy: HELD_BOOKING_GUEST_ORDER_BY,
+          });
+          if (heldGuests.some((guest) => guest.stayStart.getTime() !== request.checkIn.getTime() || guest.stayEnd.getTime() !== request.checkOut.getTime())) {
+            throw new BookingRequestError("The held guest stays changed after acceptance. Review the terms before approving.", 409);
+          }
+          acceptedHeldPrices = planAcceptedSchoolHeldPrices({
+            accepted, guests, teacherCount: teachers.length, pendingAdultCount: 0,
+            links: linkedMembers, checkIn: request.checkIn, checkOut: request.checkOut, heldGuests,
+          });
+          acceptedHeldOrder = heldGuests;
+          totalPriceCents = accepted.totalCents;
+          guestPriceCents = acceptedHeldPrices.map((guest) => guest.priceCents);
+          guestPerNightCents = undefined;
+        }
+      }
+
       // Status-claim so two admins cannot approve concurrently.
       const claimed = await tx.bookingRequest.updateMany({
         where: {
@@ -1051,7 +1151,7 @@ export async function approveSchoolBookingRequest(input: {
           // the integer version, not updatedAt (millisecond-collidable).
           version: request.version,
           status: {
-            in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED],
+            in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED, BookingRequestStatus.ACCEPTED],
           },
         },
         data: {
@@ -1096,6 +1196,7 @@ export async function approveSchoolBookingRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
+        format,
         heldBookingId: request.heldBookingId ?? null,
       });
 
@@ -1228,13 +1329,19 @@ export async function approveSchoolBookingRequest(input: {
         const reassigned = await reassignHeldBookingGuests(
           tx,
           held.id,
-          guestCreates,
+          acceptedHeldOrder ? acceptedHeldOrder.map((previous) => {
+            const index = acceptedHeldPrices!.findIndex((price) => price.guestId === previous.id);
+            const guest = guestCreates[index];
+            if (!guest) throw new BookingRequestError("The accepted guest mapping changed during approval.", 409);
+            return { ...guest, rateMembershipTypeId: previous.rateMembershipTypeId };
+          }) : guestCreates,
           {
             bookingOwnerMemberId: ownerId,
             actor: memberGuestActor,
             policy: memberGuestPolicy,
             bookingCheckIn: request.checkIn,
-          }
+          },
+          guestDietarySeeding
         );
         memberGuestNotificationRows = reassigned.memberGuestNotificationRows;
         displacedMemberGuestIds = reassigned.displacedMemberIds;
@@ -1312,6 +1419,13 @@ export async function approveSchoolBookingRequest(input: {
           policy: memberGuestPolicy,
           bookingCheckIn: request.checkIn,
         });
+        // #3029 (W8): a linked member is seeded from their profile; a teacher
+        // member this approval invented has no profile value to seed from.
+        const guestDietary = await resolveBookingGuestDietary(
+          tx,
+          guestDietarySeeding,
+          consentPlan.guests,
+        );
         const createdBooking = await tx.booking.create({
           data: {
             // #3369: the SCHOOL owns its booking. `Booking_owner_exactly_one`
@@ -1331,7 +1445,9 @@ export async function approveSchoolBookingRequest(input: {
             // Exclusive whole-lodge hold when the request asked for it (#121).
             ...exclusiveHoldData,
             guests: {
-              create: consentPlan.guests.map(toPipelineGuestCreateData),
+              create: consentPlan.guests.map((guest, index) =>
+                toPipelineGuestCreateData(guest, guestDietary[index]),
+              ),
             },
           },
           select: { id: true, guests: { select: { id: true, memberId: true } } },
@@ -1484,6 +1600,7 @@ export async function approveSchoolBookingRequest(input: {
         firstName: string;
         pin: string;
       }> = [];
+      const teacherContactMemberIds: string[] = [];
       for (const plan of teacherPlans) {
         const teacherMember = await tx.member.create({
           data: {
@@ -1500,24 +1617,26 @@ export async function approveSchoolBookingRequest(input: {
           select: { id: true, firstName: true, email: true },
         });
 
-        const teacherAssignment = await tx.hutLeaderAssignment.create({
-          data: {
-            memberId: teacherMember.id,
-            startDate: request.checkIn,
-            endDate: request.checkOut,
-            hutLeaderPin: plan.hutLeaderPin,
-            // A hut leader serves one lodge (ADR-001 Q5): stamp the booking's
-            // lodge so school-created assignments are lodge-scoped like the
-            // manual and cron paths, not left null.
-            lodgeId: bookingLodgeId,
-            // #2926: the stamp that keeps teacher rows out of the hut-leader
-            // overlap predicate. Written once, here, and never updated — why
-            // that has to be the row and not the member is in
-            // `findHutLeaderOverlapRefusal`'s docblock.
-            source: HutLeaderAssignmentSource.SCHOOL_BOOKING,
-          },
-          select: { id: true },
-        });
+        const teacherAssignment = assignTeachersAsHutLeaders
+          ? await tx.hutLeaderAssignment.create({
+              data: {
+                memberId: teacherMember.id,
+                startDate: request.checkIn,
+                endDate: request.checkOut,
+                hutLeaderPin: plan.hutLeaderPin!,
+                // A hut leader serves one lodge (ADR-001 Q5): stamp the booking's
+                // lodge so school-created assignments are lodge-scoped like the
+                // manual and cron paths, not left null.
+                lodgeId: bookingLodgeId,
+                // #2926: the stamp that keeps teacher rows out of the hut-leader
+                // overlap predicate. Written once, here, and never updated — why
+                // that has to be the row and not the member is in
+                // `findHutLeaderOverlapRefusal`'s docblock.
+                source: HutLeaderAssignmentSource.SCHOOL_BOOKING,
+              },
+              select: { id: true },
+            })
+          : null;
 
         /*
           #3367: the REAL TEACHER, recorded against the school as a person
@@ -1568,13 +1687,16 @@ export async function approveSchoolBookingRequest(input: {
           update: { role: OrganisationContactRole.TEACHER },
         });
 
-        teacherAssignments.push({
-          memberId: teacherMember.id,
-          assignmentId: teacherAssignment.id,
-          email: teacherMember.email,
-          firstName: teacherMember.firstName,
-          pin: plan.pin,
-        });
+        teacherContactMemberIds.push(teacherMember.id);
+        if (teacherAssignment && plan.pin) {
+          teacherAssignments.push({
+            memberId: teacherMember.id,
+            assignmentId: teacherAssignment.id,
+            email: teacherMember.email,
+            firstName: teacherMember.firstName,
+            pin: plan.pin,
+          });
+        }
       }
 
       /*
@@ -1599,7 +1721,7 @@ export async function approveSchoolBookingRequest(input: {
       */
       const reconciledTeachers = await reconcileOrganisationTeachers(tx, {
         organisationId: organisation.id,
-        teacherMemberIds: teacherAssignments.map((row) => row.memberId),
+        teacherMemberIds: teacherContactMemberIds,
       });
       if (reconciledTeachers.removedCount > 0) {
         await createAuditLog(
@@ -1661,6 +1783,7 @@ export async function approveSchoolBookingRequest(input: {
         schoolMemberId: schoolMember.id,
         organisation,
         teacherAssignments,
+        teacherContactMemberIds,
         ownerSubstitution,
         alreadyConverted: false as const,
         memberGuestNotificationRows,
@@ -1803,7 +1926,7 @@ export async function approveSchoolBookingRequest(input: {
         checkOut: request.checkOut,
         guestCount: guests.length,
         totalCents: totalPriceCents,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: conversion.bookingId },
           "Failed to send school manual-invoice admin notification"
@@ -1832,7 +1955,8 @@ export async function approveSchoolBookingRequest(input: {
         organisationCreated: conversion.organisation?.created ?? false,
         priceCents: totalPriceCents,
         guestCount: guests.length,
-        teacherCount: conversion.teacherAssignments.length,
+        teacherCount: teachers.length,
+        teacherHutLeaderAssignmentsCreated: conversion.teacherAssignments.length > 0,
         invoiceMode,
         exclusivityRequested: Boolean(request.exclusivityRequested),
         wholeLodgeHold: Boolean(request.exclusivityRequested),
@@ -1973,7 +2097,9 @@ export async function approveSchoolBookingRequest(input: {
     schoolMemberId: conversion.schoolMemberId,
     priceCents: totalPriceCents,
     invoiceMode,
-    teacherCount: conversion.teacherAssignments.length,
+    teacherCount: teachers.length,
+    teacherHutLeaderAssignmentsCreated: conversion.teacherAssignments.length > 0,
+    alreadyConverted: conversion.alreadyConverted,
     exclusiveHoldConflicts,
   };
 }
@@ -2096,6 +2222,9 @@ export async function approveMemberWholeLodgeRequest(input: {
   adminMemberId: string;
   override?: MemberWholeLodgeApprovalOverride;
 }): Promise<ApproveMemberWholeLodgeRequestOutcome> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2211,7 +2340,7 @@ export async function approveMemberWholeLodgeRequest(input: {
     : await getDefaultLodgeCapacity();
   if (headcount > lodgeCapacity) {
     throw new BookingRequestError(
-      `A whole-lodge booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A whole-lodge booking cannot exceed the lodge capacity of ${limit} guests`),
       422
     );
   }
@@ -2328,6 +2457,9 @@ export async function approveMemberWholeLodgeRequest(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
+  // transaction for the same reason (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -2478,8 +2610,16 @@ export async function approveMemberWholeLodgeRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
+        format,
         heldBookingId: null,
       });
+      // #3029 (W9): placeholder guests link no member, so nothing is seeded —
+      // resolved through the one door all the same.
+      const guestDietary = await resolveBookingGuestDietary(
+        tx,
+        guestDietarySeeding,
+        guestCreates,
+      );
 
       const booking = await tx.booking.create({
         data: {
@@ -2502,7 +2642,11 @@ export async function approveMemberWholeLodgeRequest(input: {
           // points. It is what nests each guest's canonical night set, and this
           // create used to hand `guestCreates` to Prisma raw — the one write
           // point that would have kept producing night-less guests.
-          guests: { create: guestCreates.map(toPipelineGuestCreateData) },
+          guests: {
+            create: guestCreates.map((guest, index) =>
+              toPipelineGuestCreateData(guest, guestDietary[index]),
+            ),
+          },
         },
         select: { id: true },
       });
@@ -2817,7 +2961,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         totalCents: totalPriceCents,
         appliedCreditCents: manualInvoiceCreditCents,
         paymentReference: conversion.paymentReference,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: conversion.bookingId },
           "Failed to send the manual-invoice admin notification for an approved member whole-lodge booking",
@@ -2858,6 +3002,7 @@ export async function approveMemberWholeLodgeRequest(input: {
       request.checkOut,
       guests.length,
       totalPriceCents,
+      format,
       {
         lodgeId: conversion.lodgeId,
         paymentDue: {

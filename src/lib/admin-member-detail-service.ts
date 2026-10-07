@@ -9,7 +9,7 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { clubToday, dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
+import { clubToday, dateOnlyInstantOf, parseCalendarDate, } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
@@ -92,7 +92,7 @@ import {
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import {
   AdminAccountGuardError,
@@ -125,6 +125,15 @@ import {
   DELETED_ACCOUNT_EDIT_REACTIVATE_MESSAGE,
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
+import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
+import {
+  buildDietaryRequirementsPatch,
+  dietaryRequirementsChanged,
+  isDietaryFieldEnabled,
+  loadDietaryRequirementsForDisplay,
+  readMemberDietaryRequirements,
+  type DietaryAccessGrant,
+} from "@/lib/member-dietary";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -143,6 +152,9 @@ export const updateMemberSchema = z.object({
   lastName: nameField({ required: "Last name is required" }).optional(),
   gender: genderEnum.optional().nullable(),
   occupation: z.string().max(100).optional().nullable().or(z.literal("")),
+  // #2941: any age tier; written only with a membership:edit dietary grant and
+  // while the club has the field ON. Blank clears.
+  dietaryRequirements: dietaryRequirementsInputSchema,
   email: z.string().email("Invalid email address").optional(),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
@@ -316,7 +328,7 @@ function resolveWriteAccessRoleTokens(input: {
 
 function sameAccessRoleSet(
   a: ReadonlyArray<string>,
-  b: ReadonlyArray<string>,
+  b: ReadonlyArray<string>
 ) {
   return a.length === b.length && a.every((role) => b.includes(role));
 }
@@ -352,8 +364,14 @@ function getAdminMemberAuditAction(
 export async function getAdminMemberDetail(params: {
   id: string;
   currentAdminMemberId: string;
+  /**
+   * #2941 (INV-PRIV-022): the caller's membership-administration dietary grant,
+   * or null. Without one — or while the field is OFF — the response carries no
+   * `dietaryRequirements` key at all.
+   */
+  dietaryGrant: DietaryAccessGrant | null;
 }): Promise<JsonRouteResult> {
-  const { id, currentAdminMemberId } = params;
+  const { id, currentAdminMemberId, dietaryGrant } = params;
 
   const [
     member,
@@ -402,6 +420,7 @@ export async function getAdminMemberDetail(params: {
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
         ageTier: true,
         active: true,
+        deletedAt: true,
         // Member profile photo (MP4, epic #171) — surfaced so an admin can
         // view/manage it on the member-detail page; spread through `...member`
         // into the response body below.
@@ -597,6 +616,10 @@ export async function getAdminMemberDetail(params: {
     return jsonResult({ error: "Member not found" }, { status: 404 });
   }
 
+  const dietary = dietaryGrant
+    ? await loadDietaryRequirementsForDisplay(dietaryGrant, id)
+    : { enabled: false as const };
+
   const [
     deleteEligibility,
     deleteLifecycleActionRequests,
@@ -705,6 +728,7 @@ export async function getAdminMemberDetail(params: {
 
   return jsonResult({
     ...member,
+    ...(dietary.enabled ? { dietaryRequirements: dietary.value } : {}),
     dependentEmailSource,
     familyBillingMode,
     accessRoles: resolveAccessRoleTokens(member),
@@ -743,7 +767,7 @@ export async function getAdminMemberDetail(params: {
       if (!current) return null;
       return membershipTypeAgeExemption(
         (
-          (current.membershipType as { allowedAgeTiers?: Array<{ ageTier: AgeTier }> })
+          (current.membershipType as { allowedAgeTiers?: Array<{ ageTier: AgeTier }>; })
             .allowedAgeTiers ?? []
         ).map((tier) => tier.ageTier),
       );
@@ -799,16 +823,19 @@ export async function getAdminMemberDetail(params: {
 export async function updateAdminMember(params: {
   id: string;
   currentAdminMemberId: string;
-  currentAdminAccessRoles: AccessRoleInput["accessRoles"];
+  currentAdminAccess: PrivilegeCheckInput;
   request: NextRequest;
   data: UpdateMemberInput;
+  /** #2941: a membership:edit dietary grant, or null (the field is not written). */
+  dietaryGrant: DietaryAccessGrant | null;
 }): Promise<JsonRouteResult> {
   const {
     id,
     currentAdminMemberId,
-    currentAdminAccessRoles,
+    currentAdminAccess,
     request: req,
     data,
+    dietaryGrant,
   } = params;
   // The club's PERSISTED zone (CT-4, #2870), read ONCE for this whole request
   // and threaded from here. The restore season below and the linked-guest date
@@ -946,7 +973,7 @@ export async function updateAdminMember(params: {
   if (
     (deactivatesTarget || deLoginsTarget) &&
     id !== currentAdminMemberId &&
-    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    !isFullAdmin(currentAdminAccess) &&
     memberHoldsPrivilegedRole(existing)
   ) {
     return jsonResult(
@@ -967,7 +994,7 @@ export async function updateAdminMember(params: {
     data.email !== undefined &&
     data.email.toLowerCase().trim() !== existing.email &&
     id !== currentAdminMemberId &&
-    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    !isFullAdmin(currentAdminAccess) &&
     hasPrivilegedAccess(existing)
   ) {
     return jsonResult(
@@ -1040,6 +1067,22 @@ export async function updateAdminMember(params: {
   if (data.gender !== undefined) updateData.gender = data.gender ?? null;
   if (data.occupation !== undefined)
     updateData.occupation = data.occupation?.trim() || null;
+  // #2941 (INV-PRIV-022): any age tier. The toggle is re-read here rather than
+  // trusted from the client, and OFF — or no grant — produces no patch, so the
+  // stored value survives. The previous value is read only to decide whether
+  // the audit row names the field; the value itself is never recorded.
+  const dietaryPatch =
+    dietaryGrant && data.dietaryRequirements !== undefined
+      ? buildDietaryRequirementsPatch({
+          enabled: await isDietaryFieldEnabled(),
+          value: data.dietaryRequirements,
+        })
+      : {};
+  const dietaryBefore =
+    dietaryGrant && "dietaryRequirements" in dietaryPatch
+      ? await readMemberDietaryRequirements(dietaryGrant, id)
+      : null;
+  Object.assign(updateData, dietaryPatch);
   for (const f of PHONE_FIELDS) {
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
@@ -1116,7 +1159,7 @@ export async function updateAdminMember(params: {
       );
     if (
       requiresFullAdmin &&
-      !isFullAdmin({ accessRoles: currentAdminAccessRoles })
+      !isFullAdmin(currentAdminAccess)
     ) {
       return jsonResult(
         { error: "Only a Full Admin can change member access roles" },
@@ -1218,8 +1261,7 @@ export async function updateAdminMember(params: {
   // Handle DOB. The resulting age tier is resolved by the shared enforcement
   // helper below (#2106) so org force, a FORCED/ALLOWED/DISALLOWED membership
   // type, an explicit manual N/A, and DOB-derived restore apply in one order.
-  const dobProvided =
-    data.dateOfBirth !== undefined && data.dateOfBirth !== "";
+  const dobProvided = data.dateOfBirth !== undefined && data.dateOfBirth !== "";
   if (data.dateOfBirth !== undefined) {
     if (dobProvided) {
       // `parseCalendarDate`, not `new Date` + `isNaN` (#3082 fix round). The old
@@ -1245,8 +1287,7 @@ export async function updateAdminMember(params: {
   {
     const tokensAfterUpdate =
       nextAccessRoles ?? resolveAccessRoleTokens(existing);
-    const legacyRoleAfterUpdate = (updateData.role ??
-      existing.role) as string;
+    const legacyRoleAfterUpdate = (updateData.role ?? existing.role) as string;
     const isOrg = isOrganisationMember({
       accessRoleTokens: tokensAfterUpdate,
       legacyRole: legacyRoleAfterUpdate,
@@ -1346,6 +1387,9 @@ export async function updateAdminMember(params: {
       auditUpdateData,
       ADMIN_MEMBER_AUDIT_FIELDS,
     );
+    if (dietaryRequirementsChanged(dietaryBefore, dietaryPatch)) {
+      changedFields.push("dietaryRequirements");
+    }
     const accessChanges = buildAccessChanges(
       existingAuditRecord,
       auditUpdateData,
@@ -1537,6 +1581,7 @@ export async function updateAdminMember(params: {
               title: changedFields.includes("title"),
               gender: changedFields.includes("gender"),
               occupation: changedFields.includes("occupation"),
+              dietaryRequirements: changedFields.includes("dietaryRequirements"),
               email: changedFields.includes("email"),
               phone: hasAnyField(changedFields, PHONE_FIELDS),
               address: hasAnyField(changedFields, ADDRESS_FIELDS),
@@ -1625,7 +1670,7 @@ export async function updateAdminMember(params: {
         defaultMembershipTypeKeyForRole(updated.role);
     const needsContactGroupSync = Boolean(
       updated.xeroContactId &&
-        (existing.ageTier !== updated.ageTier || roleDefaultTypeChanged),
+      (existing.ageTier !== updated.ageTier || roleDefaultTypeChanged),
     );
 
     if (
@@ -1661,16 +1706,23 @@ export async function updateAdminMember(params: {
       }
     }
 
-    return jsonResult(updated);
+    // The editor replaces its state with this body, so it carries the dietary
+    // value back on the same terms the detail GET does (INV-PRIV-022).
+    const dietaryAfter = dietaryGrant
+      ? await loadDietaryRequirementsForDisplay(dietaryGrant, id)
+      : { enabled: false as const };
+    return jsonResult({
+      ...updated,
+      ...(dietaryAfter.enabled
+        ? { dietaryRequirements: dietaryAfter.value }
+        : {}),
+    });
   } catch (error) {
     if (isHostingCoverageParticipantRetry(error)) {
       return jsonResult(HOSTING_COVERAGE_RETRY_BODY, { status: 409 });
     }
     if (error instanceof AdminAccountGuardError) {
-      return jsonResult(
-        { error: error.message },
-        { status: error.statusCode },
-      );
+      return jsonResult({ error: error.message }, { status: error.statusCode });
     }
 
     // Backstop for the race the pre-check above cannot close (#2385): the

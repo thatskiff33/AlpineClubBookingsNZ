@@ -235,7 +235,12 @@ Three side doors into the finished-unpaid state are closed at the door
 ### INV-ADDPAY-003
 
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
-approval regardless of how it got there or whether it was already paid: every
+approval whether or not it was already paid, on every write that changes its
+party. An adult counts only while operationally present: a member guest from
+beyond the family still waiting to agree does not (`isGuestOperationallyPresent`,
+the paid-up-adult rule's predicate; owner decision, #3770). A consent that
+lapses without a write (an expired row the sweep could not remove) is not
+re-judged until the booking's next write. Every
 edit path — including single-guest self-removal, which is never blocked for a
 written justification — flags the booking (`adminReviewStatus: PENDING`, with
 an automatic note on the removal path) so it lands in the admin review queue.
@@ -361,14 +366,15 @@ breakdown, the hold and the approval read one list rather than two.
 
 ### INV-ADDPAY-009
 
-A booking converted from (or held for) a public/school booking request keeps
-the held booking's immutable concrete lodge even when the request stored a null
-default-lodge selector and the configured default later changes. Held generic
-and school conversions lock that concrete lodge, fully re-read the request and
-booking, and reject any explicit lodge mismatch before mutation. The booking
+A public/school request booking keeps the held booking's immutable concrete
+lodge despite a null request lodge selector and a later default change. Held
+generic and school conversions lock that lodge, re-read request and booking,
+and reject explicit lodge mismatches before mutation. The booking
 keeps its officer-negotiated price, flat-split across guest rows; the quote's
-per-tier rates are not persisted on the booking. Before a school group
-arrives, the school contact confirms who is attending (#1101): a tokenized
+per-tier rates are not persisted on the booking. For accepted SCHOOL quotes
+containing pending adults, naming and approval instead preserve proven accepted
+per-person totals (#3794). Before school arrival, the contact confirms who is
+attending (#1101): a tokenized
 public page (hash-stored, rotated per reminder email) applies identity-only
 name updates through the same price-preserving machinery as quoted-booking
 edits, and the explicit confirmation is stored on the booking request.
@@ -387,9 +393,9 @@ customer "booking cancelled" email (`cancelBooking`'s
 and it deliberately does **not** revoke the requester's quote response token:
 the link stays active, so the admin is warned to re-send a fresh quote after
 re-mapping. Releasing a hold (and declining a held request) refuses with HTTP
-409 rather than cancelling if the requester accepted the quote concurrently —
-i.e. the held booking has already left `AWAITING_REVIEW` (`cancelBooking`'s
-`requireRequestHold` guard, #1406) — so a just-accepted booking is never
+409 if acceptance won the race, including an `ACCEPTED` request whose held
+booking remains `AWAITING_REVIEW`, or if the hold already converted
+(`cancelBooking`'s `requireRequestHold` guard, #1406). A just-accepted booking is never
 cancelled and its payment links never revoked out from under the requester.
 
 ### INV-ADDPAY-010
@@ -413,17 +419,18 @@ requester-cancel `CANCELLED`). Because `loadSentQuoteByToken` requires
 (accept / modify / query / cancel) on a still-live link, and the pre-expiry
 reminder cron (which selects only `SENT` quotes) skips the declined request
 instead of nudging it. As defence-in-depth against a request finalised between a
-requester POST's token load and its write, the accept re-arm, the modify/query
-re-status, and the losing-accept capacity revert are each status-guarded with
-`status notIn [DECLINED, CANCELLED]`: a late accept or modify/query `409`s (no
-new booking, Payment, or PaymentLink; no resurrection to
-`MODIFICATION_REQUESTED`/`QUERY_PENDING`), and the revert simply does not
-un-decline the request. The guards still permit a re-arm from
-`CONVERTED`/`APPROVED`, preserving approve's `convertedBookingId` idempotency
-(#1232 double-accept returns the one existing booking). Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
-if a previously mapped contact is no longer a valid non-login contact by the time
-the requester accepts (login enabled, archived, deactivated, role changed), the
-accept still succeeds — a fresh non-login contact is substituted and both a
+requester POST's token load and its write, acceptance and the modify/query
+re-status each claim the exact `SENT` quote and `QUOTE_SENT` request under the
+global lock (#3415): a late accept or modify/query `409`s (no new booking,
+Payment, or PaymentLink; no resurrection to
+`MODIFICATION_REQUESTED`/`QUERY_PENDING`). Approve's `convertedBookingId`
+idempotency returns the one existing booking (#1232). Per-teacher hut-leader
+records, when the school policy creates them (#3416), are always created fresh.
+The held owner is
+re-validated at officer approval's conversion:
+if a previously mapped contact is no longer a valid non-login contact by then
+(login enabled, archived, deactivated, role changed), the
+approval still succeeds — a fresh non-login contact is substituted and both a
 durable admin-attention audit row (`booking_request.owner_substituted`) and an
 active `admin-owner-substitution` admin email alert (gated by the
 `adminXeroSyncError` preference, F20 residual #2 / #1377) are raised post-commit
@@ -1050,9 +1057,9 @@ implementation rather than a copy per handler: one record writer, one `deletedAt
 re-read, one alert decision.
 
 **WHAT "EVERY ORDERING" MEANS ON THE PRIMARY PATH, checked rather than assumed.**
-Nothing in the tree raises an `OPEN` `ManualRefundTask` for a PRIMARY payment
-intent — the confirm-modification-payment route is the only raiser of one of these
-and it handles modification intents — so the close arm is unreachable there and the
+Only the confirm-modification-payment route raises an `OPEN` task under these
+`reason` sentences, for modification intents (#3639's approval task has its own),
+so the close arm is unreachable there and the
 CREATE arm is the only one that fires. First delivery creates the row; a Stripe
 redelivery finds this writer's own row and creates nothing; a deletion landing
 between two deliveries resolves to the one row, because every lookup matches all
@@ -1267,16 +1274,13 @@ left badges and the digest alone.
   payment was the mistake, the booking has to be made again and the member charged
   again, because the refund has already gone out.
 
-**The refund itself is deliberately NOT gated, and that is the decision this rule
-records.** Suppressing #1350's automatic refund while the booking is soft-deleted
-was considered and rejected: it leaves a member's money with the club until
-somebody acts, and it puts a new condition on a Critical webhook money path. The
-money returning to the member is the safe direction when nobody is watching, so
-visibility was added instead of the refund being held. **Do not gate it as a side
-effect of work in this area** — reversing this needs a fresh owner decision, a
-test pinning that the capture is not auto-refunded and the task stays `OPEN`, and
-its own review of the webhook path. Nothing here changes what money moves, when,
-or by how much.
+**The refund is NOT gated by default, and that is the decision this rule
+records.** Holding #1350's automatic refund leaves a member's money with the club
+until somebody acts, and the money returning is the safe direction when nobody is
+watching, so visibility was added instead. **Do not gate it as a side effect of
+work in this area.** The one gate is the club's own choice: owner decision 26 Sep
+2026 ([#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249))
+made treasurer approval a club setting, off by default, stated in `INV-PAY-106`.
 
 ### INV-ADDPAY-038
 
@@ -1372,12 +1376,12 @@ Four obligations:
 - **Still exactly one notification, and no badge or digest changed.** This replaced
   the previous mail on both paths; it did not join it. `AdminPendingCounts` and the
   count fixtures are untouched by design, and the digest keeps its explicit template
-  allowlist — so these events no longer land in its "Payment Failures" count,
-  which is a correction rather than a loss: nothing failed. The webhook still sends
-  it fire-and-forget with a `.catch` that only logs, because webhooks stay
-  non-blocking and the durable record is the row plus the audit entry. **The
-  `INV-ADDPAY-039` alert REPLACES this one when it fires** — the epilogue sends
-  exactly one of the two — so "one notification" holds across all three outcomes.
+  allowlist — so these events no longer land in its "Payment Failures" count
+  (nothing failed). The webhook still sends it fire-and-forget with a `.catch`
+  that only logs, because webhooks stay non-blocking and the durable record is the
+  row plus the audit entry. **The `INV-ADDPAY-039` alert REPLACES this one when it
+  fires.** A capture HELD for a treasurer (`INV-PAY-106`) sends its own
+  `admin-late-capture-held` alert instead, ONCE per payment (claim-guarded).
 
 ### INV-ADDPAY-039
 
@@ -1476,9 +1480,9 @@ withholding the refund must not also lose the record that Stripe holds the money
 
 **WHAT THE FENCE DOES NOT CLOSE, STATED RATHER THAN IMPLIED.** A hand-completion
 that commits after the fence read but during the Stripe refund is not caught by it.
-`resolveManualRefundTask` takes no advisory lock, and closing the window would mean
+`resolveManualRefundTask` takes no advisory lock for this kind, and closing the window would mean
 holding `pg_advisory_xact_lock(1)` across a provider round trip, which
-`docs/CONCURRENCY_AND_LOCKING.md` forbids outright. What the fence does is shrink
+`docs/CONCURRENCY_AND_LOCKING.md` forbids outright. The fence shrinks
 the exposure from "any time in the hours or days the task sits `OPEN`" to "the
 duration of one Stripe refund call". **The residue is DETECTED rather than left
 silent:** the record writer re-reads the row under the lock and returns

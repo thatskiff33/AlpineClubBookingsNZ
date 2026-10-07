@@ -25,7 +25,7 @@ surviving seed-only reader/writers — the `include: { rates: true }` and
 `20260721120000_contract_drop_season_rate`, in that same PR. Both halves had to
 ship together: `e2e/**` is a root of `tsconfig.e2e.json` (#2693; until then it
 was reached by `tsconfig.json`'s bare `**/*.ts` include), so dropping the
-model alone would fail `npm run typecheck`; and `scripts/e2e-stack.sh:92`
+model alone would fail `pnpm run typecheck`; and `scripts/e2e-stack.sh:92`
 executes that seeder under `E2E_MULTI_LODGE=1`, so the required **E2E
 multi-lodge** branch-protection check would fail at seed time. Do not
 reintroduce a boolean member/non-member rate key.

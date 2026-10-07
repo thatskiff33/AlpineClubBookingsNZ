@@ -7,7 +7,7 @@ import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
 import { prisma } from "@/lib/prisma";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import { formatClubDate, parseCalendarDate, type ClubDateFormat } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { NominationConfirmCard } from "@/components/nomination-confirm-card";
 import { CLUB_NAME } from "@/config/club-identity";
@@ -38,9 +38,9 @@ import { CLUB_NAME } from "@/config/club-identity";
  * already stored. Reading a value must not be able to take a page down whatever
  * was written.
  */
-function formatDependentDateOfBirth(value: string): string {
+function formatDependentDateOfBirth(value: string, format: ClubDateFormat): string {
   const day = parseCalendarDate(value);
-  return day === null ? value : formatClubDate(day);
+  return day === null ? value : formatClubDate(day, format);
 }
 
 function statusLabel(status: string) {
@@ -188,7 +188,7 @@ export default async function NominationPage({
                           `formatDependentDateOfBirth` for why the throwing form
                           took this page down on a stored date that names no real
                           day. */}
-                      DOB {formatDependentDateOfBirth(familyMember.dateOfBirth)}
+                      DOB {formatDependentDateOfBirth(familyMember.dateOfBirth, club.format)}
                     </div>
                   </li>
                 ))}

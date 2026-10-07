@@ -13,6 +13,9 @@ const helperWriters: Array<[string, number]> = [
   // "fixed" by loosening the assertion.
   ["src/app/api/admin/page-content/route.ts", 4],
   ["src/app/api/admin/config-transfer/apply/route.ts", 1],
+  // #3852: the footer sections render on every stored CMS page, so a footer
+  // edit must clear the full-route store too.
+  ["src/app/api/admin/site-content/route.ts", 1],
   ["src/app/api/admin/seasons/route.ts", 1],
   ["src/app/api/admin/seasons/[id]/route.ts", 2],
   ["src/app/api/admin/booking-policies/cancellation/route.ts", 1],

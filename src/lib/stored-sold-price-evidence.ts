@@ -128,10 +128,12 @@ export function editStrandEvidenceGrain(args: {
  * both readers treat it as they always did. The one home for the rule, read by
  * this module's classifier and by the edit-lines diff (#3530, `INV-SSOT`).
  */
+export const INEXACT_NIGHT_PRICE_SOURCES = ["EVEN_SPLIT", "UNKNOWN"] as const satisfies readonly BookingGuestNightPriceSource[];
+
 export function storedNightPriceSourceIsInexact(
   source: BookingGuestNightPriceSource | undefined,
 ): boolean {
-  return source === "EVEN_SPLIT" || source === "UNKNOWN";
+  return source !== undefined && (INEXACT_NIGHT_PRICE_SOURCES as readonly string[]).includes(source);
 }
 /**
  * The verdict on one guest strand.

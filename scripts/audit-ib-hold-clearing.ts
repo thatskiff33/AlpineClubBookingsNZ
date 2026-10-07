@@ -14,24 +14,25 @@
  * SAFE USAGE — run against a NON-PRODUCTION copy:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:audit-ib-hold-clearing
+ *     pnpm run payments:audit-ib-hold-clearing
  */
 import "dotenv/config";
 import process from "node:process";
 import {
   auditCardAppliedCreditDoublePays,
-  auditIbAppliedCreditStrands,
-  auditIbHoldClearingUnderclears,
   formatCardAppliedCreditDoublePayReport,
-  formatIbAppliedCreditStrandReport,
-  formatIbHoldClearingAuditReport,
 } from "../src/lib/ib-hold-clearing-audit";
+import {
+  auditIbHoldClearingUnderclears,
+  formatIbHoldClearingAuditReport,
+} from "../src/lib/ib-hold-clearing-underclear-audit";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:audit-ib-hold-clearing            # read-only audit (default)
-  npm run payments:audit-ib-hold-clearing -- --json  # also emit machine-readable JSON
+  pnpm run payments:audit-ib-hold-clearing            # read-only audit (default)
+  pnpm run payments:audit-ib-hold-clearing --json  # also emit machine-readable JSON
 
 This audit is read-only. It never writes and never calls Xero/Stripe/SES. The
 operator repairs any finding by hand (see docs/MAINTENANCE.md).
@@ -62,19 +63,15 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // The club's format (#3565), read once before any audit query.
+  const format = await getClubFormat();
 
   const result = await auditIbHoldClearingUnderclears();
 
-  console.log(formatIbHoldClearingAuditReport(result));
+  console.log(formatIbHoldClearingAuditReport(result, format));
 
-  // #1620 — enumerate every Internet-Banking payment carrying applied credit
-  // against a full invoice (realized double-pay vs pending exposure). Read-only.
-  const strandResult = await auditIbAppliedCreditStrands();
-
-  console.log("");
-  console.log("=".repeat(70));
-  console.log("");
-  console.log(formatIbAppliedCreditStrandReport(strandResult));
+  // #1620's Internet-Banking strand enumeration retired with #3583: its count
+  // is reported by `pnpm run booking-ledger:census`, under the credit identity.
 
   // #1641 — enumerate every captured CARD payment that also consumed applied
   // credit against a full-price charge (realized double-pay). Read-only.
@@ -83,17 +80,13 @@ async function main() {
   console.log("");
   console.log("=".repeat(70));
   console.log("");
-  console.log(formatCardAppliedCreditDoublePayReport(cardDoublePayResult));
+  console.log(formatCardAppliedCreditDoublePayReport(cardDoublePayResult, format));
 
   if (args.json) {
     console.log("");
     console.log("---BEGIN IB HOLD CLEARING AUDIT JSON---");
     console.log(JSON.stringify(result, null, 2));
     console.log("---END IB HOLD CLEARING AUDIT JSON---");
-    console.log("");
-    console.log("---BEGIN IB APPLIED-CREDIT STRAND JSON---");
-    console.log(JSON.stringify(strandResult, null, 2));
-    console.log("---END IB APPLIED-CREDIT STRAND JSON---");
     console.log("");
     console.log("---BEGIN CARD APPLIED-CREDIT DOUBLE-PAY JSON---");
     console.log(JSON.stringify(cardDoublePayResult, null, 2));

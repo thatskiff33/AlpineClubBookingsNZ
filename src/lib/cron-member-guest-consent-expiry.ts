@@ -5,6 +5,7 @@ import {
 } from "@/lib/member-guest-consent-service";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The member-guest pending-hold expiry sweep ("+ Add Member Guest", epic #2305,
@@ -72,6 +73,9 @@ export async function runMemberGuestConsentExpiryCron(
   }
 
   const now = dependencies.now?.() ?? new Date();
+  // The club's format (#3565), resolved once per sweep, before any row's
+  // transaction; every outcome notice below renders with it.
+  const format = await clubFormatValues();
 
   // Unbounded and ordered oldest-first, matching every other sweep in this repo.
   // The query is exactly the shape the partial index
@@ -103,7 +107,7 @@ export async function runMemberGuestConsentExpiryCron(
 
   for (const candidate of candidates) {
     try {
-      const outcome = await expireMemberGuestConsent({ guestId: candidate.id, now });
+      const outcome = await expireMemberGuestConsent({ guestId: candidate.id, now, format });
 
       if (outcome.outcome === "ALREADY_RESOLVED") {
         skippedGuestIds.push(candidate.id);
@@ -123,6 +127,7 @@ export async function runMemberGuestConsentExpiryCron(
           guestId: candidate.id,
           targetMemberId: candidate.memberId,
           outcome,
+          format,
           actorMemberId: null,
           actorLabel: `cron:${job}`,
           consentExpiresAt: candidate.consentExpiresAt,

@@ -43,6 +43,8 @@ import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-retur
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { useClubFormat } from "@/components/club-format-provider";
+import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -246,6 +248,7 @@ function buildForceConfirmAuditPath(report: ForceConfirmReport) {
 }
 
 export default function AdminWaitlistPage() {
+  const format = useClubFormat();
   const clubTime = useClubTime();
   const router = useRouter();
   // Force Confirm writes /api/admin/bookings/[id]/force-confirm (bookings
@@ -878,7 +881,7 @@ export default function AdminWaitlistPage() {
                   </TableCell>
                   <TableCell>{entry.guestCount}</TableCell>
                   <TableCell>
-                    {formatCents(entry.finalPriceCents)}
+                    {formatCents(entry.finalPriceCents, format)}
                   </TableCell>
                   <TableCell>
                     <div className="space-y-1">
@@ -902,7 +905,7 @@ export default function AdminWaitlistPage() {
                   <TableCell>
                     <Link
                       href={buildHrefWithReturnTo(
-                        `/bookings/${entry.id}`,
+                        buildBookingDetailPath(entry.id),
                         currentWaitlistPath
                       )}
                       className="text-primary hover:underline"
@@ -932,7 +935,10 @@ export default function AdminWaitlistPage() {
                             // recovery is the wrong place to send an officer.
                             // The fix is on the booking itself.
                             <Link
-                              href={`/admin/bookings/${entry.id}`}
+                              href={buildHrefWithReturnTo(
+                                buildBookingDetailPath(entry.id),
+                                currentWaitlistPath
+                              )}
                               className="block text-xs text-primary hover:underline"
                             >
                               Open the booking — turn emails back on or retract

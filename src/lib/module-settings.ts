@@ -6,6 +6,7 @@ import {
   MODULE_KEYS,
   getEffectiveModuleFlags,
   readClubModuleSettingsRecord,
+  resolveModuleDependencies,
   type ClubModuleSettingsRecord,
   type ModuleKey,
   type ModuleSettingsValues,
@@ -13,6 +14,7 @@ import {
 import type { FeatureFlags } from "@/config/schema";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Re-exported from its home beside the canonical select (#2996); the importers
 // that reached it here keep working.
@@ -136,6 +138,7 @@ function readinessMessage(params: {
 
 function buildModuleStatusList(
   settings: ModuleSettingsValues,
+  format: ClubFormat,
   context?: ModuleStatusContext,
 ): ModuleStatus[] {
   return MODULE_KEYS.map((key) => {
@@ -157,7 +160,7 @@ function buildModuleStatusList(
       effectiveEnabled: adminEnabled,
       readiness: {
         ...readiness,
-        dependencies: definition.dependencies,
+        dependencies: resolveModuleDependencies(definition, format),
       },
     };
   });
@@ -173,6 +176,7 @@ export interface ModuleStatusContext {
 }
 
 export function buildClubModuleSettingsPayload(
+  format: ClubFormat,
   record?: Partial<ClubModuleSettingsRecord> | null,
   context?: ModuleStatusContext,
 ): ClubModuleSettingsPayload {
@@ -180,13 +184,15 @@ export function buildClubModuleSettingsPayload(
 
   return {
     settings,
-    modules: buildModuleStatusList(settings, context),
+    modules: buildModuleStatusList(settings, format, context),
     updatedAt: record?.updatedAt?.toISOString() ?? null,
     updatedByMemberId: record?.updatedByMemberId ?? null,
   };
 }
 
-export async function loadClubModuleSettings(): Promise<ClubModuleSettingsPayload> {
+export async function loadClubModuleSettings(
+  format: ClubFormat,
+): Promise<ClubModuleSettingsPayload> {
   // Keep this server-only dependency behind the one admin-read path that needs it.
   // `loadEffectiveModuleFlags()` is also imported by Node-side maintenance and E2E
   // seed scripts; a top-level import would evaluate the bare `server-only` package
@@ -209,7 +215,7 @@ export async function loadClubModuleSettings(): Promise<ClubModuleSettingsPayloa
       alpineServerConfiguredPromise,
     ]);
 
-  return buildClubModuleSettingsPayload(record, {
+  return buildClubModuleSettingsPayload(format, record, {
     analyticsConfigured,
     alpineServerConfigured,
   });

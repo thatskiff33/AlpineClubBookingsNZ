@@ -29,6 +29,7 @@ import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
+import { stampXeroOrganisation } from "./admin-alert-xero-links";
 import {
   sendToAdmins,
   sendUnmuteableAdminAlert,
@@ -38,41 +39,7 @@ import {
   emailCalendarDay,
   emailCalendarDayOrUnknown,
 } from "@/lib/email-templates-club-time";
-
-/**
- * Stamp the club's Xero organisation onto an outbound deep link, at SEND time
- * (#2314, owner decision 1 Aug 2026).
- *
- * The URLs reaching these alerts are organisation-agnostic: some are read
- * straight off a `XeroSyncOperation` / `XeroObjectLink` row, which #2314
- * deliberately keeps generic so a reconnect to a different Xero organisation
- * cannot leave stored links aimed at books the club no longer owns. A screen can
- * re-render and pick the current organisation up; an email cannot. So an email
- * is the surface that most needs the organisation named, and send time is the
- * last honest moment to name it — the alert is already a point-in-time snapshot
- * of everything else it reports.
- *
- * The organisation is CONFIRMED with Xero at send time rather than read from
- * the 12-hour cache (`confirmLive`, #2314 review). The cache is per process and
- * its invalidation only reaches the process that handled a reconnect, so a cron
- * or worker process can otherwise hold the previous organisation's short code
- * for hours — and an email stamped with it is stamped forever.
- *
- * Failure degrades, never blocks: no short code (Xero disconnected, the
- * organisation read failed, or Xero reported none) leaves the generic
- * `go.xero.com` link, which is live — it may just ask a multi-organisation
- * admin which organisation they meant. It also STRIPS any organisation the
- * stored URL already carried, so an unconfirmable organisation is never the one
- * an email points at.
- */
-async function stampXeroOrganisation(
-  url: string | null | undefined,
-): Promise<string | null> {
-  if (!url) return null;
-  return applyXeroOrgShortCode(url, {
-    shortCode: await getXeroOrgShortCode({ confirmLive: true }),
-  });
-}
+import type { ClubFormat } from "@/lib/club-format";
 
 // N-04: Admin alert - payment failure
 export async function sendAdminPaymentFailureAlert(data: {
@@ -88,16 +55,19 @@ export async function sendAdminPaymentFailureAlert(data: {
   amountCents: number;
   errorMessage: string;
   paymentIntentId: string;
-}) {
-  await sendToAdmins({
+},
+  format: ClubFormat,
+) {
+  // Returned so a once-only caller can hold its claim on it (#3635 C5).
+  return sendToAdmins({
     subject: `Payment Failed — ${CLUB_BOOKINGS_NAME}`,
-    html: await renderEmailHtml(() => adminPaymentFailureTemplate(data)),
+    html: await renderEmailHtml(() => adminPaymentFailureTemplate(data, format)),
     templateName: "admin-payment-failure",
     templateData: {
       ...data,
       checkIn: emailCalendarDayOrUnknown(data.checkIn),
       checkOut: emailCalendarDayOrUnknown(data.checkOut),
-      amount: formatMoneyCents(data.amountCents),
+      amount: formatMoneyCents(data.amountCents, format),
     },
     preferenceKey: "adminPaymentFailure",
   });
@@ -147,7 +117,9 @@ export async function sendAdminLateCaptureAutoRefundAlert(data: {
    * booking-change wording.
    */
   captureKind: "modification" | "primary";
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
   const bookingStateLabel = lateCaptureAutoRefundBookingStateLabel(
@@ -156,13 +128,13 @@ export async function sendAdminLateCaptureAutoRefundAlert(data: {
 
   await sendUnmuteableAdminAlert({
     subject: `Payment refunded automatically — booking ${bookingStateLabel}: ${data.memberName}`,
-    html: await renderEmailHtml(() => adminLateCaptureAutoRefundTemplate({ ...data, reviewUrl })),
+    html: await renderEmailHtml(() => adminLateCaptureAutoRefundTemplate({ ...data, reviewUrl }, format)),
     templateName: "admin-late-capture-auto-refund",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      amount: formatMoneyCents(data.amountCents),
+      amount: formatMoneyCents(data.amountCents, format),
       bookingId: data.bookingId,
       paymentIntentId: data.paymentIntentId,
       bookingStateLabel,
@@ -217,7 +189,9 @@ export async function sendAdminLateCaptureHandBackConflictAlert(data: {
   captureKind: "modification" | "primary";
   handBackAmountCents: number | null;
   refundSent: boolean;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
   const handBackConflictLabel = lateCaptureHandBackConflictSubjectLabel(
@@ -228,13 +202,13 @@ export async function sendAdminLateCaptureHandBackConflictAlert(data: {
     // Composed from the SAME source as the {{handBackConflictLabel}} token below,
     // so the sender's subject and an admin's saved override say the same direction.
     subject: `${handBackConflictLabel}: ${data.memberName}`,
-    html: await renderEmailHtml(() => adminLateCaptureHandBackConflictTemplate({ ...data, reviewUrl })),
+    html: await renderEmailHtml(() => adminLateCaptureHandBackConflictTemplate({ ...data, reviewUrl }, format)),
     templateName: "admin-late-capture-hand-back-conflict",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      amount: formatMoneyCents(data.amountCents),
+      amount: formatMoneyCents(data.amountCents, format),
       bookingId: data.bookingId,
       paymentIntentId: data.paymentIntentId,
       // THE DIRECTION, IN THE SUBJECT, AS A TOKEN. A stored subject override
@@ -279,7 +253,9 @@ export async function sendAdminSupersededPaymentRefundAlert(data: {
   amountOwingCents: number;
   paymentIntentId: string;
   bookingId: string;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
 
@@ -294,15 +270,15 @@ export async function sendAdminSupersededPaymentRefundAlert(data: {
         amountOwingCents: data.amountOwingCents,
         paymentIntentId: data.paymentIntentId,
         bookingUrl,
-      }),
+      }, format),
     ),
     templateName: "admin-superseded-payment-refund",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      refundedAmount: formatMoneyCents(data.refundedAmountCents),
-      amountOwing: formatMoneyCents(data.amountOwingCents),
+      refundedAmount: formatMoneyCents(data.refundedAmountCents, format),
+      amountOwing: formatMoneyCents(data.amountOwingCents, format),
       paymentIntentId: data.paymentIntentId,
       bookingUrl,
     },
@@ -320,7 +296,9 @@ export async function sendAdminDuplicateCaptureRefundAlert(data: {
   operationReference: string;
   errorMessage?: string | null;
   refundFailed: boolean;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
 
@@ -339,13 +317,13 @@ export async function sendAdminDuplicateCaptureRefundAlert(data: {
       errorMessage: data.errorMessage ?? null,
       reviewUrl,
       refundFailed: data.refundFailed,
-    })),
+    }, format)),
     templateName: "admin-duplicate-capture-refund",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      amount: formatMoneyCents(data.amountCents),
+      amount: formatMoneyCents(data.amountCents, format),
       paymentIntentId: data.paymentIntentId,
       operation: data.operationReference,
       errorMessage: data.errorMessage ?? "",
@@ -387,7 +365,9 @@ export async function sendAdminManualSettlementConflictAlert(data: {
   bookingStatus: string;
   xeroInvoiceNumber: string | null;
   xeroInvoiceUrl: string | null;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
@@ -398,13 +378,13 @@ export async function sendAdminManualSettlementConflictAlert(data: {
       ...data,
       xeroInvoiceUrl,
       reviewUrl,
-    })),
+    }, format)),
     templateName: "admin-manual-settlement-conflict",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      amount: formatMoneyCents(data.amountCents),
+      amount: formatMoneyCents(data.amountCents, format),
       bookingId: data.bookingId,
       status: data.bookingStatus,
       xeroInvoiceNumber: data.xeroInvoiceNumber ?? "",
@@ -427,19 +407,21 @@ export async function sendAdminManualRefundTaskAlert(data: {
   refundAmountCents: number;
   bookingId: string;
   reason: string;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
 
   await sendToAdmins({
     subject: `Manual refund needed — cash booking cancelled: ${data.memberName}`,
-    html: await renderEmailHtml(() => adminManualRefundTaskTemplate({ ...data, reviewUrl })),
+    html: await renderEmailHtml(() => adminManualRefundTaskTemplate({ ...data, reviewUrl }, format)),
     templateName: "admin-manual-refund-task",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      refundAmount: formatMoneyCents(data.refundAmountCents),
+      refundAmount: formatMoneyCents(data.refundAmountCents, format),
       bookingId: data.bookingId,
       reason: data.reason,
       reviewUrl,
@@ -448,14 +430,15 @@ export async function sendAdminManualRefundTaskAlert(data: {
   });
 }
 
-// N-05: Admin alert - Xero sync error
+// N-05: Admin alert - Xero sync error. Returns `sendToAdmins`' result so a
+// once-only caller can hold its claim on it (#3635 C4).
 export async function sendAdminXeroSyncErrorAlert(data: {
   errorType: string;
   operation: string;
   errorMessage: string;
   timestamp: Date;
 }) {
-  await sendToAdmins({
+  return sendToAdmins({
     subject: `Xero Sync Error — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminXeroSyncErrorTemplate(data)),
     templateName: "admin-xero-sync-error",
@@ -593,6 +576,7 @@ export async function sendAdminXeroReconciliationReportAlert(
  */
 export async function sendAdminCreditSyncDriftAlert(
   report: CreditSyncDriftReportEmail,
+  format: ClubFormat,
 ) {
   const shortCode = await getXeroOrgShortCode({ confirmLive: true });
   const stampedReport: CreditSyncDriftReportEmail = {
@@ -604,11 +588,11 @@ export async function sendAdminCreditSyncDriftAlert(
   };
 
   const driftCount = stampedReport.drifts.length;
-  const subject = `Xero Credit Sync Drift — ${driftCount} booking${driftCount === 1 ? "" : "s"}, ${formatMoneyCents(stampedReport.totalDriftCents)} — ${CLUB_BOOKINGS_NAME}`;
+  const subject = `Xero Credit Sync Drift — ${driftCount} booking${driftCount === 1 ? "" : "s"}, ${formatMoneyCents(stampedReport.totalDriftCents, format)} — ${CLUB_BOOKINGS_NAME}`;
 
   await sendToAdmins({
     subject,
-    html: await renderEmailHtml(() => adminCreditSyncDriftTemplate(stampedReport)),
+    html: await renderEmailHtml(() => adminCreditSyncDriftTemplate(stampedReport, format)),
     templateName: "admin-credit-sync-drift",
     templateData: {
       generatedAt: stampedReport.generatedAt.toISOString(),
@@ -616,7 +600,7 @@ export async function sendAdminCreditSyncDriftAlert(
       checkedBookings: String(stampedReport.checkedBookings),
       deferredBookings: String(stampedReport.deferredBookings),
       driftCount: String(driftCount),
-      totalDrift: formatMoneyCents(stampedReport.totalDriftCents),
+      totalDrift: formatMoneyCents(stampedReport.totalDriftCents, format),
       count: String(driftCount),
     },
     preferenceKey: "adminXeroSyncError",
@@ -632,31 +616,34 @@ export async function sendAdminRefundRequestAlert(data: {
   requestedAmountCents: number | null;
   paidAmountCents: number;
   refundedAmountCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendToAdmins({
     subject: `Refund Appeal: ${data.memberName}`,
-    html: await renderEmailHtml(() => adminRefundRequestTemplate(data)),
+    html: await renderEmailHtml(() => adminRefundRequestTemplate(data, format)),
     templateName: "admin-refund-request",
     templateData: {
       ...data,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      paidAmount: formatMoneyCents(data.paidAmountCents),
-      refundedAmount: formatMoneyCents(data.refundedAmountCents),
+      paidAmount: formatMoneyCents(data.paidAmountCents, format),
+      refundedAmount: formatMoneyCents(data.refundedAmountCents, format),
       remainingAmount: formatMoneyCents(
         data.paidAmountCents - data.refundedAmountCents,
+        format,
       ),
       requestedAmount:
         data.requestedAmountCents === null
           ? ""
-          : formatMoneyCents(data.requestedAmountCents),
+          : formatMoneyCents(data.requestedAmountCents, format),
       // #2268: pre-composed optional line — an appeal that names no amount
       // must not print a dangling "Requested:".
       requestedAmountNote: composeOptionalEmailLine(
         "Requested",
         data.requestedAmountCents === null
           ? null
-          : formatMoneyCents(data.requestedAmountCents),
+          : formatMoneyCents(data.requestedAmountCents, format),
         { trailing: "\n" },
       ),
     },

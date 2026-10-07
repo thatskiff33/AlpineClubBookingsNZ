@@ -17,6 +17,7 @@ import {
   type ModificationLine,
   type ModificationPricingSide,
 } from "@/lib/booking-modification-lines";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function day(d: string): Date {
   return new Date(`${d}T00:00:00.000Z`);
@@ -118,7 +119,7 @@ describe("diffBookingPricing", () => {
       amountCents: -32000,
       guestNames: ["Guest a", "Guest b"],
     });
-    expect(renderModificationLineDescription(lines[0]!)).toBe(
+    expect(renderModificationLineDescription(lines[0]!, CLUB_FORMAT_TEST)).toBe(
       "2 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026",
     );
   });
@@ -130,7 +131,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, 0));
 
-    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult removed - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "1 x Non-member Adult added - 1 night - 16 Aug 2026 - 17 Aug 2026",
     ]);
@@ -144,7 +145,7 @@ describe("diffBookingPricing", () => {
     const lines = linesOf(diffBookingPricing(before, after, 1500));
 
     expect(lines.map((line) => line.amountCents)).toEqual([-8000, 9500]);
-    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult removed - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
     ]);
@@ -156,7 +157,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, -3000));
 
-    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult removed - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
     ]);
@@ -168,7 +169,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, -8000));
 
-    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult removed - 1 night - 16 Aug 2026 - 17 Aug 2026",
     ]);
   });
@@ -179,7 +180,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, 25500));
 
-    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult added - 2 nights - 14 Aug 2026 - 16 Aug 2026",
       "1 x Non-member Adult added - 1 night - 16 Aug 2026 - 17 Aug 2026",
     ]);
@@ -203,7 +204,7 @@ describe("diffBookingPricing", () => {
       promoCode: "SUMMER25",
       amountCents: -1000,
     });
-    expect(renderModificationLineDescription(lines.at(-1)!)).toBe(
+    expect(renderModificationLineDescription(lines.at(-1)!, CLUB_FORMAT_TEST)).toBe(
       "Promotion SUMMER25 increased by $10.00",
     );
   });
@@ -214,7 +215,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, 1000));
 
-    expect(renderModificationLineDescription(lines[0]!)).toBe(
+    expect(renderModificationLineDescription(lines[0]!, CLUB_FORMAT_TEST)).toBe(
       "Promotion SUMMER25 reduced by $10.00",
     );
   });
@@ -249,7 +250,7 @@ describe("diffBookingPricing", () => {
     ]);
     const after = side([{ ...guest("a"), nights: afterNights("2026-08-14", [8000, 8000]) }]);
     const lines = linesOf(diffBookingPricing(before, after, -16000));
-    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026",
     ]);
     // The same untouched guest, but this time its nights are the ones going:
@@ -354,7 +355,7 @@ describe("the sentences (for the owner's eye)", () => {
     const lines = linesOf(
       diffBookingPricing(before, after, -32000 + -4500 + 4500 + 8000 + 1000),
     );
-    const rendered = lines.map((line) => renderModificationLineWithAmount(line));
+    const rendered = lines.map((line) => renderModificationLineWithAmount(line, CLUB_FORMAT_TEST));
     console.info(["", "Rendered modification lines:", ...rendered.map((l) => `  ${l}`)].join("\n"));
     // Removals first, then additions; within each, by start date, members
     // before non-members; the promotion last.
@@ -388,26 +389,26 @@ describe("the member word follows the rate snapshot (#2543), as on the invoice l
 
   it("says Non-member for a member priced at the non-member rate when the club's type is known", () => {
     expect(
-      renderModificationLineDescription(lockedOutMember, { nonMemberTypeId: "type-non-member" }),
+      renderModificationLineDescription(lockedOutMember, CLUB_FORMAT_TEST, { nonMemberTypeId: "type-non-member" }),
     ).toBe("1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026");
   });
 
   it("falls back to isMember with no resolver, exactly as a legacy invoice line does", () => {
-    expect(renderModificationLineDescription(lockedOutMember)).toBe(
+    expect(renderModificationLineDescription(lockedOutMember, CLUB_FORMAT_TEST)).toBe(
       "1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
     );
-    expect(renderModificationLineDescription(lockedOutMember, { nonMemberTypeId: null })).toBe(
+    expect(renderModificationLineDescription(lockedOutMember, CLUB_FORMAT_TEST, { nonMemberTypeId: null })).toBe(
       "1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
     );
   });
 
   it("puts the same words and signed money on the audit row", () => {
-    expect(modificationLinesAuditFields([lockedOutMember], { nonMemberTypeId: "type-non-member" })).toEqual({
+    expect(modificationLinesAuditFields([lockedOutMember], { nonMemberTypeId: "type-non-member" }, CLUB_FORMAT_TEST)).toEqual({
       priceLines: [lockedOutMember],
       priceLinesText: ["1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)"],
     });
-    expect(modificationLinesAuditFields(null, null)).toEqual({});
-    expect(modificationLinesAuditFields([], null)).toEqual({});
+    expect(modificationLinesAuditFields(null, null, CLUB_FORMAT_TEST)).toEqual({});
+    expect(modificationLinesAuditFields([], null, CLUB_FORMAT_TEST)).toEqual({});
   });
 
   it("loads the club's NON_MEMBER type only when there are lines, and narrates without it when the read fails", async () => {
@@ -417,10 +418,10 @@ describe("the member word follows the rate snapshot (#2543), as on the invoice l
     >[0];
     const log = { warn: vi.fn() };
 
-    expect(await loadModificationLinesAuditFields(db, null, log)).toEqual({});
+    expect(await loadModificationLinesAuditFields(db, null, log, CLUB_FORMAT_TEST)).toEqual({});
     expect(findFirst).not.toHaveBeenCalled();
 
-    const fields = await loadModificationLinesAuditFields(db, [lockedOutMember], log);
+    const fields = await loadModificationLinesAuditFields(db, [lockedOutMember], log, CLUB_FORMAT_TEST);
     expect(findFirst).toHaveBeenCalledWith({ where: { key: "NON_MEMBER" }, select: { id: true } });
     expect(fields).toMatchObject({
       priceLinesText: ["1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)"],
@@ -428,7 +429,7 @@ describe("the member word follows the rate snapshot (#2543), as on the invoice l
     expect(log.warn).not.toHaveBeenCalled();
 
     findFirst.mockRejectedValueOnce(new Error("connection reset"));
-    const fallback = await loadModificationLinesAuditFields(db, [lockedOutMember], log);
+    const fallback = await loadModificationLinesAuditFields(db, [lockedOutMember], log, CLUB_FORMAT_TEST);
     expect(fallback).toMatchObject({
       priceLinesText: ["1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)"],
     });

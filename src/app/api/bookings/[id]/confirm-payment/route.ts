@@ -22,6 +22,7 @@ import {
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
 } from "@/lib/payment-recovery-contract";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -52,6 +53,9 @@ export async function POST(
   }
 
   const { paymentIntentId } = parsed.data;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   let succeededPaymentIntentObserved = false;
@@ -171,6 +175,7 @@ export async function POST(
     }
 
     const reconciliation = await markBookingPaymentSucceeded({
+      format,
       bookingId,
       paymentIntentId: pi.id,
       amountCents: pi.amount,
@@ -226,6 +231,7 @@ export async function POST(
             booking.checkOut,
             booking.guests.length,
             booking.finalPriceCents,
+            format,
             {
               lodgeId: booking.lodgeId,
               ...(provisionalGuests ? { provisionalGuests } : {}),

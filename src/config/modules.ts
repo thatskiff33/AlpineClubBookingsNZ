@@ -1,4 +1,5 @@
 import type { ClubModuleSettings, Prisma, PrismaClient } from "@prisma/client";
+import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import {
   AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS,
@@ -185,11 +186,31 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   memberLodgeRoster: false,
 };
 
+/**
+ * One dependency bullet on a module card. A plain string for the many bullets
+ * that carry no amount; a function of the club's format for the few that render
+ * one (#3565, INV-CONFIG-006), because this module is on the browser's import
+ * graph and cannot read the persisted format for itself. A reader that shows
+ * the bullets resolves them through `resolveModuleDependencies` with the format
+ * it already holds.
+ */
+export type ModuleDependency = string | ((format: ClubFormat) => string);
+
 export interface ModuleDefinition {
   key: ModuleKey;
   label: string;
   description: string;
-  dependencies: string[];
+  dependencies: ModuleDependency[];
+}
+
+/** The module's dependency bullets as text, every amount in the club's format. */
+export function resolveModuleDependencies(
+  definition: ModuleDefinition,
+  format: ClubFormat,
+): string[] {
+  return definition.dependencies.map((dependency) =>
+    typeof dependency === "function" ? dependency(format) : dependency,
+  );
 }
 
 export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
@@ -395,7 +416,8 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Enter your Anthropic API key under Admin → Integrations before the assistant can answer.",
       // The default renders through the canonical money formatter in the
       // club's configured currency (#3354, INV-CONFIG-001) — never a literal.
-      `A monthly spend cap (default ${formatCents(AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS)}) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.`,
+      (format) =>
+        `A monthly spend cap (default ${formatCents(AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS, format)}) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.`,
     ],
   },
   memberGuests: {
@@ -450,7 +472,8 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       // that spends money — the two setup steps below, and a passing readiness
       // check, are what make the product usable.
       "Enter a DEDICATED Anthropic API key under Admin → Integrations (a separate key from the AI help assistant — the keys are never shared).",
-      `Set a monthly spend budget on the AI Diagnostics settings. It ships at ${formatCents(AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS)}, which hard-stops every paid diagnostics call until you raise it.`,
+      (format) =>
+        `Set a monthly spend budget on the AI Diagnostics settings. It ships at ${formatCents(AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS, format)}, which hard-stops every paid diagnostics call until you raise it.`,
     ],
   },
   alpineCentralServer: {

@@ -21,6 +21,7 @@ import {
   type LinkedMoveQuote,
 } from "@/lib/adult-member-hosting-linked-move";
 import { strandedCoverageStateKey } from "@/lib/adult-member-hosting-same-owner";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const STRANDED = [
   {
@@ -346,7 +347,7 @@ describe("what binds the member's answer (#3232, INV-HOST-050)", () => {
 
 describe("what the member is told (#3232)", () => {
   it("states the real dates and the combined figure, and names both fees", () => {
-    const message = formatLinkedMoveOfferMessage(quote());
+    const message = formatLinkedMoveOfferMessage(quote(), CLUB_FORMAT_TEST);
     expect(message).toContain("BK-MAIN");
     expect(message).toContain("Ruapehu Lodge");
     // The dates outright, because a member can check those against a calendar and
@@ -370,6 +371,7 @@ describe("what the member is told (#3232)", () => {
     // saying nothing.
     const message = formatLinkedMoveOfferMessage(
       quote({ bothChangeFeesCharged: false, combinedChangeFeeCents: 2500 }),
+      CLUB_FORMAT_TEST,
     );
     expect(message).toMatch(/waived by the club/);
     expect(message).not.toMatch(/A change fee applies to both bookings/);
@@ -383,6 +385,7 @@ describe("what the member is told (#3232)", () => {
     // still move their own booking.
     const message = formatLinkedMoveOfferMessage(
       quote({ feasibility: "NO_CAPACITY" }),
+      CLUB_FORMAT_TEST,
     );
     expect(message).toMatch(/not enough beds free/);
     expect(message).toMatch(/You can still move\s+this booking/);
@@ -398,6 +401,7 @@ describe("what the member is told (#3232)", () => {
         combinedRefundCents: 4000,
         settlementMethodRequired: true,
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(message).toContain("$40.00");
     expect(message).toMatch(/the one choice covers both bookings/);
@@ -419,6 +423,7 @@ describe("what the member is told (#3232)", () => {
         combinedRefundCents: 0,
         combinedAmountDueCents: 6500,
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(message).toMatch(
       /2 other bookings on your account are relying on this booking/,
@@ -438,6 +443,7 @@ describe("what the member is told (#3232)", () => {
         ],
         feasibility: "NO_CAPACITY",
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(noBeds).toMatch(/beds free on the new nights to move all 3 bookings/);
     expect(noBeds).toMatch(/the other 2 will be left\s+without adult supervision/);
@@ -446,7 +452,7 @@ describe("what the member is told (#3232)", () => {
   it("never names a person, only the member's own bookings", () => {
     // §11 unchanged: not the qualifying adult, not a guest. The owner is told which
     // of their bookings, which lodge, which nights and how much.
-    const message = formatLinkedMoveOfferMessage(quote());
+    const message = formatLinkedMoveOfferMessage(quote(), CLUB_FORMAT_TEST);
     for (const phrase of ["adult member is", "hosted by", "guest of"]) {
       expect(message, phrase).not.toContain(phrase);
     }
@@ -460,7 +466,7 @@ describe("the offer's 409 body (#3232)", () => {
     const error = new SameOwnerCoverageLinkedMoveRequiredError(quote(), {
       acceptStateKey: `v1:${"a".repeat(64)}`,
       declineStateKey: `v1:${"b".repeat(64)}`,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(error.status).toBe(409);
     expect(error.code).toBe(HOSTING_COVERAGE_LINKED_MOVE_CODE);
     const body = buildSameOwnerCoverageLinkedMoveBody(error);
@@ -478,6 +484,7 @@ describe("the offer's 409 body (#3232)", () => {
     const error = new SameOwnerCoverageLinkedMoveRequiredError(
       quote({ feasibility: "NO_CAPACITY" }),
       { acceptStateKey: `v1:${"a".repeat(64)}`, declineStateKey: `v1:${"b".repeat(64)}` },
+      CLUB_FORMAT_TEST,
     );
     const body = buildSameOwnerCoverageLinkedMoveBody(error);
     expect(body.linkedMoveAvailable).toBe(false);
@@ -489,7 +496,7 @@ describe("the offer's 409 body (#3232)", () => {
       new SameOwnerCoverageLinkedMoveRequiredError(quote(), {
         acceptStateKey: `v1:${"a".repeat(64)}`,
         declineStateKey: `v1:${"b".repeat(64)}`,
-      }),
+      }, CLUB_FORMAT_TEST),
     );
     for (const amount of [
       body.combinedPriceDiffCents,

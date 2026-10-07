@@ -20,9 +20,11 @@ import {
   resolveLinkedBookingMembersWithBoundary,
 } from "@/lib/booking-guests";
 import {
-  checkOwnDependantIdentity,
-  loadBookerDependants,
+  checkOwnDependantIdentityForParty,
+  OwnDependantIdentityRefusedError,
   parseStoredDependantIdentityDeclarations,
+  type DependantIdentityDeclaration,
+  type DependantIdentityRefusal,
 } from "@/lib/booking-dependant-identity";
 import {
   loadMemberGuestAddPolicy,
@@ -67,6 +69,11 @@ import {
   type ModificationDeltaInput,
 } from "@/lib/booking-exception-request-service";
 import type { PolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
+import {
+  resolveBookingGuestDietarySeeding,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #2526 — the REAL {@link PolicyExceptionApprovalHooks} the admin approval route
@@ -161,6 +168,16 @@ export class PolicyExceptionDependantIdentityUnresolvedError extends Error {
     );
     this.name = "PolicyExceptionDependantIdentityUnresolvedError";
   }
+}
+
+/**
+ * The guard's refusal, as the officer's send-it-back refusal — the ONE mapping
+ * both approval executors use (#3451 review), new booking and modification.
+ */
+function approvalDependantIdentityRefusal(
+  refusal: DependantIdentityRefusal,
+): PolicyExceptionDependantIdentityUnresolvedError {
+  return new PolicyExceptionDependantIdentityUnresolvedError(refusal.error);
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +439,12 @@ export interface PolicyExceptionApprovalContext {
    */
   todayAtClub: CalendarDate;
   /**
+   * The club's format (#3565), resolved by the route with `todayAtClub` and for
+   * the same reason: both executors render money inside the approval's
+   * transaction, under both locks.
+   */
+  format: ClubFormat;
+  /**
    * The batch modification's own pre-transaction work, resolved by the route for
    * exactly the reason `todayAtClub` above is (#3232, `INV-LOCK-004`).
    *
@@ -488,6 +511,12 @@ export interface PolicyExceptionApprovalContext {
      * same member-guest authorisation the member's own create route runs.
      */
     memberGuestPolicy: MemberGuestAddPolicy;
+    /**
+     * #3029 (`INV-MOD-059`): whether the created booking's linked-member guest
+     * rows are seeded from their dietary/allergy profiles — the toggle, read on
+     * the module client before the transaction opened, for the same reason.
+     */
+    guestDietarySeeding: BookingGuestDietarySeeding;
   };
 }
 
@@ -513,6 +542,10 @@ export function buildPolicyExceptionApprovalHooks(
   context: PolicyExceptionApprovalContext,
 ): PolicyExceptionApprovalHookSet {
   let verifiedDelta: ModificationDeltaInput | null = null;
+  // #3451: the own-dependant answers frozen beside the delta, read in the same
+  // row read as the delta itself and replayed with it. Not trusted: the planner
+  // re-checks each one against the owner's records as they stand now.
+  let verifiedDependantIdentityDeclarations: DependantIdentityDeclaration[] = [];
   const outcome: PolicyExceptionApprovalOutcome = {
     createdBookingId: null,
     hostingDecisionRecorded: false,
@@ -614,6 +647,11 @@ export function buildPolicyExceptionApprovalHooks(
         return { intact: false, reason: "drift" };
       }
       verifiedDelta = delta;
+      verifiedDependantIdentityDeclarations =
+        parseStoredDependantIdentityDeclarations(
+          (row?.requestedChanges as { dependantIdentityDeclarations?: unknown })
+            ?.dependantIdentityDeclarations,
+        );
       return { intact: true };
     },
 
@@ -677,6 +715,7 @@ export function buildPolicyExceptionApprovalHooks(
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },
+        context.format,
       );
       void request;
     },
@@ -697,6 +736,7 @@ export function buildPolicyExceptionApprovalHooks(
           overrideReason,
           context,
           delta: verifiedDelta,
+          dependantIdentityDeclarations: verifiedDependantIdentityDeclarations,
           outcome,
         });
       }
@@ -727,6 +767,7 @@ async function executeApprovedModification(args: {
   overrideReason: string;
   context: PolicyExceptionApprovalContext;
   delta: ModificationDeltaInput | null;
+  dependantIdentityDeclarations: DependantIdentityDeclaration[];
   outcome: PolicyExceptionApprovalOutcome;
 }): Promise<{ deferredPostCommit: () => Promise<void> }> {
   const { tx, request, snapshot, override, overrideReason, context, delta, outcome } =
@@ -746,6 +787,9 @@ async function executeApprovedModification(args: {
   // Deliberately NOT passed: `confirmOverCapacity` (capacity stays a HARD refusal
   // — an approving officer is not a capacity-override actor) and `adminOverride`
   // (this is not a date-override edit; it is the member's reviewed proposal).
+  // #3451: the planner's own-dependant refusal is translated into the approval's
+  // own one, so the officer is told to send the request back rather than seeing
+  // a sentence written for the member at the edit panel.
   const result = await modifyBookingBatch({
     bookingId: snapshot.bookingId,
     actor: { id: context.actorMemberId, role: "ADMIN" },
@@ -777,6 +821,11 @@ async function executeApprovedModification(args: {
       })),
       removeGuestIds: delta.removeGuestIds,
       guestStayRanges: delta.guestStayRanges,
+      // #3451: the member's frozen own-dependant answers. The planner re-checks
+      // the added guests against the owner's records as they stand NOW.
+      ...(args.dependantIdentityDeclarations.length > 0
+        ? { dependantIdentityDeclarations: args.dependantIdentityDeclarations }
+        : {}),
       ...(context.settlementMethod
         ? { settlementMethod: context.settlementMethod }
         : {}),
@@ -797,11 +846,17 @@ async function executeApprovedModification(args: {
       ? { hostingCoverageOverride: context.hostingCoverageOverride }
       : {}),
     todayAtClub: context.todayAtClub,
+    format: context.format,
     tx,
     // #3232, `INV-LOCK-004`: resolved by the route before this transaction was
     // opened. Without it the service would read the club's settings and reach
     // Xero from inside a transaction holding two keys.
     preTransaction: context.batchPreTransaction,
+  }).catch((error: unknown) => {
+    if (error instanceof OwnDependantIdentityRefusedError) {
+      throw approvalDependantIdentityRefusal(error.refusal);
+    }
+    throw error;
   });
 
   // The service reconciles the hosting hazard from the rows it just wrote and
@@ -873,6 +928,7 @@ async function executeApprovedNewBooking(args: {
   outcome: PolicyExceptionApprovalOutcome;
 }): Promise<{ deferredPostCommit: () => Promise<void> }> {
   const { tx, request, snapshot, override, overrideReason, context, outcome } = args;
+  const { format } = context;
   const execution = context.newBookingExecution;
   if (!execution) {
     throw new PolicyExceptionUnverifiedExecutionError(
@@ -945,19 +1001,17 @@ async function executeApprovedNewBooking(args: {
    * declaration that no longer describes a real collision for this requester is
    * refused exactly as a forged one is.
    */
-  const dependantIdentityRefusal = checkOwnDependantIdentity({
+  const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+    bookerMemberId: request.requestedByMemberId,
     party: normalizedGuests,
     memberPathMemberIds: new Set(linkedMembers.keys()),
-    dependants: await loadBookerDependants(tx, request.requestedByMemberId),
     declarations: parseStoredDependantIdentityDeclarations(
       (snapshot as { dependantIdentityDeclarations?: unknown })
         .dependantIdentityDeclarations,
     ),
   });
   if (dependantIdentityRefusal) {
-    throw new PolicyExceptionDependantIdentityUnresolvedError(
-      dependantIdentityRefusal.error,
-    );
+    throw approvalDependantIdentityRefusal(dependantIdentityRefusal);
   }
 
   const consentPlan = planMemberGuestConsentWrites({
@@ -1001,6 +1055,7 @@ async function executeApprovedNewBooking(args: {
   const memberGuestEntries = consentPlan.entriesByMemberId;
 
   const created = await createConfirmedBooking({
+    format,
     // #3123 review — the club day the route resolved before this transaction
     // opened, shared with the modification executor above (`INV-LOCK-004`).
     todayAtClub: context.todayAtClub,
@@ -1031,6 +1086,7 @@ async function executeApprovedNewBooking(args: {
     lodgeId: snapshot.lodgeId,
     // HARD capacity refusal: never `confirmOverCapacity`, never `waitlistIntent`.
     notifyMember: true,
+    guestDietarySeeding: execution.guestDietarySeeding,
     tx,
   });
 
@@ -1184,5 +1240,6 @@ export async function resolveNewBookingExecutionParams(
     // singleton must not be queried on a second pool connection beneath the
     // approval's locks (`member-guest-add-policy.ts`).
     memberGuestPolicy: await loadMemberGuestAddPolicy(),
+    guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
   };
 }

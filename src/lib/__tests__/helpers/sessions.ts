@@ -18,6 +18,9 @@ const DEFAULT_USER: SessionUser = {
   name: "Test User",
   role: "USER",
   accessRoles: ["USER"],
+  // #3603: a live session belongs to a member who may sign in; the jwt
+  // callback invalidates any session whose member has canLogin false.
+  canLogin: true,
   // #1367: sessions always carry the merged admin-permission matrix; the
   // all-none default matches a plain member. Tests modelling scoped/custom
   // admins should override this rather than accessRoles.
@@ -41,6 +44,7 @@ export function makeSession(user: Partial<SessionUser> = {}): Session {
   if (user.adminPermissionMatrix === undefined) {
     merged.adminPermissionMatrix = getAdminPermissionMatrix({
       accessRoles: merged.accessRoles,
+      canLogin: merged.canLogin,
     });
   }
   return {

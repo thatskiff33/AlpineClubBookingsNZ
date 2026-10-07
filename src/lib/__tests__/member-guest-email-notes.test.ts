@@ -17,6 +17,7 @@ import {
   MEMBER_GUEST_SELF_REMOVAL_OFFER,
   type MemberGuestRemovalFacts,
 } from "@/lib/member-guest-email-notes";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * #2307 (epic #2305, MG2) — the shared composers behind the four member-guest
@@ -406,7 +407,7 @@ describe("composeMemberGuestConsentOutcome (#2307, D-15)", () => {
     const copy = composeMemberGuestConsentOutcome({
       ...COMMON,
       outcome: { kind: "APPROVED" },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(copy.heading).toBe("Priya Kaur has accepted");
     expect(copy.sentence).toContain("is confirmed on your booking at");
@@ -420,7 +421,7 @@ describe("composeMemberGuestConsentOutcome (#2307, D-15)", () => {
     const copy = composeMemberGuestConsentOutcome({
       ...COMMON,
       outcome: { kind: "DECLINED", creditCents: FIXTURE.creditCents },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(copy.heading).toBe("Priya Kaur has declined");
     expect(copy.sentence).toContain("has been taken off your booking");
@@ -431,7 +432,7 @@ describe("composeMemberGuestConsentOutcome (#2307, D-15)", () => {
     const copy = composeMemberGuestConsentOutcome({
       ...COMMON,
       outcome: { kind: "DECLINED", creditCents: 0 },
-    });
+    }, CLUB_FORMAT_TEST);
 
     // "$0.00 has been added to your account credit" would be a false promise.
     expect(copy.consequenceNote).not.toMatch(MONEY_PATTERN);
@@ -447,7 +448,7 @@ describe("composeMemberGuestConsentOutcome (#2307, D-15)", () => {
         expiredAt: FIXTURE.expiredAt,
         creditCents: FIXTURE.creditCents,
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(copy.heading).toBe("Priya Kaur did not answer in time");
     expect(copy.sentence).toContain("lapsed on 7 Aug 2026 with no answer");
@@ -463,7 +464,7 @@ describe("composeMemberGuestConsentOutcome (#2307, D-15)", () => {
         expiredAt: FIXTURE.expiredAt,
         blocker: "QUOTE_PRICED",
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The honest variant, and the one that could have been quietly omitted: the
     // owner must not be left believing the guest came off their booking.
@@ -497,7 +498,7 @@ describe("composeMemberGuestConsentOutcome (#2307, D-15)", () => {
           expiredAt: FIXTURE.expiredAt,
           blocker,
         },
-      });
+      }, CLUB_FORMAT_TEST);
       expect(copy.consequenceNote).toMatch(/^Priya is still on the booking, because .+\. The club has been told and will be in touch\.$/);
     }
   });
@@ -583,7 +584,7 @@ describe("registry preview samples mirror what the senders compose (#2307)", () 
       checkIn: FIXTURE.checkIn,
       checkOut: FIXTURE.checkOut,
       outcome: { kind: "APPROVED" },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sampleFor("member-guest-consent-outcome", "outcomeHeading")).toBe(
       copy.heading,

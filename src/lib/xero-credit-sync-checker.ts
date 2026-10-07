@@ -78,6 +78,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 import { sendAdminCreditSyncDriftAlert } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import type { ClubFormat } from "@/lib/club-format";
 import {
   type CreditSyncDriftItemEmail,
   type CreditSyncDriftReportEmail,
@@ -151,7 +152,7 @@ export interface XeroCreditSyncCheckerDeps {
   /** Read a live Xero invoice's credit allocation. Injected in tests; throws on
    * a Xero outage/rate-limit so the caller can defer rather than false-warn. */
   readInvoiceCreditAllocation?: (invoiceId: string) => Promise<CreditSyncInvoiceRead>;
-  sendAlert?: (report: CreditSyncDriftReportEmail) => Promise<void>;
+  sendAlert?: (report: CreditSyncDriftReportEmail, format: ClubFormat) => Promise<void>;
 }
 
 function toFiniteCents(value: number | null | undefined): number | null {
@@ -278,6 +279,7 @@ function emptyResult(
  * allocations and warn admins on drift. Read-only, idempotent, fail-safe.
  */
 export async function reconcileXeroCreditSync(
+  format: ClubFormat,
   deps: XeroCreditSyncCheckerDeps = {}
 ): Promise<XeroCreditSyncCheckResult> {
   const now = deps.now ?? new Date();
@@ -542,7 +544,7 @@ export async function reconcileXeroCreditSync(
       drifts,
     };
     try {
-      await sendAlert(report);
+      await sendAlert(report, format);
       emailSent = true;
     } catch (err) {
       // A send failure must not fail the whole checker (the drift is already

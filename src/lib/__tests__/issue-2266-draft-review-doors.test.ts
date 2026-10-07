@@ -36,7 +36,13 @@ const tx = {
     updateMany: mocks.txBookingUpdateMany,
     update: mocks.txBookingUpdate,
   },
-  payment: { create: mocks.txPaymentCreate, upsert: vi.fn() },
+  // #3638: the pay route's mint attach re-reads the payment's source under
+  // lock(1) before writing on this handle.
+  payment: {
+    create: mocks.txPaymentCreate,
+    upsert: vi.fn().mockResolvedValue({ id: "payment-1" }),
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
 };
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -61,14 +67,20 @@ vi.mock("@/lib/access-roles", async (importOriginal) => ({
 // refusal on this route is pinned by `adult-member-hosting-call-sites.test.ts` (which
 // asserts the route both uses the seam and catches its refusal above the generic
 // branch) and by the hosting suites themselves.
-vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/adult-member-hosting-review")),
-  reconcileAdultMemberHostingReviewWithSiblings: vi.fn(async () => ({
-    action: "none" as const,
-    violation: null,
-    mode: null,
-  })),
-}));
+vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/adult-member-hosting-review");
+  return {
+    ...actual,
+    reconcileAdultMemberHostingReviewWithSiblings: vi.fn(async () => ({
+      action: "none" as const,
+      violation: null,
+      mode: null,
+    })),
+    // A pass-through spy, so a test can read which actor role the route hands
+    // the hosting evaluator (#3603).
+    hostingCoverageActorOptions: vi.fn(actual.hostingCoverageActorOptions),
+  };
+});
 
 vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: vi.fn(async () => undefined),
@@ -126,7 +138,9 @@ vi.mock("@/lib/payment-transactions", () => ({
   findPaymentTransactionByIntentId: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
 }));
-vi.mock("@/lib/booking-status", () => ({
+vi.mock("@/lib/booking-status", async (importOriginal) => ({
+  // #3638: the mint attach reads the real payable-status rule.
+  ...((await importOriginal()) as typeof import("@/lib/booking-status")),
   bookingHasCapacityOverride: vi.fn().mockReturnValue(false),
 }));
 vi.mock("@/lib/booking-payment-cleanup", () => ({
@@ -160,6 +174,7 @@ vi.mock("@/lib/booking-split-summary", () => ({
 }));
 
 import { POST as confirmDraftRoute } from "@/app/api/bookings/[id]/confirm-draft/route";
+import { hostingCoverageActorOptions } from "@/lib/adult-member-hosting-review";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
 
 const MEMBER_ID = "member-1";
@@ -275,6 +290,50 @@ describe("#2266 door 1 — confirm-draft refuses an unresolved review", () => {
         data: expect.objectContaining({ status: "PAID" }),
       }),
     );
+  });
+});
+
+/**
+ * #3603: the confirm route hands the hosting evaluator an actor role, and "ADMIN"
+ * there is officer authority. It must be the role derived from access roles and
+ * `canLogin`, never the legacy `Member.role` claim, which neither reflects the
+ * access-role rows nor clears when login is switched off.
+ */
+describe("confirm-draft derives the hosting actor role from access roles (#3603)", () => {
+  async function confirmAs(user: Record<string, unknown>) {
+    const draft = flaggedDraft({ adminReviewStatus: "APPROVED" });
+    mocks.prismaBookingFindUnique.mockResolvedValue(draft);
+    mocks.txBookingFindUnique.mockResolvedValue({
+      ...draft,
+      guests: [{ id: "g1", nights: [] }],
+    });
+    mocks.txBookingUpdate.mockResolvedValue(draft);
+    mocks.txPaymentCreate.mockResolvedValue({ id: "pay-1" });
+    mocks.auth.mockResolvedValue({ user: { id: MEMBER_ID, ...user } });
+
+    const res = await confirmDraftRoute(confirmRequest(), {
+      params: Promise.resolve({ id: BOOKING_ID }),
+    });
+    expect(res.status).toBe(200);
+    return vi.mocked(hostingCoverageActorOptions).mock.calls.at(-1)?.[0]?.actorRole;
+  }
+
+  it("ignores a legacy ADMIN claim that the access roles do not carry", async () => {
+    await expect(
+      confirmAs({ role: "ADMIN", accessRoles: ["USER"], canLogin: true }),
+    ).resolves.toBe("USER");
+  });
+
+  it("grants no officer role to a claim that says login is switched off", async () => {
+    await expect(
+      confirmAs({ role: "ADMIN", accessRoles: ["ADMIN"], canLogin: false }),
+    ).resolves.toBe("USER");
+  });
+
+  it("passes ADMIN for a Full Admin with login enabled", async () => {
+    await expect(
+      confirmAs({ role: "USER", accessRoles: ["ADMIN"], canLogin: true }),
+    ).resolves.toBe("ADMIN");
   });
 });
 

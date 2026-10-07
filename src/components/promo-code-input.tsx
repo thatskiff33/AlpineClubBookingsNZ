@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatSignedCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 export interface PromoResult {
   // Null when the discount comes from a work party event's internal promo
@@ -68,6 +69,7 @@ export function PromoCodeInput({
   disabledReason,
   forBookingEdit = false,
 }: PromoCodeInputProps) {
+  const format = useClubFormat();
   const [code, setCode] = useState(appliedPromo?.code || "");
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState("");
@@ -202,7 +204,7 @@ export function PromoCodeInput({
               </span>
             )}
             <span className="text-success-11 ml-2">
-              ({formatSignedCents(appliedPromo.promoAdjustmentCents)})
+              ({formatSignedCents(appliedPromo.promoAdjustmentCents, format)})
             </span>
           </div>
           <Button

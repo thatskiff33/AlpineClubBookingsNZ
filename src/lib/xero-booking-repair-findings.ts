@@ -2,13 +2,13 @@
 // detection and booking summary assembly) for the booking-vs-Xero repair tool.
 // Extracted verbatim from xero-booking-repair.ts (#1208 item 2).
 import { bookingOwner } from "@/lib/booking-owner";
-import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type {
   BookingClassificationContext,
   BookingXeroRepairAction,
   BookingXeroRepairBookingSummary,
   MutableFinding,
   ResolvedLocalObject,
+  RetryableOperationMatch,
   XeroAmountEvidence,
   XeroObjectLinkRecord,
   XeroOperationRecord,
@@ -20,6 +20,7 @@ import {
   readStoredXeroAmountCents,
   toIsoDate,
 } from "./xero-booking-repair-utils";
+import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
 
 export function addAction(
   actionMap: Map<string, BookingXeroRepairAction>,
@@ -46,21 +47,99 @@ export function addFinding(
   findings.push(input);
 }
 
+/**
+ * A repair offer to re-run an operation. It is auto-applied, so it takes only
+ * the `retryable` match (#3635, `INV-INT-025`): a row an officer resolved in
+ * Xero, or one the retry helper refuses, cannot reach here.
+ */
 export function buildRetryAction(
   bookingId: string,
-  operation: XeroOperationRecord,
-  retryMeta: XeroOperationRetryMeta
+  match: RetryableOperationMatch
 ) {
+  const { operation } = match;
   return {
     key: `retry:${operation.id}`,
     bookingId,
     type: "REQUEUE_XERO_OPERATION" as const,
     description: `Requeue Xero operation ${operation.id} (${operation.entityType}/${operation.operationType}).`,
-    safeToAutoApply: retryMeta.supported,
+    safeToAutoApply: match.retryMeta.supported,
     payload: {
       operationId: operation.id,
     },
   };
+}
+
+/**
+ * #3635 (orchestrator decision 2, `INV-INT-025`): an operation an officer
+ * resolved in Xero, where the club's records hold no document for it. Resolved
+ * means "never re-run", not "never reported": info level, no action, nothing
+ * auto-applied - the shape of `MANUALLY_SETTLED_NO_XERO_EXPECTED` - so a wrong
+ * resolve can still be seen and put right by hand.
+ */
+export function addResolvedInXeroFinding(
+  findings: MutableFinding[],
+  operation: XeroOperationRecord,
+  document: string,
+  extraDetails: Record<string, unknown> = {}
+) {
+  addFinding(findings, {
+    code: "RESOLVED_IN_XERO_BY_OFFICER",
+    severity: "info",
+    summary: `An officer marked this booking's Xero ${document} operation resolved in Xero, so it is treated as done and is never re-run. The club's records hold no Xero ${document} for it; if the resolve was a mistake, raise it by hand in Xero.`,
+    safeToAutoApply: false,
+    details: {
+      ...extraDetails,
+      operationId: operation.id,
+      operationStatus: operation.status,
+      manuallyResolvedAt: operation.manuallyResolvedAt,
+      manuallyResolvedReason: operation.manuallyResolvedReason,
+    },
+    actionKeys: [],
+  });
+}
+
+/**
+ * #3548 (review F5/F6): a completed refund-note row whose note has neither its
+ * settling payment nor a skip on record (a pre-#3548 early return closed it
+ * with neither), or one Xero shows part-settled. Report-first: the settle is
+ * never auto-applied, because an officer may have left an old note open on
+ * purpose; an operator applies it by key (`--apply-action`), and it runs the
+ * one read-back-then-settle. A part-settled note's remainder is settled in
+ * Xero by hand; its action then only reads the note back and records it, never
+ * paying. `refundPaymentLinks` are the payment's `REFUND_PAYMENT` links active
+ * or not (`refundPaymentLinkWhere`), the evidence the report reads too.
+ */
+export function addUnsettledRefundCreditNoteFindings(
+  findings: MutableFinding[],
+  actionMap: Map<string, BookingXeroRepairAction>,
+  bookingId: string,
+  refundPaymentLinks: XeroObjectLinkRecord[],
+  paymentOperations: XeroOperationRecord[],
+) {
+  for (const row of unsettledRefundNoteRows(paymentOperations, refundPaymentLinks)) {
+    const partSettled = row.kind === "part-settled";
+    const note = row.creditNoteNumber ?? row.creditNoteId;
+    const action = addAction(actionMap, {
+      key: `settle-refund-note:${row.paymentId}:${row.creditNoteId}`,
+      bookingId,
+      type: "SETTLE_REFUND_CREDIT_NOTE",
+      description: partSettled
+        ? `Read part-settled refund credit note ${note} back from Xero and record the payments it now shows on operation ${row.operationId}; never pays.`
+        : `Read refund credit note ${note} back from Xero and record its settling payment, or why none is due, on operation ${row.operationId}.`,
+      safeToAutoApply: false,
+      payload: { operationId: row.operationId, paymentId: row.paymentId, creditNoteId: row.creditNoteId },
+    });
+    addFinding(findings, {
+      code: "REFUND_CREDIT_NOTE_UNSETTLED",
+      severity: "warning",
+      summary: partSettled
+        ? "A refund credit note is part-settled in Xero. Settle the remainder in Xero by hand, then apply the action by key to record it."
+        : "A refund credit note's operation completed with neither its settling payment nor a reason none is due. Review it, then apply the settle action by key if the note should be paid.",
+      safeToAutoApply: false,
+      details: { ...row },
+      actionKeys: [action.key],
+    });
+  }
 }
 
 export function buildManualReviewAction(bookingId: string, reason: string) {

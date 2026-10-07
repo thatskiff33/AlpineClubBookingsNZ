@@ -19,9 +19,9 @@
  * Dry run by default. SAFE USAGE — review the dry-run report first, keep its
  * output with the change record, then apply exactly the reviewed payments:
  *
- *   npm run xero:refund-note-link-repair                        # dry run (writes nothing)
- *   npm run xero:refund-note-link-repair -- --record-statuses   # fetch + record live note statuses, then dry run
- *   npm run xero:refund-note-link-repair -- --apply --payment <id> [--payment <id>...]
+ *   pnpm run xero:refund-note-link-repair                        # dry run (writes nothing)
+ *   pnpm run xero:refund-note-link-repair --record-statuses   # fetch + record live note statuses, then dry run
+ *   pnpm run xero:refund-note-link-repair --apply --payment <id> [--payment <id>...]
  */
 import "dotenv/config";
 import process from "node:process";
@@ -35,16 +35,17 @@ import {
   recordStripeRefundNoteLinkStatuses,
 } from "../src/lib/xero-refund-note-status-recorder";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
-  npm run xero:refund-note-link-repair                        # dry run (default, writes nothing)
-  npm run xero:refund-note-link-repair -- --dry-run           # explicit dry run
-  npm run xero:refund-note-link-repair -- --record-statuses   # fetch live note statuses from Xero (read-only
+  pnpm run xero:refund-note-link-repair                        # dry run (default, writes nothing)
+  pnpm run xero:refund-note-link-repair --dry-run           # explicit dry run
+  pnpm run xero:refund-note-link-repair --record-statuses   # fetch live note statuses from Xero (read-only
                                                               # at the provider), record them on the local
                                                               # links, then print the refreshed dry-run report
-  npm run xero:refund-note-link-repair -- --payment <id>      # scope to payment id(s) (repeatable)
-  npm run xero:refund-note-link-repair -- --apply --payment <id> [--payment <id>...]
+  pnpm run xero:refund-note-link-repair --payment <id>      # scope to payment id(s) (repeatable)
+  pnpm run xero:refund-note-link-repair --apply --payment <id> [--payment <id>...]
 
 Options:
   --apply             Apply the reviewed plans, each payment in its own
@@ -126,6 +127,8 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // The club's format (#3565), resolved once per run.
+  const format = await getClubFormat();
   const scope =
     args.paymentIds.length > 0 ? { paymentIds: args.paymentIds } : undefined;
 
@@ -136,7 +139,7 @@ async function main() {
   }
 
   if (!args.apply) {
-    const report = await findStripeRefundNoteLinkRepairs(scope);
+    const report = await findStripeRefundNoteLinkRepairs(format, scope);
     console.log("DRY RUN — no repair was applied.");
     console.log("");
     console.log(formatStripeRefundNoteLinkRepairReport(report));
@@ -146,7 +149,7 @@ async function main() {
     return;
   }
 
-  const result = await applyStripeRefundNoteLinkRepairs(scope);
+  const result = await applyStripeRefundNoteLinkRepairs(format, scope);
   console.log(formatStripeRefundNoteLinkRepairReport(result.report));
   console.log(
     `\nApplied ${result.appliedPayments} payment(s): reactivated ${result.reactivatedLinks} link(s), deactivated ${result.deactivatedLinks} cancelled-note link(s).`

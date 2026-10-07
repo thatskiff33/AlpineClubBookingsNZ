@@ -50,10 +50,12 @@ import {
   DEFAULT_MODULE_SETTINGS,
   MODULE_DEFINITIONS,
   MODULE_KEYS,
+  resolveModuleDependencies,
 } from "@/config/modules";
 import { DEFAULT_MEMBER_GUEST_SETTINGS } from "@/config/club-settings-defaults";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.
@@ -179,9 +181,12 @@ function moduleClient(memberGuests: boolean) {
  */
 const CALL_SITES = [
   {
-    name: "api/bookings/route.ts",
-    file: "src/app/api/bookings/route.ts",
-    /** `skipAuthorization: isAuthorizedOnBehalf` — admin/officer on-behalf. */
+    // #3770: the create route and both exception doors resolve their party
+    // family-first through this one module; their own modes are read back by
+    // "declares each family-first caller's real authorization modes" below.
+    name: "member-guest-family-first.ts (create route + both exception doors)",
+    file: "src/lib/member-guest-family-first.ts",
+    /** `skipAuthorization: options.skipAuthorization` — the caller's answer. */
     skipAuthorizationModes: [false, true],
   },
   {
@@ -231,6 +236,19 @@ const CALL_SITES = [
      */
     skipAuthorizationModes: [false],
   },
+] as const;
+
+/**
+ * The callers of the family-first module (#3770), each with the modes it can
+ * pass through `FamilyFirstOptions.skipAuthorization`.
+ */
+const FAMILY_FIRST_CALL_SITES = [
+  {
+    name: "api/bookings/route.ts",
+    file: "src/app/api/bookings/route.ts",
+    /** `skipAuthorization: isAuthorizedOnBehalf` — admin/officer on-behalf. */
+    skipAuthorizationModes: [false, true],
+  },
   {
     name: "booking-exception-request-service.ts (request creation)",
     file: "src/lib/booking-exception-request-service.ts",
@@ -243,10 +261,10 @@ const CALL_SITES = [
   },
 ] as const;
 
-/** How many of the nine can reach the `skipAuthorization` branch. */
+/** How many of the eight can reach the `skipAuthorization` branch. */
 const CALL_SITES_THAT_CAN_SKIP = 6;
 
-/** The nine files that call the helper. */
+/** The eight files that call the helper. */
 const CALL_SITE_FILES = CALL_SITES.map((site) => site.file);
 
 /**
@@ -565,7 +583,7 @@ describe("call-site survey", () => {
     ].sort();
   }
 
-  it("still has exactly nine call-site files, six of which can skip authorization", () => {
+  it("still has exactly eight call-site files, six of which can skip authorization", () => {
     // SET EQUALITY, not "each declared file still contains the call". The weaker
     // form only proves the known files have not stopped calling it: a planted
     // EXTRA caller passes it untouched, and an extra caller is a consent decision
@@ -609,6 +627,44 @@ describe("call-site survey", () => {
       } else {
         // No option at all: authorization is always enforced.
         expect([...site.skipAuthorizationModes], site.name).toEqual([false]);
+      }
+    }
+  });
+
+  it("has exactly the declared family-first callers (#3770)", () => {
+    // SET EQUALITY again: the module is declared as able to skip, so a new door
+    // calling it with `skipAuthorization: true` would be a consent decision nobody
+    // made, invisible to every check above. The module defines both phases.
+    const familyFirstCallers = [
+      ...new Set(
+        ["resolveFamilyPhase", "resolveBeyondFamilyPhase"].flatMap((helper) =>
+          callersOf(helper).filter(
+            (file) => file !== "src/lib/member-guest-family-first.ts",
+          ),
+        ),
+      ),
+    ].sort();
+    expect(familyFirstCallers).toEqual(
+      FAMILY_FIRST_CALL_SITES.map((site) => site.file).sort(),
+    );
+  });
+
+  it("declares each family-first caller's real authorization modes", () => {
+    for (const site of FAMILY_FIRST_CALL_SITES) {
+      const source = readRepoFile(site.file);
+      const at = source.indexOf("FamilyFirstOptions = {");
+      expect(at, `${site.file}: no FamilyFirstOptions literal`).toBeGreaterThan(-1);
+      expect(source, `${site.file}: resolves through the family-first module`).toContain(
+        "resolveFamilyPhase(",
+      );
+      const options = source.slice(at, source.indexOf("};", at));
+      expect(options, site.name).toContain("memberGuestWideningEnabled");
+      if (/skipAuthorization:\s*false\b/.test(options)) {
+        expect([...site.skipAuthorizationModes], site.name).toEqual([false]);
+      } else if (/skipAuthorization:\s*true\b/.test(options)) {
+        expect([...site.skipAuthorizationModes], site.name).toEqual([true]);
+      } else {
+        expect([...site.skipAuthorizationModes].sort(), site.name).toEqual([false, true]);
       }
     }
   });
@@ -770,6 +826,11 @@ describe("consent columns have exactly one writer", () => {
     // Its #3123 docblock names `consentExpiresAt` in order to say which of the
     // two date KINDS it renders is a real instant, which is exactly the
     // distinction a reader has to get right here.
+    // #3029 S5: READS a planned guest's consentStatus so a member whose consent
+    // is still PENDING is not seeded with their dietary note. Writes no consent
+    // column.
+    "src/lib/member-dietary-booking-writes.ts":
+      "reads consentStatus to withhold dietary seeding while consent is pending",
     "src/lib/member-guest-email-notes.ts":
       "names a consent column in a docblock explaining instants versus calendar days; reads and writes nothing",
     "src/lib/member-guest-delegate-page.ts":
@@ -899,6 +960,13 @@ describe("consent columns have exactly one writer", () => {
     // writes no consent column.
     "src/lib/subscription-lockout-enforcement.ts":
       "the shared participant mapper reads consent presence so a pending invite cannot stand in as the paid-up adult member",
+    // #3770, "only agreed adults count": READERS that state each planned row's
+    // consent (`consentStatus: guestConsentStatus(guest)`) for the
+    // adult-supervision rule. They compose no consent shape and write nothing.
+    "src/app/api/bookings/route.ts":
+      "the create route states each planned row's consent for the adult-supervision pre-flight",
+    "src/lib/booking-create-guests.ts":
+      "the create services' review gate states each planned row's consent for the adult-supervision rule",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.
@@ -1166,7 +1234,10 @@ describe("the module flag now gates the widening, and says so", () => {
     // What must SURVIVE is everything the bullet list is actually for: what
     // switching this on does to other members, and what an admin should know
     // before doing it.
-    const dependencies = MODULE_DEFINITIONS.memberGuests.dependencies.join(" ");
+    const dependencies = resolveModuleDependencies(
+      MODULE_DEFINITIONS.memberGuests,
+      CLUB_FORMAT_TEST,
+    ).join(" ");
     expect(dependencies).not.toMatch(/not ready to turn on yet/i);
     expect(dependencies).not.toMatch(/arrives in the next update/i);
     // Asked-first by default, the pending guest's operational invisibility, and
@@ -1181,7 +1252,7 @@ describe("the module flag now gates the widening, and says so", () => {
     // deleted here, in the same change that flips the widening — its own comment
     // said to. A module whose behaviour has shipped must read as ready.
     const statusFor = (memberGuests: boolean) => {
-      const found = buildClubModuleSettingsPayload({ memberGuests }).modules.find(
+      const found = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, { memberGuests }).modules.find(
         (entry) => entry.key === "memberGuests",
       );
       expect(found, "memberGuests missing from the module payload").toBeDefined();
@@ -1272,10 +1343,10 @@ describe("the admin Modules card renders memberGuests as an ordinary module (D-1
   it("badges memberGuests exactly like any other credential-free module", () => {
     // The behavioural half, so the structural pins above cannot pass while the
     // payload says something different.
-    const memberGuests = buildClubModuleSettingsPayload({ memberGuests: true }).modules.find(
+    const memberGuests = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, { memberGuests: true }).modules.find(
       (entry) => entry.key === "memberGuests",
     );
-    const notices = buildClubModuleSettingsPayload({ memberNotices: true }).modules.find(
+    const notices = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, { memberNotices: true }).modules.find(
       (entry) => entry.key === "memberNotices",
     );
     expect(memberGuests!.readiness.status).toBe(notices!.readiness.status);

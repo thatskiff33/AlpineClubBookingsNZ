@@ -3,12 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinimumStayPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { PolicyExceptionMemberMessageError } from "@/lib/booking-exception-requests";
 import { parseDateOnly } from "@/lib/date-only";
+import {
+  BookingGuestValidationError,
+  memberGuestCrossFamilyRefusal,
+} from "@/lib/booking-guests";
+import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
 
 const mocks = vi.hoisted(() => ({
   nbCreate: vi.fn(),
   nbUpdateMany: vi.fn(),
   nbFindMany: vi.fn(),
   nbFindUnique: vi.fn(),
+  nbFindFirst: vi.fn(),
+  bcrFindFirst: vi.fn(),
   bcrCreate: vi.fn(),
   bcrUpdateMany: vi.fn(),
   bcrFindMany: vi.fn(),
@@ -53,6 +60,12 @@ const mocks = vi.hoisted(() => ({
   ),
   // #2526: request-time member-guest authorisation.
   resolveLinkedMembers: vi.fn(),
+  /**
+   * #3770 family first: who is beyond the requester's family. `member-x` is the
+   * outsider every status-independence case names; a case about a family member
+   * of that id removes it.
+   */
+  beyondIds: new Set<string>(),
   assertMembersBookable: vi.fn(),
   /**
    * #2721: the requester's OWN recorded dependants, read by `loadBookerDependants`
@@ -118,12 +131,14 @@ vi.mock("@/lib/prisma", () => {
         create: (...a: unknown[]) => mocks.nbCreate(...a),
         updateMany: (...a: unknown[]) => mocks.nbUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.nbFindMany(...a),
+        findFirst: (...a: unknown[]) => mocks.nbFindFirst(...a),
       },
       bookingChangeRequest: {
         create: (...a: unknown[]) => mocks.bcrCreate(...a),
         updateMany: (...a: unknown[]) => mocks.bcrUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.bcrFindMany(...a),
         findUnique: (...a: unknown[]) => mocks.bcrFindUnique(...a),
+        findFirst: (...a: unknown[]) => mocks.bcrFindFirst(...a),
       },
       member: {
         findMany: () => mocks.memberFindMany(),
@@ -167,6 +182,14 @@ vi.mock("@/lib/booking-guests", async (importActual) => {
     ...actual,
     resolveLinkedBookingMembersWithBoundary: (...a: unknown[]) =>
       mocks.resolveLinkedMembers(...a),
+    computeMemberGuestBoundary: async (
+      _db: unknown,
+      _booker: unknown,
+      ids: readonly string[],
+    ) => ({
+      scopeByMemberId: new Map(),
+      beyondFamilyMemberIds: ids.filter((id) => mocks.beyondIds.has(id)),
+    }),
     assertLinkedBookingMembersCanBeBooked: (...a: unknown[]) =>
       mocks.assertMembersBookable(...a),
   };
@@ -237,6 +260,8 @@ beforeEach(() => {
   // #2543: a requester with no family links, and no live rows, is the neutral
   // default — every existing case in this file predates the derivation.
   mocks.familyGroupMemberFindMany.mockResolvedValue([]);
+  mocks.beyondIds.clear();
+  mocks.beyondIds.add("member-x");
   mocks.bookingGuestFindMany.mockResolvedValue([]);
   mocks.bookingFindUnique.mockResolvedValue({ memberId: null });
   mocks.validateMinimumStay.mockResolvedValue({ valid: false, violations: [minStayViolation()] });
@@ -251,6 +276,11 @@ beforeEach(() => {
   });
   mocks.assertMembersBookable.mockResolvedValue(undefined);
   mocks.nbFindUnique.mockResolvedValue({ attemptCount: 1 });
+  // #3770 pre-checks: the supersede target is open, and no other open slot.
+  mocks.nbFindFirst.mockResolvedValue({ id: "old-9" });
+  mocks.bcrFindFirst.mockImplementation(async (args: { where: { openStateKey?: string } }) =>
+    args.where.openStateKey ? null : { id: "old-9" },
+  );
   mocks.evaluateHosting.mockResolvedValue(null);
   mocks.nbCreate.mockResolvedValue({ id: "req-1", status: "REQUESTED" });
   mocks.nbUpdateMany.mockResolvedValue({ count: 1 });
@@ -271,6 +301,51 @@ beforeEach(() => {
     nightDetails: [],
   });
 });
+
+/**
+ * #3770 E1: the two worlds for a family refusal on an exception door. The family
+ * resolves; only the lookup of the outsider differs. Member guests ON, so no
+ * module-off refusal stands in front of the family.
+ */
+function arrangeFamilyFirstWorld(xIsReal: boolean) {
+  mocks.loadMemberGuestPolicy.mockResolvedValue({
+    wideningEnabled: true,
+    approvalRequired: true,
+    pendingHoldExpiryDays: 0,
+  });
+  mocks.resolveLinkedMembers.mockImplementation(
+    async (_db: unknown, _booker: unknown, ids: Array<string | null | undefined>) => {
+      const named = ids.filter((id): id is string => Boolean(id));
+      if (named.includes("member-x")) {
+        if (!xIsReal) throw memberGuestCrossFamilyRefusal(["member-x"]);
+        return {
+          members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: ["member-x"] },
+        };
+      }
+      return {
+        members: new Map(named.map((id) => [id, { id, ageTier: "ADULT" }])),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+      };
+    },
+  );
+  // The requester's family member fam-1 has incomplete details.
+  mocks.assertMembersBookable.mockImplementation(
+    async (_db: unknown, members: Map<string, unknown>) => {
+      if (members.has("fam-1")) {
+        throw new BookingGuestValidationError(
+          "Some member guests need their details completed or confirmed before booking.",
+          403,
+        );
+      }
+    },
+  );
+}
+function lookupNamedMemberX() {
+  return mocks.resolveLinkedMembers.mock.calls.some((call: unknown[]) =>
+    (call[2] as Array<string | null | undefined>).includes("member-x"),
+  );
+}
 
 describe("createNewBookingExceptionRequest", () => {
   it("freezes evidence + hash, stores under an nbpe open-slot, and returns reason codes", async () => {
@@ -410,10 +485,14 @@ describe("createNewBookingExceptionRequest", () => {
       expect(mocks.nbCreate).not.toHaveBeenCalled();
     });
 
-    it("is not fooled by a member id that resolved to nobody", async () => {
-      // The row claims to be member-linked; the linked-member map says otherwise,
-      // so it is heading for the guest split and the question still applies.
+    it("leaves a CLAIMED member id to the member lookup, which refuses one that does not resolve", async () => {
+      // #3770: the guard runs before the lookup and trusts the claim; the lookup
+      // is what refuses a forged id (the real one throws for any id that does
+      // not resolve), so the row still never reaches the guest split.
       mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      mocks.resolveLinkedMembers.mockRejectedValue(
+        new BookingGuestValidationError("Linked member is inactive or not found", 400),
+      );
       await expect(
         createNewBookingExceptionRequest(
           newBookingInput({
@@ -428,7 +507,39 @@ describe("createNewBookingExceptionRequest", () => {
             ],
           }),
         ),
+      ).rejects.toEqual(
+        new BookingGuestValidationError("Linked member is inactive or not found", 400),
+      );
+      expect(mocks.resolveLinkedMembers).toHaveBeenCalled();
+      expect(mocks.nbCreate).not.toHaveBeenCalled();
+    });
+
+    // #3770: the answer never depends on whether ANOTHER claimed member id is
+    // real, because the guard runs before the member lookup.
+    it.each([
+      ["X is a real member", () =>
+        mocks.resolveLinkedMembers.mockResolvedValue({
+          members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: ["member-x"] },
+        })],
+      ["X is nobody", () =>
+        mocks.resolveLinkedMembers.mockRejectedValue(
+          memberGuestCrossFamilyRefusal(["member-x"]),
+        )],
+    ])("answers identically whether another claimed id resolves (%s)", async (_label, arrange) => {
+      arrange();
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      await expect(
+        createNewBookingExceptionRequest(
+          newBookingInput({
+            guests: [
+              { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: true, memberId: "member-x" },
+              ...FREE_TEXT_SAM,
+            ],
+          }),
+        ),
       ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
     });
 
     it("asks nothing of a party that names nobody's dependant", async () => {
@@ -471,6 +582,133 @@ describe("createNewBookingExceptionRequest", () => {
       NoEligiblePolicyExceptionError,
     );
     expect(mocks.nbCreate).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3770 - the membership-existence oracle on this door. A party naming
+    another family's member id X must get the SAME response whether X is a real,
+    bookable member or nobody at all. With the member-guest module on, nobody is
+    refused by the lookup with D-8's collapsed refusal, so every refusal a real
+    X could reach instead must either run before the lookup or answer the same.
+  */
+  describe("a beyond-family member id answers the same whether it resolves (#3770)", () => {
+    const WITH_X: ExceptionRequestGuestInput[] = [
+      { firstName: "Ada", lastName: "Lovelace", ageTier: "ADULT", isMember: true, memberId: "m1" },
+      { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: true, memberId: "member-x" },
+    ];
+    const X_RESOLVES = () =>
+      mocks.resolveLinkedMembers.mockResolvedValue({
+        members: new Map([
+          ["m1", { id: "m1", ageTier: "ADULT" }],
+          ["member-x", { id: "member-x", ageTier: "ADULT" }],
+        ]),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: ["member-x"] },
+      });
+    const X_IS_NOBODY = () =>
+      mocks.resolveLinkedMembers.mockRejectedValue(
+        memberGuestCrossFamilyRefusal(["member-x"]),
+      );
+
+    async function responseFor(
+      arrange: () => void,
+      overrides: Record<string, unknown> = {},
+    ) {
+      arrange();
+      const res = await createNewBookingExceptionRequest(
+        newBookingInput({ guests: WITH_X, ...overrides }),
+      ).then(
+        () => {
+          throw new Error("expected a refusal");
+        },
+        (error: unknown) => mapExceptionRequestError(error),
+      );
+      return { status: res.status, body: await res.text() };
+    }
+
+    it("collapses 'nothing to review' to the lookup's refusal, byte for byte", async () => {
+      mocks.validateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
+      mocks.evaluateHosting.mockResolvedValue(null);
+
+      const real = await responseFor(X_RESOLVES);
+      const nobody = await responseFor(X_IS_NOBODY);
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(403);
+      expect(mocks.nbCreate).not.toHaveBeenCalled();
+    });
+
+    it("refuses a malformed stay range before the lookup, whoever X is", async () => {
+      const halfRange = [WITH_X[0], { ...WITH_X[1], stayStart: "2026-07-04" }];
+      const real = await responseFor(X_RESOLVES, { guests: halfRange });
+      const nobody = await responseFor(X_IS_NOBODY, { guests: halfRange });
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(400);
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+    });
+
+    it("still says 'nothing to review' to a party inside the family", async () => {
+      mocks.validateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
+      mocks.evaluateHosting.mockResolvedValue(null);
+      mocks.resolveLinkedMembers.mockResolvedValue({
+        members: new Map([["m1", { id: "m1", ageTier: "ADULT" }]]),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+      });
+
+      await expect(createNewBookingExceptionRequest(newBookingInput())).rejects.toBeInstanceOf(
+        NoEligiblePolicyExceptionError,
+      );
+    });
+
+    it("refuses a supersede target that is not this member's open request before the lookup", async () => {
+      mocks.nbFindFirst.mockResolvedValue(null);
+      const real = await responseFor(X_RESOLVES, { supersedeRequestId: "nope" });
+      const nobody = await responseFor(X_IS_NOBODY, { supersedeRequestId: "nope" });
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(409);
+      expect(JSON.parse(real.body).code).toBe("LOST_SUPERSEDE_CLAIM");
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+      expect(mocks.nbFindFirst.mock.calls[0]?.[0]).toMatchObject({
+        where: { id: "nope", requestedByMemberId: "m1", status: "REQUESTED" },
+      });
+    });
+
+    // #3770 E1: the requester's family is gated before the outsider is looked up.
+    it("answers a family profile refusal the same whether X resolves", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        mocks.memberFindMany.mockResolvedValue([]);
+        arrangeFamilyFirstWorld(xIsReal);
+        const res = await createNewBookingExceptionRequest(
+          newBookingInput({
+            guests: [
+              ...WITH_X.slice(0, 1),
+              { firstName: "Fam", lastName: "One", ageTier: "ADULT", isMember: true, memberId: "fam-1" },
+              WITH_X[1],
+            ],
+          }),
+        ).then(
+          () => {
+            throw new Error("expected a refusal");
+          },
+          (error: unknown) => mapExceptionRequestError(error),
+        );
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedMemberX()).toBe(false);
+      }
+
+      expect(responses[0]).toEqual(responses[1]);
+      expect(responses[0]?.status).toBe(403);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBeUndefined();
+    });
+
+    it("lets a request that has something to review through with X in it", async () => {
+      X_RESOLVES();
+      const result = await createNewBookingExceptionRequest(newBookingInput({ guests: WITH_X }));
+      expect(result.status).toBe("REQUESTED");
+    });
   });
 
   it("rejects an empty-after-trim member message before any DB write", async () => {
@@ -675,6 +913,7 @@ describe("createModificationExceptionRequest", () => {
 
   it("writes a POLICY_EXCEPTION BookingChangeRequest and never touches the live booking", async () => {
     const result = await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -699,6 +938,7 @@ describe("createModificationExceptionRequest", () => {
     mocks.bcrUpdateMany.mockResolvedValue({ count: 0 });
     await expect(
       createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
         requestedByMemberId: "m1",
         bookingId: "booking-1",
         lodgeId: "lodge_1",
@@ -730,6 +970,7 @@ describe("createModificationExceptionRequest", () => {
     };
 
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -761,6 +1002,7 @@ describe("createModificationExceptionRequest", () => {
     // base === proposed: the live booking already holds every bed, so the
     // incremental reservation is empty even though the aggregate mode is HOLD.
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -794,6 +1036,7 @@ describe("createModificationExceptionRequest", () => {
     };
 
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -821,6 +1064,7 @@ describe("createModificationExceptionRequest", () => {
     };
 
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -849,6 +1093,7 @@ describe("createModificationExceptionRequest", () => {
     // rows (a lost claim) and is never cross-released under the wrong lock.
     const supersedeClaim = mocks.bcrUpdateMany;
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -889,6 +1134,7 @@ describe("createModificationExceptionRequest", () => {
     };
     await expect(
       createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
         requestedByMemberId: "m1",
         bookingId: "booking-1",
         lodgeId: "lodge_1",
@@ -917,6 +1163,7 @@ describe("createModificationExceptionRequest", () => {
     // night): with a holding base the incremental hold is empty, but with a
     // NON-holding base the full one bed must be reserved.
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -934,6 +1181,287 @@ describe("createModificationExceptionRequest", () => {
       changeRequestId: "bcr-1",
       lodgeId: "lodge_1",
       beds: 1,
+    });
+  });
+  // #3770: "nothing to review" is shared with the edit exception door, and
+  // collapses there the same way for an added beyond-family member.
+  describe("'nothing to review' with an added beyond-family member (#3770)", () => {
+    const delta = {
+      addGuests: [
+        { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT" as const, isMember: true, memberId: "member-x" },
+      ],
+    };
+    async function responseFor(arrange: () => void) {
+      arrange();
+      mocks.validateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
+      mocks.evaluateHosting.mockResolvedValue(null);
+      const res = await createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
+        requestedByMemberId: "m1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed: base,
+        memberMessage: "please allow",
+        requestedSummary: "add 1 guest(s)",
+        delta,
+        baseHoldsCapacity: true,
+      }).then(
+        () => {
+          throw new Error("expected a refusal");
+        },
+        (error: unknown) => mapExceptionRequestError(error),
+      );
+      return { status: res.status, body: await res.text() };
+    }
+
+    it("answers byte for byte as the lookup does for an id that resolves to nobody", async () => {
+      const real = await responseFor(() =>
+        mocks.resolveLinkedMembers.mockResolvedValue({
+          members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: ["member-x"] },
+        }),
+      );
+      const nobody = await responseFor(() =>
+        mocks.resolveLinkedMembers.mockRejectedValue(
+          memberGuestCrossFamilyRefusal(["member-x"]),
+        ),
+      );
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(403);
+      expect(mocks.bcrCreate).not.toHaveBeenCalled();
+    });
+
+    async function preCheckResponseFor(
+      arrange: () => void,
+      supersedeRequestId?: string,
+    ) {
+      arrange();
+      const res = await createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
+        requestedByMemberId: "m1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed: base,
+        memberMessage: "please allow",
+        requestedSummary: "add 1 guest(s)",
+        delta,
+        baseHoldsCapacity: true,
+        supersedeRequestId,
+      }).then(
+        () => {
+          throw new Error("expected a refusal");
+        },
+        (error: unknown) => mapExceptionRequestError(error),
+      );
+      return { status: res.status, body: await res.text() };
+    }
+    const X_RESOLVES = () =>
+      mocks.resolveLinkedMembers.mockResolvedValue({
+        members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: ["member-x"] },
+      });
+    const X_IS_NOBODY = () =>
+      mocks.resolveLinkedMembers.mockRejectedValue(
+        memberGuestCrossFamilyRefusal(["member-x"]),
+      );
+
+    it("refuses a supersede target that is not open on this booking before the lookup", async () => {
+      mocks.bcrFindFirst.mockResolvedValue(null);
+      const real = await preCheckResponseFor(X_RESOLVES, "nope");
+      const nobody = await preCheckResponseFor(X_IS_NOBODY, "nope");
+
+      expect(real).toEqual(nobody);
+      expect(JSON.parse(real.body).code).toBe("LOST_SUPERSEDE_CLAIM");
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+      expect(mocks.bcrFindFirst.mock.calls[0]?.[0]).toMatchObject({
+        where: {
+          id: "nope",
+          bookingId: "booking-1",
+          requestedByMemberId: "m1",
+          kind: "POLICY_EXCEPTION",
+          status: "REQUESTED",
+        },
+      });
+    });
+
+    it("refuses an occupied open-request slot before the lookup", async () => {
+      mocks.bcrFindFirst.mockResolvedValue({ id: "open-1" });
+      const real = await preCheckResponseFor(X_RESOLVES);
+      const nobody = await preCheckResponseFor(X_IS_NOBODY);
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(409);
+      expect(JSON.parse(real.body).code).toBe("OPEN_EXCEPTION_REQUEST");
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+      expect(mocks.bcrFindFirst.mock.calls[0]?.[0]).toMatchObject({
+        where: { openStateKey: "pe:booking-1:m1" },
+      });
+    });
+
+    // #3770 E1, the edit door.
+    it("answers a family profile refusal on an added guest the same whether X resolves", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        mocks.memberFindMany.mockResolvedValue([]);
+        mocks.bcrFindFirst.mockResolvedValue(null);
+        arrangeFamilyFirstWorld(xIsReal);
+        const res = await createModificationExceptionRequest({
+          bookingOwnerMemberId: null,
+          requestedByMemberId: "m1",
+          bookingId: "booking-1",
+          lodgeId: "lodge_1",
+          base,
+          proposed: base,
+          memberMessage: "please allow",
+          requestedSummary: "add 2 guest(s)",
+          delta: {
+            addGuests: [
+              { firstName: "Fam", lastName: "One", ageTier: "ADULT", isMember: true, memberId: "fam-1" },
+              ...delta.addGuests,
+            ],
+          },
+          baseHoldsCapacity: true,
+        }).then(
+          () => {
+            throw new Error("expected a refusal");
+          },
+          (error: unknown) => mapExceptionRequestError(error),
+        );
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedMemberX()).toBe(false);
+      }
+
+      expect(responses[0]).toEqual(responses[1]);
+      expect(responses[0]?.status).toBe(403);
+    });
+
+    it("still says 'nothing to review' when the added member is family", async () => {
+      mocks.beyondIds.delete("member-x");
+      const family = await responseFor(() =>
+        mocks.resolveLinkedMembers.mockResolvedValue({
+          members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+        }),
+      );
+      expect(family.status).toBe(400);
+      expect(JSON.parse(family.body).error).toBe(new NoEligiblePolicyExceptionError().message);
+    });
+  });
+
+  /*
+    #3451 (`INV-GUEST-019`): an edit's exception request is an add-guest door
+    too, so it asks the own-dependant question about the guests it ADDS, against
+    the booking OWNER's dependants, before anything is frozen — and freezes the
+    answers beside the delta for the approval's replay.
+  */
+  describe("own-dependant identity on an added guest (#3451)", () => {
+    const withSam = {
+      checkIn: "2026-07-04",
+      checkOut: "2026-07-05",
+      guests: [
+        ...base.guests,
+        { firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false, memberId: null, nights: ["2026-07-04"] },
+      ],
+    };
+    const addSam = {
+      addGuests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+    };
+    const DECLARATION = {
+      kind: "different_person_same_name" as const,
+      dependantMemberId: "dep-sam",
+      normalizedName: "sam smith",
+    };
+    const request = (extra: Record<string, unknown> = {}) =>
+      createModificationExceptionRequest({
+        bookingOwnerMemberId: "owner-1",
+        requestedByMemberId: "owner-1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed: withSam,
+        memberMessage: "please allow",
+        requestedSummary: "add 1 guest(s)",
+        delta: addSam,
+        baseHoldsCapacity: true,
+        ...extra,
+      });
+
+    it("REFUSES an unanswered collision, freezing nothing", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await expect(request()).rejects.toBeInstanceOf(
+        PolicyExceptionDependantIdentityError,
+      );
+      expect(mocks.bcrCreate).not.toHaveBeenCalled();
+    });
+
+    it("freezes the answer beside the delta, outside the proposal hash", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await request({ dependantIdentityDeclarations: [DECLARATION] });
+      const data = mocks.bcrCreate.mock.calls[0][0].data;
+      expect(data.requestedChanges.dependantIdentityDeclarations).toEqual([
+        DECLARATION,
+      ]);
+      expect(data.requestedChanges.delta.dependantIdentityDeclarations).toBeUndefined();
+      expect(data.proposalSnapshot.dependantIdentityDeclarations).toBeUndefined();
+    });
+
+    it("refuses a forged answer about somebody who is not the owner's dependant", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await expect(
+        request({
+          dependantIdentityDeclarations: [
+            { ...DECLARATION, dependantMemberId: "another-familys-child" },
+          ],
+        }),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+      expect(mocks.bcrCreate).not.toHaveBeenCalled();
+    });
+
+    // #3451 review, B1: the answer never depends on whether ANOTHER claimed
+    // member id is real, because the guard runs before the member lookup.
+    it.each([
+      ["X is a real member", () =>
+        mocks.resolveLinkedMembers.mockResolvedValue({
+          members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+        })],
+      ["X is nobody", () =>
+        mocks.resolveLinkedMembers.mockRejectedValue(new Error("not found"))],
+    ])("answers identically whether another claimed id resolves (%s)", async (_label, arrange) => {
+      arrange();
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await expect(
+        request({
+          delta: {
+            addGuests: [
+              { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: true, memberId: "member-x" },
+              ...addSam.addGuests,
+            ],
+          },
+        }),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+    });
+
+    it("has nobody's dependants to ask about on a booking with no member owner", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await request({ bookingOwnerMemberId: null });
+      expect(mocks.bcrCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.memberFindMany).not.toHaveBeenCalled();
     });
   });
 });

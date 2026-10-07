@@ -51,6 +51,7 @@ import {
   LAST_FULL_ADMIN_GUARD_MESSAGE,
   PRIVILEGED_TARGET_GUARD_MESSAGE,
 } from "@/lib/admin-account-guards";
+import { LOGIN_HOLDER_SIGN_OUT_NOTICE } from "@/lib/admin-family-group-ui-helpers";
 
 const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
@@ -272,7 +273,56 @@ describe("POST /api/admin/family-groups/[id]/login-holder", () => {
     });
   });
 
-  it("writes audit logs for each touched member and records the session lag warning for the old holder", async () => {
+  // #3603: switching a login off stamps the member's revocation time and signs
+  // them out, so re-saving the CURRENT holder (the editor pre-selects them)
+  // must never write canLogin: false for them, not even transiently.
+  it("never switches the login off when the same holder is saved again", async () => {
+    mockTx.member.findUnique.mockResolvedValue({
+      id: "holder",
+      ageTier: "ADULT",
+      parentMemberId: null,
+      inheritEmailFromId: null,
+      inheritEmailChoiceId: null,
+      email: "shared@example.com",
+      archivedAt: null,
+    });
+    mockTx.familyGroup.findUnique.mockResolvedValue(
+      makeGroup([
+        makeMember({
+          id: "holder",
+          canLogin: true,
+          inheritEmailFromId: null,
+          inheritEmailFrom: null,
+        }),
+        makeMember({ id: "other-adult" }),
+      ])
+    );
+
+    const res = await POST(makeReq({
+      email: "shared@example.com",
+      newHolderId: "holder",
+    }), {
+      params: Promise.resolve({ id: "group-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const holderWrites = mockTx.member.update.mock.calls
+      .map(([args]) => args as { where: { id: string }; data: Record<string, unknown> })
+      .filter((args) => args.where.id === "holder");
+    expect(holderWrites.length).toBeGreaterThan(0);
+    for (const write of holderWrites) {
+      expect(write.data.canLogin).not.toBe(false);
+    }
+    expect(holderWrites.at(-1)?.data.canLogin).toBe(true);
+    // Nobody is signed out, so no audit row carries the sign-out notice.
+    for (const [args] of mockTx.auditLog.create.mock.calls) {
+      expect(String((args as { data: { details: string } }).data.details)).not.toContain(
+        "signed out",
+      );
+    }
+  });
+
+  it("writes audit logs for each touched member and records the sign-out notice for the old holder", async () => {
     mockTx.familyGroup.findUnique.mockResolvedValue(
       makeGroup([
         makeMember({
@@ -300,7 +350,7 @@ describe("POST /api/admin/family-groups/[id]/login-holder", () => {
         action: "family-group.login-holder-swapped",
         memberId: "admin-1",
         targetId: "old-holder",
-        details: expect.stringContaining("up to 8 hours"),
+        details: expect.stringContaining(LOGIN_HOLDER_SIGN_OUT_NOTICE),
       }),
     });
   });

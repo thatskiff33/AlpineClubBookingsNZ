@@ -154,7 +154,7 @@ jobs:
               # mode of a typo is a red pull request opened by a scheduled job
               # that may well run with nobody awake to read it. Keeping the text in a
               # file that `scripts/ci/render-epic-sync-pr-body.test.mjs` runs
-              # through the real gate is what moves that failure into `npm test`.
+              # through the real gate is what moves that failure into `pnpm test`.
               if ! body="$(BRANCH="${branch}" RUN_URL="${RUN_URL}" \
                 node scripts/ci/render-epic-sync-pr-body.mjs)"; then
                 echo "${branch}: could not render the pull request description."

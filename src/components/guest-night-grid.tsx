@@ -5,7 +5,9 @@ import {
   formatClubDayMonth,
   formatClubWeekday,
   requireCalendarDate,
+  type ClubDateFormat,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * A night column is two stacked lines — weekday above, day-and-month below — so
@@ -51,12 +53,15 @@ export interface GuestNightGridProps {
   departureLabel?: string;
 }
 
-function nightColumnLabel(nightKey: string): { weekday: string; day: string } {
+function nightColumnLabel(
+  nightKey: string,
+  format: ClubDateFormat,
+): { weekday: string; day: string } {
   // nightKey is a calendar day; both halves render with no zone in the picture.
   const day = requireCalendarDate(nightKey);
   return {
-    weekday: formatClubWeekday(day),
-    day: formatClubDayMonth(day),
+    weekday: formatClubWeekday(day, format),
+    day: formatClubDayMonth(day, format),
   };
 }
 
@@ -69,6 +74,7 @@ export function GuestNightGrid({
   arrivalLabel,
   departureLabel,
 }: GuestNightGridProps) {
+  const format = useClubFormat();
   if (nights.length === 0 || guestLabels.length === 0) {
     return null;
   }
@@ -94,7 +100,7 @@ export function GuestNightGrid({
                 Guest
               </th>
               {nights.map((nightKey) => {
-                const { weekday, day } = nightColumnLabel(nightKey);
+                const { weekday, day } = nightColumnLabel(nightKey, format);
                 return (
                   <th
                     key={nightKey}
@@ -117,14 +123,14 @@ export function GuestNightGrid({
                   const on = isNightOn(guestIndex, nightKey);
                   const priceCents = priceForNight?.(guestIndex, nightKey) ?? null;
                   const priceText =
-                    priceCents != null ? formatCents(priceCents) : on ? "On" : "Off";
+                    priceCents != null ? formatCents(priceCents, format) : on ? "On" : "Off";
                   return (
                     <td key={nightKey} className="px-1 py-1 text-center">
                       <button
                         type="button"
                         onClick={() => onToggle(guestIndex, nightKey)}
                         aria-pressed={on}
-                        aria-label={`${on ? "Remove" : "Add"} ${nightColumnLabel(nightKey).day} for ${label || `Guest ${guestIndex + 1}`}`}
+                        aria-label={`${on ? "Remove" : "Add"} ${nightColumnLabel(nightKey, format).day} for ${label || `Guest ${guestIndex + 1}`}`}
                         className={[
                           "flex w-full min-w-14 flex-col items-center gap-0.5 rounded-md border px-2 py-1 transition-colors",
                           on

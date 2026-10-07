@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   calculateBookingHoldDecision,
+  decideBookingSplit,
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
 import { AgeTier, BookingStatus } from "@prisma/client";
@@ -34,18 +35,20 @@ import {
   type NonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
 import {
-  checkOwnDependantIdentity,
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
   dependantIdentityDeclarationSchema,
-  loadBookerDependants,
-  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
-  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
 } from "@/lib/booking-dependant-identity";
 import {
-  assertLinkedBookingMembersCanBeBooked,
+  dependantIdentityRefusalBody,
+  dependantIdentitySpeaksOnBehalf,
+} from "@/lib/booking-dependant-identity-doors";
+import {
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
+  memberGuestCrossFamilyRefusal,
   normalizeBookingGuestInputs,
-  resolveLinkedBookingMembersWithBoundary,
+  type LinkedBookingMember,
 } from "@/lib/booking-guests";
 import {
   loadMemberGuestAddPolicy,
@@ -59,7 +62,6 @@ import {
   MemberGuestAddThrottledError,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { nameField } from "@/lib/zod-helpers";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
@@ -81,13 +83,38 @@ import {
   RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
   type BookingGuestInput,
 } from "@/lib/booking-create";
-import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
+import {
+  getCapacityGuestRanges,
+  resolveBookingDateEnvelope,
+} from "@/lib/booking-create-guests";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import {
+  promoCodeRequestRefusal,
+  resolveEffectivePromoSource,
+} from "@/lib/booking-create-promo";
+import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import {
   assertCheckInClearsXeroLockDate,
   getXeroLockGuardErrorResponse,
 } from "@/lib/xero-period-lock-guard";
-import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
+import {
+  assertMemberMayBookLodge,
+  LodgeBookingEligibilityError,
+} from "@/lib/lodge-access";
+import {
+  resolveBeyondFamilyPhase,
+  resolveFamilyPhase,
+  type FamilyFirstOptions,
+} from "@/lib/member-guest-family-first";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
+import { requiresAdultSupervisionReview } from "@/lib/booking-review";
+import { hasPresentAdult } from "@/lib/adult-supervision";
+import {
+  guestConsentStatus,
+  type MemberGuestAddActor,
+} from "@/lib/member-guest-consent";
 import {
   BookingMemberNightConflictError,
   findBookingMemberNightConflicts,
@@ -114,6 +141,8 @@ import {
   hasAdminAccess,
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -296,6 +325,9 @@ export async function POST(request: NextRequest) {
   }
 
   const xeroIntegrationEnabled = (await loadEffectiveModuleFlags()).xeroIntegration;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   // Resolve effective member: authorized on-behalf booking for another member.
   let effectiveMemberId = session.user.id;
@@ -382,6 +414,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
+  let requestedRoomLodgeId: string | null = null;
   if (requestedRoomId) {
     const modules = await loadEffectiveModuleFlags();
     if (!modules.bedAllocation) {
@@ -389,100 +422,43 @@ export async function POST(request: NextRequest) {
     }
     const requestedRoom = await prisma.lodgeRoom.findUnique({
       where: { id: requestedRoomId },
-      select: { id: true },
+      select: { id: true, lodgeId: true },
     });
     if (!requestedRoom) {
       return NextResponse.json({ error: "Invalid requested room" }, { status: 400 });
     }
+    requestedRoomLodgeId = requestedRoom.lodgeId;
   }
 
-  // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
-  // policy singleton HERE — one read each, before any transaction is opened —
-  // then pass the answers down. The create service opens the booking transaction
-  // and takes the per-lodge capacity lock; a settings read in there would hold
-  // that lock across an extra query for nothing.
-  const memberGuestPolicy = await loadMemberGuestAddPolicy();
-  // MG4-D-a, brought forward into MG2: an on-behalf create is an ADMIN add, so a
-  // cross-family guest is consent-free and always-notify, stamped with the acting
-  // admin rather than left PENDING. `isAuthorizedOnBehalf` is exactly the flag
-  // that passes `skipAuthorization` below, so the two can never disagree.
-  const memberGuestActor: MemberGuestAddActor = isAuthorizedOnBehalf
-    ? { kind: "ADMIN", adminMemberId: session.user.id }
-    : { kind: "MEMBER" };
-  let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
-  /**
-   * The member ids on this party that actually resolved to a bookable member —
-   * the own-dependant guard's forgery defence (#2721, `INV-GUEST-019`). Hoisted
-   * out of the try so the guard below can be handed it; see
-   * `checkOwnDependantIdentity` for why it is an argument rather than a
-   * precondition about the party's provenance.
+  /*
+   * THE INPUT-ONLY REFUSALS RUN BEFORE THE MEMBER LOOKUP (#3770).
+   *
+   * Each refusal from here to the lookup depends on the request and the booker
+   * alone, never on whether a member id in the party resolves. Below the lookup
+   * each was reachable only once every claimed id had resolved, so meeting one,
+   * rather than the lookup's collapsed refusal (#2388), told a caller probing a
+   * beyond-family id that the member exists. Up here the answer is the same
+   * either way. What each one says is unchanged; only the order moved, so a
+   * party naming an id that does not resolve now meets one of these first when
+   * both apply. A new refusal that reads nothing about the party's members
+   * belongs here too, not below the lookup.
+   *
+   * The stay ranges are validated here on the request's own rows. The lookup
+   * changes a row's name and tier, never its dates, so the normalisation below
+   * cannot refuse what this one accepted — and the stay envelope the services
+   * resolve (#713) is this one, which is why the retroactive and promo checks
+   * below read it rather than the requested dates.
    */
-  let memberPathMemberIds: ReadonlySet<string> = new Set<string>();
-
+  let requestEnvelope: { checkIn: Date; checkOut: Date };
+  let stayRangedRequestRows: BookingGuestInput[];
   try {
-    const { members: linkedMembers, boundary } =
-      await resolveLinkedBookingMembersWithBoundary(
-        prisma,
-        effectiveMemberId,
-        guests.map((guest) => guest.memberId),
-        {
-          skipAuthorization: isAuthorizedOnBehalf,
-          memberGuestWideningEnabled: memberGuestPolicy.wideningEnabled,
-          // #2388: the per-acting-member throttle, counted only on an attempt
-          // that actually names a beyond-family member, and spent the moment the
-          // family boundary is known — before any member row is read (H1), so a
-          // real member and an id with nobody behind it answer identically once
-          // the budget is gone.
-          onBoundaryResolved: memberGuestAddThrottleHook({
-            request,
-            actorMemberId: session.user.id,
-            skipAuthorization: isAuthorizedOnBehalf,
-          }),
-        }
-      );
-
-    await assertLinkedBookingMembersCanBeBooked(
-      prisma,
-      linkedMembers,
-      session.user.id,
-      {
-        actorRole,
-        onBehalfOfMemberId: isAuthorizedOnBehalf ? effectiveMemberId : null,
-        // D-8: a blocked cross-family member gets the one neutral refusal
-        // instead of their name, their missing profile fields and their login
-        // state.
-        crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
-      }
+    stayRangedRequestRows = normalizeGuestStayRanges(guests, { checkIn, checkOut });
+    requestEnvelope = resolveBookingDateEnvelope(
+      stayRangedRequestRows,
+      checkIn,
+      checkOut,
     );
-    memberPathMemberIds = new Set(linkedMembers.keys());
-    const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
-    const consentPlan = planMemberGuestConsentWrites({
-      guests: normalizeGuestStayRanges(normalizedGuests, { checkIn, checkOut }),
-      boundary,
-      actor: memberGuestActor,
-      now: new Date(),
-      bookingCheckIn: checkIn,
-      policy: memberGuestPolicy,
-    });
-    guestInputs = consentPlan.guests;
-    memberGuestEntries = consentPlan.entriesByMemberId;
   } catch (error) {
-    if (error instanceof MemberGuestAddThrottledError) return error.response;
-    if (error instanceof BookingGuestValidationError) {
-      await handleMemberGuestAddRefusal({
-        request,
-        actorMemberId: session.user.id,
-        error: error,
-        route: "bookings/create",
-        startedAt,
-        throttle: "ALREADY_CHARGED",
-        skipAuthorization: isAuthorizedOnBehalf,
-      });
-      return NextResponse.json(
-        getBookingGuestValidationErrorResponse(error),
-        { status: error.status }
-      );
-    }
     if (error instanceof BookingGuestStayRangeValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
@@ -492,15 +468,15 @@ export async function POST(request: NextRequest) {
   /**
    * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`).
    *
-   * `memberPathMemberIds` is what makes "already on the member path" a fact
-   * rather than a claim: it holds the ids that really resolved to a bookable
-   * member, so a forged `isMember: true` or an invented member id is read as
-   * the free-text row it is. The guard takes it as a required argument, so this
-   * cannot be weakened by moving the call or by passing a different party.
-   *
-   * Placed BEFORE the person-night, hosting and capacity pre-flights and before
-   * any create service, so a party that is about to put a member on the
-   * bumpable non-member queue is stopped while it is still only a proposal.
+   * BEFORE THE MEMBER LOOKUP, against the CLAIMED ids (`claimedMemberPathIds`,
+   * #3770), exactly as the edit doors ask it (#3451). After the lookup, this 409
+   * versus the lookup's collapsed refusal told a caller whether another claimed
+   * id was a real member. A forged member link still cannot walk past it: a row
+   * claiming an id that does not resolve is refused by the lookup below,
+   * whatever this said. It is also before the person-night, hosting and capacity
+   * pre-flights and before any create service, so a party that is about to put a
+   * member on the bumpable non-member queue is stopped while it is still only a
+   * proposal.
    *
    * IT RUNS ON THE AUTHORISED ON-BEHALF CREATE TOO, and unlike the member-guest
    * boundary check beside it there is no `isAuthorizedOnBehalf` arm here (owner
@@ -521,50 +497,434 @@ export async function POST(request: NextRequest) {
    *
    * The dependant read is skipped entirely for a party that is all member-linked
    * and carries no declaration — the common family booking — so the ordinary
-   * path pays nothing for this.
+   * path pays nothing for this — the skip rule and the read are
+   * `checkOwnDependantIdentityForParty`'s, the one entry point every door shares.
    */
-  if (
-    guestInputs.some((guest) => !guest.memberId?.trim()) ||
-    (dependantIdentityDeclarations?.length ?? 0) > 0
-  ) {
-    const bookerDependants = await loadBookerDependants(
+  {
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(
       prisma,
-      effectiveMemberId,
+      {
+        bookerMemberId: effectiveMemberId,
+        party: guests,
+        memberPathMemberIds: claimedMemberPathIds(guests),
+        declarations: dependantIdentityDeclarations,
+      },
     );
-    const dependantIdentityRefusal = checkOwnDependantIdentity({
-      party: guestInputs,
-      memberPathMemberIds,
-      dependants: bookerDependants,
-      declarations: dependantIdentityDeclarations,
-    });
     if (dependantIdentityRefusal) {
+      // The CODE is the same on both paths — each client keys on it to send
+      // whoever is at the screen back to the guest step — but the SENTENCE is
+      // not: "your dependant" is wrong in both halves when the reader is an
+      // officer. Chosen here because this handler is the only place that knows
+      // which of the two people is reading the response; the body is the shared
+      // one, which deliberately does not echo the collisions (#2721 review).
       return NextResponse.json(
-        {
-          code: dependantIdentityRefusal.code,
-          // The CODE is the same on both paths — each client keys on it to send
-          // whoever is at the screen back to the guest step — but the SENTENCE
-          // is not: "your dependant" is wrong in both halves when the reader is
-          // an officer, so the on-behalf wording says whose dependant it is and
-          // where the answer lives. Substituted here rather than inside the
-          // guard because this handler is the only place that knows which of the
-          // two people is reading the response.
-          error:
-            isAuthorizedOnBehalf &&
-            dependantIdentityRefusal.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE
-              ? DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE
-              : dependantIdentityRefusal.error,
-          // The collisions are deliberately NOT echoed (#2721 review). They were,
-          // and nothing read them: the wizard re-derives the question from
-          // `/api/members/family`, because a refusal this client did not expect
-          // is by definition one whose cached list is stale — and it has to
-          // re-read that list anyway to draw the answers, which the response
-          // body does not carry. Names and member ids travelling to no consumer
-          // are a payload waiting for someone to start trusting it.
-        },
+        dependantIdentityRefusalBody(dependantIdentityRefusal, {
+          onBehalf: dependantIdentitySpeaksOnBehalf({
+            actorIsAdmin: isAuthorizedOnBehalf,
+            actorId: session.user.id,
+            ownerMemberId: effectiveMemberId,
+          }),
+          surface: "create",
+        }),
         { status: dependantIdentityRefusal.status },
       );
     }
   }
+
+  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
+  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
+  // midnight so it shares a frame with the parsed dates and addDaysDateOnly.
+  //
+  // #3123 review — resolved HERE, above the person-night pre-flight, and used by
+  // everything on this route that needs a day: the retroactive gate below, the
+  // conflict scan's self-removal window, and `createConfirmedBooking`, which is
+  // transaction-aware and so cannot resolve one for itself (`INV-LOCK-004`).
+  // `clubTime()` is request-memoised, but ONE binding is what makes "one club
+  // day per request" a property of the code rather than of the cache.
+  const todayAtClub = (await clubTime()).today();
+  const today = dateOnlyInstantOf(todayAtClub);
+
+  // Retroactive booking (#1695): a past check-in is allowed only for an admin
+  // on-behalf create that opted into allowPastDates, and only within the
+  // rolling lookback (checked below the member lookup, on the resolved stay
+  // envelope). Everything else keeps the original today-or-future rule.
+  const retroactiveCreate =
+    parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
+  // The flag is strictly retroactive: a today-or-future check-in carrying it is
+  // rejected rather than silently widening normal-create behaviour (lead-time
+  // skip, capacity warn-and-confirm belong to past stays only).
+  if (retroactiveCreate && checkIn >= today) {
+    return NextResponse.json(
+      { error: "allowPastDates requires a check-in in the past" },
+      { status: 400 },
+    );
+  }
+  if (checkIn < today && !retroactiveCreate) {
+    return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+  }
+  // A guest's own range can start before the requested check-in (#713), and the
+  // confirmed create refuses that envelope in the same words; a draft never did.
+  if (!draft && !retroactiveCreate && requestEnvelope.checkIn < today) {
+    return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+  }
+  // Retroactive booking (#1695), the rolling lookback and the Xero lock date.
+  // Both read the stay envelope, which the request alone decides, so they run
+  // before the member lookup too (#3770). Only a retroactive create reaches the
+  // block with a past check-in: the plain past-date refusal returned above.
+  const envelopeCheckIn = retroactiveCreate ? requestEnvelope.checkIn : checkIn;
+  if (checkIn < today) {
+    if (envelopeCheckIn < addDaysDateOnly(today, -RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)) {
+      return NextResponse.json(
+        {
+          error: `Retroactive bookings can go back at most ${RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS} days.`,
+        },
+        { status: 400 },
+      );
+    }
+    // Xero lock-date guard (#1695; shared with the admin override modify paths
+    // via #1697): the booking's invoice issue date is its check-in, so a past
+    // check-in must not fall on or before a locked accounting period. Skipped
+    // when Xero is not connected; fails closed (retryable 503) when the lock
+    // dates cannot be read. The Xero call stays outside any DB transaction.
+    try {
+      await assertCheckInClearsXeroLockDate(envelopeCheckIn, {
+        xeroIntegrationEnabled,
+      });
+    } catch (error) {
+      const guardResponse = getXeroLockGuardErrorResponse(error);
+      if (guardResponse) {
+        return NextResponse.json(guardResponse.body, {
+          status: guardResponse.status,
+        });
+      }
+      throw error;
+    }
+  }
+
+
+  /*
+   * A BOOKING MUST NAME ITS LODGE. THE SERVER NO LONGER FILLS THE BLANK (#2701).
+   *
+   * `resolveOptionalActiveLodgeId` answers a missing id with the club's DEFAULT
+   * lodge. On a read that is a reasonable convenience; on a CREATE it is how a
+   * guest ends up booked — and paid up — at a lodge nobody ever showed them.
+   * The reachable path was not a hand-made request: when `/api/admin/lodges` or
+   * `/api/lodges` fails, `useLodgeOptions` returns an empty list, `LodgeSelect`
+   * normalises the selection to `null` and renders nothing at all (ADR-002),
+   * and both booking wizards then posted `lodgeId: undefined`. In a multi-lodge
+   * club that silently stamped the default lodge on a real booking, and the
+   * member's own review step suppressed its "Lodge:" line in exactly that
+   * state, so nothing on screen contradicted it.
+   *
+   * Ten client surfaces are fixed alongside this, but the refusal is what closes
+   * the class: one gate instead of ten, so the eleventh screen somebody writes
+   * next year fails loudly here rather than writing quietly to the wrong lodge.
+   *
+   * Deliberately NOT done by making the shared helper strict. That helper also
+   * serves reads where an omitted lodge legitimately means "the whole club", and
+   * `INV-INT-016` retains exactly such a mode on `GET /api/bookings/rooms` for
+   * consumers outside this repository. The two are consistent rather than in
+   * tension: an unscoped DISCOVERY read is a real question ("where could I
+   * book?"), an unscoped CREATE is not — you cannot book "somewhere". So the
+   * strictness lives here, on the write, and the read contract is untouched.
+   */
+  if (!parsed.data.lodgeId) {
+    return NextResponse.json(
+      {
+        error:
+          "This booking did not say which lodge it is for. Choose a lodge and try again.",
+        code: BOOKING_LODGE_REQUIRED_CODE,
+      },
+      { status: 400 },
+    );
+  }
+  const bookingLodgeId = await resolveOptionalActiveLodgeId(
+    prisma,
+    parsed.data.lodgeId,
+  );
+  if (!bookingLodgeId) {
+    return NextResponse.json(
+      { error: "Unknown or inactive lodgeId" },
+      { status: 400 },
+    );
+  }
+  // The two lodge refusals the create services make that read only the request
+  // and the booker. The services keep both, as the arbiters under their locks.
+  if (requestedRoomLodgeId && requestedRoomLodgeId !== bookingLodgeId) {
+    return NextResponse.json(
+      { error: "Requested room belongs to a different lodge" },
+      { status: 400 },
+    );
+  }
+  try {
+    await assertMemberMayBookLodge(prisma, {
+      memberId: effectiveMemberId,
+      lodgeId: bookingLodgeId,
+      isOnBehalf: isAuthorizedOnBehalf,
+    });
+  } catch (err) {
+    if (err instanceof LodgeBookingEligibilityError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
+
+  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
+  if (guests.length > lodgeCapacity) {
+    return NextResponse.json(
+      { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`) },
+      { status: 400 },
+    );
+  }
+
+  // #2543 — the club's three-way subscription-lockout policy, resolved ONCE for
+  // this request so the owner gate, the member-guest gate and the paid-up-adult
+  // requirement below cannot branch on different answers if an admin saves the
+  // setting mid-request.
+  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+
+  // Subscription gate for the booking owner. Bypassed when the Xero module
+  // is effectively off, because subscriptions are invoiced through Xero, and
+  // (#2543) when the club has chosen NON_MEMBER_PRICING — there the unpaid owner
+  // books and is repriced by `resolveGuestRateMembershipTypes` instead.
+  if (
+    subscriptionLockoutMode === "HARD_BLOCK" &&
+    !isAuthorizedOnBehalf &&
+    await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: effectiveMemberId,
+      seasonYear: seasonYearOfStoredDate(checkIn),
+      ageTier: effectiveMemberAgeTier,
+    })
+  ) {
+    const seasonYear = seasonYearOfStoredDate(checkIn);
+    const paidSub = await prisma.memberSubscription.findFirst({
+      where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
+    });
+    if (!paidSub) {
+      const subscription = await prisma.memberSubscription.findFirst({
+        where: { memberId: effectiveMemberId, seasonYear },
+        orderBy: { updatedAt: "desc" },
+      });
+      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+      return NextResponse.json(
+        {
+          error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
+          code: "SUBSCRIPTION_REQUIRED",
+          invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
+          invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  // Minimum stay policy (skipped only for authorized on-behalf bookings —
+  // self-bookings always enforce it, #1442).
+  if (!isAuthorizedOnBehalf) {
+    const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
+    const stayResult = await validateMinimumStay(checkIn, checkOut, bookingLodgeId);
+    if (!stayResult.valid) {
+      const exceptionReview = aggregatePolicyExceptionViolations(
+        stayResult.violations,
+      );
+      return NextResponse.json(
+        {
+          error: "Booking does not meet minimum stay requirement",
+          details: formatViolationsDetail(stayResult.violations),
+          code: "MINIMUM_STAY_VIOLATION",
+          violations: exceptionReview.violations,
+          exceptionReview,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  let internetBankingSettings: InternetBankingPaymentSettingsValues | undefined;
+  // Drafts never reach payment, so a draft skips this as it always has: the
+  // draft branch used to return before it.
+  if (!draft && paymentMethod === "internet_banking") {
+    const modules = await loadEffectiveModuleFlags();
+    if (!modules.xeroIntegration || !modules.internetBankingPayments) {
+      return NextResponse.json(
+        { error: "Internet Banking payments are not available." },
+        { status: 400 }
+      );
+    }
+
+    internetBankingSettings = await loadInternetBankingPaymentSettings();
+    // The lead-time cutoff exists to collect payment before the stay; for a
+    // retroactive booking the stay already happened, so skip the rejection
+    // (the module-enabled check above still applies). (#1695)
+    if (!retroactiveCreate) {
+      const leadTime = checkInternetBankingLeadTime({
+        checkIn,
+        settings: internetBankingSettings,
+        // #3123 — the SAME club day this route already resolved above for the
+        // retroactive-create gate, not a second answer from the environment.
+        today,
+      });
+      if (!leadTime.allowed) {
+        return NextResponse.json(
+          {
+            error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
+            code: "INTERNET_BANKING_CUTOFF",
+            minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+            checkIn: leadTime.checkIn,
+          },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  // A working-bee id or promo code that cannot apply to this request (#3770).
+  // The create services re-run all of this authoritatively, under their lock;
+  // this only answers the refusals that read the request and the booker, so
+  // none of them waits for the member lookup. Usage caps and the guest-selection
+  // refusals read the priced party and stay in the services.
+  try {
+    const promoSource = await resolveEffectivePromoSource(prisma, {
+      promoCodeStr,
+      workPartyEventId,
+      checkIn: requestEnvelope.checkIn,
+      checkOut: requestEnvelope.checkOut,
+      lodgeId: bookingLodgeId,
+    });
+    if (promoSource) {
+      const promoRefusal = await promoCodeRequestRefusal({
+        promoCodeStr: promoSource.promoCodeStr,
+        allowInternal: promoSource.allowInternal,
+        memberId: effectiveMemberId,
+        checkIn: requestEnvelope.checkIn,
+        lodgeId: bookingLodgeId,
+        promoGuestIndexes,
+        todayAtClub,
+      });
+      if (promoRefusal) throw new BookingPromoError(promoRefusal);
+    }
+  } catch (error) {
+    if (error instanceof BookingPromoError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
+
+  // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
+  // policy singleton HERE — one read each, before any transaction is opened —
+  // then pass the answers down. The create service opens the booking transaction
+  // and takes the per-lodge capacity lock; a settings read in there would hold
+  // that lock across an extra query for nothing.
+  const memberGuestPolicy = await loadMemberGuestAddPolicy();
+  // MG4-D-a, brought forward into MG2: an on-behalf create is an ADMIN add, so a
+  // cross-family guest is consent-free and always-notify, stamped with the acting
+  // admin rather than left PENDING. `isAuthorizedOnBehalf` is exactly the flag
+  // that passes `skipAuthorization` below, so the two can never disagree.
+  const memberGuestActor: MemberGuestAddActor = isAuthorizedOnBehalf
+    ? { kind: "ADMIN", adminMemberId: session.user.id }
+    : { kind: "MEMBER" };
+  let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
+
+  /*
+   * THE FAMILY IS RESOLVED AND JUDGED BEFORE ANY BEYOND-FAMILY MEMBER (#3770,
+   * `INV-GUEST-020`).
+   *
+   * Owner decision, 2 Oct 2026 (#3770, comment 5946598639). A refusal that can
+   * only be reached once a named member resolved tells the caller that member is
+   * real. So the boundary is computed first (it reads only the booker's family
+   * groups), the throttle is spent on it as before, and then:
+   *   1. the booker's own family is resolved and every refusal about it runs;
+   *   2. only then are the beyond-family ids resolved, where an id with nobody
+   *      behind it meets the lookup's collapsed refusal, and the guards run again
+   *      over the whole party, refusing only about that member, neutrally.
+   * A rule that can count a beyond-family adult (paid-up adult, hosting) cannot
+   * be answered from the family alone; with such a member named it is judged
+   * after step 2 and, if it still fails, answers with the same collapsed
+   * refusal. An admin acting on a member's behalf is entitled to detail, so that
+   * collapse is a member-path rule only.
+   */
+  const lookupRefusal = async (error: unknown): Promise<Response> => {
+    if (error instanceof MemberGuestAddThrottledError) return error.response;
+    if (error instanceof BookingGuestValidationError) {
+      await handleMemberGuestAddRefusal({
+        request,
+        actorMemberId: session.user.id,
+        error: error,
+        route: "bookings/create",
+        startedAt,
+        throttle: "ALREADY_CHARGED",
+        skipAuthorization: isAuthorizedOnBehalf,
+      });
+      return NextResponse.json(
+        getBookingGuestValidationErrorResponse(error),
+        { status: error.status }
+      );
+    }
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  };
+  const profileGateContext = {
+    actorRole,
+    onBehalfOfMemberId: isAuthorizedOnBehalf ? effectiveMemberId : null,
+  };
+
+  const familyFirstOptions: FamilyFirstOptions = {
+    bookerMemberId: effectiveMemberId,
+    actorMemberId: session.user.id,
+    skipAuthorization: isAuthorizedOnBehalf,
+    memberGuestWideningEnabled: memberGuestPolicy.wideningEnabled,
+    profileGate: profileGateContext,
+    // #2388: the per-acting-member throttle, counted only on an attempt that
+    // actually names a beyond-family member, and spent the moment the family
+    // boundary is known — before any member row is read (H1), so a real member
+    // and an id with nobody behind it answer identically once the budget is
+    // gone.
+    onBoundaryResolved: memberGuestAddThrottleHook({
+      request,
+      actorMemberId: session.user.id,
+      skipAuthorization: isAuthorizedOnBehalf,
+    }),
+  };
+  let family: Awaited<ReturnType<typeof resolveFamilyPhase>>;
+  let familyParty: BookingGuestInput[] = [];
+  let familyEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
+  const planParty = (
+    rows: typeof guests,
+    linked: Map<string, LinkedBookingMember>,
+  ) =>
+    planMemberGuestConsentWrites({
+      guests: normalizeGuestStayRanges(
+        normalizeBookingGuestInputs(rows, linked),
+        { checkIn, checkOut },
+      ),
+      boundary: family.boundary,
+      actor: memberGuestActor,
+      now: new Date(),
+      bookingCheckIn: checkIn,
+      policy: memberGuestPolicy,
+    });
+  try {
+    family = await resolveFamilyPhase(
+      prisma,
+      guests.map((guest) => guest.memberId),
+      familyFirstOptions,
+    );
+    const beyond = new Set(family.beyondFamilyMemberIds);
+    const familyPlan = planParty(
+      guests.filter((guest) => {
+        const id = guest.memberId?.trim();
+        return !id || !beyond.has(id);
+      }),
+      family.familyMembers,
+    );
+    familyParty = familyPlan.guests;
+    familyEntries = familyPlan.entriesByMemberId;
+  } catch (error) {
+    return lookupRefusal(error);
+  }
+  const beyondFamilyIds = new Set(family.beyondFamilyMemberIds);
 
   /**
    * Tell the cross-family guests this create just added, AFTER it committed.
@@ -652,250 +1012,35 @@ export async function POST(request: NextRequest) {
     }
   };
 
-  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
-  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
-  // midnight so it shares a frame with the parsed dates and addDaysDateOnly.
-  //
-  // #3123 review — resolved HERE, above the person-night pre-flight, and used by
-  // everything on this route that needs a day: the retroactive gate below, the
-  // conflict scan's self-removal window, and `createConfirmedBooking`, which is
-  // transaction-aware and so cannot resolve one for itself (`INV-LOCK-004`).
-  // `clubTime()` is request-memoised, but ONE binding is what makes "one club
-  // day per request" a property of the code rather than of the cache.
-  const todayAtClub = (await clubTime()).today();
-  const today = dateOnlyInstantOf(todayAtClub);
-
-  // D-8: with a cross-family guest in the party this refuses NEUTRALLY rather
-  // than returning the conflict body, because that body would name the nights a
-  // member the caller may never have met is already booked for.
-  let memberNightConflicts;
-  try {
-    memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
-      actorMemberId: session.user.id,
-      actorRole,
-      checkIn,
-      checkOut,
-      guests: guestInputs,
-      today,
-    });
-  } catch (error) {
-    if (error instanceof BookingGuestValidationError) {
-      await handleMemberGuestAddRefusal({
-        request,
-        actorMemberId: session.user.id,
-        error: error,
-        route: "bookings/create",
-        startedAt,
-        throttle: "ALREADY_CHARGED",
-        skipAuthorization: isAuthorizedOnBehalf,
-      });
-      return NextResponse.json(
-        getBookingGuestValidationErrorResponse(error),
-        { status: error.status },
-      );
-    }
-    throw error;
-  }
-  if (memberNightConflicts.length > 0) {
-    return NextResponse.json(
-      getBookingMemberNightConflictResponse(memberNightConflicts),
-      { status: 409 },
-    );
-  }
-
-  // Retroactive booking (#1695): a past check-in is allowed only for an admin
-  // on-behalf create that opted into allowPastDates, and only within the
-  // rolling lookback. Everything else keeps the original today-or-future rule.
-  const retroactiveCreate =
-    parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
-  // The flag is strictly retroactive: a today-or-future check-in carrying it is
-  // rejected rather than silently widening normal-create behaviour (lead-time
-  // skip, capacity warn-and-confirm belong to past stays only).
-  if (retroactiveCreate && checkIn >= today) {
-    return NextResponse.json(
-      { error: "allowPastDates requires a check-in in the past" },
-      { status: 400 },
-    );
-  }
-  // Guards run on the RESOLVED stay envelope: guest nights can expand the stay
-  // before the requested check-in (#713), and the envelope check-in is what the
-  // booking — and its Xero invoice issue date — persists.
-  const envelopeCheckIn = retroactiveCreate
-    ? resolveBookingDateEnvelope(guestInputs, checkIn, checkOut).checkIn
-    : checkIn;
-  if (checkIn < today) {
-    if (!retroactiveCreate) {
-      return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
-    }
-    if (envelopeCheckIn < addDaysDateOnly(today, -RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)) {
-      return NextResponse.json(
-        {
-          error: `Retroactive bookings can go back at most ${RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS} days.`,
-        },
-        { status: 400 },
-      );
-    }
-    // Xero lock-date guard (#1695; shared with the admin override modify paths
-    // via #1697): the booking's invoice issue date is its check-in, so a past
-    // check-in must not fall on or before a locked accounting period. Skipped
-    // when Xero is not connected; fails closed (retryable 503) when the lock
-    // dates cannot be read. The Xero call stays outside any DB transaction.
-    try {
-      await assertCheckInClearsXeroLockDate(envelopeCheckIn, {
-        xeroIntegrationEnabled,
-      });
-    } catch (error) {
-      const guardResponse = getXeroLockGuardErrorResponse(error);
-      if (guardResponse) {
-        return NextResponse.json(guardResponse.body, {
-          status: guardResponse.status,
-        });
-      }
-      throw error;
-    }
-  }
-
-  /*
-   * A BOOKING MUST NAME ITS LODGE. THE SERVER NO LONGER FILLS THE BLANK (#2701).
+  /**
+   * The refusals that judge each member of a party on their own: an existing
+   * booking on the same nights, a membership type that blocks booking, and an
+   * unpaid subscription (#3770).
    *
-   * `resolveOptionalActiveLodgeId` answers a missing id with the club's DEFAULT
-   * lodge. On a read that is a reasonable convenience; on a CREATE it is how a
-   * guest ends up booked — and paid up — at a lodge nobody ever showed them.
-   * The reachable path was not a hand-made request: when `/api/admin/lodges` or
-   * `/api/lodges` fails, `useLodgeOptions` returns an empty list, `LodgeSelect`
-   * normalises the selection to `null` and renders nothing at all (ADR-002),
-   * and both booking wizards then posted `lodgeId: undefined`. In a multi-lodge
-   * club that silently stamped the default lodge on a real booking, and the
-   * member's own review step suppressed its "Lodge:" line in exactly that
-   * state, so nothing on screen contradicted it.
-   *
-   * Ten client surfaces are fixed alongside this, but the refusal is what closes
-   * the class: one gate instead of ten, so the eleventh screen somebody writes
-   * next year fails loudly here rather than writing quietly to the wrong lodge.
-   *
-   * Deliberately NOT done by making the shared helper strict. That helper also
-   * serves reads where an omitted lodge legitimately means "the whole club", and
-   * `INV-INT-016` retains exactly such a mode on `GET /api/bookings/rooms` for
-   * consumers outside this repository. The two are consistent rather than in
-   * tension: an unscoped DISCOVERY read is a real question ("where could I
-   * book?"), an unscoped CREATE is not — you cannot book "somewhere". So the
-   * strictness lives here, on the write, and the read contract is untouched.
+   * RUN TWICE, AND THE ORDER IS THE PRIVACY RULE. First over the booker's own
+   * family, before any member from beyond it is resolved, so a refusal about the
+   * family reads the same whether a named beyond-family id is a real member or
+   * nobody. Then over the whole party once that member is known, where each guard
+   * keeps its own D-8 collapse. The family half already passed, so the second
+   * run can only refuse about the beyond-family member, neutrally. This reverses
+   * the "cross-family refusal wins" order these guards keep on other doors, on
+   * this door, by owner decision (#3770, comment 5946598639).
    */
-  if (!parsed.data.lodgeId) {
-    return NextResponse.json(
-      {
-        error:
-          "This booking did not say which lodge it is for. Choose a lodge and try again.",
-        code: BOOKING_LODGE_REQUIRED_CODE,
-      },
-      { status: 400 },
-    );
-  }
-  const bookingLodgeId = await resolveOptionalActiveLodgeId(
-    prisma,
-    parsed.data.lodgeId,
-  );
-  if (!bookingLodgeId) {
-    return NextResponse.json(
-      { error: "Unknown or inactive lodgeId" },
-      { status: 400 },
-    );
-  }
-
-  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
-  if (guestInputs.length > lodgeCapacity) {
-    return NextResponse.json(
-      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
-      { status: 400 },
-    );
-  }
-
-  try {
-    await assertMembershipTypeBookingAllowed(prisma, {
-      ownerMemberId: effectiveMemberId,
-      guests: guestInputs,
-      seasonYear: seasonYearOfStoredDate(checkIn),
-      // Finding 2 (privacy re-review of MG3 #2308).
-      skipAuthorization: isAuthorizedOnBehalf,
-    });
-  } catch (err) {
-    if (err instanceof MembershipTypeBookingPolicyError) {
-      // Finding 2 (privacy re-review of MG3 #2308). The membership-type refusal
-      // is D-8's FOURTH collapsing refusal, so when it collapsed it owes the
-      // same three mitigations as its siblings — the throttle unit, the audit
-      // row naming actor and target, and the timing floor. A no-op for every
-      // other membership-type block: the handler returns immediately unless the
-      // error carries `crossFamilyMemberIds`, which only a collapsed one does.
-      await handleMemberGuestAddRefusal({
-        request,
-        actorMemberId: session.user.id,
-        error: err,
-        route: "bookings/create",
-        startedAt,
-        throttle: "ALREADY_CHARGED",
-        skipAuthorization: isAuthorizedOnBehalf,
-      });
-      return NextResponse.json(
-        getMembershipTypeBookingPolicyErrorBody(err),
-        { status: err.status },
-      );
-    }
-    throw err;
-  }
-
-  // #2543 — the club's three-way subscription-lockout policy, resolved ONCE for
-  // this request so the owner gate, the member-guest gate and the paid-up-adult
-  // requirement below cannot branch on different answers if an admin saves the
-  // setting mid-request.
-  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
-
-  // Subscription gate for the booking owner. Bypassed when the Xero module
-  // is effectively off, because subscriptions are invoiced through Xero, and
-  // (#2543) when the club has chosen NON_MEMBER_PRICING — there the unpaid owner
-  // books and is repriced by `resolveGuestRateMembershipTypes` instead.
-  if (
-    subscriptionLockoutMode === "HARD_BLOCK" &&
-    !isAuthorizedOnBehalf &&
-    await requiresPaidSubscriptionForMemberForBooking(prisma, {
-      memberId: effectiveMemberId,
-      seasonYear: seasonYearOfStoredDate(checkIn),
-      ageTier: effectiveMemberAgeTier,
-    })
-  ) {
-    const seasonYear = seasonYearOfStoredDate(checkIn);
-    const paidSub = await prisma.memberSubscription.findFirst({
-      where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
-    });
-    if (!paidSub) {
-      const subscription = await prisma.memberSubscription.findFirst({
-        where: { memberId: effectiveMemberId, seasonYear },
-        orderBy: { updatedAt: "desc" },
-      });
-      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
-      return NextResponse.json(
-        {
-          error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
-          code: "SUBSCRIPTION_REQUIRED",
-          invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
-          invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
-        },
-        { status: 403 }
-      );
-    }
-  }
-
-  // Subscription gate for member guests (skipped only for authorized
-  // on-behalf bookings — self-bookings always enforce it, #1442).
-  if (!isAuthorizedOnBehalf) {
-    // D-8: for a cross-family guest this throws the one neutral refusal instead
-    // of returning the member's name, subscription status, invoice number and a
-    // link to their invoice.
-    let unpaidMemberGuests;
+  const partyGuardRefusal = async (
+    party: BookingGuestInput[],
+  ): Promise<NextResponse | null> => {
+    // D-8: with a cross-family guest in the party this refuses NEUTRALLY rather
+    // than returning the conflict body, because that body would name the nights a
+    // member the caller may never have met is already booked for.
+    let memberNightConflicts;
     try {
-      unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
-        bookingMemberId: effectiveMemberId,
+      memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
+        actorMemberId: session.user.id,
+        actorRole,
         checkIn,
-        guests: guestInputs,
+        checkOut,
+        guests: party,
+        today,
       });
     } catch (error) {
       if (error instanceof BookingGuestValidationError) {
@@ -915,31 +1060,279 @@ export async function POST(request: NextRequest) {
       }
       throw error;
     }
-
-    // #2543: under NON_MEMBER_PRICING an unpaid member guest is repriced, not
-    // refused. `findUnpaidMemberGuests` above still RUNS in that mode, and
-    // deliberately: it is what raises the D-8 neutral refusal for an unpaid
-    // member guest from beyond the booker's family, and that privacy boundary is
-    // not the lockout policy's to relax. Only the refusal below is mode-gated.
-    if (subscriptionLockoutMode === "HARD_BLOCK" && unpaidMemberGuests.length > 0) {
-      const unpaidMemberNames = unpaidMemberGuests.map((member) => member.name);
+    if (memberNightConflicts.length > 0) {
       return NextResponse.json(
-        {
-          error: `The following member guests have unpaid subscriptions: ${unpaidMemberNames.join(", ")}. All member guests must have a paid subscription before booking.`,
-          code: "GUEST_SUBSCRIPTION_REQUIRED",
-          unpaidMembers: unpaidMemberNames,
-          unpaidMemberInvoices: unpaidMemberGuests.map((member) => ({
-            memberId: member.memberId,
-            name: member.name,
-            status: member.status,
-            invoiceUrl: member.invoiceUrl,
-            invoiceNumber: member.invoiceNumber,
-          })),
-        },
-        { status: 403 }
+        getBookingMemberNightConflictResponse(memberNightConflicts, format),
+        { status: 409 },
       );
     }
+
+    try {
+      await assertMembershipTypeBookingAllowed(prisma, {
+        ownerMemberId: effectiveMemberId,
+        guests: party,
+        seasonYear: seasonYearOfStoredDate(checkIn),
+        // Finding 2 (privacy re-review of MG3 #2308).
+        skipAuthorization: isAuthorizedOnBehalf,
+      });
+    } catch (err) {
+      if (err instanceof MembershipTypeBookingPolicyError) {
+        // Finding 2 (privacy re-review of MG3 #2308). The membership-type refusal
+        // is D-8's FOURTH collapsing refusal, so when it collapsed it owes the
+        // same three mitigations as its siblings — the throttle unit, the audit
+        // row naming actor and target, and the timing floor. A no-op for every
+        // other membership-type block: the handler returns immediately unless the
+        // error carries `crossFamilyMemberIds`, which only a collapsed one does.
+        await handleMemberGuestAddRefusal({
+          request,
+          actorMemberId: session.user.id,
+          error: err,
+          route: "bookings/create",
+          startedAt,
+          throttle: "ALREADY_CHARGED",
+          skipAuthorization: isAuthorizedOnBehalf,
+        });
+        return NextResponse.json(
+          getMembershipTypeBookingPolicyErrorBody(err),
+          { status: err.status },
+        );
+      }
+      throw err;
+    }
+
+    // Subscription gate for member guests (skipped only for authorized
+    // on-behalf bookings — self-bookings always enforce it, #1442).
+    if (!isAuthorizedOnBehalf) {
+      // D-8: for a cross-family guest this throws the one neutral refusal instead
+      // of returning the member's name, subscription status, invoice number and a
+      // link to their invoice.
+      let unpaidMemberGuests;
+      try {
+        unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
+          bookingMemberId: effectiveMemberId,
+          checkIn,
+          guests: party,
+        });
+      } catch (error) {
+        if (error instanceof BookingGuestValidationError) {
+          await handleMemberGuestAddRefusal({
+            request,
+            actorMemberId: session.user.id,
+            error: error,
+            route: "bookings/create",
+            startedAt,
+            throttle: "ALREADY_CHARGED",
+            skipAuthorization: isAuthorizedOnBehalf,
+          });
+          return NextResponse.json(
+            getBookingGuestValidationErrorResponse(error),
+            { status: error.status },
+          );
+        }
+        throw error;
+      }
+
+      // #2543: under NON_MEMBER_PRICING an unpaid member guest is repriced, not
+      // refused. `findUnpaidMemberGuests` above still RUNS in that mode, and
+      // deliberately: it is what raises the D-8 neutral refusal for an unpaid
+      // member guest from beyond the booker's family, and that privacy boundary is
+      // not the lockout policy's to relax. Only the refusal below is mode-gated.
+      if (subscriptionLockoutMode === "HARD_BLOCK" && unpaidMemberGuests.length > 0) {
+        const unpaidMemberNames = unpaidMemberGuests.map((member) => member.name);
+        return NextResponse.json(
+          {
+            error: `The following member guests have unpaid subscriptions: ${unpaidMemberNames.join(", ")}. All member guests must have a paid subscription before booking.`,
+            code: "GUEST_SUBSCRIPTION_REQUIRED",
+            unpaidMembers: unpaidMemberNames,
+            unpaidMemberInvoices: unpaidMemberGuests.map((member) => ({
+              memberId: member.memberId,
+              name: member.name,
+              status: member.status,
+              invoiceUrl: member.invoiceUrl,
+              invoiceNumber: member.invoiceNumber,
+            })),
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    return null;
+  };
+
+  {
+    const familyRefusal = await partyGuardRefusal(familyParty);
+    if (familyRefusal) return familyRefusal;
   }
+
+  /**
+   * The non-member hold decision the route hands the create service, from a
+   * party's member flags: asked of the request before the outsider lookup (the
+   * full-lodge pre-flight) and of the resolved party for the service. A row
+   * naming a member id is a member either way, so the two answers agree.
+   */
+  const holdDecisionFor = async (party: ReadonlyArray<{ isMember: boolean }>) => {
+    const hasNonMembers = party.some((g) => !g.isMember);
+    const holdPolicy = hasNonMembers
+      ? await getNonMemberHoldPolicy(checkIn, parsed.data.lodgeId ?? null)
+      : { enabled: false, holdDays: 0, source: "default" as const };
+    return {
+      holdPolicy,
+      ...calculateBookingHoldDecision({
+        hasNonMembers,
+        checkIn,
+        holdDays: holdPolicy.holdDays,
+        holdEnabled: holdPolicy.enabled,
+      }),
+    };
+  };
+
+  /** The route's one answer for a full lodge (the pre-flight and the service). */
+  const capacityExceededResponse = (fullNights: unknown) =>
+    NextResponse.json(
+      {
+        error: "The lodge is fully booked on some of your requested dates.",
+        code: "CAPACITY_EXCEEDED",
+        fullNights,
+        canWaitlist: true,
+      },
+      { status: 409 }
+    );
+
+  if (beyondFamilyIds.size === 0) {
+    guestInputs = familyParty;
+    memberGuestEntries = familyEntries;
+  } else {
+    /*
+     * A FULL LODGE IS ANSWERED BEFORE THE OUTSIDER IS LOOKED UP (#3770, owner
+     * decision on R4: "Check 'full' first"). Otherwise the 409 below was reachable
+     * only once the outsider resolved. For a member's own booking that will be
+     * capacity-checked (not a draft, not a waitlist join), this asks the services'
+     * own capacity question of the rows the service will COUNT: the whole party,
+     * or only the member half when the booking will split (`decideBookingSplit`,
+     * the service's own definition). A row naming a member id is a member row —
+     * an id that does not resolve is refused by the lookup — and the hold
+     * decision is the one the route hands the service. Whether the booking is held
+     * for review (never split) can depend on the outsider's age and consent, so
+     * a supplied justification is taken as held, counting the whole party —
+     * unless an adult the service will count as present is already known without
+     * the outsider (a family member or a non-member guest): then the adult-
+     * supervision rule cannot trip and the justification is discarded, as the
+     * service discards it. What remains is an over-count that depends on the
+     * outsider (a justification sent for a party whose only adult is an agreed
+     * outsider); the member UI sends one only when the server's rule asks for it.
+     * Read outside the lodge lock, so a booking or cancellation in the same
+     * instant can rarely make it disagree; the service still decides.
+     */
+    if (!isAuthorizedOnBehalf && !draft && !waitlist) {
+      const requestParty = stayRangedRequestRows.map((guest) => ({
+        ...guest,
+        isMember: Boolean(guest.memberId?.trim()),
+      }));
+      const { shouldBePending: requestWouldHold } = await holdDecisionFor(requestParty);
+      const adultKnownWithoutOutsider = hasPresentAdult(
+        familyParty.map((guest) => ({
+          ageTier: guest.ageTier,
+          consentStatus: guestConsentStatus(guest),
+        })),
+      );
+      const { primaryGuests: countedRows } = decideBookingSplit(requestParty, {
+        shouldBePending: requestWouldHold,
+        cancelIfGuestsBumped,
+        blockForReview:
+          Boolean(memberReviewJustification?.trim()) && !adultKnownWithoutOutsider,
+      });
+      const preflight = await checkCapacityForGuestRanges(
+        bookingLodgeId,
+        requestEnvelope.checkIn,
+        requestEnvelope.checkOut,
+        getCapacityGuestRanges(
+          countedRows,
+          requestEnvelope.checkIn,
+          requestEnvelope.checkOut,
+        ),
+      );
+      if (!preflight.available) {
+        const fullNights = getCapacityFullNights(preflight.nightDetails);
+        return capacityExceededResponse(fullNights);
+      }
+    }
+    try {
+      const beyondMembers = await resolveBeyondFamilyPhase(
+        prisma,
+        family,
+        familyFirstOptions,
+      );
+      const wholeParty = planParty(
+        guests,
+        new Map([...family.familyMembers, ...beyondMembers]),
+      );
+      guestInputs = wholeParty.guests;
+      memberGuestEntries = wholeParty.entriesByMemberId;
+    } catch (error) {
+      return lookupRefusal(error);
+    }
+    const partyRefusal = await partyGuardRefusal(guestInputs);
+    if (partyRefusal) return partyRefusal;
+  }
+
+  /*
+   * The paid-up-adult, hosting and adult-supervision rules can be satisfied by
+   * a beyond-family adult, so with one named they are judged on the whole party
+   * and, if they still fail, answer with the lookup's collapsed refusal rather
+   * than their own message: their own message would say the member is real
+   * (#3770, owner decision, `INV-GUEST-020`). A member-path rule; an officer
+   * acting on a member's behalf keeps the detailed answers.
+   */
+  const deferredPolicyRefusal =
+    beyondFamilyIds.size > 0 && !isAuthorizedOnBehalf
+      ? async (): Promise<NextResponse> => {
+          const error = memberGuestCrossFamilyRefusal(
+            family.beyondFamilyMemberIds,
+          );
+          await handleMemberGuestAddRefusal({
+            request,
+            actorMemberId: session.user.id,
+            error,
+            route: "bookings/create",
+            startedAt,
+            throttle: "ALREADY_CHARGED",
+            skipAuthorization: isAuthorizedOnBehalf,
+          });
+          return NextResponse.json(
+            getBookingGuestValidationErrorResponse(error),
+            { status: error.status },
+          );
+        }
+      : null;
+
+  // Minors with no adult must justify the stay (#1422). The create services ask
+  // this of the same whole party; with an outsider named, a failure here would
+  // say whether that outsider is a real adult, so it is the neutral refusal.
+  if (
+    deferredPolicyRefusal &&
+    requiresAdultSupervisionReview(
+      guestInputs.map((guest) => ({
+        ageTier: guest.ageTier,
+        consentStatus: guestConsentStatus(guest),
+      })),
+    ) &&
+    !memberReviewJustification?.trim()
+  ) {
+    return deferredPolicyRefusal();
+  }
+  /** A service refusal of a rule the outsider could have satisfied (race-safe). */
+  const deferredServiceRefusal = (err: unknown) =>
+    deferredPolicyRefusal &&
+    (err instanceof AdultMemberHostingRequiredError ||
+      err instanceof BookingReviewJustificationRequiredError)
+      ? deferredPolicyRefusal()
+      : null;
+
+  // #3029 (`INV-MOD-059`) — whether the new guest rows are seeded from the
+  // members' dietary/allergy profiles: the toggle, read ONCE here, before any
+  // create service opens its transaction (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   // #2543 — under NON_MEMBER_PRICING the booking must contain at least one
   // paid-up adult member. Refused when it does not, but refused with a door: the
@@ -980,28 +1373,6 @@ export async function POST(request: NextRequest) {
     paidUpAdultViolation = nonMemberPricing?.violation ?? null;
   }
 
-  // Minimum stay policy (skipped only for authorized on-behalf bookings —
-  // self-bookings always enforce it, #1442).
-  if (!isAuthorizedOnBehalf) {
-    const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
-    const stayResult = await validateMinimumStay(checkIn, checkOut, bookingLodgeId);
-    if (!stayResult.valid) {
-      const exceptionReview = aggregatePolicyExceptionViolations(
-        stayResult.violations,
-      );
-      return NextResponse.json(
-        {
-          error: "Booking does not meet minimum stay requirement",
-          details: formatViolationsDetail(stayResult.violations),
-          code: "MINIMUM_STAY_VIOLATION",
-          violations: exceptionReview.violations,
-          exceptionReview,
-        },
-        { status: 400 }
-      );
-    }
-  }
-
   // Adult-member hosting policy (#2364, epic decisions D-R3/D-R4).
   //
   // Unlike minimum stay this is NOT a refusal for a member: the club chose
@@ -1027,7 +1398,9 @@ export async function POST(request: NextRequest) {
   // read, and a club on ADMIN_REVIEW_REQUIRED behaves exactly as it did before —
   // the answer is used for the on-behalf gate and otherwise discarded, with the
   // stored snapshot still coming from the reconciler inside the transaction.
-  if (!adultMemberHostingReason) {
+  // The reason is an officer's answer (D-R4); from a member it means nothing to
+  // the services, so it must not skip this check either (#3770 F1).
+  if (!adultMemberHostingReason || !isAuthorizedOnBehalf) {
     const hostingViolation = await evaluateProposedAdultMemberHosting(prisma, {
       bookingOwnerMemberId: effectiveMemberId,
       // #3038. `null`, and stated rather than omitted, because the field is
@@ -1067,6 +1440,7 @@ export async function POST(request: NextRequest) {
     // and it is the only place the member can be handed the exception door with
     // the party they actually submitted.
     if (hostingViolation?.consequence === "ENFORCED") {
+      if (deferredPolicyRefusal) return deferredPolicyRefusal();
       if (paidUpAdultViolation) {
         const hostingRefusal = buildAdultMemberHostingRefusalBody(hostingViolation);
         const exceptionReview = aggregatePolicyExceptionViolations([
@@ -1099,6 +1473,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (paidUpAdultViolation) {
+    if (deferredPolicyRefusal) return deferredPolicyRefusal();
     return NextResponse.json(
       buildPaidUpAdultRefusalBody(paidUpAdultViolation),
       { status: 409 },
@@ -1111,6 +1486,7 @@ export async function POST(request: NextRequest) {
   if (draft) {
     try {
       const newBooking = await createDraftBooking({
+        format,
         effectiveMemberId,
         isOnBehalf: isAuthorizedOnBehalf,
         sessionUserId: session.user.id,
@@ -1137,6 +1513,7 @@ export async function POST(request: NextRequest) {
         // #2543 — the mode resolved once above, handed to pricing so no path in
         // this request can price under a regime the gates did not branch on.
         subscriptionLockoutMode,
+        guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,
         lodgeId: parsed.data.lodgeId,
@@ -1145,6 +1522,8 @@ export async function POST(request: NextRequest) {
       await notifyFamilyAdds(newBooking);
       return NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
+      const deferred = deferredServiceRefusal(err);
+      if (deferred) return deferred;
       if (err instanceof BookingGuestValidationError) {
         // The in-transaction person-night guard's D-8 refusal (the pre-flight
         // check above ran before the lock, so a race lands here). The
@@ -1193,7 +1572,7 @@ export async function POST(request: NextRequest) {
       }
       if (err instanceof BookingMemberNightConflictError) {
         return NextResponse.json(
-          getBookingMemberNightConflictResponse(err.conflicts),
+          getBookingMemberNightConflictResponse(err.conflicts, format),
           { status: 409 },
         );
       }
@@ -1225,52 +1604,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  let internetBankingSettings: InternetBankingPaymentSettingsValues | undefined;
-  if (paymentMethod === "internet_banking") {
-    const modules = await loadEffectiveModuleFlags();
-    if (!modules.xeroIntegration || !modules.internetBankingPayments) {
-      return NextResponse.json(
-        { error: "Internet Banking payments are not available." },
-        { status: 400 }
-      );
-    }
-
-    internetBankingSettings = await loadInternetBankingPaymentSettings();
-    // The lead-time cutoff exists to collect payment before the stay; for a
-    // retroactive booking the stay already happened, so skip the rejection
-    // (the module-enabled check above still applies). (#1695)
-    if (!retroactiveCreate) {
-      const leadTime = checkInternetBankingLeadTime({
-        checkIn,
-        settings: internetBankingSettings,
-        // #3123 — the SAME club day this route already resolved above for the
-        // retroactive-create gate, not a second answer from the environment.
-        today,
-      });
-      if (!leadTime.allowed) {
-        return NextResponse.json(
-          {
-            error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
-            code: "INTERNET_BANKING_CUTOFF",
-            minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
-            checkIn: leadTime.checkIn,
-          },
-          { status: 400 }
-        );
-      }
-    }
-  }
-
-  const hasNonMembers = guestInputs.some((g) => !g.isMember);
-  const holdPolicy = hasNonMembers
-    ? await getNonMemberHoldPolicy(checkIn, parsed.data.lodgeId ?? null)
-    : { enabled: false, holdDays: 0, source: "default" as const };
-  const { shouldBePending, status } = calculateBookingHoldDecision({
-    hasNonMembers,
-    checkIn,
-    holdDays: holdPolicy.holdDays,
-    holdEnabled: holdPolicy.enabled,
-  });
+  const { holdPolicy, shouldBePending, status } = await holdDecisionFor(guestInputs);
 
   // Pre-warm the credit balance only if requested; the service will load
   // it again inside the transaction. This call is kept here to preserve
@@ -1281,6 +1615,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const outcome = await createConfirmedBooking({
+      format,
       // #3123 review — the SAME club day this route already gated the
       // retroactive envelope on, so the service's defence-in-depth re-check
       // cannot land on a different day (`INV-LOCK-004`).
@@ -1302,6 +1637,7 @@ export async function POST(request: NextRequest) {
       groupDiscount,
       // #2543 — see the draft branch above.
       subscriptionLockoutMode,
+      guestDietarySeeding,
       status,
       shouldBePending,
       holdDays: holdPolicy.holdDays,
@@ -1325,19 +1661,12 @@ export async function POST(request: NextRequest) {
     // Capacity exceeded path: 409 unless the caller already opted into
     // the waitlist, in which case we create the WAITLISTED booking.
     if (!waitlist) {
-      return NextResponse.json(
-        {
-          error: "The lodge is fully booked on some of your requested dates.",
-          code: "CAPACITY_EXCEEDED",
-          fullNights: outcome.fullNights,
-          canWaitlist: true,
-        },
-        { status: 409 }
-      );
+      return capacityExceededResponse(outcome.fullNights);
     }
 
     try {
       const waitlisted = await createWaitlistedBooking({
+        format,
         effectiveMemberId,
         isOnBehalf: isAuthorizedOnBehalf,
         sessionUserId: session.user.id,
@@ -1353,6 +1682,7 @@ export async function POST(request: NextRequest) {
         groupDiscount,
         // #2543 — see the draft branch above.
         subscriptionLockoutMode,
+        guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,
         lodgeId: parsed.data.lodgeId,
@@ -1363,6 +1693,8 @@ export async function POST(request: NextRequest) {
       await notifyFamilyAdds(waitlisted.booking);
       return NextResponse.json(waitlisted.booking, { status: 201 });
     } catch (waitlistErr) {
+      const deferred = deferredServiceRefusal(waitlistErr);
+      if (deferred) return deferred;
       if (waitlistErr instanceof BookingGuestValidationError) {
       await handleMemberGuestAddRefusal({
           request,
@@ -1379,6 +1711,17 @@ export async function POST(request: NextRequest) {
         );
       }
       if (waitlistErr instanceof MembershipTypeBookingPolicyError) {
+        // Race-only (the pre-flight passed); a collapsed one owes the same
+        // audit, floor and throttle accounting as the draft branch's.
+        await handleMemberGuestAddRefusal({
+          request,
+          actorMemberId: session.user.id,
+          error: waitlistErr,
+          route: "bookings/create",
+          startedAt,
+          throttle: "ALREADY_CHARGED",
+          skipAuthorization: isAuthorizedOnBehalf,
+        });
         return NextResponse.json(
           getMembershipTypeBookingPolicyErrorBody(waitlistErr),
           { status: waitlistErr.status },
@@ -1392,7 +1735,7 @@ export async function POST(request: NextRequest) {
       }
       if (waitlistErr instanceof BookingMemberNightConflictError) {
         return NextResponse.json(
-          getBookingMemberNightConflictResponse(waitlistErr.conflicts),
+          getBookingMemberNightConflictResponse(waitlistErr.conflicts, format),
           { status: 409 },
         );
       }
@@ -1414,6 +1757,8 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
+    const deferred = deferredServiceRefusal(err);
+    if (deferred) return deferred;
     if (err instanceof BookingGuestValidationError) {
       // The in-transaction person-night guard's D-8 refusal, reached on a race
       // with the pre-flight check above.
@@ -1432,6 +1777,17 @@ export async function POST(request: NextRequest) {
       );
     }
     if (err instanceof MembershipTypeBookingPolicyError) {
+      // Race-only (the pre-flight passed); a collapsed one owes the same audit,
+      // floor and throttle accounting as the draft branch's.
+      await handleMemberGuestAddRefusal({
+        request,
+        actorMemberId: session.user.id,
+        error: err,
+        route: "bookings/create",
+        startedAt,
+        throttle: "ALREADY_CHARGED",
+        skipAuthorization: isAuthorizedOnBehalf,
+      });
       return NextResponse.json(
         getMembershipTypeBookingPolicyErrorBody(err),
         { status: err.status },
@@ -1445,7 +1801,7 @@ export async function POST(request: NextRequest) {
     }
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, format),
         { status: 409 },
       );
     }

@@ -63,6 +63,7 @@ import {
   type RateMembershipLabelResolver,
 } from "@/lib/rate-membership-label";
 import { formatCents, formatSignedCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export const MODIFICATION_LINES_VERSION = 1 as const;
 
@@ -134,16 +135,39 @@ export type DiffBookingPricingResult =
       linesSumCents?: number;
     };
 
+type PricingSideGuest = ModificationPricingSide["guests"][number];
+
+/** One guest's nights that an edit took away and gave, before any folding. */
+export type GuestNightChange = {
+  guestKey: string;
+  /** The guest as the BEFORE side held it; a removed night was sold under this shape. */
+  before: PricingSideGuest | undefined;
+  /** The guest as the AFTER side holds it; an added night is sold under this shape. */
+  after: PricingSideGuest | undefined;
+  /** Nights only before, or repriced, or re-sold under a new category - at the BEFORE price. */
+  removed: Array<{ stayDate: Date; priceCents: number }>;
+  /** Nights only after, or repriced, or re-sold under a new category - at the AFTER price. */
+  added: Array<{ stayDate: Date; priceCents: number }>;
+};
+
+export type DiffGuestNightsResult =
+  | { kind: "nights"; guests: GuestNightChange[] }
+  | { kind: "none"; reason: "UNPRICED_NIGHT" | "INEXACT_STORED_NIGHT_PRICE" };
+
 /**
- * The signed lines from `before` to `after`, or why there are none.
- * `expectedDeltaCents` is the caller's own `priceDiffCents`, the figure it
- * settles on; the lines are stored only when they explain exactly that.
+ * THE PER-NIGHT STEP OF AN EDIT'S DIFF (#3582), before anything is folded.
+ *
+ * Extracted from `diffBookingPricing` so the two readers of an edit's nights -
+ * the folded Xero/history lines below and the booking ledger's per-night
+ * postings (`booking-ledger-modification-posting.ts`) - read ONE differ
+ * (`INV-SSOT`). Every rule in this module's header that is about a NIGHT lives
+ * here: the unpriced refusal, the inexact-provenance refusal, the category
+ * judgement, and "a repriced night is one removed and one added, never netted".
  */
-export function diffBookingPricing(
+export function diffGuestNights(
   before: ModificationPricingSide,
   after: ModificationPricingSide,
-  expectedDeltaCents: number,
-): DiffBookingPricingResult {
+): DiffGuestNightsResult {
   for (const guest of before.guests) {
     for (const night of guest.nights) {
       if (typeof night.priceCents !== "number") {
@@ -162,9 +186,7 @@ export function diffBookingPricing(
   const beforeByKey = new Map(before.guests.map((guest) => [guest.guestKey, guest]));
   const afterByKey = new Map(after.guests.map((guest) => [guest.guestKey, guest]));
   const keys = [...new Set([...beforeByKey.keys(), ...afterByKey.keys()])];
-
-  type Folded = Extract<ModificationLine, { kind: "GUEST_NIGHTS" }>;
-  const folded = new Map<string, Folded>();
+  const changes: GuestNightChange[] = [];
 
   for (const key of keys) {
     const beforeGuest = beforeByKey.get(key);
@@ -173,8 +195,7 @@ export function diffBookingPricing(
     // guest; a kept guest is named by its AFTER shape, which is what the edit
     // sold. (A category change on a kept guest is a reprice: every night is
     // removed at the old shape and added at the new one, below.)
-    const identity = afterGuest ?? beforeGuest;
-    if (!identity) continue;
+    if (!beforeGuest && !afterGuest) continue;
 
     const beforeNights = new Map(
       (beforeGuest?.nights ?? []).map((night) => [
@@ -227,13 +248,50 @@ export function diffBookingPricing(
       if (sameShape && beforeNights.get(day) === priceCents) continue;
       added.push({ stayDate: parseDay(day), priceCents });
     }
+    changes.push({ guestKey: key, before: beforeGuest, after: afterGuest, removed, added });
+  }
+  return { kind: "nights", guests: changes };
+}
 
+/**
+ * A side's promotion figure; a non-number (a legacy row read without the column)
+ * counts as zero. Every caller's sum still holds against its real delta.
+ */
+export function normalisedPromoCents(promoAdjustmentCents: number): number {
+  return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
+}
+
+/** The signed change in the promotion adjustment, each side normalised. */
+export function modificationPromoDeltaCents(
+  before: Pick<ModificationPricingSide, "promoAdjustmentCents">,
+  after: Pick<ModificationPricingSide, "promoAdjustmentCents">,
+): number {
+  return normalisedPromoCents(after.promoAdjustmentCents) - normalisedPromoCents(before.promoAdjustmentCents);
+}
+
+/**
+ * The signed lines from `before` to `after`, or why there are none.
+ * `expectedDeltaCents` is the caller's own `priceDiffCents`, the figure it
+ * settles on; the lines are stored only when they explain exactly that.
+ */
+export function diffBookingPricing(
+  before: ModificationPricingSide,
+  after: ModificationPricingSide,
+  expectedDeltaCents: number,
+): DiffBookingPricingResult {
+  const nights = diffGuestNights(before, after);
+  if (nights.kind === "none") return nights;
+
+  type Folded = Extract<ModificationLine, { kind: "GUEST_NIGHTS" }>;
+  const folded = new Map<string, Folded>();
+
+  for (const change of nights.guests) {
     const fold = (
       sign: ModificationLineSign,
-      nights: Array<{ stayDate: Date; priceCents: number }>,
-      shape: NonNullable<typeof identity>,
+      nightsToFold: Array<{ stayDate: Date; priceCents: number }>,
+      shape: PricingSideGuest,
     ) => {
-      for (const run of splitNightsIntoPriceRuns(nights)) {
+      for (const run of splitNightsIntoPriceRuns(nightsToFold)) {
         const startDate = formatDateOnly(run.startDate);
         const foldKey = [
           sign,
@@ -272,18 +330,13 @@ export function diffBookingPricing(
     };
     // A removed night is named by the shape it was sold under; an added one by
     // the shape it is sold under now.
-    if (beforeGuest) fold(-1, removed, beforeGuest);
-    if (afterGuest) fold(1, added, afterGuest);
+    if (change.before) fold(-1, change.removed, change.before);
+    if (change.after) fold(1, change.added, change.after);
   }
 
   const lines: ModificationLine[] = [...folded.values()].sort(orderLines);
 
-  // A promotion figure that is not a number (a legacy row read without the
-  // column) counts as zero; the sum postcondition below still has to hold
-  // against the caller's real delta, so a coerced zero can hide nothing.
-  const promoDeltaCents =
-    (Number.isFinite(after.promoAdjustmentCents) ? after.promoAdjustmentCents : 0) -
-    (Number.isFinite(before.promoAdjustmentCents) ? before.promoAdjustmentCents : 0);
+  const promoDeltaCents = modificationPromoDeltaCents(before, after);
   if (promoDeltaCents !== 0) {
     lines.push({
       v: MODIFICATION_LINES_VERSION,
@@ -386,9 +439,9 @@ export function describeModificationLineCategory(
   return `${describeGuestRateMembershipLabel(labels, line)} ${AGE_TIER_WORD[line.ageTier]}`;
 }
 
-function formatDay(day: string): string {
+function formatDay(day: string, format: ClubFormat): string {
   const parsed = parseCalendarDate(day);
-  return parsed ? formatClubDate(parsed) : day;
+  return parsed ? formatClubDate(parsed, format) : day;
 }
 
 /**
@@ -398,6 +451,7 @@ function formatDay(day: string): string {
  */
 export function renderModificationLineDescription(
   line: ModificationLine,
+  format: ClubFormat,
   labels?: RateMembershipLabelResolver | null,
 ): string {
   if (line.kind === "PROMO_DELTA") {
@@ -405,20 +459,21 @@ export function renderModificationLineDescription(
     // A promotion adjustment is negative money; it "increases" when the
     // adjustment moves further below zero.
     return line.amountCents < 0
-      ? `${code} increased by ${formatCents(-line.amountCents)}`
-      : `${code} reduced by ${formatCents(line.amountCents)}`;
+      ? `${code} increased by ${formatCents(-line.amountCents, format)}`
+      : `${code} reduced by ${formatCents(line.amountCents, format)}`;
   }
   const verb = line.sign > 0 ? "added" : "removed";
   const nights = `${line.nightCount} night${line.nightCount === 1 ? "" : "s"}`;
-  return `${line.guestCount} x ${describeModificationLineCategory(line, labels)} ${verb} - ${nights} - ${formatDay(line.startDate)} - ${formatDay(line.endExclusive)}`;
+  return `${line.guestCount} x ${describeModificationLineCategory(line, labels)} ${verb} - ${nights} - ${formatDay(line.startDate, format)} - ${formatDay(line.endExclusive, format)}`;
 }
 
 /** The description with its signed money (`+$320.00` / `-$320.00`), for history and audit text. */
 export function renderModificationLineWithAmount(
   line: ModificationLine,
+  format: ClubFormat,
   labels?: RateMembershipLabelResolver | null,
 ): string {
-  return `${renderModificationLineDescription(line, labels)} (${formatSignedCents(line.amountCents)})`;
+  return `${renderModificationLineDescription(line, format, labels)} (${formatSignedCents(line.amountCents, format)})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -605,11 +660,12 @@ export async function computeModificationPriceLines(
 export function modificationLinesAuditFields(
   lines: ReadonlyArray<ModificationLine> | null | undefined,
   labels: RateMembershipLabelResolver | null,
+  format: ClubFormat,
 ): ModificationLinesAuditFields {
   if (!lines || lines.length === 0) return {};
   return {
     priceLines: [...lines],
-    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, labels)),
+    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, format, labels)),
   };
 }
 
@@ -628,6 +684,7 @@ export async function loadModificationLinesAuditFields(
   db: Parameters<typeof loadRateMembershipLabelResolver>[0],
   lines: ReadonlyArray<ModificationLine> | null | undefined,
   log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  format: ClubFormat,
 ): Promise<ModificationLinesAuditFields> {
   if (!lines || lines.length === 0) return {};
   let labels: RateMembershipLabelResolver | null = null;
@@ -639,5 +696,5 @@ export async function loadModificationLinesAuditFields(
       "booking-modification-lines: member label resolver unavailable; audit text falls back to isMember",
     );
   }
-  return modificationLinesAuditFields(lines, labels);
+  return modificationLinesAuditFields(lines, labels, format);
 }

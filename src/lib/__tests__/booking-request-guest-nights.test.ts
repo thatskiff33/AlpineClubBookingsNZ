@@ -16,6 +16,7 @@
  * total is divided by exactly the rule Xero line building already synthesises,
  * so no money moves on that path.
  */
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgeTier } from "@prisma/client";
 
@@ -43,6 +44,17 @@ import {
 import { parseDateOnly } from "@/lib/date-only";
 import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+import {
+  bookingGuestDietarySeeding,
+  resolveBookingGuestDietary,
+} from "@/lib/member-dietary-booking-writes";
+
+// #3029: builder calls need a dietary decision per guest; nothing is seeded here.
+const NO_DIETARY = await resolveBookingGuestDietary(
+  {} as never,
+  bookingGuestDietarySeeding(false),
+  [{}, {}, {}],
+);
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -262,6 +274,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
   it("attaches nights to every guest, matching each one's own price", async () => {
     const guestCreates = await buildApprovalGuestCreates(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       guests: [
         { firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT },
         { firstName: "Sam", lastName: "Student", ageTier: AgeTier.CHILD },
@@ -283,6 +296,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
   it("nests them the way Prisma wants at the shared write point", async () => {
     const [guestCreate] = await buildApprovalGuestCreates(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       guests: [{ firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT }],
       linkedMembers: new Map<number, string>(),
       guestPriceCents: [9000],
@@ -292,7 +306,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
       heldBookingId: null,
     });
 
-    const prismaData = toPipelineGuestCreateData(guestCreate);
+    const prismaData = toPipelineGuestCreateData(guestCreate, NO_DIETARY[0]);
     expect(prismaData.nights).toEqual({
       create: [
         { stayDate: parseDateOnly("2026-08-01"), priceCents: 3000, priceSource: "EVEN_SPLIT" },
@@ -309,7 +323,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
     /*
       This is the assertion that makes INV-CAP-032's "a fifth pipeline cannot be
       added without answering the question" true rather than aspirational, and it
-      is checked by `npm run typecheck`, not at runtime.
+      is checked by `pnpm run typecheck`, not at runtime.
 
       `@ts-expect-error` fails the build when the line does NOT error. So if
       `nights` ever goes back to optional — or the `?? []` fallback comes back —
@@ -325,7 +339,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
         firstName: "Tara",
         lastName: "Tester",
         priceCents: 9000,
-      }),
+      }, NO_DIETARY[0]),
     ).toThrow();
   });
 });
@@ -365,6 +379,7 @@ describe("the guests now reach the Bed Allocation officer card (#2739)", () => {
   async function pipelineNights() {
     const [guestCreate] = await buildApprovalGuestCreates({} as never, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       guests: [{ firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT }],
       linkedMembers: new Map<number, string>(),
       guestPriceCents: [9000],
@@ -373,7 +388,7 @@ describe("the guests now reach the Bed Allocation officer card (#2739)", () => {
       adminMemberId: "admin-1",
       heldBookingId: null,
     });
-    return toPipelineGuestCreateData(guestCreate).nights.create;
+    return toPipelineGuestCreateData(guestCreate, NO_DIETARY[0]).nights.create;
   }
 
   it("counts a converted guest once the pipeline writes their nights", async () => {

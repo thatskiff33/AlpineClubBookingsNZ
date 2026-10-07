@@ -9,8 +9,10 @@ import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
   parseInstant,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * One night of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870).
@@ -31,7 +33,7 @@ import { formatCents } from "@/lib/utils";
  * string "Invalid Date", which only `toLocaleDateString` produces — so this
  * fallback is a FIX rather than a preserved behaviour.
  */
-function formatStayDay(value: string): string {
+function formatStayDay(value: string, format: ClubDateFormat): string {
   // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
   // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
   // `TypeError` out of the guard that exists to stop a throw. The premise above
@@ -41,7 +43,7 @@ function formatStayDay(value: string): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
   } catch {
     return value;
   }
@@ -86,6 +88,7 @@ export function GroupJoinVerifyPageClient({
    */
   lodgeName?: string | null;
 }) {
+  const format = useClubFormat();
   const [outcome, setOutcome] = useState<Outcome>("idle");
   const [details, setDetails] = useState<CreatedDetails>({});
   const [message, setMessage] = useState<string>("");
@@ -203,15 +206,15 @@ export function GroupJoinVerifyPageClient({
               {details.checkIn && details.checkOut ? (
                 <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
                   <p>
-                    Dates: {formatStayDay(details.checkIn)} to{" "}
-                    {formatStayDay(details.checkOut)}
+                    Dates: {formatStayDay(details.checkIn, format)} to{" "}
+                    {formatStayDay(details.checkOut, format)}
                   </p>
                   {typeof details.guestCount === "number" ? (
                     <p className="mt-1">Guests: {details.guestCount}</p>
                   ) : null}
                   {typeof details.priceCents === "number" ? (
                     <p className="mt-1 font-semibold text-foreground">
-                      Amount due: {formatCents(details.priceCents)}
+                      Amount due: {formatCents(details.priceCents, format)}
                     </p>
                   ) : null}
                 </div>

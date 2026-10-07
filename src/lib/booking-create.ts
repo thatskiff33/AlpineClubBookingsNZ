@@ -34,6 +34,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
+  decideBookingSplit,
   priceDeferredNonMemberPortion,
   toGuestPricingInputs,
   toSeasonRateData,
@@ -105,6 +106,8 @@ import { DUPLICATE_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
   type ResolvedPromo,
   getPromoTargetBookingGuestIds,
+  normalizePromoCodeInput,
+  promoCodeVisibilityRefusal,
   remapPromoIndexesToSubset,
   resolveEffectivePromoSource,
   resolvePromoInTransaction,
@@ -120,7 +123,9 @@ import {
 import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { withOptionalTransaction } from "@/lib/db-transaction";
+import { organiserPaysForJoinerInTx } from "@/lib/group-late-joiner";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
 
 // The helper types, errors, and pure functions that used to live here now live
 // in three cohesive sibling modules (types <- promo, types <- guests). Re-export
@@ -327,7 +332,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       // (`INV-LOCK-004`). The guard reaches `evaluateGuestSelfRemoval` with it,
       // and the promo window below reads the same one — one day per create.
       today: dateOnlyInstantOf(todayAtClub),
-    });
+    }, input.format);
     const draftExpiresAt = review.blockForReview
       ? null
       : new Date(Date.now() + 72 * 60 * 60 * 1000);
@@ -405,6 +410,13 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       promoAdjustmentCents,
     });
     const hasNonMembers = guests.some((g) => !g.isMember);
+    // #3029 (`INV-MOD-059`): each new guest row's dietary/allergy snapshot, from
+    // the linked members' CURRENT profiles through this transaction's client.
+    const guestDietary = await resolveBookingGuestDietary(
+      tx,
+      input.guestDietarySeeding,
+      guests,
+    );
 
     const createdBooking = await tx.booking.create({
       data: {
@@ -450,7 +462,9 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         adminReviewNotes: review.adminReviewNotes,
         adminReviewedById: review.adminReviewedById,
         adminReviewedAt: review.adminReviewedAt,
-        guests: { create: buildGuestCreateData(guests, price, checkIn, checkOut) },
+        guests: {
+          create: buildGuestCreateData(guests, price, checkIn, checkOut, guestDietary),
+        },
       },
       include: { guests: true },
     });
@@ -475,6 +489,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     // last night write and the redemption write. With no promotion the targets
     // are empty and RECORDED says exactly that: nothing was taken off.
     await recordBookingNightAdjustments(tx, {
+      format: input.format,
       bookingId: createdBooking.id,
       guestIds: createdBooking.guests.map((guest) => guest.id),
       targets: promoAdjustmentTargets,
@@ -566,7 +581,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         status: newBooking.status,
         reviewReason: newBooking.adminReviewReason,
         memberJustification: newBooking.memberReviewJustification,
-      }).catch((err) => logger.error({ err }, "Failed to send admin alert for awaiting-review draft"));
+      }, input.format).catch((err) => logger.error({ err }, "Failed to send admin alert for awaiting-review draft"));
     }
   }
 
@@ -727,27 +742,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // Pure parties stay a single booking. Bookings held for admin review are
   // never split — the whole party waits in AWAITING_REVIEW until an admin
   // decides.
-  const memberGuests = guests.filter((g) => g.isMember);
-  const nonMemberGuests = guests.filter((g) => !g.isMember);
-  const hasMemberGuests = memberGuests.length > 0;
-  const hasNonMemberGuests = nonMemberGuests.length > 0;
-  const flaggedProvisional =
-    shouldBePending &&
-    (cancelIfGuestsBumped ?? false) &&
-    hasNonMemberGuests &&
-    !review.blockForReview;
-  const splitBooking =
-    hasMemberGuests &&
-    hasNonMemberGuests &&
-    shouldBePending &&
-    !flaggedProvisional &&
-    !review.blockForReview;
+  // The split decision, and which rows hold capacity, are `decideBookingSplit`'s
+  // — one definition, shared with the create route's full-lodge pre-flight.
+  const { nonMemberGuests, flaggedProvisional, splitBooking, primaryGuests } =
+    decideBookingSplit(guests, {
+      shouldBePending,
+      cancelIfGuestsBumped,
+      blockForReview: review.blockForReview,
+    });
   const effectiveCancelIfGuestsBumped = flaggedProvisional;
-
-  // The primary (returned) booking. For a split it carries only the member
-  // guests; the non-member guests become the linked child created in the same
-  // transaction. Promo selection indexes are remapped onto the member subset.
-  const primaryGuests = splitBooking ? memberGuests : guests;
+  // Promo selection indexes are remapped onto the member subset of a split.
   const primaryHasNonMembers = primaryGuests.some((g) => !g.isMember);
   const primaryPromoGuestIndexes = splitBooking
     ? remapPromoIndexesToSubset(promoGuestIndexes, guests, primaryGuests)
@@ -886,7 +890,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         // The same club day the retroactive envelope and the promo window use,
         // resolved before this transaction opened (`INV-LOCK-004`).
         today: todayDateOnly,
-      });
+      }, input.format);
 
       const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
       const capacityCheck = await checkCapacityForGuestRanges(
@@ -977,6 +981,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           ? await getMemberCreditBalance(effectiveMemberId, tx)
           : 0;
       const { creditAppliedCents, effectivePriceCents } = calculateBookingCreditApplication({
+        format: input.format,
         requestedCreditCents: review.blockForReview ? 0 : (applyCreditCents ?? 0),
         creditBalanceCents: creditBalance,
         finalPriceCents,
@@ -1024,6 +1029,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         }
       }
 
+      // #3672 (`INV-PAY-109`): a group join's payer is re-decided here, under
+      // `lock(1)`. A settlement paid since the join read the group makes this
+      // an ordinary member-pays booking, never one the paid bill left out.
+      // Only ever downgrades: the join forced the card method for an
+      // organiser-pays joiner, which is also what a member-pays one may use.
+      const organiserSettledInLock =
+        Boolean(organiserSettled) &&
+        (!groupJoin ||
+          (await organiserPaysForJoinerInTx(tx, groupJoin.groupBookingId)));
+
       const nonMemberHoldUntil = primaryShouldBePending && !internetBankingPaymentSelected
         ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
         : null;
@@ -1051,7 +1066,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           // and the organiser settles it. Omitted entirely otherwise so the
           // column defaults to false and the create-payload assertions in
           // booking-split.test.ts stay unchanged.
-          ...(organiserSettled ? { organiserSettled: true } : {}),
+          ...(organiserSettledInLock ? { organiserSettled: true } : {}),
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
           requestedRoomId: requestedRoomId || null,
@@ -1088,7 +1103,21 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           adminReviewNotes: review.adminReviewNotes,
           adminReviewedById: review.adminReviewedById,
           adminReviewedAt: review.adminReviewedAt,
-          guests: { create: buildGuestCreateData(primaryGuests, price, checkIn, checkOut) },
+          guests: {
+            create: buildGuestCreateData(
+              primaryGuests,
+              price,
+              checkIn,
+              checkOut,
+              // #3029 (`INV-MOD-059`): carried values (the cross-lodge offer) as
+              // they are; linked members seeded from their current profiles.
+              await resolveBookingGuestDietary(
+                tx,
+                input.guestDietarySeeding,
+                primaryGuests,
+              ),
+            ),
+          },
         },
         include: { guests: true },
       });
@@ -1113,6 +1142,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // last night write and the redemption write. With no promotion the targets
       // are empty and RECORDED says exactly that: nothing was taken off.
       await recordBookingNightAdjustments(tx, {
+        format: input.format,
         bookingId: newBooking.id,
         guestIds: newBooking.guests.map((guest) => guest.id),
         targets: promoAdjustmentTargets,
@@ -1120,7 +1150,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       });
 
       if (creditAppliedCents > 0) {
-        await applyCreditToBooking(effectiveMemberId, creditAppliedCents, newBooking.id, tx);
+        await applyCreditToBooking(effectiveMemberId, creditAppliedCents, newBooking.id, tx, input.format);
       }
 
       // Zero-dollar (or fully credit-covered) PAYMENT_PENDING booking:
@@ -1356,7 +1386,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
                 nonMemberGuests,
                 childPrice,
                 checkIn,
-                checkOut
+                checkOut,
+                // #3029: non-members, so nothing is seeded; a carried value
+                // (cross-lodge offer) is kept.
+                await resolveBookingGuestDietary(
+                  tx,
+                  input.guestDietarySeeding,
+                  nonMemberGuests,
+                ),
               ),
             },
           },
@@ -1365,6 +1402,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         // #3276: the split child carries no promotion (one redemption per party,
         // on the member booking), so its nights record that nothing came off.
         await recordBookingNightAdjustments(tx, {
+          format: input.format,
           bookingId: childBooking.id,
           guestIds: childBooking.guests.map((guest) => guest.id),
           targets: [],
@@ -1560,6 +1598,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
               fullBooking.checkOut,
               fullBooking.guests.length,
               fullBooking.finalPriceCents,
+              input.format,
               {
                 lodgeId: fullBooking.lodgeId,
                 ...(provisionalGuests ? { provisionalGuests } : {}),
@@ -1655,7 +1694,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         status: booking.status,
         reviewReason: booking.adminReviewReason,
         memberJustification: booking.memberReviewJustification,
-      }).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
+      }, input.format).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
     }
 
   };
@@ -1806,7 +1845,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     lodgeId: waitlistLodgeId,
   });
   if (promoSource) {
-    const normalizedCode = promoSource.promoCodeStr.toUpperCase().trim();
+    const normalizedCode = normalizePromoCodeInput(promoSource.promoCodeStr);
     const promoCode = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
       include: {
@@ -1814,8 +1853,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         lodges: { select: { lodgeId: true } },
       },
     });
-    if (promoCode?.internal && !promoSource.allowInternal) {
-      throw new BookingPromoError("Promo code not found");
+    const hidden = promoCodeVisibilityRefusal(promoCode, promoSource.allowInternal);
+    if (hidden) {
+      throw new BookingPromoError(hidden);
     }
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)
@@ -1903,7 +1943,14 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       // Resolved above, before this transaction opened (`INV-LOCK-004`), and
       // shared with the promotion's validity window — one day per create.
       today: dateOnlyInstantOf(todayAtClub),
-    });
+    }, input.format);
+    // #3029 (`INV-MOD-059`): the waitlisted guest rows are the rows a later
+    // promotion keeps, so they are seeded here, when they are first created.
+    const guestDietary = await resolveBookingGuestDietary(
+      tx,
+      input.guestDietarySeeding,
+      guests,
+    );
 
     const createdBooking = await tx.booking.create({
       data: {
@@ -1930,7 +1977,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         adminReviewNotes: review.adminReviewNotes,
         adminReviewedById: review.adminReviewedById,
         adminReviewedAt: review.adminReviewedAt,
-        guests: { create: buildGuestCreateData(guests, price, checkIn, checkOut) },
+        guests: {
+          create: buildGuestCreateData(guests, price, checkIn, checkOut, guestDietary),
+        },
       },
       include: { guests: true },
     });
@@ -1955,6 +2004,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     // last night write and the redemption write. With no promotion the targets
     // are empty and RECORDED says exactly that: nothing was taken off.
     await recordBookingNightAdjustments(tx, {
+      format: input.format,
       bookingId: createdBooking.id,
       guestIds: createdBooking.guests.map((guest) => guest.id),
       targets: promoAdjustmentTargets,
@@ -2026,7 +2076,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       status: newBooking.status,
       reviewReason: newBooking.adminReviewReason,
       memberJustification: newBooking.memberReviewJustification,
-    }).catch((err) => logger.error({ err }, "Failed to send admin alert for waitlisted booking"));
+    }, input.format).catch((err) => logger.error({ err }, "Failed to send admin alert for waitlisted booking"));
   }
 
   logAudit({

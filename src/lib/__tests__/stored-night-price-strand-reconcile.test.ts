@@ -33,6 +33,7 @@ import {
   recordStrandNightPriceReconcile,
   strandNightPriceOffersForBooking,
 } from "@/lib/stored-night-price-strand-reconcile";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * #3214 (epic #2797): an officer records what a guest strand's nights sold for,
@@ -252,6 +253,7 @@ async function reconcile(
   bookingId = BOOKING_ID,
 ) {
   const plan = await planStrandNightPriceReconcile({
+    format: CLUB_FORMAT_TEST,
     bookingId,
     bookingGuestId,
     entries,
@@ -566,6 +568,7 @@ describe("a concurrent write is refused, never overwritten", () => {
     });
     const store = makeStore({ guests: [row] });
     const plan = await planStrandNightPriceReconcile({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       bookingGuestId: "g1",
       entries: [
@@ -599,6 +602,7 @@ describe("a concurrent write is refused, never overwritten", () => {
     });
     const store = makeStore({ guests: [row] });
     const plan = await planStrandNightPriceReconcile({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       bookingGuestId: "g1",
       entries: [
@@ -714,6 +718,7 @@ describe("the audit entry", () => {
     const store = makeStore({ guests: [row] });
 
     const plan = await planStrandNightPriceReconcile({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       bookingGuestId: "g1",
       entries: [

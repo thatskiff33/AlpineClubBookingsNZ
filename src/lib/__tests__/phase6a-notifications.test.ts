@@ -7,6 +7,7 @@ import { getAppBaseUrl } from "../app-url";
 import { EMAIL_FROM } from "@/lib/email-sender";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
@@ -659,7 +660,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
       guestCount: 3,
       totalCents: 45000,
       status: "CONFIRMED",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -684,7 +685,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
       guestCount: 3,
       totalCents: 45000,
       status: "CONFIRMED",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const recipients = mockPrisma.emailLog.create.mock.calls.map(
       (call) => call[0].data.to
@@ -730,7 +731,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
       guestCount: 3,
       totalCents: 45000,
       status: "CONFIRMED",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -1001,7 +1002,7 @@ describe("N-04: sendAdminPaymentFailureAlert", () => {
       amountCents: 15000,
       errorMessage: "Card declined",
       paymentIntentId: "pi_test123",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -1121,7 +1122,7 @@ describe("Email templates - Phase 6a", () => {
       guestCount: 2,
       totalCents: 15000,
       status: "CONFIRMED",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).not.toContain('onerror="alert(1)"');
     expect(html).toContain("&lt;img");
@@ -1141,7 +1142,7 @@ describe("Email templates - Phase 6a", () => {
       amountCents: 15000,
       errorMessage: "Stored credit election cleared",
       paymentIntentId: "booking-1",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Reference");
     expect(html).not.toContain("Stripe PI");
@@ -1157,7 +1158,7 @@ describe("Email templates - Phase 6a", () => {
       amountCents: 15000,
       errorMessage: "Card declined",
       paymentIntentId: "pi_test123",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("pi_test123");
     expect(html).toContain("Card declined");

@@ -427,9 +427,17 @@ async function setTransactionLockTimeout(
  * No parameter is interpolated, so the reason `set_config` was needed above —
  * `SET` takes no placeholders — does not apply here.
  *
- * On this repository's current configuration nothing sets `lock_timeout` at any
+ * On the connections THIS code runs on, nothing sets `lock_timeout` at any
  * level, so `DEFAULT` resolves to `0` and this is byte-for-byte the old
  * behaviour. It is hardening against a deployment that adds one, not a live bug.
+ *
+ * Since #3377 the deployment does set one — `lock_timeout` on the `migrate`
+ * service's connection, so a blocked schema migration fails fast instead of
+ * taking a hot table's readers down with it. That service runs
+ * `prisma migrate deploy` and imports no application code, so it never reaches
+ * this helper, and the paragraph above is still true here. It is no longer true
+ * of the deployment as a whole: see `docs/CONCURRENCY_AND_LOCKING.md` ->
+ * "The migration lock timeout".
  */
 async function clearTransactionLockTimeout(
   db: Pick<PrismaClient, "$executeRaw">,

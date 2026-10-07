@@ -1,5 +1,41 @@
 import { Prisma } from "@prisma/client";
-import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "./xero-operation-outbox-payload";
+import {
+  XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+} from "./xero-operation-outbox-payload";
+import { asRecord, readString } from "./xero-json";
+
+/**
+ * #3635 (orchestrator decision 1, `INV-INT-025`): an applied-credit allocation
+ * or deallocation cannot be marked resolved in Xero. Fixing Xero by hand does
+ * not bring the local credit-slice ledger back in line, and an unconverged
+ * deallocation deliberately fences the booking's cancel, the hold-expiry cron
+ * and credit writes (below) - a resolved one would fence them for good. These
+ * rows stay retry-only. Read from the queue-type column, or the payload for a
+ * row written before the column.
+ */
+export function isAppliedCreditLedgerOperation(operation: {
+  queueType: string | null;
+  requestPayload: unknown;
+}): boolean {
+  return readAppliedCreditLedgerQueueType(operation) !== null;
+}
+
+/** Which of the two applied-credit ledger types a row is, or null (#3635 N9). */
+export function readAppliedCreditLedgerQueueType(operation: {
+  queueType: string | null;
+  requestPayload: unknown;
+}):
+  | typeof XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE
+  | typeof XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+  | null {
+  const queueType =
+    operation.queueType ?? readString(asRecord(operation.requestPayload)?.queueType);
+  return queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE ||
+    queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+    ? queueType
+    : null;
+}
 
 /**
  * A claimed applied-credit worker found another claimed operation for the same
@@ -7,10 +43,24 @@ import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "./xero-operation-o
  * operation to PENDING instead of creating a durable FAILED dead-end.
  */
 export class XeroAppliedCreditOperationBusyError extends Error {
-  constructor(message: string) {
+  /**
+   * #3791: the fencing deallocation's status, where a fence raised this. A
+   * PENDING or RUNNING one converges by itself; FAILED or PARTIAL waits for an
+   * operator to retry the Xero operation, and a caller telling a person what to
+   * do next has to be able to tell the two apart.
+   */
+  readonly fenceStatus: string | null;
+
+  constructor(message: string, fenceStatus: string | null = null) {
     super(message);
     this.name = "XeroAppliedCreditOperationBusyError";
+    this.fenceStatus = fenceStatus;
   }
+}
+
+/** #3791: a fence only an operator's retry of the Xero operation clears. */
+export function needsOperatorXeroRetry(error: XeroAppliedCreditOperationBusyError): boolean {
+  return error.fenceStatus === "FAILED" || error.fenceStatus === "PARTIAL";
 }
 
 /**
@@ -28,6 +78,21 @@ export class XeroAppliedCreditDeallocationEventualConsistencyError extends XeroA
   constructor(message: string) {
     super(message);
     this.name = "XeroAppliedCreditDeallocationEventualConsistencyError";
+  }
+}
+
+/**
+ * #3880 (`INV-PAY-111`): another refund credit note on this payment is being
+ * sized, raised or recorded right now. A subclass of the applied-credit busy
+ * error so the outbox treats it the same way: the row goes back to PENDING,
+ * reason kept, and the next scan raises it once the other has recorded.
+ */
+export class XeroRefundCreditNoteInFlightError extends XeroAppliedCreditOperationBusyError {
+  constructor(paymentId: string, inFlightOperationId: string) {
+    super(
+      `Refund credit note operation ${inFlightOperationId} on payment ${paymentId} is still running; this note waits for it to record before sizing`
+    );
+    this.name = "XeroRefundCreditNoteInFlightError";
   }
 }
 
@@ -123,6 +188,7 @@ export async function assertNoAppliedCreditDeallocationFence(
   if (fence) {
     throw new XeroAppliedCreditOperationBusyError(
       `Applied-credit deallocation ${fence.id} is ${fence.status} for payment ${paymentId}; converge it before changing applied credit`,
+      fence.status,
     );
   }
 }

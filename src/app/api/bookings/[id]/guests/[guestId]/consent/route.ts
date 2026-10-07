@@ -12,6 +12,7 @@ import {
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { MEMBER_GUEST_MODULE_KEY } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Answer one member-guest consent request ("+ Add Member Guest", epic #2305,
@@ -90,6 +91,9 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // The club's format (#3565), resolved once per request, before the transition.
+  const format = await clubFormatValues();
+
   try {
     // Read the target BEFORE the transition, because a successful decline or
     // expiry DELETES the guest row: after the fact there is nothing left to read
@@ -108,6 +112,7 @@ export async function POST(
       guestId,
       actorMemberId: session.user.id,
       action,
+      format,
     });
 
     await finaliseMemberGuestConsentTransition({
@@ -116,6 +121,7 @@ export async function POST(
       targetMemberId,
       outcome,
       actorMemberId: session.user.id,
+      format,
     });
 
     if (outcome.outcome === "BLOCKED") {

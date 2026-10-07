@@ -109,6 +109,7 @@ import {
   planStrandNightPriceReconcile,
   recordStrandNightPriceReconcile,
 } from "@/lib/stored-night-price-strand-reconcile";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
  * #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller before it
@@ -302,6 +303,7 @@ beforeEach(() => {
 
 async function save(input: Record<string, unknown>) {
   return modifyBookingBatch({
+    format: CLUB_FORMAT_TEST,
     todayAtClub: FIXTURE_CLUB_DAY,
     bookingId: "booking-1",
     actor: { id: "admin-9", role: "ADMIN" as Role },
@@ -594,6 +596,7 @@ describe("#3214 acceptance: the refusal's sentence is satisfiable", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = reconcileStore(strand) as any;
     const plan = await planStrandNightPriceReconcile({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       bookingGuestId: GUEST.id,
       entries: [

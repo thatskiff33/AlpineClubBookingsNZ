@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingEventType, BookingStatus, PaymentStatus } from "@prisma/client";
 
 vi.mock("@/lib/prisma", () => ({
@@ -12,6 +12,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       upsert: vi.fn(),
+      // #3638: the attach re-reads the payment's source under lock(1).
+      findUnique: vi.fn(),
     },
     booking: {
       findUnique: vi.fn(),
@@ -36,6 +38,11 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: vi.fn(),
   findOrCreateCustomer: vi.fn(),
   getPaymentIntent: vi.fn(),
+  // #3638: a refused attach cancels the intent it minted.
+  cancelPaymentIntentIfCancellableWithResult: vi.fn().mockResolvedValue({
+    paymentIntent: { id: "pi_orphan", status: "canceled" },
+    canceled: true,
+  }),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -86,8 +93,22 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach
+// below) is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 import { prisma } from "@/lib/prisma";
-import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
+import {
+  cancelPaymentIntentIfCancellableWithResult,
+  createPaymentIntent,
+  findOrCreateCustomer,
+  getPaymentIntent,
+} from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
   findPaymentTransactionByIntentId,
@@ -120,6 +141,9 @@ import {
   issueSplitGuestPaymentLink,
   mintSplitGuestPaymentLinkIfAbsent,
 } from "@/lib/payment-link-split-guest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
@@ -177,6 +201,10 @@ beforeAll(() => {
 
 afterAll(() => {
   vi.useRealTimers();
+});
+
+beforeEach(() => {
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
 });
 
 function baseBooking(overrides: Partial<Record<string, unknown>> = {}) {
@@ -300,6 +328,41 @@ describe("getPaymentLinkContext", () => {
     expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
     expect(context.narrative.message).toContain("$120.00");
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  // #3638 delta D4: a switched booking's link page offers no card and keeps
+  // its bank-transfer details, even if the module has since been turned off.
+  it("offers card payment on an ordinary payable booking", async () => {
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.cardPaymentAvailable).toBe(true);
+  });
+
+  it("offers no card payment on a booking switched to Internet Banking, and still shows its reference", async () => {
+    loadEffectiveModuleFlagsMock.mockResolvedValue({
+      xeroIntegration: true,
+      internetBankingPayments: false,
+    });
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          status: BookingStatus.PAYMENT_PENDING,
+          payment: {
+            id: "pay-1",
+            source: "INTERNET_BANKING",
+            status: PaymentStatus.PENDING,
+            stripePaymentIntentId: null,
+          },
+        }),
+      }) as never
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.cardPaymentAvailable).toBe(false);
+    expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
   });
 
   // #2919: the public pay page's confirmation copy used to name the club's
@@ -715,7 +778,7 @@ describe("getPaymentLinkContext under an open financial review", () => {
     });
 
     const resolverInput = {
-      club: bindClubTime(requireClubTimeZone("Pacific/Auckland")),
+      club: bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST),
       booking: {
         status: booking.status,
         finalPriceCents: booking.finalPriceCents,
@@ -730,12 +793,12 @@ describe("getPaymentLinkContext under an open financial review", () => {
     };
 
     expect(context.narrative).toEqual(
-      resolveBookingNarrative({ ...resolverInput, financialReviewPending: true }),
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: true }, CLUB_FORMAT_TEST),
     );
     // The flag really reached it: the same facts without the review resolve to
     // different wording, so this cannot pass on a dropped flag.
     expect(context.narrative).not.toEqual(
-      resolveBookingNarrative({ ...resolverInput, financialReviewPending: false }),
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: false }, CLUB_FORMAT_TEST),
     );
   });
 });
@@ -764,7 +827,7 @@ describe("reissuePaymentLinkForToken", () => {
       })
     );
     expect(sendBookingRequestApprovedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tara@example.com" })
+      expect.objectContaining({ email: "tara@example.com" }), CLUB_FORMAT_TEST
     );
   });
 
@@ -818,7 +881,7 @@ describe("reissuePaymentLinkForToken", () => {
 
     expect(result.emailed).toBe(true);
     expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tara@example.com", bookingReference: "booking-1" })
+      expect.objectContaining({ email: "tara@example.com", bookingReference: "booking-1" }), CLUB_FORMAT_TEST
     );
     expect(sendBookingRequestApprovedEmail).not.toHaveBeenCalled();
   });
@@ -902,7 +965,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
       status: "requires_payment_method",
-      client_secret: "secret_existing",
+      client_secret: "secret_existing", currency: "nzd",
       amount: 12000,
       payment_method: null,
     } as never);
@@ -928,7 +991,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_stale",
       status: "requires_payment_method",
-      client_secret: "secret_stale",
+      client_secret: "secret_stale", currency: "nzd",
       amount: 10000,
       payment_method: null,
     } as never);
@@ -938,7 +1001,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -965,6 +1028,99 @@ describe("createPaymentIntentForPaymentLink", () => {
     );
   });
 
+  it("supersedes a same-amount intent minted in another currency and mints a fresh one (#3567)", async () => {
+    const { queueSupersededPrimaryIntentCancellations } = await import(
+      "@/lib/booking-payment-cleanup"
+    );
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: PaymentStatus.PENDING },
+        }),
+      }) as never
+    );
+    // The right amount, but minted in AUD before the club moved to NZD.
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "requires_payment_method",
+      client_secret: "secret_aud", currency: "aud",
+      amount: 12000,
+      payment_method: null,
+    } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+      baseBooking({ guests: [{ id: "guest-1" }] }) as never
+    );
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_nzd",
+      client_secret: "secret_nzd", currency: "nzd",
+      amount: 12000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    const result = await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    expect(result).toEqual({
+      type: "clientSecret",
+      clientSecret: "secret_nzd",
+      paymentIntentId: "pi_nzd",
+    });
+    expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        bookingId: "booking-1",
+        paymentId: "pay-1",
+        newFinalPriceCents: 12000,
+        wrongCurrencyPaymentIntentId: "pi_aud",
+      },
+    );
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 12000 }),
+    );
+  });
+
+  it("answers 409 for an old-currency intent still processing, and neither supersedes it nor mints (#3567 final check)", async () => {
+    const { queueSupersededPrimaryIntentCancellations } = await import(
+      "@/lib/booking-payment-cleanup"
+    );
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: PaymentStatus.PENDING },
+        }),
+      }) as never
+    );
+    // A bank debit in AUD, submitted before the club moved to NZD, not yet settled.
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "processing",
+      client_secret: "secret_aud", currency: "aud",
+      amount: 12000,
+      payment_method: null,
+    } as never);
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      name: "PaymentLinkError",
+      status: 409,
+      code: "PAYMENT_PROCESSING",
+      message: "This payment is being processed. Refresh the page in a minute to see it confirmed.",
+    });
+    expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("refuses a club currency without two decimal places with a 409 before resolving the link (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      status: 409,
+      message: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+    });
+    expect(mockedFindUnique).not.toHaveBeenCalled();
+    expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("reports alreadyPaid and reconciles when the existing PaymentIntent already succeeded", async () => {
     mockedFindUnique.mockResolvedValue(
       baseLink({
@@ -976,7 +1132,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
       status: "succeeded",
-      client_secret: "secret_existing",
+      client_secret: "secret_existing", currency: "nzd",
       amount: 12000,
       payment_method: "pm_123",
     } as never);
@@ -1013,7 +1169,7 @@ describe("createPaymentIntentForPaymentLink", () => {
         // Stripe retains the client secret after success/refund. Keeping this
         // production-shaped is the mutation proof: removing the explicit repay
         // bypass would return this old secret before the fresh mint below.
-        client_secret: "secret_refunded_must_not_be_reused",
+        client_secret: "secret_refunded_must_not_be_reused", currency: "nzd",
         amount: 12000,
         payment_method: "pm_old",
       } as never);
@@ -1026,7 +1182,7 @@ describe("createPaymentIntentForPaymentLink", () => {
       mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
       mockedCreatePaymentIntent.mockResolvedValue({
         id: "pi_repay",
-        client_secret: "secret_repay",
+        client_secret: "secret_repay", currency: "nzd",
       } as never);
       vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
@@ -1181,7 +1337,7 @@ describe("createPaymentIntentForPaymentLink", () => {
         amountCents: 4500,
         paymentIntentId: "booking-1",
         errorMessage: expect.stringContaining("$45.00"),
-      })
+      }), CLUB_FORMAT_TEST
     );
   });
 
@@ -1193,7 +1349,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_1" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
@@ -1240,7 +1396,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1275,7 +1431,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1306,7 +1462,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1325,6 +1481,140 @@ describe("createPaymentIntentForPaymentLink", () => {
     );
   });
 
+  // #3638 (`INV-PAY-102`): the link is the third card door. A booking switched
+  // to Internet Banking has an emailed invoice, and a card intent recorded
+  // beside it also flips the payment's source back to STRIPE, hiding a later
+  // bank payment from the inbound loop — so the link refuses before minting,
+  // and again under lock(1) where it attaches.
+  describe("a booking being paid by Internet Banking (#3638)", () => {
+    // clearAllMocks keeps implementations; do not leak a "switched" payment
+    // into the rest of the suite.
+    afterEach(() => {
+      vi.mocked(prisma.payment.findUnique).mockReset();
+    });
+
+    it("refuses before any Stripe call when the booking has already switched", async () => {
+      mockedFindUnique.mockResolvedValue(
+        baseLink({
+          booking: baseBooking({
+            status: BookingStatus.PAYMENT_PENDING,
+            payment: {
+              id: "pay-1",
+              source: "INTERNET_BANKING",
+              status: PaymentStatus.PENDING,
+              stripePaymentIntentId: null,
+            },
+          }),
+        }) as never
+      );
+
+      // The shared body's message AND code (delta D4: one definition).
+      await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+        status: 409,
+        message: SWITCHED_TO_INTERNET_BANKING_BODY.error,
+        code: SWITCHED_TO_INTERNET_BANKING_BODY.code,
+      });
+      expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
+      expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+      expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockedTransaction).not.toHaveBeenCalled();
+    });
+
+    it("refuses, attaches nothing and cancels the new intent when the switch committed during the mint", async () => {
+      mockedFindUnique.mockResolvedValue(baseLink() as never);
+      vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+        baseBooking({ guests: [{ id: "guest-1" }] }) as never
+      );
+      // Under the attach lock the payment now reads as switched.
+      vi.mocked(prisma.payment.findUnique).mockResolvedValue({
+        source: "INTERNET_BANKING",
+      } as never);
+      mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+      mockedCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12000,
+      } as never);
+
+      await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+        status: 409,
+        message: SWITCHED_TO_INTERNET_BANKING_BODY.error,
+        code: SWITCHED_TO_INTERNET_BANKING_BODY.code,
+      });
+      expect(prisma.payment.upsert).not.toHaveBeenCalled();
+      expect(mockedUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(vi.mocked(cancelPaymentIntentIfCancellableWithResult)).toHaveBeenCalledWith("pi_new");
+    });
+
+    it("refuses with 410 and cancels the new intent when the booking stopped being payable during the mint", async () => {
+      mockedFindUnique.mockResolvedValue(baseLink() as never);
+      const payable = baseBooking({ guests: [{ id: "guest-1" }] });
+      vi.mocked(prisma.booking.findUnique)
+        // The revalidation transaction's lock-key read and post-lock re-read.
+        .mockResolvedValueOnce(payable as never)
+        .mockResolvedValueOnce(payable as never)
+        // The attach's re-read: cancelled while Stripe was minting.
+        .mockResolvedValueOnce({ status: BookingStatus.CANCELLED } as never);
+      vi.mocked(prisma.payment.findUnique).mockResolvedValue(null as never);
+      mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+      mockedCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12000,
+      } as never);
+
+      await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+        status: 410,
+      });
+      expect(mockedUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(vi.mocked(cancelPaymentIntentIfCancellableWithResult)).toHaveBeenCalledWith("pi_new");
+    });
+
+    it("attaches a card intent under lock(1), on the locked transaction's handle", async () => {
+      mockedFindUnique.mockResolvedValue(baseLink() as never);
+      vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+        baseBooking({ guests: [{ id: "guest-1" }] }) as never
+      );
+      vi.mocked(prisma.payment.findUnique).mockResolvedValue({ source: "STRIPE" } as never);
+      mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+      mockedCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12000,
+      } as never);
+      vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+      const txHandles: unknown[] = [];
+      mockedTransaction.mockImplementation(
+        async (fn: (tx: typeof prisma) => Promise<unknown>) => {
+          txHandles.push(prisma);
+          return fn(prisma);
+        }
+      );
+
+      await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+      // The attach is its own transaction, after the lodge-lock revalidation.
+      expect(txHandles).toHaveLength(2);
+      const lockCall = vi
+        .mocked(prisma.$executeRaw)
+        .mock.calls.findIndex(([sql]) =>
+          (sql as unknown as string[]).join("?").includes("pg_advisory_xact_lock(1)")
+        );
+      expect(lockCall).toBeGreaterThanOrEqual(0);
+      expect(
+        vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[lockCall]
+      ).toBeLessThan(vi.mocked(prisma.payment.findUnique).mock.invocationCallOrder[0]);
+      expect(mockedUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentId: "pay-1",
+          paymentIntentId: "pi_new",
+          store: prisma,
+        })
+      );
+      expect(vi.mocked(cancelPaymentIntentIfCancellableWithResult)).not.toHaveBeenCalled();
+    });
+  });
+
   it("throws when the booking has no client secret available", async () => {
     mockedFindUnique.mockResolvedValue(baseLink() as never);
     vi.mocked(prisma.booking.findUnique).mockResolvedValue(
@@ -1333,7 +1623,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: null,
+      client_secret: null, currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1425,7 +1715,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       splitChild({ parentBookingId: null }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1437,7 +1727,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       splitChild({ groupBookingJoin: { id: "join-1" } }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1460,7 +1750,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1479,7 +1769,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1507,7 +1797,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     mockedPaymentLinkFindFirst.mockResolvedValue(null);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     expect(mockedPaymentLinkCreate).toHaveBeenCalled();
@@ -1519,7 +1809,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       .mockResolvedValueOnce(splitChild() as never) // outer load
       .mockResolvedValueOnce({ status: BookingStatus.CANCELLED } as never); // under-lock re-read
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkFindFirst).not.toHaveBeenCalled();
@@ -1534,7 +1824,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       splitChild({ noEmails: true }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "withheld" });
     // The whole point: no mint, so no revoke, so no churn.
@@ -1560,7 +1850,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       id: "log-existing",
     } as never);
 
-    await issueSplitGuestPaymentLink("child-1");
+    await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(vi.mocked(prisma.emailLog.create)).not.toHaveBeenCalled();
   });
@@ -1572,7 +1862,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     mockedPaymentLinkFindFirst.mockResolvedValue(null);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     expect(mockedPaymentLinkCreate).toHaveBeenCalledWith(
@@ -1586,7 +1876,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
         priceCents: 12000,
         guestCount: 2,
         bookingReference: "child-1",
-      })
+      }), CLUB_FORMAT_TEST
     );
   });
 
@@ -1599,7 +1889,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       createdAt: new Date(Date.now() - 10_000), // 10s old — inside cooldown
     } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "just_sent" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1617,7 +1907,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     } as never);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     // Revocation and mint are one atomic step under the lodge lock:
@@ -1649,7 +1939,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "BOUNCE",
     } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "suppressed" });
     // Post-commit revocation targets exactly the minted row by id.
@@ -1688,7 +1978,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "environment_unknown",
     } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     // 503 "try again shortly" rather than 502 "your address is undeliverable".
     expect(result).toEqual({ outcome: "transient_failure" });
@@ -1713,7 +2003,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "capture_transport_in_production",
     } as never);
 
-    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({
       outcome: "transient_failure",
     });
   });
@@ -1735,7 +2025,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "environment_non_production",
     } as never);
 
-    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({
       outcome: "withheld",
     });
   });
@@ -1750,7 +2040,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       new Error("SES unavailable")
     );
 
-    await expect(issueSplitGuestPaymentLink("child-1")).rejects.toThrow(
+    await expect(issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).rejects.toThrow(
       "SES unavailable"
     );
     expect(mockedUpdateMany).toHaveBeenCalledWith(

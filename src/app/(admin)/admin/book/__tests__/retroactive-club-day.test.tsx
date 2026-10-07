@@ -11,7 +11,7 @@
  * server applies the retroactive pricing rules. So the club's calendar day here
  * is not a label — it decides money and capacity — and before this test the only
  * coverage of it rendered under `CLUB_TIME_TEST_ZONE`, which is deliberately
- * equal to `APP_TIME_ZONE`. Under that zone the migrated code and the browser's
+ * equal to the environment's default zone. Under that zone the migrated code and the browser's
  * `new Date()` it replaced give the identical answer, so every assertion on this
  * page passed whether or not the club's persisted zone was consulted.
  *
@@ -33,10 +33,11 @@ import {
   render,
   screen,
   waitFor,
+  ClubFormatTestProvider,
 } from "@/lib/__tests__/support/club-time-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { APP_TIME_ZONE } from "@/config/operational"
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone"
 import { ClubTimeProvider } from "@/components/club-time-provider"
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 
@@ -55,6 +56,8 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
+  // /admin/book also reads lodge-area view access for its not-set-up link (#3407).
+  useAdminAreaViewAccess: () => true,
 }))
 
 vi.mock("@/components/club-identity-provider", () => ({
@@ -163,6 +166,7 @@ vi.mock("@/components/promo-code-input", () => ({
 }))
 
 import AdminBookPage from "@/app/(admin)/admin/book/page"
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 function response(body: unknown): Response {
   return { ok: true, status: 200, json: async () => body } as Response
@@ -235,13 +239,15 @@ describe("admin book: the club's day decides what is retroactive (CT-4, #2870)",
     })
     // The two zones must genuinely disagree about this stay, or the assertion
     // below would hold for either answer. Hand-derived, not recomputed.
-    const environmentRetroactive = CHECK_IN < todayIn(APP_TIME_ZONE)
+    const environmentRetroactive = CHECK_IN < todayIn(ENVIRONMENT_CLUB_ZONE)
     expect(chosen.retroactive).not.toBe(environmentRetroactive)
     expect(chosen.retroactive).toBe(CHECK_IN < chosen.today)
 
     render(<AdminBookPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
       ),
     })
 

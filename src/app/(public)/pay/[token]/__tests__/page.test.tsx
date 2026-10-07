@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import PayByLinkPage from "../page";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
+  PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
@@ -20,6 +21,7 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
   financialReviewNoteBesideAnAmount,
 } from "@/lib/booking-financial-review-copy";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ token: "public-token" }),
@@ -69,6 +71,7 @@ const payableContext = {
     status: "CONFIRMED",
     amountCents: 12500,
     internetBankingReference: "BOOK-123",
+    cardPaymentAvailable: true,
     expiresAt: "2026-09-10T00:00:00.000Z",
   },
   canRequestFreshLink: false,
@@ -194,6 +197,13 @@ describe("public payment-link captured-payment recovery", () => {
       },
       heading: "Card transaction found - check payment status",
       message: /could not confirm whether it is still paid or has been refunded/i,
+    },
+    {
+      // #3567: an intent in the club's previous currency is still processing.
+      name: "earlier payment still processing",
+      body: PAYMENT_PROCESSING_BODY,
+      heading: "Payment being processed",
+      message: /This payment is being processed\. Refresh the page in a minute/,
     },
   ])(
     "suppresses every payment action for $name recovery",
@@ -365,6 +375,52 @@ describe("public payment-link confirmation names the booking's lodge", () => {
   });
 });
 
+// #3638 delta D4: a booking switched to Internet Banking has an emailed
+// invoice; its link page must not offer a card button the card door would
+// refuse, and must show the bank-transfer details as the way to pay.
+describe("the public payment page on a booking switched to Internet Banking (#3638)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it("offers no card button and shows the internet banking details instead", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/pay/public-token" && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            ...payableContext,
+            payable: { ...payableContext.payable, cardPaymentAvailable: false },
+          }),
+        } as Response;
+      }
+      if (url === "/api/booking-messages") {
+        return { ok: true, json: async () => ({ messages: {} }) } as Response;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    render(<PayByLinkPage />);
+
+    expect(
+      await screen.findByText(/being paid by internet banking, so it can.t be paid by\s+card here/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
+    expect(screen.getByText("Pay by internet banking")).toBeInTheDocument();
+    expect(screen.getAllByText("BOOK-123").length).toBeGreaterThan(0);
+    // Nothing tried to start a card payment.
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/payment-intent")),
+    ).toBe(false);
+  });
+});
+
 describe("the public payment page survives a payload that omits its dates", () => {
   /*
     THE GUARD THAT WAS HALF THERE (CT-4, #2870 fix round).
@@ -471,7 +527,9 @@ describe("the public payment page says when the link dies, in the CLUB's time", 
   function renderInClubZone(zone: string) {
     return render(<PayByLinkPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
       ),
     });
   }

@@ -58,7 +58,8 @@ describe("xero-oauth", () => {
     await expect(
       handleXeroCallback(
         "https://example.org/api/admin/xero/callback?code=abc&state=xyz",
-        "xyz"
+        "xyz",
+        { actor: { kind: "admin", memberId: "admin-1" } },
       )
     ).rejects.toThrow("did not return an organisation");
 
@@ -70,7 +71,8 @@ describe("xero-oauth", () => {
 
     await handleXeroCallback(
       "https://example.org/api/admin/xero/callback?code=abc&state=xyz",
-      "xyz"
+      "xyz",
+      { actor: { kind: "admin", memberId: "admin-1" } },
     );
 
     expect(mockSaveXeroTokens).toHaveBeenCalledWith({
@@ -78,6 +80,6 @@ describe("xero-oauth", () => {
       refreshToken: "new-refresh-token",
       expiresAt: new Date("2026-05-29T12:30:00.000Z"),
       tenantId: "tenant-123",
-    });
+    }, { actor: { kind: "admin", memberId: "admin-1" } });
   });
 });

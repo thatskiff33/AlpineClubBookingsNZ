@@ -16,6 +16,7 @@ import {
   type BookingMoneyBuildUpSelection,
 } from "@/lib/booking-money-build-up";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #3219 (epic #2797): what a booking's stored price MEANS once a parked edit's
@@ -135,21 +136,23 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  *
  * ## Locks
  *
- * NO ADVISORY TIER, matching the completion path this rides on, which
- * `docs/CONCURRENCY_AND_LOCKING.md` records as deliberately holding none - a key
- * here would sit over the Stripe round trip that follows the commit. The
- * single-flight guarantee is the task's own status claim, and safety against a
- * concurrent booking edit is a COMPARE-AND-SET on all four money columns as they
- * were read inside this transaction.
+ * NO ADVISORY TIER OF ITS OWN. The single-flight guarantee is the task's own
+ * status claim, and safety against a concurrent booking edit is a
+ * COMPARE-AND-SET on all four money columns as they were read inside this
+ * transaction. Since #3582 the completion that calls this holds
+ * `pg_advisory_xact_lock(1)` from before its claim - inside the transaction
+ * only, never across the Stripe round trip that follows the commit - because
+ * the closure posts this re-base's booking-ledger lines and must ask whether
+ * the booking is confirmed on the ledger under the settle's key.
  *
  * It does take one lock the settle path did not take before: the PROMO ROW,
  * inside `recalculateBookingPromo`, which row-locks the promo code and re-reads
  * its usage counter because a re-base can release a redemption slot. That is the
- * same key that function's two other callers take, it is the only ADVISORY tier
- * this transaction holds so it can close no cycle against a lodge, member or
- * global key, and it is registered in `docs/CONCURRENCY_AND_LOCKING.md` under
- * this issue - along with the ordinary row locks the repair write takes before
- * it, and the deadlock shape their ordering leaves against a waitlist confirm.
+ * same key that function's two other callers take, and it is registered in
+ * `docs/CONCURRENCY_AND_LOCKING.md` under this issue - along with the ordinary
+ * row locks the repair write takes before it, and the deadlock shape their
+ * ordering leaves against a waitlist confirm. Since #3582 it is taken AFTER the
+ * global key, the order every edit door takes the two in.
  *
  * MOVING THE TRIGGER (#3257) WIDENED WHEN THAT KEY IS TAKEN AND NOT WHICH KEY:
  * every closure of a parked review on a promoted booking now takes it, where
@@ -378,6 +381,7 @@ export async function rebaseBookingPriceFromStrands({
   repairedStrands,
   todayAtClub,
   store,
+  format,
 }: {
   bookingId: string;
   /**
@@ -400,6 +404,11 @@ export async function rebaseBookingPriceFromStrands({
    */
   todayAtClub: CalendarDate;
   store: Prisma.TransactionClient;
+  /**
+   * The club's format (#3565), resolved by the caller BEFORE it opened this
+   * transaction, like `todayAtClub` above.
+   */
+  format: ClubFormat;
 }): Promise<BookingPriceRebaseOutcome> {
   const booking = await store.booking.findUnique({
     where: { id: bookingId },
@@ -497,6 +506,7 @@ export async function rebaseBookingPriceFromStrands({
   // them after it. The officer's prices stay OFFICER_PRICED; the build-up on
   // top of them is the engine's own figure and is RECORDED.
   await recordBookingNightAdjustments(store, {
+    format,
     bookingId,
     guestIds: strandNights.map((strand) => strand.bookingGuestId),
     targets: promo.adjustmentTargets,
@@ -636,14 +646,22 @@ export function bookingRebaseAuditMetadata({
 export function rebaseDivergesFromIssuedInvoice({
   rebase,
   hasIssuedXeroInvoice,
-  settlementIssuesXeroDocument,
+  settlement,
 }: {
-  rebase: BookingPriceRebase;
+  /** What the re-base did, or null where it declined. */
+  rebase: BookingPriceRebase | null;
   hasIssuedXeroInvoice: boolean;
-  settlementIssuesXeroDocument: boolean;
+  /**
+   * Whether the closure's Xero document corrects the invoice - or, for an
+   * uncaptured account-credit share (#3791), what its allocated note takes off
+   * it, which must equal the re-price's drop; null falls back to the document.
+   */
+  settlement: { issuesXeroDocument: boolean; invoiceReductionCents?: number | null };
 }): boolean {
   if (!hasIssuedXeroInvoice) return false;
-  if (settlementIssuesXeroDocument) return false;
+  const priceDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
+  if (typeof settlement.invoiceReductionCents === "number") return settlement.invoiceReductionCents !== priceDropCents;
+  if (rebase === null || settlement.issuesXeroDocument) return false;
   return rebase.newFinalPriceCents !== rebase.previousFinalPriceCents;
 }
 

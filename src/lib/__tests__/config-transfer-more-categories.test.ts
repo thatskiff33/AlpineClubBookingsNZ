@@ -8,6 +8,7 @@ import { buildImportPlan } from "@/lib/config-transfer/import";
 import { readBundle } from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function sourceDb(): ReadDb {
   return {
@@ -107,7 +108,7 @@ describe("config-transfer committee + xero-config", () => {
 
   it("plans all-create against an empty target and warns on Xero", async () => {
     const { zip } = await exportCats();
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const committee = plan.categories.find((c) => c.category === "committee")!;
     const xero = plan.categories.find((c) => c.category === "xero-config")!;
     expect(committee.items.every((i) => i.action === "create")).toBe(true);

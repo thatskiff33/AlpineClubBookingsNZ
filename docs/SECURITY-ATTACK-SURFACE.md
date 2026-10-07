@@ -38,11 +38,11 @@ Authentication and authorization currently use these mechanisms:
 
 | Mechanism | Current implementation | Main route families |
 | --- | --- | --- |
-| Auth.js session | `src/lib/auth.ts` exposes `auth()` backed by credentials login, JWT sessions, dynamic access-role refresh, email verification, and session invalidation on password change. | Member, admin, finance, lodge, booking, payment, profile routes. |
-| Active-account guard | `requireActiveSessionUser()` in `src/lib/session-guards.ts` checks `Member.active` and `forcePasswordChange`. | Most session-authenticated routes. |
+| Auth.js session | `src/lib/auth.ts` exposes `auth()` backed by credentials login, JWT sessions, dynamic access-role refresh, email verification, and session invalidation on password change, account deletion, or login being switched off: a session issued before `Member.sessionsRevokedAt`, which a database trigger stamps whenever login goes from on to off, is refused even after login is switched back on (`INV-LIFE-014`, `INV-LIFE-092`). | Member, admin, finance, lodge, booking, payment, profile routes. |
+| Active-account guard | `requireActiveSessionUser()` in `src/lib/session-guards.ts` checks `Member.active`, `canLogin` (#3603) and `forcePasswordChange`. | Most session-authenticated routes. |
 | Shared admin guard | `requireAdmin()` in `src/lib/session-guards.ts` combines Auth.js session, scoped access-role bundles (`getAdminRouteRequirement` area/level resolution), and active-account checks. | Every `/api/admin/**` route — each exported method must reach `requireAdmin()` (directly, via a local helper, or via an allowlisted shared wrapper), enforced per-method by `api-route-boundaries.test.ts` (#1132). The former hand-rolled inline admin checks (#613) are fully migrated. |
 | Finance API guard | `requireFinanceViewerApiAccess()` and `requireFinanceManagerApiAccess()` in `src/lib/finance-api-auth.ts`. | `/api/finance/**`. |
-| Lodge/kiosk guard | `checkLodgeAuth()` in `src/lib/lodge-auth.ts`, including active session and hut-leader PIN session support. | `/api/lodge/**` and lodge roster/guest routes. |
+| Lodge/kiosk guard | `checkLodgeAuth()` in `src/lib/lodge-auth.ts`, including active session and hut-leader PIN session support. The signed-in kiosk or staff account must be login-enabled (#3603); a hut leader's PIN is a separate assignment credential, governed by the hut leader's `active` flag rather than by login, because hut leaders can be members who never had a login. | `/api/lodge/**` and lodge roster/guest routes. |
 | Cron/deploy secret | Repeated `x-cron-secret` comparison against `CRON_SECRET`, usually with `timingSafeEqual`. | `/api/cron/**`, `/api/deploy/runtime-status`, `/api/deploy/warmup`. |
 | Provider signature | Stripe signed body, Xero HMAC, SES/SNS signature verification. | `/api/webhooks/**`. |
 | Public exception | Explicit route metadata in `src/lib/api-route-security.ts`, backed by static route-boundary tests. | Anonymous health, contact, application, auth token, address autocomplete, committee, age-tier, and public token routes. |
@@ -113,6 +113,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/admin/family-groups/**` (list, `[id]`, `requests`, `member-search`, `partner-invites`), `/api/admin/family-suggestions/**` | Admin session via the shared `requireAdmin()` guard. The identity-confirmation surfaces name the requirement explicitly rather than inferring it from the request path: `GET /api/admin/family-groups/member-search` and `GET /api/admin/family-groups/[id]` both demand `membership:view` (#2568). | Membership admin (view to read, edit to act). | Family group membership, pending join/child/adult/removal requests, partner invitations, and — on the identity-sensitive surfaces only — each member's **calculated age** (#2568). | Email sends on request review; partner invitation tokens. | Area permission checked server-side against database-read roles on every request, so an admin whose role covers an unrelated area receives no identity information. Dates of birth are NOT in these payloads: the age is computed server-side and sent as a finished string, and no calculated age is stored. The routine group-list response carries neither. `GET /api/admin/family-groups/[id]` builds its body by WHITELIST rather than by spreading the Prisma row (#2568 review): the spread re-exported the raw `memberships` relation beside the sanitised member list, so every member's `passwordHash`, `passwordChangedAt` and `lastLoginAt` — and the `dateOfBirth` the age work added — reached the browser despite the mapping stripping all four. Only `hasPassword`, derived server-side, survives of the credential columns. | Audit log for group create / update / delete and request review; logger for failures. | The blast radius is member identity data rather than money. A regression to watch for is a new family-group payload re-introducing `dateOfBirth`, or age appearing on a routine or member-facing view — both are pinned by `src/lib/__tests__/member-identity-age-surfaces.test.ts`. |
 | `/api/admin/member-applications/**`, `/api/admin/membership-cancellation-requests/**`, `/api/admin/members/[id]/membership-cancellation`, `/api/admin/membership-cancellation-settings`, `/api/admin/deletion-requests/**` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Applications, cancellation requests/participants/settings, deletion request state, member lifecycle action requests. | Email sends; cancellation approval can affect Xero contact groups/archive through services. | Admin role plus active guard; participant resend/approval routes import rate-limit helpers. Approving a membership cancellation or a deletion request applies the #1604 admin-account guards (extended by #1622): only a Full Admin may de-login/anonymise a privileged-role account, and the last active Full Admin cannot be removed. The family-group login-holder transfer (`POST /api/admin/family-groups/[id]/login-holder`) carries the same two guards, evaluating the last-admin end state on its post-write count so the incoming holder's login grant is included. | Audit log and logger. | Sensitive lifecycle and account deletion operations. #617 should review durable state transitions and external writes outside long transactions. |
 | `/api/admin/bookings/**`, `/api/admin/booking-change-requests/**`, `/api/admin/booking-reviews`, `/api/admin/waitlist` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Booking list/search/detail, operational payment/Xero/bed/change filters, review/force-confirm state, change requests, waitlist. | Email sends; Xero invoice/outbox; capacity/booking services. | Admin role plus active guard; route/service validation. | Audit logs for booking approvals/force-confirm/change-request decisions; logger. | Financial and reservation integrity surface. #613/#614 should standardize guard markers; #617 should review invariants. |
+| `/api/admin/bookings/[id]/guest-dietary` (#3029) | Admin session via `requireAdmin({ permission: { area: "bookings", level: "edit" } })`, then a booking-admin dietary grant that re-reads the actor's own database row and access roles (any session matrix is ignored). | Admin holding bookings **edit**. | One `BookingGuest.dietaryRequirements` value (special-category health data, `INV-PRIV-022`), on the one row matching BOTH the booking id and the guest id, on a booking that is not deleted. Never the member profile. | None. | Refused while the club has the field OFF (409). Strict Zod body (`guestId` plus a required string or null; unknown keys refused); the shared 500-character limit. A guest id from another booking, or a deleted booking, matches no row (404). Single-row update, last writer wins; no lock, no reprice, no email, no Xero (`INV-MOD-001`). | `booking.guest_dietary.updated` / `booking.guest_dietary.cleared` under category `booking`, carrying the guest id and a changed flag — never the value; the audit sanitizer would redact a string under the key anyway. | The response returns only that guest's new value to the editing officer. |
 | `/api/admin/bookings/[id]/exclusive-hold` | Admin session via the shared `requireAdmin()` guard (mirrors the sibling capacity-hold route). | Admin. | `Booking.wholeLodgeHold` plus its who/when audit fields; on set, the ids of overlapping capacity-holding bookings surfaced for officer resolution. **Also `BedAllocation` rows (#2285):** setting the hold DELETES every per-bed row this booking owns (manually placed and admin-approved rows included) and clearing it re-plans them through the auto-allocator, which can in turn move or unallocate OTHER bookings' provisional rows; each such displacement and each `#1750` partner promotion writes its own extra audit row. | None. | The flag write, the conflict read and the allocation reconcile all run inside the per-lodge capacity lock (`acquireLodgeCapacityLock`, #154) — the same key every admission takes — so setting a hold cannot race an in-flight admission and the flag can never commit apart from its allocation rows; the reconcile runs strictly after the compare-and-set write, so a lost claim (409) changes nothing. No capacity **admission** decision is made here and the availability engine (`checkCapacityForGuestRanges`) is never consulted (exclusive-booking ADR-001 decision 1) — the hold is never refused for want of space — but the bed-allocation planner IS run on the clear direction, so "no arithmetic at all" is not accurate: it is bed *placement*, not bed *admission*. Set and clear are idempotency-guarded (409 on a redundant set or clear); Zod body validation. | `booking.exclusiveHold.set`/`booking.exclusiveHold.cleared` audit entries (important severity) recording the overlapping conflict ids, the reconcile counts, and — on set — a capped list of the removed allocation rows so a mistaken hold can be undone by hand (#2285); plus `bed_allocation.provisional_displaced` and `BED_ALLOCATION_PARTNER_PROMOTED` rows from the reconcile itself. | Privacy property is member-facing indistinguishability (exclusive-booking ADR-001 decision 6): held nights present to members and the public exactly as a genuinely full lodge — same "no space" messaging, waitlist, and emails — and the exclusive nature is visible only on admin surfaces, never surfaced to members. |
 | `/api/admin/bed-allocation/**` | Admin session plus bed-allocation module capability. | Admin. | Lodge rooms, lodge beds, per-night guest allocations, allocation approvals, booking highlight/date-range filters. | None directly. | The route-appropriate `requireBedAllocationRead()`, `requireBedAllocationWrite()`, `requireBedInventoryRead()`, or `requireBedInventoryWrite()` guard; module-state gate; Zod/body validation through bed-allocation route helpers; service-level allocation uniqueness constraints. | Audit logs for room/bed/allocation/settings mutations and approval runs; logger on failures. | Reservation and shared-room integrity surface. Keep allocation writes synchronized with booking lifecycle and preserve per-guest date-only semantics. |
 | `/api/admin/booking-policies/**`, `/api/admin/seasons/**`, `/api/admin/age-tier-settings`, `/api/admin/promo-codes/**` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Booking policy settings, seasons/rates, age-tier settings, promo codes, Xero item/account mappings for promos. | Xero mapping reads/writes where promo/account mappings are touched. | Admin role plus active guard; Zod validation in several routes. | Audit logs for policy/rate/promo changes. | Money values must remain integer cents. #617 should review pricing/promo abuse and concurrent updates. |
@@ -127,7 +128,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/admin/members/[id]/lodge-access` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | `MemberLodgeAccess` grant rows for one member: `BOOKING_RESTRICTION` rows (which lodges the member may book) and `STAFF` rows (kiosk-account lodge binding). | None. | Admin role plus active guard; Zod strict schema (max 50 lodge ids per kind); unknown lodge ids rejected 400; PUT replaces the member's rows for both kinds in one transaction. | Structured audit log `MEMBER_LODGE_ACCESS_UPDATED` recording previous and new lodge-id sets per kind. | **Authorization-granting surface.** Editing these rows changes what a member may book and which lodge a kiosk (STAFF) account binds to — it grants/removes access, so it must stay Full-admin-guarded and fully audited. A wrong STAFF grant re-homes a shared kiosk device to another lodge. No self-widening path exists (only admins reach it), but treat it as security-sensitive configuration like `access-roles`. |
 | `/api/admin/bed-allocation/rooms/bulk`, `/api/admin/lockers/bulk` | Admin session. Rooms-bulk via `requireBedInventoryWrite()` (admin plus `bookings:edit` and the Bed Allocation module capability); lockers-bulk via the shared `requireAdmin()` guard. | Admin. | Bulk-created `LodgeRoom`/`LodgeBed` and `Locker` rows for a resolved active lodge. | None. | Admin/module guard; Zod strict schemas cap batch size (`MAX_BULK_ROOMS`, `MAX_BULK_BEDS_PER_ROOM`, `MAX_BULK_LOCKERS = 100`); target lodge validated active or 400; a clashing name prefix is rejected (409) before any rows are written; the whole batch is created in one transaction. | Structured audit logs `BED_ALLOCATION_ROOMS_BULK_CREATED` and `locker.bulk_created` with lodge id and counts. | Write-amplification surface: one admin call seeds many rows. Batch caps and transactional all-or-nothing creation bound the amplification; keep the caps in place and the clash pre-check ahead of the write. Name uniqueness is `[lodgeId, name]`; null-lodge rows still clash at every lodge until the contract release enforces NOT NULL. |
 | `/api/finance/bookings/metrics`, `/api/finance/sync/**`, `/api/finance/legacy-dashboard/**` | Finance viewer or manager guard depending on route. Legacy auth route redirects/204s for viewer access. | Finance viewer/manager; not lodge accounts. | Finance snapshots, booking metrics, finance sync run state, operational Xero organisation/config status. | Operational Xero API through the finance sync service. | `requireFinanceViewerApiAccess()` or `requireFinanceManagerApiAccess()`; active and force-password-change checks; shared admin-managed Xero connection. | Logger for sync/Xero failures; sync status records. | Privileged but not always admin. #618 should review finance role assignment and legacy dashboard bridge; #614 should cover ordinary member/admin-without-finance denial. |
-| `/api/cron`, `/api/cron/payments`, `/api/cron/xero`, `/api/cron/issue-reports` | Shared `x-cron-secret` header matching `CRON_SECRET`. | External scheduler or operator with cron secret. | Pending booking confirmation, payment recovery, Xero outbox/retry/inbound reconciliation, issue-report digest, cron run rows. | Stripe through payment recovery, Xero through operational sync, email alerts/digests. | Constant-time compare in each route, task allowlists, module-state gating for Xero tasks. | Logger; `CronJobRun` records for payment recovery; provider/service logs. | Cron guard is centralised in `requireCronSecret()` and covered by missing/wrong/different-length secret tests (#613/#614 closed). |
+| `/api/cron`, `/api/cron/payments`, `/api/cron/xero`, `/api/cron/issue-reports` | Shared `x-cron-secret` header matching `CRON_SECRET`. | Operator or a custom deployment's external scheduler with the cron secret; the supported deployment runs the same work in its cron leader. | Pending booking confirmation, payment recovery, expired Internet Banking hold release, waiting-invoice reaping, the held late-capture alert retry, Xero outbox/retry/inbound reconciliation, issue-report digest, cron run rows. | Stripe through payment recovery, Xero through operational sync, email alerts/digests. | Constant-time compare in each route, task allowlists, module-state gating for Xero tasks. | Logger; `CronJobRun` records per task (`payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper`, `late-capture-held-alert`, and the general and Xero jobs); provider/service logs. | Cron guard is centralised in `requireCronSecret()` and covered by missing/wrong/different-length secret tests (#613/#614 closed). |
 | `/api/deploy/runtime-status` | Shared `x-cron-secret` header matching `CRON_SECRET`. | Blue/green deploy script or operator with cron secret. | Runtime role and cron-enabled flag only. | None. | Shared `requireCronSecret()` helper (constant-time compare). | None. | Resolved under #613 (closed): now uses the shared cron/deploy guard helper rather than a duplicated local compare. |
 | `/api/deploy/warmup` | Shared `x-cron-secret` header matching `CRON_SECRET`. | Blue/green deploy script or operator with cron secret. | A warm-up report: route counts, failed public paths with their HTTP result and cache-verification result, warnings, and the gate verdict. No page content, no member data, and the release identifier is never returned — the caller sends the release it EXPECTS and receives only match/mismatch (#2566). | Its own public pages, over its own loopback origin. The path list comes from the release's build output and the `published` `PageContent` rows; no request input reaches it, so it is not an SSRF pivot. Requests are capped by a configurable concurrency (default 3), a per-request timeout, and a whole-gate deadline, and a second concurrent run is refused (409). | Shared `requireCronSecret()` helper (constant-time compare); every query parameter is refused unless it is a whole number in range or a hex commit id, so a mistyped tolerance cannot silently widen the gate; `force-dynamic` so no response is ever stored. | The deploy log carries the whole report; nothing is written to the database. | Warms only addresses `isFixedNonceWebsitePath()` claims, so admin, member, auth and API routes are structurally unreachable from it, and drafts are excluded at the database read. It is a GET because the runtime image's only HTTP client is busybox `wget`, which cannot POST — warming is idempotent, so the verb costs nothing. |
 | `/api/webhooks/stripe` | Stripe signature. No session auth by design. | Stripe. | Stripe event payload, payment intent/setup intent state through service. | Stripe webhook verification and downstream payment handling. | Resolves the signing secret from the encrypted `IntegrationCredential` store via the shared resolver (`getOperationalStripeWebhookSecret`), **fail-closed**: no/unreadable secret or a resolver error ⇒ reject (HTTP 500), never accept — #2082, the legacy `STRIPE_WEBHOOK_SECRET` env var is no longer read. Requires `stripe-signature`; bounded raw body read before signature verification. | Logger for signature/body-limit errors; service-level records. | Do not add session auth. Event idempotency is handled by `ProcessedWebhookEvent`; keep Stripe event coverage under payment-integrity review. The setup wizard's webhook **Verify** reads a marker written only for signature-verified test-mode events, freshness-scoped against the stored signing secret (#2082). |
@@ -229,10 +230,11 @@ These family rules are enforced by automated tests (issue #1132):
 
   It also proves the #2984 boundary by attempt — a finance-only administrator is
   refused every admin page outside Finance and every non-finance API route on
-  GET, POST, PATCH, PUT and DELETE, save exactly three admissions that are named
+  GET, POST, PATCH, PUT and DELETE, save exactly four admissions that are named
   and reasoned in the suite (the shared lodge vocabulary, the Diagnostics ask
-  route's ADR-002 admission, and the joining-fee preview, which is gated on
-  `finance:view` in its own source).
+  route's ADR-002 admission, the joining-fee preview, which is gated on
+  `finance:view` in its own source, and the read of the club's currency and
+  locale (#3596), whose write stays Full Admin).
 
 ### Public or Provider-Signed Exceptions
 
@@ -335,7 +337,7 @@ Admin route subfamilies are:
 
 | Data store or secret class | Where it appears | Current controls | Follow-up |
 | --- | --- | --- | --- |
-| Password hashes and session security fields | `Member.passwordHash`, `forcePasswordChange`, `passwordChangedAt`, Auth.js JWT callbacks. | bcrypt, email verification before session, session invalidation on password change. | #615 for account-recovery behavior; #617 for lifecycle interactions. |
+| Password hashes and session security fields | `Member.passwordHash`, `forcePasswordChange`, `passwordChangedAt`, `sessionsRevokedAt`, Auth.js JWT callbacks. | bcrypt, email verification before session, session invalidation on password change and on a login switch-off (#3603). | #615 for account-recovery behavior; #617 for lifecycle interactions. |
 | Action and verification tokens | Password reset, setup invite, verification, email change, nomination, chore, cancellation confirmation helpers. | Token helpers store hashes/expiry where implemented; some routes are session-bound in addition to token-bound. | #615 for token URL/log exposure and enumeration. |
 | Member PII | Member/profile/family/admin/application routes. | Session/admin guards, audit logs on sensitive changes, scoped selects in public committee route that exclude email and gate phone by assignment flag. | #613/#614 for route boundaries; #617 for integrity and lifecycle review. |
 | **Member name list, deliberately browsable when a club opts in** (`memberGuests`, epic #2305) | `src/app/api/members/guest-candidates/**` (member finder, #2308) and `src/app/api/admin/bookings/[id]/member-guest-candidates` (officer picker, #2309). | **The honest model, not softened:** with *open member search* ON the club's member name list IS browsable to any member who can start a booking — that is the setting's purpose, it is a per-club choice, and it ships OFF. The controls are (1) rate limits, burst and daily, keyed per acting member as well as per IP; (2) a full audit trail — every query in both modes, including empty, under-minimum and rate-limited ones, and the email path stores the **full address** because "who looked up which household" is the whole point of the row; (3) a ten-row cap with prefix-only matching and a boolean overflow rather than a count, so harvesting is slow and noisy rather than one request; (4) minors excluded from the type-ahead by default. Neither path evaluates eligibility, so neither can become an eligibility oracle, and the envelope is always 200 and identical for found, not-found and inactive. The officer picker is NOT bound by the two member-facing switches (D-20) but its NAME mode is gated on **`membership:view`**, so #1376's directory-less Booking Officer falls back to exact-email; its lookups are audited through the same two writers. Neither privacy setting travels in config transfer (D-18). | #2305 / #2308 / #2309; the two settings' defaults and the audit actions are pinned by `member-guest-widening.test.ts`. |
@@ -443,6 +445,10 @@ this page already learnt about once, from the rotation runbook two sections up.
   for pushes and stored the secret the central server issued.
 - `xero-token-key-generation` — first use of Xero token encryption generated
   (or, after an auth-secret change, replaced) the wrapped token key.
+- `xero-token-refresh` — the Xero access token was near expiry, so the API
+  client spent the refresh token under the shared refresh lease and stored the
+  rotated pair (#3454). Connecting, disconnecting and the verify-reset each have
+  an administrator behind them and name that person instead.
 - `e2e-stripe-seed` — the E2E staging stack seeding Stripe test-mode keys.
   Never a real deployment.
 
@@ -484,23 +490,43 @@ every signature-verified test-mode event, so it is written only when the
 freshness answer would actually change, rather than minting a seven-year row per
 delivery.
 
-**What this contract covers, and what it does not.** Everything above is about
-the `IntegrationCredential` table. Two other secrets are stored elsewhere and
-are outside it, which is worth saying plainly on the page an operator reads to
-plan a rotation or reconstruct an incident:
+**What this contract covers.** Everything above is about the
+`IntegrationCredential` table, and since #3454 that includes **the Xero access
+and refresh tokens**. An operator planning a rotation or reconstructing an
+incident can rely on the following:
 
-- **The Xero access and refresh tokens** (`XeroToken`) are their own table, with
-  no actor column and no audit row on any write or delete. `deleteXeroTokens()`
-  wipes them from the verify-reset path described above and from the OAuth
-  disconnect, so an administrator changing a Xero client credential destroys a
-  live provider grant and the trail records the credential write beside it but
-  nothing about the tokens.
-- **A member's TOTP secret** (`Member.totpSecret`) is encrypted at rest and
-  written at enrolment with no audit row of its own.
-
-Neither is a regression — both predate this contract and neither ever carried
-attribution — and neither is in this issue's scope. They are named here so the
-section is not read as covering every stored secret.
+- **The tokens are one credential row**, `xero-oauth` / `token-set`, written by
+  the store's own mutators. Connecting Xero, every token refresh, disconnecting
+  and the verify-reset each record who did it — the administrator, or the named
+  `xero-token-refresh` job — in the same transaction as the change.
+- **The verify-reset is ONE action, in one transaction.** Saving a Xero client id
+  or secret destroys the stored tokens in the same transaction as the credential
+  write, and the token row's audit entry carries the same request and
+  `cause: verify-reset` naming the credential that caused it
+  (`causedByCredential`, a name and never a value). A treasurer asking why the
+  connection broke now gets both halves.
+- **The old `XeroToken` table is still written, for now.** A blue-green deploy
+  runs the previous colour beside this one for a while, and that colour reads and
+  refreshes only `XeroToken`. Xero refresh tokens can be spent once, so this
+  release keeps that row current in the same transaction as every write and
+  keeps the refresh lease on it, so the two colours can never both spend one
+  refresh token. Writes the previous colour makes during that window are not
+  attributed, because that code predates this contract. In this release only
+  the token store may write `XeroToken`: the credential census reports any other
+  writer, raw SQL or migration that rewrites it, because the token store reads
+  that row as the newer copy when it no longer matches. Retiring the table is a
+  separate, later change.
+- **A member's second factor** — the TOTP secret (`Member.totpSecret`) and the
+  recovery codes — stays where it is, encrypted or hashed at rest; it is not a
+  provider credential. Enrolment, replacing the recovery codes and the
+  account-erasure clear each write a `security` audit row in the same
+  transaction, naming the member (who may act only on their own) or the
+  administrator, with no field that could hold a secret
+  (`src/lib/two-factor-audit.ts`). There is no compare-and-set here.
+  `two-factor-secret-census.test.ts` pins every writer of those fields and of
+  the recovery-code table, so a new one cannot land unaudited unseen. The member
+  sees the generic event on their own timeline; it declares no member-facing
+  text.
 
 **What the census can and cannot see.** It enumerates every DIRECT CALL of the
 three store mutators, found by walking the tree — not every function that
@@ -1105,6 +1131,12 @@ Verified controls already present and intentionally preserved:
   as `0` and a non-numeric one as `NaN`, and `NaN > 0` is `false`, so a future
   report-shape change would otherwise turn this required gate green everywhere,
   permanently and silently.
+- The audit's only other passing verdict is MITIGATED, never CLEAN (#3843):
+  one reviewed advisory under an expiring, code-owned, owner-approved record.
+  The conditions it requires are stated once, in
+  [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md)
+  -> "When the wrapper says MITIGATED"; it covers only the copy the audit can
+  see, and the bundled copies it cannot reach are printed on every run.
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a
@@ -2047,7 +2079,7 @@ lobby TV display (fork #54) and the global 404 (#2356).
     `NEXT_NOT_FOUND` string matched nothing and was corrected in this work) and
     `NEXT_REDIRECT`.
 - **Enforced by `scripts/ci/check-prerendered-script-nonces.mjs`**, run in the
-  `verify` job immediately after `npm run build` (the only point where the
+  `verify` job immediately after `pnpm run build` (the only point where the
   property is observable). It walks every `.html` under `server/app/**` and
   `server/pages/**` and fails on any inline `<script>` without a non-empty
   `nonce`. `nonce=""` counts as unnonced, because it matches no `'nonce-…'`
@@ -2692,7 +2724,7 @@ above.
 ### Guards
 
 - **`src/lib/__tests__/asset-url-404.test.ts`** holds the invariant in the ordinary
-  `npm test` run, with no stack required. It works at three depths, because each
+  `pnpm test` run, with no stack required. It works at three depths, because each
   catches a different regression:
   - it compiles the **shipped** rule array on the fly with the exact options
     `filesystem.js` uses (`strict`, `removeUnnamedParams`, `modifyRouteRegex`, and

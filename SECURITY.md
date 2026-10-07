@@ -32,7 +32,7 @@ This project uses:
 - Stripe PaymentIntents, SetupIntents, and webhooks
 - Xero OAuth and webhook integrations
 - AWS SES email and SNS feedback ingestion
-- gitleaks, Semgrep, npm audit, Trivy and CodeQL in CI
+- gitleaks, Semgrep, pnpm audit, Trivy and CodeQL in CI
 
 ## Which CI security checks block a merge
 
@@ -45,13 +45,16 @@ the live configuration rather than trusting a document:
   packs plus this repository's own rules in `.semgrep/rules/`. The same job
   first runs each custom rule against its must-fail/must-pass fixtures in
   `.semgrep/tests/`.
-- **`verify`** (required today) — lint, types, `npm test` and the build.
-- **`Dependency audit`** (**pending**) — `npm audit --audit-level=high` over the
+- **`verify`** (required today) — lint, types, `pnpm test` and the build.
+- **`Dependency audit`** (**pending**) — `pnpm audit --audit-level=high` over the
   committed lockfile, run through `scripts/ci/audit-dependencies.mjs` so that
   "the advisory service was unreachable" and "this branch ships a
   vulnerability" are told apart on the first line of the output rather than
   looking identical. An unreachable service is retried and then still fails
-  (#3254): green means the audit really ran. It used to be a step inside `verify`, where a published
+  (#3254): green means the audit really ran. Its one non-clean pass is
+  MITIGATED (#3843), under an expiring owner-approved record whose conditions
+  are in [`dependency-mitigations.d/README.md`](dependency-mitigations.d/README.md);
+  the advisory stays printed and the verdict never says CLEAN. It used to be a step inside `verify`, where a published
   advisory in a transitive dependency skipped every gate behind it — lint, the
   file-size ratchet, `prisma generate`, typecheck, knip, `npm test` and the
   build — on every branch, while the other required checks stayed green (#2945,

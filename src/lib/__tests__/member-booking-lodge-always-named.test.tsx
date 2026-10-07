@@ -17,7 +17,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewStep } from "@/app/(authenticated)/book/_components/review-step";
 

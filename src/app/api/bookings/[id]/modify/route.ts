@@ -14,6 +14,14 @@ import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import {
+  dependantIdentityDeclarationSchema,
+  OwnDependantIdentityRefusedError,
+} from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityRefusalBody,
+  dependantIdentitySpeaksOnBehalf,
+} from "@/lib/booking-dependant-identity-doors";
+import {
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
 } from "@/lib/booking-guests";
@@ -53,6 +61,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -70,6 +79,12 @@ const batchModifySchema = z.object({
         nights: z.array(z.string()).max(370).optional(),
       }),
     )
+    .optional(),
+  // #3451 (`INV-GUEST-019`): the answer about an added guest sharing a name with
+  // one of the owner's dependants, re-verified by the guest planner.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
     .optional(),
   removeGuestIds: z.array(z.string()).optional(),
   guestStayRanges: z
@@ -149,6 +164,8 @@ const batchModifySchema = z.object({
 
 const OVERRIDE_DATE_ONLY_FIELDS = [
   "addGuests",
+  // #3451: an answer about an added guest is a guest change, never a date override.
+  "dependantIdentityDeclarations",
   "removeGuestIds",
   "guestStayRanges",
   "guestUpdates",
@@ -294,6 +311,9 @@ export async function PUT(
   // policy-exception path — `INV-LOCK-004`, and the reason its `todayAtClub` is
   // a required parameter.
   const todayAtClub = (await clubTime()).today();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result =
@@ -313,6 +333,7 @@ export async function PUT(
             ipAddress,
           })
         : await modifyBookingWithLinkedMoveSupport({
+            format,
             bookingId,
             actor: { id: session.user.id, role: actorRole },
             ...(parsed.data.hostingCoverageOverride
@@ -330,6 +351,22 @@ export async function PUT(
   } catch (err) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
+    // #3451 (`INV-GUEST-019`): an added guest is named as one of the owner's
+    // recorded dependants with no live answer. The create route's body and code;
+    // `onBehalf` is ownership, not role — an officer's OWN booking reads as theirs.
+    if (err instanceof OwnDependantIdentityRefusedError) {
+      return NextResponse.json(
+        dependantIdentityRefusalBody(err.refusal, {
+          onBehalf: dependantIdentitySpeaksOnBehalf({
+            actorIsAdmin: actorRole === "ADMIN",
+            actorId: session.user.id,
+            ownerMemberId: err.ownerMemberId,
+          }),
+          surface: "edit",
+        }),
+        { status: err.refusal.status },
+      );
+    }
     if (err instanceof OverCapacityConfirmationRequiredError) {
       return NextResponse.json(
         {
@@ -385,7 +422,7 @@ export async function PUT(
     }
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, format),
         { status: 409 },
       );
     }

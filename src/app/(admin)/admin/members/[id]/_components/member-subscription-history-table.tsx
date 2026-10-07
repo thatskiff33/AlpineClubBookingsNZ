@@ -52,7 +52,7 @@ export function MemberSubscriptionHistoryTable({
         {subscriptions.map((sub) => (
           <TableRow key={sub.id}>
             <TableCell className="font-medium">
-              {seasonSelectLabel(sub.seasonYear)}
+              {seasonSelectLabel(sub.seasonYear, clubTime.format)}
             </TableCell>
             <TableCell>
               <Badge

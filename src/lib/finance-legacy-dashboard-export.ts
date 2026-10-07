@@ -7,6 +7,7 @@ import {
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import { formatCentsPlain } from "@/lib/utils";
 import {
   reconcileBookingMoney,
   type BookingMoneyReconciliationReason,
@@ -237,7 +238,7 @@ function toLegacyDashboardBookingRow(input: {
     guests: guestCount,
     nights: input.overlapNights,
     guest_nights: guestCount * input.overlapNights,
-    total: Number((bookedRevenueCents / 100).toFixed(2)),
+    total: Number(formatCentsPlain(bookedRevenueCents)),
     money_reconciliation_state: moneyReconciliation.state,
     money_reconciliation_reasons: moneyReconciliation.reasons,
   };

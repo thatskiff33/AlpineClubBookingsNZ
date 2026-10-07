@@ -176,6 +176,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests/[id]/quote": "bookings",
   "/api/admin/booking-requests/[id]/release-hold": "bookings",
   "/api/admin/booking-requests/[id]/resend-attendee-confirmation": "bookings",
+  "/api/admin/booking-requests/[id]/resolve-pending-adults": "bookings",
   "/api/admin/booking-requests/[id]/school-record": "bookings",
   "/api/admin/booking-requests/[id]/send-quote": "bookings",
   "/api/admin/booking-requests/settings": "bookings",
@@ -189,6 +190,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/eligible-family": "bookings",
   "/api/admin/bookings/[id]/exclusive-hold": "bookings",
   "/api/admin/bookings/[id]/force-confirm": "bookings",
+  // #3029: one guest's dietary/allergy note for this stay, bookings:edit.
+  "/api/admin/bookings/[id]/guest-dietary": "bookings",
   // B5 (#2262): a bookings-prefixed path deliberately resolved to finance by
   // SPECIAL_ROUTE_AREA_PATTERNS — recording or reversing a cash settlement is a
   // money action, gated finance:edit.
@@ -218,9 +221,11 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/chores/[id]": "lodge",
   "/api/admin/club-contact": "content",
   // #3563 (programme #3205): the club currency and locale maintenance API.
-  // `support` for route-map resolution only; BOTH verbs enforce Full Admin in
-  // the route itself with `requireAdmin({ permission: false })`, exactly like
-  // club-time-zone below.
+  // `support` for route-map resolution only; each verb passes its own explicit
+  // gate (#3596) — the read `requireAdmin({ permission: "any-admin" })`, WIDER
+  // than this area, and the write `requireAdmin({ permission: false })`, Full
+  // Admin like club-time-zone below. Both divergences are pinned in
+  // `admin-route-authorization-proof.test.ts`.
   "/api/admin/club-format": "support",
   "/api/admin/club-identity": "content",
   // CT-1 (#2989): the club-timezone maintenance API. `support` is the area — it
@@ -425,6 +430,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // is gated exactly as closing one is - undoing a money decision is not a
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
+  // #3835: what a review share on a cancelled booking still owes, read by the
+  // settle dialog before completing - a finance read, gated as the queue is.
+  "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
   "/api/admin/promo-codes": "bookings",
   "/api/admin/promo-codes/[id]": "bookings",
@@ -492,6 +500,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/missing-contacts": "finance",
   "/api/admin/xero/missing-invoices": "finance",
   "/api/admin/xero/operations": "finance",
+  "/api/admin/xero/operations/[id]/mark-failed": "finance",
   "/api/admin/xero/operations/[id]/mark-non-replayable": "finance",
   "/api/admin/xero/operations/[id]/requeue": "finance",
   "/api/admin/xero/operations/[id]/resolve": "finance",

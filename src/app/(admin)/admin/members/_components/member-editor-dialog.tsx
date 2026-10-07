@@ -73,6 +73,7 @@ import type {
 import { emptyForm, getMissingFieldsForXeroCreate } from "../_utils";
 import { MemberXeroControls } from "./member-xero-controls";
 import { MemberXeroDuplicateDecisionDialog } from "./member-xero-duplicate-decision-dialog";
+import { MemberDietaryRequirementsField } from "@/components/member-dietary-requirements-field";
 
 /*
   #2264 — ONE hint for the whole phone row (country / area / number) instead of
@@ -134,6 +135,8 @@ function memberToForm(member: Member | null): MemberForm {
     joinedDate: member.joinedDate || "",
     lifeMemberDate: member.lifeMemberDate || "",
     occupation: member.occupation || "",
+    // Never read from the list row, which does not carry it (INV-PRIV-022).
+    dietaryRequirements: "",
     comments: member.comments || "",
     canLogin: member.canLogin,
     streetAddressLine1: member.streetAddressLine1 || "",
@@ -204,7 +207,8 @@ export function MemberEditorDialog({
   const [xeroSearchLoading, setXeroSearchLoading] = useState(false);
   const [selectedXeroContactId, setSelectedXeroContactId] = useState("");
   const entranceFeeDecision = useXeroEntranceFeeDecision();
-  const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
+  const { showTitle, showGender, showOccupation, showDietaryRequirements } =
+    useMemberFieldsSettings();
   const [pendingXeroCreateDecision, setPendingXeroCreateDecision] =
     useState<PendingXeroCreateDecision | null>(null);
   const [pendingXeroDecisionContactId, setPendingXeroDecisionContactId] =
@@ -637,6 +641,11 @@ export function MemberEditorDialog({
         joinedDate: form.joinedDate || null,
         lifeMemberDate: form.lifeMemberDate || null,
         occupation: form.occupation || null,
+        // #2941: create only, and only while the field is ON; an edit from the
+        // list sends no key so the stored value is untouched.
+        ...(!currentEditingMember && showDietaryRequirements
+          ? { dietaryRequirements: form.dietaryRequirements || null }
+          : {}),
         comments: form.comments || null,
         streetAddressLine1: form.streetAddressLine1 || null,
         streetAddressLine2: form.streetAddressLine2 || null,
@@ -1051,6 +1060,20 @@ export function MemberEditorDialog({
                   }
                 />
               </div>
+            )}
+
+            {!currentEditingMember && showDietaryRequirements && (
+              <MemberDietaryRequirementsField
+                id="dietaryRequirements"
+                audience="admin"
+                value={form.dietaryRequirements}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    dietaryRequirements: value,
+                  }))
+                }
+              />
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">

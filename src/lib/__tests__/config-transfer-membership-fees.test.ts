@@ -8,6 +8,7 @@ import { buildConfigExport } from "@/lib/config-transfer/export";
 import { readBundle } from "@/lib/config-transfer/bundle";
 import { membershipFeesImporter } from "@/lib/config-transfer/categories/membership-fees";
 import { xeroConfigImporter } from "@/lib/config-transfer/categories/xero-config";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 
 // Config-transfer membership-fees category (#1941): first-class transfer of the
@@ -135,6 +136,7 @@ function applyCtx(
     tx,
     files,
     manifest: {} as never,
+    format: CLUB_FORMAT_TEST,
     mode,
     resolutions: new Map<string, string>(),
     actorMemberId: "admin-1",
@@ -154,6 +156,7 @@ function planCtx(
     db,
     files,
     manifest: {} as never,
+    format: CLUB_FORMAT_TEST,
     mode,
     resolutions: new Map<string, string>(),
     selectedCategories,
@@ -355,7 +358,7 @@ describe("config-transfer membership-fees validation (#1941)", () => {
       "membership-fees/annual-fee-components.csv": AC_HEADER + "FULL,2026-01-01,Base,10000,true,,,0\n",
     });
     const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
-    expect(plan.errors.join(" ")).toMatch(/sum to 10000 cents but the fee amount is 12000/i);
+    expect(plan.errors.join(" ")).toMatch(/sum to \$100\.00 but the fee amount is \$120\.00/i);
   });
 
   it("rejects a NO_INVOICE fee that carries components, and a non-zero no-invoice amount", async () => {
@@ -527,7 +530,7 @@ describe("config-transfer membership-fees post-merge component invariant (#1941)
     });
     const plan = await membershipFeesImporter.plan(planCtx(files, target.db as unknown as ReadDb, "overwrite"));
     expect(plan.errors.join(" ")).toMatch(/"Base fee"/);
-    expect(plan.errors.join(" ")).toMatch(/22000 cents but the fee total is 12000/);
+    expect(plan.errors.join(" ")).toMatch(/\$220\.00 but the fee total is \$120\.00/);
     expect(plan.errors.join(" ")).toMatch(/Fees page/i);
   });
 

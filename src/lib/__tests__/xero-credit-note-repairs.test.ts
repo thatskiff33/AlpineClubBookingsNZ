@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindMany: vi.fn(),
   memberCreditFindMany: vi.fn(),
   notifyXeroSyncError: vi.fn(),
+  xeroSyncOperationFindMany: vi.fn(),
+  paymentRefundAggregate: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -26,6 +28,12 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberCredit: {
       findMany: mocks.memberCreditFindMany,
+    },
+    xeroSyncOperation: {
+      findMany: mocks.xeroSyncOperationFindMany,
+    },
+    paymentRefund: {
+      aggregate: mocks.paymentRefundAggregate,
     },
   },
 }));
@@ -47,6 +55,7 @@ function payment(overrides: Record<string, unknown> = {}) {
     refundedAmountCents: 0,
     status: PaymentStatus.SUCCEEDED,
     source: PaymentSource.STRIPE,
+    booking: { organiserSettled: false },
     ...overrides,
   };
 }
@@ -108,7 +117,7 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
       expect.objectContaining({
         errorType: "refund-ledger-divergence",
         operation: "inbound-credit-note-repair:cn-current",
-        errorMessage: expect.stringContaining("pay-1"),
+        errorMessage: expect.stringMatching(/\$20\.00.*pay-1.*\$50\.00/),
       })
     );
   });
@@ -183,5 +192,96 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
     });
     expect(result).toEqual({ matchedPayments: 1, updatedPayments: 1 });
     expect(mocks.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #3809 (review M2): an edit's invoice-allocated note for applied credit GIVEN
+// BACK moves no cash. The inbound fold of modification notes into
+// `Payment.refundedAmountCents` (Xero-authoritative for internet banking) must
+// count only the notes that returned money - here the $30 bank hand-back of a
+// $100 bank + $100 credit booking reduced by $150 at 50% less $20, not the $25
+// of credit given back beside it.
+// -----------------------------------------------------------------------------
+describe("#3809: a give-back's account-credit note is not a cash refund", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.paymentFindMany.mockResolvedValue([
+      payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+    ]);
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (where.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION") {
+        return [
+          { localId: "pay-1", xeroObjectId: "alloc-hand-back", metadata: { creditNoteId: "cn-hand-back", invoiceId: "inv-1", amountCents: 3000 } },
+          { localId: "pay-1", xeroObjectId: "alloc-give-back", metadata: { creditNoteId: "cn-give-back", invoiceId: "inv-1", amountCents: 2500 } },
+        ];
+      }
+      if (where.role === "MODIFICATION_CREDIT_NOTE") {
+        return [
+          { xeroObjectId: "cn-hand-back", metadata: { status: "AUTHORISED" } },
+          { xeroObjectId: "cn-give-back", metadata: { status: "AUTHORISED" } },
+        ];
+      }
+      return [];
+    });
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([
+      { xeroObjectId: "cn-hand-back", requestPayload: { refundMethod: "internet-banking" } },
+      { xeroObjectId: "cn-give-back", requestPayload: { refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" } },
+    ]);
+  });
+
+  it("MUTATION: an unrelated inbound note leaves the bank payment's refunded total at the $30 actually handed back", async () => {
+    await repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-current",
+      creditNote: { status: "AUTHORISED", total: 0 } as never,
+      directPaymentIds: [],
+      modificationRefundAmountsByPaymentId: new Map([["pay-1", 0]]),
+    });
+
+    // Before #3809's fix this wrote 5500: the $25 of credit folded in as cash.
+    expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ refundedAmountCents: 5500 }) }));
+    const writes = mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
+    expect(writes.every((cents) => cents === 3000)).toBe(true);
+  });
+});
+
+describe("an organiser-settled child's mirror is raised only by Stripe evidence (#3653)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+  });
+
+  it("does not raise the child's mirror past the refunds Stripe recorded", async () => {
+    mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: 1500 } });
+    await runRepair({
+      paymentRow: payment({
+        refundedAmountCents: 1000,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        booking: { organiserSettled: true },
+      }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 1500 },
+    });
+  });
+
+  it("writes nothing when Stripe recorded no more than the mirror already holds", async () => {
+    mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    const result = await runRepair({
+      paymentRow: payment({
+        refundedAmountCents: 1000,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        booking: { organiserSettled: true },
+      }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
   });
 });

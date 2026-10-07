@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * #3123 — the cash-balance KPI dates two DIFFERENT kinds of value, and they take
@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
  * and the only right chooser is the club's persisted one (`INV-CONFIG-002`).
  *
  * Before #3123 all six labels went through `formatNZDate`/`formatNZDateTime` and
- * so through `APP_TIME_ZONE`, which for a club west of Greenwich dated the
+ * so through the environment zone, which for a club west of Greenwich dated the
  * club's bank balance a day early on the screen a finance manager reads a cash
  * figure off. Sweeping all six onto the club's zone would have fixed one and
  * broken five, so this file pins BOTH halves: the instant follows the club's
@@ -20,31 +20,26 @@ import { describe, expect, it, vi } from "vitest";
  *
  * ## How it discriminates
  *
- * `APP_TIME_ZONE` is pinned to `America/Denver` — behind Greenwich, the side on
- * which the defect is visible — and the club's zone is supplied as a binding,
- * varied per case. Deliberately never `Pacific/Auckland` on both dials at once:
- * that is what `APP_TIME_ZONE` falls back to, so a test agreeing with it could
- * not tell the club's configured zone from the container's (#3123 execution
- * contract). This module formats SUPPLIED values rather than "now", so the
- * frozen clock is not involved and no `vi.setSystemTime` pin is needed.
+ * The environment zone used to be pinned here to `America/Denver` with a
+ * `@/config/operational` mock; #3567 deleted that module and nothing reads the
+ * environment's zone any more, so the pin is gone. The club's zone is supplied
+ * as a binding, varied per case, and the calendar-day assertions demand the
+ * STORED day, which no projection behind Greenwich produces. This module
+ * formats SUPPLIED values rather than "now", so the frozen clock is not
+ * involved and no `vi.setSystemTime` pin is needed.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import {
   parseCashSnapshot,
   type FinanceCashSnapshotRecord,
 } from "@/lib/finance-cash-snapshot";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ENVIRONMENT_ZONE = "America/Denver";
-const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
-const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"));
-const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"));
+const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
+const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"), CLUB_FORMAT_TEST);
+const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"), CLUB_FORMAT_TEST);
 
 /**
  * A stored `@db.Date`, spelled the way Prisma hands one back: UTC midnight.
@@ -110,9 +105,9 @@ describe("the cash snapshot's dates (#3123)", () => {
 
   it("dates the stored @db.Date columns with NO zone at all", () => {
     // BEFORE the migration these read "29 Jun 2026" / "31 May 2026 to 29 Jun
-    // 2026" — the day before, on a bank balance — because APP_TIME_ZONE is
-    // behind Greenwich.
-    const parsed = parseCashSnapshot(AUCKLAND, snapshot());
+    // 2026" — the day before, on a bank balance — because the environment zone
+    // was pinned behind Greenwich.
+    const parsed = parseCashSnapshot(AUCKLAND, snapshot(), CLUB_FORMAT_TEST);
     expect(parsed?.snapshotLabel).toBe("30 Jun 2026");
     expect(parsed?.sourceWindow).toBe("1 Jun 2026 to 30 Jun 2026");
   });
@@ -124,9 +119,9 @@ describe("the cash snapshot's dates (#3123)", () => {
       would be a new defect rather than a fix — the mistake #3113 was filed to
       correct. A money figure's as-of day must not move when the club moves.
     */
-    const base = parseCashSnapshot(AUCKLAND, snapshot());
+    const base = parseCashSnapshot(AUCKLAND, snapshot(), CLUB_FORMAT_TEST);
     for (const club of [KIRITIMATI, PAGO]) {
-      const other = parseCashSnapshot(club, snapshot());
+      const other = parseCashSnapshot(club, snapshot(), CLUB_FORMAT_TEST);
       expect(other?.snapshotLabel).toBe(base?.snapshotLabel);
       expect(other?.sourceWindow).toBe(base?.sourceWindow);
     }
@@ -134,16 +129,16 @@ describe("the cash snapshot's dates (#3123)", () => {
   });
 
   it("dates the sourceUpdatedAt INSTANT in the club's zone", () => {
-    // BEFORE the migration this read "30 Jun 2026, 8:00 pm" (APP_TIME_ZONE).
-    const parsed = parseCashSnapshot(AUCKLAND, snapshot());
+    // BEFORE the migration this read "30 Jun 2026, 8:00 pm" (the Denver environment zone).
+    const parsed = parseCashSnapshot(AUCKLAND, snapshot(), CLUB_FORMAT_TEST);
     expect(parsed?.sourceUpdatedAtLabel).toContain("1 Jul 2026");
     expect(parsed?.sourceUpdatedAtLabel).not.toContain("30 Jun 2026");
   });
 
   it("moves that instant with the club's zone — kills a hard-coded one", () => {
     // The leg a literal `Pacific/Auckland` cannot pass.
-    const ahead = parseCashSnapshot(KIRITIMATI, snapshot());
-    const behind = parseCashSnapshot(PAGO, snapshot());
+    const ahead = parseCashSnapshot(KIRITIMATI, snapshot(), CLUB_FORMAT_TEST);
+    const behind = parseCashSnapshot(PAGO, snapshot(), CLUB_FORMAT_TEST);
     expect(ahead?.sourceUpdatedAtLabel).toContain("1 Jul 2026");
     expect(behind?.sourceUpdatedAtLabel).toContain("30 Jun 2026");
   });
@@ -156,7 +151,7 @@ describe("the cash snapshot's dates (#3123)", () => {
       notice, which is why this throws rather than answering.
     */
     expect(() =>
-      parseCashSnapshot(AUCKLAND, snapshot({ asOfDate: SOURCE_UPDATED_AT })),
+      parseCashSnapshot(AUCKLAND, snapshot({ asOfDate: SOURCE_UPDATED_AT }), CLUB_FORMAT_TEST),
     ).toThrow(/stored calendar day/);
   });
 
@@ -164,21 +159,23 @@ describe("the cash snapshot's dates (#3123)", () => {
     const parsed = parseCashSnapshot(
       AUCKLAND,
       snapshot({ sourceUpdatedAt: null }),
+      CLUB_FORMAT_TEST,
     );
     expect(parsed?.sourceUpdatedAtLabel).toBe("Snapshot update time unavailable");
   });
 
   it("reports the partial windows the same way, with no zone", () => {
     expect(
-      parseCashSnapshot(PAGO, snapshot({ periodStart: null }))?.sourceWindow,
+      parseCashSnapshot(PAGO, snapshot({ periodStart: null }), CLUB_FORMAT_TEST)?.sourceWindow,
     ).toBe("Through 30 Jun 2026");
     expect(
-      parseCashSnapshot(PAGO, snapshot({ periodEnd: null }))?.sourceWindow,
+      parseCashSnapshot(PAGO, snapshot({ periodEnd: null }), CLUB_FORMAT_TEST)?.sourceWindow,
     ).toBe("From 1 Jun 2026");
     expect(
       parseCashSnapshot(
         PAGO,
         snapshot({ periodStart: null, periodEnd: null }),
+        CLUB_FORMAT_TEST,
       )?.sourceWindow,
     ).toBe("Snapshot period not recorded");
   });

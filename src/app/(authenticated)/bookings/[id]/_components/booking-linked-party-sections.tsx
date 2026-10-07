@@ -1,5 +1,6 @@
 import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { OrganiserGroupBookingCard } from "@/components/group-booking/organiser-group-booking-card";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BookingDetailViewer } from "../_lib/booking-detail-viewer";
@@ -12,11 +13,13 @@ import type { BookingDetailLinkedParty } from "../_lib/booking-detail-linked-par
  */
 export function BookingLinkedPartySections({
   booking,
+  money,
   viewer,
   party,
   bookingLodgeEmailSettings,
 }: {
   booking: BookingDetailRecord;
+  money: BoundClubFormat;
   viewer: BookingDetailViewer;
   party: BookingDetailLinkedParty;
   bookingLodgeEmailSettings: EmailMessageSettings;
@@ -40,6 +43,7 @@ export function BookingLinkedPartySections({
         <section id="non-member-guests" className="scroll-mt-20">
           <NonMemberGuestsSection
             guests={nonMemberGuestChildren}
+            money={money}
             nonOwnerAdminViewer={nonOwnerAdminViewer}
           />
         </section>

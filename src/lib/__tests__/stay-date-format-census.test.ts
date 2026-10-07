@@ -41,7 +41,7 @@ import { stripComments } from "./support/strip-comments";
  * ## This suite is unreachable by `vitest related`
  *
  * It reads `src/` from disk, so it has no import edge to the files it scans.
- * Run it BY NAME (`npm run test:named`), and note that a missing path is a
+ * Run it BY NAME (`pnpm run test:named`), and note that a missing path is a
  * failure here rather than a silent skip (#3120).
  */
 

@@ -28,6 +28,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { z } from "zod";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const forceConfirmSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -65,6 +66,9 @@ export async function POST(
   // before the transaction, which holds the global advisory lock and must not wait on a
   // settings read over a second connection.
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -333,6 +337,7 @@ export async function POST(
         booking.checkOut,
         booking.guests.length,
         booking.finalPriceCents,
+        format,
         {
           lodgeId: booking.lodgeId,
           ...(provisionalGuests ? { provisionalGuests } : {}),

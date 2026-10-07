@@ -11,6 +11,7 @@ import {
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
 import { CHART_FINANCE_8SLOT } from "@/lib/theme/aliases";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Ordered palette for mix/breakdown charts (pies, stacked bars).
@@ -80,39 +81,41 @@ export type FinanceValueType = "currency" | "count" | "percent" | "ratio";
 /** Display value for tooltips and labels (currency: whole dollars). */
 export function formatFinanceValue(
   value: number,
-  valueType: FinanceValueType
+  valueType: FinanceValueType,
+  format: ClubFormat,
 ): string {
   switch (valueType) {
     case "currency":
-      return formatDollarsDisplay(value);
+      return formatDollarsDisplay(value, format);
     case "percent":
-      return formatFinancePercent(value);
+      return formatFinancePercent(value, format);
     case "ratio":
-      return formatFinanceRatio(value);
+      return formatFinanceRatio(value, format);
     case "count":
     default:
-      return formatFinanceNumber(value);
+      return formatFinanceNumber(value, format);
   }
 }
 
 /** Compact value for chart axis ticks (e.g. "$10k", "1.2k", "5%"). */
 export function formatFinanceAxisTick(
   value: number,
-  valueType: FinanceValueType
+  valueType: FinanceValueType,
+  format: ClubFormat,
 ): string {
   if (valueType === "percent") {
-    return formatFinancePercent(value);
+    return formatFinancePercent(value, format);
   }
 
   if (valueType === "ratio") {
-    return formatFinanceRatio(value);
+    return formatFinanceRatio(value, format);
   }
 
   if (valueType === "currency") {
-    return formatCompactDollarsDisplay(value);
+    return formatCompactDollarsDisplay(value, format);
   }
 
   const abs = Math.abs(value);
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return formatFinanceNumber(value);
+  return formatFinanceNumber(value, format);
 }

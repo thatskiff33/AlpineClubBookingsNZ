@@ -113,6 +113,10 @@ describe("Lodges page — address field (E3 #1929)", () => {
     fireEvent.change(addressField, {
       target: { value: "12 Alpine Road, Ohakune" },
     });
+    // Required on create since #3407.
+    fireEvent.change(screen.getByLabelText("Capacity (maximum guests)"), {
+      target: { value: "16" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
 
     await waitFor(() => expect(fetchBodies).toHaveLength(1));

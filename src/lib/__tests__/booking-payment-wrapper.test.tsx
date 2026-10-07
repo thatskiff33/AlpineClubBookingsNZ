@@ -7,11 +7,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 import {
+  CREDIT_ELECTION_NOT_APPLIED_BODIES,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
+  PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
+  SWITCHED_TO_INTERNET_BANKING_BODY,
+  SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
@@ -189,6 +193,60 @@ describe("BookingPaymentWrapper", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it("says the account credit was not applied yet, in the server's words, without reporting a payment-start failure (#3864)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => CREDIT_ELECTION_NOT_APPLIED_BODIES.cancelUnconfirmed,
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert");
+    await waitFor(() => expect(alert).toHaveTextContent("Account credit not applied yet"));
+    expect(alert).toHaveTextContent(CREDIT_ELECTION_NOT_APPLIED_BODIES.cancelUnconfirmed.error);
+    expect(screen.queryByText("Payment Error")).toBeNull();
+    expect(document.body.textContent).not.toContain("We couldn't start the card payment");
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("says an earlier payment is still processing, without reporting a payment-start failure (#3567)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ ...PAYMENT_PROCESSING_BODY, creditElection: null }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert");
+    await waitFor(() => expect(alert).toHaveTextContent("Payment being processed"));
+    expect(alert).toHaveTextContent(
+      "This payment is being processed. Refresh the page in a minute to see it confirmed.",
+    );
+    expect(screen.queryByText("Payment Error")).toBeNull();
+    expect(document.body.textContent).not.toContain("We couldn't start the card payment");
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
   it("reports captured-card finalisation recovery instead of a payment-start failure", async () => {
     const onPaymentComplete = vi.fn();
     const retryMessage =
@@ -301,6 +359,64 @@ describe("BookingPaymentWrapper", () => {
     await waitFor(() => expect(alert).toHaveTextContent("Payment Error"));
     expect(alert).not.toHaveTextContent("Payment received - check booking status");
     consoleErrorSpy.mockRestore();
+  });
+
+  // #3638 review (SSOT F1): the pay route refuses a card payment on a booking
+  // being paid by Internet Banking. The member must be told that, not shown
+  // "you can pay later" (a card retry is refused again), and it is not a fault
+  // to report to Sentry.
+  it("tells the member the booking is being paid by Internet Banking, with no card form and no error report (#3638)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ ...SWITCHED_TO_INTERNET_BANKING_BODY }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() =>
+      expect(alert).toHaveTextContent("Paying by Internet Banking"),
+    );
+    expect(alert).toHaveTextContent(SWITCHED_TO_INTERNET_BANKING_MESSAGE);
+    expect(alert).not.toHaveTextContent(/pay later/i);
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("shows the contract's own wording, not the response's error text (#3638)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        code: "SWITCHED_TO_INTERNET_BANKING",
+        error: "internal detail that must not render",
+      }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(SWITCHED_TO_INTERNET_BANKING_MESSAGE),
+    );
+    expect(alert).not.toHaveTextContent("internal detail");
   });
 
   it("suppresses payment without claiming receipt when only Stripe success is known", async () => {

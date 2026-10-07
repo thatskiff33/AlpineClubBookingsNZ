@@ -14,6 +14,7 @@ import {
   formatClubLongWeekdayDate,
   requireCalendarDate,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * The two headline stay dates, spelled out in full — long weekday, long month —
@@ -31,8 +32,8 @@ import {
  * IT IS ONE CALL NOW because CT-4's `src/lib` group added the missing shape:
  * `HOUSE_SHAPES.longWeekdayDate` is the long weekday, long month AND the year,
  * declared as one shape rather than composed from `longWeekdayDayMonth` plus the
- * year — which is byte-identical for `en-NZ` and not safe for a configurable
- * `APP_LOCALE`.
+ * year — which is byte-identical for `en-NZ` and not safe for the club's
+ * persisted locale (#3566).
  */
 
 interface Guest {
@@ -98,6 +99,8 @@ export interface BookingEditorData {
   status: string;
   guests: Guest[];
   viewerRole: string;
+  /** #3451: see `BookingData.viewerIsBookingOwner`. */
+  viewerIsBookingOwner?: boolean;
   totalPriceCents: number;
   discountCents: number;
   promoAdjustmentCents: number;
@@ -179,6 +182,7 @@ export function BookingEditor({
   // fully-past booking that renders no self-service editor at all.
   canAdminOverride?: boolean;
 }) {
+  const format = useClubFormat();
   const searchParams = useSearchParams();
   /**
    * #2562: the open policy-exception request this visit is here to REPLACE, from
@@ -214,6 +218,7 @@ export function BookingEditor({
           checkOut: booking.checkOut,
           guests: booking.guests,
           viewerRole: booking.viewerRole,
+          viewerIsBookingOwner: booking.viewerIsBookingOwner,
           finalPriceCents: booking.finalPriceCents,
           totalPriceCents: booking.totalPriceCents,
           discountCents: booking.discountCents,
@@ -265,13 +270,13 @@ export function BookingEditor({
             <div>
               <p className="text-sm text-muted-foreground">Check-in</p>
               <p className="font-medium">
-                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkIn))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkIn), format)}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Check-out</p>
               <p className="font-medium">
-                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkOut))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkOut), format)}
               </p>
             </div>
             <div>
@@ -352,7 +357,7 @@ export function BookingEditor({
                     </Badge>
                   ) : null}
                 </div>
-                <p className="font-medium">{formatCents(guest.priceCents)}</p>
+                <p className="font-medium">{formatCents(guest.priceCents, format)}</p>
               </div>
             ))}
           </div>
@@ -367,7 +372,7 @@ export function BookingEditor({
         <CardContent className="space-y-2">
           <div className="flex justify-between">
             <span>Subtotal</span>
-            <span>{formatCents(booking.totalPriceCents)}</span>
+            <span>{formatCents(booking.totalPriceCents, format)}</span>
           </div>
           {booking.promoAdjustmentCents !== 0 && (
             <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
@@ -387,13 +392,13 @@ export function BookingEditor({
               </span>
               <span>
                 {booking.promoAdjustmentCents > 0 ? "+" : "-"}
-                {formatCents(Math.abs(booking.promoAdjustmentCents))}
+                {formatCents(Math.abs(booking.promoAdjustmentCents), format)}
               </span>
             </div>
           )}
           <div className="flex justify-between border-t pt-2 font-bold">
             <span>Total</span>
-            <span>{formatCents(booking.finalPriceCents)}</span>
+            <span>{formatCents(booking.finalPriceCents, format)}</span>
           </div>
         </CardContent>
       </Card>

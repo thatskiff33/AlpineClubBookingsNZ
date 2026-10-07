@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatStayDate } from "@/lib/club-time";
+import { formatStayDate, type ClubDateFormat } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface SourceBooking {
   id: string;
@@ -58,11 +59,12 @@ function useTransactionDateFormatter() {
  * real instant is exactly where the two concepts get merged. `formatStayDate`
  * is the kernel's one home for a serialised `@db.Date` (#3507; INV-DATE-010).
  */
-function formatDateRange(checkIn: string, checkOut: string): string {
-  return `${formatStayDate(checkIn)} - ${formatStayDate(checkOut)}`;
+function formatDateRange(checkIn: string, checkOut: string, format: ClubDateFormat): string {
+  return `${formatStayDate(checkIn, format)} - ${formatStayDate(checkOut, format)}`;
 }
 
 export function AccountCreditSection() {
+  const format = useClubFormat();
   const formatDate = useTransactionDateFormatter();
   const [data, setData] = useState<CreditData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,7 +107,7 @@ export function AccountCreditSection() {
       <div className="text-center py-3 bg-muted rounded-lg">
         <p className="text-sm text-muted-foreground">Current Balance</p>
         <p className="text-2xl font-bold text-foreground">
-          {formatCents(data.balanceCents)}
+          {formatCents(data.balanceCents, format)}
         </p>
       </div>
 
@@ -140,7 +142,7 @@ export function AccountCreditSection() {
                       }`}
                     >
                       {tx.amountCents >= 0 ? "+" : ""}
-                      {formatCents(tx.amountCents)}
+                      {formatCents(tx.amountCents, format)}
                     </td>
                     <td className="py-2 pr-2">{tx.description}</td>
                     <td className="py-2 whitespace-nowrap">
@@ -149,7 +151,7 @@ export function AccountCreditSection() {
                           href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/profile")}
                           className="text-info-11 hover:underline"
                         >
-                          {formatDateRange(booking.checkIn, booking.checkOut)}
+                          {formatDateRange(booking.checkIn, booking.checkOut, format)}
                         </Link>
                       ) : (
                         <span className="text-muted-foreground">-</span>

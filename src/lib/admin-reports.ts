@@ -24,6 +24,7 @@ import {
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import { formatDateOnly } from "@/lib/date-only";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 
 export type RevenueGranularity = "daily" | "weekly" | "monthly";
 
@@ -273,11 +274,7 @@ export function summarizeNetCollectedCash(
   let refundedCents = 0;
   for (const payment of payments) {
     if (!payment) continue;
-    if (
-      payment.status === PaymentStatus.SUCCEEDED ||
-      payment.status === PaymentStatus.PARTIALLY_REFUNDED ||
-      payment.status === PaymentStatus.REFUNDED
-    ) {
+    if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
       capturedGrossCents += payment.amountCents;
     }
     refundedCents += payment.refundedAmountCents;

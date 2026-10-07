@@ -20,7 +20,7 @@ never one shared file** - a lane adds a file rather than editing a shared list,
 so two lanes cannot collide. That rule lives in `AGENTS.md` -> "Change
 Discipline", and the row in its routing table points back here for the detail.
 
-There are four instances, and until [#3111](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3111)
+There are five instances, and until [#3111](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3111)
 they read as four unrelated special cases rather than as one rule - which is how
 a fifth artifact came to be appended to by four lanes at once before anyone
 recognised what it was:
@@ -29,6 +29,7 @@ recognised what it was:
 |---|---|---|
 | `changelog.d/` | fragment directory | Every code-bearing pull request adds one entry (#2452) |
 | `size-allowances.d/` | fragment directory | Every lane that grows an over-budget file adds one allowance |
+| `dependency-mitigations.d/` | fragment directory | Each owner-approved, expiring dependency-audit mitigation is one record (#3843) |
 | `CHANGELOG.md` | `merge=union` (#2451) | A flat list of released lines, none of which refers to another |
 | `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` | `merge=union` (#3111) | One row per migration, hand-appended by every schema lane |
 
@@ -42,7 +43,7 @@ document several lanes co-edit stays an ordinary file and takes the conflicts.
 seven-section topical reference each lane revises in place - rather than a
 ledger, which is why it was left alone.
 
-`src/lib/__tests__/additive-artifact-fragments.test.ts` checks the four artifacts
+`src/lib/__tests__/additive-artifact-fragments.test.ts` checks the five artifacts
 above have not regressed, and fails a new top-level `*.d/` directory that nobody
 registered. It cannot recognise a newly invented shared **file** that should have
 been a fragment directory - no offline check can, and #3111 records the two
@@ -140,9 +141,18 @@ node scripts/release/compile-changelog.mjs 0.14.0             # do it
 The compiler adds `## <version> - <date>` above the existing releases, filled
 with every fragment in filename order (numeric parts compared as numbers, so
 `999-…` sorts before `2448-…`), folds in any entries still written directly
-under `## Unreleased`, deletes the fragments it consumed, and prints what it
-did. The date defaults to today in New Zealand; pass one as the second argument
-to override it. Historical sections are never rewritten.
+under `## Unreleased`, deletes the fragments it consumed, retires committed and
+clean `size-allowances.d/*.md` fragments already made inert by their merge to
+main, and prints what it did. The allowance directory's `README.md`, untracked
+drafts, branch-only commits and locally edited files are preserved; a locally
+edited merged allowance stops the compile before any write. A refreshed
+`origin/main` must be an ancestor of the release-prep checkout. Nothing is
+retired if there is no changelog release to compile. The date defaults to today
+in New Zealand; pass one as the second argument to override it. Historical
+sections are never rewritten. A failed removal restores the original changelog
+and fragments for a safe retry; if restoration itself fails, stop and inspect
+the files named by the error. The compiler cannot prove an unfetched remote
+update does not exist, so refresh `origin/main` before running it.
 
 Two things under `## Unreleased` are **not** entries, and the compiler tells
 them apart by marker rather than by position:

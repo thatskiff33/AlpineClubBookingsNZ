@@ -77,6 +77,7 @@ import { plainTextEmailTemplate } from "@/lib/email-templates/layout";
 // module pulls in a large graph, and paying for that inside a 5s test body made
 // the assertion time out on a loaded machine.
 import { sendPreArrivalReminderEmail } from "../email/booking";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const TEMPLATE = "pre-arrival-reminder";
 const defaults = EMAIL_AUDIT_DEFAULTS[TEMPLATE];
@@ -223,7 +224,7 @@ describe("#2621 sendPreArrivalReminderEmail composes the sentence once for both 
       checkOut: new Date("2026-07-18"),
       guestCount: 2,
       expectedArrivalTime: "16:30",
-    });
+    }, CLUB_FORMAT_TEST);
 
   it("says the D-M5 sentence in BOTH the HTML and the flat body when chores is ON", async () => {
     await send();

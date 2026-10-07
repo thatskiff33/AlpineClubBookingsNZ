@@ -77,6 +77,7 @@ vi.mock("@/lib/stripe", () => ({
   // double.
   getPaymentMethod: vi.fn(),
   getSetupIntent: vi.fn(),
+  cancelPaymentIntentIfCancellableWithResult: vi.fn(),
 }));
 
 vi.mock("@/lib/booking-payment-cleanup", () => ({
@@ -132,6 +133,15 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach)
+// is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
@@ -142,10 +152,13 @@ import {
   getPaymentIntent,
   getPaymentMethod,
   getSetupIntent,
+  cancelPaymentIntentIfCancellableWithResult,
 } from "@/lib/stripe";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
 import { POST as createSetupIntentRoute } from "@/app/api/payments/create-setup-intent/route";
 import { POST as confirmPaymentRoute } from "@/app/api/bookings/[id]/confirm-payment/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -183,6 +196,7 @@ const mockGetPaymentMethod = getPaymentMethod as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
   // clearAllMocks resets call history but not implementations, so restore the
   // non-split default here — a split-case test's mockResolvedValue would
   // otherwise leak into every following test (#1976).
@@ -199,6 +213,23 @@ beforeEach(() => {
     queueOperationId: "xero-op-1",
     message: "queued",
   });
+  // #3638: a fresh mint attaches its intent under lock(1), re-reading the
+  // payment's source first. Delegates the write to the client mock so the
+  // assertions on `prisma.payment.upsert` keep reading the same calls.
+  mockPrisma.$transaction.mockImplementation(
+    async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        $executeRaw: vi.fn(),
+        payment: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: mockPrisma.payment.upsert,
+        },
+        // ...and the booking's status, which is still payable.
+        booking: {
+          findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+        },
+      })
+  );
 });
 
 describe("payment intent routes", () => {
@@ -221,7 +252,7 @@ describe("payment intent routes", () => {
     });
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
-      client_secret: "cs_existing",
+      client_secret: "cs_existing", currency: "nzd",
       status: "requires_payment_method",
       amount: 12500,
     });
@@ -272,7 +303,7 @@ describe("payment intent routes", () => {
     // Existing intent already priced at the member portion (12000c).
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_reuse",
-      client_secret: "cs_reuse",
+      client_secret: "cs_reuse", currency: "nzd",
       status: "requires_payment_method",
       amount: 12000,
     });
@@ -319,7 +350,7 @@ describe("payment intent routes", () => {
     // Default getProvisionalNonMemberChildSummary mock returns null → non-split.
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_reuse",
-      client_secret: "cs_reuse",
+      client_secret: "cs_reuse", currency: "nzd",
       status: "requires_payment_method",
       amount: 12500,
     });
@@ -362,14 +393,14 @@ describe("payment intent routes", () => {
     // Minted at $125 before the member edited the unpaid booking to $150.
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_stale",
-      client_secret: "cs_stale",
+      client_secret: "cs_stale", currency: "nzd",
       status: "requires_payment_method",
       amount: 12500,
     });
     mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_1" });
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_fresh",
-      client_secret: "cs_fresh",
+      client_secret: "cs_fresh", currency: "nzd",
       amount: 15000,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-1" });
@@ -400,6 +431,116 @@ describe("payment intent routes", () => {
     );
   });
 
+  it("supersedes a same-amount intent minted in another currency and mints a fresh one (#3567)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      payment: {
+        id: "pay-1",
+        stripePaymentIntentId: "pi_aud",
+        status: "PENDING",
+      },
+    });
+    // The right amount, but minted in AUD before the club moved to NZD.
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      client_secret: "cs_aud", currency: "aud",
+      status: "requires_payment_method",
+      amount: 12500,
+    });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_nzd",
+      client_secret: "cs_nzd", currency: "nzd",
+      amount: 12500,
+    });
+    mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-1" });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.clientSecret).toBe("cs_nzd");
+    expect(JSON.stringify(data)).not.toContain("cs_aud");
+    expect(mocks.queueSupersededPrimaryIntentCancellations).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        bookingId: "booking-1",
+        paymentId: "pay-1",
+        newFinalPriceCents: 12500,
+        wrongCurrencyPaymentIntentId: "pi_aud",
+      },
+    );
+    expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 12500 }),
+    );
+  });
+
+  it("answers 409 for an old-currency intent still processing, and neither supersedes it nor mints (#3567 final check)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 12500,
+      member: { id: "member-1", email: "member@example.com", firstName: "Test", lastName: "Member" },
+      payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: "PENDING" },
+    });
+    // A bank debit in AUD, submitted before the club moved to NZD, not yet settled.
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      client_secret: "cs_aud", currency: "aud",
+      status: "processing",
+      amount: 12500,
+    });
+
+    const res = await createPaymentIntentRoute(
+      new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: "booking-1" }),
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("This payment is being processed. Refresh the page in a minute to see it confirmed.");
+    expect(data.code).toBe("PAYMENT_PROCESSING");
+    expect(JSON.stringify(data)).not.toContain("cs_aud");
+    expect(mocks.queueSupersededPrimaryIntentCancellations).not.toHaveBeenCalled();
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("refuses a club currency without two decimal places with a 409 before reading the booking (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE });
+    expect(mockPrisma.booking.findUnique).not.toHaveBeenCalled();
+    expect(mockFindOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("returns the member-portion charge and deferred guest portion for a split parent (#1976)", async () => {
     // Split parent: priced on the member subset only (12000c). Its non-member
     // guests live on a provisional child priced at 8000c, charged later.
@@ -426,7 +567,7 @@ describe("payment intent routes", () => {
     });
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_split",
-      client_secret: "cs_split",
+      client_secret: "cs_split", currency: "nzd",
       amount: 12000,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-split" });
@@ -470,7 +611,7 @@ describe("payment intent routes", () => {
     // Default mock returns null → non-split.
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_full",
-      client_secret: "cs_full",
+      client_secret: "cs_full", currency: "nzd",
       amount: 12500,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-full" });
@@ -488,6 +629,187 @@ describe("payment intent routes", () => {
     expect(data.chargedAmountCents).toBe(12500);
     expect(data.isSplit).toBe(false);
     expect(data.deferredGuestAmountCents).toBeNull();
+  });
+
+  it("refuses, and never hands out the new intent, when the booking switched to Internet Banking during the mint (#3638)", async () => {
+    // The interleave: the route's unlocked read saw a card booking, a switch to
+    // Internet Banking committed while it minted, and the attach — under the
+    // lock(1) the switch holds — now reads the switched payment.
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: null,
+    });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_orphan",
+      client_secret: "cs_orphan",
+      amount: 12500,
+    });
+    const txExecuteRaw = vi.fn();
+    const txPaymentFindUnique = vi
+      .fn()
+      .mockResolvedValue({ source: "INTERNET_BANKING" });
+    const txPaymentUpsert = vi.fn();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          $executeRaw: txExecuteRaw,
+          payment: { findUnique: txPaymentFindUnique, upsert: txPaymentUpsert },
+          booking: {
+            findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+          },
+        })
+    );
+    const cancel = vi.mocked(cancelPaymentIntentIfCancellableWithResult);
+    cancel.mockResolvedValue({ paymentIntent: {}, canceled: true } as never);
+
+    const res = await createPaymentIntentRoute(
+      new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: "booking-1" }),
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.code).toBe("SWITCHED_TO_INTERNET_BANKING");
+    expect(data.clientSecret).toBeUndefined();
+    // Read under the lock, and nothing attached.
+    expect(txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      txPaymentFindUnique.mock.invocationCallOrder[0]
+    );
+    expect(txPaymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    // The orphan is tidied away.
+    expect(cancel).toHaveBeenCalledWith("pi_orphan");
+  });
+
+  it("attaches the new intent when the payment is still a card payment under the lock (#3638)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: null,
+    });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_card",
+      client_secret: "cs_card",
+      amount: 12500,
+    });
+    mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-card" });
+    // Capture the transaction handle so the writes can be pinned to it: a
+    // transaction row written on the global client would commit outside the
+    // lock the source check relies on (and, on a real database, block on the
+    // payment row this transaction has just upserted).
+    const txExecuteRaw = vi.fn();
+    const txPaymentUpsert = vi.fn().mockResolvedValue({ id: "pay-card" });
+    const txHandle = {
+      $executeRaw: txExecuteRaw,
+      payment: {
+        findUnique: vi.fn().mockResolvedValue({ source: "STRIPE" }),
+        upsert: txPaymentUpsert,
+      },
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+      },
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(txHandle)
+    );
+
+    const res = await createPaymentIntentRoute(
+      new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: "booking-1" }),
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay-card", paymentIntentId: "pi_card" })
+    );
+    // Both writes on the locked transaction's handle, after the lock.
+    expect(mocks.upsertPaymentIntentTransaction.mock.calls[0][0].store).toBe(txHandle);
+    expect(txPaymentUpsert).toHaveBeenCalled();
+    expect(txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      txPaymentUpsert.mock.invocationCallOrder[0]
+    );
+    expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
+    expect(cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+  });
+
+  it("refuses, and cancels the new intent, when the booking was cancelled during the mint (#3638)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: null,
+    });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_orphan",
+      client_secret: "cs_orphan",
+      amount: 12500,
+    });
+    const txPaymentUpsert = vi.fn();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          $executeRaw: vi.fn(),
+          payment: { findUnique: vi.fn().mockResolvedValue(null), upsert: txPaymentUpsert },
+          booking: { findUnique: vi.fn().mockResolvedValue({ status: "CANCELLED" }) },
+        })
+    );
+    const cancel = vi.mocked(cancelPaymentIntentIfCancellableWithResult);
+    cancel.mockResolvedValue({ paymentIntent: {}, canceled: true } as never);
+
+    const res = await createPaymentIntentRoute(
+      new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: "booking-1" }),
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.clientSecret).toBeUndefined();
+    expect(data.error).toContain("no longer payable");
+    expect(txPaymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledWith("pi_orphan");
   });
 
   it("does not disclose an existing payment intent client secret to a non-owner", async () => {
@@ -564,6 +886,7 @@ describe("payment intent routes", () => {
       paymentIntentId: "pi_existing",
       amountCents: 12500,
       paymentMethodId: "pm_123",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -888,7 +1211,7 @@ describe("payment intent routes", () => {
     });
     mockGetSetupIntent.mockResolvedValue({
       id: "seti_existing",
-      client_secret: "seti_secret",
+      client_secret: "seti_secret", currency: "nzd",
       status: "requires_payment_method",
     });
 
@@ -985,7 +1308,7 @@ describe("payment intent routes", () => {
       mockGetSetupIntent.mockResolvedValue({
         id: "seti_old",
         status: "canceled",
-        client_secret: null,
+        client_secret: null, currency: "nzd",
       });
 
       const res = await postSetupIntent();
@@ -1362,6 +1685,7 @@ describe("payment intent routes", () => {
       paymentIntentId: "pi_success",
       amountCents: 12500,
       paymentMethodId: "pm_123",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -1441,6 +1765,7 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
       expect.any(Date),
       2,
       12500,
+      CLUB_FORMAT_TEST,
       // Multi-lodge phase 8: the options now carry the booking's lodge so
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).

@@ -378,7 +378,7 @@ The money-safety invariant — that no burst of concurrent reservers can push
   budget. It is off by default and runs in CI's `Migration drift check` job via
   the guarded `concurrency-lock-races.realdb.test.ts` harness (opt-in
   `RUN_CONCURRENCY_RACE_TESTS=1`, dedicated loopback database), so ordinary
-  `npm test` never needs a live database.
+  `pnpm test` never needs a live database.
 
   The lead test does not *hope* for the dangerous interleaving, it **forces**
   it. A third connection takes the same per-month advisory lock and holds it
@@ -793,7 +793,7 @@ why the module is not ready and set it up.
   [page context](page-context.md); `registry.test.ts` enforces the first.
 - A new diagnostics tool ships its `GRANT SELECT` in `provision-role.ts` in the
   **same** pull request, never a blanket `ALL TABLES IN SCHEMA` grant, and the
-  release note tells operators to re-run `npm run diagnostics:provision-role` —
+  release note tells operators to re-run `pnpm run diagnostics:provision-role` —
   see [tool substrate](tools.md).
 - Do not add a runtime seam that lets a caller inject an authorizer, an auditor, or
   SQL into `invokeDiagnosticsTool`, and do not relax the privilege self-check in

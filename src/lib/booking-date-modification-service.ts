@@ -75,6 +75,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
 import {
@@ -102,6 +103,7 @@ import {
 } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
   deletePromoRedemptionAndAdjustCount,
@@ -150,13 +152,16 @@ import {
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
   loadModificationLinesAuditFields,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
+  pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -213,6 +218,7 @@ type DateModificationTransactionResult =
     paymentReference: string | null;
     xeroInvoiceNumber: string | null;
     xeroRefundAmountCents: number;
+    appliedCreditGivenBackCents: number;
     xeroAdditionalAmountCents: number;
     // F20 (#1887): the reprice landed the booking fully credit-covered and it
     // was auto-confirmed at $0, so the primary Xero invoice must be created.
@@ -225,6 +231,8 @@ export type DateModificationResponse = {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   additionalAmountCents: number;
@@ -335,6 +343,9 @@ export async function modifyBookingDates({
   // money, and two todays on one date change would price it against itself.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+  // The club's format (#3565), for the same reason and at the same point: the
+  // edit renders money under both locks, so it is read before either is taken.
+  const format = await clubFormatValues();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -675,7 +686,7 @@ export async function modifyBookingDates({
       // rather than read under the locks (`INV-LOCK-004`). The same day the
       // edit policy, the change fee and the settlement tier above use.
       today: clubTodayDateOnly,
-    });
+    }, format);
 
     /**
      * #3166 (epic #2797): THE DATE PATH EVIDENCE GATE, and the reason it could
@@ -915,6 +926,8 @@ export async function modifyBookingDates({
       changeFeeCents,
       settlementOptions,
       settlementMethod,
+      todayAtClub,
+      format,
     });
     const {
       refundAmountCents,
@@ -984,7 +997,7 @@ export async function modifyBookingDates({
       : 0;
     if (appliedBeforeClamp > 0) {
       const clampedCredit = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
         tx,
       );
       const effectivePriceCents =
@@ -1196,6 +1209,7 @@ export async function modifyBookingDates({
     // stored prices; its nights stay UNKNOWN for the reviewer.
     if (!parked) {
       await recordBookingNightAdjustments(tx, {
+        format,
         bookingId,
         guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
         targets: adjustmentTargets,
@@ -1275,17 +1289,16 @@ export async function modifyBookingDates({
      * were rewritten above) against the breakdown it priced, index-aligned
      * with `guestsForPricing`. A parked edit moved no money and stores none.
      */
-    const priceLines = parked
-      ? null
-      : await computeModificationPriceLines(
+    const { priceLines, sides: pricingSides } = parked
+      ? { priceLines: null, sides: null }
+      : await computeModificationPricing(
           { bookingId, site: "date-change" },
-          () =>
-            diffBookingPricing(
-              pricingSideFromStoredGuests(booking.guests, {
-                promoAdjustmentCents: booking.promoAdjustmentCents,
-                promoCode: booking.promoRedemption?.promoCode.code ?? null,
-              }),
-              pricingSideFromPriceBreakdown(
+          () => ({
+            before: pricingSideFromStoredGuests(booking.guests, {
+              promoAdjustmentCents: booking.promoAdjustmentCents,
+              promoCode: booking.promoRedemption?.promoCode.code ?? null,
+            }),
+            after: pricingSideFromPriceBreakdown(
                 booking.guests.map((g) => ({
                   guestKey: g.id,
                   name: `${g.firstName} ${g.lastName}`.trim(),
@@ -1298,8 +1311,8 @@ export async function modifyBookingDates({
                     : (booking.promoRedemption?.promoCode.code ?? null),
                 },
               ),
-              priceDiffCents,
-            ),
+          }),
+          priceDiffCents,
           logger,
         );
 
@@ -1326,6 +1339,7 @@ export async function modifyBookingDates({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
@@ -1337,6 +1351,18 @@ export async function modifyBookingDates({
         changeFeeCents,
         ...(priceLines ? { priceLines } : {}),
       },
+    });
+
+    // #3582: the same before and after, per night, on the booking ledger —
+    // under the `lock(1)` this transaction took first. A parked change posts
+    // nothing (`INV-MOD-040`); its review's closure does.
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: pricingSides,
+      site: "date-change",
     });
 
     /**
@@ -1381,6 +1407,13 @@ export async function modifyBookingDates({
         booking.payment?.id,
       );
     }
+    // #3653: an organiser-settled child's refund debt, before this edit commits.
+    await reserveOrganiserChildModificationRefund(tx, {
+      plan: payments.organiserChildRefund,
+      bookingId,
+      payment: booking.payment,
+      bookingModificationId: bookingModification.id,
+    });
 
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
@@ -1451,7 +1484,9 @@ export async function modifyBookingDates({
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
       xeroRefundAmountCents,
+      appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       xeroAdditionalAmountCents,
+      organiserChildRefund: payments.organiserChildRefund,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
@@ -1465,6 +1500,7 @@ export async function modifyBookingDates({
   });
 
   const stripeRefundId = await executeBookingModificationRefund({
+    format,
     bookingId,
     result,
     metadataReason: "date_change_price_decrease",
@@ -1476,6 +1512,7 @@ export async function modifyBookingDates({
 
   const { additionalPaymentClientSecret, additionalPaymentIntentId } =
     await createModificationAdditionalPaymentIntent({
+      format,
       bookingId,
       result,
       reason: "date_change_price_increase",
@@ -1507,6 +1544,7 @@ export async function modifyBookingDates({
     result,
     additionalPaymentIntentId,
     linkedChangeRequestId,
+    format,
   });
 
   return {
@@ -1515,6 +1553,7 @@ export async function modifyBookingDates({
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     additionalAmountCents: result.additionalAmountCents,
@@ -1534,6 +1573,7 @@ async function dispatchDatePostTransactionSideEffects({
   result,
   additionalPaymentIntentId,
   linkedChangeRequestId,
+  format,
 }: {
   bookingId: string;
   actorMemberId: string;
@@ -1541,6 +1581,8 @@ async function dispatchDatePostTransactionSideEffects({
   result: DateModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
   linkedChangeRequestId: string | null;
+  /** The club's format (#3565), resolved before the edit's transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   // Issue #1668: an admin override records the pricing mode, capacity decision
   // and linked change request alongside the standard date-change audit fields.
@@ -1560,7 +1602,7 @@ async function dispatchDatePostTransactionSideEffects({
       ? {}
       : { notifyMember: false };
   // #3530: what the figure is made of, line by line and in dollars.
-  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
   logAudit({
     action: result.adminOverride
       ? "booking.modify.admin_override"
@@ -1626,6 +1668,9 @@ async function dispatchDatePostTransactionSideEffects({
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    // #3653: the organiser child refund raises the one note, after Stripe.
+    organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
     // F20 (#1887): a reprice that landed the booking fully credit-covered
     // auto-confirmed it at $0, so create the primary invoice if none was issued
     // (mirrors the batch modify path).
@@ -1699,6 +1744,7 @@ async function dispatchDatePostTransactionSideEffects({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       additionalPaymentMethod:
         result.additionalAmountCents > 0 &&
@@ -1713,7 +1759,7 @@ async function dispatchDatePostTransactionSideEffects({
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
       lodgeId: result.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
     );
   }
@@ -1726,7 +1772,7 @@ async function dispatchDatePostTransactionSideEffects({
       checkIn: result.oldCheckIn,
       checkOut: result.oldCheckOut,
       lodgeId: result.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to process waitlist after date modification"),
     );
   }
@@ -1784,6 +1830,8 @@ export async function adminShiftBookingDates({
   // `clubTimeSettings.findUnique` on a second pooled connection while the global
   // cohort key and the lodge capacity key are both held (`INV-LOCK-004`).
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+  // The club's format (#3565), before the transaction for the same reason.
+  const format = await clubFormatValues();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
@@ -1995,7 +2043,7 @@ export async function adminShiftBookingDates({
       // Resolved before this transaction opened (`INV-LOCK-004`); the same day
       // the shift's edit-policy gate reads.
       today: clubTodayDateOnly,
-    });
+    }, format);
 
     // #3276: a shift moves every night by the same delta and no money moves, so
     // the recorded build-up moves with it — captured before the rewrite below
@@ -2129,6 +2177,28 @@ export async function adminShiftBookingDates({
       },
     });
 
+    // #3741: a shift moves every night, so it posts like any other edit door —
+    // each old-date night's live line reversed, each new-date night posted,
+    // netting to the row's zero — under the `lock(1)` taken first above. Both
+    // sides are read as written rows: a shift sells nothing, it re-dates each
+    // line at its own figure, and the planner still refuses a live line whose
+    // figure is not the stored price (`LIVE_LINE_DISAGREES`).
+    const promo = { promoAdjustmentCents: booking.promoAdjustmentCents };
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: {
+        before: pricingSideFromWrittenGuests(booking.guests, promo),
+        after: pricingSideFromWrittenGuests(
+          translatedGuests.map((entry) => ({ ...entry.guest, nights: entry.nights })),
+          promo,
+        ),
+      },
+      site: "admin-date-shift",
+    });
+
     await assertBookingEnvelopeInvariants(tx);
 
     // #2364. An admin date SHIFT keeps every price and every guest, but it does
@@ -2245,13 +2315,14 @@ export async function adminShiftBookingDates({
       changeFeeCents: 0,
       refundAmountCents: 0,
       accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
       additionalAmountCents: 0,
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
       lodgeId: result.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),
     );
   }
@@ -2262,7 +2333,7 @@ export async function adminShiftBookingDates({
     checkIn: result.oldCheckIn,
     checkOut: result.oldCheckOut,
     lodgeId: result.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error({ err, bookingId }, "Failed to process waitlist after admin date shift"),
   );
 
@@ -2277,6 +2348,7 @@ export async function adminShiftBookingDates({
     changeFeeCents: 0,
     refundAmountCents: 0,
     accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     additionalAmountCents: 0,

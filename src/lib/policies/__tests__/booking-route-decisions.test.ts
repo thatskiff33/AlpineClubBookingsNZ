@@ -13,6 +13,7 @@ import {
   type CancellationRule,
 } from "@/lib/policies";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 describe("booking route policy decisions", () => {
   it("normalizes enabled group discount settings and ignores disabled settings", () => {
@@ -344,6 +345,7 @@ describe("booking route policy decisions", () => {
   it("validates booking credit application against balance, status, and price", () => {
     expect(
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: 2500,
         creditBalanceCents: 3000,
         finalPriceCents: 4000,
@@ -353,15 +355,17 @@ describe("booking route policy decisions", () => {
 
     expect(() =>
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: 5000,
         creditBalanceCents: 3000,
         finalPriceCents: 4000,
         status: BookingStatus.PAYMENT_PENDING,
       })
-    ).toThrow("Insufficient credit: 3000 cents available, 5000 requested");
+    ).toThrow("Insufficient credit: $30.00 available, $50.00 requested");
 
     expect(
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: 2500,
         creditBalanceCents: 3000,
         finalPriceCents: 4000,
@@ -397,6 +401,8 @@ describe("booking route policy decisions", () => {
         // `now: new Date("2026-07-05T00:00:00.000Z")` produced once the
         // container's zone had projected it, so the money below is unchanged.
         todayAtClub: requireCalendarDate("2026-07-05"),
+        // #3809 (`INV-PAY-115`): no edit ran through the give-back, so no cap.
+        capAppliedCredit: false,
       })
     ).toMatchObject({
       refundAmountCents: 3000,
@@ -408,7 +414,8 @@ describe("booking route policy decisions", () => {
       // #1164 / D7: applied credit is now tiered by the CARD tier (50%), not
       // restored at 100%. refundableBase 8000 -> cardGross 4000 absorbs the full
       // 1000 fixed fee (feeRemainder 0), so the 2000 applied credit restores
-      // 50% = 1000.
+      // 50% = 1000. Uncapped: this booking was not reduced through #3809's
+      // settlement (`INV-PAY-115`).
       creditRestoredCents: 1000,
       totalPaidCents: 9000,
     });
@@ -437,6 +444,8 @@ describe("booking route policy decisions", () => {
         // `now: new Date("2026-07-05T00:00:00.000Z")` produced once the
         // container's zone had projected it, so the money below is unchanged.
         todayAtClub: requireCalendarDate("2026-07-05"),
+        // #3809 (`INV-PAY-115`): no edit ran through the give-back, so no cap.
+        capAppliedCredit: false,
       })
     ).toMatchObject({
       refundAmountCents: 20000,

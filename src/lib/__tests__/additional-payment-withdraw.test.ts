@@ -41,6 +41,7 @@ import {
   withdrawAdditionalPaymentAsk,
 } from "@/lib/additional-payment-withdraw";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const NOW = new Date("2026-06-20T00:00:00.000Z");
 const MODIFICATION_ID = "mod-1";
@@ -423,7 +424,7 @@ describe("withdrawAdditionalPaymentAsk", () => {
     expect(result).toEqual({
       ok: false,
       status: 409,
-      error: additionalAskCarriesPriceMessage(10000),
+      error: additionalAskCarriesPriceMessage(10000, CLUB_FORMAT_TEST),
     });
     expect((result as { error: string }).error).toContain("$100.00");
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();

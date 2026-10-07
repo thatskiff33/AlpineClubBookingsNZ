@@ -1,4 +1,4 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
 
@@ -23,6 +23,12 @@ export interface Guest {
   stayEnd?: string | null;
   nights?: string[] | null;
   priceCents: number;
+  /**
+   * The row's stored member-guest consent (#3770): the edit panel's
+   * adult-supervision check counts an outsider adult only once agreed, as the
+   * server does. Null for family and non-member rows; optional for fixtures.
+   */
+  consentStatus?: MemberGuestConsentStatus | null;
   /**
    * Other Lodges epic: true when this NON-MEMBER guest is priced at the club's
    * own member rate as a recognised member of the booking's partner lodge.
@@ -76,6 +82,13 @@ export interface BookingData {
   checkOut: string;
   guests: Guest[];
   viewerRole: string;
+  /**
+   * #3451: whether the viewer IS the booking's owner, so the own-dependant
+   * question is worded by ownership rather than role (an officer on their own
+   * booking is the member). Optional so existing fixtures stay valid; absent
+   * reads as "not the owner".
+   */
+  viewerIsBookingOwner?: boolean;
   finalPriceCents: number;
   totalPriceCents: number;
   discountCents: number;
@@ -236,6 +249,8 @@ export interface SettlementOptions {
   accountCreditPercentage: number;
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
+  /** #3653: paid for by the group organiser; the reduction goes back to their card. */
+  returnsToOrganiser: boolean;
 }
 
 export interface QuoteResult {
@@ -247,6 +262,15 @@ export interface QuoteResult {
   changeFeeCents: number;
   netChargeCents: number;
   settlementOptions: SettlementOptions | null;
+  // #3809: applied credit saving would give back on a paid booking - all of a
+  // credit-paid one's tiered reduction, or what a card refund leaves.
+  appliedCreditGiveBackCents?: number;
+  /**
+   * #3653: set when the save would refuse this increase because the group
+   * organiser paid for the booking by card. The server's sentence, shown
+   * verbatim; Save stays off while it is set.
+   */
+  chargeRefusal?: string | null;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;

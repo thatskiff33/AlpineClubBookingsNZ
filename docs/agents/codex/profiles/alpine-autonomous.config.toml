@@ -1,0 +1,13 @@
+# Example only. Copy to ~/.codex/alpine-autonomous.config.toml before use.
+# Autonomous local profile for low/medium risk, fully scoped issues only.
+# Do not use for risk:high or risk:critical issues, live providers,
+# production data, schema changes, deployment changes, or money movement.
+# Merging follows AGENTS.md "Completion and Merge"; this profile has no network
+# access, so it cannot push or merge on its own.
+# Model and effort are chosen at launch (AGENTS.md → Model selection); e.g. -c model_reasoning_effort=high
+
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false

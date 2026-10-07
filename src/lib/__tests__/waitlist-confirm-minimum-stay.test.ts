@@ -243,6 +243,7 @@ import { confirmWaitlistOffer } from "@/lib/waitlist";
 // The real formatter, so this path and the cross-lodge promotion are checked
 // against one shared string rather than against two copies of it.
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const LODGE = "lodge-a";
 const CHECK_IN = new Date("2026-07-10T00:00:00.000Z");
@@ -342,7 +343,7 @@ describe("confirmWaitlistOffer minimum-stay guard (#2363)", () => {
       violations: [violation],
     });
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("MINIMUM_STAY_VIOLATION");
@@ -375,7 +376,7 @@ describe("confirmWaitlistOffer minimum-stay guard (#2363)", () => {
       violations: [violation],
     });
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.error).toBe(
       "The minimum stay for these nights has changed since you joined the waitlist, " +
@@ -396,7 +397,7 @@ describe("confirmWaitlistOffer minimum-stay guard (#2363)", () => {
   });
 
   it("leaves a compliant confirm untouched", async () => {
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(h.validateMinimumStay).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(true);
@@ -413,7 +414,7 @@ describe("confirmWaitlistOffer minimum-stay guard (#2363)", () => {
       violations: [violation],
     });
 
-    const result = await confirmWaitlistOffer("booking-1", "someone-else");
+    const result = await confirmWaitlistOffer("booking-1", "someone-else", CLUB_FORMAT_TEST);
 
     expect(h.validateMinimumStay).not.toHaveBeenCalled();
     expect(result).toEqual({ success: false, error: "Forbidden" });
@@ -434,7 +435,7 @@ describe("confirmWaitlistOffer minimum-stay guard (#2363)", () => {
       violations: [violation],
     });
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(h.validateMinimumStay).not.toHaveBeenCalled();
     expect(result.error).toContain("expired");
@@ -467,7 +468,7 @@ describe("confirmWaitlistOffer policy backstop inside the claim (#2363)", () => 
       violations: [violation],
     });
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("CONFIRM_RETRY");
@@ -493,7 +494,7 @@ describe("confirmWaitlistOffer policy backstop inside the claim (#2363)", () => 
       // nights belong to a different lodge's policy set entirely.
       .mockResolvedValue(offer({ waitlistOfferedLodgeId: "lodge-b" }));
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     // The same-lodge check did run — on the pre-read's classification, which is
@@ -509,7 +510,7 @@ describe("confirmWaitlistOffer policy backstop inside the claim (#2363)", () => 
   it("keeps the offer's own answers when the pre-read skipped the check for a reason the transaction agrees with", async () => {
     // Not this member's offer: the transaction's Forbidden answer wins over the
     // retry, because it is a settled refusal rather than a stale read.
-    const forbidden = await confirmWaitlistOffer("booking-1", "someone-else");
+    const forbidden = await confirmWaitlistOffer("booking-1", "someone-else", CLUB_FORMAT_TEST);
     expect(forbidden).toEqual({ success: false, error: "Forbidden" });
 
     // Already expired: same story — "expired" is the true answer, not "retry".
@@ -526,7 +527,7 @@ describe("confirmWaitlistOffer policy backstop inside the claim (#2363)", () => 
       .mockResolvedValueOnce({ lodgeId: LODGE })
       .mockResolvedValue(expired);
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
     expect(result.error).toContain("expired");
     expect(result.code).toBeUndefined();
   });
@@ -572,7 +573,7 @@ describe("confirmWaitlistOffer paid-up-adult re-check (#2543)", () => {
       violation,
     } as never);
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("PAID_UP_ADULT_MEMBER_REQUIRED");
@@ -611,7 +612,7 @@ describe("confirmWaitlistOffer paid-up-adult re-check (#2543)", () => {
       violation: null,
     } as never);
 
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.subscriptionMemberRateNotice).toContain("isn't paid");
@@ -619,7 +620,7 @@ describe("confirmWaitlistOffer paid-up-adult re-check (#2543)", () => {
 
   it("adds no key at all when nobody is repriced", async () => {
     h.evaluateNonMemberPricingRequirements.mockResolvedValue(null as never);
-    const result = await confirmWaitlistOffer("booking-1", "member-1");
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
     expect(result.success).toBe(true);
     expect("subscriptionMemberRateNotice" in result).toBe(false);
   });

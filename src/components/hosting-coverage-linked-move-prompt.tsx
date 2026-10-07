@@ -8,6 +8,7 @@ import {
   type HostingCoverageLinkedMoveChoice,
   type HostingCoverageLinkedMovePromptData,
 } from "@/lib/hosting-coverage-linked-move-client";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * #3232's linked-move offer, as the member sees it.
@@ -64,6 +65,7 @@ export function HostingCoverageLinkedMovePrompt({
   idPrefix: string;
   onChoiceChange: (choice: HostingCoverageLinkedMoveChoice) => void;
 }) {
+  const format = useClubFormat();
   // Permanently mounted live region, for the reason its override sibling carries:
   // inserting an already-populated role=alert is missed by some screen-reader and
   // browser pairs. The radio group sits OUTSIDE the assertive region so choosing
@@ -145,7 +147,7 @@ export function HostingCoverageLinkedMovePrompt({
                       settlementMethodChosen: prompt.settlementMethodChosen,
                       bothChangeFeesCharged: prompt.bothChangeFeesCharged,
                       linkedCount: prompt.linkedBookings.length,
-                    })}
+                    }, format)}
                   </span>
                 ) : (
                   <span className="block text-xs text-muted-foreground">

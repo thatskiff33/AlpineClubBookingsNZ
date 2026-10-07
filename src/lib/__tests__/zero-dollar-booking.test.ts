@@ -20,6 +20,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
@@ -100,8 +101,17 @@ const mockTx = {
   },
 };
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({
+  postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     lodge: { findFirst: mockTxLodgeFindFirst, findUnique: mockLodgeFindUnique },
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
@@ -474,6 +484,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       expect.any(Date),
       expect.any(Number),
       0,
+      CLUB_FORMAT_TEST,
       expect.objectContaining({ discountCents: 10000 })
     );
   });
@@ -505,6 +516,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       expect.any(Date),
       expect.any(Number),
       0,
+      CLUB_FORMAT_TEST,
       expect.objectContaining({
         provisionalGuests: { guestCount: 2, holdUntil },
       }),
@@ -741,6 +753,7 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
       booking.checkOut,
       2,
       0,
+      CLUB_FORMAT_TEST,
       { discountCents: 10000, promoAdjustmentCents: -10000, promoCode: "FREE100" }
     );
   });

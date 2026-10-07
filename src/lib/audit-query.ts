@@ -11,6 +11,7 @@ import {
   recoverTruncatedStructuredDetail,
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -451,7 +452,7 @@ function stringMetadataValue(
 // test seam (#3302): this used to be its own hard-coded "$" + toFixed(2)
 // formatter with no fixture; exported so the switch to the shared,
 // currency-aware `formatCents` is asserted rather than merely claimed.
-export function formatMetadataFragment(key: string, value: Prisma.JsonValue): string | null {
+export function formatMetadataFragment(key: string, value: Prisma.JsonValue, format: ClubFormat): string | null {
   if (value === null) {
     return null;
   }
@@ -464,7 +465,7 @@ export function formatMetadataFragment(key: string, value: Prisma.JsonValue): st
     // caller stored, and removes a rounding-MODE difference the review
     // measured between the old `.toFixed(2)` body and `Intl.NumberFormat`
     // at exactly a half-cent (1.5 rounded to 2c one way and 1c the other).
-    return `${humanizeKey(key)} ${formatCents(Math.round(value))}`;
+    return `${humanizeKey(key)} ${formatCents(Math.round(value), format)}`;
   }
   if (typeof value === "boolean") {
     return `${humanizeKey(key)} ${value ? "yes" : "no"}`;
@@ -490,7 +491,8 @@ export function formatMetadataFragment(key: string, value: Prisma.JsonValue): st
 }
 
 function formatMetadataDescription(
-  metadata: Prisma.JsonValue | Prisma.JsonObject | null
+  metadata: Prisma.JsonValue | Prisma.JsonObject | null,
+  format: ClubFormat,
 ): string | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return null;
@@ -522,7 +524,7 @@ function formatMetadataDescription(
     if (value === undefined) {
       continue;
     }
-    const fragment = formatMetadataFragment(key, value);
+    const fragment = formatMetadataFragment(key, value, format);
     if (fragment) {
       fragments.push(fragment);
     }
@@ -543,7 +545,7 @@ function formatMetadataDescription(
     .filter(([key]) => !isReservedDetailKey(key))
     .slice(0, 4)
     .map(([key, value]) =>
-      value === undefined ? null : formatMetadataFragment(key, value)
+      value === undefined ? null : formatMetadataFragment(key, value, format)
     )
     .filter((value): value is string => Boolean(value))
     .join(" · ") || null;
@@ -699,13 +701,14 @@ function getMemberSummary(log: AuditTimelineLog): string {
 function getDescription(
   log: AuditTimelineLog,
   metadata: Prisma.JsonValue | Prisma.JsonObject | null,
-  structuredDetails: boolean
+  structuredDetails: boolean,
+  format: ClubFormat,
 ): string | null {
   if (log.details && !structuredDetails) {
     return log.details;
   }
 
-  return formatMetadataDescription(metadata);
+  return formatMetadataDescription(metadata, format);
 }
 
 function addDrilldownLink(
@@ -1148,9 +1151,17 @@ function projectFreeTextForAudience(params: {
    */
   hasStructuredDetails: boolean;
   adminMetadata: Prisma.JsonValue | Prisma.JsonObject | null;
+  /** The club's format, for amounts in an officer's description (#3565). */
+  format: ClubFormat;
 }): { summary: string; description: string | null; details: string | null } {
-  const { audience, log, legacyMetadata, hasStructuredDetails, adminMetadata } =
-    params;
+  const {
+    audience,
+    log,
+    legacyMetadata,
+    hasStructuredDetails,
+    adminMetadata,
+    format,
+  } = params;
 
   if (audience === "member") {
     return {
@@ -1166,7 +1177,7 @@ function projectFreeTextForAudience(params: {
 
   return {
     summary: getSummary(log),
-    description: getDescription(log, adminMetadata, hasStructuredDetails),
+    description: getDescription(log, adminMetadata, hasStructuredDetails, format),
     // The RAW column, and the test is the CLEAN parse rather than
     // `hasStructuredDetails` — deliberately (#2704). A cleanly-parsed payload
     // is shown whole in the metadata panel, so repeating it is noise; a
@@ -1184,8 +1195,9 @@ function serializeAuditTimelineLog(params: {
   memberById: Map<string, AuditTimelineActorRecord>;
   audience: "admin" | "member";
   currentMemberId?: string;
+  format: ClubFormat;
 }): AuditTimelineEntry {
-  const { log, memberById, audience, currentMemberId } = params;
+  const { log, memberById, audience, currentMemberId, format } = params;
   const actorMemberId = getAuditLogActorMemberId(log);
   const subjectMemberId = getAuditLogSubjectMemberId(log);
   const actorResult = serializeActorForAudience({
@@ -1223,6 +1235,7 @@ function serializeAuditTimelineLog(params: {
     legacyMetadata,
     hasStructuredDetails: structuredDetails !== null,
     adminMetadata: metadata,
+    format,
   });
 
   return {
@@ -1272,9 +1285,24 @@ export async function getAuditTimelinePage(params: {
   category: AuditTimelineCategory;
   audience: "admin" | "member";
   currentMemberId?: string;
+  /**
+   * The club's format (#3565), resolved once by the route. A parameter, not a
+   * read here: this module is also on the browser's import graph (the audit
+   * pages import its category options), so it must not reach a `server-only`
+   * reader.
+   */
+  format: ClubFormat;
 }): Promise<AuditTimelineResponse> {
-  const { db, where, page, pageSize, category, audience, currentMemberId } =
-    params;
+  const {
+    db,
+    where,
+    page,
+    pageSize,
+    category,
+    audience,
+    currentMemberId,
+    format,
+  } = params;
   const [logs, total] = await Promise.all([
     db.auditLog.findMany({
       where,
@@ -1312,6 +1340,7 @@ export async function getAuditTimelinePage(params: {
         memberById,
         audience,
         currentMemberId,
+        format,
       })
     ),
     total,

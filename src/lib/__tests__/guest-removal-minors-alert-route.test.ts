@@ -35,7 +35,6 @@ const mocks = vi.hoisted(() => ({
   // route post-transaction side effects
   drainSupersededPrimaryIntents: vi.fn(),
   executeBookingModificationRefund: vi.fn(),
-  createModificationAdditionalPaymentIntent: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   queueXeroBookingEditSettlement: vi.fn(),
   logAudit: vi.fn(),
@@ -43,6 +42,13 @@ const mocks = vi.hoisted(() => ({
   sendAdminMinorsOnlyReviewAlert: vi.fn(),
 }));
 
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
@@ -98,11 +104,13 @@ vi.mock("@/lib/membership-type-policy", () => ({
     status = 400;
   },
 }));
-vi.mock("@/lib/booking-modification-settlement", () => ({
+// #3341 (`INV-OPS-015`): the minter stays REAL. This file asserts the edit's ask
+// (`additionalAmountCents`) and a stubbed minter would pass whatever it is handed;
+// a removal asks for nothing, so the real one returns before minting.
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
   drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
   executeBookingModificationRefund: mocks.executeBookingModificationRefund,
-  createModificationAdditionalPaymentIntent:
-    mocks.createModificationAdditionalPaymentIntent,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBookingWithLodgeLockHeld:
@@ -127,6 +135,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 const CHECK_IN = new Date("2027-07-15");
@@ -416,10 +425,6 @@ beforeEach(() => {
   });
   mocks.drainSupersededPrimaryIntents.mockResolvedValue(undefined);
   mocks.executeBookingModificationRefund.mockResolvedValue(null);
-  mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-    additionalPaymentClientSecret: null,
-    additionalPaymentIntentId: null,
-  });
   mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
   mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
   mocks.sendBookingModifiedEmail.mockResolvedValue(undefined);
@@ -733,6 +738,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: true }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -747,6 +753,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: false }),
+      CLUB_FORMAT_TEST,
     );
   });
 

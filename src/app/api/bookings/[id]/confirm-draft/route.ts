@@ -34,7 +34,7 @@ import {
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { authorizationRoleFromAccessRoles, hasAdminAccess } from "@/lib/access-roles";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
   hostingCoverageActorOptions,
@@ -48,6 +48,7 @@ import {
   buildSameOwnerCoverageRefusalBody,
   readHostingCoverageOverride,
 } from "@/lib/adult-member-hosting-same-owner";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function POST(
   request: NextRequest,
@@ -77,6 +78,9 @@ export async function POST(
   const hostingOverride = readHostingCoverageOverride(
     await request.json().catch(() => null),
   );
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -322,7 +326,7 @@ export async function POST(
         // #3232: confirming a draft does not move its stay, so there is no
         // vacated window for the dependent fan-out to also look at.
         vacatedRange: null,
-        actorRole: session.user.role,
+        actorRole: authorizationRoleFromAccessRoles(session.user),
         hasBookingsEditAccess: isAdmin,
         actorMemberId: session.user.id,
         ...(hostingOverride ? { override: hostingOverride } : {}),
@@ -366,6 +370,7 @@ export async function POST(
     booking.checkOut,
     booking.guests.length,
     0,
+    format,
     {
       lodgeId: booking.lodgeId,
       ...(booking.promoRedemption?.promoCode

@@ -76,7 +76,7 @@ function makeApplication(
   };
 }
 
-function makeTarget(overrides: Partial<MappingTargetRecord> = {}): MappingTargetRecord {
+function makeTarget(overrides: Partial<MappingTargetRecord> = {},): MappingTargetRecord {
   return {
     id: "member-x",
     email: "old@test.com",
@@ -86,6 +86,7 @@ function makeTarget(overrides: Partial<MappingTargetRecord> = {}): MappingTarget
     ageTier: "ADULT",
     role: "USER",
     active: true,
+    deletedAt: null,
     archivedAt: null,
     canLogin: false,
     parentMemberId: null,
@@ -128,7 +129,7 @@ function makeTarget(overrides: Partial<MappingTargetRecord> = {}): MappingTarget
   };
 }
 
-const applicantMapDecisions = (memberId: string): NormalizedPersonDecision[] => [
+const applicantMapDecisions = (memberId: string,): NormalizedPersonDecision[] => [
   { ref: { kind: "applicant" }, decision: { mode: "MAP", memberId } },
 ];
 
@@ -152,15 +153,15 @@ describe("computeApprovalMappingOutcomes — applicant MAP", () => {
     expect(applicant.mode).toBe("MAP");
     expect(applicant.loginPromoted).toBe(true);
     expect(applicant.keepAuth).toBe(false);
-    const emailDiff = applicant.fieldDiffs.find((diff) => diff.field === "email");
-    expect(emailDiff).toMatchObject({ current: "old@test.com", incoming: "jane@test.com", willChange: true });
+    const emailDiff = applicant.fieldDiffs.find((diff) => diff.field === "email",);
+    expect(emailDiff).toMatchObject({ current: "old@test.com", incoming: "jane@test.com", willChange: true, });
     expect(applicant.errors).toContain(
       "The application email is already used by a different member who can log in.",
     );
   });
 
   it("relaxes the login-email guard when the login holder IS the target (keep-auth)", async () => {
-    const target = makeTarget({ id: "member-x", canLogin: true, email: "jane@test.com" });
+    const target = makeTarget({ id: "member-x", canLogin: true, email: "jane@test.com", });
     const { persons } = await computeApprovalMappingOutcomes({
       application: makeApplication(),
       decisions: applicantMapDecisions("member-x"),
@@ -198,15 +199,37 @@ describe("computeApprovalMappingOutcomes — applicant MAP", () => {
       actor: FULL_ADMIN,
       ageTierSettings: DEFAULT_SETTINGS,
     });
-    expect(inactiveOutcome.persons[0].errors.join(" ")).toContain("inactive or archived");
+    expect(inactiveOutcome.persons[0].errors.join(" ")).toContain("inactive or archived",
+    );
 
-    const grouped = makeTarget({ id: "m-grouped", familyGroupMemberships: [{ familyGroupId: "fg-9" }] });
+    const adopterErased = makeTarget({
+      id: "m-erased",
+      active: true,
+      deletedAt: null,
+      email: "deleted-legacy@deleted.invalid",
+    });
+    const erasedOutcome = await computeApprovalMappingOutcomes({
+      application: makeApplication(),
+      decisions: applicantMapDecisions("m-erased"),
+      targetsById: new Map([["m-erased", adopterErased]]),
+      loginHolderId: null,
+      seasonYear: 2026,
+      actor: FULL_ADMIN,
+      ageTierSettings: DEFAULT_SETTINGS,
+    });
+    expect(erasedOutcome.persons[0].errors).toContain(
+      "Cannot map to a deleted member.",
+    );
+    expect(erasedOutcome.persons[0].errors.join(" ")).not.toContain(
+      "inactive or archived",);
+
+    const grouped = makeTarget({ id: "m-grouped", familyGroupMemberships: [{ familyGroupId: "fg-9" }], });
     const groupedOutcome = await computeApprovalMappingOutcomes({
       application: makeApplication({
-        familyMembers: [{ firstName: "Sam", lastName: "Doe", dateOfBirth: "2018-06-01" }],
+        familyMembers: [{ firstName: "Sam", lastName: "Doe", dateOfBirth: "2018-06-01" },],
       }),
       decisions: [
-        { ref: { kind: "applicant" }, decision: { mode: "MAP", memberId: "m-grouped" } },
+        { ref: { kind: "applicant" }, decision: { mode: "MAP", memberId: "m-grouped" }, },
         { ref: { kind: "family", index: 0 }, decision: { mode: "CREATE" } },
       ],
       targetsById: new Map([["m-grouped", grouped]]),
@@ -215,11 +238,11 @@ describe("computeApprovalMappingOutcomes — applicant MAP", () => {
       actor: FULL_ADMIN,
       ageTierSettings: DEFAULT_SETTINGS,
     });
-    expect(groupedOutcome.persons[0].errors.join(" ")).toContain("already belongs to a family group");
+    expect(groupedOutcome.persons[0].errors.join(" ")).toContain("already belongs to a family group",);
   });
 
   it("skips billing with a note when the target already has season coverage", async () => {
-    const target = makeTarget({ id: "member-x", subscriptions: [{ id: "sub-1" }] });
+    const target = makeTarget({ id: "member-x", subscriptions: [{ id: "sub-1" }], });
     const { persons } = await computeApprovalMappingOutcomes({
       application: makeApplication(),
       decisions: applicantMapDecisions("member-x"),
@@ -230,14 +253,14 @@ describe("computeApprovalMappingOutcomes — applicant MAP", () => {
       ageTierSettings: DEFAULT_SETTINGS,
     });
     expect(persons[0].skipSeasonalAssignment).toBe(true);
-    expect(persons[0].notes.join(" ")).toContain("existing season membership coverage");
+    expect(persons[0].notes.join(" ")).toContain("existing season membership coverage",);
   });
 });
 
 describe("computeApprovalMappingOutcomes — family MAP", () => {
   const familyApp = () =>
     makeApplication({
-      familyMembers: [{ firstName: "Sam", lastName: "Doe", dateOfBirth: "2018-06-01" }],
+      familyMembers: [{ firstName: "Sam", lastName: "Doe", dateOfBirth: "2018-06-01" },],
     });
   const familyDecisions = (memberId: string): NormalizedPersonDecision[] => [
     { ref: { kind: "applicant" }, decision: { mode: "CREATE" } },
@@ -255,11 +278,11 @@ describe("computeApprovalMappingOutcomes — family MAP", () => {
       actor: FULL_ADMIN,
       ageTierSettings: DEFAULT_SETTINGS,
     });
-    expect(persons[1].errors.join(" ")).toContain("admin member cannot be mapped as a dependent");
+    expect(persons[1].errors.join(" ")).toContain("admin member cannot be mapped as a dependent",);
   });
 
   it("sets the parent link only for a non-login target with no parent; notes otherwise", async () => {
-    const fresh = makeTarget({ id: "m-fresh", canLogin: false, parentMemberId: null });
+    const fresh = makeTarget({ id: "m-fresh", canLogin: false, parentMemberId: null, });
     const freshOutcome = await computeApprovalMappingOutcomes({
       application: familyApp(),
       decisions: familyDecisions("m-fresh"),
@@ -282,7 +305,7 @@ describe("computeApprovalMappingOutcomes — family MAP", () => {
       ageTierSettings: DEFAULT_SETTINGS,
     });
     expect(loginableOutcome.persons[1].setParentLink).toBe(false);
-    expect(loginableOutcome.persons[1].notes.join(" ")).toContain("left untouched");
+    expect(loginableOutcome.persons[1].notes.join(" ")).toContain("left untouched",);
   });
 
   it("blocks the same member mapped to two people (duplicate target)", async () => {
@@ -290,8 +313,8 @@ describe("computeApprovalMappingOutcomes — family MAP", () => {
     const { blockingErrors } = await computeApprovalMappingOutcomes({
       application: familyApp(),
       decisions: [
-        { ref: { kind: "applicant" }, decision: { mode: "MAP", memberId: "dup" } },
-        { ref: { kind: "family", index: 0 }, decision: { mode: "MAP", memberId: "dup" } },
+        { ref: { kind: "applicant" }, decision: { mode: "MAP", memberId: "dup" }, },
+        { ref: { kind: "family", index: 0 }, decision: { mode: "MAP", memberId: "dup" }, },
       ],
       targetsById: new Map([["dup", target]]),
       loginHolderId: null,
@@ -299,7 +322,7 @@ describe("computeApprovalMappingOutcomes — family MAP", () => {
       actor: FULL_ADMIN,
       ageTierSettings: DEFAULT_SETTINGS,
     });
-    expect(blockingErrors.join(" ")).toContain("cannot be mapped to more than one person");
+    expect(blockingErrors.join(" ")).toContain("cannot be mapped to more than one person",);
   });
 
   it.each([
@@ -380,7 +403,7 @@ describe("preview token drift", () => {
     });
     expect(
       verifyApprovalMappingPreviewToken(
-        { application, persons: base.persons, blockingErrors: base.blockingErrors },
+        { application, persons: base.persons, blockingErrors: base.blockingErrors, },
         token,
       ),
     ).toBe(true);
@@ -401,7 +424,7 @@ describe("preview token drift", () => {
     });
     expect(
       verifyApprovalMappingPreviewToken(
-        { application, persons: rowDrift.persons, blockingErrors: rowDrift.blockingErrors },
+        { application, persons: rowDrift.persons, blockingErrors: rowDrift.blockingErrors, },
         token,
       ),
     ).toBe(false);
@@ -410,7 +433,7 @@ describe("preview token drift", () => {
     // edit reclassifies the applicant, so the recomputed tier — and the token
     // payload — change.
     const editedBoundaries: AgeTierSettingData[] = [
-      { tier: "YOUTH", minAge: 0, maxAge: null, label: "Everyone", sortOrder: 1 },
+      { tier: "YOUTH", minAge: 0, maxAge: null, label: "Everyone", sortOrder: 1, },
     ];
     const outcomeDrift = await computeApprovalMappingOutcomes({
       application,
@@ -423,7 +446,7 @@ describe("preview token drift", () => {
     });
     expect(
       verifyApprovalMappingPreviewToken(
-        { application, persons: outcomeDrift.persons, blockingErrors: outcomeDrift.blockingErrors },
+        { application, persons: outcomeDrift.persons, blockingErrors: outcomeDrift.blockingErrors, },
         token,
       ),
     ).toBe(false);
@@ -518,7 +541,7 @@ describe("privileged-email mapping gate (#1026 parity)", () => {
     const sameEmail = await computeApprovalMappingOutcomes({
       application: makeApplication(),
       decisions: applicantMapDecisions("member-x"),
-      targetsById: new Map([["member-x", privileged({ email: "jane@test.com" })]]),
+      targetsById: new Map([["member-x", privileged({ email: "jane@test.com" })],]),
       loginHolderId: "member-x",
       seasonYear: 2026,
       actor: SCOPED_ADMIN,
@@ -531,7 +554,7 @@ describe("privileged-email mapping gate (#1026 parity)", () => {
       application: makeApplication(),
       decisions: applicantMapDecisions("member-x"),
       targetsById: new Map([
-        ["member-x", privileged({ accessRoles: [{ role: "USER", roleDefinitionId: null }] })],
+        ["member-x", privileged({ accessRoles: [{ role: "USER", roleDefinitionId: null }], }),],
       ]),
       loginHolderId: null,
       seasonYear: 2026,
@@ -590,7 +613,7 @@ describe("privileged promotion mapping gate (#1604 parity, canLogin-blind)", () 
       ...overrides,
     });
 
-  const outcomesFor = (target: MappingTargetRecord, actor: { id: string; isFullAdmin: boolean }) =>
+  const outcomesFor = (target: MappingTargetRecord, actor: { id: string; isFullAdmin: boolean },) =>
     computeApprovalMappingOutcomes({
       application: makeApplication(),
       decisions: applicantMapDecisions("member-x"),
@@ -614,7 +637,7 @@ describe("privileged promotion mapping gate (#1604 parity, canLogin-blind)", () 
 
   it("blocks the FINANCE_ADMIN access-role and legacy financeAccessLevel (dormant Treasurer) variants", async () => {
     const financeRole = await outcomesFor(
-      dormant({ accessRoles: [{ role: "FINANCE_ADMIN", roleDefinitionId: null }] }),
+      dormant({ accessRoles: [{ role: "FINANCE_ADMIN", roleDefinitionId: null }], }),
       SCOPED_ADMIN,
     );
     expect(financeRole.persons[0].errors).toContain(
@@ -747,12 +770,12 @@ describe("buildApprovalMappingPreview", () => {
   }
 
   it("ranks an exact email match ahead of a name-only match", async () => {
-    prismaMock.memberApplication.findUnique.mockResolvedValue(previewApplicationRow());
+    prismaMock.memberApplication.findUnique.mockResolvedValue(previewApplicationRow(),);
     prismaMock.member.findFirst.mockResolvedValue(null); // no login holder
     // Suggestions query (applicant person).
     prismaMock.member.findMany.mockResolvedValue([
-      { id: "name-only", firstName: "Jane", lastName: "Doe", email: "different@test.com", ageTier: "ADULT", active: true, canLogin: true },
-      { id: "email-hit", firstName: "Janet", lastName: "Doering", email: "jane@test.com", ageTier: "ADULT", active: true, canLogin: true },
+      { id: "name-only", firstName: "Jane", lastName: "Doe", email: "different@test.com", ageTier: "ADULT", active: true, canLogin: true, },
+      { id: "email-hit", firstName: "Janet", lastName: "Doering", email: "jane@test.com", ageTier: "ADULT", active: true, canLogin: true, },
     ]);
 
     const result = await buildApprovalMappingPreview({
@@ -762,10 +785,41 @@ describe("buildApprovalMappingPreview", () => {
       actor: FULL_ADMIN,
     });
     const body = result.body as {
-      preview: { persons: Array<{ suggestions: Array<{ id: string; matchedOnEmail: boolean }> }>; hasMappings: boolean };
+      preview: { persons: Array<{ suggestions: Array<{ id: string; matchedOnEmail: boolean }>; }>; hasMappings: boolean; };
     };
     expect(body.preview.hasMappings).toBe(false);
-    expect(body.preview.persons[0].suggestions[0]).toMatchObject({ id: "email-hit", matchedOnEmail: true });
+    expect(body.preview.persons[0].suggestions[0]).toMatchObject({ id: "email-hit", matchedOnEmail: true,
+    });
+  });
+
+  it("does not suggest an adopter-era erased mapping target", async () => {
+    prismaMock.memberApplication.findUnique.mockResolvedValue(
+      previewApplicationRow(),
+    );
+    prismaMock.member.findFirst.mockResolvedValue(null);
+    prismaMock.member.findMany.mockResolvedValue([
+      {
+        id: "legacy-erased",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "deleted-legacy@deleted.invalid",
+        ageTier: "ADULT",
+        active: true,
+        deletedAt: null,
+        canLogin: false,
+      },
+    ]);
+
+    const result = await buildApprovalMappingPreview({
+      applicationId: "app-1",
+      personDecisions: null,
+      seasonYear: 2026,
+      actor: FULL_ADMIN,
+    });
+    const body = result.body as {
+      preview: { persons: Array<{ suggestions: unknown[] }> };
+    };
+    expect(body.preview.persons[0].suggestions).toEqual([]);
   });
 
   it("409s an application that is not pending admin review", async () => {

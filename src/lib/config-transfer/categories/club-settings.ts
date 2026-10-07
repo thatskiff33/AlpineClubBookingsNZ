@@ -363,8 +363,12 @@ export const SINGLETONS: SingletonSpec[] = [
       // and a club adopting this codebase should carry its own answer with it
       // rather than silently reverting to charging.
       "linkedMoveChargesBothChangeFees",
+      // #3639: refund a late capture on a cancelled booking automatically, or
+      // have a treasurer approve it. It TRAVELS for the same reason: it is the
+      // club's own answer about how it handles members' money.
+      "lateCaptureRefundNeedsApproval",
     ],
-    // All four columns are non-null (@default); a present null fails the dry-run
+    // All five columns are non-null (@default); a present null fails the dry-run
     // (#2200). nonMemberHoldDays mirrors the admin route's 1–365 bound
     // (booking-policies/cancellation route: z.number().int().min(1).max(365)).
     // waitlistCrossLodgeOrder is enum-validated automatically.
@@ -373,6 +377,7 @@ export const SINGLETONS: SingletonSpec[] = [
       nonMemberHoldDays: { required: true, min: 1, max: 365 },
       waitlistCrossLodgeOrder: { required: true },
       linkedMoveChargesBothChangeFees: { required: true },
+      lateCaptureRefundNeedsApproval: { required: true },
     },
     excluded: {
       lodgeId:
@@ -384,13 +389,24 @@ export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "member-fields-settings",
     delegate: "memberFieldsSettings",
-    fields: ["showTitle", "showGender", "showOccupation"],
-    // All three columns are non-null Boolean (@default true); a present null
-    // fails the dry-run (#2200). No route enforces a numeric range.
+    fields: [
+      "showTitle",
+      "showGender",
+      "showOccupation",
+      "showDietaryRequirements",
+    ],
+    // All four columns are non-null Boolean (three @default true, the dietary
+    // toggle @default false); a present null fails the dry-run (#2200). No route
+    // enforces a numeric range. The dietary toggle (#2941) travels because it is
+    // a club's own answer to whether it collects the data; it carries no member
+    // value. An older bundle without the key imports unchanged, because an
+    // absent field is skipped rather than defaulted, so importing one never
+    // turns the field on or off.
     constraints: {
       showTitle: { required: true },
       showGender: { required: true },
       showOccupation: { required: true },
+      showDietaryRequirements: { required: true },
     },
     defaults: () => DEFAULT_MEMBER_FIELDS_SETTINGS,
   },
@@ -445,6 +461,7 @@ export const SINGLETONS: SingletonSpec[] = [
     delegate: "bookingRequestSettings",
     fields: [
       "showPricingToNonMembers", "quoteResponseTtlDays", "quoteReminderLeadDays",
+      "assignSchoolTeachersAsHutLeaders",
       "attendeeConfirmationLeadDays", "attendeeConfirmationReminderDays",
     ],
     // All non-null (@default); a present null fails the dry-run (#2200). Int
@@ -457,6 +474,7 @@ export const SINGLETONS: SingletonSpec[] = [
       showPricingToNonMembers: { required: true },
       quoteResponseTtlDays: { required: true, min: 1, max: 60 },
       quoteReminderLeadDays: { required: true, min: 0, max: 30 },
+      assignSchoolTeachersAsHutLeaders: { required: true },
       attendeeConfirmationLeadDays: { required: true, min: 0, max: 90 },
       attendeeConfirmationReminderDays: { required: true, min: 1, max: 30 },
     },

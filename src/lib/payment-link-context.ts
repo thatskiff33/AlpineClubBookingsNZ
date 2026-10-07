@@ -5,7 +5,7 @@
  * booking is paid; token resolution stays in `payment-link.ts`, and the
  * wording comes from `booking-narrative.ts`, which this module only feeds.
  */
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import {
@@ -21,6 +21,7 @@ import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { isPaidLikeStatus, loadPaymentLinkRecord } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /** The data the public page needs to actually take a payment. */
 interface PaymentLinkPayable {
@@ -35,6 +36,12 @@ interface PaymentLinkPayable {
    * page never offers a payment method the club hasn't enabled.
    */
   internetBankingReference?: string;
+  /**
+   * #3638 (`INV-PAY-102`): false when the booking has switched to Internet
+   * Banking. The page then shows the bank-transfer details in place of the card
+   * button, because the card door would refuse the payment anyway.
+   */
+  cardPaymentAvailable: boolean;
   /**
    * The link's hard expiry, ISO. The END OF THE CHECK-IN DAY in the club's
    * PERSISTED timezone (`payment-link-expiry.ts`, `INV-CONFIG-002`) — not the
@@ -110,6 +117,9 @@ export async function getPaymentLinkContext(
   token: string,
   { readOpenFinancialReview }: PaymentLinkContextReaders,
 ): Promise<PaymentLinkContext> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const link = await loadPaymentLinkRecord(token);
   const booking = link.booking;
   const now = new Date();
@@ -131,7 +141,7 @@ export async function getPaymentLinkContext(
   // container's (#3123). The runtime reader, not `clubTime()`: this module is
   // reachable from `src/instrumentation.node.ts`, where `server-only` throws at
   // import. Its stay dates are @db.Date lodge nights and take no zone.
-  const club = bindClubTime(await readClubTimeZoneOutsideRequest());
+  const club = bindClubTime(await readClubTimeZoneOutsideRequest(), format);
 
   const financialReviewPending = await readOpenFinancialReview(booking.id);
 
@@ -203,9 +213,9 @@ export async function getPaymentLinkContext(
   const narrative = resolveBookingNarrative({
     ...narrativeInput,
     financialReviewPending,
-  });
+  }, format);
   const paymentState = financialReviewPending
-    ? resolveBookingNarrative(narrativeInput).state
+    ? resolveBookingNarrative(narrativeInput, format).state
     : narrative.state;
 
   // A paid/completed booking burns the link so it cannot be replayed.
@@ -224,6 +234,10 @@ export async function getPaymentLinkContext(
   const internetBankingEnabled = Boolean(
     ibModules?.xeroIntegration && ibModules?.internetBankingPayments
   );
+  // A switched booking already has its invoice: its bank-transfer details are
+  // shown even if the module has since been turned off.
+  const payingByInternetBanking =
+    booking.payment?.source === PaymentSource.INTERNET_BANKING;
 
   const payable: PaymentLinkPayable | null =
     paymentState === "payable"
@@ -233,7 +247,8 @@ export async function getPaymentLinkContext(
           guestCount: booking.guests.length,
           status: booking.status,
           amountCents: booking.finalPriceCents,
-          ...(internetBankingEnabled
+          cardPaymentAvailable: !payingByInternetBanking,
+          ...(internetBankingEnabled || payingByInternetBanking
             ? {
                 internetBankingReference: buildInternetBankingPaymentReference(
                   booking.id

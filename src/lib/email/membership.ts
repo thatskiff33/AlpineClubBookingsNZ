@@ -24,6 +24,7 @@ import { formatCents } from "@/lib/utils";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 export async function sendNominationRequestEmail(params: {
   email: string;
@@ -76,7 +77,9 @@ export async function sendMembershipPaymentRecordedEmail(params: {
   seasonYear: number;
   amountCents: number | null;
   recordedAt: Date;
-}): Promise<EmailSendOutcome> {
+},
+  format: ClubFormat,
+): Promise<EmailSendOutcome> {
   // The outcome is returned, not swallowed: the admin who chose "email member"
   // is told what actually happened, and a suppressed or placeholder recipient
   // never reads back as "the member has been emailed".
@@ -88,7 +91,7 @@ export async function sendMembershipPaymentRecordedEmail(params: {
       seasonYear: params.seasonYear,
       amountCents: params.amountCents,
       recordedAt: params.recordedAt,
-    })),
+    }, format)),
     // A membership subscription is not a booking, so there is no booking whose
     // "No emails" switch could apply here (#2258): bookingContext is "none" and
     // the per-booking gate short-circuits. The admin's own per-send choice on
@@ -101,12 +104,12 @@ export async function sendMembershipPaymentRecordedEmail(params: {
       // Integer cents rendered through the repo's one money formatter; empty
       // when no fee amount is recorded, so an override's {{amount}} renders to
       // nothing instead of a made-up figure.
-      amount: params.amountCents !== null ? formatCents(params.amountCents) : "",
+      amount: params.amountCents !== null ? formatCents(params.amountCents, format) : "",
       // #2268: pre-composed optional line — the whole "Amount recorded: $x"
       // line, or nothing when no amount can be attributed to this member.
       amountRecordedNote: composeOptionalEmailLine(
         "Amount recorded",
-        params.amountCents !== null ? formatCents(params.amountCents) : null,
+        params.amountCents !== null ? formatCents(params.amountCents, format) : null,
         { trailing: "\n" },
       ),
       date: emailClubDate(params.recordedAt),

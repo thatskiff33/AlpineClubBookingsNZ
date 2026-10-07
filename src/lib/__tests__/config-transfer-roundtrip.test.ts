@@ -11,6 +11,7 @@ import {
 import { parseCsv } from "@/lib/config-transfer/csv";
 import { siteContentImporter } from "@/lib/config-transfer/categories/site-content";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // A true round-trip for the site-content category: export from a seeded source,
 // apply into an in-memory store (the real category apply logic, incl. HTML
@@ -114,6 +115,7 @@ describe("config-transfer round-trip (site-content)", () => {
       manifest,
       mode: "overwrite" as const,
       resolutions: new Map<string, string>(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
       notes: { doorCodesWritten: [] as string[] },

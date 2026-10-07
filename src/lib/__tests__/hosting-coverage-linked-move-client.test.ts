@@ -22,6 +22,7 @@ import {
   HOSTING_COVERAGE_STATE_KEY_VERSION,
   hostingCoverageStateKeyOf,
 } from "@/lib/hosting-coverage-override-client";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const KEY_A = `v1:${"a".repeat(64)}`;
 const KEY_B = `v1:${"b".repeat(64)}`;
@@ -188,12 +189,14 @@ describe("what the offer says about the money (#3232)", () => {
     // "carries one change fee only" over a total that carried none.
     const charged = formatLinkedMoveMoneySentence(
       money({ combinedAmountDueCents: 5_000 }),
+      CLUB_FORMAT_TEST,
     );
     expect(charged).toContain("No change fee applies to this move.");
     expect(charged).not.toContain("$0.00");
 
     const waived = formatLinkedMoveMoneySentence(
       money({ combinedAmountDueCents: 5_000, bothChangeFeesCharged: false }),
+      CLUB_FORMAT_TEST,
     );
     expect(waived).toContain("No change fee applies to this move.");
     expect(waived).not.toMatch(/one change fee only/);
@@ -209,6 +212,7 @@ describe("what the offer says about the money (#3232)", () => {
         combinedRefundCents: 25_000,
         combinedChangeFeeCents: 10_000,
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(sentence).not.toMatch(/total includes the change fee/);
     expect(sentence).toContain(
@@ -226,6 +230,7 @@ describe("what the offer says about the money (#3232)", () => {
         combinedRefundCents: 25_000,
         linkedCount: 2,
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(sentence).toContain("across all 3 bookings");
     expect(sentence).not.toMatch(/pay the one and be refunded the other/);
@@ -237,7 +242,7 @@ describe("what the offer says about the money (#3232)", () => {
     // bookings and hands neither a card prompt, so each increase is collected on
     // its own booking page. Nothing said so.
     expect(
-      formatLinkedMoveMoneySentence(money({ combinedAmountDueCents: 17_000 })),
+      formatLinkedMoveMoneySentence(money({ combinedAmountDueCents: 17_000 }), CLUB_FORMAT_TEST),
     ).toContain("each booking is paid on its own booking page");
   });
 
@@ -245,6 +250,7 @@ describe("what the offer says about the money (#3232)", () => {
     expect(
       formatLinkedMoveMoneySentence(
         money({ combinedRefundCents: 25_000, combinedPolicyRetainedCents: 25_000 }),
+        CLUB_FORMAT_TEST,
       ),
     ).toContain(
       "The club's cancellation policy keeps $250.00 of the reduction, so what comes back is less than the drop in price.",
@@ -254,6 +260,7 @@ describe("what the offer says about the money (#3232)", () => {
   it("promises a question only when one will really be asked", () => {
     const asks = formatLinkedMoveMoneySentence(
       money({ combinedRefundCents: 25_000, settlementMethodRequired: true }),
+      CLUB_FORMAT_TEST,
     );
     expect(asks).toContain("You will be asked once whether that comes back");
 
@@ -265,6 +272,7 @@ describe("what the offer says about the money (#3232)", () => {
         settlementMethodRequired: true,
         settlementMethodChosen: true,
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(alreadyChosen).not.toMatch(/You will be asked once/);
   });
@@ -275,6 +283,7 @@ describe("what the offer says about the money (#3232)", () => {
     // come back" over a Return-method control is what made the offer unanswerable.
     const sentence = formatLinkedMoveMoneySentence(
       money({ settlementMethodRequired: true }),
+      CLUB_FORMAT_TEST,
     );
     expect(sentence).toContain("Money does come back on this move");
     expect(sentence).toContain("account credit instead");

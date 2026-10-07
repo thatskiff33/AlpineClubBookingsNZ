@@ -94,7 +94,7 @@ import {
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   isAccessRole,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import {
   accessRoleAssignmentRowsFromTokens,
@@ -108,6 +108,12 @@ import {
 } from "@/lib/admin-permissions";
 import { getMemberLoginStageSortRank } from "@/lib/member-login-stage";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
+import {
+  buildDietaryRequirementsPatch,
+  isDietaryFieldEnabled,
+  type DietaryAccessGrant,
+} from "@/lib/member-dietary";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -139,6 +145,9 @@ export const createMemberSchema = z.object({
   lastName: nameField({ required: "Last name is required" }),
   gender: genderEnum.optional().nullable(),
   occupation: z.string().max(100).optional().nullable().or(z.literal("")),
+  // #2941: any age tier; stored only with a membership:edit dietary grant and
+  // while the club has the field ON.
+  dietaryRequirements: dietaryRequirementsInputSchema,
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
@@ -376,7 +385,7 @@ export async function listAdminMembers(
             none: { seasonYear: currentSeasonYear },
           },
         },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] }, },
       ],
     },
     {
@@ -442,7 +451,7 @@ export async function listAdminMembers(
                         { lastName: { contains: term, mode: "insensitive" } },
                         { email: { contains: term, mode: "insensitive" } },
                       ],
-                    }),
+                    })
                   ),
                 },
               ]
@@ -516,7 +525,7 @@ export async function listAdminMembers(
     // The member's descendants are excluded outright: with the old
     // "no dependants" clause gone they are no longer incidentally filtered, and
     // offering one would be offering a cycle the write route then refuses.
-    const childSide = await describeChildSideDepth(prisma, parentLinkEligibleFor);
+    const childSide = await describeChildSideDepth(prisma, parentLinkEligibleFor,);
     const excludedParentIds = [
       parentLinkEligibleFor,
       target?.parentMemberId,
@@ -817,6 +826,7 @@ export async function listAdminMembers(
     accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
     ageTier: true,
     active: true,
+    deletedAt: true,
     canLogin: true,
     cancelledAt: true,
     cancelledReason: true,
@@ -1097,7 +1107,7 @@ export async function listAdminMembers(
     // downward walk. Bounded to DEPENDENT_LINK_INELIGIBLE_EXPLANATION_LIMIT
     // rows on an already-empty result, which is the only path that reaches here.
     const candidateDepths = await Promise.all(
-      textMatches.map((candidate) => describeChildSideDepth(prisma, candidate.id)),
+      textMatches.map((candidate) => describeChildSideDepth(prisma, candidate.id),),
     );
 
     const explained = textMatches.flatMap((candidate, index) => {
@@ -1202,10 +1212,9 @@ export async function listAdminMembers(
       // — exactly the "inactive" lifecycle filter above — so without this flag an
       // erased account is indistinguishable in the list from a member someone
       // deactivated yesterday, and a multi-select Reactivate to undo a mistaken
-      // bulk deactivate would sweep it up. Resolved from the email marker (the
-      // password hash is deliberately NOT selected into a list response); the
-      // predicate reads whichever markers are present, so it stays correct if the
-      // select ever widens. The list badge is the visible warning; the refusals in
+      // bulk deactivate would sweep it up. Resolved from `deletedAt` plus the
+      // permanent reserved-address compatibility arm. The list badge is the
+      // visible warning; the refusals in
       // bulk update, member edit and the login providers are the enforcement.
       deletedAccount: isDeletedAccountRecord(m),
       subscriptionStatus:
@@ -1265,7 +1274,10 @@ export async function listAdminMembers(
 
 export async function createAdminMember(
   data: CreateMemberInput,
-  actor: { accessRoles: AccessRoleInput["accessRoles"] },
+  actor: PrivilegeCheckInput & {
+    /** #2941: a membership:edit dietary grant, or null (the field is not stored). */
+    dietaryGrant: DietaryAccessGrant | null;
+  },
 ): Promise<JsonRouteResult> {
   // Full Admin gate (issue #1012): a scoped admin (e.g. membership:edit)
   // must not be able to mint a privileged account. Evaluated canLogin-blind
@@ -1283,7 +1295,7 @@ export async function createAdminMember(
         });
   if (
     accessRoleChangeRequiresFullAdmin([], requestedGrant) &&
-    !isFullAdmin({ accessRoles: actor.accessRoles })
+    !isFullAdmin(actor)
   ) {
     return jsonResult(
       {
@@ -1395,10 +1407,7 @@ export async function createAdminMember(
     // interactively (the admin link route, the family-group reviewer, and
     // nomination approval) all walk inside their own transaction and have no
     // such window.
-    const parentSide = await describeParentSideDepth(
-      prisma,
-      parentMember.id,
-    );
+    const parentSide = await describeParentSideDepth(prisma, parentMember.id);
     if (
       exceedsFamilyLinkGenerationLimit({
         parentAncestorGenerations: parentSide.ancestorGenerations,
@@ -1573,6 +1582,17 @@ export async function createAdminMember(
         postalCountry: data.postalCountry,
       };
 
+  // #2941 (INV-PRIV-022): the toggle is re-read here; OFF, or no grant, stores
+  // nothing. The created row handed back below never carries the value — the
+  // select does not name it and the client omits it by default.
+  const dietaryPatch =
+    actor.dietaryGrant && data.dietaryRequirements !== undefined
+      ? buildDietaryRequirementsPatch({
+          enabled: await isDietaryFieldEnabled(),
+          value: data.dietaryRequirements,
+        })
+      : {};
+
   try {
     const member = await prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
@@ -1583,6 +1603,7 @@ export async function createAdminMember(
           lastName: data.lastName.trim(),
           gender: data.gender ?? null,
           occupation: data.occupation?.trim() || null,
+          ...dietaryPatch,
           phoneCountryCode: data.phoneCountryCode?.trim() || null,
           phoneAreaCode: data.phoneAreaCode?.trim() || null,
           phoneNumber: data.phoneNumber?.trim() || null,

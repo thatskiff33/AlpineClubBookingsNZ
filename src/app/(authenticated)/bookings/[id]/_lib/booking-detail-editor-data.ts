@@ -194,6 +194,8 @@ export async function buildBookingDetailEditorData({
       // viewer because it is not a secret — it is what a non-member row is being
       // charged — but only an admin is offered the control that changes it.
       otherLodgeMember: g.otherLodgeMember,
+      // #3770: the panel's supervision check reads it, as the server does.
+      consentStatus: g.consentStatus ?? null,
       nights: g.nights.map((n) => formatDateOnly(n.stayDate)),
       // #2307 (MG2-M-2): null for family and non-member rows — no badge, no
       // layout change. A conditional spread so those rows' serialised payload
@@ -211,6 +213,7 @@ export async function buildBookingDetailEditorData({
           // already resolved for its stay-boundary questions, so one page cannot
           // answer in two zones.
           timeZone: club.zone,
+          format: club.format,
         });
         // MG4 (#2309) adds the SUB-STATE beside the badge, because the edit
         // panel needs to tell "still being asked" from "the club put them
@@ -223,6 +226,8 @@ export async function buildBookingDetailEditorData({
       })(),
     })),
     viewerRole: viewerAuthorizationRole,
+    // #3451: ownership, for the own-dependant question's voice.
+    viewerIsBookingOwner: bookingOwner(booking).memberId === session.user.id,
     totalPriceCents: booking.totalPriceCents,
     discountCents: booking.discountCents,
     promoAdjustmentCents: booking.promoAdjustmentCents,

@@ -15,6 +15,7 @@ import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import type {
   CanonicalLinkExpectation,
   CanonicalLinkRecord,
@@ -31,11 +32,18 @@ import {
 } from "./xero-hardening-shared";
 import {
   findStripeSourcePaymentIds,
-  isStripePerDeltaRefundCreditNoteLink,
+  isPerRefundCreditNoteLink,
 } from "./xero-hardening-canonical-links";
-import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
+import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import { buildUnsettledRefundNoteSection } from "@/lib/xero-refund-note-unsettled";
+import {
+  readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
+} from "@/lib/xero-resolved-in-xero-fences";
 import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
-import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
+import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 const DEFAULT_STALE_PENDING_MINUTES = 30;
 
@@ -303,7 +311,9 @@ function groupRepeatedFailures(
   });
 }
 
-export async function buildXeroReconciliationReport(options?: {
+export async function buildXeroReconciliationReport(
+  format: ClubFormat,
+  options?: {
   lookbackHours?: number;
   stalePendingMinutes?: number;
   repeatedFailureThreshold?: number;
@@ -352,7 +362,7 @@ export async function buildXeroReconciliationReport(options?: {
     payments,
     subscriptions,
     links,
-    recentFailureOperations,
+    recentFailureOperationRows,
     stalePendingOperations,
     stalePendingOperationExamples,
     failedInboundEvents,
@@ -467,6 +477,7 @@ export async function buildXeroReconciliationReport(options?: {
         xeroObjectUrl: true,
         startedAt: true,
         createdAt: true,
+        manuallyResolvedAt: true,
       },
     }),
     prisma.xeroSyncOperation.count({
@@ -585,7 +596,7 @@ export async function buildXeroReconciliationReport(options?: {
       expectation,
     ])
   );
-  const activeLinksByScope = new Map<string, CanonicalLinkRecord[]>();
+  const activeLinksByScope = new Map<string, (typeof links)[number][]>();
 
   for (const link of links) {
     const scopeKey = buildCanonicalScopeKey(link);
@@ -626,7 +637,8 @@ export async function buildXeroReconciliationReport(options?: {
   // report every legitimate per-delta sibling as drift, so they are made
   // source-aware exactly like `cleanupStaleCanonicalXeroObjectLinks`. The
   // "missing" classification is deliberately kept: the scalar-pointed note
-  // should always carry an active link, whatever the source.
+  // should always carry an active link, whatever the source. A per-refund-
+  // stamped note on any source (#3880) is exempt by the same predicate.
   const stripePaymentIds = await findStripeSourcePaymentIds(
     Array.from(
       new Set(
@@ -642,7 +654,7 @@ export async function buildXeroReconciliationReport(options?: {
 
   const mismatchedCanonicalExpectations = canonicalExpectations.filter((expectation) => {
     if (
-      isStripePerDeltaRefundCreditNoteLink(expectation, stripePaymentIds)
+      isPerRefundCreditNoteLink({ ...expectation, metadata: null }, stripePaymentIds)
     ) {
       // Active sibling notes beside the scalar-pointed one are the multi-delta
       // contract, not a mismatch; an absent scalar link is already counted as
@@ -650,7 +662,11 @@ export async function buildXeroReconciliationReport(options?: {
       return false;
     }
     const scopeKey = buildCanonicalScopeKey(expectation);
-    const scopedLinks = activeLinksByScope.get(scopeKey) ?? [];
+    // #3880: a per-refund sibling is not "the active link" the field disagrees
+    // with; without the field's own link it is missing, counted above.
+    const scopedLinks = (activeLinksByScope.get(scopeKey) ?? []).filter(
+      (link) => !isPerRefundCreditNoteLink(link, stripePaymentIds)
+    );
     return (
       scopedLinks.length > 0 &&
       !exactCanonicalLinkKeys.has(buildCanonicalMatchKey(expectation))
@@ -659,7 +675,7 @@ export async function buildXeroReconciliationReport(options?: {
   const mismatchedCanonicalLinks = mismatchedCanonicalExpectations.length;
 
   const staleCanonicalLinkRecords = links.filter((link) => {
-    if (isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds)) {
+    if (isPerRefundCreditNoteLink(link, stripePaymentIds)) {
       // Exempt only LIVE per-delta coverage: the still-active mirror of a
       // note VOIDED/DELETED in Xero is exactly the drift the nightly cleanup
       // deactivates (#2901 fix round), so the digest must show it too.
@@ -689,7 +705,7 @@ export async function buildXeroReconciliationReport(options?: {
   const duplicateCanonicalLinkGroups = Array.from(activeLinksByScope.values())
     .map((scopedLinks) =>
       scopedLinks.filter(
-        (link) => !isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds)
+        (link) => !isPerRefundCreditNoteLink(link, stripePaymentIds)
       )
     )
     .flatMap((nonExemptLinks) => {
@@ -711,39 +727,87 @@ export async function buildXeroReconciliationReport(options?: {
   // (#2902, INV-PAY-050), never the refundedAmountCents mirror — an
   // account-credit-only cancellation whose fictitious note exactly equals the
   // mirror is over-covered against a cash target of ZERO and must show here.
+  // #3635 round-3 R6: a hand-made note an officer resolved in Xero covers its
+  // recorded amount everywhere a note is sized, so it counts here too, and a
+  // payment covered ONLY by such notes is a candidate as well. The target is
+  // the cash a note may answer (`resolveRefundNoteEligibleCash`), the one
+  // figure the enqueue and the executor cap against (`INV-SSOT-002`).
+  const resolvedNotePaymentIds = (
+    await prisma.xeroSyncOperation.findMany({
+      where: {
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        manuallyResolvedAt: { not: null },
+        OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
+      },
+      select: { localId: true },
+    })
+  ).flatMap((operation) => (operation.localId ? [operation.localId] : []));
+  const resolvedStripePaymentIds = await findStripeSourcePaymentIds(
+    Array.from(new Set(resolvedNotePaymentIds))
+  );
+  const overCoverageCandidateIds = new Set([...stripePaymentIds, ...resolvedStripePaymentIds]);
   const stripeRefundPaymentRows =
-    stripePaymentIds.size > 0
+    overCoverageCandidateIds.size > 0
       ? await prisma.payment.findMany({
-          where: { id: { in: Array.from(stripePaymentIds) } },
+          where: { id: { in: Array.from(overCoverageCandidateIds) } },
           select: { id: true, bookingId: true, refundedAmountCents: true },
         })
       : [];
   const overCoveredStripeRefundItems: XeroReconciliationIssueItem[] = [];
+  const overCoverageItem = (paymentId: string, detail: string): XeroReconciliationIssueItem => ({
+    label: `Payment ${paymentId}`,
+    localModel: "Payment",
+    localId: paymentId,
+    localUrl: buildLocalAdminUrl("Payment", paymentId),
+    xeroObjectType: null,
+    xeroObjectId: null,
+    xeroObjectNumber: null,
+    xeroObjectUrl: null,
+    operationId: null,
+    operationStatus: null,
+    operationType: null,
+    correlationKey: null,
+    detail,
+    latestErrorMessage: null,
+    createdAt: null,
+  });
   for (const payment of stripeRefundPaymentRows) {
-    const coveredCents = await sumCoveredRefundCreditNoteCents(payment.id);
-    const evidence = await resolveStripeCashRefundEvidence(payment);
-    if (coveredCents > evidence.cashRefundCents) {
-      overCoveredStripeRefundItems.push({
-        label: `Payment ${payment.id}`,
-        localModel: "Payment",
-        localId: payment.id,
-        localUrl: buildLocalAdminUrl("Payment", payment.id),
-        xeroObjectType: null,
-        xeroObjectId: null,
-        xeroObjectNumber: null,
-        xeroObjectUrl: null,
-        operationId: null,
-        operationStatus: null,
-        operationType: null,
-        correlationKey: null,
-        detail: `Active refund credit-note coverage is ${coveredCents} cents against a provider-backed cash refund target of ${evidence.cashRefundCents} cents (${evidence.source}; refunded mirror ${payment.refundedAmountCents} cents), so Xero over-credits this member and any further refund on this payment gets no credit note.`,
-        latestErrorMessage: null,
-        createdAt: null,
-      });
+    const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
+    if (resolved.unreadableOperationIds.length > 0) {
+      // Never skipped silently: the coverage cannot be valued, so say so.
+      overCoveredStripeRefundItems.push(
+        overCoverageItem(
+          payment.id,
+          `A refund credit note resolved by hand in Xero on this payment has no readable amount (operation ${resolved.unreadableOperationIds.join(", ")}), so its refund-note coverage cannot be valued. Check the notes in Xero by hand.`
+        )
+      );
+      continue;
+    }
+    const coveredCents = await sumRefundCreditNoteCoverageCents(payment.id, resolved);
+    const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash(payment);
+    if (coveredCents > eligibleCashCents) {
+      const linkedCents = coveredCents - resolved.coveredCents;
+      overCoveredStripeRefundItems.push(
+        overCoverageItem(
+          payment.id,
+          `Refund credit-note coverage is ${formatCents(coveredCents, format)} (${formatCents(linkedCents, format)} from active notes, ${formatCents(resolved.coveredCents, format)} from notes resolved by hand in Xero) against a refund-note cash target of ${formatCents(eligibleCashCents, format)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents, format)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`
+        )
+      );
     }
   }
   const overCoveredStripeRefundPayments = overCoveredStripeRefundItems.length;
+  // #3548: refund notes whose settlement is not on record, or part-settled.
+  const unsettledRefundNotes = await buildUnsettledRefundNoteSection(format, topLimit, overCoverageItem);
+  const unsettledRefundCreditNotes = unsettledRefundNotes.count;
 
+  // #3635 (`INV-INT-025`): an operation an officer resolved in Xero is done, so
+  // it is not a failure: not repeated, not recent, not an unsupported partial.
+  const recentFailureOperations = recentFailureOperationRows.filter(
+    (operation) => !isResolvedInXero(operation)
+  );
   const repeatedFailures = groupRepeatedFailures(recentFailureOperations)
     .filter((group) => group.failureCount >= repeatedFailureThreshold)
     .slice(0, topLimit);
@@ -796,6 +860,7 @@ export async function buildXeroReconciliationReport(options?: {
     staleCanonicalLinks,
     duplicateActiveCanonicalLinks,
     overCoveredStripeRefundPayments,
+    unsettledRefundCreditNotes,
     stalePendingOperations,
     recentFailedOperations,
     recentPartialOperations,
@@ -811,7 +876,9 @@ export async function buildXeroReconciliationReport(options?: {
     )
   );
   const mismatchedCanonicalItems = mismatchedCanonicalExpectations.map((expectation) => {
-    const scopedLinks = activeLinksByScope.get(buildCanonicalScopeKey(expectation)) ?? [];
+    const scopedLinks = (activeLinksByScope.get(buildCanonicalScopeKey(expectation)) ?? []).filter(
+      (link) => !isPerRefundCreditNoteLink(link, stripePaymentIds)
+    );
     const activeTargets = scopedLinks
       .map((link) => `${link.xeroObjectType} ${link.xeroObjectId}`)
       .join(", ");
@@ -823,7 +890,7 @@ export async function buildXeroReconciliationReport(options?: {
   });
   const staleCanonicalItems = staleCanonicalLinkRecords.map((link) => {
     if (
-      isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds) &&
+      isPerRefundCreditNoteLink(link, stripePaymentIds) &&
       isRefundCreditNoteLinkCancelledInXero(link.metadata)
     ) {
       return buildCanonicalLinkIssueItem(
@@ -947,6 +1014,7 @@ export async function buildXeroReconciliationReport(options?: {
           },
         ]
       : []),
+    ...unsettledRefundNotes.sections,
     ...(stalePendingOperations > 0
       ? [
           {
@@ -1028,12 +1096,15 @@ export async function buildXeroReconciliationReport(options?: {
       staleCanonicalLinks,
       duplicateActiveCanonicalLinks,
       overCoveredStripeRefundPayments,
+      unsettledRefundCreditNotes,
       stalePendingOperations,
       recentFailedOperations,
       recentPartialOperations,
       unsupportedPartialOperations,
       repeatedFailureCorrelations: repeatedFailures.length,
       failedInboundEvents,
+      resolvedInXeroOperations:
+        recentFailureOperationRows.length - recentFailureOperations.length,
       issueCategoryCount: issueCounts.filter((count) => count > 0).length,
       issueTotalCount: issueCounts.reduce((sum, count) => sum + count, 0),
     },
@@ -1043,7 +1114,9 @@ export async function buildXeroReconciliationReport(options?: {
   };
 }
 
-export async function sendXeroReconciliationReport(options?: {
+export async function sendXeroReconciliationReport(
+  format: ClubFormat,
+  options?: {
   lookbackHours?: number;
   stalePendingMinutes?: number;
   repeatedFailureThreshold?: number;
@@ -1051,7 +1124,7 @@ export async function sendXeroReconciliationReport(options?: {
   topLimit?: number;
   now?: Date;
 }) {
-  const report = await buildXeroReconciliationReport(options);
+  const report = await buildXeroReconciliationReport(format, options);
   const delivery = await shouldSendAdminSystemEmail({
     templateName: "admin-xero-reconciliation-report",
     hasContent: report.summary.issueTotalCount > 0,

@@ -24,6 +24,7 @@ import {
   isReturnToWaitlistTransactionContention,
 } from "@/lib/waitlist-return-contract";
 import { processWaitlistForDates } from "@/lib/waitlist";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * #2649 review — the repair's own lock budget.
@@ -118,6 +119,9 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
   const auditRequest = getAuditRequestContext(request);
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result = await prisma.$transaction(
@@ -377,7 +381,7 @@ export async function POST(
       checkIn: result.checkIn,
       checkOut: result.checkOut,
       lodgeId: result.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId },
         "Failed to process the waitlist after returning a stranded confirm",

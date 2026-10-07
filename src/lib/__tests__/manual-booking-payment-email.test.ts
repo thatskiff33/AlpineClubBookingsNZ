@@ -49,6 +49,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { applyManualBookingPayment } from "@/lib/manual-booking-payment";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const HOLD_UNTIL = new Date("2026-08-01T00:00:00Z");
 
@@ -115,6 +116,7 @@ describe("applyManualBookingPayment — confirmation email parity (M4)", () => {
       expect.any(Date),
       2,
       10000,
+      CLUB_FORMAT_TEST,
       expect.objectContaining({
         lodgeId: "lodge-1",
         provisionalGuests: { guestCount: 2, holdUntil: HOLD_UNTIL },
@@ -210,7 +212,7 @@ describe("applyManualBookingPayment — a balance left owing is stated to the me
     // The booking's PRICE is still what the money rows are derived from — the
     // template splits it into paid vs still owing.
     expect(call[6]).toBe(12100);
-    expect(call[7]).toMatchObject({
+    expect(call[8]).toMatchObject({
       outstandingBalance: { amountCents: 2100, payableOnline: true },
     });
   });
@@ -268,7 +270,7 @@ describe("applyManualBookingPayment — a balance left owing is stated to the me
     const call = mocks.sendBookingConfirmedEmail.mock.calls[0];
 
     expect(call[6]).toBe(20000);
-    expect(call[7]).toMatchObject({
+    expect(call[8]).toMatchObject({
       outstandingBalance: { amountCents: 3000, payableOnline: true },
     });
   });
@@ -278,7 +280,7 @@ describe("applyManualBookingPayment — a balance left owing is stated to the me
 
     const call = await send();
 
-    expect(call[7]).toMatchObject({
+    expect(call[8]).toMatchObject({
       outstandingBalance: { amountCents: 2100, payableOnline: false },
     });
   });

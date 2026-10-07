@@ -65,19 +65,19 @@ import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
 // The club's currency and locale seed (#3563, programme #3205). Marked
 // `server-only` on arrival, and a fixture here for the same reason as its
-// timezone sibling above — plus a sharper one. `NEXT_PUBLIC_CURRENCY` and
-// `NEXT_PUBLIC_LOCALE` have no `Dockerfile` build argument at all, so in the
-// published image a client-side read does not merely answer from the build:
-// it inlines `undefined`, falls through to the shipped New Zealand defaults,
-// and every non-NZ club silently reads NZD. That is the defect programme
-// #3205 exists to fix (INV-CONFIG-006).
+// timezone sibling above — plus a sharper one. It reads the server's CURRENCY /
+// LOCALE, which a browser bundle does not have (they are not NEXT_PUBLIC_, and
+// since #3567 the NEXT_PUBLIC_ twins are not read at all), so a client-side read
+// would find nothing, fall through to the shipped New Zealand defaults, and
+// every non-NZ club would silently read NZD. That is the defect programme #3205
+// existed to fix (INV-CONFIG-006).
 // ruleid: acb-client-server-boundary
 import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
 
 // The environment-role declaration and its resolver (#3034, epic #2986). Both
 // carry the marker since #3204, and both stay fixtures here for the same reason
 // as above: `setup-readiness-db.ts` reaches the resolver from the
-// `npm run setup:check` entrypoint, which since #2850 carries the condition, so
+// `pnpm run setup:check` entrypoint, which since #2850 carries the condition, so
 // the marker costs that command nothing. The declaration module reads
 // `process.env.APP_ENVIRONMENT_ROLE`, which is deliberately NOT `NEXT_PUBLIC_*`
 // and therefore inlines as `undefined` in a browser. A client import would read

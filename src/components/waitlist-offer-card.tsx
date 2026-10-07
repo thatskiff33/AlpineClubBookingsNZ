@@ -12,6 +12,7 @@ import {
 } from "@/lib/waitlist-confirm-recovery-contract";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface WaitlistOfferCardProps {
   bookingId: string;
@@ -30,6 +31,7 @@ export function WaitlistOfferCard({
   offeredLodgeName,
   offeredPriceCents,
 }: WaitlistOfferCardProps) {
+  const format = useClubFormat();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   // Why the CTA is gone. `status-unverified` = we could not read the outcome, so
@@ -190,7 +192,7 @@ export function WaitlistOfferCard({
             </p>
             <p className="text-sm text-muted-foreground">
               The price at this lodge for your stay is{" "}
-              <strong>{displayPriceCents !== null && displayPriceCents !== undefined ? formatCents(displayPriceCents) : ""}</strong>
+              <strong>{displayPriceCents !== null && displayPriceCents !== undefined ? formatCents(displayPriceCents, format) : ""}</strong>
               , which differs from your original booking. Nothing is booked
               until you confirm this price — your original waitlist entry is
               replaced only once you do.
@@ -252,7 +254,7 @@ export function WaitlistOfferCard({
               {confirming
                 ? "Confirming..."
                 : isCrossLodge && displayPriceCents !== null && displayPriceCents !== undefined
-                  ? `Confirm at ${offeredLodgeName ?? "this lodge"} for ${formatCents(displayPriceCents)}`
+                  ? `Confirm at ${offeredLodgeName ?? "this lodge"} for ${formatCents(displayPriceCents, format)}`
                   : "Confirm Booking"}
             </Button>
           ) : null}

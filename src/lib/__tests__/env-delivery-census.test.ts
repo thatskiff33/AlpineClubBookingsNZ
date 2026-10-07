@@ -276,9 +276,8 @@ const DELIBERATELY_NOT_DELIVERED: Record<string, string> = {
 
   // NEXT_PUBLIC_* are inlined into the browser bundle at BUILD time. Delivering
   // one at runtime would let the server and the browser disagree about the same
-  // value. The server-side spellings (CURRENCY, LOCALE, TZ) are delivered.
-  NEXT_PUBLIC_CURRENCY: "inlined into the client bundle at build time; CURRENCY is delivered",
-  NEXT_PUBLIC_LOCALE: "inlined into the client bundle at build time; LOCALE is delivered",
+  // value. The server-side spelling (TZ) is delivered. NEXT_PUBLIC_CURRENCY and
+  // NEXT_PUBLIC_LOCALE left the env files in #3567, when they stopped being read.
   NEXT_PUBLIC_TZ: "inlined into the client bundle at build time; TZ is delivered",
 };
 

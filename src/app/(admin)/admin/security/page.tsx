@@ -5,6 +5,7 @@ import { PasswordPolicyCard } from "@/components/admin/security/password-policy-
 import { getGoogleSetupState } from "@/lib/google-config";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { loadClubModuleSettings } from "@/lib/module-settings";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Login & Security admin page (epic #2030, child #2033). Scaffolds the page and
 // hosts the password-policy card, the magic-link sign-in card (#2034), and the
@@ -25,9 +26,11 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminSecurityPage() {
+  // The club's format (#3565), resolved once per render pass.
+  const format = await clubFormatValues();
   const [{ settings: moduleSettings }, loginSecurity, googleState] =
     await Promise.all([
-      loadClubModuleSettings(),
+      loadClubModuleSettings(format),
       loadLoginSecuritySettings(),
       // Fail-open: a store error degrades to "not configured / not verified" so
       // the card renders (and the enable gate shows) rather than the page 500ing.

@@ -45,6 +45,7 @@ vi.mock("@/lib/payment-link-split-guest", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/[id]/send-guest-payment-link/route";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const OWNER = {
   user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
@@ -163,6 +164,6 @@ describe("POST /api/bookings/[id]/send-guest-payment-link — deletion guard ord
     const res = await callRoute();
 
     expect(res.status).toBe(200);
-    expect(mocks.issueSplitGuestPaymentLink).toHaveBeenCalledWith("child-1");
+    expect(mocks.issueSplitGuestPaymentLink).toHaveBeenCalledWith("child-1", CLUB_FORMAT_TEST);
   });
 });

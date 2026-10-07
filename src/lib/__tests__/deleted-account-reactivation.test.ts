@@ -131,6 +131,8 @@ vi.mock("@/lib/two-factor", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
+  // #3454: the erasure's two-factor clear records itself in the transaction.
+  createAuditLog: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
   getAuditEmailDomain: vi.fn(
     (email?: string | null) => email?.split("@")[1]?.toLowerCase() ?? null,
@@ -174,6 +176,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { createAuditLog, logAudit } from "@/lib/audit";
 import { authConfig } from "@/lib/auth";
 import { resolveGoogleProfile } from "@/lib/google-oauth";
 import { updateAdminMember } from "@/lib/admin-member-detail-service";
@@ -185,6 +188,7 @@ import {
   DELETED_ACCOUNT_PASSWORD_HASH,
   isDeletedAccountEmail,
   isDeletedAccountRecord,
+  notDeletedAccountWhere,
 } from "@/lib/deleted-account";
 
 const mockedPrisma = vi.mocked(prisma, true);
@@ -220,6 +224,7 @@ function liveMember(overrides: Record<string, unknown> = {}) {
     twoFactorMethod: null,
     postLoginLanding: null,
     googleSub: "google-sub-jane",
+    deletedAt: null,
     cancelledAt: null,
     archivedAt: null,
     xeroContactId: null,
@@ -239,7 +244,9 @@ function liveMember(overrides: Record<string, unknown> = {}) {
  * route is the authority, and the point of capturing it is that the refusal
  * assertions below are made against whatever it genuinely leaves behind.
  */
-async function captureAnonymisationPayload(): Promise<Record<string, unknown>> {
+async function captureAnonymisationPayload(
+  liveOverrides: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
   mockRequireAdmin.mockResolvedValue({ ok: true, session: ADMIN_SESSION });
   mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
     id: "dr1",
@@ -286,9 +293,9 @@ async function captureAnonymisationPayload(): Promise<Record<string, unknown>> {
         // is still live at this point in the transaction — it is this very
         // statement that is about to anonymise them — so the fence must see the
         // pre-anonymisation row and allow the write through.
-        findUnique: vi.fn().mockResolvedValue(liveMember()),
+        findUnique: vi.fn().mockResolvedValue(liveMember(liveOverrides)),
       },
-      familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), },
       bookingGuest: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       bedAllocation: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -380,13 +387,14 @@ function deletedMemberRow(
   return { ...liveMember(), ...anonymisation, ...overrides };
 }
 
-/** A hand-built equivalent for the focused tests, pinned by the combination test. */
+/** An adopter-era erased row: reserved address present, structural marker absent. */
 function deletedMemberFixture(overrides: Record<string, unknown> = {}) {
   return liveMember({
     firstName: "Deleted",
     lastName: "Member",
     email: "deleted-m1abcdef@deleted.invalid",
     passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
+    deletedAt: null,
     active: false,
     ...overrides,
   });
@@ -517,8 +525,9 @@ describe("#2620 the combination: anonymise, then try every way back in", () => {
     const editRes = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
+      dietaryGrant: null,
       data: { active: true } as never,
     });
     expect(editRes.init?.status).toBe(409);
@@ -630,7 +639,9 @@ describe("#2620 reactivation refusals, one path at a time", () => {
       fn({
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: { updateMany, count: vi.fn().mockResolvedValue(2) },
-        familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        familyGroupMember: {
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
         bedAllocation: {
           findMany: vi.fn().mockResolvedValue([]),
           deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -651,8 +662,9 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
+      dietaryGrant: null,
       data: { active: true } as never,
     });
     expect(res.init?.status).toBe(409);
@@ -670,8 +682,9 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
+      dietaryGrant: null,
       data: { canLogin: true } as never,
     });
     expect(res.init?.status).toBe(409);
@@ -691,8 +704,9 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
+      dietaryGrant: null,
       data: { active: false, canLogin: true } as never,
     });
     expect(res.init?.status).not.toBe(409);
@@ -775,9 +789,11 @@ describe("#2620 login refusals, one path at a time", () => {
 });
 
 describe("isDeletedAccountRecord", () => {
-  it("recognises either marker on its own", () => {
+  it("recognises the structural marker or adopter-compatibility address on its own", () => {
     expect(
-      isDeletedAccountRecord({ passwordHash: DELETED_ACCOUNT_PASSWORD_HASH }),
+      isDeletedAccountRecord({
+        deletedAt: new Date("2026-07-01T00:00:00.000Z"),
+      }),
     ).toBe(true);
     expect(
       isDeletedAccountRecord({ email: "deleted-abcdef12@deleted.invalid" }),
@@ -787,15 +803,40 @@ describe("isDeletedAccountRecord", () => {
     expect(
       isDeletedAccountRecord({
         email: "deleted-abcdef12@deleted.invalid",
-        passwordHash: null,
+        deletedAt: null,
       }),
     ).toBe(true);
   });
 
   it("is case- and whitespace-insensitive on the address", () => {
-    expect(
-      isDeletedAccountEmail("  Deleted-ABCDEF12@Deleted.Invalid  "),
-    ).toBe(true);
+    expect(isDeletedAccountEmail("  Deleted-ABCDEF12@Deleted.Invalid  ")).toBe(
+      true,
+    );
+  });
+
+  it("prefilters padded adopter addresses before capped Prisma queries", () => {
+    const clauses = notDeletedAccountWhere();
+    const addressFilters = (
+      clauses[1] as {
+        NOT: {
+          OR: Array<{
+            email: { endsWith?: string; contains?: string; mode: string };
+          }>;
+        };
+      }
+    ).NOT.OR;
+
+    expect(addressFilters[0]).toEqual({
+      email: { endsWith: "@deleted.invalid", mode: "insensitive" },
+    });
+    const paddedSuffixes = addressFilters
+      .slice(1)
+      .map((filter) => filter.email.contains);
+    expect(paddedSuffixes).toContain("@deleted.invalid ");
+    expect(paddedSuffixes).toContain("@deleted.invalid\t");
+    expect(paddedSuffixes).toContain("@deleted.invalid\u00a0");
+    expect(paddedSuffixes).toContain("@deleted.invalid\ufeff");
+    expect(paddedSuffixes).not.toContain("@deleted.invalid.example");
   });
 
   it("does not fire on a live member, a walk-in placeholder, or nothing at all", () => {
@@ -804,7 +845,7 @@ describe("isDeletedAccountRecord", () => {
     expect(
       isDeletedAccountRecord({
         email: "walk-in-2f1c@no-email.invalid",
-        passwordHash: "$2b$12$whatever",
+        deletedAt: null,
       }),
     ).toBe(false);
     expect(isDeletedAccountRecord(null)).toBe(false);
@@ -814,5 +855,54 @@ describe("isDeletedAccountRecord", () => {
     expect(isDeletedAccountEmail("someone@notdeleted.invalid.example")).toBe(
       false,
     );
+  });
+});
+
+describe("#3454 the erasure's two-factor clear is recorded in its own transaction", () => {
+  const TOTP_CIPHERTEXT = "v1:SENTINEL-totp-ciphertext-3454";
+  const clearedCalls = () =>
+    vi
+      .mocked(createAuditLog)
+      .mock.calls.filter(
+        ([params]) => (params as { action?: string }).action === "security.two_factor.cleared",
+      );
+
+  it("names the administrator, on the transaction client, and carries no secret", async () => {
+    const anonymisation = await captureAnonymisationPayload({
+      twoFactorEnabled: true,
+      twoFactorMethod: "TOTP",
+      totpSecret: TOTP_CIPHERTEXT,
+    });
+    expect(anonymisation.totpSecret).toBeNull();
+
+    const calls = clearedCalls();
+    expect(calls).toHaveLength(1);
+    const [params, client] = calls[0];
+    expect(params).toMatchObject({
+      category: "security",
+      actorMemberId: "admin-1",
+      subjectMemberId: "m1",
+      metadata: { actorKind: "admin", method: "TOTP", authenticatorApp: true },
+      memberDisclosure: { visibility: "internal" },
+      // The canonical request context (`getAuditRequestContext`, mocked above),
+      // not the route's own first-hop forwarded-for (#3454 review).
+      ipAddress: "127.0.0.1",
+    });
+    // The transaction client, not the module client: it commits with the clear.
+    expect(client).not.toBe(prisma);
+    expect(client).toBeDefined();
+    expect(JSON.stringify(params)).not.toContain("SENTINEL");
+    // ONE erasure, ONE IP: the decision's own row records the same canonical
+    // address as the clear's row, not the first forwarded-for hop (#3454 review).
+    const approved = vi
+      .mocked(logAudit)
+      .mock.calls.map(([event]) => event as { action?: string; ipAddress?: string })
+      .find((event) => event.action === "member.deletion_approved");
+    expect(approved?.ipAddress).toBe("127.0.0.1");
+  });
+
+  it("records nothing for a member who had no second factor", async () => {
+    await captureAnonymisationPayload();
+    expect(clearedCalls()).toHaveLength(0);
   });
 });

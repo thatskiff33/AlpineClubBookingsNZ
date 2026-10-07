@@ -163,6 +163,39 @@ describe("Admin waitlist page", () => {
     expect(recoveryLink.getAttribute("href")).toBe("/admin/email-deliverability");
   });
 
+  it("sends a suppressed live offer to the real booking page (#3635)", async () => {
+    mocks.currentSearch = "";
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            ...waitlistEntry(),
+            offerEmailDelivery: {
+              status: "SUPPRESSED",
+              emailLogId: null,
+              attempts: 0,
+              lastAttemptAt: null,
+              errorMessage: null,
+              retryState: "suppressed_live_offer",
+              needsOperatorAction: true,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      }),
+    });
+
+    render(<AdminWaitlistPage />);
+
+    // `/admin/bookings/<id>` does not exist; the booking page is /bookings/<id>.
+    const link = await screen.findByRole("link", { name: /Open the booking/i });
+    const href = decodeURIComponent(link.getAttribute("href") ?? "");
+    expect(href.startsWith("/bookings/booking-1?returnTo=/admin/waitlist")).toBe(true);
+  });
+
   it("reports force-confirmed overbook dates and links the critical audit record", async () => {
     mocks.currentSearch = "";
     let waitlistLoads = 0;
@@ -729,7 +762,7 @@ describe("Admin refund and credit review page", () => {
     render(<RefundRequestsPage />);
 
     const amountBox = () =>
-      screen.getByLabelText(/Refund Amount/i) as HTMLInputElement;
+      screen.getByRole("textbox", { name: /Refund Amount/i }) as HTMLInputElement;
 
     /*
       Only one review panel is open at a time, and the request being reviewed

@@ -28,7 +28,9 @@ import {
 } from "@/lib/date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
+import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -52,6 +54,9 @@ export async function copyBookingToDraft({
   targetCheckIn: string;
   adminMemberId: string;
 }) {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const newCheckIn = parseDateOnly(targetCheckIn);
   if (Number.isNaN(newCheckIn.getTime())) {
     throw new ApiError("Invalid target check-in date", 400);
@@ -240,6 +245,7 @@ export async function copyBookingToDraft({
   const guests = consentPlan.guests;
 
   const booking = await createDraftBooking({
+    format,
     effectiveMemberId: sourceOwnerMemberId,
     isOnBehalf: true,
     sessionUserId: adminMemberId,
@@ -252,6 +258,10 @@ export async function copyBookingToDraft({
     guests,
     notes: source.notes ?? undefined,
     expectedArrivalTime: source.expectedArrivalTime ?? undefined,
+    // #3029 (`INV-MOD-059`, `INV-GUEST-011`): a copy is a NEW stay, so its guest
+    // rows are seeded afresh from the members' current profiles and the source
+    // booking's values are not carried. Read before the create's transaction.
+    guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
   });
 
   // AFTER the draft's transaction has committed. Awaited so a copy that could not

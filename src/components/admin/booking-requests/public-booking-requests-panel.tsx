@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -37,9 +38,10 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
-import { formatCents } from "@/lib/utils";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { ResolvePendingSchoolAdults } from "@/components/admin/booking-requests/resolve-pending-school-adults";
 import {
   BookingRequestContactPicker,
   type OwnerContactChoice,
@@ -98,19 +100,21 @@ function deriveChildCounts(
 /**
  * #2342: does this request carry stored data the server could not read back?
  *
- * True for ANY of the three per-blob flags. A row in this state cannot be
- * quoted, priced, held or approved — every one of those routes now strict-reads
- * the stored blobs and refuses — so the panel disables those affordances rather
- * than offering buttons that are guaranteed to fail. Decline is deliberately
- * NOT gated: it works end to end on a flagged row and is the intended way out.
+ * True for ANY per-blob flag. The panel disables quoting, pricing, holding and
+ * approval rather than inviting an officer to act on an unreadable party.
+ * School approval strict-reads teachers; the other stored blobs have their own
+ * server guards. Decline is deliberately NOT gated: it works end to end on a
+ * flagged row and is the intended way out.
  */
 function storedDataNeedsAttention(request: {
   guestDataNeedsAttention?: boolean;
+  teacherDataNeedsAttention?: boolean;
   linkedMemberDataNeedsAttention?: boolean;
   quoteDataNeedsAttention?: boolean;
 }): boolean {
   return Boolean(
     request.guestDataNeedsAttention ||
+      request.teacherDataNeedsAttention ||
       request.linkedMemberDataNeedsAttention ||
       request.quoteDataNeedsAttention,
   );
@@ -202,6 +206,8 @@ interface PublicBookingRequestData {
   // hint and the actual warning threshold cannot diverge per lodge (#1656).
   schoolGroupSoftCap: number;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
+  pendingAdultCount: number;
+  pendingAdultsWriteEnabled?: boolean;
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   linkedGuestMembers: Array<{ guestIndex: number; memberId: string }>;
   contactFirstName: string;
@@ -211,8 +217,8 @@ interface PublicBookingRequestData {
   checkIn: string;
   checkOut: string;
   guests: Array<{ firstName: string; lastName: string; ageTier: string }>;
-  // #2342: one flag per stored JSON blob, each present (and always true) only
-  // when THAT blob failed validation on the server; all three are absent on a
+  // #2342/#3485: one flag per stored JSON blob, each present (and always true)
+  // only when THAT blob failed validation on the server; all are absent on a
   // well-formed request. Kept separate rather than OR'd into one, because the
   // panel has to be able to say which thing is wrong — telling an officer their
   // member links are hidden when the links parsed fine, or to distrust names
@@ -221,6 +227,8 @@ interface PublicBookingRequestData {
   // `guests` above is then the salvaged list (names as saved, bar collapsed
   // line breaks and a 100-character cap) rather than validated data.
   guestDataNeedsAttention?: boolean;
+  // School-only: the entire stored teacher list failed its acting-path schema.
+  teacherDataNeedsAttention?: boolean;
   // `linkedGuestMembers` above is then empty — no half-trusted links.
   linkedMemberDataNeedsAttention?: boolean;
   // `latestQuote.options` below is then empty.
@@ -358,6 +366,7 @@ function statusBadgeClass(status: PublicBookingRequestData["status"]) {
     status === "PRICED" ||
     status === "QUOTED" ||
     status === "QUOTE_SENT" ||
+    status === "ACCEPTED" ||
     status === "QUERY_PENDING" ||
     status === "MODIFICATION_REQUESTED"
   ) return "border-warning-6 bg-warning-3 text-warning-11";
@@ -415,6 +424,15 @@ export function PublicBookingRequestsPanel({
   showHeading = true,
   canEdit = true,
 }: PublicBookingRequestsPanelProps) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const format = useClubFormat();
+  const { currencyCode } = format;
   const formatDateTime = useInstantFormatter();
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
@@ -579,7 +597,7 @@ export function PublicBookingRequestsPanel({
   // figure to show when the officer has not typed in that option's box.
   function priceInputValue(request: PublicBookingRequestData) {
     const cents = request.priceCents ?? request.indicativePriceCents;
-    return cents != null ? (cents / 100).toFixed(2) : "";
+    return cents != null ? formatCentsPlain(cents) : "";
   }
 
   function quoteOptionIds(request: PublicBookingRequestData) {
@@ -616,7 +634,7 @@ export function PublicBookingRequestsPanel({
     ageTier: string,
   ) {
     const cents = request.suggestedGuestNightRates[ageTier]?.nonMemberCents;
-    return cents != null ? (cents / 100).toFixed(2) : "";
+    return cents != null ? formatCentsPlain(cents) : "";
   }
 
   // #2749: the suggested pre-fill value for a rate field. A member combo, or any
@@ -630,7 +648,7 @@ export function PublicBookingRequestsPanel({
     if (!tierRates) return "";
     const useMemberRate = combo.isMember || request.otherLodgeId != null;
     const cents = useMemberRate ? tierRates.memberCents : tierRates.nonMemberCents;
-    return cents != null ? (cents / 100).toFixed(2) : "";
+    return cents != null ? formatCentsPlain(cents) : "";
   }
 
   function activeMemberLinks(request: PublicBookingRequestData): UiMemberLink[] {
@@ -644,14 +662,19 @@ export function PublicBookingRequestsPanel({
   function pricingCombos(request: PublicBookingRequestData) {
     const seen = new Set<string>();
     const combos: Array<{ ageTier: string; isMember: boolean }> = [];
-    plannedGuests(request).forEach((guest, guestIndex) => {
-      const isMember = Boolean(linkedMemberIdFor(request, guestIndex));
-      const key = `${guest.ageTier}:${isMember}`;
+    function addCombo(ageTier: string, isMember: boolean) {
+      const key = `${ageTier}:${isMember}`;
       if (!seen.has(key)) {
         seen.add(key);
-        combos.push({ ageTier: guest.ageTier, isMember });
+        combos.push({ ageTier, isMember });
       }
+    }
+    plannedGuests(request).forEach((guest, guestIndex) => {
+      addCombo(guest.ageTier, Boolean(linkedMemberIdFor(request, guestIndex)));
     });
+    if (request.type === "SCHOOL" && request.pendingAdultCount > 0) {
+      addCombo("ADULT", false);
+    }
     return combos;
   }
 
@@ -663,7 +686,7 @@ export function PublicBookingRequestsPanel({
     if (typed !== undefined) return typed;
     if (request.latestQuote) {
       const option = request.latestQuote.options.find((item) => item.id === optionId);
-      if (option) return (option.totalCents / 100).toFixed(2);
+      if (option) return formatCentsPlain(option.totalCents);
     }
     if (optionId === "STANDARD") return priceInputValue(request);
     return "";
@@ -881,11 +904,11 @@ export function PublicBookingRequestsPanel({
       (sum, tier) => sum + parseCount(counts[tier]),
       0,
     );
-    return request.teachers.length + children;
+    return request.teachers.length + (request.pendingAdultCount ?? 0) + children;
   }
 
   // #2685: the canonical exact parser. `null` already reaches the officer as a
-  // thrown "Enter a valid …" message below, and now covers a malformed suffix or
+  // thrown format-specific message below, and now covers a malformed suffix or
   // a third decimal place rather than silently keeping the leading digits.
   function dollarsToCents(raw: string) {
     return parseDecimalDollarsToCents(raw);
@@ -905,7 +928,7 @@ export function PublicBookingRequestsPanel({
         if (pricingMode === "OVERALL_TOTAL") {
           const totalCents = dollarsToCents(optionTotalInputValue(request, optionId));
           if (totalCents == null) {
-            throw new Error(`Enter a valid ${optionLabel(optionId).toLowerCase()} total`);
+            throw new Error(`Enter ${optionLabel(optionId).toLowerCase()} total in dollars and cents, up to 2 decimal places`);
           }
           return {
             id: optionId,
@@ -923,7 +946,7 @@ export function PublicBookingRequestsPanel({
           );
           if (rateCents == null) {
             throw new Error(
-              `Enter a valid ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate`
+              `Enter ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate in dollars and cents, up to 2 decimal places`
             );
           }
           return { ...combo, rateCents };
@@ -1077,7 +1100,7 @@ export function PublicBookingRequestsPanel({
         if (response.status === 409 && Array.isArray(data.fullNights)) {
           throw new Error(
             `The lodge is at capacity for: ${data.fullNights
-              .map((d: string) => formatStayDate(d))
+              .map((d: string) => formatStayDate(d, format))
               .join(", ")}`
           );
         }
@@ -1303,7 +1326,7 @@ export function PublicBookingRequestsPanel({
         if (response.status === 409 && Array.isArray(data.fullNights)) {
           throw new Error(
             `The lodge is at capacity for: ${data.fullNights
-              .map((d: string) => formatStayDate(d))
+              .map((d: string) => formatStayDate(d, format))
               .join(", ")}`
           );
         }
@@ -1341,9 +1364,13 @@ export function PublicBookingRequestsPanel({
         }
       } else if (data.type === "SCHOOL") {
         toast.success(
-          data.invoiceMode === "xero"
-            ? "School booking confirmed. The Xero invoice has been emailed to the school and the teacher PIN email sent."
-            : "School booking confirmed. The Xero module is off, so admins have been emailed to invoice the school manually."
+          data.alreadyConverted === true
+            ? "School booking was already confirmed. No new invoice or teacher PIN email was sent."
+            : `School booking confirmed. ${data.teacherHutLeaderAssignmentsCreated === true
+              ? "Teacher hut-leader assignments were created."
+              : "Teacher hut-leader assignments were not created."} ${data.invoiceMode === "xero"
+              ? "Check invoice progress and email delivery."
+              : "The Xero module is off, so manual invoicing is required. Check email delivery."}`
         );
       } else {
         toast.success("Request approved. A payment link has been emailed to the requester.");
@@ -1607,25 +1634,26 @@ export function PublicBookingRequestsPanel({
                   <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <span className="text-muted-foreground">Dates:</span>{" "}
-                      {formatStayDate(request.checkIn)} to {formatStayDate(request.checkOut)}
+                      {formatStayDate(request.checkIn, format)} to {formatStayDate(request.checkOut, format)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Nights:</span>{" "}
                       {nightsBetween(request.checkIn, request.checkOut)}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Guests:</span> {request.guests.length}
+                      <span className="text-muted-foreground">Guests:</span> {request.guests.length + (request.pendingAdultCount ?? 0)}
+                      {request.pendingAdultCount > 0 ? ` (${request.pendingAdultCount} adult names pending)` : ""}
                     </div>
                     {request.indicativePriceCents != null ? (
                       <div>
                         <span className="text-muted-foreground">Indicative price:</span>{" "}
-                        {formatCents(request.indicativePriceCents)}
+                        {formatCents(request.indicativePriceCents, format)}
                       </div>
                     ) : null}
                     {request.priceCents != null ? (
                       <div>
                         <span className="text-muted-foreground">Quoted price:</span>{" "}
-                        {formatCents(request.priceCents)}
+                        {formatCents(request.priceCents, format)}
                       </div>
                     ) : null}
                   </div>
@@ -1683,6 +1711,13 @@ export function PublicBookingRequestsPanel({
                             confirmed details.
                           </li>
                         ) : null}
+                        {request.teacherDataNeedsAttention ? (
+                          <li>
+                            The saved teacher list could not be read back. The
+                            teacher and parent-helper section is hidden; names
+                            in the guest badges below are only a rough record.
+                          </li>
+                        ) : null}
                         {request.linkedMemberDataNeedsAttention ? (
                           <li>
                             The saved member links could not be read back, so no
@@ -1704,11 +1739,16 @@ export function PublicBookingRequestsPanel({
                       {LINKING_EDITOR_STATUSES.has(request.status) ? (
                         <p className="mt-1">
                           Quoting, pricing, holding and approving are turned off
-                          for this request and will be refused if attempted —
-                          there is no screen for repairing the saved data. Check
-                          what the group actually wants with the requester, then
-                          either <strong>Decline</strong> it so they can submit
-                          again, or ask support to repair the stored row.
+                          in this panel. {request.type === "SCHOOL" &&
+                          request.teacherDataNeedsAttention ? (
+                            <>School approval also refuses unreadable teacher details. </>
+                          ) : null}
+                          There is no screen for repairing the saved data. Check
+                          what the group actually wants with the requester. {canEdit ? (
+                            <>Either <strong>Decline</strong> it so they can submit again, or ask support to repair the stored row.</>
+                          ) : (
+                            <>Ask an officer with edit access to decline it so they can submit again, or to arrange support repair.</>
+                          )}
                         </p>
                       ) : (
                         <p className="mt-1">
@@ -1757,7 +1797,7 @@ export function PublicBookingRequestsPanel({
                       <div className="mt-2 flex flex-wrap gap-2">
                         {request.latestQuote.options.map((option) => (
                           <Badge key={option.id} variant="secondary">
-                            {option.label}: {formatCents(option.totalCents)}
+                            {option.label}: {formatCents(option.totalCents, format)}
                           </Badge>
                         ))}
                       </div>
@@ -1946,13 +1986,20 @@ export function PublicBookingRequestsPanel({
                               controls on one card with very different
                               consequences and nothing to tell them apart, so
                               each now says what it changes. */}
-                          <p className="text-xs text-muted-foreground">
-                            {request.teachers.length} teachers &amp; helpers + children ={" "}
-                            {plannedGuestTotal(request)} total. These boxes change only the
-                            booking you are about to quote or approve, not what the school
-                            asked for. To change the request itself — its dates, its teachers
-                            or its catering — use &ldquo;Correct this request&rdquo; above.
-                          </p>
+                          {request.teacherDataNeedsAttention ? (
+                            <p className="text-xs text-muted-foreground">
+                              The teacher and helper count is unavailable, so the
+                              group total cannot be confirmed from this record.
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              {request.teachers.length} named teachers &amp; helpers + {request.pendingAdultCount ?? 0} adults awaiting names + children ={" "}
+                              {plannedGuestTotal(request)} total. These boxes change only the
+                              booking you are about to quote or approve, not what the school
+                              asked for. To change the request itself — its dates, its teachers
+                              or its catering — use &ldquo;Correct this request&rdquo; above.
+                            </p>
+                          )}
                           {/* #3412: saving the quote now rewrites the group,
                               and beds already held for the old numbers are not
                               re-sized under it. Say so before the click — the
@@ -1993,7 +2040,8 @@ export function PublicBookingRequestsPanel({
                               you send the quote or press <strong>Hold slots</strong>.
                             </p>
                           ) : null}
-                          {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
+                          {!request.teacherDataNeedsAttention &&
+                          plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
                             <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
                               Over {request.schoolGroupSoftCap}: confirm a club member is staying with the
                               group before approving.
@@ -2040,19 +2088,18 @@ export function PublicBookingRequestsPanel({
                                 <div className="mt-2 flex flex-wrap items-end gap-3">
                                   <div className="space-y-1">
                                     <Label htmlFor={`price-${request.id}-${optionId}`}>
-                                      Total ({APP_CURRENCY})
+                                      Total ({currencyCode})
                                     </Label>
-                                    <Input
+                                    <MoneyInput
                                       id={`price-${request.id}-${optionId}`}
-                                      {...MONEY_INPUT_PROPS}
                                       className="w-32"
                                       disabled={actionsBlocked}
                                       value={optionTotalInputValue(request, optionId)}
-                                      onChange={(event) =>
+                                      onValueChange={(value) =>
                                         setPriceInputs((prev) => ({
                                           ...prev,
                                           [priceInputKey(request.id, optionId)]:
-                                            event.target.value,
+                                            value,
                                         }))
                                       }
                                     />
@@ -2083,19 +2130,18 @@ export function PublicBookingRequestsPanel({
                                           {combo.ageTier}{" "}
                                           {combo.isMember ? "member" : "non-member"}
                                         </Label>
-                                        <Input
+                                        <MoneyInput
                                           id={key}
-                                          {...MONEY_INPUT_PROPS}
                                           className="w-32"
                                           disabled={actionsBlocked}
                                           value={
                                             rateInputs[key] ??
                                             suggestedRateDollars(request, combo)
                                           }
-                                          onChange={(event) =>
+                                          onValueChange={(value) =>
                                             setRateInputs((prev) => ({
                                               ...prev,
-                                              [key]: event.target.value,
+                                              [key]: value,
                                             }))
                                           }
                                         />
@@ -2150,10 +2196,10 @@ export function PublicBookingRequestsPanel({
                                 <li key={`${conflict.memberId}-${conflict.bookingCheckIn}`}>
                                   {conflict.memberName} is already on{" "}
                                   {conflict.bookingOwnerName}&apos;s booking (
-                                  {formatStayDate(conflict.bookingCheckIn)}–
-                                  {formatStayDate(conflict.bookingCheckOut)}) for{" "}
+                                  {formatStayDate(conflict.bookingCheckIn, format)}–
+                                  {formatStayDate(conflict.bookingCheckOut, format)}) for{" "}
                                   {conflict.conflictingNights
-                                    .map((night) => formatStayDate(night))
+                                    .map((night) => formatStayDate(night, format))
                                     .join(", ")}
                                   .
                                 </li>
@@ -2352,6 +2398,7 @@ export function PublicBookingRequestsPanel({
                           // The service refuses it as well.
                           disabled={
                             actionsBlocked ||
+                            request.pendingAdultCount > 0 ||
                             !request.latestQuote ||
                             schoolCountsChanged(request)
                           }
@@ -2411,7 +2458,8 @@ export function PublicBookingRequestsPanel({
                             actionsBlocked ||
                             (!memberWholeLodge &&
                               request.type !== "SCHOOL" &&
-                              request.status !== "PRICED") ||
+                              request.status !== "PRICED" &&
+                              request.status !== "ACCEPTED") ||
                             misplacedSchoolLinkOnApprove(request) !== null
                           }
                         >
@@ -2529,6 +2577,31 @@ export function PublicBookingRequestsPanel({
                       ) : null}
                     </div>
                     ) : null
+                  ) : null}
+
+                  {request.status === "ACCEPTED" ? (
+                    <div className="space-y-3 rounded-md border border-warning-6 bg-warning-3/30 p-3">
+                      <p className="text-sm text-warning-11">
+                        The requester accepted this quote. Review the accepted price and request details, then approve or decline it. Quote editing and contact changes are locked after acceptance.
+                      </p>
+                      {request.type === "SCHOOL" ? (
+                        <ResolvePendingSchoolAdults
+                          requestId={request.id}
+                          expectedVersion={request.version}
+                          pendingAdultCount={request.pendingAdultCount ?? 0}
+                          canEdit={canEdit}
+                          onResolved={fetchRequests}
+                        />
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => handleApprove(request)} disabled={actionsBlocked || request.pendingAdultCount > 0 || misplacedSchoolLinkOnApprove(request) !== null}>
+                          {request.type === "SCHOOL" ? "Approve & invoice school" : "Approve & send payment link"}
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => openDeclineChoice(request)} disabled={isActioning}>
+                          Decline
+                        </Button>
+                      </div>
+                    </div>
                   ) : null}
 
                   {request.status === "DECLINED" ? (

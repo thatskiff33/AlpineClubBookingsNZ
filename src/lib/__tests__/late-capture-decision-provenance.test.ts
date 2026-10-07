@@ -19,7 +19,7 @@ vi.setConfig({ testTimeout: 30_000 });
  * documents** recorded the #2773 / #2774 directions as a settled "owner decision
  * 11 Aug 2026", while both issues carried `needs-decision`, one comment (the owner
  * holding the branch over exactly this), zero ticked options and no assignee. That
- * is not a wording nicety. `CLAUDE.md` makes the issue thread the audit trail,
+ * is not a wording nicety. `AGENTS.md` makes the issue thread the audit trail,
  * `docs/DOMAIN_INVARIANTS.md` is mandatory reading, and `INV-ADDPAY-039`
  * **withholds a member's refund** — so a false "owner decided" clause in it would
  * tell every future agent that the semantics are settled and must not be revisited.
@@ -108,7 +108,11 @@ const PROVENANCE_SCANNED_FILES = [
   "src/lib/email-message-notes.ts",
   "src/lib/email-templates/admin-finance.ts",
   "src/lib/email/admin-alerts-finance.ts",
+  // #3638: the second-instrument alert cites #2774's locking reasoning.
+  "src/lib/email/admin-alerts-settlement.ts",
   "src/components/admin/manual-refund-task-queue.tsx",
+  // #3635: the receipt rule cites the #2760/#2773 task row that names the intent.
+  "src/lib/late-capture-xero-receipt.ts",
   // The test files matter as much as the sources. A test docblock is what the next
   // implementor reads before touching this money path, and four of them carried the
   // fabricated "the owner chose to keep it" sentence.

@@ -58,7 +58,7 @@ export async function POST(
       firstName: true,
       lastName: true,
       email: true,
-      passwordHash: true,
+      deletedAt: true,
       xeroContactId: true,
     },
   });

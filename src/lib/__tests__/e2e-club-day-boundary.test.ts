@@ -94,7 +94,8 @@ function nextDay(dateOnly: string): string {
 /**
  * The E2E date space, re-evaluated at `instant`.
  *
- * `E2E_TODAY_NZ` is frozen at module load ("one today per process", by design),
+ * `E2E_TODAY_NZ` is frozen at module load (from the stack's shared fixture date
+ * when provided, otherwise from the current club day),
  * so moving the clock is not enough — the modules have to be re-imported behind
  * it. Without the reset this whole file would silently assert against
  * `2026-07-01`, which is the one instant that cannot tell the bug from the fix.
@@ -108,8 +109,28 @@ async function e2eDateSpaceAt(instant: string) {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
   vi.resetModules();
+});
+
+it("keeps a Monday-aligned seed window when Playwright starts after club midnight", async () => {
+  // 10:59 UTC is Monday night in NZ; 11:01 UTC is Tuesday morning. Without
+  // the captured seed day, relMondayWindow(63) moves a whole week overnight.
+  const seeded = await e2eDateSpaceAt("2026-09-28T10:59:00.000Z");
+  expect(seeded.E2E_TODAY_NZ).toBe("2026-09-28");
+
+  const unanchored = await e2eDateSpaceAt("2026-09-28T11:01:00.000Z");
+  expect(unanchored.E2E_TODAY_NZ).toBe("2026-09-29");
+  expect(unanchored.WAITLIST_FULL_WINDOW.checkIn).not.toBe(
+    seeded.WAITLIST_FULL_WINDOW.checkIn,
+  );
+
+  vi.stubEnv("E2E_FIXTURE_TODAY_NZ", seeded.E2E_TODAY_NZ);
+  const playwright = await e2eDateSpaceAt("2026-09-28T11:01:00.000Z");
+  expect(playwright.E2E_TODAY_NZ).toBe(seeded.E2E_TODAY_NZ);
+  expect(playwright.WAITLIST_FULL_WINDOW).toEqual(seeded.WAITLIST_FULL_WINDOW);
+  expect(playwright.SEEDED_SEASONS).toEqual(seeded.SEEDED_SEASONS);
 });
 
 describe("the club's day at a UTC month boundary", () => {

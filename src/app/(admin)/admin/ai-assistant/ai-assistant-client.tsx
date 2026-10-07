@@ -12,11 +12,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Spinner } from "@/components/ui/spinner";
-import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { isFullAdmin } from "@/lib/access-roles";
 import { useClubTime } from "@/components/club-time-provider";
@@ -138,7 +138,7 @@ function KeyCard({
   const clubTime = useClubTime();
   const { data: session } = useSession();
   const canWrite = session?.user
-    ? isFullAdmin({ accessRoles: session.user.accessRoles })
+    ? isFullAdmin(session.user)
     : false;
 
   const [keyState, setKeyState] = useState<AiAssistantKeyState>(initialKeyState);
@@ -263,6 +263,14 @@ function KeyCard({
 
 function BudgetCard() {
   const canEdit = useAdminAreaEditAccess("support");
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006). This
+    was `APP_CURRENCY`, which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time
+    and therefore `undefined` in the published image, so a club charging in
+    anything but New Zealand dollars was told its spend cap was in NZD.
+  */
+  const format = useClubFormat();
+  const { currencyCode } = format;
 
   const [dollars, setDollars] = useState("");
   const [savedCents, setSavedCents] = useState<number | null>(null);
@@ -299,7 +307,7 @@ function BudgetCard() {
   const onSave = useCallback(async () => {
     setError("");
     setSuccess("");
-    const parsed = parseDollarsToCents(dollars);
+    const parsed = parseDollarsToCents(dollars, format);
     if (!parsed.ok) {
       setError(parsed.error);
       return;
@@ -324,7 +332,7 @@ function BudgetCard() {
     } finally {
       setSaving(false);
     }
-  }, [dollars]);
+  }, [dollars, format]);
 
   const editingDisabled = !canEdit || saving || loading;
 
@@ -333,9 +341,9 @@ function BudgetCard() {
       <CardHeader>
         <CardTitle>Monthly spend cap</CardTitle>
         <CardDescription>
-          A hard limit on paid AI spend per calendar month, in {APP_CURRENCY}.
+          A hard limit on paid AI spend per calendar month, in {currencyCode}.
           Once reached, the assistant stops answering until the next month;
-          curated page help keeps working. Set it to {formatCents(0)} to switch
+          curated page help keeps working. Set it to {formatCents(0, format)} to switch
           paid answers off entirely.
         </CardDescription>
       </CardHeader>
@@ -352,25 +360,24 @@ function BudgetCard() {
         ) : (
           <>
             <div className="grid gap-2 sm:max-w-xs">
-              <Label htmlFor="ai-budget">Monthly cap ({APP_CURRENCY})</Label>
+              <Label htmlFor="ai-budget">Monthly cap ({currencyCode})</Label>
               <div className="flex items-center gap-2">
-                <Input
+                <MoneyInput
                   id="ai-budget"
-                  {...MONEY_INPUT_PROPS}
                   value={dollars}
                   disabled={editingDisabled}
-                  onChange={(event) => setDollars(event.target.value)}
+                  onValueChange={setDollars}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Maximum {formatCents(MAX_BUDGET_CENTS)}. Also set a spend limit
+                Maximum {formatCents(MAX_BUDGET_CENTS, format)}. Also set a spend limit
                 in the Anthropic console as the hard backstop.
               </p>
             </div>
 
             {savedCents === 0 ? (
               <p className="text-xs text-warning">
-                The cap is {formatCents(0)} — paid AI answers are currently
+                The cap is {formatCents(0, format)} — paid AI answers are currently
                 switched off.
               </p>
             ) : null}
@@ -423,6 +430,7 @@ function SpendCurrencyCard() {
 // ---------------------------------------------------------------------------
 
 function UsageCard() {
+  const format = useClubFormat();
   // Each failure's `createdAt` is a real INSTANT (CT-4, #2870).
   const clubTime = useClubTime();
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -490,8 +498,8 @@ function UsageCard() {
             <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
               <UsageStat
                 label="Spent this month"
-                value={formatCents(month.costCents)}
-                detail={`of ${formatCents(usage.budget.limitCents)} cap`}
+                value={formatCents(month.costCents, format)}
+                detail={`of ${formatCents(usage.budget.limitCents, format)} cap`}
               />
               <UsageStat
                 label="Requests"

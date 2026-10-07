@@ -152,7 +152,7 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
       shared regex is how a HISTORICAL statement starts matching.
     */
     {
-      // The fenced `npm run audit:census` paste on the category-review page. Its
+      // The fenced `pnpm run audit:census` paste on the category-review page. Its
       // DISTRIBUTION is compared against the manifest by its own test below.
       pattern: /\brow-producing\s+sites:\s+(\d+)\s+uncategorised:\s+(zero|\d+)\b/giu,
     },
@@ -306,7 +306,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ]);
     expect(
       claims,
-      "A runtime or document current-fact copy is stale. Re-run `npm run " +
+      "A runtime or document current-fact copy is stale. Re-run `pnpm run " +
         "audit:census`, then update every discovered claim in the same commit.",
     ).toEqual(
       claims.map(({ file, uncategorised }) => ({
@@ -327,7 +327,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
   it("pins the pasted census DISTRIBUTION, not only its total", () => {
     /*
-      The fenced `npm run audit:census` output on the category-review page states
+      The fenced `pnpm run audit:census` output on the category-review page states
       the eleven per-category counts as well as the total, and nothing read either.
       A pass that moves a writer between two categories leaves the total untouched —
       #2755 did exactly that — so a total-only pin would leave that block asserting
@@ -358,7 +358,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     expect(
       pasted,
       "The pasted census distribution on docs/ai-diagnostics/audit-admin-category-review.md " +
-        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `npm run audit:census` " +
+        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `pnpm run audit:census` " +
         "and paste the new block.",
     ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
   });
@@ -1350,7 +1350,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts` - not from
+    // `edit-financial-review-charge-sync.ts` - not from
     // `edit-financial-review-charge-request.ts`, which imports only the pure
     // `measureCarriedAskShortfall`. Categorised `payment` at the site and
     // named in none of the four per-site maps, so it lands unpinned.
@@ -1393,10 +1393,33 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 357 -> 358 (#3563): the club currency and locale record, likewise - a new
     // unpinned writer under `/api/admin/club-format/`, which no per-site map
     // covers. RE-MEASURED with `npm run audit:census`, not incremented.
-    // 128 -> 126 pinned, 358 unchanged (#52): the other-lodges CREATE and DELETE
-    // writers leave the keep with their handlers; the unpinned population does
-    // not move. RE-MEASURED with `npm run audit:census`, not decremented.
-    ).toEqual({ pinned: 126, unpinned: 358 });
+    // 358 -> 359 (#3531 3b): the rate-derived night-price backfill record,
+    // `payment` at the site, unpinned like every other new feature's writer.
+    // 359 -> 360 (#3029): the booking dietary edit record, `booking` at the
+    // site, unpinned likewise. RE-MEASURED with `npm run audit:census`.
+    // 360 -> 361 (#3566): the AI spend rate clear (`ai-spend-currency-clear.ts`,
+    // run by `/api/admin/club-format/`), unpinned like #3563's writer there.
+    // RE-MEASURED with `npm run audit:census` on the tree merged with #3029.
+    // 361 -> 362 (#3639): the late-notice acknowledgement, a new unpinned
+    // `payment` writer. RE-MEASURED with `npm run audit:census`.
+    // 362 -> 364 (#3639): the two late-capture approval writers, both unpinned
+    // `payment` rows. RE-MEASURED with `npm run audit:census`.
+    // 364 -> 365 (#3639 review): the setting-change record, unpinned
+    // `payment`. RE-MEASURED with `npm run audit:census`.
+    // 365 -> 364 (#3415): the accept-time capacity-block/revert writer retired.
+    // 364 -> 365 (#3413): pending-adult identity resolution is classified.
+    // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
+    // `xero`. RE-MEASURED with `pnpm run audit:census`.
+    // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,
+    // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
+    // 367 -> 368 (#3792): the refused restored-booking allocation change
+    // record, unpinned `xero`. RE-MEASURED with `pnpm run audit:census`.
+    // 368 -> 369 (#3653 fix round, composed onto #3792 by #3630): the organiser child refund recovery
+    // record, unpinned `booking`. RE-MEASURED with `pnpm run audit:census`.
+    // 128 -> 126 pinned (#52, composed with main): the other-lodges CREATE
+    // and DELETE writers leave the keep with their handlers; the unpinned
+    // population does not move. RE-MEASURED with `npm run audit:census`.
+    ).toEqual({ pinned: 126, unpinned: 369 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

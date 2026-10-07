@@ -3,6 +3,7 @@ import {
   type EnvironmentRoleDeclaration,
 } from "@/lib/environment-role-declaration";
 import { prisma } from "@/lib/prisma";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
@@ -153,7 +154,7 @@ async function checkXero(): Promise<CheckResult> {
   const start = Date.now();
   try {
     const token = await withTimeout(
-      prisma.xeroToken.findFirst({ orderBy: { updatedAt: "desc" } }),
+      prisma.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER }),
       CHECK_TIMEOUT_MS,
     );
     if (!token) {
@@ -231,7 +232,7 @@ async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
     const problems: string[] = [];
     if (stale > 0) {
       problems.push(
-        `${stale} payment recovery operation(s) pending > 15 minutes; check /api/cron/payments scheduler`,
+        `${stale} payment recovery operation(s) pending > 15 minutes; check the cron leader's 15-minute payments cycle (payment-recovery on admin cron health)`,
       );
     }
     if (exhausted > 0) {

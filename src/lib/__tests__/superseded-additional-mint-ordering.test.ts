@@ -17,10 +17,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
   has risen reading the superseded figure with no live instrument behind it.
 
   `superseded-additional-intent-cancel.test.ts` is the sibling for what happens
-  INSIDE the cancel helper, and it mocks that helper's own collaborators; it
-  therefore cannot see this ordering at all. This file mocks the helper itself
-  and watches the two calls the MINTER makes, which is the only place the order
-  is decided.
+  INSIDE the cancel helper; it calls that helper directly and therefore cannot
+  see this ordering at all. This file watches the MINTER, which is the only
+  place the order is decided.
+
+  #3341: THE SUPERSEDE HELPER RUNS FOR REAL HERE. It used to be mocked, which
+  `INV-OPS-015` forbids in a suite that asserts the ask: the order is now read
+  off the helper's own ledger query and cancellation enqueue, over a ledger that
+  holds the $70 ask this mint retires.
 
   Frozen clock inherited; nothing here reads a date.
 */
@@ -29,7 +33,9 @@ const mocks = vi.hoisted(() => ({
   createPaymentIntent: vi.fn(),
   findOrCreateCustomer: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
-  queueSuperseded: vi.fn(),
+  supersedeRead: vi.fn(),
+  enqueueCancel: vi.fn(),
+  cancelNow: vi.fn(),
   enqueueRecovery: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   enqueueRefundRecovery: vi.fn(),
@@ -45,20 +51,28 @@ vi.mock("@/lib/payment-transactions", () => ({
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   PartialRefundError: class PartialRefundError extends Error {},
 }));
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: mocks.queueSuperseded,
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { paymentTransaction: { findMany: mocks.supersedeRead } },
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  enqueuePaymentIntentCancellationRecovery: mocks.enqueueCancel,
+  runPaymentRecoveryOperationNow: mocks.cancelNow,
   enqueueAdditionalPaymentIntentRecovery: mocks.enqueueRecovery,
   enqueueBookingModificationRefundRecovery: mocks.enqueueRefundRecovery,
   processPaymentRecoveryOperations: mocks.processRecovery,
 }));
 
+import { resolveClubFormat } from "@/lib/club-format";
 import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTEXT = {
   pendingRefundAmountCents: 0,
+  organiserChildRefund: null,
   paymentId: "payment_1",
   // #3371: the minter takes the ask as ONE value carrying what minting it will
   // absorb, so the fixture builds it the way a door does - through the one home
@@ -91,16 +105,23 @@ beforeEach(() => {
   mocks.upsertPaymentIntentTransaction.mockImplementation(async () => {
     order.push("upsertPaymentIntentTransaction");
   });
-  mocks.queueSuperseded.mockImplementation(async () => {
-    order.push("queueSuperseded");
-    return [];
+  // The ledger the real supersede helper reads: the first edit's unpaid $70.
+  mocks.supersedeRead.mockImplementation(async () => {
+    order.push("supersedeRead");
+    return [{ id: "txn_old", stripePaymentIntentId: "pi_old", amountCents: 7000 }];
   });
+  mocks.enqueueCancel.mockImplementation(async () => {
+    order.push("enqueueCancel");
+    return { id: "op_old" };
+  });
+  mocks.cancelNow.mockResolvedValue("succeeded");
   mocks.enqueueRecovery.mockResolvedValue(undefined);
 });
 
 describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
   it("writes the new intent's ADDITIONAL row BEFORE queueing the supersede", async () => {
     const result = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       result: CONTEXT,
       reason: "guest_add_price_increase",
@@ -112,7 +133,8 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       "createPaymentIntent",
       // The row the reconcile inside the cancel will read as "latest".
       "upsertPaymentIntentTransaction",
-      "queueSuperseded",
+      "supersedeRead",
+      "enqueueCancel",
     ]);
     expect(result.additionalPaymentIntentId).toBe("pi_new");
     expect(result.additionalPaymentClientSecret).toBe("pi_new_secret");
@@ -120,6 +142,7 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
 
   it("writes that row for the NEW intent id and the FULL sized ask", async () => {
     await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       result: CONTEXT,
       reason: "guest_add_price_increase",
@@ -140,22 +163,35 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       reason: "guest_add_price_increase",
       stripeCustomerId: "cus_1",
     });
-    // …and the supersede is told which intent NOT to retire, so the row written
-    // a moment earlier cannot select itself.
-    expect(mocks.queueSuperseded).toHaveBeenCalledWith({
+    // …and the supersede excludes the NEW intent, so the row written a moment
+    // earlier cannot select itself, then retires the old ask it carried.
+    expect(mocks.supersedeRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentId: "payment_1",
+          kind: PaymentTransactionKind.ADDITIONAL,
+          stripePaymentIntentId: { not: "pi_new" },
+        }),
+      }),
+    );
+    expect(mocks.enqueueCancel).toHaveBeenCalledWith({
       bookingId: "booking_1",
       paymentId: "payment_1",
-      newPaymentIntentId: "pi_new",
+      paymentTransactionId: "txn_old",
+      paymentIntentId: "pi_old",
+      amountCents: 7000,
     });
+    expect(mocks.cancelNow).toHaveBeenCalledWith("op_old", CLUB_FORMAT_TEST);
   });
 
   it("still returns the secret when the supersede queue fails after the row exists", async () => {
-    mocks.queueSuperseded.mockImplementation(async () => {
-      order.push("queueSuperseded");
+    mocks.supersedeRead.mockImplementation(async () => {
+      order.push("supersedeRead");
       throw new Error("the queue is down");
     });
 
     const result = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       result: CONTEXT,
       reason: "guest_add_price_increase",
@@ -169,8 +205,36 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
     expect(order).toEqual([
       "createPaymentIntent",
       "upsertPaymentIntentTransaction",
-      "queueSuperseded",
+      "supersedeRead",
     ]);
     expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
+  });
+});
+
+describe("a refused increase keeps its debt (#3567 re-review)", () => {
+  it("with a stored JPY club: mints nothing, looks up no customer, and writes the durable recovery row", async () => {
+    const stored = resolveClubFormat({ currencyCode: "JPY", locale: "en-NZ" }, null);
+    const result = await createModificationAdditionalPaymentIntent({
+      format: stored,
+      bookingId: "booking_1",
+      result: CONTEXT,
+      reason: "guest_add_price_increase",
+      idempotencyKey: "mod_guest_booking_1_mod_1",
+      failureMessage: "boom",
+    });
+
+    expect(result.additionalPaymentIntentId).toBeUndefined();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    // The debt survives: the recovery runner leaves it unclaimed until the
+    // currency is fixed, then mints it under the same keys.
+    expect(mocks.enqueueRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        amountCents: 14000,
+        stripeIdempotencyKey: "mod_guest_booking_1_mod_1",
+      }),
+    );
   });
 });

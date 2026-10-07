@@ -1,17 +1,29 @@
 import { readClubModuleSettingsRecord } from "@/config/modules";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
 import { readWithheldApplicationEmail } from "@/lib/environment-safety-withheld";
-import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
+import {
+  getDefaultLodgeCapacity,
+  getLodgeCapacityStatus,
+} from "@/lib/lodge-capacity";
+import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
 import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { CLUB_FORMAT_SETTINGS_ID } from "@/lib/club-format";
+import { resolveStoredClubFormat } from "@/lib/club-format-env";
+import { clubChargeCurrencyCode } from "@/lib/stripe-charge-currency";
 import {
   computeMembershipTypeRateGaps,
   formatMembershipTypeRateGap,
   selectTypesRequiringHutRates,
 } from "@/lib/membership-type-rate-coverage";
+import {
+  MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS,
+  canonicalKeyResolvedRateHolderBookingBehavior,
+} from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
@@ -152,8 +164,8 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       },
     }),
     prisma.xeroToken.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { expiresAt: true, accessToken: true },
+      orderBy: XERO_TOKEN_ROW_ORDER,
+      select: { expiresAt: true },
     }),
     prisma.xeroAccountMapping.count({
       where: {
@@ -326,6 +338,22 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     bookableAgeTiers:
       bookableAgeTiers.length > 0 ? bookableAgeTiers : BOOKABLE_AGE_TIER_VALUES,
   }).map(formatMembershipTypeRateGap);
+  const keyResolvedRateHolderWarnings = membershipTypesForRateGaps.flatMap(
+    (type) => {
+      const expected = canonicalKeyResolvedRateHolderBookingBehavior(type);
+      if (expected === null) return [];
+      const warnings: string[] = [];
+      if (!type.isActive) {
+        warnings.push(`${type.name} (${type.key}) is archived; Reactivate it.`);
+      }
+      if (type.bookingBehavior !== expected) {
+        warnings.push(
+          `${type.name} (${type.key}) uses ${MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS[type.bookingBehavior]} for bookings; restore ${MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS[expected]}.`,
+        );
+      }
+      return warnings;
+    },
+  );
 
   // Public {{hut-fees}} readiness (#2129): the embed renders one nightly-rate
   // column per publicly-listed active membership type that carries rate rows
@@ -411,6 +439,21 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   const clubIdentityName =
     clubIdentity?.name?.trim() || emailSettings?.clubName?.trim() || null;
 
+  // The club's currency row, read once for two answers: the RAW stored code
+  // (the Stripe step blocks on an unusable one, #3567) and the currency cards
+  // are actually charged in (#3633), resolved through the same fallback every
+  // reader uses. Guarded, so an unreadable row is "not stored", not a failed
+  // snapshot.
+  const clubFormatCurrencyCode = await Promise.resolve()
+    .then(() =>
+      prisma.clubFormatSettings.findUnique({
+        where: { id: CLUB_FORMAT_SETTINGS_ID },
+        select: { currencyCode: true },
+      }),
+    )
+    .then((row) => row?.currencyCode ?? null)
+    .catch(() => null);
+
   // Resolved default-lodge booking capacity (#1982): 0 means the default lodge
   // has no active beds and no capacity override, so it accepts no bookings — the
   // club-config readiness check warns on it. Guarded because a pre-seed DB has
@@ -420,6 +463,30 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     defaultLodgeCapacity = await getDefaultLodgeCapacity(prisma);
   } catch {
     defaultLodgeCapacity = null;
+  }
+
+  // Every active lodge that cannot take a booking (#3407 review), through the
+  // same resolver every booking path reads. Guarded like the default-lodge read
+  // above: an unreadable lodge list omits the signal rather than sinking the
+  // snapshot.
+  let lodgesNotSetUpForBookings: string[] | undefined;
+  try {
+    const activeLodges = await prisma.lodge.findMany({
+      where: { active: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    const resolved = await Promise.all(
+      activeLodges.map(async (lodge) => ({
+        name: lodge.name,
+        capacity: (await getLodgeCapacityStatus(lodge.id, prisma)).capacity,
+      })),
+    );
+    lodgesNotSetUpForBookings = resolved
+      .filter((lodge) => !isLodgeSetUpForBookings(lodge.capacity))
+      .map((lodge) => lodge.name);
+  } catch {
+    lodgesNotSetUpForBookings = undefined;
   }
 
   // Truthful Xero connection state (#2079): a token row that no longer decrypts
@@ -432,9 +499,9 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   if (operationalXeroToken) {
     try {
       operationalXeroNeedsReentry =
-        (await getXeroTokenReadability({
-          accessToken: operationalXeroToken.accessToken,
-        })) === "unreadable";
+        // Over the CURRENT copy of the tokens, which since #3454 may be the
+        // credential-store one rather than this row's.
+        (await getXeroTokenReadability()) === "unreadable";
     } catch {
       operationalXeroNeedsReentry = false;
     }
@@ -508,9 +575,11 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,
+    keyResolvedRateHolderWarnings,
     publicHutFeeSingleColumnSeasons,
     basedOnAgeTierTypesWithoutSubscribingTier,
     defaultLodgeCapacity,
+    lodgesNotSetUpForBookings,
     clubIdentityName,
     configuredCapacity: lodgeSettings?.capacity ?? null,
     // Reported EXACTLY as stored, not trimmed or blank-collapsed. A row holding
@@ -523,6 +592,16 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
         ? null
         : (clubTimeSettings?.timeZone ?? null),
     clubTimeZoneUnreadable: clubTimeSettings === CLUB_TIME_SETTINGS_UNREADABLE,
+    // Raw, like the zone above (#3567 review).
+    clubFormatCurrencyCode,
+    // What cards are charged in, or null when none can be (#3633).
+    clubChargeCurrencyCode: clubChargeCurrencyCode(
+      resolveStoredClubFormat(
+        clubFormatCurrencyCode === null
+          ? null
+          : { currencyCode: clubFormatCurrencyCode },
+      ),
+    ),
     environmentRole,
     withheldEmail,
   };

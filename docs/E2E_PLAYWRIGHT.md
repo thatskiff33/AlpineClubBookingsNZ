@@ -35,7 +35,7 @@ the demo seed (`prisma/demo-seed.ts`).
 | `e2e/unmatched-url-status.spec.ts` | No matrix row — regression guard for #2405 (Medium) | The status LINE for URLs nothing serves, which only a running server can show. Anonymous throughout, because these are the shapes a crawler or a scanner asks for. Unmatched website URLs (`/definitely-missing`, `/wp-admin/setup-config.php`, `/.env`, `/admin/nope`) must each answer **404** *and* still render the club's own seeded `/404` CMS screen — pinned on the level-1 heading plus the seeded header text, since that page emits the same words as an `h2` as well and the hardcoded emergency fallback would otherwise satisfy a looser assertion. `/about` must still be **200**. Unmatched `/api` URLs — bare `/api` and `/api/` included — must answer a JSON 404 rather than ~23KB of HTML, with `POST` answered identically and `HEAD` carrying GET's `content-type`. `/api/health` must be untouched. Depends on `SEED_THEME_COMPLETE=1`: without it the layout's holding screen answers every URL with 200 |
 | `e2e/asset-url-404.spec.ts` | No matrix row — regression guard for #2404 (High) | The CSP on the static-asset URL shapes, which only a running server can show. Anonymous throughout — these are the addresses scanners and stale browser tabs ask for. A MISSING asset (`/foo.png`, `/favicon.ico`, `/logo.png`, `/wp-content/uploads/x.jpg`, `/branding/definitely-missing.png`, `/_next/static/chunks/nope.js`) must answer **404 with an empty body, no `content-type`**, the app's security headers, and a policy from the app rather than the edge — either the terminal route's own `default-src 'none'` or the proxy's nonced page policy, since #2404 closed this from both directions and `src/proxy.ts` now runs on image-extension URLs. `/_next/static/…` is the one shape the proxy still skips, so the exact `default-src 'none'` is pinned on it. Never the ~29KB HTML 404 page, which shipped inline scripts with no nonce and no CSP header at all. A REAL asset must still be served: `/branding/favicon.example.ico` and a `/_next/static/chunks/*.js` URL taken from a live page render both 200 with their bytes, which is the assertion that catches an `afterFiles` -> `beforeFiles` slip turning every image in the app into a 404 — and the `public/` one now also carries `nosniff`, `X-Frame-Options` and a nonced policy, which is the runtime check that running middleware on static assets disturbs nothing. An ADMIN-UPLOADED image must also still be served: the spec uploads a 1x1 PNG through `/api/admin/image-manager/upload` (the uploads directory is a container volume the seeds never populate), fetches it back **anonymously** at `/api/images/uploaded/<file>` and asserts 200 with the same bytes and `image/png` — the guard against an asset rule swallowing every uploaded picture in the app — while a missing one still gets that route's own JSON 404. `/_next/staticfoo`, `/_next/imagemap`, `/_next/image/x`, `/apiary` and `/api-docs` must carry a nonced policy (the bare-prefix exclusions anchored in #2404 and #2420). `/definitely-missing` must still render the club's own 404 screen, fully nonced — nothing here may blank a human-plausible mistyped address. Asset-shaped `/api` URLs are probed on two axes. Ones no handler claims (`/api/does-not-exist.png`, `/api/definitely-missing.jpg`, `/api/nope/deeper.webp`) must answer the frozen JSON 404; ones a real handler DOES claim (`/api/chores/zzz.svg` is `[token]`'s, `/api/admin/lockers/zzz.png` is `[id]`'s) must answer as that handler does and must never be diverted to the empty asset 404. Both are sent **with `RSC: 1` and a query string** and must carry neither `x-nextjs-rewritten-path` nor `x-nextjs-rewritten-query` — that request shape is the only one in which either header can be set, so without it the assertion cannot fail, and their presence in one module state and not the other is #2405's module-state oracle. Mixed case is pinned separately and the other way round: `/API/x.png` and `/API/images/uploaded/<file>` must render the club's own nonced 404 page rather than reach an `/api` handler, which is what proves the `(?!api/)` lookahead excludes the namespace case-insensitively instead of leaving a seam |
 | `e2e/print-dark-mode.spec.ts` | No matrix row — regression guard for #2146 (Medium) | Renders `/admin/reports` and `/finance` as the Full Admin with the app in **dark** mode, then flips the page to print media (`emulateMedia({ media: "print", colorScheme: "dark" })`) and asserts the computed ink is dark on a light surface — the blank-looking export in #2146 was near-white text on a forced-white card. Also asserts dark mode really is applied on screen first (so the check cannot pass vacuously), that `.dark` is still on `<html>` while printing (print wins *despite* the theme, not by switching it off), and that the printed colours are identical with and without the theme class. The only browser coverage of print/theme interaction; every other guard is a source-text parser |
-| `e2e/raw-css-secret-reflection.spec.ts` | No matrix row - regression guard for #2981 (Critical) | The one thing no source scan and no jsdom test can answer: whether a typed secret becomes visible to a CSS selector in a real browser. Rule and mechanism are in [`SECURITY.md`](SECURITY.md) -> "Secret entry on pages that carry Raw CSS". The spec saves real administrator Raw CSS through `PUT /api/admin/site-style` — a control rule plus the full `[value^="..."]` prefix ladder for a known kiosk PIN, both derived from the PIN so they cannot drift from it — opens the anonymous hut-leader instructions page (`?a=` only has to be PRESENT for the PIN form to render, so no assignment is seeded and seed drift cannot break it), and after every keystroke — and after paste, a real mid-string edit with the caret two from the end, the rerender a refused submit causes, and a clear — asserts all four layers at once: the `value` property holds the typed prefix, `getAttribute("value")` is `null`, not one of the ten oracle selectors matches, and the computed `outline-color` is still the control rule's. The control rule is what stops the whole spec passing vacuously on a page the Raw CSS never reached; the computed-style check is secondary, because Chromium was measured lagging a keystroke behind the attribute it was leaking. Restores the club's original `rawCss` in `afterAll` and reports rather than swallows a failed restore |
+| `e2e/raw-css-secret-reflection.spec.ts` | No matrix row - regression guard for #2981 (Critical) | The one thing no source scan and no jsdom test can answer: whether a typed secret becomes visible to a CSS selector in a real browser. Rule and mechanism are in [`SECURITY.md`](SECURITY.md) -> "Secret entry on pages that carry Raw CSS". The spec saves real administrator Raw CSS through `PUT /api/admin/site-style` — a control rule plus the full `[value^="..."]` prefix ladder for a known kiosk PIN, both derived from the PIN so they cannot drift from it — opens the anonymous hut-leader instructions page (`?a=` only has to be PRESENT for the PIN form to render, so no assignment is seeded and seed drift cannot break it), and after every keystroke — and after paste, a real mid-string edit with the caret two from the end, the rerender a refused submit causes, and a clear — asserts all four layers at once: the `value` property holds the typed prefix, `getAttribute("value")` is `null`, not one of the ten oracle selectors matches, and the computed `outline-color` is still the control rule's. The control rule is what stops the whole spec passing vacuously on a page the Raw CSS never reached; the computed-style check is secondary, because Chromium was measured lagging a keystroke behind the attribute it was leaking. It also asserts the field is `type="password"` by default (#3460) and exercises the Show PIN / Hide PIN toggle: a `type="button"` that never submits, `text` only while shown, and the same four-layer check across a Backspace and a retyped digit while shown. Restores the club's original `rawCss` in `afterAll` and reports rather than swallows a failed restore |
 
 Not covered by browser tests (by design):
 
@@ -82,10 +82,10 @@ so the gaps are not silently implied as covered):
 
 ```bash
 cp .env.staging.example .env.staging   # once; adjust ports if taken
-npm run test:e2e                       # prepare stack + run suite
+pnpm run test:e2e                       # prepare stack + run suite
 ```
 
-`npm run test:e2e` (via `scripts/e2e-stack.sh`) does the following:
+`pnpm run test:e2e` (via `scripts/e2e-stack.sh`) does the following:
 
 1. Starts the staging compose Postgres (host port `STAGING_POSTGRES_PORT`,
    default 5433 — **never** the production 5432).
@@ -114,14 +114,14 @@ npm run test:e2e                       # prepare stack + run suite
 Other entry points:
 
 ```bash
-npm run test:e2e:prepare   # stack + fresh database only
-npm run test:e2e:run       # suite only (stack already prepared)
-npm run test:e2e:run -- --ui               # Playwright UI mode
-npm run test:e2e:run -- e2e/booking.spec.ts # one spec
-npm run test:e2e:down      # stop the stack and delete its volumes
+pnpm run test:e2e:prepare   # stack + fresh database only
+pnpm run test:e2e:run       # suite only (stack already prepared)
+pnpm run test:e2e:run --ui               # Playwright UI mode
+pnpm run test:e2e:run e2e/booking.spec.ts # one spec
+pnpm run test:e2e:down      # stop the stack and delete its volumes
 ```
 
-First-time setup: `npx playwright install chromium` — the same command CI runs (see "How CI installs the browser" below).
+First-time setup: `pnpm exec playwright install chromium` — the same command CI runs (see "How CI installs the browser" below).
 The HTML report lands in `playwright-report/`; traces and screenshots for
 failures land in `test-results/`.
 
@@ -152,13 +152,13 @@ unaffected:
 - **Project:** the `multi-lodge` Playwright project is only added to
   `playwright.config.ts` when `E2E_MULTI_LODGE=1`, and the default `chromium`
   project always ignores `e2e/multi-lodge/`, so the default suite's project and
-  spec list are byte-identical (verify with `npx playwright test --list`).
+  spec list are byte-identical (verify with `pnpm exec playwright test --list`).
 
 Run it locally (uses the same staging stack; keep off ports 5432/3001 in use):
 
 ```bash
-E2E_MULTI_LODGE=1 npm run test:e2e:prepare              # stack + second lodge
-E2E_MULTI_LODGE=1 npm run test:e2e:run -- --project=multi-lodge
+E2E_MULTI_LODGE=1 pnpm run test:e2e:prepare              # stack + second lodge
+E2E_MULTI_LODGE=1 pnpm run test:e2e:run --project=multi-lodge
 ```
 
 This project is a **coverage aid, not a substitute** for the manual two-lodge
@@ -246,13 +246,13 @@ suite is designed to run against a **fresh** prepare each time; re-running
 Playwright's Chromium needs the usual Linux browser libraries. On a host that
 is missing one (commonly `libasound.so.2`, which surfaces as
 `error while loading shared libraries: libasound.so.2`), install them with
-`npx playwright install-deps chromium` (needs root), or, without root, extract
+`pnpm exec playwright install-deps chromium` (needs root), or, without root, extract
 the package and point the loader at it:
 
 ```bash
 apt-get download libasound2t64 && dpkg -x libasound2t64*.deb extracted
 LD_LIBRARY_PATH="$PWD/extracted/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" \
-  npm run test:e2e:run
+  pnpm run test:e2e:run
 ```
 
 ### How CI installs the browser
@@ -262,11 +262,11 @@ Both E2E jobs get their browser from the composite action
 
 1. **Restore `~/.cache/ms-playwright`**, keyed on the resolved `@playwright/test`
    version, so a version bump misses the cache and nothing else does.
-2. **`npx playwright install chromium`** — run even on a cache hit, where it is a
+2. **`pnpm exec playwright install chromium`** — run even on a cache hit, where it is a
    ~2s no-op that verifies the restored tree and re-downloads anything partial.
 3. **Launch the browser and render a page** (`launch-check.mjs`). A browser that
    launches and lays out a page has every system library it needs.
-4. **Only if that check fails**, run `npx playwright install-deps chromium` and
+4. **Only if that check fails**, run `pnpm exec playwright install-deps chromium` and
    re-check.
 
 CI used to run `npx playwright install --with-deps chromium` on every run
@@ -299,7 +299,7 @@ Two env vars carry the keys, and they flow into the stack differently:
 | `STRIPE_SECRET_KEY` (`sk_test_…`) | Runtime env | Passed to the `app` container at runtime; picked up on restart, no rebuild needed. |
 
 - **Locally**: put both real test-mode keys in `.env.staging`, then run
-  `npm run test:e2e` (not `test:e2e:prepare` with `E2E_SKIP_APP_BUILD=1`) so the
+  `pnpm run test:e2e` (not `test:e2e:prepare` with `E2E_SKIP_APP_BUILD=1`) so the
   app image is rebuilt with the new publishable key. `e2e-stack.sh` parses
   `.env.staging` and exports both vars, so the Playwright process also sees them
   and stops skipping.
@@ -707,15 +707,22 @@ So a spec never asks the machine what day it is:
 const d = new Date();
 const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 
-// RIGHT — the club's calendar, one clock read for the whole suite.
+// RIGHT — the club's calendar, anchored once for this prepared E2E stack.
 import { relDateOnly, shiftDateOnly } from "./helpers/fixtures";
 const today = relDateOnly(0);
 const inAFortnight = shiftDateOnly(today, 14);
 ```
 
+`scripts/e2e-stack.sh prepare` captures the club date before seeding and saves
+it in an ignored `.artifacts/e2e-fixture-date-*` file. Its separate `run` command
+passes that date as `E2E_FIXTURE_TODAY_NZ` to Playwright. This keeps the seed and
+specs on the same relative date even if the job crosses club midnight; a
+Monday-aligned fixture would otherwise move a whole week (#3702). A direct
+import without that environment variable still reads the current club date.
+
 `E2E_TODAY_NZ` / `relDateOnly` (in `prisma/e2e-fixtures.ts`, re-exported by
-`e2e/helpers/fixtures.ts`) is **the** clock read, frozen once per process and
-formatted through `Intl` with an explicit zone. `shiftDateOnly` is the only
+`e2e/helpers/fixtures.ts`) is the one fixture date authority. Its fallback
+clock read uses `Intl` with an explicit zone. `shiftDateOnly` is the only
 date arithmetic. `src/lib/__tests__/e2e-club-day-census.test.ts` sweeps `e2e/`
 and fails a second one; `docs/TESTING.md` → "The browser suite's clock
 discipline" is the full rule, and

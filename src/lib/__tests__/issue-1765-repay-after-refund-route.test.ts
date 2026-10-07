@@ -17,16 +17,34 @@ const mocks = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    booking: {
-      findUnique: vi.fn(),
+vi.mock("@/lib/prisma", () => {
+  const payment = {
+    upsert: vi.fn(),
+  };
+  return {
+    prisma: {
+      booking: {
+        findUnique: vi.fn(),
+      },
+      payment,
+      // #3638: the mint attaches its intent under lock(1), re-reading the
+      // payment's source first; nothing here has switched to Internet Banking.
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          $executeRaw: vi.fn(),
+          payment: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            upsert: payment.upsert,
+          },
+          // ...and the booking's status, which is still payable.
+          booking: {
+            findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+          },
+        })
+      ),
     },
-    payment: {
-      upsert: vi.fn(),
-    },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
@@ -87,6 +105,7 @@ import {
   getPaymentIntent,
 } from "@/lib/stripe";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn> };
@@ -301,6 +320,7 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
       paymentIntentId: "pi_stuck",
       amountCents: REPRICED_FINAL,
       paymentMethodId: "pm_123",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -429,7 +449,7 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
     );
   });
 
-  it("keeps the non-repay idempotency key scheme unchanged for ordinary mints", async () => {
+  it("keys an ordinary mint by pointer, amount and currency (#3864)", async () => {
     mockPrisma.booking.findUnique.mockResolvedValue({
       ...makeRepayBooking(),
       payment: null,
@@ -439,7 +459,9 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
 
     expect(res.status).toBe(200);
     expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey: "pi_booking-1_initial" })
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^pi_booking-1_initial_\d+_[a-z]{3}$/),
+      })
     );
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #1285: preference-gating tests. These prove that the OPTIONAL categories are
 // honored before the send path. `bookingReminder` is gated in its cron caller
@@ -274,6 +275,7 @@ describe("#1285 must-send transactional mail is never suppressible", () => {
       new Date("2026-04-10T00:00:00.000Z"),
       new Date("2026-04-12T00:00:00.000Z"),
       0,
+      CLUB_FORMAT_TEST,
     );
 
     // The cancellation sender must never consult notification preferences and

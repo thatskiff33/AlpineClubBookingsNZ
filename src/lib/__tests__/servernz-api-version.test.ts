@@ -15,7 +15,7 @@ import { sampleValue } from "@/lib/email-message-registry";
 import { stripComments } from "./support/strip-comments";
 
 /**
- * #49, `INV-INT-025`: the ONE rule for comparing the central server's API
+ * #49, `INV-INT-026`: the ONE rule for comparing the central server's API
  * version with the one this site was built for. The owner's decision on the
  * issue is exact integer equality of `major.minor`, never a float - `1.10` is
  * not `1.1` - and any difference, a minor-only one included, is a mismatch.

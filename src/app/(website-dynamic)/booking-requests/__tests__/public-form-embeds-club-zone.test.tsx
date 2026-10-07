@@ -37,8 +37,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * - PERSISTED `America/Denver`. Behind UTC, which is the direction the date-only
  *   defects live in, and on the frozen instant (2026-07-01T00:00:00.000Z) it is
  *   still 30 June there.
- * - ENVIRONMENT `Pacific/Auckland`, mocked. It is what `APP_TIME_ZONE` resolves
- *   to wherever `TZ` is unset — CI included — and it is 1 July on that instant.
+ * - ENVIRONMENT `Pacific/Auckland`, the shipped default: what the environment
+ *   resolves to wherever `TZ` is unset — CI included — and it is 1 July on that
+ *   instant. (This used to be pinned with a mock of the environment constant;
+ *   #3567 deleted the constant, so the pin went with it.)
  *   The two therefore DISAGREE, which is what makes the assertion mean anything:
  *   a wrapper that resolved the environment instead would offer 1 July.
  * - HOST `Asia/Tokyo`, a third place again, so a read of the machine's own clock
@@ -54,14 +56,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * without it would let this file pass for exactly the reason it exists to rule
  * out. The last case drives that home by asserting the row was really read.
  */
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 vi.mock("server-only", () => ({}));
 
@@ -79,7 +73,9 @@ import { BookingRequestFormEmbed } from "@/app/(website-dynamic)/booking-request
 import { SchoolBookingFormEmbed } from "@/app/(website-dynamic)/school-bookings/school-booking-form-embed";
 import { bindClubTime, fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const PERSISTED_ZONE = "America/Denver";
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
@@ -123,7 +119,10 @@ afterEach(() => {
 });
 
 async function earliestNightFrom(element: React.ReactElement) {
-  render(element);
+  // The embed mounts the club's zone itself (that is what is under test); the
+  // club's format is the website chrome's job in production, so the test
+  // supplies it here (#3564).
+  render(<ClubFormatTestProvider>{element}</ClubFormatTestProvider>);
   const checkIn = (await screen.findByLabelText(
     /check-?in/i,
   )) as HTMLInputElement;
@@ -137,10 +136,10 @@ describe("public form embeds carry the club's persisted zone (CT-4, #2870)", () 
     // instant ever made these agree, this fails here rather than leaving both
     // cases below quietly asserting nothing.
     expect(
-      bindClubTime(requireClubTimeZone(PERSISTED_ZONE)).today(frozenClock),
+      bindClubTime(requireClubTimeZone(PERSISTED_ZONE), CLUB_FORMAT_TEST).today(frozenClock),
     ).toBe("2026-06-30");
     expect(
-      bindClubTime(requireClubTimeZone(ENVIRONMENT_ZONE)).today(frozenClock),
+      bindClubTime(requireClubTimeZone(ENVIRONMENT_ZONE), CLUB_FORMAT_TEST).today(frozenClock),
     ).toBe("2026-07-01");
   });
 

@@ -32,6 +32,7 @@ import {
 } from "@/lib/booking-review-price-rebase";
 import { requireCalendarDate } from "@/lib/club-time";
 import { selectBookingMoneyBuildUp } from "@/lib/booking-money-build-up";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const store = {
   booking: {
@@ -110,6 +111,7 @@ const SURVIVING_STRAND = {
 };
 
 const STORED_MONEY_SELECTION = selectBookingMoneyBuildUp({
+  format: CLUB_FORMAT_TEST,
   operation: "REVIEW_REBASE",
   baseEvidence: { kind: "EXACT", amountCents: 24_000 },
   rows: [],
@@ -138,6 +140,7 @@ beforeEach(() => {
 describe("re-pricing a booking from its strands (#3219)", () => {
   it("sums the surviving strands and writes all four money columns, fenced on all four", async () => {
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -190,6 +193,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
       reach, and the frozen figure is what produces MINUS $50.00.
     */
     await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -226,6 +230,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
     });
 
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -257,6 +262,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
         todayAtClub: TODAY,
@@ -277,6 +283,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
     });
 
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -367,6 +374,7 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
       );
 
       const outcome = await rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands,
         todayAtClub: TODAY,
@@ -394,6 +402,7 @@ describe("re-pricing a closure that repaired NOTHING (#3257)", () => {
       the headline kept counting a strand the booking no longer had.
     */
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [],
       todayAtClub: TODAY,
@@ -500,6 +509,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [
           { bookingGuestId: "guest-on-some-other-booking", totalCents: 10_000 },
@@ -519,6 +529,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
         todayAtClub: TODAY,
@@ -538,6 +549,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     mocks.bookingFindUnique.mockResolvedValue(bookingWithStrands([]));
 
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [],
       todayAtClub: TODAY,
@@ -558,6 +570,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     // write would give a pre-repair figure and a sum that is quietly wrong.
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 9_999 }],
         todayAtClub: TODAY,
@@ -572,6 +585,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
         todayAtClub: TODAY,
@@ -599,7 +613,7 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       rebaseDivergesFromIssuedInvoice({
         rebase,
         hasIssuedXeroInvoice: true,
-        settlementIssuesXeroDocument: false,
+        settlement: { issuesXeroDocument: false },
       }),
     ).toBe(true);
   });
@@ -607,14 +621,21 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
   it.each([
     [
       "the settlement issues a Xero document that brings the invoice back into line",
-      { hasIssuedXeroInvoice: true, settlementIssuesXeroDocument: true },
+      { hasIssuedXeroInvoice: true, settlement: { issuesXeroDocument: true } },
     ],
     [
       "the club never invoiced this booking",
-      { hasIssuedXeroInvoice: false, settlementIssuesXeroDocument: false },
+      { hasIssuedXeroInvoice: false, settlement: { issuesXeroDocument: false } },
     ],
   ])("does not diverge when %s", (_name, flags) => {
     expect(rebaseDivergesFromIssuedInvoice({ rebase, ...flags })).toBe(false);
+  });
+
+  it("MUTATION: #3791 F1 - a captured payment's account-credit share (no reduction figure) is judged by its document, so a re-priced card-paid review is not a false alarm", () => {
+    // $200 paid, re-priced to $180, a $20 share minted as credit and noted.
+    const cardPaid = { ...rebase, previousFinalPriceCents: 20_000, newFinalPriceCents: 18_000 };
+    expect(rebaseDivergesFromIssuedInvoice({ rebase: cardPaid, hasIssuedXeroInvoice: true, settlement: { invoiceReductionCents: null, issuesXeroDocument: true } })).toBe(false);
+    expect(rebaseDivergesFromIssuedInvoice({ rebase: cardPaid, hasIssuedXeroInvoice: true, settlement: { invoiceReductionCents: null, issuesXeroDocument: false } })).toBe(true);
   });
 
   it("does not diverge when the re-price moved the figure nowhere", () => {
@@ -622,9 +643,22 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       rebaseDivergesFromIssuedInvoice({
         rebase: { ...rebase, newFinalPriceCents: 24_000 },
         hasIssuedXeroInvoice: true,
-        settlementIssuesXeroDocument: false,
+        settlement: { issuesXeroDocument: false },
       }),
     ).toBe(false);
+  });
+
+  it("MUTATION: #3791 - an account-credit share agrees with the stored price only where its note took off exactly what the re-price removed, re-price or none", () => {
+    const diverges = (creditedCents: number, moved: BookingPriceRebase | null) =>
+      rebaseDivergesFromIssuedInvoice({ rebase: moved, hasIssuedXeroInvoice: true, settlement: { invoiceReductionCents: creditedCents, issuesXeroDocument: true } });
+
+    expect(diverges(12_000, rebase)).toBe(false);
+    expect(diverges(5_000, rebase)).toBe(true);
+    // A share with no re-price at all: its notes take $50 off an invoice the
+    // booking still prices in full.
+    expect(diverges(5_000, null)).toBe(true);
+    expect(diverges(0, null)).toBe(false);
+    expect(rebaseDivergesFromIssuedInvoice({ rebase: null, hasIssuedXeroInvoice: false, settlement: { invoiceReductionCents: 5_000, issuesXeroDocument: true } })).toBe(false);
   });
 
   it("writes the re-price into the BOOKING'S OWN history, with the divergence on it", async () => {
@@ -660,6 +694,8 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
           moneyBuildUpDerivedCents: 24_000,
         }),
       }),
+      // #3582: the row's id anchors the re-price's booking-ledger lines.
+      select: { id: true },
     });
   });
 

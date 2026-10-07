@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { BookingGuestNightPriceSource, Prisma } from "@prisma/client";
 
 import type { EditFinancialReviewCause } from "@/lib/edit-financial-review-context";
 import {
@@ -6,6 +6,9 @@ import {
   memberBenefitAllocations,
 } from "@/lib/night-adjustment-write";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
+import { formatCents } from "@/lib/utils";
+
+import type { ClubFormat } from "@/lib/club-format";
 
 export const BOOKING_MONEY_BUILD_UP_INVARIANT = "INV-MONEY-030";
 
@@ -35,6 +38,23 @@ export type BookingMoneyBaseEvidence =
        */
       reason: EditFinancialReviewCause;
     };
+
+/**
+ * How a caller wants a stored/derived mismatch treated — and, only when it
+ * names no classification, the club format the refusal renders its two
+ * amounts in (#3565).
+ *
+ * A UNION rather than two optional fields on purpose: a caller that classifies
+ * the mismatch can never reach the refusal, so it is not asked for a format it
+ * would never use; a caller that does not classify CAN reach it, so it cannot
+ * compile without one.
+ */
+export type BookingMoneyMismatchPolicy =
+  | {
+      mismatchClassification: BookingMoneyCompatibilityClassification;
+      format?: never;
+    }
+  | { mismatchClassification?: undefined; format: ClubFormat };
 
 export type BookingMoneyCompatibilityClassification =
   | "STORED_SIDE_DEFECT"
@@ -111,7 +131,7 @@ export type BookingMoneyBuildUpProjection = {
       id: string;
       stayDate: Date;
       priceCents: number | null;
-      priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+      priceSource: BookingGuestNightPriceSource;
     }>;
   }>;
   promoRedemption: {
@@ -279,17 +299,14 @@ export function bookingMoneyBuildUpFromProjection(
 
 export function selectLoadedBookingMoneyBuildUp(
   loaded: LoadedBookingMoneyBuildUp,
-  args: {
-    derivedCents: number;
-    mismatchClassification?: BookingMoneyCompatibilityClassification;
-  },
+  args: { derivedCents: number } & BookingMoneyMismatchPolicy,
 ): BookingMoneyBuildUpSelection {
   return selectBookingMoneyBuildUp({
     ...loaded,
     derivedCents: args.derivedCents,
     ...(args.mismatchClassification
       ? { mismatchClassification: args.mismatchClassification }
-      : {}),
+      : { format: args.format }),
   });
 }
 
@@ -341,8 +358,7 @@ export function selectBookingMoneyBuildUp(args: {
   } | null;
   derivedCents: number;
   bookingGuestId?: string;
-  mismatchClassification?: BookingMoneyCompatibilityClassification;
-}): BookingMoneyBuildUpSelection {
+} & BookingMoneyMismatchPolicy): BookingMoneyBuildUpSelection {
   if (!Number.isInteger(args.derivedCents)) {
     refuse(`${args.operation}: today's result is not integer cents (${args.derivedCents})`);
   }
@@ -420,7 +436,7 @@ export function selectBookingMoneyBuildUp(args: {
 
   if (!args.mismatchClassification) {
     refuse(
-      `${args.operation}: stored ${storedCents} cents differs from today's ${args.derivedCents} cents without a classified compatibility fallback`,
+      `${args.operation}: stored ${formatCents(storedCents, args.format)} differs from today's ${formatCents(args.derivedCents, args.format)} without a classified compatibility fallback`,
     );
   }
   const reason = "STORED_DERIVED_MISMATCH" as const;

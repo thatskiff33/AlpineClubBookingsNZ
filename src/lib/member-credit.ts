@@ -3,16 +3,21 @@ import { ApiError } from "@/lib/api-error";
 import {
   AdminCreditAdjustmentRequestStatus,
   BookingEventType,
+  BookingStatus,
   CreditType,
   PaymentSource,
   Prisma,
 } from "@prisma/client";
+import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
+import { bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
 import { createAuditLog } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -28,6 +33,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
 
@@ -136,11 +142,12 @@ export async function createCancellationCredit(
       memberId,
       amountCents,
       type: CreditType.CANCELLATION_REFUND,
-      description: `Cancellation refund for booking ${bookingId.slice(0, 8)}`,
+      description: cancellationCreditDescription(bookingId),
       sourceBookingId: bookingId,
       xeroCreditNoteId: xeroCreditNoteId ?? null,
     },
   });
+  await syncBookingLedgerCredits({ bookingId, store: db });
 
   // Durable CREDITED settlement fact for the cancellation narrative (issue
   // #740). Written on the base client so it is not tied to the caller's
@@ -269,6 +276,7 @@ export async function createBookingModificationCredit(
     // Replay: the allocation happened atomically with the original credit.
     return;
   }
+  await syncBookingLedgerCredits({ bookingId, store: db });
 
   if (paymentId) {
     await applyLocalRefundAllocation({
@@ -354,10 +362,7 @@ export async function deriveBookingAppliedCreditCents(
   db: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<number> {
   const agg = await db.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-    },
+    where: bookingAppliedCreditWhere(bookingId),
     _sum: { amountCents: true },
   });
   return Math.max(0, -(agg._sum.amountCents ?? 0));
@@ -397,11 +402,14 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     newFinalPriceCents,
+    format,
   }: {
     /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
     memberId: string | null;
     bookingId: string;
     newFinalPriceCents: number;
+    /** Club format resolved before the caller's transaction or ledger lock. */
+    format: ClubFormat;
   },
   tx: Prisma.TransactionClient
 ): Promise<{ appliedCreditCents: number; refundedExcessCents: number }> {
@@ -412,45 +420,100 @@ export async function clampAppliedCreditToBookingPrice(
   if (memberId === null) {
     return { appliedCreditCents: 0, refundedExcessCents: 0 };
   }
-  await lockMemberCreditLedger(memberId, tx);
+  const { appliedCreditCents, givenBackCents: excessCents } = await giveBackAppliedCredit({
+    memberId,
+    bookingId,
+    giveBackCentsOf: (applied) => applied - Math.max(0, newFinalPriceCents),
+    description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
+    format,
+  }, tx);
 
+  return {
+    appliedCreditCents: appliedCreditCents - excessCents,
+    refundedExcessCents: excessCents,
+  };
+}
+
+/**
+ * THE GIVE-BACK OF APPLIED CREDIT, the one mechanism (#1887's clamp; #3791,
+ * `INV-SSOT`). Its callers: the clamp above, a credit-paid booking's review
+ * share (`edit-financial-review-account-credit.ts`) and its price reduction
+ * (`booking-modify-credit-give-back.ts`, #3809). Under the ledger lock and the
+ * deallocation fence it writes one positive `BOOKING_APPLIED` row for what
+ * `giveBackCentsOf` returns, capped at the credit applied, and posts it through
+ * the credit sync.
+ *
+ * THE XERO STEP IS PART OF IT (owner decision 1 on #3791): where a booking's
+ * applied credit is allocated (bank transfer, or card since #1641) against its Xero
+ * invoice beyond the new applied figure, the durable deallocation operation
+ * commits with the row, so the next inbound sync cannot pull the applied figure
+ * back up to Xero's. Never on a CANCELLED booking, whose invoice would reopen.
+ * The worker makes the provider calls after this transaction, never under the
+ * ledger lock.
+ *
+ * `giveBackCentsOf` is asked under the lock, with the applied credit and the
+ * payment just read, so its answer cannot be stale. Returns that applied credit
+ * (read BEFORE the give-back), what was given back and the payment; the
+ * `Payment.creditAppliedCents` mirror stays the caller's.
+ */
+export async function giveBackAppliedCredit(
+  { memberId, bookingId, giveBackCentsOf, description, format, sourceBookingId }: {
+    memberId: string;
+    bookingId: string;
+    /**
+     * Marks the row as a financial review's give-back (#3791): later reviews of
+     * the booking find the give-backs already made by it, not by a description
+     * a Xero repair may rewrite. Absent on the clamp's.
+     */
+    sourceBookingId?: string;
+    giveBackCentsOf: (
+      appliedCreditCents: number,
+      payment: AppliedCreditGiveBackPayment | null,
+    ) => number | Promise<number>;
+    description: string;
+    /** Club format resolved before the caller's transaction or ledger lock. */
+    format: ClubFormat;
+  },
+  tx: Prisma.TransactionClient,
+): Promise<{ appliedCreditCents: number; givenBackCents: number; payment: AppliedCreditGiveBackPayment | null }> {
+  await lockMemberCreditLedger(memberId, tx);
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    select: { payment: { select: { id: true, source: true, xeroInvoiceId: true } } },
+    select: { status: true, payment: { select: { id: true, source: true, xeroInvoiceId: true, creditAppliedCents: true } } },
   });
-  const payment = booking?.payment;
-  if (payment) {
-    await assertNoAppliedCreditDeallocationFence(payment.id, tx);
-  }
+  const payment = booking?.payment ?? null;
+  if (payment) await assertNoAppliedCreditDeallocationFence(payment.id, tx);
 
   const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
-  const excessCents = appliedCreditCents - Math.max(0, newFinalPriceCents);
-
-  if (excessCents <= 0) {
-    return { appliedCreditCents, refundedExcessCents: 0 };
-  }
+  const givenBackCents = Math.max(0, Math.min(appliedCreditCents, await giveBackCentsOf(appliedCreditCents, payment)));
+  if (givenBackCents <= 0) return { appliedCreditCents, givenBackCents: 0, payment };
 
   await tx.memberCredit.create({
     data: {
       memberId,
-      amountCents: excessCents,
+      amountCents: givenBackCents,
       type: CreditType.BOOKING_APPLIED,
-      description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
+      description,
       appliedToBookingId: bookingId,
+      ...(sourceBookingId ? { sourceBookingId } : {}),
     },
   });
+  await syncBookingLedgerCredits({ bookingId, store: tx });
 
-  if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
-    await repairLegacyAppliedCreditNoteAllocationsForBooking(
-      bookingId,
-      payment.xeroInvoiceId,
-      tx,
-    );
+  // Never on a CANCELLED booking: its invoice stands as the cancellation left
+  // it, and releasing credit allocated against it would reopen it with an
+  // amount due. The caller returns that money in Xero another way (#3791).
+  // #3809: the allocation SLICES decide, not the payment's source - a card
+  // booking's are #1641's - and are checked against their provenance first.
+  if (booking?.status !== BookingStatus.CANCELLED && payment?.xeroInvoiceId) {
+    if (payment.source === PaymentSource.INTERNET_BANKING || (await tx.memberCreditNoteAllocation.count({ where: { appliedToBookingId: bookingId } })) > 0) {
+      await repairLegacyAppliedCreditNoteAllocationsForBooking(bookingId, payment.xeroInvoiceId, tx, format);
+    }
     const allocated = await tx.memberCreditNoteAllocation.aggregate({
       where: { appliedToBookingId: bookingId },
       _sum: { amountCents: true },
     });
-    const targetAppliedCents = appliedCreditCents - excessCents;
+    const targetAppliedCents = appliedCreditCents - givenBackCents;
     if ((allocated._sum.amountCents ?? 0) > targetAppliedCents) {
       const correlationKey = buildXeroIdempotencyKey(
         "booking", bookingId, "applied-credit-deallocation", targetAppliedCents, "v1"
@@ -464,33 +527,42 @@ export async function clampAppliedCreditToBookingPrice(
         status: "PENDING",
         idempotencyKey: correlationKey,
         correlationKey,
-        requestPayload: {
-          queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
-          bookingId,
-        },
+        requestPayload: { queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE, bookingId },
         store: tx,
       });
     }
   }
-
-  return {
-    appliedCreditCents: appliedCreditCents - excessCents,
-    refundedExcessCents: excessCents,
-  };
+  return { appliedCreditCents, givenBackCents, payment };
 }
+
+/** The booking's payment as the give-back reads it, under the ledger lock. */
+export type AppliedCreditGiveBackPayment = {
+  id: string;
+  source: PaymentSource;
+  xeroInvoiceId: string | null;
+  creditAppliedCents: number;
+};
 
 export async function applyCreditToBooking(
   memberId: string,
   amountCents: number,
   bookingId: string,
-  tx: Prisma.TransactionClient, options?: { description?: string },
+  tx: Prisma.TransactionClient,
+  /**
+   * The club's format, for the insufficient-balance message. A PARAMETER
+   * because this runs inside the caller's transaction, under the member's
+   * ledger lock, and the format is resolved before that transaction opens
+   * (#3565).
+   */
+  format: ClubFormat,
+  options?: { description?: string },
 ): Promise<void> {
   validateCreditApplicationAmount(amountCents);
 
   await lockMemberCreditLedger(memberId, tx);
 
   const balance = await getMemberCreditBalance(memberId, tx);
-  validateCreditApplicationAgainstBalance(amountCents, balance);
+  validateCreditApplicationAgainstBalance(amountCents, balance, format);
 
   await tx.memberCredit.create({
     data: {
@@ -501,6 +573,7 @@ export async function applyCreditToBooking(
       appliedToBookingId: bookingId,
     },
   });
+  await syncBookingLedgerCredits({ bookingId, store: tx });
 }
 
 /**
@@ -541,13 +614,15 @@ export async function restoreCreditFromBooking(
   restoreAmountCentsOverride?: number
 ): Promise<number> {
   const db = tx || prisma;
+  // #3792: the member ledger lock, before the read, so the inbound Xero
+  // credit-note sync (same key) cannot post a de-allocation against applied
+  // rows this restore is about to give back. Re-entrant for callers already
+  // holding it; every caller takes lock(1) (and its lodge lock) first.
+  if (tx) await lockMemberCreditLedger(memberId, tx);
 
   // Find all BOOKING_APPLIED credits for this booking
   const appliedCredits = await db.memberCredit.findMany({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-    },
+    where: bookingAppliedCreditWhere(bookingId),
   });
 
   if (appliedCredits.length === 0) {
@@ -592,6 +667,7 @@ export async function restoreCreditFromBooking(
     ],
     skipDuplicates: true,
   });
+  await syncBookingLedgerCredits({ bookingId, store: db });
 
   // count === 0 => a restore row for this booking already existed; nothing was
   // written and no credit was restored on THIS call.
@@ -705,11 +781,12 @@ export async function lockMemberCreditLedger(
 async function validateNegativeAdjustmentBalance(
   memberId: string,
   amountCents: number,
+  format: ClubFormat,
   tx?: Prisma.TransactionClient
 ) {
   if (amountCents < 0) {
     const balance = await getMemberCreditBalance(memberId, tx);
-    validateNegativeAdjustmentAgainstBalance(amountCents, balance);
+    validateNegativeAdjustmentAgainstBalance(amountCents, balance, format);
   }
 }
 
@@ -772,6 +849,11 @@ export async function createAdminAdjustmentRequest(
     };
   }
 
+  // Resolved BEFORE the transaction opens (#3565): a settings read has no
+  // business inside it, and the balance check and the audit line below both
+  // render money.
+  const format = await clubFormatValues();
+
   try {
     const request = await prisma.$transaction(async (tx) => {
       const createdRequest = await tx.adminCreditAdjustmentRequest.create({
@@ -785,7 +867,7 @@ export async function createAdminAdjustmentRequest(
         select: adminAdjustmentRequestSelect,
       });
 
-      await validateNegativeAdjustmentBalance(memberId, amountCents, tx);
+      await validateNegativeAdjustmentBalance(memberId, amountCents, format, tx);
 
       await createAuditLog(
         {
@@ -795,7 +877,7 @@ export async function createAdminAdjustmentRequest(
           entityId: createdRequest.id,
           memberId: adminId,
           targetId: memberId,
-          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents)}. Reason: ${description}`,
+          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents, format)}. Reason: ${description}`,
           ipAddress,
         },
         tx
@@ -861,6 +943,9 @@ export async function reviewAdminAdjustmentRequest(
   adminId: string,
   ipAddress?: string
 ) {
+  // Before the transaction and its ledger lock (#3565).
+  const format = await clubFormatValues();
+
   const result = await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(memberId, tx);
 
@@ -886,6 +971,7 @@ export async function reviewAdminAdjustmentRequest(
       await validateNegativeAdjustmentBalance(
         request.memberId,
         request.amountCents,
+        format,
         tx
       );
     }
@@ -920,7 +1006,7 @@ export async function reviewAdminAdjustmentRequest(
           entityId: request.id,
           memberId: adminId,
           targetId: memberId,
-          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
           ipAddress,
         },
         tx
@@ -953,7 +1039,7 @@ export async function reviewAdminAdjustmentRequest(
         entityId: request.id,
         memberId: adminId,
         targetId: memberId,
-        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
         // #2695 (`INV-PRIV-018`) — DECLARED MEMBER-FACING, owner decision of
         // 9 August 2026. The only explanation a member ever gets for why their
         // credit balance moved, which is why both fixes the issue originally
@@ -962,9 +1048,9 @@ export async function reviewAdminAdjustmentRequest(
         // Written out rather than reusing `details` above, and that is the
         // point: `details` is the officers' record. It names the credit row and
         // the member who asked for the adjustment, and NEITHER reaches any
-        // member surface (`INV-PRIV-012`). And `formatAdjustmentAmount` renders
-        // raw cents (`+2500 cents`) for an operator; a member reads money, so
-        // the direction is a word and the amount unsigned.
+        // member surface (`INV-PRIV-012`). And `formatAdjustmentAmount` renders the
+        // officers' amount SIGNED (`+$25.00`, #3533); a member reads the
+        // direction as a word, with the amount unsigned.
         //
         // The claim is the free text only, on purpose: the adjustment REQUEST's
         // id is this row's `entityId`, which the timeline returns to both
@@ -975,8 +1061,8 @@ export async function reviewAdminAdjustmentRequest(
           visibility: "member-facing",
           text:
             request.amountCents >= 0
-              ? `Credit of ${formatCents(request.amountCents)} added to your account. Reason: ${request.description}`
-              : `Credit of ${formatCents(Math.abs(request.amountCents))} deducted from your account. Reason: ${request.description}`,
+              ? `Credit of ${formatCents(request.amountCents, format)} added to your account. Reason: ${request.description}`
+              : `Credit of ${formatCents(Math.abs(request.amountCents), format)} deducted from your account. Reason: ${request.description}`,
         },
         ipAddress,
       },

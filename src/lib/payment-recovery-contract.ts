@@ -24,6 +24,77 @@ export const EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY = Object.freeze({
   paymentStatusUnconfirmed: true as const,
 });
 
+// #3567: an intent in the club's previous currency is still `processing` (a bank
+// debit, say), so it is neither handed back nor superseded; the member waits.
+export const PAYMENT_PROCESSING_CODE = "PAYMENT_PROCESSING" as const;
+
+export const PAYMENT_PROCESSING_MESSAGE =
+  "This payment is being processed. Refresh the page in a minute to see it confirmed.";
+
+export const PAYMENT_PROCESSING_BODY = Object.freeze({
+  code: PAYMENT_PROCESSING_CODE,
+  error: PAYMENT_PROCESSING_MESSAGE,
+});
+
+export function isPaymentProcessing(value: unknown): value is { code: typeof PAYMENT_PROCESSING_CODE; error: string } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.code === PAYMENT_PROCESSING_CODE && typeof candidate.error === "string";
+}
+
+// #3864: the pay step left the member's stored credit election unspent because
+// an earlier card intent could not be confirmed dead. The booking is still
+// payable; the member retries. One code, two server-written reasons.
+export const CREDIT_ELECTION_NOT_APPLIED_CODE = "CREDIT_ELECTION_NOT_APPLIED" as const;
+
+export const CREDIT_ELECTION_NOT_APPLIED_BODIES = Object.freeze({
+  cancelUnconfirmed: Object.freeze({
+    code: CREDIT_ELECTION_NOT_APPLIED_CODE,
+    error:
+      "We couldn't confirm your earlier card payment was cancelled, so your account credit has not been applied yet. Please try again in a few minutes.",
+  }),
+  otherPaymentStarted: Object.freeze({
+    code: CREDIT_ELECTION_NOT_APPLIED_CODE,
+    error:
+      "Another card payment for this booking was started while this one was opening, so your account credit has not been applied yet. Reload the page and try again.",
+  }),
+});
+
+export function isCreditElectionNotApplied(value: unknown): value is { code: typeof CREDIT_ELECTION_NOT_APPLIED_CODE; error: string } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.code === CREDIT_ELECTION_NOT_APPLIED_CODE && typeof candidate.error === "string";
+}
+
+/**
+ * #3641 / #3635: Stripe already holds an additional (modification) payment —
+ * `succeeded` or `requires_capture` — and our rows have not caught up yet. The
+ * additional-payment-secret route answers this instead of a second form, and
+ * the card shows it as paid. A `processing` intent is NOT this: it can still
+ * fail, so it answers {@link PAYMENT_PROCESSING_BODY} instead.
+ */
+export const ADDITIONAL_PAYMENT_ALREADY_MADE_CODE =
+  "ADDITIONAL_PAYMENT_ALREADY_MADE" as const;
+
+export const ADDITIONAL_PAYMENT_ALREADY_MADE_MESSAGE =
+  "This payment has already been made. Refresh the page to see it.";
+
+export const ADDITIONAL_PAYMENT_ALREADY_MADE_BODY = Object.freeze({
+  code: ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
+  error: ADDITIONAL_PAYMENT_ALREADY_MADE_MESSAGE,
+});
+
+export function isAdditionalPaymentAlreadyMade(
+  value: unknown,
+): value is typeof ADDITIONAL_PAYMENT_ALREADY_MADE_BODY {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.code === ADDITIONAL_PAYMENT_ALREADY_MADE_CODE &&
+    typeof candidate.error === "string"
+  );
+}
+
 export const REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_CODE =
   "REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED" as const;
 
@@ -97,5 +168,35 @@ export function isRefundedCardTransactionRepaymentRequired(
     candidate.paymentRefunded === true &&
     candidate.repaymentRequired === true &&
     candidate.paymentReceived !== true
+  );
+}
+
+/**
+ * #3638 (`INV-PAY-102`): the booking is being paid by Internet Banking — it
+ * switched before this request, or while its card intent was being minted — so
+ * a card door refuses a card payment beside the emailed invoice. THE ONE body
+ * for that refusal, sent by both card doors (the session pay route and the
+ * `/pay/<token>` link), and worded for either reader: the member on their
+ * booking page or a payer holding only the link. A pure leaf, so a page can
+ * recognise it without importing the server module that sends it.
+ */
+export const SWITCHED_TO_INTERNET_BANKING_CODE =
+  "SWITCHED_TO_INTERNET_BANKING" as const;
+
+export const SWITCHED_TO_INTERNET_BANKING_MESSAGE =
+  "This booking is being paid by Internet Banking, so it can't be paid by card. Pay by bank transfer using the booking's Internet Banking details instead.";
+
+export const SWITCHED_TO_INTERNET_BANKING_BODY = Object.freeze({
+  code: SWITCHED_TO_INTERNET_BANKING_CODE,
+  error: SWITCHED_TO_INTERNET_BANKING_MESSAGE,
+});
+
+export function isSwitchedToInternetBanking(
+  value: unknown,
+): value is typeof SWITCHED_TO_INTERNET_BANKING_BODY {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as Record<string, unknown>).code === SWITCHED_TO_INTERNET_BANKING_CODE
   );
 }

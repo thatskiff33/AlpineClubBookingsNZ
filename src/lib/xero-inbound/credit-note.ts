@@ -8,6 +8,9 @@ import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, build
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, getDerivedInboundAllocationRole, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance, resolvePaymentIdsByInvoiceTargets } from "./credit-note-repairs";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { accountCreditModificationNoteIds } from "./account-credit-modification-notes";
+import { mayRecordAsCanonicalRefundNote } from "@/lib/xero-refund-note-status";
 
 export async function reconcileXeroCreditNote(creditNoteId: string) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -197,7 +200,12 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   const canApplyCanonicalRefundLink = paymentCandidates.length === 1;
   let updatedPayments = 0;
   for (const payment of paymentCandidates) {
-    if (!payment.xeroRefundCreditNoteId && canApplyCanonicalRefundLink) {
+    // #3880 F1: a per-refund note never becomes the payment's canonical one.
+    if (
+      !payment.xeroRefundCreditNoteId &&
+      canApplyCanonicalRefundLink &&
+      (await mayRecordAsCanonicalRefundNote(payment.id, creditNote.creditNoteID, prisma))
+    ) {
       await prisma.payment.update({
         where: {
           id: payment.id,
@@ -223,14 +231,13 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
     if (!creditOwnerMemberId) continue;
 
-    const bookingLabel = payment.bookingId.slice(0, 8);
     const backfilledCredits = await prisma.memberCredit.updateMany({
       where: {
         memberId: creditOwnerMemberId,
         sourceBookingId: payment.bookingId,
         amountCents: creditNoteAmountCents,
         type: CreditType.CANCELLATION_REFUND,
-        description: `Cancellation refund for booking ${bookingLabel}`,
+        description: cancellationCreditDescription(payment.bookingId),
         xeroCreditNoteId: null,
       },
       data: {
@@ -307,9 +314,10 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     await upsertXeroObjectLink(link);
   }
 
+  // #3809 (review M2): a modification note that gave credit back moved no cash.
   const modificationRefundPaymentIdsByInvoiceId = resolvedCreditNoteLinks.some(
     (link) => link.role === "MODIFICATION_CREDIT_NOTE"
-  )
+  ) && !(await accountCreditModificationNoteIds([creditNote.creditNoteID])).has(creditNote.creditNoteID)
     ? await resolvePaymentIdsByInvoiceTargets(
         creditNote.creditNoteID,
         allocationTargets

@@ -10,15 +10,13 @@
  *
  * ## How this suite can fail, which is the whole point
  *
- * `APP_TIME_ZONE` — the container's `TZ`, and the only thing `formatNZDate`
- * ever read — is pinned to `America/Denver`, BEHIND Greenwich, because that is
- * the side on which the defect is visible. The club's own zone is then supplied
- * as data and varied per test, so no assertion here can pass by coincidence and
- * none can pass by falling back to the environment.
- *
- * Deliberately NOT `Pacific/Auckland` as the environment zone: that is what
- * `APP_TIME_ZONE` falls back to, so a suite pinning it could not tell the
- * club's answer from the container's.
+ * The environment zone — the container's `TZ`, and the only thing
+ * `formatNZDate` ever read — used to be pinned here to `America/Denver`, BEHIND
+ * Greenwich, via a `@/config/operational` mock. #3567 deleted that module and
+ * nothing reads the environment's zone any more, so the pin is gone; the
+ * premise below still compares against Denver, the side on which the defect is
+ * visible. The club's own zone is supplied as data and varied per test, so no
+ * assertion here can pass by coincidence.
  *
  * The fixture instant `2026-07-01T02:00:00Z` is 1 July 14:00 in Auckland and
  * 30 June 20:00 in Denver — two different calendar days. The frozen clock
@@ -34,15 +32,8 @@
  * zone" would break exactly that, which is why it is asserted here rather than
  * left to the reader of a docblock.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { BookingEventType } from "@prisma/client";
-
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import {
@@ -50,6 +41,7 @@ import {
   type NarrativeBooking,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** 1 July 14:00 in Auckland, 30 June 20:00 in Denver. */
 const OCCURRED_AT = "2026-07-01T02:00:00.000Z";
@@ -58,9 +50,9 @@ const OCCURRED_AT = "2026-07-01T02:00:00.000Z";
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
 
-const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
-const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"));
-const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"));
+const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
+const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"), CLUB_FORMAT_TEST);
+const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"), CLUB_FORMAT_TEST);
 
 function booking(overrides: Partial<NarrativeBooking> = {}): NarrativeBooking {
   return {
@@ -115,7 +107,7 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
           amountCents: 12000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Before this migration the message read "30 Jun 2026" — the day it was in
     // Denver, where nobody involved in this booking lives.
@@ -131,12 +123,12 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
       club: KIRITIMATI,
       booking: booking(),
       events: paid,
-    });
+    }, CLUB_FORMAT_TEST);
     const behind = resolveBookingNarrative({
       club: PAGO,
       booking: booking(),
       events: paid,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(ahead.message).toContain("payment of $120.00 on 1 Jul 2026");
     expect(behind.message).toContain("payment of $120.00 on 30 Jun 2026");
@@ -153,12 +145,12 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
       club: AUCKLAND,
       booking: booking({ status: "CANCELLED" }),
       events,
-    });
+    }, CLUB_FORMAT_TEST);
     const behindGreenwich = resolveBookingNarrative({
       club: PAGO,
       booking: booking({ status: "CANCELLED" }),
       events,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(atTheClub.state).toBe("cancelled_post_payment");
     // Cancelled on / paid on / refunded on — all three stamps, one zone.
@@ -175,14 +167,14 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
         club: AUCKLAND,
         booking: booking({ status: "BUMPED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("released on 1 Jul 2026");
     expect(
       resolveBookingNarrative({
         club: PAGO,
         booking: booking({ status: "BUMPED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("released on 30 Jun 2026");
   });
 
@@ -194,14 +186,14 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
         club: AUCKLAND,
         booking: booking({ status: "CANCELLED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("was cancelled on 1 Jul 2026");
     expect(
       resolveBookingNarrative({
         club: PAGO,
         booking: booking({ status: "CANCELLED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("was cancelled on 30 Jun 2026");
   });
 });
@@ -214,7 +206,7 @@ describe("a lodge night takes no zone at all — the half a sweep would break", 
           club,
           booking: booking({ status: "PENDING" }),
           events: [],
-        }).message
+        }, CLUB_FORMAT_TEST).message
     );
 
     for (const message of rendered) {
@@ -231,12 +223,12 @@ describe("a lodge night takes no zone at all — the half a sweep would break", 
       club: KIRITIMATI,
       booking: booking(),
       events: paid,
-    }).message;
+    }, CLUB_FORMAT_TEST).message;
     const behind = resolveBookingNarrative({
       club: PAGO,
       booking: booking(),
       events: paid,
-    }).message;
+    }, CLUB_FORMAT_TEST).message;
 
     // One sentence, two kinds of date, and only one of them is allowed to move.
     expect(ahead).toContain("stay from 1 Aug 2026 to 3 Aug 2026 is confirmed");
@@ -258,7 +250,7 @@ describe("a lodge night takes no zone at all — the half a sweep would break", 
           checkIn: new Date("2026-08-01T11:30:00.000Z"),
         }),
         events: [],
-      })
+      }, CLUB_FORMAT_TEST)
     ).toThrow(/takes a stored calendar day, not a moment/);
   });
 });

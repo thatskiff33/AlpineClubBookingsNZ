@@ -19,6 +19,7 @@ import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
 import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payment-link";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   mintSplitGuestPaymentLinkIfAbsent,
@@ -74,6 +75,9 @@ import {
 import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
 import { processWaitlistForDates } from "./waitlist";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { localChargeRefusal } from "@/lib/stripe-charge-currency";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
@@ -239,6 +243,10 @@ type HoldResolution =
       booking: PendingBooking;
     }
   | { type: "missing_payment_method"; booking: PendingBooking }
+  // #3567 re-review: the charge would be refused here before Stripe is called
+  // (the club's stored currency, the minimum), so NOTHING was claimed and no
+  // attempt row exists; every other branch of the run still ran.
+  | { type: "charge_refused"; booking: PendingBooking; refusal: Error }
   | {
       type: "split_child_payment_link";
       booking: PendingBooking;
@@ -391,7 +399,7 @@ async function queueXeroInvoice(bookingId: string, logMessage: string) {
   }
 }
 
-async function sendConfirmationEmail(booking: PendingBooking) {
+async function sendConfirmationEmail(booking: PendingBooking, format: ClubFormat) {
   try {
     await sendBookingConfirmedEmail(
       { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
@@ -401,6 +409,7 @@ async function sendConfirmationEmail(booking: PendingBooking) {
       booking.checkOut,
       booking.guests.length,
       booking.finalPriceCents,
+      format,
       bookingPromoEmailOptions(booking)
     );
   } catch (emailErr) {
@@ -452,12 +461,12 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
   }
 }
 
-function triggerWaitlistProcessing(booking: PendingBooking) {
+function triggerWaitlistProcessing(booking: PendingBooking, format: ClubFormat) {
   processWaitlistForDates({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     lodgeId: booking.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId: booking.id },
       "Failed to process waitlist after cron bump"
@@ -473,7 +482,8 @@ function triggerWaitlistProcessing(booking: PendingBooking) {
 async function resolveHoldWindowUnderLock(
   bookingId: string,
   now: Date,
-  clubZone: ClubTimeZone
+  clubZone: ClubTimeZone,
+  format: ClubFormat
 ): Promise<HoldResolution> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -576,6 +586,9 @@ async function resolveHoldWindowUnderLock(
       }
 
       await revokePaymentLinksForBooking(booking.id, tx);
+      // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
+      // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
+      await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
 
       return {
         type: "bumped",
@@ -696,6 +709,9 @@ async function resolveHoldWindowUnderLock(
           }
 
           await revokePaymentLinksForBooking(booking.id, tx);
+          // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
+          // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
+          await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:request-hold-ended" });
 
           return { type: "request_hold_terminal_cancelled", booking };
         }
@@ -798,6 +814,9 @@ async function resolveHoldWindowUnderLock(
           });
 
           await revokePaymentLinksForBooking(booking.id, tx);
+          // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
+          // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
+          await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:child-hold-ended" });
 
           // The CANCELLED narrative event is recorded POST-COMMIT (below), not
           // here: booking-events.ts documents recordBookingEvent as a
@@ -877,6 +896,10 @@ async function resolveHoldWindowUnderLock(
 
       return { type: "missing_payment_method", booking };
     }
+
+    // Before the claim, so a refused charge writes no status, no attempt row.
+    const refusal = localChargeRefusal(format, booking.finalPriceCents);
+    if (refusal) return { type: "charge_refused", booking, refusal };
 
     const claimed = await tx.booking.updateMany({
       where: { id: booking.id, status: BookingStatus.PENDING },
@@ -1164,6 +1187,9 @@ async function cancelSupersededLinkIntentsBestEffort(
  *    requester + admins are given a terminal notice (#2012).
  */
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = new Date();
 
   // ONE settings read per run, outside every transaction, so no lock waits on
@@ -1203,7 +1229,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       const resolution = await resolveHoldWindowUnderLock(
         candidate.id,
         now,
-        clubZone
+        clubZone,
+        format
       );
 
       if (resolution.type === "already_processed") {
@@ -1225,7 +1252,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           snapshot: { flagged: resolution.flagged },
         });
         await sendBumpedEmail(resolution.booking, resolution.flagged);
-        triggerWaitlistProcessing(resolution.booking);
+        triggerWaitlistProcessing(resolution.booking, format);
         continue;
       }
 
@@ -1240,7 +1267,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           resolution.booking.id,
           "Xero invoice queued for $0 booking"
         );
-        await sendConfirmationEmail(resolution.booking);
+        await sendConfirmationEmail(resolution.booking, format);
         continue;
       }
 
@@ -1266,7 +1293,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               guestCount: resolution.booking.guests.length,
               totalCents: resolution.booking.finalPriceCents,
               holdUntil: resolution.extendedHoldUntil,
-            });
+            }, format);
           } catch (emailErr) {
             logger.error(
               {
@@ -1331,7 +1358,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             checkOut: resolution.booking.checkOut,
             guestCount: resolution.booking.guests.length,
             totalCents: resolution.booking.finalPriceCents,
-          });
+          }, format);
         } catch (alertErr) {
           logger.error(
             {
@@ -1343,7 +1370,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           );
         }
 
-        triggerWaitlistProcessing(resolution.booking);
+        triggerWaitlistProcessing(resolution.booking, format);
         continue;
       }
 
@@ -1401,7 +1428,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             guestCount: resolution.booking.guests.length,
             totalCents: resolution.booking.finalPriceCents,
             parentUnpaid: resolution.parentUnpaid,
-          });
+          }, format);
         } catch (alertErr) {
           logger.error(
             {
@@ -1413,7 +1440,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           );
         }
 
-        triggerWaitlistProcessing(resolution.booking);
+        triggerWaitlistProcessing(resolution.booking, format);
         continue;
       }
 
@@ -1473,7 +1500,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               bookingReference: resolution.booking.id,
               expiresAt,
               lodgeId: resolution.booking.lodgeId ?? null,
-            });
+            }, format);
             delivered = emailOutcome.status === "sent";
             // #2258: the switch can be flipped between the pre-mint gate and this
             // send. The token is revoked below either way, but a DELIBERATE
@@ -1539,7 +1566,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               totalCents: resolution.booking.finalPriceCents,
               holdUntil: resolution.extendedHoldUntil,
               parentUnpaid: false,
-            });
+            }, format);
           } catch (alertErr) {
             logger.error(
               {
@@ -1581,7 +1608,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               totalCents: resolution.booking.finalPriceCents,
               holdUntil: resolution.extendedHoldUntil,
               parentUnpaid: true,
-            });
+            }, format);
           } catch (alertErr) {
             logger.error(
               {
@@ -1592,6 +1619,28 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               "Failed to send admin split-settlement unpaid alert"
             );
           }
+        }
+        continue;
+      }
+
+      if (resolution.type === "charge_refused") {
+        // Alerted on the refusal cadence, anchored on when the charge fell due,
+        // never every run; the booking stays PENDING until the cause is fixed.
+        const due = await savedCardChargeDueAtForBooking(resolution.booking, resolution.booking.nonMemberHoldUntil);
+        const alert = shouldAlertOnSavedCardChargeRefusal(due, now);
+        logger.error({ bookingId: resolution.booking.id, alert, job: "confirmPendingBookings" }, `Did not charge a saved card: ${resolution.refusal.message}`);
+        result.failedBookingIds.push(resolution.booking.id);
+        if (alert) {
+          sendAdminPaymentFailureAlert({
+            memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
+            checkIn: resolution.booking.checkIn,
+            checkOut: resolution.booking.checkOut,
+            amountCents: resolution.booking.finalPriceCents,
+            errorMessage: resolution.refusal.message,
+            paymentIntentId: resolution.booking.payment?.stripePaymentIntentId ?? "N/A",
+          }, format).catch((alertErr) =>
+            logger.error({ err: alertErr, bookingId: resolution.booking.id }, "Failed to send admin payment failure alert"),
+          );
         }
         continue;
       }
@@ -1624,6 +1673,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // row FAILED before the throw reaches the catch below, which is what
       // lets #3268's retire null the row's card safely.
       const paymentIntent = await chargeSavedCardAttempt({
+        format,
         attempt: resolution.attempt,
         bookingId: resolution.booking.id,
         memberId: bookingOwner(resolution.booking).memberId,
@@ -1644,6 +1694,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         });
 
         const reconciliation = await markBookingPaymentSucceeded({
+          format,
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,
           amountCents: paymentIntent.amount,
@@ -1693,7 +1744,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         result.confirmedBookingIds.push(resolution.booking.id);
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
-        await sendConfirmationEmail(resolution.booking);
+        await sendConfirmationEmail(resolution.booking, format);
       } else {
         const settled = await prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -1871,7 +1922,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             amountCents: candidate.finalPriceCents,
             errorMessage: err.message,
             paymentIntentId: err.paymentIntentId ?? paymentIntentId,
-          }).catch((alertErr) =>
+          }, format).catch((alertErr) =>
             logger.error(
               { err: alertErr, bookingId: candidate.id },
               "Failed to send admin payment failure alert"
@@ -1939,8 +1990,16 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
                 now
               ),
             });
-            if (failure.outcome === "terminal") {
+            if (failure.outcome === "local_refusal") {
+              // #3567 re-review: refused before Stripe was called; alert on the
+              // refusal cadence only, and never retire the card for it.
+              escalatedAsTerminal = !shouldAlertOnSavedCardChargeRefusal(
+                await savedCardChargeDueAt(claimForCharge),
+                now,
+              );
+            } else if (failure.outcome === "terminal") {
               await retireAndEscalateUnusableSavedCard({
+                format,
                 booking: claimForCharge.booking,
                 paymentMethodId: claimForCharge.payment.stripePaymentMethodId,
                 paymentIntentId,
@@ -1964,7 +2023,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             amountCents: candidate.finalPriceCents,
             errorMessage: err instanceof Error ? err.message : String(err),
             paymentIntentId,
-          }).catch((alertErr) =>
+          }, format).catch((alertErr) =>
             logger.error(
               { err: alertErr, bookingId: candidate.id },
               "Failed to send admin payment failure alert"

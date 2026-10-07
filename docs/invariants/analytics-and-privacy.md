@@ -11,6 +11,8 @@ public Analytics preferences control, the analytics route policy, anything that
 decides what leaves this application for Google, the log/Sentry redactor and what
 it strips out, or the `category` an audit writer records — which decides both the
 admin permissions a reader needs and whether the subject member sees the row.
+Read it too before anything reads, writes, exports or logs a member's
+dietary/allergy information (`INV-PRIV-022`).
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -142,7 +144,7 @@ These are two different answers on purpose, and neither is "none".
   composed spellings a route invents (`fullName`, `memberName`, `guestName`,
   `contactName`, `surname`, `familyName`); street and postal address including
   Xero's own bare `City`/`Region`/`Country`/`PostalCode`; date of birth; gender;
-  occupation; email; phone; credentials including hashed and second-factor ones;
+  occupation; dietary/allergy keys; email; phone; credentials including hashed and second-factor ones;
   and payment identifiers.
 - **A key spelling it does not know is a leak, so this list is a floor and not a
   guarantee.** Emails and phone numbers have a second, value-shaped net, so a
@@ -171,9 +173,9 @@ These are two different answers on purpose, and neither is "none".
   tokens, card numbers and long HTML but NOT person fields. Owner decision of
   9-10 Aug 2026 on #2683: an `AuditLog` row is a permission-gated,
   retention-classed evidence record whose job is to say who did what to whom, so
-  "who" has to be legible to the officer reviewing it; this schema holds no
-  special-category data (a check across all 172 models found no medical,
-  dietary, emergency-contact, next-of-kin or ethnicity field), and the file's own
+  "who" has to be legible to the officer reviewing it; the one special-category
+  field, dietary/allergy information, is recorded only as changed
+  (`INV-PRIV-022`), and the file's own
   ARCHIVE MODE note records that over-redaction had already destroyed the only
   surviving copy of a club's email wording. `src/lib/__tests__/audit.test.ts`
   pins all three fields, in both directions at once.
@@ -451,7 +453,7 @@ costed options live on those issues, not here.
   asserts all three strings name every subsystem in the set, so a copy-edit
   that drops one fails by name. The population here is three string literals in
   one file, which is why this half is pinned rather than reviewer-enforced like
-  the 307 unpinned write sites in `INV-OPS-012`.
+  the 369 unpinned write sites in `INV-OPS-012`.
 
 ## INV-PRIV-014
 
@@ -779,32 +781,33 @@ does.
 
 Every mutation of the encrypted integration-credential store names its writer,
 and the writer is a person or a NAMED background actor, never an absence.
-Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723),
-which carries the before-measurement.
+Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723);
+since [#3454](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3454)
+the store holds the Xero OAuth token set. The two-factor secret and recovery
+codes (`two-factor-audit.ts`) take bullets 1, 3, 5 and 6 only: no expectation,
+and a member acts only on their own.
 
-- **`actor` is a required argument on every mutator**, so a write with no
-  attribution does not compile. Omission used to be the default, and most call
-  sites took it, storing the `null` a background write stores.
-- **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
-  list, so the row says WHICH background writer touched the secret, not merely
-  that no person did. `assertCredentialActor` is the runtime half, and an
-  `admin` actor carries a non-empty member id.
-- **The secret and its audit row are ONE local transaction**, on the same
-  client, so a failed audit rolls the secret back.
-- **A stale write LOSES.** Every set and delete declares what it expected to
-  find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
-  it read. A loser changes nothing and records nothing.
-- **A read records nothing**, and neither does a delete matching no row nor a
-  freshness marker whose answer would not change.
-- **No plaintext reaches audit, log or error output.** The payload is built from
-  a type with no field a value fits into, and the store calls no logger — a
-  property of its own doors, not of a redactor, since `INV-PRIV-011` is blind to
-  any door that never calls one.
-- **The proof is mechanical, over every DIRECT CALL of a mutator** rather than
-  every function that ends up changing a credential.
-  `credential-actor-census.test.ts` walks the tree; its scanner test proves a
-  seeded actorless writer and a seeded bypass are reported. A wrapper hides its
-  callers, soundly: it requires an actor, so the type covers them.
+1. **`actor` is a required argument on every mutator**, so a write with no
+   attribution does not compile.
+2. **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
+   list. `assertCredentialActor` is the runtime half; an `admin` actor carries
+   a non-empty member id.
+3. **The secret and its audit row are ONE local transaction**, on the same
+   client. A change caused by another (the Xero verify-reset) joins that
+   write's transaction and names it as `cause`.
+4. **A stale write LOSES.** Every set and delete declares what it expected, and
+   a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple it
+   read. A loser changes nothing and records nothing.
+5. **A read records nothing**, nor does a delete matching no row or an
+   unchanged freshness marker.
+6. **No plaintext reaches audit, log or error output.** The payload type has no
+   field a value fits into, and the store calls no logger (`INV-PRIV-011`).
+7. **The proof is mechanical, over every DIRECT CALL.**
+   `credential-actor-census.test.ts` walks the tree, and also allows writes to
+   the `XeroToken` mirror only from the token store; `two-factor-secret-census.test.ts`
+   pins every second-factor writer, nested relation writes included; its
+   docblock lists the shapes no walk sees (spreads, computed keys, raw SQL). Scanner tests prove seeded bypasses are
+   reported. A wrapper hides its callers soundly: it requires an actor.
 
 ## INV-PRIV-021
 
@@ -837,3 +840,39 @@ Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
   and is not audited as one.
 - One home, `src/lib/issue-report-screenshot-access.ts`; proof in
   `issue-report-admin-origin-screenshots.test.ts`.
+
+## INV-PRIV-022
+
+Dietary/allergy information — the profile's `Member.dietaryRequirements`
+(#2941) and each stay's `BookingGuest.dietaryRequirements` (#3029) — is ABSENT
+unless `src/lib/member-dietary.ts` selects it for a grant holder.
+Decisions: 20 Sep 2026 on
+[#2941](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2941); the
+[#3029](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3029) body.
+
+- **Absent by construction.** Every application Prisma client omits both columns
+  (`PRISMA_CLIENT_GLOBAL_OMIT`). The write half
+  (`member-dietary-booking-writes.ts`) mints no grant; its fence is its closed
+  importer list, and its fragment builders, which return the plain value, may
+  appear only as a spread operand.
+- **Profile audiences:** the subject (profile, onboarding) while ON; their own
+  data export, ON or OFF; a DB-verified `membership` admin while ON; a Full
+  Admin merge.
+- **Booking audiences:** a DB-verified `bookings:view` admin (`bookings:edit` to
+  change one row) and the kiosk's `admin` and `hut-leader` tiers, for that
+  lodge's present guests that day, both while ON; the subject's export, for
+  their own rows. So an admin who adds a member as a guest sees that member's
+  current profile value there, audited. Grants never cross profile and booking.
+- **Everyone else is denied, absent from the payload:** members (own booking,
+  linked guests, the #2942 roster), family, other kiosk tiers and preview,
+  rosters, the lobby, exports, reports, Xero, Stripe, analytics, notifications,
+  logs and raw audit metadata.
+- **OFF hides, never clears.** Only the export grant is issued; writers write
+  nothing new. Default OFF, including on a read failure.
+- **One shape.** Trimmed, blank null, at most 500 characters.
+- **Records say THAT, never WHAT.** Audit rows name the field; the log redactor
+  and audit sanitizer strip `dietary`/`allerg` values.
+- **Merge fills if blank.** **Erasure clears** the profile and the subject's
+  guest rows.
+- Proof: `member-dietary-access-census.test.ts`, a text scan (no data-flow
+  tracing), plus privacy, kiosk, route and real-database tests.

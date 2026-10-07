@@ -570,7 +570,7 @@ export default function SubscriptionsPage() {
                 <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {yearOptions.map((y) => (
-                    <SelectItem key={y} value={String(y)}>{seasonSelectLabel(y)}</SelectItem>
+                    <SelectItem key={y} value={String(y)}>{seasonSelectLabel(y, clubTime.format)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

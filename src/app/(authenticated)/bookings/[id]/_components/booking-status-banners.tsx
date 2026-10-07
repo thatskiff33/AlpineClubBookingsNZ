@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatCents } from "@/lib/utils";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import type { BookingNarrativeState } from "@/lib/booking-narrative";
 import { resolveCreditElectionNoticeAudience } from "@/lib/booking-credit-election";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
@@ -49,6 +49,7 @@ const narrativeBannerClasses: Record<string, string> = {
 export function BookingStatusBanners({
   booking,
   club,
+  money,
   viewer,
   access,
   party,
@@ -58,6 +59,7 @@ export function BookingStatusBanners({
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
+  money: BoundClubFormat;
   viewer: BookingDetailViewer;
   access: BookingDetailEditAccess;
   party: BookingDetailLinkedParty;
@@ -229,8 +231,8 @@ export function BookingStatusBanners({
           <div className="space-y-1 rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
             <p className="font-medium">
               {creditNoticeAudience === "admin"
-                ? `The member's ${formatCents(booking.creditElectionCents)} credit choice is saved and will be applied when they confirm.`
-                : `Your ${formatCents(booking.creditElectionCents)} credit choice is saved and will be applied when you confirm.`}
+                ? `The member's ${money.cents(booking.creditElectionCents)} credit choice is saved and will be applied when they confirm.`
+                : `Your ${money.cents(booking.creditElectionCents)} credit choice is saved and will be applied when you confirm.`}
             </p>
             <p className="opacity-80">
               {creditNoticeAudience === "admin"

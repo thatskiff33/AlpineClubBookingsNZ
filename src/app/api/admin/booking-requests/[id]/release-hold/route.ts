@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Release the capacity hold placed on a booking request at quote-send/hold
 // (#1280) so an admin can re-map or re-hold it (issue #1255 residual risk:
@@ -24,6 +25,9 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   const request = await prisma.bookingRequest.findUnique({
     where: { id },
@@ -74,6 +78,7 @@ export async function POST(
       session.user.id,
       "ADMIN",
       getClientIp(req),
+      format,
       "card",
       {
       // #1255 RR-2: suppress the requester's "booking cancelled" email — this is

@@ -39,7 +39,7 @@
  * so the pipeline under-flags a genuine refund note and can never mint one.
  * The third is NOT fail-safe in that direction and is the deliberate cost of
  * the 21 Aug 2026 owner decision recorded on
- * `EXCLUDED_CASH_REFUND_STATUSES` — read it before changing the filter:
+ * `isRecordedRefundStatus` (`payment-transaction-status.ts`) — read it before changing the filter:
  *
  * - A payment refunded partly before and partly after the ledger existed
  *   resolves from its (partial) ledger rows and can under-state cash.
@@ -64,26 +64,11 @@
  *   actually refunded, and the next reconciliation run corrects it once the
  *   row lands on `failed`.
  */
-import { CreditType, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
+import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 
-/**
- * PaymentRefund statuses that are NOT cash. Deliberately the same exclusion
- * list as the `refundedAmountCents` mirror this module replaces
- * (`EXCLUDED_LEDGER_REFUND_STATUSES`, payment-transactions.ts), so a refund
- * Stripe has accepted but not yet settled keeps counting as cash exactly as it
- * did before #2902.
- *
- * Owner decision, 21 Aug 2026: count a refund still in progress as cash. An
- * earlier draft of this module counted only `succeeded`, which would have
- * fixed the account-credit defect while introducing the opposite reporting
- * error — a still-settling refund resolving to zero cash, so the note
- * UNDER-states what went back until somebody re-runs the report. Understating
- * cash in an accounting document was judged the more damaging mistake, and a
- * refund Stripe has accepted almost always settles. The rare overstatement, if
- * one later fails, is corrected by the next run.
- */
-export const EXCLUDED_CASH_REFUND_STATUSES = ["failed", "canceled"] as const;
 
 export interface StripeCashRefundEvidence {
   /**
@@ -93,7 +78,7 @@ export interface StripeCashRefundEvidence {
   cashRefundCents: number;
   /**
    * Sum of PaymentRefund rows whose status is not in
-   * `EXCLUDED_CASH_REFUND_STATUSES` (0 when none exist) — i.e. settled cash
+   * `isRecordedRefundStatus` (0 when none exist) — i.e. settled cash
    * plus cash Stripe has accepted and not yet settled.
    */
   countedRefundCents: number;
@@ -106,6 +91,36 @@ export interface StripeCashRefundEvidence {
   accountCreditCents: number;
   /** Which rule produced `cashRefundCents`. */
   source: "provider-ledger" | "legacy-mirror";
+}
+
+/**
+ * The `MemberCredit` rows a booking ISSUED as account credit, excluding restores
+ * - selected by TYPE (`BOOKING_ISSUED_CREDIT_TYPES`), not by whether
+ * `applyLocalRefundAllocation` ever folded them into `refundedAmountCents`.
+ * Most were (a cancellation's or a reduction's credit against a captured
+ * payment); some were not (a credit minted with no payment, internet-banking
+ * cash landing on an already-cancelled booking). Read by the legacy cash
+ * fallback below and by the refunded-total shortfall audit (#3640), which each
+ * say what that difference costs them.
+ */
+export const ACCOUNT_CREDIT_DISPOSITION_WHERE = {
+  type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },
+  amountCents: { gt: 0 },
+  // Restores of previously applied credit never ran
+  // applyLocalRefundAllocation, so they are not part of the mirror.
+  restoredFromBookingId: null,
+} satisfies Prisma.MemberCreditWhereInput;
+
+/** The booking's account-credit dispositions, in cents (never negative). */
+export async function accountCreditDispositionCents(
+  db: Prisma.TransactionClient,
+  bookingId: string
+): Promise<number> {
+  const credit = await db.memberCredit.aggregate({
+    where: { sourceBookingId: bookingId, ...ACCOUNT_CREDIT_DISPOSITION_WHERE },
+    _sum: { amountCents: true },
+  });
+  return Math.max(0, credit._sum.amountCents ?? 0);
 }
 
 /**
@@ -137,9 +152,7 @@ export async function resolveStripeCashRefundEvidence(
   const countedRefundCents = grouped
     .filter(
       (row) =>
-        !(EXCLUDED_CASH_REFUND_STATUSES as readonly string[]).includes(
-          row.status
-        )
+        isRecordedRefundStatus(row.status)
     )
     .reduce((sum, row) => sum + Math.max(0, row._sum.amountCents ?? 0), 0);
 
@@ -153,23 +166,7 @@ export async function resolveStripeCashRefundEvidence(
     };
   }
 
-  const credit = await db.memberCredit.aggregate({
-    where: {
-      sourceBookingId: payment.bookingId,
-      type: {
-        in: [
-          CreditType.CANCELLATION_REFUND,
-          CreditType.BOOKING_MODIFICATION_REFUND,
-        ],
-      },
-      amountCents: { gt: 0 },
-      // Restores of previously applied credit never ran
-      // applyLocalRefundAllocation, so they are not part of the mirror.
-      restoredFromBookingId: null,
-    },
-    _sum: { amountCents: true },
-  });
-  const accountCreditCents = Math.max(0, credit._sum.amountCents ?? 0);
+  const accountCreditCents = await accountCreditDispositionCents(db, payment.bookingId);
 
   return {
     cashRefundCents: Math.max(0, mirrorCents - accountCreditCents),

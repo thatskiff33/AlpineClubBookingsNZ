@@ -36,7 +36,7 @@ const base = {
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..", "..", "..");
 
-function documentedGrantCount(document: string, relation: string): number | null {
+function documentedGrantCount(document: string, relation: string,): number | null {
   const rows = document
     .split(/\r?\n/)
     .filter((candidate) => candidate.trimStart().startsWith("|"))
@@ -53,7 +53,9 @@ function documentedGrantCount(document: string, relation: string): number | null
     );
   }
   const grantedCell = rows[0]?.split("|")[2];
-  const match = grantedCell?.match(/(\d+)\s+(?:explicitly named\s+)?columns?\b/i);
+  const match = grantedCell?.match(
+    /(\d+)\s+(?:explicitly named\s+)?columns?\b/i,
+  );
   return match ? Number(match[1]) : null;
 }
 
@@ -127,7 +129,9 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
     expect(text).toContain("SET default_transaction_read_only = on");
     expect(text).toContain("SET statement_timeout = '5000ms'");
     expect(text).toContain("SET lock_timeout = '5000ms'");
-    expect(text).toContain("SET idle_in_transaction_session_timeout = '10000ms'");
+    expect(text).toContain(
+      "SET idle_in_transaction_session_timeout = '10000ms'",
+    );
     expect(text).toContain("SET search_path = 'public'");
   });
 
@@ -137,7 +141,9 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
     expect(text).toContain(
       'REVOKE TEMPORARY ON DATABASE "tacbookings" FROM PUBLIC;',
     );
-    expect(text).toContain('GRANT TEMPORARY ON DATABASE "tacbookings" TO "tac";');
+    expect(text).toContain(
+      'GRANT TEMPORARY ON DATABASE "tacbookings" TO "tac";',
+    );
     expect(text).toContain(
       'GRANT TEMPORARY ON DATABASE "tacbookings" TO "migrator";',
     );
@@ -158,7 +164,9 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
     expect(text).toContain(
       'REVOKE ALL PRIVILEGES ON SCHEMA public FROM "ai_diagnostics_ro";',
     );
-    expect(text).toContain('GRANT USAGE ON SCHEMA public TO "ai_diagnostics_ro";');
+    expect(text).toContain(
+      'GRANT USAGE ON SCHEMA public TO "ai_diagnostics_ro";',
+    );
     // Never CREATE anywhere. The word boundaries are load-bearing: the AID-6A
     // allowlist grants the `"createdAt"` COLUMN of `AuditLog`, and a bare
     // substring match would read that grant as a CREATE privilege. The negative
@@ -208,7 +216,9 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
       // The old existence guard is unnecessary once the revoke is driven by recorded
       // rows: a role absent from this server (pg_maintain is PostgreSQL 17+)
       // contributes none.
-      expect(statement).not.toContain("IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles");
+      expect(statement).not.toContain(
+        "IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles",
+      );
     }
   });
 
@@ -322,14 +332,13 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
   // PUBLIC leaves the diagnostics role holding TEMP.
   // ------------------------------------------------------------------
   describe("statement ORDER is load-bearing", () => {
-    function indexOfStatement(
-      statements: string[],
-      fragment: string,
-    ): number {
+    function indexOfStatement(statements: string[], fragment: string): number {
       const index = statements.findIndex((statement) =>
         statement.includes(fragment),
       );
-      expect(index, `no statement contains ${fragment}`).toBeGreaterThanOrEqual(0);
+      expect(index, `no statement contains ${fragment}`).toBeGreaterThanOrEqual(
+        0,
+      );
       return index;
     }
 
@@ -365,7 +374,9 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
       });
       expect(
         indexOfStatement(statements, "REVOKE TEMPORARY ON DATABASE"),
-      ).toBeLessThan(indexOfStatement(statements, "GRANT TEMPORARY ON DATABASE"));
+      ).toBeLessThan(
+        indexOfStatement(statements, "GRANT TEMPORARY ON DATABASE"),
+      );
     });
 
     it("revokes all database privileges BEFORE granting CONNECT", () => {
@@ -379,7 +390,9 @@ describe("AI Diagnostics SELECT-only role provisioning SQL (#2374, ADR-007)", ()
       const statements = buildAiDiagnosticsRoleSql(base);
       expect(
         indexOfStatement(statements, "REVOKE ALL PRIVILEGES ON SCHEMA public"),
-      ).toBeLessThan(indexOfStatement(statements, "GRANT USAGE ON SCHEMA public"));
+      ).toBeLessThan(
+        indexOfStatement(statements, "GRANT USAGE ON SCHEMA public"),
+      );
     });
 
     it("revokes every object and default privilege BEFORE granting the allowlist", () => {
@@ -478,12 +491,13 @@ describe("provisioning SQL quoting refuses hostile input rather than escaping it
   // The operator CLI asks this question BEFORE it builds any SQL, so a managed
   // provider's `tac-app` or `user@server` role name is refused with an actionable
   // line naming the variable that carried it, instead of a Node stack trace.
-  it.each(["ai_diagnostics_ro", "IntegrationCredential", "_leading_underscore"])(
-    "isSupportedProvisionIdentifier accepts %s",
-    (value) => {
-      expect(isSupportedProvisionIdentifier(value)).toBe(true);
-    },
-  );
+  it.each([
+    "ai_diagnostics_ro",
+    "IntegrationCredential",
+    "_leading_underscore",
+  ])("isSupportedProvisionIdentifier accepts %s", (value) => {
+    expect(isSupportedProvisionIdentifier(value)).toBe(true);
+  });
 
   it.each(["tac-diag-ro", "tac.app", "user@server", "role$$name", ""])(
     "isSupportedProvisionIdentifier refuses %s",
@@ -709,9 +723,12 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
   it("grants exactly the census the deployment and pack documents quote", () => {
     expect(SELECT_GRANTS.length).toBe(26);
     expect(
-      SELECT_GRANTS.reduce((total, grant) => total + (grant.columns?.length ?? 0), 0),
+      SELECT_GRANTS.reduce(
+        (total, grant) => total + (grant.columns?.length ?? 0),
+        0,
+      ),
       "update docs/ai-diagnostics/deployment.md and tool-pack-booking-membership.md in the same commit",
-    ).toBe(243);
+    ).toBe(244);
   });
 
   it("pins the documented column census for every relation, not only the total", () => {
@@ -728,7 +745,7 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
       XeroInboundEvent: 9,
       XeroObjectLink: 10,
       XeroSyncOperation: 17,
-      Member: 23,
+      Member: 24,
       Booking: 25,
       Lodge: 2,
       BookingGuest: 15,
@@ -745,13 +762,21 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
     } as const;
     expect(
       Object.fromEntries(
-        SELECT_GRANTS.map((grant) => [grant.relation, grant.columns?.length ?? 0]),
+        SELECT_GRANTS.map((grant) => [
+          grant.relation,
+          grant.columns?.length ?? 0,
+        ]),
       ),
       "update both grant tables in deployment.md and tool-pack-booking-membership.md",
     ).toEqual(expected);
 
     const packDoc = readFileSync(
-      join(REPO_ROOT, "docs", "ai-diagnostics", "tool-pack-booking-membership.md"),
+      join(
+        REPO_ROOT,
+        "docs",
+        "ai-diagnostics",
+        "tool-pack-booking-membership.md",
+      ),
       "utf8",
     );
     const deploymentDoc = readFileSync(
@@ -759,9 +784,10 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
       "utf8",
     );
     for (const [relation, count] of Object.entries(expected)) {
-      expect(documentedGrantCount(packDoc, relation), `${relation} pack count`).toBe(
-        count,
-      );
+      expect(
+        documentedGrantCount(packDoc, relation),
+        `${relation} pack count`,
+      ).toBe(count);
       expect(
         documentedGrantCount(deploymentDoc, relation),
         `${relation} deployment count`,
@@ -801,7 +827,12 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
       ["XeroSyncOperation", "entityType"],
     ];
     const packDoc = readFileSync(
-      join(REPO_ROOT, "docs", "ai-diagnostics", "tool-pack-booking-membership.md"),
+      join(
+        REPO_ROOT,
+        "docs",
+        "ai-diagnostics",
+        "tool-pack-booking-membership.md",
+      ),
       "utf8",
     );
     const deploymentDoc = readFileSync(
@@ -885,17 +916,21 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
   });
 
   it("grants no relation that no statement reads, and reads none it does not grant", () => {
-    const grantedRelations = new Set(SELECT_GRANTS.map((grant) => grant.relation));
+    const grantedRelations = new Set(
+      SELECT_GRANTS.map((grant) => grant.relation),
+    );
     const readRelations = new Set(
       sqlEntries.flatMap((entry) =>
-        [...entry.sql.matchAll(/public\."([A-Za-z]+)"/g)].map((match) => match[1]),
+        [...entry.sql.matchAll(/public\."([A-Za-z]+)"/g)].map(
+          (match) => match[1],
+        ),
       ),
     );
-    expect([...readRelations].filter((r) => !grantedRelations.has(r)).sort()).toEqual(
-      [],
-    );
-    expect([...grantedRelations].filter((r) => !readRelations.has(r)).sort()).toEqual(
-      [],
-    );
+    expect(
+      [...readRelations].filter((r) => !grantedRelations.has(r)).sort(),
+    ).toEqual([]);
+    expect(
+      [...grantedRelations].filter((r) => !readRelations.has(r)).sort(),
+    ).toEqual([]);
   });
 });

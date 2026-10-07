@@ -12,6 +12,7 @@ import {
 } from "../pricing"
 import { formatDateOnly } from "../date-only"
 import { seasonYearOfStoredDate } from "../financial-year"
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture"
 
 // --- Test fixtures ---
 // Rates are keyed by membership type (#1930, E4): old member rows map to
@@ -443,19 +444,19 @@ describe("calculatePromoDiscount", () => {
 
 describe("formatCents", () => {
   it("formats whole dollars", () => {
-    expect(formatCents(4500)).toBe("$45.00")
+    expect(formatCents(4500, CLUB_FORMAT_TEST)).toBe("$45.00")
   })
 
   it("formats cents", () => {
-    expect(formatCents(4550)).toBe("$45.50")
+    expect(formatCents(4550, CLUB_FORMAT_TEST)).toBe("$45.50")
   })
 
   it("formats zero", () => {
-    expect(formatCents(0)).toBe("$0.00")
+    expect(formatCents(0, CLUB_FORMAT_TEST)).toBe("$0.00")
   })
 
   it("formats large amounts with thousands separators", () => {
-    expect(formatCents(100000)).toBe("$1,000.00")
+    expect(formatCents(100000, CLUB_FORMAT_TEST)).toBe("$1,000.00")
   })
 })
 

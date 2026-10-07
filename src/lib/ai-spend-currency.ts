@@ -3,8 +3,8 @@
  *
  * Both AI modules price provider tokens from a table in NEW ZEALAND cents per
  * million tokens (Anthropic's USD list x a fixed, conservative 1.8 NZD/USD).
- * A club configured for another currency (`APP_CURRENCY`) enters, compares and
- * reads its monthly cap in its OWN money, so every NZD-cent estimate is
+ * A club configured for another currency (its stored `ClubFormat.currencyCode`,
+ * #3566) enters, compares and reads its monthly cap in its OWN money, so every NZD-cent estimate is
  * converted through ONE administrator-set rate before it is booked or compared
  * with a cap. This module is the single home for that rate's arithmetic and
  * grammar; `ai-spend-currency-settings.ts` reads the stored rate.
@@ -21,9 +21,11 @@
 
 /**
  * The currency both AI price tables are written in (`ai-assistant-usage.ts`,
- * `ai-diagnostics-usage.ts`). `loadAiSpendCurrency` compares `APP_CURRENCY`
- * against THIS constant to decide that no conversion applies, so the table
- * currency and the identity check cannot drift apart.
+ * `ai-diagnostics-usage.ts`). `loadAiSpendCurrency` compares the club's stored
+ * currency against THIS constant to decide that no conversion applies, so the
+ * table currency and the identity check cannot drift apart. It is a fact about
+ * the price table, not about the club, and is deliberately NOT the club's
+ * setting (#3566).
  */
 export const AI_PRICE_TABLE_CURRENCY = "NZD";
 
@@ -157,7 +159,7 @@ export function convertNzdCentsToClubCents(nzdCents: number, micros: number): nu
 
 /** What every consumer of the rate receives; see `loadAiSpendCurrency`. */
 export interface AiSpendCurrency {
-  /** The club's configured currency code (`APP_CURRENCY`). */
+  /** The club's stored currency code (`ClubFormat.currencyCode`, #3566). */
   clubCurrency: string;
   /** True when the club prices in NZD: no conversion applies and no rate is stored or shown. */
   isNzd: boolean;

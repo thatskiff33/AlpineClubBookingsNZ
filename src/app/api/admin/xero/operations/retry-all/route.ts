@@ -8,6 +8,7 @@ import {
   processQueuedXeroOperationRetries,
 } from "@/lib/xero-operation-queue";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 function scheduleAfterResponse(task: () => Promise<void>) {
   try {
@@ -68,9 +69,12 @@ export async function POST() {
     }
 
     if (queuedOperationIds.length > 0) {
+      // The club's format (#3565), resolved once per request and handed to the
+      // worker so it is not read once per queued operation.
+      const format = await clubFormatValues();
       scheduleAfterResponse(async () => {
         try {
-          await processQueuedXeroOperationRetries({ limit: queuedOperationIds.length });
+          await processQueuedXeroOperationRetries({ limit: queuedOperationIds.length }, format);
         } catch (error) {
           logger.error(
             { err: error, queuedOperationIds },

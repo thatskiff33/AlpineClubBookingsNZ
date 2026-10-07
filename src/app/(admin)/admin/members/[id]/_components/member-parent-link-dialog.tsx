@@ -21,6 +21,7 @@ import {
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers"
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
+import { useClubFormat } from "@/components/club-format-provider"
 import { useDependentEmailSource } from "@/hooks/use-dependent-email-source"
 import { DependentNotificationRoutingNotice } from "./dependent-notices"
 import type { LinkParentSearchResult, MemberDetail } from "../_types"
@@ -75,6 +76,7 @@ export function MemberParentLinkDialog({
   onToggleFamilyGroup,
   onSubmit,
 }: MemberParentLinkDialogProps) {
+  const format = useClubFormat()
   // #2282 review: where this member's club email would actually land if the
   // notifications were routed through the chosen parent. The route walks up from
   // that parent to the nearest adult who can receive mail and stores THEM, so
@@ -250,7 +252,7 @@ export function MemberParentLinkDialog({
                   <p className="mt-1 text-xs text-muted-foreground">{selected.email}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {selected.canLogin ? "Can login" : "Non-login"}
-                    {selected.dateOfBirth ? ` · DOB ${formatPayloadCalendarDay(selected.dateOfBirth)}` : ""}
+                    {selected.dateOfBirth ? ` · DOB ${formatPayloadCalendarDay(selected.dateOfBirth, format)}` : ""}
                   </p>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={onClearSelection} disabled={saving}>

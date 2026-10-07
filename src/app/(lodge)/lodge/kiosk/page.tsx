@@ -6,11 +6,16 @@ import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
+import {
+  formatClubLongWeekdayDate,
+  parseCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 // #2621: one 12-hour rendering of the expected arrival time, shared with the
 // booking page editor and the lobby wall. Three private copies of the same six
 // lines is how three surfaces end up disagreeing about midnight.
 import { formatArrivalTime } from "@/lib/arrival-time";
+import { DIETARY_REQUIREMENTS_LABEL } from "@/lib/member-dietary-field";
 // #3228: the idle window, the renewal interval and this page's own refresh
 // cadence are ONE rule with halves on both sides of the client/server boundary,
 // so they come from the module that defines them rather than from numbers typed
@@ -82,6 +87,10 @@ interface Guest {
   canMarkArrived: boolean;
   arrivedAt: string | null;
   departedAt: string | null;
+  // #3029 (`INV-PRIV-022`): the stay's dietary/allergy note. The server sends
+  // this key ONLY to the `admin` and `hut-leader` tiers; for every other tier
+  // it is absent from the payload, so there is nothing here to hide.
+  dietaryRequirements?: string | null;
 }
 
 interface BookingGroup {
@@ -186,7 +195,7 @@ const CLUB_DAY_TICK_MS = 60000;
 // the identity for every club. The local formatter this replaces was the fourth
 // copy of the same options in the same locale.
 
-function displayDate(dateStr: string): string {
+function displayDate(dateStr: string, format: ClubDateFormat): string {
   // `parseCalendarDate`, not `requireCalendarDate`: this is the night the whole
   // page is keyed on, and a throw here would blank an unattended wall tablet.
   // The fallback is NEW rather than preserved — `parseDateOnly` returned
@@ -194,7 +203,7 @@ function displayDate(dateStr: string): string {
   // value` out of the render, which on a lodge wall screen nobody is watching is
   // the worst available outcome.
   const night = parseCalendarDate(dateStr);
-  return night === null ? dateStr : formatClubLongWeekdayDate(night);
+  return night === null ? dateStr : formatClubLongWeekdayDate(night, format);
 }
 
 export default function KioskPage() {
@@ -289,6 +298,9 @@ export default function KioskPage() {
   const canCompleteChores = canMarkAttendance;
   const canManageRoster =
     !isPreview && (effectiveTier === "admin" || effectiveTier === "hut-leader");
+  // #3029 S4: the server sends notes to an admin, and "Viewing as" must show
+  // what the SIMULATED tier would see — which, below hut leader, is none.
+  const showDietary = effectiveTier === "admin" || effectiveTier === "hut-leader";
 
   const fetchData = useCallback(async () => {
     try {
@@ -879,7 +891,7 @@ export default function KioskPage() {
               <CalendarDays className="h-4 w-4" />
               &lsaquo; Week
             </button>
-            <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
+            <h1 className="text-2xl font-bold">{displayDate(date, clubTime.format)}</h1>
             <p className="text-lg text-kiosk-muted-fg">
               {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list
             </p>
@@ -1182,6 +1194,14 @@ export default function KioskPage() {
                                       {guest.phone
                                         ? `Phone ${guest.phone}`
                                         : "Phone not available"}
+                                    </p>
+                                  )}
+                                  {showDietary && guest.dietaryRequirements && (
+                                    <p className="text-sm mt-1 whitespace-pre-wrap">
+                                      <span className="font-medium">
+                                        {DIETARY_REQUIREMENTS_LABEL}:
+                                      </span>{" "}
+                                      {guest.dietaryRequirements}
                                     </p>
                                   )}
                                 </div>

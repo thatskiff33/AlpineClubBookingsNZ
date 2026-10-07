@@ -405,6 +405,44 @@ function schoolShapedMembers(...memberIds: string[]) {
   };
 }
 
+/**
+ * #3603 made the live privilege checks honour `canLogin`. This blocker must NOT:
+ * a duplicate that still stores the Full Admin row after its login was switched
+ * off is refused exactly as before, so the demote-first rule cannot be skipped
+ * by turning the login off. And it still keys on the Full Admin row alone.
+ */
+describe("the duplicate's Full Admin row blocks the merge, login or not (#3603)", () => {
+  async function blockersForLoser(overrides: Record<string, unknown>) {
+    const blockers = await evaluateMemberMergeGuards({
+      db: makeDb() as never,
+      actorMemberId: ACTOR_ID,
+      master: guardMember(MASTER_ID) as never,
+      loser: guardMember(LOSER_ID, overrides) as never,
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+    });
+    return blockers.map((blocker) => blocker.code);
+  }
+
+  it("blocks a login-disabled duplicate that stores the Full Admin row", async () => {
+    expect(
+      await blockersForLoser({ canLogin: false, accessRoles: [{ role: "ADMIN" }] }),
+    ).toContain("loser_is_admin");
+  });
+
+  it("blocks the same duplicate with login enabled", async () => {
+    expect(
+      await blockersForLoser({ canLogin: true, accessRoles: [{ role: "ADMIN" }] }),
+    ).toContain("loser_is_admin");
+  });
+
+  it("does not widen to a scoped admin role", async () => {
+    expect(
+      await blockersForLoser({ canLogin: false, accessRoles: [{ role: "ADMIN_BOOKINGS" }] }),
+    ).not.toContain("loser_is_admin");
+  });
+});
+
 describe("#3369: member merge refuses a school's record", () => {
   it("blocks when the DUPLICATE is a school, and names which side", async () => {
     const blockers = await runGuards({

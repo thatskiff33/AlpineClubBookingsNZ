@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -17,6 +18,7 @@ import {
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
 } from "@/lib/manual-refund-task-resolution";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const noteField = z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable();
 // Explicit confirmation so closing a money task is never a single-click
@@ -165,6 +167,10 @@ export async function POST(
     );
   }
 
+  // The club's format (#3565), resolved once per request, before the
+  // resolution's transaction.
+  const format = await clubFormatValues();
+
   try {
     const result = await resolveManualRefundTask(
       parsed.data.resolution === "completed"
@@ -184,16 +190,17 @@ export async function POST(
             actingMemberId: guard.session.user.id,
             recordedNightPrices: parsed.data.recordedNightPrices ?? null,
           },
+      format,
     );
     revalidatePath("/admin/payments");
-    revalidatePath("/admin/bookings/[id]", "page");
+    revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     return NextResponse.json({
       success: true,
       task: result,
       message: `${
         parsed.data.resolution === "completed"
-          ? completionMessage(result)
-          : dismissalMessage(result.kind)
+          ? completionMessage(result, format)
+          : dismissalMessage(result.kind, result.partPaymentReview)
       }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });
   } catch (error) {

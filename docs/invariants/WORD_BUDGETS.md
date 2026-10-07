@@ -7,7 +7,7 @@ register serves: [`SCHEME.md`](SCHEME.md) §8.1 · deciding issue: #2789.
 
 Every invariant entry is at most **300 words** and every index-row description
 at most **12 words** (`SCHEME.md` §8.1). This file is the only place an entry
-may be allowed more, and `npm run docs:indexcheck` reads it: an id listed here
+may be allowed more, and `pnpm run docs:indexcheck` reads it: an id listed here
 is held to the limit on its row, an id not listed here is held to 300, and the
 index cap has no register at all. **Nothing in this file is a rule and nothing
 here has an id**; it is an inventory the gate enforces exactly, so a row that is
@@ -71,7 +71,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | ID | Words |
 | --- | ---: |
 | `INV-MOD-025` | 4650 |
-| `INV-ADDPAY-037` | 2769 |
+| `INV-ADDPAY-037` | 2726 |
 | `INV-SSOT-004` | 2653 |
 | `INV-HOST-050` | 2220 |
 | `INV-PRIV-012` | 2086 |
@@ -86,18 +86,18 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1219 |
-| `INV-PAY-047` | 1211 |
+| `INV-PAY-047` | 1173 |
 | `INV-MOD-055` | 1157 |
 | `INV-ADDPAY-036` | 1137 |
 | `INV-SSOT-003` | 1094 |
-| `INV-ADDPAY-038` | 1032 |
+| `INV-ADDPAY-038` | 1025 |
 | `INV-HOST-052` | 1010 |
 | `INV-HOST-043` | 1003 |
-| `INV-CONFIG-002` | 909 |
-| `INV-MONEY-003` | 869 |
+| `INV-CONFIG-002` | 874 |
+| `INV-MONEY-003` | 867 |
 | `INV-ADDPAY-034` | 828 |
 | `INV-MOD-026` | 828 |
-| `INV-PRIV-011` | 814 |
+| `INV-PRIV-011` | 809 |
 | `INV-HOST-041` | 794 |
 | `INV-DATE-013` | 781 |
 | `INV-GUEST-016` | 781 |
@@ -132,9 +132,9 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-OPS-001` | 408 |
 | `INV-HOST-028` | 404 |
 | `INV-HOST-033` | 396 |
-| `INV-ADDPAY-011` | 395 |
 | `INV-REQ-007` | 391 |
 | `INV-MOD-005` | 381 |
+| `INV-ADDPAY-011` | 380 |
 | `INV-CAP-023` | 360 |
 | `INV-PAY-058` | 363 |
 | `INV-LIFE-050` | 359 |
@@ -148,7 +148,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-ADDPAY-035` | 340 |
 | `INV-LIFE-018` | 338 |
 | `INV-CAP-030` | 337 |
-| `INV-ADDPAY-009` | 334 |
+| `INV-ADDPAY-009` | 333 |
 | `INV-CAP-032` | 332 |
 | `INV-LIFE-065` | 325 |
 | `INV-MONEY-017` | 323 |

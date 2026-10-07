@@ -579,15 +579,15 @@ land.
 
 ## How to check this page is still true
 
-`npm run audit:census` prints the live distribution, and
+`pnpm run audit:census` prints the live distribution, and
 `src/lib/__tests__/audit-writer-census.test.ts` fails CI if it moves without the
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  484
+row-producing sites:  495
 uncategorised:        0
-category values: admin 106, booking 104, xero 37, family 35, payment 47,
-                 lodge 66, account 19, security 24, privacy 20,
+category values: admin 107, booking 106, xero 39, family 35, payment 52,
+                 lodge 66, account 19, security 25, privacy 20,
                  communication 21, system 4
 ```
 
@@ -717,7 +717,60 @@ by the same administrators who can already see those - so it widens nobody's
 readership. The row carries the actor and the before/after pair and nothing
 else: no request echo and no settings blob.
 
-#52 then REMOVED two (`admin` 108 -> 106, 486 -> 484, MEASURED with
+#3531 3b then added one more (`payment` 47 -> 48, 486 -> 487, RE-MEASURED with
+`npm run audit:census` on the tree composed with #3563, not incremented):
+`booking-payment.stored-night-price.rate-derived`,
+the record that the operator-run backfill re-derived a booking's evenly-split
+night prices from the rate table, every guest total unchanged. `payment` beside
+the officer night-price repair it mirrors, and `important` because it is the
+only place the per-night rewrite shows; it carries every strand's before and
+after vectors.
+
+#3029 then added one more (`booking` 104 -> 105, 487 -> 488, RE-MEASURED with
+`npm run audit:census`): `booking.guest_dietary.updated` / `.cleared`, the record
+that a booking officer changed or cleared one guest's dietary/allergy note for a
+stay. `booking` because that note is booking data read by booking officers; the
+row carries the guest id and a changed flag and never the note itself
+(`INV-PRIV-022`).
+
+#3566 then added one more (`admin` 108 -> 109, 488 -> 489, RE-MEASURED with
+`npm run audit:census` on the tree merged with #3029 rather than added to the
+literal):
+`AI_SPEND_CURRENCY_RATE_CLEARED`, the record that changing the club's currency
+cleared the stored AI spend conversion rate, which records no currency of its
+own and would otherwise go on pricing the new currency at the old one's rate.
+`admin` for the reason `AI_SPEND_CURRENCY_RATE_UPDATED` is: installation
+configuration, readable with `support:view` alone, carrying two currency codes,
+a ratio and an administrator id and no member data.
+
+#3639 then added one more (`payment` 48 -> 49, 489 -> 490, RE-MEASURED with
+`npm run audit:census`): `booking.payment.late_notice_acknowledged`, the record
+that a Stripe success notice on a cancelled booking was answered WITHOUT a
+refund because the cancellation had already settled the money, or it was
+already refunded. `payment` beside the late-capture records it sits with.
+The club setting for genuine late captures (owner decision 26 Sep 2026) then
+added two (`payment` 49 -> 51, 490 -> 492, RE-MEASURED):
+`booking.payment.late_capture_refund_held`, a late capture held for a
+treasurer, and the `booking.payment.refunded_after_cancellation` a treasurer's
+approval writes when its refund goes out. The review round added one more
+(`payment` 51 -> 52, 492 -> 493, RE-MEASURED):
+`booking-defaults.late_capture_refund_approval.changed`, who switched the
+club between automatic refunds and treasurer approval. #3462 then added one
+(`xero` 37 -> 38, 493 -> 494, RE-MEASURED): `xero.operation.marked_failed`,
+the per-row Mark failed on a stale RUNNING Xero operation. #3454 then added one
+(`security` 24 -> 25, 494 -> 495, RE-MEASURED): the two-factor enrolment and
+erasure-clear record in `two-factor-audit.ts`.
+#3792 then added one
+(`xero` 38 -> 39, 495 -> 496, RE-MEASURED):
+`xero.allocation.restored-booking-change-refused`, a Xero allocation change the
+inbound credit-note sync refused to post to a cancelled booking whose applied
+credit was already restored. #3653 (epic #3503) then added one, disjoint from
+#3792's, so the composed figure is both (`booking` 105 -> 106, 496 -> 497,
+RE-MEASURED on the merged tree): the organiser child refund recovery record,
+`booking.payment.refund_recovered`.
+
+#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
+with all of the above; MEASURED with
 `npm run audit:census` on that branch rather than subtracted from the literal):
 `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` went with the create and delete
 handlers of the other-lodges registry, because a site now changes only the lodge

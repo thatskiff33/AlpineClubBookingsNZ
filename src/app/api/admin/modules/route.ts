@@ -27,6 +27,7 @@ import {
   type ModuleKey,
   type ModuleSettingsValues,
 } from "@/config/modules";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const moduleSettingsSchema = z
   .object(
@@ -62,7 +63,9 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json(await loadClubModuleSettings());
+  // The club's format (#3565), resolved once per request.
+  const format = await clubFormatValues();
+  return NextResponse.json(await loadClubModuleSettings(format));
 }
 
 export async function PUT(request: Request) {
@@ -175,8 +178,11 @@ export async function PUT(request: Request) {
   // The analytics readiness fact is a separate DB read (#2573); resolved here so the
   // response the toggle grid re-seeds from carries the same readiness message the GET
   // would return, rather than the fail-closed default.
+  // The club's format (#3565), resolved once per request; the readiness text
+  // it feeds names the module's default spend cap.
+  const format = await clubFormatValues();
   return NextResponse.json(
-    buildClubModuleSettingsPayload(record, {
+    buildClubModuleSettingsPayload(format, record, {
       analyticsConfigured: await isAnalyticsIntegrationConfigured(),
     }),
   );

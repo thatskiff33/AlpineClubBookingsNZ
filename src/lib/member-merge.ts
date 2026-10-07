@@ -11,7 +11,7 @@ import {
   actorIsFullAdmin,
   wouldRemoveLastFullAdmin,
 } from "@/lib/admin-account-guards";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { memberHoldsFullAdminRole } from "@/lib/access-roles";
 import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
 import {
   describeChildSideDepth,
@@ -61,6 +61,11 @@ import {
   mergeMemberFields,
   type FieldMergeRow,
 } from "@/lib/member-merge-field-rules";
+import {
+  attachMergeDietaryRequirements,
+  isDietaryFieldEnabled,
+  redactDietaryMergeRow,
+} from "@/lib/member-dietary";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.
@@ -595,7 +600,7 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
-  if (hasAdminAccess({ accessRoles: loser.accessRoles })) {
+  if (memberHoldsFullAdminRole(loser)) {
     blockers.push({
       code: "loser_is_admin",
       label: "The duplicate holds an admin access role. Demote it before merging.",
@@ -677,7 +682,7 @@ export async function evaluateMemberMergeGuards(params: {
   // the "cannot tell" the census hands to a person: an unclassified row that
   // looks like a school is a question, and a merge is not the place to answer
   // one. An officer who knows it is a teacher records that with
-  // `npm run db:school-classification-census -- --classify <id> --as PERSON`,
+  // `pnpm run db:school-classification-census --classify <id> --as PERSON`,
   // which takes any member id, and the merge then proceeds.
   //
   // If a school really has been recorded twice, the two `Organisation` records
@@ -715,7 +720,7 @@ export async function evaluateMemberMergeGuards(params: {
     );
     const undecided = organisationSides.some((id) => !classifiedById.has(id));
     const howToProceed = undecided
-      ? " If it is really a person, record that decision first: npm run db:school-classification-census -- --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
+      ? " If it is really a person, record that decision first: pnpm run db:school-classification-census --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
       : "";
     blockers.push({
       code: "organisation_row",
@@ -1013,9 +1018,17 @@ export async function buildMemberMergePreview(params: {
     );
   }
 
+  // The merge grant verifies Full Admin and the two ids itself; nothing here
+  // is inferred from the blockers, which can return before that check.
+  const [masterForMerge, loserForMerge] = await attachMergeDietaryRequirements(
+    db,
+    actorMemberId,
+    masterFull,
+    loserFull,
+  );
   const { diff } = mergeMemberFields(
-    masterFull as unknown as Record<string, unknown>,
-    loserFull as unknown as Record<string, unknown>,
+    masterForMerge as unknown as Record<string, unknown>,
+    loserForMerge as unknown as Record<string, unknown>,
   );
 
   const warnings: string[] = [];
@@ -1138,8 +1151,13 @@ export async function buildMemberMergePreview(params: {
     core,
   );
 
+  // The token covers the real values; the screen hides them while OFF.
+  const showDietaryValues = await isDietaryFieldEnabled();
   return {
     ...core,
+    fieldMerge: showDietaryValues
+      ? core.fieldMerge
+      : core.fieldMerge.map(redactDietaryMergeRow),
     masterId,
     loserId,
     masterName: memberDisplayName(masterFull),
@@ -1794,9 +1812,16 @@ export async function executeMemberMerge(params: {
     // This derivation is the PREVIEW's — it must stay keyed to the snapshot the
     // token was built from. The derivation that is actually WRITTEN is taken
     // fresh at step 5; see the comment there (#2243).
+    const [masterFullForMerge, loserFullForMerge] =
+      await attachMergeDietaryRequirements(
+        tx,
+        actorMemberId,
+        masterFull,
+        loserFull,
+      );
     const previewedFieldOutcome = mergeMemberFields(
-      masterFull as unknown as Record<string, unknown>,
-      loserFull as unknown as Record<string, unknown>,
+      masterFullForMerge as unknown as Record<string, unknown>,
+      loserFullForMerge as unknown as Record<string, unknown>,
     );
     const relationPreview = await previewRelationCountsForToken(tx, masterId, loserId);
     const relationMoveCountsPreview = relationPreview.counts;
@@ -2135,9 +2160,16 @@ export async function executeMemberMerge(params: {
     if (!masterAtWrite || !loserAtWrite) {
       throw new MemberMergeError("Both members must exist to merge.", 404, "member_missing");
     }
+    const [masterAtWriteForMerge, loserAtWriteForMerge] =
+      await attachMergeDietaryRequirements(
+        tx,
+        actorMemberId,
+        masterAtWrite,
+        loserAtWrite,
+      );
     const fieldOutcome = mergeMemberFields(
-      masterAtWrite as unknown as Record<string, unknown>,
-      loserAtWrite as unknown as Record<string, unknown>,
+      masterAtWriteForMerge as unknown as Record<string, unknown>,
+      loserAtWriteForMerge as unknown as Record<string, unknown>,
     );
     const driftFields = diffFieldMergePatches(previewedFieldOutcome.patch, fieldOutcome.patch);
     if (driftFields.length > 0) {
@@ -2286,7 +2318,8 @@ export async function executeMemberMerge(params: {
           masterId,
           loserId,
           loserSnapshot,
-          fieldOutcome: fieldOutcome.diff,
+          // INV-PRIV-022: the dietary row's values are redacted.
+          fieldOutcome: fieldOutcome.diff.map(redactDietaryMergeRow),
           fieldsChanged,
           relationMoves,
           collisions: resolveResults.collisions,

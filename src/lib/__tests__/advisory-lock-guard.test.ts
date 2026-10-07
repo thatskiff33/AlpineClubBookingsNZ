@@ -248,6 +248,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "attachMintedCardIntent#1",
+    tier: "GLOBAL",
+    reason:
+      "#3638: both card mint doors (create-payment-intent and the /pay/<token> link) attach a freshly minted intent here, re-reading the payment's source and the booking's status under the key the Internet Banking switch holds, so a switch that committed during the mint is refused, and a mint that attached first leaves the switch a different intent from the one it cancelled (INV-PAY-102). Global key alone: no capacity or credit is touched.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "POST /api/payments/switch-to-internet-banking#1",
     tier: "GLOBAL",
     reason:
@@ -483,6 +490,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "resolveManualRefundTask#1",
+    tier: "GLOBAL",
+    reason:
+      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only).",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "respondToBookingRequestQuote#1",
     tier: "GLOBAL",
     reason:
@@ -493,7 +507,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "respondToBookingRequestQuote#2",
     tier: "GLOBAL",
     reason:
-      "#2936: the accept re-arm, which used to be a bare unlocked update guarded only on the request not being DECLINED/CANCELLED. A correction (`correctBookingRequest`, which holds this key) leaves the request VERIFIED and SUPERSEDES the quote, so that guard passed — and the accept then wrote the retired quote's price and snapshot onto the corrected envelope and converted it, queueing the corrected school's Xero invoice at yesterday's price. The key orders this re-arm against the correction so the quote's status can be re-read under it as the evidence; the claim itself stays status-guarded. Taken alone: the re-arm creates no booking and claims no bed, and the conversion that follows opens its own two-tier transaction after this one has committed.",
+      "#3415, superseding #2936's deliberately unfenced message writer: the requester's MODIFY/QUERY branch. A stale message could otherwise re-status an accepted, corrected, declined or cancelled request, re-stamp a quote a correction already SUPERSEDED, or move an accepted request somewhere the stale-hold cron would release its hold. Under this key it re-reads the request and quote, requires the loaded version, QUOTE_SENT, no accepted pointer and a SENT quote, then claims the request on that same version and status before superseding only the still-SENT quote; a lost race returns 409 before either write. Taken alone: it creates no booking and claims no bed.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "respondToBookingRequestQuote#3",
+    tier: "GLOBAL",
+    reason:
+      "#3415, closing #2936: requester acceptance. It replaces the old accept re-arm, a bare update guarded only on the request not being DECLINED/CANCELLED, which let an accept write a retired quote's price and snapshot onto a corrected (VERIFIED) envelope. Under this key it re-reads the SENT quote, the request (QUOTE_SENT, no accepted or converted pointer) and its request-owned AWAITING_REVIEW hold, then claims ACCEPTED on the request (version-fenced) and on the quote in one transaction; either lost claim rolls both back. The key orders it against correction, requester cancel, generic hold-release and the stale-hold cron; officer decline takes no advisory lock and is excluded instead by its status-guarded claim on the same request row — if decline commits first, acceptance's QUOTE_SENT claim updates nothing; if acceptance commits first, decline still claims the now-ACCEPTED request, which an officer may retire. Taken alone: acceptance retains the hold and creates no booking, payment or conversion — officer approval (`approveBookingRequest#1`) converts in its own two-tier transaction — and a matching accepted retry returns read-only before this transaction.",
     invariant: "INV-LOCK-001",
   },
   {
@@ -501,6 +522,27 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "Accepting a request converts a held booking. Hold-release and cancel serialise on this key alone, so with only the per-lodge key a release could cancel the held booking out from under a converting accept.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "holdBookingRequestSlots#1",
+    tier: "GLOBAL",
+    reason:
+      "#3413: reusing an unnamed-adult hold re-reads its request, booking and exact reservation nights under global then lodge locks, excluding cancellation, correction and accepted naming while validating the quoted beds.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "holdBookingRequestSlots#2",
+    tier: "GLOBAL",
+    reason:
+      "#3413: a SCHOOL quote with unnamed adults creates capacity reservations linked to its AWAITING_REVIEW hold. It takes global before lodge so generic booking cancel, quote cancel, correction and accepted identity resolution cannot release or rewrite that hold across creation. Other holds retain the lodge-only path.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "resolveAcceptedSchoolPendingAdults#1",
+    tier: "GLOBAL",
+    reason:
+      "#3413: naming an accepted adult swaps an anonymous reservation for named guest nights without changing occupied beds. Global then immutable held-booking lodge excludes correction, decline, quote cancel, generic hold release and school approval before the under-lock version/status claim.",
     invariant: "INV-LOCK-002",
   },
 
@@ -571,6 +613,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
 
   // ── Settlement, refunds and money side effects ────────────────────────────
   {
+    site: "holdLateCaptureForTreasurerIfRequired#1",
+    tier: "GLOBAL",
+    reason:
+      "#3639 (owner decision 26 Sep 2026): raising the treasurer-approval ManualRefundTask for a late capture is a find-then-create keyed on the payment INTENT, and it must also see the confirm route's #2700 OPEN question for the same capture — which that raise creates under this same key. Two webhook deliveries, or a delivery and a confirm, would otherwise put two tasks on one capture and a treasurer could refund it twice. Same cohort as raiseDeletedBookingModificationRefundTask; takes nothing else and makes no provider call inside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "raiseDeletedBookingModificationRefundTask#1",
     tier: "GLOBAL",
     reason:
@@ -611,6 +660,27 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     reason:
       "Each child's cancel and its refund credit-note enqueue commit inside one transaction on the settlement cohort's key, and reconcile that child's allocations through the lock-held seam.",
     invariant: "INV-LOCK-002",
+  },
+  {
+    site: "planOrganiserCancelChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653: an organiser cancel freezes one refund debt per paid child and the settlement's plan in one transaction. The headroom it reads - refunds recorded on the combined intent plus child-refund debts still owed - is written by edit doors (which already hold this key) and by the refund recorder below, so the read and the inserts must be one decision on the settlement cohort's key. Provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "processOrganiserChildRefundOperation#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653: recording an organiser child's Stripe refund against the combined payment - the refund row, the child's mirror, its Xero note, the settlement status and the debt's close - commits as one unit on the settlement cohort's key, so a concurrent edit or cancel reading the combined headroom sees the debt either owed or recorded, never neither or both. Then the Payment row (`lockPaymentForRefundedTotal`), the order every refunded-total writer takes. The Stripe call has already returned.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "reconcilePendingOrganiserChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653 fix round: taking a failed organiser child refund back out - its refund row, the child's mirror, the settlement status and reopening its debt - is the inverse of the recorder above and commits as one unit on the same key, so a concurrent edit or cancel reading the combined headroom sees the refund either recorded or owed again, never neither. Then the Payment row, the order every refunded-total writer takes. Stripe was read before the transaction opened.",
+    invariant: "INV-LOCK-001",
   },
   {
     site: "createGroupSettlementIntent#1",
@@ -723,7 +793,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "correctBookingRequest#1",
     tier: "GLOBAL",
     reason:
-      "#2936: the key is what makes the school-record preview re-read inside this transaction a FENCE rather than a snapshot. The correction stores a school name the officer acknowledged as either an existing record or a new one, and `resolveOrCreateSchoolOrganisation` — whose unique-name claim is the approval transaction's hold of this very key — is the only writer of those records. Excluding approval is therefore what lets the re-read promise that no record appeared between the preview and the claim, so the acknowledgement pins an identity instead of describing a stale one. It is NOT what fences the conversion's own write: both approvals claim on `version: request.version` (#1923), so the correction's version bump already loses to a conversion in flight and wins ahead of one. The counterparts that were NOT closed by a version fence, and are reconciled per-writer rather than by this key, are the FOUR quote writers in `booking-request-quotes.ts`, none of which took a lock and all of which fenced only on 'not declined, not cancelled' — a set that a correction's VERIFIED is in: `createBookingRequestQuote` now claims on the request version, `sendBookingRequestQuote` now claims the quote row while it is still DRAFT/SENT, and the accept re-arm in `respondToBookingRequestQuote` now takes this key itself (see `respondToBookingRequestQuote#2`). The fourth, that function's MODIFY/QUERY branch, is deliberately NOT fenced and so is deliberately absent from this registry: it writes a status and the requester's message and nothing else — no price, no snapshot, no hold, no conversion — so a correction it races loses a status rather than money or a bed, and refusing it would throw away the requester's words. Its quote write is narrowed to DRAFT/SENT so it cannot re-stamp a correction's supersede mark; if it ever writes a price or converts, it joins this registry. It takes NO per-lodge key: it creates no booking and claims no bed, and the stale hold it releases is cancelled afterwards, outside this transaction, by the shared cancel path that takes both tiers itself.",
+      "#2936: the key is what makes the school-record preview re-read inside this transaction a FENCE rather than a snapshot. The correction stores a school name the officer acknowledged as either an existing record or a new one, and `resolveOrCreateSchoolOrganisation` — whose unique-name claim is the approval transaction's hold of this very key — is the only writer of those records. Excluding approval is therefore what lets the re-read promise that no record appeared between the preview and the claim, so the acknowledgement pins an identity instead of describing a stale one. It is NOT what fences the conversion's own write: both approvals claim on `version: request.version` (#1923), so the correction's version bump already loses to a conversion in flight and wins ahead of one. The counterparts that were NOT closed by a version fence, and are reconciled per-writer rather than by this key, are the FOUR quote writers in `booking-request-quotes.ts`, none of which took a lock and all of which fenced only on 'not declined, not cancelled' — a set that a correction's VERIFIED is in: `createBookingRequestQuote` now claims on the request version, `sendBookingRequestQuote` now claims the quote row while it is still DRAFT/SENT, and the accept re-arm in `respondToBookingRequestQuote` took this key itself; #3415 replaced that re-arm with an atomic SENT/QUOTE_SENT -> ACCEPTED claim under this key that retains the hold and never converts (see `respondToBookingRequestQuote#3`). The fourth, that function's MODIFY/QUERY branch, was deliberately left unfenced by #2936; #3415 superseded that too, and it now takes this key and claims the loaded-version QUOTE_SENT request and the SENT quote (see `respondToBookingRequestQuote#2`). An ACCEPTED request is not correctable. This site takes NO per-lodge key: it creates no booking and claims no bed, and the stale hold it releases is cancelled afterwards, outside this transaction, by the shared cancel path that takes both tiers itself.",
     invariant: "INV-LOCK-001",
   },
   {
@@ -818,14 +888,35 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "createXeroInvoiceForGroupSettlement#2",
     tier: "GLOBAL",
     reason:
-      "After the provider call returns, the create-versus-cancel race is decided under the same fence: a cancellation that acquired it first wins and the invoice is voided, otherwise issuance won the serialisation point.",
+      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed.",
     invariant: "INV-LOCK-001",
   },
   {
-    site: "createXeroInvoiceForGroupSettlement#3",
+    site: "releaseUninvoiceableGroupSettlement#1",
     tier: "GLOBAL",
     reason:
-      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime is never emailed.",
+      "#3642: a bound settlement whose joiners' stored prices cannot make its invoice is FAILED to release the binding; the guarded update must serialise with the settle, card-attach, reaper and create-worker writers of the same settlement, which all take this key.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "bindCreatedGroupSettlementInvoice#1",
+    tier: "GLOBAL",
+    reason:
+      "The post-create fence (moved out of createXeroInvoiceForGroupSettlement by #3642): after the provider call returns it decides create-versus-cancel and create-versus-release under the key the cancellation, the reaper and the settle paths take, binding the invoice with its active link or abandoning it on arrival.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "setGroupBookingJoinStatus#1",
+    tier: "GLOBAL",
+    reason:
+      "#3672 review: an organiser's close or reopen re-reads the group's status under the key the organiser-pays cancel fence writes CANCELLED under, and writes OPEN or CLOSED only with a not-CANCELLED guard, so a reopen racing the cancel can never overwrite the CANCELLED that the paid apply, the reaper and the payer switch rely on.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "releaseJoinersLeftBehindPaidSettlements#1",
+    tier: "GLOBAL",
+    reason:
+      "#3672: the reaper's self-heal moves a paid group's left-behind organiser-settled joiners to member-pays; it re-reads the group and settlement under the key the paid apply, the group cancel and the booking create (which re-decides a joiner's payer) take, so a cancel or a refund racing it wins.",
     invariant: "INV-LOCK-001",
   },
 
@@ -1122,6 +1213,18 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // serialisation itself is proven against real PostgreSQL by
   // `edit-financial-review-races.realdb.test.ts`.
   "src/lib/xero-operation-outbox.ts": 1,
+  //
+  // #3641 (`INV-PAY-104`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
+  // which both the enqueue and the late-capture re-queue
+  // (`xero-supplementary-invoice-late-capture.ts`,
+  // `requeueRetiredSupplementaryInvoiceOperation`) call, so the two cannot drift
+  // onto different keys. The re-queue takes it on a reaper-retired operation's
+  // anchor for covered-check -> link-check -> queued-check -> revive, so a
+  // revived invoice and a fresh enqueue can never both go out (forced against
+  // real PostgreSQL in `edit-financial-review-races.realdb.test.ts`). Its
+  // callers (the Stripe webhook's additional-payment handler, the
+  // confirm-modification-payment route, the waiting-invoice reaper) hold no
+  // transaction or other advisory lock there, and no provider call runs inside.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,
@@ -1177,6 +1280,19 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Singleton-keyed; no advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Club-theme logo writer".
   "src/lib/club-theme.ts": 1,
+  // #3029 C3: the held-party dietary rebuild locks the booking's guest rows
+  // (`SELECT 1 … FOR UPDATE`, id order) before reading the values it carries,
+  // so a concurrent single-row admin edit is read or refused, never lost.
+  // Order: global -> lodge (held by the approval) -> BookingGuest rows. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Held-party guest rows before a dietary
+  // rebuild".
+  "src/lib/booking-guest-row-lock.ts": 1,
+  // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
+  // worker's send-time decision lock the #3639 approval task's row
+  // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
+  // claims write. No advisory key; the dismissal's claim already holds the row.
+  // See docs/CONCURRENCY_AND_LOCKING.md -> "Kept late-capture task row".
+  "src/lib/xero-kept-late-capture-invoice.ts": 1,
   // Member-photo upload (POST) and remove (DELETE) each lock the member row
   // (`SELECT 1 … FOR UPDATE`) so concurrent replace/remove
   // serialise and never orphan a MEMBER_PHOTO blob. Member-id keyed; no
@@ -1241,6 +1357,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // and an ordinary rejection. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Approve, reject and release of one `DeletionRequest`".
   "src/lib/deletion-request-decision.ts": 1,
+  // #3640 (delta review, D1): `lockPaymentForRefundedTotal` takes the Payment
+  // row `FOR NO KEY UPDATE` FIRST in every writer of the transaction refund
+  // mirror - the card-refund writer, `applyLocalRefundAllocation`, and the
+  // cancel claim before its #1491 fold - so the order is Payment row -> refund
+  // rows -> transaction row everywhere. NO KEY strength so a `PaymentRefund`
+  // insert's FK check (`FOR KEY SHARE`) is not blocked. Keyed on an immutable
+  // cuid; taken after `lock(1)` where the caller holds it. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> the #3640 paragraph.
+  "src/lib/payment-transactions.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

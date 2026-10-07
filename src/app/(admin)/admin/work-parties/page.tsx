@@ -37,6 +37,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { calendarDayFromPayload } from "../_lib/calendar-day";
 import { formatCents } from "@/lib/pricing";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface WorkPartyEventRow {
   id: string;
@@ -118,6 +119,7 @@ function formatStoredDate(value: string) {
  * answer, in one place.
  */
 function ExpandedEventBookings({ detail }: { detail: EventDetail | undefined }) {
+  const format = useClubFormat();
   if (!detail) {
     return (
       <div className="rounded-md border p-3 text-sm text-muted-foreground">
@@ -147,7 +149,7 @@ function ExpandedEventBookings({ detail }: { detail: EventDetail | undefined }) 
             </TableCell>
             <TableCell>{row.booking.status}</TableCell>
             <TableCell className="text-right">
-              {formatCents(row.discountCents)}
+              {formatCents(row.discountCents, format)}
             </TableCell>
           </TableRow>
         ))}
@@ -157,6 +159,7 @@ function ExpandedEventBookings({ detail }: { detail: EventDetail | undefined }) 
 }
 
 export default function AdminWorkPartiesPage() {
+  const format = useClubFormat();
   // Work-party events are lodge config; the write routes enforce lodge:edit, so
   // a lodge:view admin sees this screen read-only (#1940).
   const canEdit = useAdminAreaEditAccess("lodge");
@@ -594,7 +597,7 @@ export default function AdminWorkPartiesPage() {
                     Attending bookings: <strong>{event.bookingCount}</strong>
                   </span>
                   <span>
-                    Total discount given: <strong>{formatCents(event.totalDiscountCents)}</strong>
+                    Total discount given: <strong>{formatCents(event.totalDiscountCents, format)}</strong>
                   </span>
                   {event.bookingCount > 0 && (
                     <Button variant="ghost" size="sm" onClick={() => toggleDetail(event.id)}>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pushMock = vi.fn();
@@ -9,22 +9,31 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { MemberGroupJoinPanel } from "@/app/(website-dynamic)/join/[code]/member-group-join-panel";
+import type { GroupBookingSummary } from "@/lib/group-booking";
+import { toGroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 
 const CODE = "ABCD2345";
 
-function summary(overrides: Record<string, unknown> = {}) {
-  return {
+/**
+ * The route's response, built by the route's own serialiser from a summary, so
+ * this fixture cannot carry a field the route does not send (#3672 review).
+ */
+function summary(overrides: Partial<GroupBookingSummary> = {}) {
+  const paymentMode = overrides.paymentMode ?? "ORGANISER_PAYS";
+  return toGroupBookingSummaryResponse({
     code: CODE,
     status: "OPEN",
-    paymentMode: "ORGANISER_PAYS",
+    paymentMode,
+    // #3672: how a member joining now pays; the group's mode unless paid.
+    joinerPaymentMode: paymentMode,
     organiserFirstName: "Olive",
     lodgeName: "West Ridge Hut",
-    checkIn: "2026-07-01",
-    checkOut: "2026-07-03",
+    checkIn: new Date("2026-07-01T00:00:00.000Z"),
+    checkOut: new Date("2026-07-03T00:00:00.000Z"),
     joinDeadline: null,
     isJoinable: true,
     ...overrides,
-  };
+  });
 }
 
 const family = {
@@ -127,6 +136,34 @@ describe("MemberGroupJoinPanel", () => {
     expect(await screen.findByText(/You're in/)).toBeDefined();
     // ORGANISER_PAYS: no redirect to a pay page.
     expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining("/bookings/b1"));
+  });
+
+  // #3672 (`INV-PAY-109`): the organiser has already paid, so a member
+  // joining now pays for their own beds, like any each-pays joiner.
+  it("tells a joiner after the organiser has paid that they pay for themselves, and sends them to pay", async () => {
+    const fetchMock = stubFetch({
+      summary: summary({ paymentMode: "ORGANISER_PAYS", joinerPaymentMode: "EACH_PAYS_OWN" }),
+      internetBankingEnabled: true,
+      joinBody: { bookingId: "b1", organiserSettled: false, requiresPayment: true },
+    });
+
+    render(<MemberGroupJoinPanel code={CODE} />);
+
+    expect(
+      await screen.findByText(/Olive has already paid for the group, so you'll pay for your own beds/)
+    ).toBeDefined();
+    expect(screen.queryByText(/you won't be charged/)).toBeNull();
+    // The member-pays payment choice is offered, as for any each-pays joiner.
+    expect(screen.getByRole("button", { name: /Internet Banking/ })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: /Join and pay/ }));
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/bookings/b1");
+    });
+    const joinCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/join") && init?.method === "POST"
+    );
+    expect(JSON.parse((joinCall![1] as { body: string }).body).paymentMethod).toBe("stripe");
   });
 
   it("redirects to pay for an EACH_PAYS_OWN join", async () => {

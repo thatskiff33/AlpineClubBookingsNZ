@@ -97,6 +97,7 @@ import {
   deletedBookingPrimaryPaymentRefundReason,
   findCompletedHandBackForLateCapture,
 } from "@/lib/deleted-booking-modification-payment";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const INTENT_ID = "pi_late";
 
@@ -316,6 +317,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
     // refund happened here, so writing it would put a money movement that did not
     // occur into the club's permanent record.
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture(),
       handBack: HAND_BACK,
     });
@@ -340,6 +342,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
 
   it("spells out in the row that the money did NOT go, and which row proves it", async () => {
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture({ captureKind: "primary", amountCents: 12000 }),
       handBack: { ...HAND_BACK, amountCents: 9000 },
     });
@@ -365,6 +368,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
     // cheerful mail here would be the #2761 defect at the opposite polarity: a
     // subject asserting a refund that was withheld.
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture({ openingDeletedAt: new Date("2026-07-01") }),
       handBack: HAND_BACK,
     });
@@ -377,7 +381,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
         handBackAmountCents: 2500,
         bookingDeleted: true,
         captureKind: "modification",
-      }),
+      }), CLUB_FORMAT_TEST,
     );
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
   });
@@ -385,6 +389,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
   it("does not re-read deletedAt, because no Stripe round trip happened", async () => {
     // There is no window for the population to have changed under us on this path.
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture(),
       handBack: HAND_BACK,
     });
@@ -468,6 +473,8 @@ describe("recordAutomaticLateCaptureRefund (#2773 — the record)", () => {
     // And it reports NO conflict: the writer is the only thing that reads the row's
     // status, so when it throws nothing is known about a hand-back either way.
     expect(outcome.handCompletedAfterRefund).toBe(false);
+    // And it says the record was NOT written, so no caller claims it (#3635 N4).
+    expect(outcome.recorded).toBe(false);
   });
 
   it("reports a hand-COMPLETED row found after the refund", async () => {
@@ -480,6 +487,7 @@ describe("recordAutomaticLateCaptureRefund (#2773 — the record)", () => {
 
     const outcome = await recordAutomaticLateCaptureRefund(capture());
     expect(outcome.handCompletedAfterRefund).toBe(true);
+    expect(outcome.recorded).toBe(true);
   });
 
   it("does NOT report a hand-DISMISSED row, which is the documented carve-out", async () => {
@@ -502,8 +510,9 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
   it("sends the auto-refund alert on the ordinary outcome", async () => {
     await announceAutomaticLateCaptureRefund(capture({ captureKind: "primary" }), {
       bookingDeleted: false,
+      recorded: true,
       handCompletedAfterRefund: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -511,7 +520,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
         bookingDeleted: false,
         captureKind: "primary",
         amountCents: 2500,
-      }),
+      }), CLUB_FORMAT_TEST,
     );
     expect(
       mocks.sendAdminLateCaptureHandBackConflictAlert,
@@ -523,18 +532,20 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     // So the row's sentence, the subject and the card's grouping cannot disagree.
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: true,
+      recorded: true,
       handCompletedAfterRefund: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingDeleted: true }),
+      expect.objectContaining({ bookingDeleted: true }), CLUB_FORMAT_TEST,
     );
   });
 
   it("swaps to the conflict alert, with a CRITICAL audit row, on a suspected double payment", async () => {
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: false,
+      recorded: true,
       handCompletedAfterRefund: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -550,7 +561,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     expect(
       mocks.sendAdminLateCaptureHandBackConflictAlert,
     ).toHaveBeenCalledWith(
-      expect.objectContaining({ refundSent: true, handBackAmountCents: null }),
+      expect.objectContaining({ refundSent: true, handBackAmountCents: null }), CLUB_FORMAT_TEST,
     );
     // ONE notification for the event: never both, and never the cheerful one on
     // its own, which would be a lie by omission about money leaving twice.

@@ -21,6 +21,9 @@ import {
   daysUntilDate,
   type CancellationRule,
 } from "./cancellation";
+import { formatCents } from "@/lib/utils";
+import { cancelAppliedCreditBaseCents, cancelRefundableBaseCents } from "@/lib/booking-payment-state";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type { CancellationRule };
 
@@ -391,16 +394,71 @@ export function calculateBookingHoldDecision(input: {
   };
 }
 
+/**
+ * Split-booking decision (#738), and with it WHICH ROWS COUNT FOR CAPACITY — the
+ * one definition the create service and the create route's full-lodge pre-flight
+ * both read (#3770, `INV-SSOT-001`).
+ *
+ * A mixed member/non-member party that is not flagged becomes two linked
+ * bookings: the member portion is charged up front and holds capacity (the
+ * parent), while the non-member portion is a provisional PENDING child that holds
+ * nothing (resolved at the hold window). The flagged "only book if my guests can
+ * come" path stays a single provisional PENDING booking holding nothing. Pure
+ * parties stay a single booking. A booking held for admin review is never split —
+ * the whole party waits in AWAITING_REVIEW. `primaryGuests` is the booking that
+ * holds capacity: the member half of a split, otherwise the whole party.
+ */
+export function decideBookingSplit<Guest extends { isMember: boolean }>(
+  guests: readonly Guest[],
+  input: {
+    shouldBePending: boolean;
+    cancelIfGuestsBumped?: boolean;
+    blockForReview: boolean;
+  },
+): {
+  memberGuests: Guest[];
+  nonMemberGuests: Guest[];
+  flaggedProvisional: boolean;
+  splitBooking: boolean;
+  primaryGuests: Guest[];
+} {
+  const memberGuests = guests.filter((g) => g.isMember);
+  const nonMemberGuests = guests.filter((g) => !g.isMember);
+  const hasMemberGuests = memberGuests.length > 0;
+  const hasNonMemberGuests = nonMemberGuests.length > 0;
+  const flaggedProvisional =
+    input.shouldBePending &&
+    (input.cancelIfGuestsBumped ?? false) &&
+    hasNonMemberGuests &&
+    !input.blockForReview;
+  const splitBooking =
+    hasMemberGuests &&
+    hasNonMemberGuests &&
+    input.shouldBePending &&
+    !flaggedProvisional &&
+    !input.blockForReview;
+  return {
+    memberGuests,
+    nonMemberGuests,
+    flaggedProvisional,
+    splitBooking,
+    primaryGuests: splitBooking ? memberGuests : [...guests],
+  };
+}
+
 export function calculateBookingCreditApplication(input: {
   requestedCreditCents: number;
   creditBalanceCents: number;
   finalPriceCents: number;
   status: BookingStatus;
+  /** The club's format, for the insufficient-credit message (#3565). */
+  format: ClubFormat;
 }): {
   creditAppliedCents: number;
   effectivePriceCents: number;
 } {
-  const { requestedCreditCents, creditBalanceCents, finalPriceCents, status } = input;
+  const { requestedCreditCents, creditBalanceCents, finalPriceCents, status, format } =
+    input;
   if (requestedCreditCents <= 0 || status !== BookingStatus.PAYMENT_PENDING) {
     return {
       creditAppliedCents: 0,
@@ -410,7 +468,7 @@ export function calculateBookingCreditApplication(input: {
 
   if (requestedCreditCents > creditBalanceCents) {
     throw new Error(
-      `Insufficient credit: ${creditBalanceCents} cents available, ${requestedCreditCents} requested`
+      `Insufficient credit: ${formatCents(creditBalanceCents, format)} available, ${formatCents(requestedCreditCents, format)} requested`
     );
   }
   if (requestedCreditCents > finalPriceCents) {
@@ -449,6 +507,8 @@ export function calculateCancellationPreview(input: {
    * supplied, which is why this parameter cannot be an instant.
    */
   todayAtClub: CalendarDate;
+  /** #3809: `bookingReducedThroughCreditGiveBack`, as the cancel reads it (`INV-PAY-115`). */
+  capAppliedCredit: boolean;
 }): {
   refundAmountCents: number;
   keptAmountCents: number;
@@ -462,11 +522,14 @@ export function calculateCancellationPreview(input: {
   const paidAmountCents =
     input.payment.amountCents - input.payment.refundedAmountCents;
   const changeFeeCents = input.payment.changeFeeCents;
-  // Same refundable-base cap as cancelBooking (#1031): the preview must not
+  // The refundable base cancelBooking itself uses (#1031): the preview must not
   // promise a refund the stale Payment mirror can no longer back.
-  const refundableBaseCents =
-    Math.min(paidAmountCents, input.finalPriceCents + changeFeeCents) -
-    changeFeeCents;
+  const refundableBaseCents = cancelRefundableBaseCents({
+    amountCents: input.payment.amountCents,
+    refundedAmountCents: input.payment.refundedAmountCents,
+    finalPriceCents: input.finalPriceCents,
+    changeFeeCents,
+  });
   const days = daysUntilDate(input.checkIn, input.todayAtClub);
   const {
     cardRefundAmountCents,
@@ -486,7 +549,15 @@ export function calculateCancellationPreview(input: {
     // (#1164 / D7), no longer restored at 100%. Fed the same refundableBaseCents
     // and days so preview == actual cancel.
     creditRestoredCents: calculateAppliedCreditRestore(
-      input.payment.creditAppliedCents ?? 0,
+      // #3809: capped with the money paid at what the booking is worth, as the cancel caps it.
+      cancelAppliedCreditBaseCents({
+        amountCents: input.payment.amountCents,
+        refundedAmountCents: input.payment.refundedAmountCents,
+        finalPriceCents: input.finalPriceCents,
+        changeFeeCents,
+        creditAppliedCents: input.payment.creditAppliedCents ?? 0,
+        capAtWorth: input.capAppliedCredit,
+      }),
       refundableBaseCents,
       days,
       input.policyRules,

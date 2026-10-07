@@ -42,6 +42,7 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
 }));
 
 import { sendAdminLateCaptureAutoRefundAlert } from "@/lib/email/admin-alerts-finance";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 type CapturedAlert = {
   subject: string;
@@ -70,7 +71,7 @@ async function send(
     bookingId: "booking-9",
     bookingDeleted,
     captureKind,
-  });
+  }, CLUB_FORMAT_TEST);
   return captured();
 }
 

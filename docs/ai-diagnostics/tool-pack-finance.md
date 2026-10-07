@@ -548,7 +548,7 @@ under `admin`, which this tool cannot read; and the audit category is optional, 
 row recorded with **no** category is matched by no diagnostics tool at all. **82**
 production write paths used to record that way, several of them money-adjacent
 (subscription billing, member-credit adjustments, fee configuration); #2676
-classified all 82 at the source, so the census now reads **484 write sites and zero
+classified all 82 at the source, so the census now reads **495 write sites and zero
 uncategorised** and no *new* finance audit row is born invisible to this tool. Rows
 written before that runtime deployed still carry no category, and back-filling them
 is a separate data change that has not run — so for historical events an empty
@@ -618,7 +618,7 @@ extend the test.
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Every finance tool fails; readiness says `under_provisioned` | This release added twelve relation grants and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
+| Every finance tool fails; readiness says `under_provisioned` | This release added twelve relation grants and provisioning has not been re-run | `pnpm run diagnostics:provision-role`, then re-check readiness |
 | A Finance Officer is told no diagnostics tool is available | Their access role has `finance` but the module or the diagnostics credential is not set up | `diagnostics.readiness` (needs `support:view`) reports the blocker |
 | `booking_finance_state` is refused but the other finance tools work | The caller lacks `bookings:view` | The denial names the missing area; the per-payment tools still answer |
 | `xero_contact_linkage` is refused | The caller lacks `membership:view` | Same — it is the only member-keyed entry |

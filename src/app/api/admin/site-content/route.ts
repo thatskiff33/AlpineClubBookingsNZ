@@ -8,6 +8,7 @@ import {
 } from "@/lib/audit";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { SITE_CONTENT_KEYS, SITE_CONTENT_LIMITS } from "@/lib/page-content";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { getSiteContentForAdmin } from "@/lib/site-content";
 
 const updateSchema = z
@@ -105,6 +106,10 @@ export async function PUT(request: NextRequest) {
       request: getAuditRequestContext(request),
     }),
   );
+
+  // Footer sections render on every public page, stored CMS pages included, so
+  // clear the full-route store as well as the tagged caches (#3852).
+  revalidatePublicPageContent();
 
   return NextResponse.json({
     document: {

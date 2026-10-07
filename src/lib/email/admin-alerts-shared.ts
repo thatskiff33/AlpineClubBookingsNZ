@@ -24,7 +24,8 @@ import {
   type AdminAlertRecipientDeliveryOutcome,
 } from "@/lib/email-admin-alert-escalation";
 import { sendEmail } from "./core";
-import { type EmailAttachment } from "./internal";
+import { type EmailAttachment, shouldPersistEmailHtml } from "./internal";
+import { type AdminAlertSendResult } from "./admin-alert-send-result";
 
 /**
  * Candidate rows for any admin-audience email (#2548). The audience is decided
@@ -100,7 +101,11 @@ export async function getAdminAlertEmails(
     .map((admin) => admin.email);
 }
 
-/** Send an email to all active admins who opted into the alert category. */
+/**
+ * Send an email to all active admins who opted into the alert category, and
+ * say what happened to each recipient (`AdminAlertSendResult`). Callers that
+ * do not hold a claim ignore the result.
+ */
 export async function sendToAdmins({
   subject,
   html,
@@ -115,18 +120,24 @@ export async function sendToAdmins({
   preferenceKey: AdminNotificationPreferenceKey;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
-}) {
+}): Promise<AdminAlertSendResult> {
   const delivery = await shouldSendAdminSystemEmail({ templateName });
   if (!delivery.send) {
     logger.info(
       { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
       "Skipped admin email by delivery policy",
     );
-    return;
+    return {
+      deliveryAllowed: false,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    };
   }
 
   const emails = await getAdminAlertEmails(preferenceKey);
-  await sendAdminAlertTo({
+  return sendAdminAlertTo({
     emails,
     subject,
     html,
@@ -162,9 +173,14 @@ export async function sendAdminAlertTo({
   preferenceKey: AdminNotificationPreferenceKey;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
-}) {
+}): Promise<AdminAlertSendResult> {
+  // A FAILED row is replayed only when it kept its body (`core.ts`); a
+  // sensitive template's does not, and goes to the review queue instead.
+  const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
   const outcomes = await Promise.all(
-    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome> => {
+    emails.map(async (email): Promise<
+      AdminAlertRecipientDeliveryOutcome & { queuedForRetry: boolean }
+    > => {
       try {
         const outcome = await sendEmail({
           to: email,
@@ -182,13 +198,25 @@ export async function sendAdminAlertTo({
 
         // Admin alert recipients are real admin addresses, never walk-in
         // placeholders (#1935); fold the not-sent outcomes into "suppressed".
-        return { status: outcome.status === "sent" ? "sent" : "suppressed" };
+        // An environment FAULT (not a confirmed non-production copy) leaves a
+        // FAILED row the retry cron sends once the installation is corrected.
+        return {
+          status: outcome.status === "sent" ? "sent" : "suppressed",
+          queuedForRetry:
+            outcome.status === "withheld_for_environment" &&
+            outcome.reason !== "environment_non_production" &&
+            failedRowIsReplayed,
+        };
       } catch (err) {
         logger.error(
           { err, to: email, templateName },
           "Failed to send admin alert",
         );
-        return { status: "failed" };
+        // A transport failure marks this recipient's EmailLog row FAILED for
+        // the retry cron. Stated limit: a throw before that row exists (the
+        // message settings unreadable) is counted the same, and its
+        // undeliverable escalation below is then the only trail.
+        return { status: "failed", queuedForRetry: failedRowIsReplayed };
       }
     }),
   );
@@ -200,7 +228,7 @@ export async function sendAdminAlertTo({
     await recordAdminAlertDeliveryEscalation({
       templateName,
       preferenceKey,
-      outcomes,
+      outcomes: outcomes.map(({ status }) => ({ status })),
     }).catch((err) =>
       logger.error(
         { err, templateName },
@@ -208,6 +236,17 @@ export async function sendAdminAlertTo({
       ),
     );
   }
+  const sent = outcomes.filter((outcome) => outcome.status === "sent").length;
+  const queuedForRetry = outcomes.filter(
+    (outcome) => outcome.status !== "sent" && outcome.queuedForRetry,
+  ).length;
+  return {
+    deliveryAllowed: true,
+    recipients: outcomes.length,
+    sent,
+    queuedForRetry,
+    notDelivered: outcomes.length - sent - queuedForRetry,
+  };
 }
 
 /**

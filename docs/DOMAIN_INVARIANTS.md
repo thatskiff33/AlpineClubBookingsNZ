@@ -34,7 +34,7 @@ description, so you can find the right file without opening more than one.
 | [`analytics-and-privacy.md`](invariants/analytics-and-privacy.md) | `INV-PRIV` | analytics loading, the consent banner, the public Analytics preferences control, the analytics route policy, what leaves this application for Google, what personal data may appear in a log, the audit `category` a writer records and who may therefore read the row |
 | [`membership-lifecycle.md`](invariants/membership-lifecycle.md) | `INV-LIFE` (except `INV-LIFE-062`) | applications and nomination, cancellation, archive and deletion, roles and the admin lock-out guards, seasonal membership type and age tier, family groups, partner and parent/dependant links, email inheritance, inductions, member merge |
 | [`integrations.md`](invariants/integrations.md) | `INV-INT` | webhooks, cron idempotency, provider callbacks, Xero member grouping |
-| [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input |
+| [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input, mocking a money seam in a test that asserts money |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 
@@ -98,6 +98,12 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
 | `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
 | `INV-MONEY-031` | Stored booking totals carry a derived reconciliation state |
+| `INV-MONEY-032` | A booking's money ledger is append-only, written through one door |
+| `INV-MONEY-033` | Every ledger posting carries an idempotency key; a repeat posts nothing |
+| `INV-MONEY-034` | Settlement lines converge from payment rows where the mirror is derived |
+| `INV-MONEY-035` | Every booking credit row and hand-back posts one line, in its writer |
+| `INV-MONEY-036` | Edits post per-night lines or none; closures record a share once |
+| `INV-MONEY-037` | Ledger projections proved per booking; the gate opens on exact agreement |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -108,7 +114,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
-| `INV-MONEY-016` | Membership type alone decides subscription liability; access role grants no exemption |
+| `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |
@@ -154,7 +160,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-014` | Client-side a lodge night is an NZ `yyyy-MM-dd` string, end to end |
 | `INV-DATE-015` | Rendering has one seam, `@/lib/club-time`; bare `toLocale*`, unzoned `Intl`, `date-fns` lint-blocked |
 | `INV-DATE-029` | Naming the environment zone is lint-blocked; escape-hatch ceilings are tight, only fall |
-| `INV-DATE-016` | The long spelled-out date shape is reserved for four named member-facing surfaces |
+| `INV-DATE-016` | The long spelled-out date shape is reserved for named member-facing surfaces |
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |
 | `INV-CAP-001` | Capacity is per lodge; no path may sum beds across lodges |
@@ -213,6 +219,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
 | `INV-PAY-043` | Duplicate capture on a cash-settled booking is auto-refunded, not silently kept |
+| `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
 | `INV-PAY-046` | An outstanding upward-modification delta is asked about, never silently absorbed or dropped |
@@ -221,6 +228,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
+| `INV-PAY-103` | A card refund adds only newly recorded money, through one writer |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
 | `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |
@@ -257,12 +265,16 @@ Prefix `INV-PAY`.
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
 | `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
+| `INV-PAY-113` | A credit-paid share is applied credit given back, once |
+| `INV-PAY-115` | A cancellation tiers applied credit capped at what the booking is worth |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
+| `INV-PAY-112` | One edit's charge request is raised by one run at a time |
 | `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
+| `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
 | `INV-PAY-071` | Both shortfall endings audited with opposite instructions; repair reads settled shares |
@@ -285,9 +297,13 @@ Prefix `INV-PAY`.
 | `INV-PAY-014` | Stripe paths own PaymentIntents, SetupIntents, refunds, webhooks and recovery operations |
 | `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
-| `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |
+| `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
+| `INV-PAY-107` | An expired hold with money against its invoice is kept, not released |
+| `INV-PAY-108` | A part payment under review is never handed back or credited twice |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
+| `INV-PAY-106` | Nothing later re-decides what a cancellation settled: late Stripe notice, repair tool |
+| `INV-PAY-110` | A late capture a treasurer keeps is invoiced and paid in Xero |
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |
 | `INV-PAY-021` | An unpaid confirmation defers to the invoice and promises nothing about it |
 | `INV-PAY-022` | Unpaid confirmation with applied credit states the netting, from the ledger |
@@ -299,6 +315,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-027` | Payment, refund and credit operations are idempotent across retries, replays and reruns |
 | `INV-PAY-028` | The Stripe webhook dedup claim is a processing lease, not "seen" |
 | `INV-PAY-029` | A FAILED Stripe payment keeps its WAITING_PAYMENT Xero op for 24h |
+| `INV-PAY-104` | Waiting invoice retired only when the pay door closes; captures never silent |
 | `INV-PAY-030` | External provider side effects require clear retry and idempotency behaviour |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
@@ -307,6 +324,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-114` | An organiser child's refund: one recorded Stripe refund from the combined payment |
+| `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
+| `INV-PAY-109` | Joiners a paid organiser bill does not cover pay for themselves |
 
 ## Member-Guest Consent
 
@@ -336,7 +356,8 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-016` | MG4: edit path, admin parity, request pipeline; no address in URLs |
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
-| `INV-GUEST-019` | Own dependants leave the guest split at create doors; exact own-family matching |
+| `INV-GUEST-019` | Own dependants leave the guest split at create, edit and exception doors |
+| `INV-GUEST-020` | Family is judged before any beyond-family member is resolved |
 
 ## Booking Modifications
 
@@ -372,7 +393,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
 | `INV-MOD-010` | Priced guests store a rate-type snapshot; kept locked nights stay stale |
-| `INV-MOD-011` | Reductions refund within the cancellation tier; captured payments need settlement elections |
+| `INV-MOD-011` | Reductions settle within the cancellation tier, credit-paid ones as applied credit |
 | `INV-MOD-012` | Pre-payment reduction below applied credit refunds the over-consumed slice under lock |
 | `INV-MOD-013` | A modification parked to AWAITING_REVIEW refunds no credit, auto-pays nothing until released |
 | `INV-MOD-014` | Xero deallocation commits the clamp offset and outbox op together, member-credit-locked |
@@ -411,6 +432,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
 | `INV-MOD-057` | Cancellable statuses have one home; member doors read a named subset |
 | `INV-MOD-058` | An edit stores its delta as lines; every reader reads those rows |
+| `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 
 ### Adult-member hosting
 
@@ -702,6 +724,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-019` | An audit row's subject is a person; an organisation-owned booking records none |
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
+| `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
 
 ## Membership Lifecycle
 
@@ -731,11 +754,12 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-009` | Kiosk test is record-class: refused only when `LODGE` is everything |
 | `INV-LIFE-010` | The `canLogin` term applies to `SCHOOL` alone; every other class is cancellable |
 | `INV-LIFE-011` | Both callers feed the rule one shape; nothing refused is offered |
-| `INV-LIFE-012` | Cancellation approval leaves access roles standing; `active: false` is the load-bearing flag |
+| `INV-LIFE-012` | Cancellation approval leaves access roles standing, dormant behind `active` and `canLogin` |
 | `INV-LIFE-013` | Two paths write `active: true`; each refuses cancelled, archived and deleted members |
 | `INV-LIFE-014` | A deleted account yields no session even with `active: true`; providers refuse |
-| `INV-LIFE-015` | The deleted-account marker is a strong signal, not a schema invariant |
-| `INV-LIFE-016` | Cancellation clears no roles and no JWT; admin-access routes re-read `active` |
+| `INV-LIFE-015` | Structural deletion and adopter-era reserved addresses share one predicate |
+| `INV-LIFE-016` | Cancellation clears no roles; admin-access routes re-read `active` and `canLogin` |
+| `INV-LIFE-092` | A login-disabled member holds no access and keeps no session |
 | `INV-LIFE-017` | Application-approval mapping preserves login uniqueness and auth, and never double-charges coverage |
 | `INV-LIFE-066` | The applicant MAP path's #1026 privileged-email gate is Full-Admin-only, fail-closed |
 | `INV-LIFE-067` | On-behalf booking pickers are `bookings:edit`-scoped and never require `membership:view` |
@@ -752,6 +776,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
 | `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
+| `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
 | `INV-LIFE-021` | A `FamilyGroup` with no `FamilyGroupMember` rows is inert everywhere |
 | `INV-LIFE-022` | Family-group facts: the guest-eligibility correction, billing recipients, and memberless groups |
@@ -843,7 +868,8 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-022` | The missing-contact census: read-only, cache-fresh, ambiguity handed back |
 | `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
 | `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
-| `INV-INT-025` | Central-server syncing pauses on any API version difference, integer-compared |
+| `INV-INT-025` | Resolved in Xero means done: no automatic retry or re-mint |
+| `INV-INT-026` | Central-server syncing pauses on any API version difference, integer-compared |
 
 ## Operations
 
@@ -874,6 +900,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-011` | The dropped column's stored values were meaningless rather than frozen |
 | `INV-OPS-003` | Public CI and local validation must use test/demo credentials or placeholders |
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
+| `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 
 ## Product Configuration
 

@@ -13,10 +13,13 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
-import { createAuditLog, logAudit } from "@/lib/audit";
+import { createAuditLog, getAuditRequestContext, logAudit } from "@/lib/audit";
+import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
 import {
   EMPTY_ORPHANED_FAMILY_LINKS,
   readFamilyLinkOrphans,
@@ -80,6 +83,8 @@ import {
   XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
   XeroContactCreateBlocksDeletionError,
 } from "@/lib/xero-contact-create-recovery";
+import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -149,21 +154,6 @@ function deletionCleanupRecovery(input: {
   };
 }
 
-function isMemberAnonymised(member: {
-  firstName: string;
-  lastName: string;
-  email: string;
-  active: boolean;
-}): boolean {
-  return (
-    member.active === false &&
-    member.firstName === "Deleted" &&
-    member.lastName === "Member" &&
-    member.email.startsWith("deleted-") &&
-    member.email.endsWith("@deleted.invalid")
-  );
-}
-
 async function readFinalDeletionDecision(
   requestId: string,
   cancelledBookings: number,
@@ -176,10 +166,8 @@ async function readFinalDeletionDecision(
         status: true,
         member: {
           select: {
-            firstName: true,
-            lastName: true,
             email: true,
-            active: true,
+            deletedAt: true,
           },
         },
       },
@@ -207,7 +195,7 @@ async function readFinalDeletionDecision(
         // Whatever this attempt committed before it lost the row stays
         // committed, which is exactly what the next decider has to be told.
         cancelledBookings,
-        memberAnonymised: isMemberAnonymised(latest.member),
+        memberAnonymised: isDeletedAccountRecord(latest.member),
         retryAllowed: false as const,
       };
     }
@@ -215,7 +203,7 @@ async function readFinalDeletionDecision(
       latest &&
       (latest.status === "APPROVED" || latest.status === "REJECTED")
     ) {
-      const memberAnonymised = isMemberAnonymised(latest.member);
+      const memberAnonymised = isDeletedAccountRecord(latest.member);
       return {
         code: decisionErrorCode,
         error:
@@ -305,8 +293,13 @@ export async function POST(
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // ONE request context for every audit row of this decision (#3454 review):
+  // the canonical helper's proxy-appended hop, not the client-settable first.
+  const auditRequest = getAuditRequestContext(request);
+  const ip = auditRequest?.ipAddress ?? "unknown";
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   let completedBookingCancellations = 0;
   let memberAnonymised = false;
 
@@ -781,6 +774,7 @@ export async function POST(
           session.user.id,
           "ADMIN",
           ip,
+          format,
         );
       } catch (err) {
         const cancellationFact = await recheckCancellationFailure(booking.id);
@@ -859,7 +853,7 @@ export async function POST(
     const approvalReceipt = { email: member.email, firstName: member.firstName };
 
     // 4-7: Anonymise atomically in a single transaction
-    const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
+    const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@${DELETED_CONTACT_EMAIL_DOMAIN}`;
     let sweptShares: SweptPartnerSharedAllocation[] = [];
     // #2255: who was still pointed at this member when we anonymised them.
     let detachedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;
@@ -920,6 +914,14 @@ export async function POST(
       // flight to Xero or whose provider-created contact still needs linking.
       const fencedMember = await lockMemberForAccountDeletionXeroFence(tx, member.id);
 
+      // #3454: the clear of the member's second factor, below, is recorded in
+      // this transaction, read after the fence above.
+      await recordErasureTwoFactorClear(tx, {
+        memberId: member.id,
+        adminMemberId: session.user.id,
+        request: auditRequest,
+      });
+
       // 3. Anonymise the member record
       await tx.member.update({
         where: { id: member.id },
@@ -974,6 +976,9 @@ export async function POST(
           // Billing-family removal sweep (#1932, E6): the member is leaving all
           // families here, so clear any billing-family selection they hold.
           billingFamilyGroupId: null,
+          // #2941 (INV-PRIV-022): dietary/allergy information is erased with
+          // the rest of the person, regardless of the club toggle.
+          ...DIETARY_ERASURE_PATCH,
         },
       });
 
@@ -1115,13 +1120,17 @@ export async function POST(
         actorMemberId: session.user.id,
       });
 
-      // 5. Anonymise BookingGuest names for this member's guest appearances
+      // 5. Anonymise BookingGuest names for this member's guest appearances —
+      // and their per-stay dietary/allergy snapshot with them (#3029, W16,
+      // `INV-PRIV-022`): the same erasure patch as the profile value, whatever
+      // the toggle says, in the same update.
       await tx.bookingGuest.updateMany({
         where: { memberId: member.id },
         data: {
           firstName: "Deleted",
           lastName: "Member",
           memberId: null,
+          ...DIETARY_ERASURE_PATCH,
         },
       });
 

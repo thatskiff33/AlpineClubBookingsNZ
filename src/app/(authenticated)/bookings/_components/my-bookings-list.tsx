@@ -25,10 +25,12 @@ import {
 } from "@/lib/booking-money-reconciliation-audience";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   calendarDateOfSerialisedDbDate,
   compareCalendarDates,
   formatClubWeekdayDate,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 
 export interface MyBookingItem {
@@ -70,8 +72,8 @@ type SortDir = "desc" | "asc";
 // them through `APP_TIME_ZONE`, and for a club west of Greenwich that names the
 // night before the stay — including the weekday, which is what this shape exists
 // to show.
-function formatDate(value: string) {
-  return formatClubWeekdayDate(calendarDateOfSerialisedDbDate(value));
+function formatDate(value: string, format: ClubDateFormat) {
+  return formatClubWeekdayDate(calendarDateOfSerialisedDbDate(value), format);
 }
 
 // #1975: the pre-#1975 inline link labels. When a provisional child is nested
@@ -114,15 +116,16 @@ function BookingSummary({
   booking: MyBookingItem;
   showLinkLabel: boolean;
 }) {
+  const format = useClubFormat();
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="space-y-1">
         <p className="font-medium">
-          {formatDate(booking.checkIn)} - {formatDate(booking.checkOut)}
+          {formatDate(booking.checkIn, format)} - {formatDate(booking.checkOut, format)}
         </p>
         <p className="text-sm text-muted-foreground">
           {booking.guestCount} guest{booking.guestCount !== 1 ? "s" : ""} &middot;{" "}
-          {formatCents(booking.finalPriceCents)}
+          {formatCents(booking.finalPriceCents, format)}
           {/*
             #3033: the qualifier, not a replacement. The total IS what the
             booking is priced at after the change; what it does not include is

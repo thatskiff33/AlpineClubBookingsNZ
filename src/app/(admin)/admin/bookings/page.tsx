@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { bookingOwner } from "@/lib/booking-owner";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { BookingsPagination } from "@/components/admin/bookings-pagination";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
@@ -196,6 +196,7 @@ export default async function AdminBookingsPage({
   }>;
 }) {
   const club = await clubTime();
+  const money = await clubFormat();
   const params = await searchParams;
   const parsedQuery = adminBookingsQuerySchema.safeParse(params);
   const query = parsedQuery.success ? parsedQuery.data : adminBookingsQuerySchema.parse({});
@@ -467,8 +468,8 @@ export default async function AdminBookingsPage({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {incident.booking.lodge?.name ?? "Lodge"} ·{" "}
-                      {formatClubDate(stayDay(incident.booking.checkIn))}–
-                      {formatClubDate(stayDay(incident.booking.checkOut))}
+                      {formatClubDate(stayDay(incident.booking.checkIn), club.format)}–
+                      {formatClubDate(stayDay(incident.booking.checkOut), club.format)}
                       {uncovered === null
                         ? ""
                         : ` · ${uncovered} uncovered guest-night${uncovered === 1 ? "" : "s"}`}
@@ -587,7 +588,7 @@ export default async function AdminBookingsPage({
                     >
                       <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
                         {row.lodgeName ? `${row.lodgeName} · ` : ""}
-                        {formatClubDate(stayDay(row.checkIn))} – {formatClubDate(stayDay(row.checkOut))}
+                        {formatClubDate(stayDay(row.checkIn), club.format)} – {formatClubDate(stayDay(row.checkOut), club.format)}
                       </span>
                       <span className="block text-xs text-muted-foreground">
                         {row.bookerName}
@@ -600,8 +601,8 @@ export default async function AdminBookingsPage({
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {row.status === "DECLINED"
-                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt, club.zone)}` : ""}`
-                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt, club.zone)}` : ""}, never answered`}
+                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt, club.zone, club.format)}` : ""}`
+                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt, club.zone, club.format)}` : ""}, never answered`}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">{row.why}</TableCell>
@@ -723,8 +724,8 @@ export default async function AdminBookingsPage({
                         calendar dates that need none (CT-4, #2870). */}
                     <TableCell className="text-sm">{club.instantDate(booking.updatedAt)}</TableCell>
                     <TableCell className="text-sm">
-                      <span className="block">{formatClubDate(stayDay(booking.checkIn))}</span>
-                      <span className="block text-xs text-muted-foreground">to {formatClubDate(stayDay(booking.checkOut))}</span>
+                      <span className="block">{formatClubDate(stayDay(booking.checkIn), club.format)}</span>
+                      <span className="block text-xs text-muted-foreground">to {formatClubDate(stayDay(booking.checkOut), club.format)}</span>
                       <span className="block text-xs text-muted-foreground">
                         {nights} night{nights === 1 ? "" : "s"}
                       </span>
@@ -733,7 +734,7 @@ export default async function AdminBookingsPage({
                       {formatAdminBookingGuestCount(booking.guests.length, nonMemberGuestCount)}
                     </TableCell>
                     <TableCell className="text-right text-sm font-medium tabular-nums">
-                      {formatCents(booking.finalPriceCents)}
+                      {money.cents(booking.finalPriceCents)}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -791,7 +792,7 @@ export default async function AdminBookingsPage({
                             available to this admin. */}
                         <DiagnosticsRecordButton
                           recordId={booking.id}
-                          subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
+                          subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} from ${formatClubDate(stayDay(booking.checkIn), club.format)}`}
                         />
                       </div>
                       {booking.requiresAdminReview && booking.adminReviewReason ? (
@@ -810,7 +811,7 @@ export default async function AdminBookingsPage({
                         ) : null}
                         {outstandingAdditionalCents > 0 ? (
                           <MiniChip tone="warning" icon={AlertTriangle}>
-                            {formatCents(outstandingAdditionalCents)} due
+                            {money.cents(outstandingAdditionalCents)} due
                           </MiniChip>
                         ) : null}
                       </div>

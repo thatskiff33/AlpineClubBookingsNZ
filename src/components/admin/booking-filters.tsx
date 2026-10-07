@@ -2,7 +2,11 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
-import { calendarDateParts } from "@/lib/club-time";
+import {
+  calendarDateFromParts,
+  calendarDateParts,
+  formatClubShortMonthYear,
+} from "@/lib/club-time";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -160,11 +164,11 @@ export function BookingFilters({
   // months the server can actually filter on.
   const monthOptions: Array<{ value: string; label: string }> = [];
   const currentYear = calendarDateParts(clubTime.today()).year;
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   for (let y = currentYear - 1; y <= currentYear + 1; y++) {
     for (let m = 0; m < 12; m++) {
       const val = `${y}-${String(m + 1).padStart(2, "0")}`;
-      monthOptions.push({ value: val, label: `${monthNames[m]} ${y}` });
+      const label = formatClubShortMonthYear(calendarDateFromParts(y, m + 1, 1), clubTime.format);
+      monthOptions.push({ value: val, label });
     }
   }
 

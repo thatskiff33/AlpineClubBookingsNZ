@@ -90,8 +90,8 @@ function schoolRequest(overrides: Record<string, unknown> = {}) {
       guests: [
         {
           id: "g1",
-          firstName: "School Child 1",
-          lastName: "Placeholder",
+          firstName: "School Child",
+          lastName: "1",
           ageTier: "CHILD",
           isMember: false,
           memberId: null,
@@ -321,6 +321,38 @@ describe("applySchoolAttendeeConfirmation", () => {
       }),
     ).rejects.toThrow(/Member guest names cannot be edited/);
     expect(mocks.guestUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a named child renamed to somebody else loses the previous child's dietary note; a placeholder or a spelling fix keeps it (INV-MOD-059)", async () => {
+    const request = schoolRequest({ attendeeConfirmationTokenExpiresAt: CHECK_IN });
+    const guests = (request.convertedBooking as { guests: Array<Record<string, unknown>> }).guests;
+    guests.push(
+      { id: "g3", firstName: "Alice", lastName: "Smith", ageTier: "CHILD", isMember: false, memberId: null },
+      { id: "g4", firstName: "Jonh", lastName: "Walker", ageTier: "CHILD", isMember: false, memberId: null },
+    );
+    mocks.requestFindUnique.mockResolvedValue(request);
+
+    await applySchoolAttendeeConfirmation({
+      token: "raw-token",
+      guestUpdates: [
+        { guestId: "g1", firstName: "Aroha", lastName: "Ngata" },
+        { guestId: "g3", firstName: "Bob", lastName: "Jones" },
+        { guestId: "g4", firstName: "John", lastName: "Walker" },
+      ],
+      now: NOW,
+    });
+
+    const dataFor = (id: string) =>
+      mocks.guestUpdate.mock.calls
+        .map((call) => call[0] as { where: { id: string }; data: Record<string, unknown> })
+        .find((args) => args.where.id === id)?.data;
+    expect(dataFor("g3"), "Alice's note must not stay on Bob's row").toEqual({
+      firstName: "Bob",
+      lastName: "Jones",
+      dietaryRequirements: null,
+    });
+    expect(dataFor("g1")).not.toHaveProperty("dietaryRequirements");
+    expect(dataFor("g4")).not.toHaveProperty("dietaryRequirements");
   });
 
   it("rejects an already-confirmed list", async () => {

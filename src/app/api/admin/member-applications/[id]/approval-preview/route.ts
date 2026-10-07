@@ -66,9 +66,7 @@ export async function POST(
       // the privileged-email block can never be dodged with a stale JWT claim.
       actor: {
         id: guard.session.user.id,
-        isFullAdmin: isFullAdmin({
-          accessRoles: guard.session.user.accessRoles,
-        }),
+        isFullAdmin: isFullAdmin(guard.session.user),
       },
     });
     return NextResponse.json(result.body, result.init);

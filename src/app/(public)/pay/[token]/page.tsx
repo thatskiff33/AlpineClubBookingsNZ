@@ -16,10 +16,12 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
+  isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -27,9 +29,11 @@ import {
 // migration carried this file past its 500-line route-page budget. See that
 // file's header for why an allowance was not the answer.
 import {
+  CardPaymentUnavailableNotice,
   FinancialReviewNotice,
   formatLinkExpiry,
   formatStayDay,
+  internetBankingHeading,
   NarrativeCard,
   toneForState,
   type Narrative,
@@ -48,6 +52,7 @@ import {
 } from "@/lib/booking-financial-review-copy";
 
 export default function PayByLinkPage() {
+  const format = useClubFormat();
   const club = useClubIdentity();
   /*
     `expiresAt` is a real INSTANT — the moment the link stops working — so it has
@@ -171,6 +176,10 @@ export default function PayByLinkPage() {
             heading: "Card transaction found - check payment status",
             message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
           });
+          return;
+        }
+        if (res.status === 409 && isPaymentProcessing(data)) {
+          setPaymentRecovery({ heading: "Payment being processed", message: data.error });
           return;
         }
         throw new Error(data.error || "Unable to start payment");
@@ -383,12 +392,12 @@ export default function PayByLinkPage() {
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
-            Dates: {formatStayDay(payable.checkIn)} to{" "}
-            {formatStayDay(payable.checkOut)}
+            Dates: {formatStayDay(payable.checkIn, format)} to{" "}
+            {formatStayDay(payable.checkOut, format)}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">
-            Amount due: {formatCents(payable.amountCents)}
+            Amount due: {formatCents(payable.amountCents, format)}
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
@@ -449,9 +458,13 @@ export default function PayByLinkPage() {
           </StripeProvider>
         ) : (
           <div className="space-y-3">
-            <Button onClick={startCardPayment} disabled={intentLoading}>
-              {intentLoading ? "Preparing..." : "Pay by card"}
-            </Button>
+            {payable.cardPaymentAvailable !== false ? (
+              <Button onClick={startCardPayment} disabled={intentLoading}>
+                {intentLoading ? "Preparing..." : "Pay by card"}
+              </Button>
+            ) : (
+              <CardPaymentUnavailableNotice />
+            )}
             {intentError ? (
               <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {intentError}
@@ -460,7 +473,7 @@ export default function PayByLinkPage() {
 
             {payable.internetBankingReference ? (
               <div className="rounded-md border border-border p-3 text-sm">
-                <p className="font-medium text-foreground">Or pay by internet banking</p>
+                <p className="font-medium text-foreground">{internetBankingHeading(payable)}</p>
                 <p className="mt-1 text-muted-foreground">
                   {/* #2919 review: every token this body may carry, not just the
                       payment reference — and the lodge is THIS booking's. */}

@@ -53,12 +53,23 @@ interface FakeOperationRow {
   replayable: boolean;
   requestPayload: unknown;
   createdAt: Date;
+  // #3635: an officer's "resolved in Xero" mark; absent means unresolved.
+  manuallyResolvedAt?: Date | null;
+  queueType?: string | null;
+  correlationKey?: string | null;
 }
 
 interface FakePaymentRefundRow {
   paymentId: string;
   status: string;
   amountCents: number;
+  // #3635 C3: the capture a refund row returned, read by the note-eligible cash.
+  stripePaymentIntentId?: string | null;
+}
+
+interface FakeManualRefundTaskRow {
+  lateCaptureApprovalIntentId: string | null;
+  reason: string | null;
 }
 
 interface FakeMemberCreditRow {
@@ -78,6 +89,8 @@ const state = vi.hoisted(() => ({
   // pre-#2902 target every #2901 scenario was written against.
   paymentRefunds: [] as FakePaymentRefundRow[],
   memberCredits: [] as FakeMemberCreditRow[],
+  // #3635 C3: late-capture records that make an intent a known late capture.
+  manualRefundTasks: [] as FakeManualRefundTaskRow[],
 }));
 
 const fakePrisma = vi.hoisted(() => {
@@ -183,7 +196,39 @@ const fakePrisma = vi.hoisted(() => {
         return { count: rows.length };
       },
     },
+    manualRefundTask: {
+      // `findLateCapturePaymentIntents`' read, and the receipt reader's.
+      findMany: async (args: {
+        where: {
+          OR: Array<{
+            lateCaptureApprovalIntentId?: { in: string[] };
+            reason?: { in: string[] };
+          }>;
+        };
+      }) =>
+        state.manualRefundTasks.filter((row) =>
+          args.where.OR.some(
+            (branch) =>
+              (branch.lateCaptureApprovalIntentId?.in ?? []).includes(
+                row.lateCaptureApprovalIntentId ?? ""
+              ) || (branch.reason?.in ?? []).includes(row.reason ?? "")
+          )
+        ),
+      findUnique: async (args: { where: { lateCaptureApprovalIntentId: string } }) =>
+        state.manualRefundTasks.find(
+          (row) => row.lateCaptureApprovalIntentId === args.where.lateCaptureApprovalIntentId
+        ) ?? null,
+    },
     paymentRefund: {
+      // `resolveRefundNoteEligibleCash`' per-capture read (#3635 C3).
+      findMany: async (args: { where: { paymentId: string } }) =>
+        state.paymentRefunds
+          .filter((row) => row.paymentId === args.where.paymentId && row.stripePaymentIntentId)
+          .map((row) => ({
+            stripePaymentIntentId: row.stripePaymentIntentId ?? null,
+            amountCents: row.amountCents,
+            status: row.status,
+          })),
       // Mirrors resolveStripeCashRefundEvidence's groupBy(["status"]) shape.
       groupBy: async (args: {
         by: string[];
@@ -228,6 +273,29 @@ const fakePrisma = vi.hoisted(() => {
       },
     },
     xeroSyncOperation: {
+      // #3635 C3: the resolved-in-Xero coverage read, and the receipt reader's
+      // released-supplementary read (which matches nothing here).
+      findMany: async (args: {
+        where: {
+          localId?: string;
+          queueType?: string;
+          manuallyResolvedAt?: { not: null };
+          requestPayload?: unknown;
+        };
+      }) =>
+        state.operations
+          .filter((row) => {
+            if (args.where.requestPayload !== undefined) return false;
+            if (args.where.localId !== undefined && row.localId !== args.where.localId) return false;
+            if (args.where.manuallyResolvedAt && !row.manuallyResolvedAt) return false;
+            return row.entityType === "CREDIT_NOTE" && row.operationType === "CREATE";
+          })
+          .map((row) => ({
+            id: row.id,
+            correlationKey: row.correlationKey ?? null,
+            requestPayload: row.requestPayload,
+          })),
+      count: async () => 0,
       findFirst: async (args: {
         where: {
           localId?: string;
@@ -240,6 +308,7 @@ const fakePrisma = vi.hoisted(() => {
             operationType?: string;
             status?: { in: string[] };
             replayable?: boolean;
+            manuallyResolvedAt?: null;
           }>;
         };
       }) => {
@@ -249,11 +318,13 @@ const fakePrisma = vi.hoisted(() => {
             operationType?: string;
             status?: { in: string[] };
             replayable?: boolean;
+            manuallyResolvedAt?: null;
           }
         ) => {
           if (branch.operationType !== undefined && row.operationType !== branch.operationType) return false;
           if (branch.status?.in && !branch.status.in.includes(row.status)) return false;
           if (branch.replayable !== undefined && row.replayable !== branch.replayable) return false;
+          if (branch.manuallyResolvedAt === null && (row.manuallyResolvedAt ?? null) !== null) return false;
           return true;
         };
         const matches = state.operations
@@ -302,6 +373,8 @@ import {
   findStripeRefundNoteLinkRepairs,
   formatStripeRefundNoteLinkRepairReport,
 } from "@/lib/xero-refund-note-link-repair";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { cancelledBookingPrimaryPaymentRefundReason } from "@/lib/deleted-booking-modification-payment";
 
 let nextId = 0;
 function makeLink(overrides: Partial<FakeLinkRow>): FakeLinkRow {
@@ -339,6 +412,125 @@ beforeEach(() => {
   state.operations = [];
   state.paymentRefunds = [];
   state.memberCredits = [];
+  state.manualRefundTasks = [];
+});
+
+/**
+ * #3635 composed review C3: the script reads coverage and its target as the
+ * enqueue does. The target is the note-eligible cash (`resolveRefundNoteEligibleCash`),
+ * and coverage counts notes resolved in Xero (`sumRefundCreditNoteCoverageCents`).
+ */
+describe("the link repair reads the enqueue's figures (#3635 C3)", () => {
+  it("does not reactivate a note for the refund of a late capture Xero never received", async () => {
+    // $1.00 refunded in all: $0.40 of an ordinary capture, $0.60 of a late
+    // capture the webhook refunded, which no note may answer.
+    state.paymentRefunds = [
+      { paymentId: "pay_1", status: "succeeded", amountCents: 40, stripePaymentIntentId: "pi_ordinary" },
+      { paymentId: "pay_1", status: "succeeded", amountCents: 60, stripePaymentIntentId: "pi_late" },
+    ];
+    state.manualRefundTasks = [
+      { lateCaptureApprovalIntentId: null, reason: cancelledBookingPrimaryPaymentRefundReason("pi_late") },
+    ];
+    state.links = [
+      makeLink({ id: "link_40", active: true, metadata: { amountCents: 40, status: "AUTHORISED" } }),
+      makeLink({ id: "link_60", active: false, metadata: { amountCents: 60, status: "AUTHORISED" } }),
+    ];
+
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
+
+    // Covered exactly: nothing to reactivate, nothing to report.
+    expect(report.plans).toEqual([]);
+  });
+
+  it("counts a note resolved in Xero as coverage, so no phantom gap is reported", async () => {
+    state.links = [makeLink({ id: "link_40", active: true, metadata: { amountCents: 40, status: "AUTHORISED" } })];
+    state.operations = [
+      {
+        id: "op_resolved",
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectId: null,
+        status: "FAILED",
+        replayable: false,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 60 },
+        createdAt: new Date("2026-05-03T00:00:00Z"),
+        manuallyResolvedAt: new Date("2026-05-04T00:00:00Z"),
+        queueType: "REFUND_CREDIT_NOTE",
+      },
+    ];
+
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
+
+    expect(report.plans).toEqual([]);
+  });
+
+  it("applies a reactivation beside a resolved note, re-summing coverage with it after the claims", async () => {
+    state.links = [
+      makeLink({ id: "link_10", active: true, metadata: { amountCents: 10, status: "AUTHORISED" } }),
+      makeLink({ id: "link_60", active: false, metadata: { amountCents: 60, status: "AUTHORISED" } }),
+    ];
+    state.operations = [
+      {
+        id: "op_resolved_30",
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectId: null,
+        status: "FAILED",
+        replayable: false,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 30 },
+        createdAt: new Date("2026-05-03T00:00:00Z"),
+        manuallyResolvedAt: new Date("2026-05-04T00:00:00Z"),
+        queueType: "REFUND_CREDIT_NOTE",
+      },
+    ];
+
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST, { paymentIds: ["pay_1"] });
+
+    expect(result.report.plans[0]).toMatchObject({
+      activeCoveredCents: 40,
+      plannedCoveredCents: 100,
+      reactivateLinkIds: ["link_60"],
+    });
+    expect(result).toMatchObject({ appliedPayments: 1, reactivatedLinks: 1, skippedPayments: [] });
+  });
+
+  it("refuses a payment whose resolved note's amount cannot be read", async () => {
+    state.operations = [
+      {
+        id: "op_resolved_unreadable",
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectId: null,
+        status: "FAILED",
+        replayable: false,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE" },
+        createdAt: new Date("2026-05-03T00:00:00Z"),
+        manuallyResolvedAt: new Date("2026-05-04T00:00:00Z"),
+        queueType: "REFUND_CREDIT_NOTE",
+      },
+    ];
+    state.links = [makeLink({ id: "link_100", active: false, metadata: { amountCents: 100, status: "AUTHORISED" } })];
+
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
+
+    expect(report.plans).toEqual([
+      expect.objectContaining({
+        repairable: false,
+        blockedByPendingOperation: true,
+        reactivateLinkIds: [],
+        manualReviewReason: expect.stringMatching(/resolved in Xero by hand .*op_resolved_unreadable/),
+      }),
+    ]);
+  });
 });
 
 describe("findStripeRefundNoteLinkRepairs", () => {
@@ -360,7 +552,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.scannedPayments).toBe(1);
     expect(report.plans).toHaveLength(1);
@@ -412,7 +604,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.repairable).toBe(true);
@@ -442,7 +634,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.repairable).toBe(false);
@@ -487,7 +679,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.repairable).toBe(false);
@@ -530,7 +722,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan).toMatchObject({
@@ -567,7 +759,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan).toMatchObject({
@@ -610,7 +802,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.blockedByPendingOperation).toBe(true);
@@ -620,7 +812,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
     expect(plan?.manualReviewReason).toContain("op_pending");
     expect(plan?.manualReviewReason).toContain("could still execute");
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(0);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(false);
   });
@@ -679,7 +871,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.blockedByPendingOperation).toBe(true);
@@ -687,7 +879,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
     expect(plan?.reactivateLinkIds).toEqual([]);
     expect(plan?.manualReviewReason).toContain("op_requeue");
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(0);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(false);
   });
@@ -763,7 +955,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.plans).toHaveLength(2);
     for (const [paymentId, operationId] of [
@@ -777,7 +969,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       expect(plan?.manualReviewReason).toContain(operationId);
     }
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(0);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(false);
     expect(state.links.find((link) => link.id === "link_2_90")?.active).toBe(false);
@@ -821,17 +1013,75 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.blockedByPendingOperation).toBe(false);
     expect(plan?.repairable).toBe(true);
     expect(plan?.reactivateLinkIds).toEqual(["link_90"]);
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(1);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(true);
   });
+
+  it.each([
+    ["resolved in Xero", new Date("2026-06-20T00:00:00Z"), false],
+    ["unresolved (control)", null, true],
+  ])(
+    "a replayable FAILED credit-note CREATE %s blocks the repair: %s (#3635)",
+    async (_label, manuallyResolvedAt, blocks) => {
+      // Inverted by #3635 (`INV-INT-025`): before it, resolving gated nothing
+      // in the retry machinery, so a resolved-but-replayable FAILED CREATE
+      // could still mint and had to block. Now every retry path refuses it, so
+      // it is done and must not fence the payment's link repair; the
+      // unresolved twin still blocks. #3635 C3: and the note resolved by hand
+      // IS the coverage for its 90, as the enqueue counts it, so the inactive
+      // 90 link is not reactivated on top of it (that would over-cover).
+      state.links = [
+        makeLink({
+          id: "link_90",
+          xeroObjectId: "cn_90",
+          active: false,
+          metadata: { amountCents: 90, status: "AUTHORISED" },
+        }),
+        makeLink({
+          id: "link_10",
+          xeroObjectId: "cn_10",
+          active: true,
+          metadata: { amountCents: 10 },
+        }),
+      ];
+      state.operations = [
+        {
+          id: "op_failed_create",
+          direction: "OUTBOUND",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: "pay_1",
+          xeroObjectId: null,
+          status: "FAILED",
+          replayable: true,
+          manuallyResolvedAt,
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 90 },
+          createdAt: new Date("2026-05-05T00:00:00Z"),
+        },
+      ];
+
+      const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
+
+      if (!blocks) {
+        // Covered exactly (10 active + 90 resolved): nothing to do or report.
+        expect(report.plans).toEqual([]);
+        return;
+      }
+      const plan = report.plans[0];
+      expect(plan?.blockedByPendingOperation).toBe(true);
+      expect(plan?.repairable).toBe(false);
+      expect(plan?.reactivateLinkIds).toEqual([]);
+    }
+  );
 
   it("does not report healthy payments, non-Stripe payments, never-invoiced payments, or unrelated links", async () => {
     state.payments.push(
@@ -888,7 +1138,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.scannedPayments).toBe(1);
     expect(report.plans).toEqual([]);
@@ -921,7 +1171,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const first = await applyStripeRefundNoteLinkRepairs();
+    const first = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(first.appliedPayments).toBe(1);
     expect(first.reactivatedLinks).toBe(1);
@@ -931,7 +1181,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
     expect(state.links.find((link) => link.id === "link_90_voided")?.active).toBe(false);
     expect(state.links.find((link) => link.id === "link_10")?.active).toBe(true);
 
-    const second = await applyStripeRefundNoteLinkRepairs();
+    const second = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(second.report.plans).toEqual([]);
     expect(second.appliedPayments).toBe(0);
@@ -957,7 +1207,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(1);
     expect(result.deactivatedLinks).toBe(1);
@@ -986,7 +1236,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(1);
     // The scalar now names the newest remaining ACTIVE note, so the report's
@@ -1007,7 +1257,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(1);
     expect(state.payments[0]!.xeroRefundCreditNoteId).toBeNull();
@@ -1044,7 +1294,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
         return originalFindUnique(args);
       });
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     findUniqueSpy.mockRestore();
     expect(result.appliedPayments).toBe(0);
@@ -1114,7 +1364,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
         return result;
       });
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     updateManySpy.mockRestore();
     // pay_1 rolled back: the post-claim re-sum found 190 !== 100.
@@ -1151,7 +1401,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(0);
     expect(result.skippedPayments).toHaveLength(1);
@@ -1180,7 +1430,7 @@ describe("formatStripeRefundNoteLinkRepairReport", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     const text = formatStripeRefundNoteLinkRepairReport(report);
 
     expect(text).toContain("1 need repair or review");
@@ -1220,7 +1470,7 @@ describe("#2902 cash-evidence coverage target", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.plans).toHaveLength(1);
     const plan = report.plans[0];
@@ -1239,7 +1489,7 @@ describe("#2902 cash-evidence coverage target", () => {
     expect(plan.manualReviewReason).toContain("fictitious");
 
     // Nothing is applied for it either.
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(result.appliedPayments).toBe(0);
     expect(
       state.links.find((link) => link.id === "link_fict")?.active
@@ -1265,7 +1515,7 @@ describe("#2902 cash-evidence coverage target", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs({
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST, {
       paymentIds: ["pay_1"],
     });
 
@@ -1302,7 +1552,7 @@ describe("#2902 cash-evidence coverage target", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.plans).toHaveLength(1);
     const plan = report.plans[0];

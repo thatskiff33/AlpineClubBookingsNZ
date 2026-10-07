@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => {
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    // #3548: a new refund note is recorded (payment, link, row) in one
+    // transaction; the same fns as the global client's, so assertions hold.
+    payment: { update: vi.fn() },
+    xeroSyncOperation: { update: vi.fn() },
   };
 
   const prisma = {
@@ -48,7 +52,11 @@ const mocks = vi.hoisted(() => {
     },
     payment: {
       findUnique: vi.fn(),
-      update: vi.fn(),
+      update: tx.payment.update,
+    },
+    // #3635 round-3 R1: no refund row names a late capture unless a test says so.
+    paymentRefund: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     paymentTransaction: {
       updateMany: vi.fn(),
@@ -59,6 +67,11 @@ const mocks = vi.hoisted(() => {
     },
     xeroToken: {
       findFirst: vi.fn(),
+    },
+    // #3454: the token store reads its credential-store copy too; none here,
+    // so these suites keep exercising the pre-upgrade XeroToken row.
+    integrationCredential: {
+      findUnique: vi.fn(async () => null),
     },
     xeroAccountMapping: {
       findUnique: vi.fn(),
@@ -76,12 +89,16 @@ const mocks = vi.hoisted(() => {
       ]),
     },
     xeroSyncOperation: {
-      update: vi.fn(),
+      update: tx.xeroSyncOperation.update,
       // #2929: the creation-time invoice-email instruction is read back off the
       // operation row a dispatcher claimed. Defaults to "no instruction was
       // recorded", which is every row this application has ever written before
       // that issue and every row an enqueuer with no on-behalf choice writes.
       findUnique: vi.fn().mockResolvedValue({ invoiceEmailDelivery: null }),
+      // #3635: no refund note was resolved by hand in Xero unless a test says so.
+      findMany: vi.fn().mockResolvedValue([]),
+      // #3809: no applied-credit deallocation is on its way for an edit's note to wait on.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
   };
 
@@ -251,7 +268,6 @@ import {
   createXeroCreditNoteForModification,
   createXeroCreditNote,
   createXeroInvoiceForBooking,
-  createXeroRefundPaymentForInvoice,
   encryptToken,
   resetXeroRateLimitStateForTests,
   updateXeroBookingInvoiceForBooking,
@@ -260,6 +276,7 @@ import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // encryptToken is async (#2079); precompute the fixture ciphertexts once so the
 // synchronous mock-setup blocks below need no await. The stubbed token key
@@ -2515,6 +2532,7 @@ describe("createXeroCreditNoteForModification", () => {
 
     await expect(
       createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1",
         refundAmountCents: 3200,
         bookingModificationId: "mod_1",
@@ -2541,87 +2559,6 @@ describe("createXeroCreditNoteForModification", () => {
       })
     );
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
-  });
-});
-
-describe("createXeroRefundPaymentForInvoice", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resetXeroRateLimitStateForTests();
-    vi.stubEnv(
-      "XERO_ENCRYPTION_KEY",
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    );
-    vi.stubEnv("XERO_CLIENT_ID", "client-id");
-    vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
-    // #3036: on a copy the funnel reads the linked contact back and contains it
-    // before returning its id. On the club's live site none of this runs.
-    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
-    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
-    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
-      body: {
-        contacts: [
-          { contactID: "contact_1", emailAddress: "member@example.com" },
-        ],
-      },
-    });
-    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
-      body: {},
-    });
-
-    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
-      id: "token_1",
-      accessToken: encryptedAccess,
-      refreshToken: encryptedRefresh,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      tenantId: "tenant_1",
-    });
-    mocks.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
-    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_payment_1" });
-    mocks.xeroClientInstance.accountingApi.createPayments.mockResolvedValue({
-      body: {
-        payments: [
-          {
-            paymentID: "xpay_1",
-            creditNoteNumber: "CN-1",
-          },
-        ],
-      },
-    });
-  });
-
-  it("creates the Xero refund payment against the credit note", async () => {
-    await expect(
-      createXeroRefundPaymentForInvoice({
-        paymentId: "pay_1",
-        invoiceId: "inv_1",
-        creditNoteId: "cn_1",
-        refundAmountCents: 2500,
-      })
-    ).resolves.toBe("xpay_1");
-
-    expect(mocks.xeroClientInstance.accountingApi.createPayments).toHaveBeenCalledWith(
-      "tenant_1",
-      {
-        payments: [
-          expect.objectContaining({
-            creditNote: { creditNoteID: "cn_1" },
-            account: { code: "606" },
-            amount: 25,
-          }),
-        ],
-      },
-      undefined,
-      "payment:pay_1:refund-payment:2500:cn_1:v2"
-    );
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_payment_1",
-      expect.objectContaining({
-        xeroObjectType: "PAYMENT",
-        xeroObjectId: "xpay_1",
-        xeroObjectNumber: "CN-1",
-      })
-    );
   });
 });
 
@@ -2834,6 +2771,7 @@ describe("createXeroCreditNote", () => {
         },
       });
       mocks.prisma.xeroObjectLink.findMany.mockResolvedValue(linkRows);
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([]);
       mocks.tx.member.findUnique.mockResolvedValue({
         id: "mem_1",
         email: "member@example.com",
@@ -2938,6 +2876,47 @@ describe("createXeroCreditNote", () => {
         undefined,
         "payment:pay_1:refund-credit-note:7000:v2"
       );
+    });
+
+    // #3635 (`INV-INT-025`): the execution-time cap reads the same coverage as
+    // the enqueue - links PLUS notes an officer raised by hand in Xero - so a
+    // note resolved after this one was queued (a kept late capture's
+    // credit-back, say) is not credited twice.
+    it("counts a note resolved by hand in Xero as covered at execution time (#3635)", async () => {
+      // 7000 refunded: a 5000 linked note and a 2000 note made by hand.
+      armCreatePath(7000, [
+        {
+          xeroObjectId: "cn_first",
+          xeroObjectNumber: "CN-1",
+          metadata: { amountCents: 5000, watermarkCents: 5000 },
+        },
+      ]);
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([
+        {
+          id: "op_resolved_note",
+          correlationKey: "payment:pay_1:refund-credit-note:7000:v2",
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2000, watermarkCents: 7000 },
+        },
+      ]);
+
+      await createXeroCreditNote("pay_1", 2000, {
+        watermarkCents: 7000,
+        syncOperationId: "op_delta_x",
+      });
+
+      expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
+    });
+
+    it("refuses at execution time when a hand-resolved note's amount cannot be read (#3635)", async () => {
+      armCreatePath(7000, []);
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([
+        { id: "op_unreadable", correlationKey: null, requestPayload: null },
+      ]);
+
+      await expect(
+        createXeroCreditNote("pay_1", 2000, { watermarkCents: 7000, syncOperationId: "op_delta_x" })
+      ).rejects.toThrow(/no readable amount/);
+      expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
     });
 
     it("two stepped refunds sum to the exact refunded total whatever order their operations execute (#1354 validation)", async () => {

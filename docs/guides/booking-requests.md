@@ -140,6 +140,13 @@ are listed on the booking for you to relay.
    booking created at approval. The named teachers and parent helpers are kept
    exactly as submitted, and the group can never exceed the lodge's capacity.
 
+   When the school knows the adult headcount but not every name, use **Correct
+   this request** to enter **Adult names pending** separately from the named
+   teachers. The quote prices those adults as adults and labels them *Adult name
+   pending*; sending it reserves a bed for each one on every lodge night. No
+   teacher, member, school contact or hut-leader PIN is invented for them. Keep
+   at least one real named teacher on the request.
+
    **Save quote applies the numbers and prices them. It does not reserve any
    beds.** The beds are reserved when you send the quote, or when you press
    **Hold slots** — so set the numbers, save, and then reserve. Until you save,
@@ -170,10 +177,19 @@ are listed on the booking for you to relay.
    unlinked anyone without saving, the panel warns that approving would go ahead
    with the saved links instead. A member you linked but did not save would be
    invoiced at non-member rates.
-3. When the requester accepts (or for a priced general request), click
+3. When the requester accepts, the request moves to **Accepted** and stays in
+   the Queue with its beds held. Review the accepted quote, then click
    **Approve & send payment link** (general) or **Approve & invoice school**
-   (school groups) to convert it into a booking. Use **Decline** with an
-   optional reason to turn it down.
+   (school groups) to create the booking. The requester receives a read-only
+   confirmation while they wait; accepting does not create an invoice, payment
+   link, or hut-leader PIN. Use **Decline** with an optional reason to release
+   the held beds and turn it down.
+
+   After school approval, the success message confirms the booking and whether
+   teacher hut-leader assignments were created. It does not confirm email
+   delivery: check invoice progress separately, and ask a support officer to
+   review [Email Deliverability](email-deliverability.md). If the Xero module
+   is off, arrange manual invoicing.
 
 #### Correcting a request before you convert it
 
@@ -222,6 +238,27 @@ the list exactly where it was, so it leaves the links alone.
 you have an agreement, and changing it underneath them is a new offer rather than
 a correction. Decline that quote or issue a fresh one first, deliberately.
 
+**Naming an already-accepted pending adult is a separate action.** On an
+accepted school request, choose **Name one pending adult**, enter the real first
+and last name, then **Save real name**. Repeat until the count is zero. Each save
+replaces one unnamed held bed with a named guest on the same nights; the
+accepted price, quote and bed total stay fixed, even when a different option or
+a revised quote was chosen. Naming aligns earlier provisional held prices with
+that accepted breakdown. Approval then preserves each person's accepted price
+and held guest identity, including children whose list position shifted as
+adults were named.
+The original quote still shows that the name was pending when the school
+accepted it. **Approve & invoice
+school** stays disabled until every adult has a real name. If a name matches a
+club member, or the held party, reservations and price breakdown cannot be
+mapped to the accepted terms, the save stops: review the rate, consent and terms
+with the school before issuing a new quote. Ordinary **Correct this request** cannot
+change an accepted quote.
+
+Declining or cancelling the request clears its pending adult count and releases
+the held capacity. The original quote snapshot remains as the record of what
+was offered or accepted.
+
 You also cannot correct a request that has already become a booking (edit the
 booking instead), one that is closed, one that a member submitted through the
 whole-lodge door (approve it with the headcount you mean, or decline it), or one
@@ -258,6 +295,22 @@ replace them; the audit log records who they were.
 
 Nothing here creates or changes a school record on its own. A correction changes
 what approval will resolve, not what it has already resolved.
+
+#### Dietary/allergy information on a request
+
+A public, school or whole-lodge request never asks for dietary or allergy
+information, and nothing on it collects any. When a request's party names a
+club member (a linked guest), the held or approved booking copies that
+member's profile value onto their guest row while the club collects the field;
+everybody else starts empty, and a booking officer can fill a value in on the
+booking page afterwards (see
+[Bookings](bookings.md#dietaryallergy-information-for-a-stay)). If an approval
+has to rebuild the held party because its size changed, each person keeps their
+own value and nobody inherits somebody else's. One limit: **anything that
+releases the hold** — a correction, **Release hold**, the quote expiring, or a
+cancellation — leaves a value you typed on the held booking with that cancelled
+booking; the next hold creates new guest rows, so enter it again on the new
+one.
 
 #### Member whole-lodge requests
 
@@ -486,12 +539,16 @@ Notes and constraints:
   including under **All** — under a **Saved details need attention** note. One
   unreadable row never hides the rest of the queue. The note names only what
   actually failed: the guest list (names and age groups are then shown as they
-  were saved, so treat them as a rough record), the member links (none are
-  shown), or the saved quote (its options and totals are not shown). On a
+  were saved, so treat them as a rough record), a school's teacher list (its
+  teacher/helper section and derived total are hidden, while any guest badges
+  remain only a rough record), the member links (none are shown), or
+  the saved quote (its options and totals are not shown). A malformed teacher
+  name or email hides the whole teacher list rather than showing a partial
+  party, because the school approval path will not trust any of that list. On a
   request that is still open, Save quote, Send quote, Hold slots and Approve
-  are turned off, and the server refuses all four plus pricing even if
-  something calls them directly, so it cannot become a booking. There is no
-  screen for repairing the saved data: check what the group wants with the
+  are turned off in the panel. The school approval path also refuses an
+  unreadable teacher list. There is no screen for repairing the saved data:
+  check what the group wants with the
   requester, then **Decline** the request so they can submit again, or ask
   support to repair the stored row. On an already-converted or finalised
   request nothing is blocked — the note is there so you know the details it
@@ -598,10 +655,11 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | A school's Xero contact names a teacher who has left | The teacher on the contact is refreshed when the club next raises something against that school | Approve the school's next booking and it corrects itself, or edit the contact person in Xero now |
 | A returning school's invoice went to the Xero contact it always used | Correct. The school's own record took that contact over; it is the same customer with the same history | Nothing to do. The hand-over is in the audit log if you want to see it |
 | A school has two contacts in Xero | Something created a second one — usually a name that was typed differently | Merge the two contacts in Xero. This application cannot merge them for you |
-| A request says **Saved details need attention** and its buttons are greyed out | Some of its saved data could not be read back, so it cannot be quoted, priced, held, or approved | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. **Correct this request** is deliberately not offered here: your corrected list would silently become the whole truth about a party nobody can check it against |
+| A request says **Saved details need attention** and its buttons are greyed out | Some saved data could not be read back, so quote, price, hold, and approve controls are disabled in this panel; school approval also refuses unreadable teachers | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. **Correct this request** is deliberately not offered here: your corrected list would silently become the whole truth about a party nobody can check it against |
 | The requester's dates or party were wrong | They told you after they submitted | **Correct this request**, then price and quote it again — the correction re-opens it and retires the old quote |
 | **Save correction** is greyed out | On a school request you have not yet ticked the box confirming which school the name refers to, or you have not written why you are correcting it | Read what the form says about the school, tick **"Yes, this is that school."** / **"Yes, add it as a new school."**, and record your reason. Retyping the name takes the tick back on purpose |
 | A correction is refused because the requester has already accepted a quote | You have an agreement at that price for those dates; changing it is a new offer, not a correction | Decline that quote or issue a fresh one, then correct the request |
+| **Approve & invoice school** is disabled on an accepted quote | Adult names are still pending, so conversion cannot create real teacher and contact records yet | Use **Name one pending adult** for each real person. If it detects a club member or a changed hold, review the accepted terms before quoting again |
 | A correction is refused because the request "changed while you were correcting it" | Somebody else priced, quoted, declined or accepted it since your screen loaded | Reload the queue, look at the request as it is now, and correct it again |
 | A correction is refused and names the school | The club's record of that school changed while your form was open, or you edited the name after ticking the confirmation | Re-open the correction, read which school it now says the name refers to, confirm that, and save |
 | A correction says it **saved** but something afterwards did not finish | The correction is real and committed; what failed came after it — usually the bed release, because the requester accepted the hold in the same moment | Do NOT correct it again: a second attempt is refused anyway, because the first one really did save. Open the request, check whether it is still holding beds, and use **Release hold** before you quote it again |

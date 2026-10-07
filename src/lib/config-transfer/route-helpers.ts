@@ -29,7 +29,7 @@ type Guarded =
 export async function requireFullAdminForConfigTransfer(): Promise<Guarded> {
   const guard = await requireAdmin();
   if (!guard.ok) return { ok: false, response: guard.response };
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+  if (!isFullAdmin(guard.session.user)) {
     return {
       ok: false,
       response: NextResponse.json(

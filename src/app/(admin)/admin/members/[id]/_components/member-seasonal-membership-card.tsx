@@ -26,7 +26,11 @@ import { formatCents } from "@/lib/utils";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { seasonSelectLabel } from "@/lib/season-label";
 import { useClubTime } from "@/components/club-time-provider";
-import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import {
+  parseInstant,
+  type BoundClubTime,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
 import type {
   MembershipTypeSummary,
@@ -34,6 +38,7 @@ import type {
   SeasonalMembershipAssignmentSummary,
 } from "../_types";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
@@ -125,8 +130,8 @@ const EMPTY_SEASONAL_ASSIGNMENTS: SeasonalMembershipAssignmentSummary[] = [];
  * both this and `paidAt`, which is a real instant — so whichever zone it chose
  * was wrong for one of them.
  */
-function formatCalendarDay(date: string | null) {
-  return formatPayloadCalendarDay(date, "-");
+function formatCalendarDay(date: string | null, format: ClubDateFormat) {
+  return formatPayloadCalendarDay(date, format, "-");
 }
 
 /** A real INSTANT, in the club's persisted zone (INV-CONFIG-002). */
@@ -142,6 +147,7 @@ function BookingSummaryBlock({
   title: string;
   summary: PreviewBookingSummary;
 }) {
+  const format = useClubFormat();
   return (
     <div className="rounded-md border border-border p-3">
       <div className="flex items-center justify-between gap-3">
@@ -155,11 +161,11 @@ function BookingSummaryBlock({
           {summary.list.map((booking) => (
             <div key={booking.id} className="text-xs text-muted-foreground">
               <span className="font-medium text-foreground">
-                {formatCalendarDay(booking.checkIn)} to {formatCalendarDay(booking.checkOut)}
+                {formatCalendarDay(booking.checkIn, format)} to {formatCalendarDay(booking.checkOut, format)}
               </span>{" "}
               - {booking.status} - {booking.guestCount} guest
               {booking.guestCount === 1 ? "" : "s"} -{" "}
-              {formatCents(booking.finalPriceCents)}
+              {formatCents(booking.finalPriceCents, format)}
               {booking.waitlistPosition
                 ? ` - position ${booking.waitlistPosition}`
                 : ""}
@@ -500,12 +506,13 @@ export function MemberSeasonalMembershipCard({
               {currentAssignment
                 ? `${currentAssignment.membershipType.name} for ${seasonSelectLabel(
                     currentAssignment.seasonYear,
+                    clubTime.format,
                   )}`
-                : `No assignment for ${seasonSelectLabel(seasonYear)}`}
+                : `No assignment for ${seasonSelectLabel(seasonYear, clubTime.format)}`}
             </div>
             {currentAssignment?.applyFrom && (
               <div className="mt-1 text-xs text-muted-foreground">
-                Applies from {formatCalendarDay(currentAssignment.applyFrom)}
+                Applies from {formatCalendarDay(currentAssignment.applyFrom, clubTime.format)}
               </div>
             )}
           </div>
@@ -574,10 +581,13 @@ export function MemberSeasonalMembershipCard({
                 Subscription summary
               </div>
               <div className="mt-1 text-muted-foreground">
-                Applies from {preview.applyFrom ? formatCalendarDay(preview.applyFrom) : "season start"}
+                Applies from {preview.applyFrom ? formatCalendarDay(preview.applyFrom, clubTime.format) : "season start"}
               </div>
               <div className="mt-1 text-muted-foreground">
-                {seasonSelectLabel(preview.currentSeasonSubscription.seasonYear)}
+                {seasonSelectLabel(
+                  preview.currentSeasonSubscription.seasonYear,
+                  clubTime.format,
+                )}
                 : {preview.currentSeasonSubscription.status}
                 {preview.currentSeasonSubscription.xeroInvoiceNumber
                   ? ` - invoice ${preview.currentSeasonSubscription.xeroInvoiceNumber}`
@@ -592,7 +602,7 @@ export function MemberSeasonalMembershipCard({
                   {preview.subscriptionHistory.recent
                     .map(
                       (record) =>
-                        `${seasonSelectLabel(record.seasonYear)} ${record.status}`,
+                        `${seasonSelectLabel(record.seasonYear, clubTime.format)} ${record.status}`,
                     )
                     .join(", ")}
                 </div>

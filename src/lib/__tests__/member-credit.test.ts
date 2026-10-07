@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // ── Mock Prisma ─────────────────────────────────────────────────────────────
 
@@ -35,6 +36,15 @@ prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof prismaMo
 
 vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
+}));
+
+// #3599: every credit writer posts the booking's ledger lines through the one
+// sync, inside its own client. The sync itself is proved in
+// `booking-ledger-credit-sync.test.ts` and against Postgres; here it is a spy,
+// so these suites keep testing the credit rows and can assert the handoff.
+const mockSyncBookingLedgerCredits = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/lib/booking-ledger-credit-sync", () => ({
+  syncBookingLedgerCredits: mockSyncBookingLedgerCredits,
 }));
 
 const mockApplyLocalRefundAllocation = vi.fn();
@@ -169,6 +179,10 @@ describe("member-credit helpers", () => {
           xeroCreditNoteId: "xero-cn-1",
         }),
       });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-abc12345",
+        store: prisma,
+      });
     });
 
     it("handles missing Xero credit note ID", async () => {
@@ -209,6 +223,10 @@ describe("member-credit helpers", () => {
           sourceBookingModificationId: "mod-1",
           xeroCreditNoteId: null,
         }),
+      });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-abc12345",
+        store: prisma,
       });
     });
 
@@ -324,7 +342,7 @@ describe("member-credit helpers", () => {
       };
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
-      await applyCreditToBooking("member-1", 5000, "booking-new", txClient as any);
+      await applyCreditToBooking("member-1", 5000, "booking-new", txClient as any, CLUB_FORMAT_TEST);
 
       expect(txClient.memberCredit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -333,6 +351,10 @@ describe("member-credit helpers", () => {
           type: "BOOKING_APPLIED",
           appliedToBookingId: "booking-new",
         }),
+      });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-new",
+        store: txClient,
       });
     });
 
@@ -348,7 +370,7 @@ describe("member-credit helpers", () => {
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
-        applyCreditToBooking("member-1", 5000, "booking-new", txClient as any)
+        applyCreditToBooking("member-1", 5000, "booking-new", txClient as any, CLUB_FORMAT_TEST)
       ).rejects.toThrow("Insufficient credit balance");
     });
 
@@ -360,12 +382,43 @@ describe("member-credit helpers", () => {
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
-        applyCreditToBooking("member-1", 0, "booking-new", txClient as any)
+        applyCreditToBooking("member-1", 0, "booking-new", txClient as any, CLUB_FORMAT_TEST)
       ).rejects.toThrow("Credit amount must be positive");
     });
   });
 
   describe("restoreCreditFromBooking", () => {
+    it("takes the member credit-ledger lock before reading the applied rows when it joins a transaction (#3792)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.$executeRaw).mockClear();
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      await restoreCreditFromBooking("member-1", "booking-locked", prisma as any);
+
+      const lockCall = vi.mocked(prisma.$executeRaw).mock.calls.findIndex(
+        (call) => (call as unknown[]).includes("member-credit-ledger") && (call as unknown[]).includes("member-1"),
+      );
+      expect(lockCall).toBeGreaterThanOrEqual(0);
+      expect(vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[lockCall]).toBeLessThan(
+        vi.mocked(prisma.memberCredit.findMany).mock.invocationCallOrder[0],
+      );
+    });
+
+    it("takes no lock outside a transaction: an advisory xact lock there would be released at once (#3792)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.$executeRaw).mockClear();
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      await restoreCreditFromBooking("member-1", "booking-no-tx");
+
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    });
+
     it("restores the FULL applied total when no override is passed (guards the payment-reconciliation system void, #1164)", async () => {
       // The capacity_failed system void in payment-reconciliation.ts calls this
       // with no override and MUST still restore 100% — a system void never
@@ -394,6 +447,10 @@ describe("member-credit helpers", () => {
           }),
         ],
         skipDuplicates: true,
+      });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-cancelled",
+        store: prisma,
       });
     });
 
@@ -665,7 +722,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
@@ -695,12 +752,12 @@ describe("member-credit helpers", () => {
       tx.memberCreditNoteAllocation.aggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
       const { clampAppliedCreditToBookingPrice } = await import("@/lib/member-credit");
       await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any
       );
       expect(
         mockRepairLegacyAppliedCreditNoteAllocationsForBooking,
-      ).toHaveBeenCalledWith("booking-ib", "inv-1", tx);
+      ).toHaveBeenCalledWith("booking-ib", "inv-1", tx, CLUB_FORMAT_TEST);
       expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
         operationType: "UPDATE",
         correlationKey: "booking:booking-ib:applied-credit-deallocation:3000:v1",
@@ -723,7 +780,7 @@ describe("member-credit helpers", () => {
 
       await expect(
         clampAppliedCreditToBookingPrice(
-          { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
+          { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
           tx as any,
         ),
       ).rejects.toThrow("dealloc-pending is PENDING");
@@ -741,7 +798,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-y", newFinalPriceCents: 5000 },
+        { memberId: "member-1", bookingId: "booking-y", newFinalPriceCents: 5000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
@@ -759,7 +816,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-z", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-z", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
@@ -779,11 +836,172 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
       expect(result.refundedExcessCents).toBe(0);
+      expect(tx.memberCredit.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("giveBackAppliedCredit, the one give-back the clamp and a review share share (#3791)", () => {
+    function makeTx(appliedNetCents: number, payment: Record<string, unknown> | null, allocatedCents: number | null) {
+      return {
+        $executeRaw: vi.fn().mockResolvedValue(undefined),
+        xeroSyncOperation: { findMany: vi.fn().mockResolvedValue([]) },
+        booking: { findUnique: vi.fn().mockResolvedValue(payment ? { payment } : null) },
+        memberCreditNoteAllocation: {
+          aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: allocatedCents } }),
+          count: vi.fn().mockResolvedValue(allocatedCents ? 1 : 0),
+        },
+        memberCredit: {
+          aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: appliedNetCents } }),
+          create: vi.fn().mockResolvedValue({} as any),
+        },
+      };
+    }
+    const ibPayment = {
+      id: "payment-1",
+      source: "INTERNET_BANKING",
+      xeroInvoiceId: "inv-1",
+      creditAppliedCents: 20000,
+    };
+    const giveBack = async (tx: ReturnType<typeof makeTx>, giveBackCentsOf: (applied: number) => number) => {
+      const { giveBackAppliedCredit } = await import("@/lib/member-credit");
+      return giveBackAppliedCredit(
+        { memberId: "member-1", bookingId: "booking-1", giveBackCentsOf, description: "review share", format: CLUB_FORMAT_TEST },
+        tx as any,
+      );
+    };
+
+    it("MUTATION: a review share on a Xero-allocated bank-transfer booking queues the clamp's deallocation to the new applied figure", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+
+      const result = await giveBack(tx, () => 5000);
+
+      expect(result).toMatchObject({ appliedCreditCents: 20000, givenBackCents: 5000 });
+      expect(tx.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ amountCents: 5000, type: "BOOKING_APPLIED", appliedToBookingId: "booking-1" }),
+      });
+      // Without this the next inbound sync pulls applied credit back up to
+      // Xero's $200 and undoes the give-back (the review's High finding).
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).toHaveBeenCalledWith("booking-1", "inv-1", tx, CLUB_FORMAT_TEST);
+      expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+        correlationKey: "booking:booking-1:applied-credit-deallocation:15000:v1",
+        localId: "payment-1",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: "booking-1" },
+        store: tx,
+      }));
+    });
+
+    it("MUTATION: never deallocates on a CANCELLED booking - its invoice stands as the cancellation left it", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+      tx.booking.findUnique.mockResolvedValue({ status: "CANCELLED", payment: ibPayment });
+
+      const result = await giveBack(tx, () => 2500);
+
+      expect(result.givenBackCents).toBe(2500);
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: says which deallocation fences it, so a FAILED one can be told from one in flight", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+      tx.xeroSyncOperation.findMany.mockResolvedValue([{ id: "dealloc-failed", status: "FAILED", requestPayload: {} }]);
+      const { needsOperatorXeroRetry, XeroAppliedCreditOperationBusyError } = await import(
+        "@/lib/xero-applied-credit-operation-serialization"
+      );
+
+      const error = await giveBack(tx, () => 5000).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+      expect(needsOperatorXeroRetry(error as InstanceType<typeof XeroAppliedCreditOperationBusyError>)).toBe(true);
+      expect(needsOperatorXeroRetry(new XeroAppliedCreditOperationBusyError("x", "PENDING"))).toBe(false);
+    });
+
+    it("MUTATION: marks a review's give-back row with its booking as source, and the clamp's with none", async () => {
+      const tx = makeTx(-20000, null, null);
+      const { giveBackAppliedCredit } = await import("@/lib/member-credit");
+
+      await giveBackAppliedCredit(
+        { memberId: "member-1", bookingId: "booking-1", giveBackCentsOf: () => 5000, description: "review share", format: CLUB_FORMAT_TEST, sourceBookingId: "booking-1" },
+        tx as any,
+      );
+      await giveBack(tx, () => 1000);
+
+      expect(tx.memberCredit.create.mock.calls[0]![0]).toMatchObject({ data: { sourceBookingId: "booking-1" } });
+      expect(tx.memberCredit.create.mock.calls[1]![0].data).not.toHaveProperty("sourceBookingId");
+    });
+
+    it("MUTATION: queues no deallocation where Xero already holds no more than the new applied figure", async () => {
+      const tx = makeTx(-20000, ibPayment, 15000);
+
+      await giveBack(tx, () => 5000);
+
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (#3809): a card booking whose credit #1641 allocated has its slices checked against their provenance, then deallocated", async () => {
+      const tx = makeTx(-10000, { ...ibPayment, source: "STRIPE", creditAppliedCents: 10000 }, 10000);
+
+      await giveBack(tx, () => 5000);
+
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).toHaveBeenCalledWith("booking-1", "inv-1", tx, CLUB_FORMAT_TEST);
+      expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+        correlationKey: "booking:booking-1:applied-credit-deallocation:5000:v1",
+      }));
+    });
+
+    it("a card booking whose credit was never allocated (#3836) takes no Xero step", async () => {
+      const tx = makeTx(-10000, { ...ibPayment, source: "STRIPE", creditAppliedCents: 10000 }, null);
+
+      await giveBack(tx, () => 5000);
+
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: takes no Xero step for a booking with no internet-banking invoice", async () => {
+      const tx = makeTx(-20000, { ...ibPayment, source: "STRIPE", xeroInvoiceId: null }, 20000);
+
+      await giveBack(tx, () => 5000);
+
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: asks for the amount under the lock, with the applied credit and payment, and never gives back more than is applied", async () => {
+      const tx = makeTx(-3000, ibPayment, null);
+      const giveBackCentsOf = vi.fn().mockReturnValue(5000);
+
+      const result = await giveBack(tx, giveBackCentsOf);
+
+      expect(giveBackCentsOf).toHaveBeenCalledWith(3000, ibPayment);
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(giveBackCentsOf.mock.invocationCallOrder[0]);
+      expect(result.givenBackCents).toBe(3000);
+      expect(tx.memberCredit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ amountCents: 3000 }) });
+    });
+
+    it("writes nothing, and takes no Xero step, when there is nothing to give back", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+
+      expect((await giveBack(tx, () => 0)).givenBackCents).toBe(0);
+      expect(tx.memberCredit.create).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("refuses while an applied-credit deallocation is in flight, before it asks or writes", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+      tx.xeroSyncOperation.findMany.mockResolvedValue([{
+        id: "dealloc-pending",
+        status: "PENDING",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION" },
+      }]);
+      const giveBackCentsOf = vi.fn().mockReturnValue(5000);
+
+      await expect(giveBack(tx, giveBackCentsOf)).rejects.toThrow("dealloc-pending is PENDING");
+      expect(giveBackCentsOf).not.toHaveBeenCalled();
       expect(tx.memberCredit.create).not.toHaveBeenCalled();
     });
   });
@@ -940,7 +1158,7 @@ describe("member-credit helpers", () => {
           "admin-1",
           "9a13b0af-7ffc-451b-a50b-81f6fb8630f4"
         )
-      ).rejects.toThrow("Cannot deduct 2000 cents: only 1000 cents available");
+      ).rejects.toThrow("Cannot deduct $20.00: only $10.00 available");
 
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
@@ -1302,7 +1520,7 @@ describe("member-credit helpers", () => {
         (result) => result.status === "rejected"
       ) as PromiseRejectedResult;
       expect(rejectedResult.reason.message).toBe(
-        "Cannot deduct 700 cents: only 300 cents available"
+        "Cannot deduct $7.00: only $3.00 available"
       );
 
       const approvedRequests = Object.values(state.requests).filter(

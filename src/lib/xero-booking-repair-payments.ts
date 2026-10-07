@@ -9,8 +9,11 @@ import {
 import type { BookingPaymentRecord } from "./xero-booking-repair-types";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
+import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
 interface RepairPaymentTransaction {
+  /** The ledger row's id; null for a legacy payment's reconstructed slice. */
+  id: string | null;
   kind: PaymentTransactionKind;
   source: PaymentSource;
   stripePaymentIntentId: string | null;
@@ -26,7 +29,7 @@ const CANCELLABLE_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
 ]);
 
 /**
- * "Captured" is `isCapturedTransactionStatus` (`payment-transactions.ts`), the
+ * "Captured" is `isCapturedTransactionStatus` (`payment-transaction-status.ts`), the
  * same predicate the live settlement's own guards ask (`INV-SSOT`).
  *
  * This module used to carry a byte-identical private `Set` of its own. The
@@ -85,6 +88,7 @@ function buildRepairPaymentTransactions(
 
   const ledgerTransactions = (payment.transactions ?? []).map(
     (transaction): RepairPaymentTransaction => ({
+      id: transaction.id,
       kind: transaction.kind,
       source: transaction.source,
       stripePaymentIntentId: transaction.stripePaymentIntentId,
@@ -128,6 +132,7 @@ function buildRepairPaymentTransactions(
 
   if (payment.stripePaymentIntentId) {
     legacyTransactions.push({
+      id: null,
       kind: PaymentTransactionKind.PRIMARY,
       source: PaymentSource.STRIPE,
       stripePaymentIntentId: payment.stripePaymentIntentId,
@@ -144,6 +149,7 @@ function buildRepairPaymentTransactions(
 
   if (payment.additionalPaymentIntentId) {
     legacyTransactions.push({
+      id: null,
       kind: PaymentTransactionKind.ADDITIONAL,
       source: PaymentSource.STRIPE,
       stripePaymentIntentId: payment.additionalPaymentIntentId,
@@ -192,6 +198,34 @@ export function getCapturedRepairTransactions(
   return buildRepairPaymentTransactions(payment)
     .filter(isStripeRepairPaymentTransaction)
     .filter((transaction) => isCapturedTransactionStatus(transaction.status));
+}
+
+/**
+ * #3639: "was money ever captured on this payment?" — asked of EVERY source.
+ *
+ * `getCapturedRepairTransactions` above keeps its Stripe-only filter because
+ * its rows feed Stripe cancel and refund calls, which an internet-banking row
+ * (no intent id) must never reach (#668). But "was this booking ever paid?" is
+ * a different question, and answering it from that list made a cancelled
+ * booking paid by bank transfer look never-paid, so the cancelled-open-invoice
+ * arm queued a full clearing note against an invoice the member had paid.
+ *
+ * The same SHAPE as the modification arm's test (the aggregate status OR the
+ * ledger) but NOT the same test: that arm keeps its ledger half Stripe-only
+ * because it routes a card refund, and a bank-transfer row must not reach one.
+ * Here the ledger half is unfiltered by source: the aggregate covers a
+ * pre-ledger payment with no rows, and the ledger covers a capture row sitting
+ * under a still-PENDING aggregate.
+ */
+export function hasCapturedRepairPayment(
+  payment: BookingPaymentRecord | null | undefined
+): boolean {
+  return (
+    hasCapturedPayment(payment) ||
+    buildRepairPaymentTransactions(payment).some((transaction) =>
+      isCapturedTransactionStatus(transaction.status)
+    )
+  );
 }
 
 export function getOutstandingCapturedRefundAmountCents(

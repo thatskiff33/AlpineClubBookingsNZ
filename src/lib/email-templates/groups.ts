@@ -16,6 +16,7 @@ import {
 } from "./layout";
 import { CLUB_NAME } from "@/config/club-identity";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 export function groupSettlementReceiptTemplate(data: {
   firstName: string;
@@ -23,7 +24,9 @@ export function groupSettlementReceiptTemplate(data: {
   checkOut: Date;
   joinerCount: number;
   totalCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Your Group Booking Is Settled")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", thanks for settling your group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge. Everyone you are paying for is now confirmed.")}
@@ -31,7 +34,7 @@ export function groupSettlementReceiptTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Joiners settled", value: String(data.joinerCount) },
-      { label: "Total paid", value: formatCents(data.totalCents) },
+      { label: "Total paid", value: formatCents(data.totalCents, format) },
     ])}
     ${paragraph("Each joiner has been emailed to confirm their spot. There is nothing more for them to pay.")}
     ${supportContactSentence("If anything looks wrong, contact the club at ")}
@@ -57,13 +60,38 @@ export function groupJoinSettledTemplate(data: {
   `);
 }
 
+/**
+ * #3672 (`INV-PAY-109`): the organiser paid the group's bill before this
+ * joiner was on it, so the joiner now pays for their own place. The booking
+ * link (added for every booking-scoped message) takes them to the pay step.
+ */
+export function groupJoinPaySelfTemplate(data: {
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  return layout(`
+    ${heading("Please Pay For Your Place")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + escapeHtml(data.organiserName) + " has paid for their group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge. You joined after that payment was prepared, so your place was not included in it.")}
+    ${infoTable([
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+    ])}
+    ${paragraph("Your place is not confirmed until you pay for it yourself. Open your booking to pay.")}
+    ${supportContactSentence("If you have any questions, contact the club at ")}
+  `);
+}
+
 export function groupSettlementExpiredTemplate(data: {
   firstName: string;
   checkIn: Date;
   checkOut: Date;
   joinerCount: number;
   totalCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Your Group Settlement Has Expired")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", the combined payment you started for your group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge was not completed in time, so the beds held for your joiners have been released.")}
@@ -71,7 +99,7 @@ export function groupSettlementExpiredTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Joiners affected", value: String(data.joinerCount) },
-      { label: "Amount not charged", value: formatCents(data.totalCents) },
+      { label: "Amount not charged", value: formatCents(data.totalCents, format) },
     ])}
     ${paragraph("No money has been taken. If your group still plans to come, restart the payment from your group booking page — the beds are subject to availability.")}
     ${supportContactSentence("If anything looks wrong, contact the club at ")}

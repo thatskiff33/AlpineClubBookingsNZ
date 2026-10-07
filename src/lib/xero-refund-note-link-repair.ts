@@ -25,7 +25,10 @@
  *   `PaymentRefund` cents when the payment has ledger rows, else the
  *   pre-ledger legacy fallback (`refundedAmountCents` minus its
  *   account-credit disposition) — never the raw mirror, which also counts
- *   account credit. A link is reactivated only when its note's live status
+ *   account credit. Since #3635 it is that evidence less refunds of late
+ *   captures Xero never received (`resolveRefundNoteEligibleCash`), and the
+ *   coverage it is compared with counts notes resolved in Xero, both as the
+ *   enqueue reads them. A link is reactivated only when its note's live status
  *   has been RECORDED locally and is not cancelled (#2901 review F3): inbound
  *   reconciliation structurally cannot stamp a status onto an inactive link,
  *   so an unrecorded status must be treated as "possibly voided" and refused —
@@ -111,19 +114,24 @@
 import { PaymentSource, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import type { StripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import {
-  resolveStripeCashRefundEvidence,
-  type StripeCashRefundEvidence,
-} from "@/lib/stripe-cash-refund-evidence";
+  resolveRefundNoteEligibleCash,
+  type RefundNoteEligibleCash,
+} from "@/lib/refund-note-eligible-cash";
+import {
+  readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
+} from "@/lib/xero-resolved-in-xero-fences";
 import {
   isIncludedRefundCreditNoteStatus,
   readRefundCreditNoteLinkStatus,
 } from "@/lib/xero-refund-note-status";
-import {
-  recoverRefundCreditNoteLinkAmountCents,
-  sumCoveredRefundCreditNoteCents,
-} from "@/lib/xero-sync";
-import { formatCentsPlain } from "@/lib/utils";
+import { recoverRefundCreditNoteLinkAmountCents } from "@/lib/xero-sync";
+import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
+import { paymentCreditNoteOperationWhere } from "@/lib/xero-refund-note-in-flight";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type StripeRefundNoteLinkPlannedAction =
   | "keep-active"
@@ -160,7 +168,11 @@ export interface StripeRefundNoteLinkRepairPlan {
   coverageTargetCents: number;
   /** Which rule produced the target ("provider-ledger" | "legacy-mirror"). */
   cashEvidenceSource: StripeCashRefundEvidence["source"];
-  /** Active covered cents exactly as `sumCoveredRefundCreditNoteCents` sees them today. */
+  /**
+   * Covered cents exactly as the enqueue sees them today
+   * (`sumRefundCreditNoteCoverageCents`): active links plus notes an officer
+   * resolved in Xero (#3635 C3, `INV-INT-025`).
+   */
   activeCoveredCents: number;
   /** Active covered cents after the planned actions. */
   plannedCoveredCents: number;
@@ -221,18 +233,17 @@ interface RepairPayment {
 }
 
 /**
- * The cents this payment's ACTIVE refund-note coverage must equal
- * (INV-ADDPAY-020). THE named seam for the target figure: since #2902 it is
- * the provider-backed CASH refund evidence (INV-PAY-050, resolved by
- * `resolveStripeCashRefundEvidence` — already capped at the mirror and never
- * negative), NOT `refundedAmountCents`, which also counts account-credit
- * dispositions. Every comparison in this module must go through it and
- * nothing may read `refundedAmountCents` directly for a target.
+ * The cents this payment's refund-note coverage must equal (INV-ADDPAY-020).
+ * THE named seam for the target figure: the note-eligible cash (#3635 C3,
+ * `INV-PAY-110`, `resolveRefundNoteEligibleCash`), the one figure the enqueue,
+ * the executor, the gap reader and the hardening report also read — the
+ * provider-backed CASH refund evidence (#2902, INV-PAY-050) less refunds of
+ * late captures the app never recorded in Xero. Never `refundedAmountCents`,
+ * which also counts account-credit dispositions, and never the raw cash
+ * evidence, which would reactivate a note for a refund no note may answer.
  */
-function getRefundNoteCoverageTargetCents(
-  evidence: StripeCashRefundEvidence
-): number {
-  return evidence.cashRefundCents;
+function getRefundNoteCoverageTargetCents(eligible: RefundNoteEligibleCash): number {
+  return eligible.eligibleCashCents;
 }
 
 function isCancelledStatus(status: string | null): boolean {
@@ -270,21 +281,29 @@ function buildPlan(
   assessedLinks: AssessedLink[],
   options: {
     pendingOperationId: string | null;
-    evidence: StripeCashRefundEvidence;
-  }
+    eligible: RefundNoteEligibleCash;
+    /** Cents covered by notes an officer resolved in Xero (`INV-INT-025`). */
+    resolvedCoveredCents: number;
+    /** A note resolved in Xero whose amount cannot be read (#3635 C3). */
+    unreadableResolvedOperationId: string | null;
+  },
+  format: ClubFormat
 ): StripeRefundNoteLinkRepairPlan {
-  const target = getRefundNoteCoverageTargetCents(options.evidence);
+  const target = getRefundNoteCoverageTargetCents(options.eligible);
   const ordered = [...assessedLinks].sort(
     (left, right) =>
       left.createdAt.getTime() - right.createdAt.getTime() ||
       left.id.localeCompare(right.id)
   );
 
-  // Exactly what sumCoveredRefundCreditNoteCents returns today: active links'
-  // recovered amounts, where a cancelled note already contributes null.
-  const activeCoveredCents = ordered
-    .filter((link) => link.active)
-    .reduce((sum, link) => sum + (link.amountCents ?? 0), 0);
+  // Exactly what the enqueue's `sumRefundCreditNoteCoverageCents` returns
+  // today: active links' recovered amounts (a cancelled note already
+  // contributes null) plus the notes resolved in Xero (#3635 C3).
+  const activeCoveredCents =
+    options.resolvedCoveredCents +
+    ordered
+      .filter((link) => link.active)
+      .reduce((sum, link) => sum + (link.amountCents ?? 0), 0);
 
   const assessments: StripeRefundNoteLinkAssessment[] = [];
   const reactivateLinkIds: string[] = [];
@@ -319,11 +338,13 @@ function buildPlan(
       bookingId: payment.bookingId,
       refundedAmountCents: payment.refundedAmountCents,
       coverageTargetCents: target,
-      cashEvidenceSource: options.evidence.source,
+      cashEvidenceSource: options.eligible.evidence.source,
       activeCoveredCents,
       plannedCoveredCents: activeCoveredCents,
       repairable: false,
-      manualReviewReason: `A Xero credit-note operation (${options.pendingOperationId}) for this payment could still execute — it is queued, running, awaiting payment confirmation, or failed-but-still-retryable. Every execution path computes its amounts from live coverage, so changing links now could mint a duplicate note. Let the outbox and retry queue drain, or retry the failed operation to completion, or mark it non-replayable in the admin Xero panel (marking it "resolved" alone does not clear this), then re-run.`,
+      manualReviewReason: options.unreadableResolvedOperationId
+        ? `A refund credit note for this payment was resolved in Xero by hand (operation ${options.unreadableResolvedOperationId}), but its amount cannot be read, so the coverage cannot be planned around. Check the note in Xero and the operation's recorded payload, then re-run.`
+        : `A Xero credit-note operation (${options.pendingOperationId}) for this payment could still execute — it is queued, running, awaiting payment confirmation, or failed-but-still-retryable. Every execution path computes its amounts from live coverage, so changing links now could mint a duplicate note. Let the outbox and retry queue drain, or retry the failed operation to completion, or mark it non-replayable in the admin Xero panel (marking it "resolved" alone does not clear this), then re-run.`,
       blockedByPendingOperation: true,
       links: assessments,
       reactivateLinkIds,
@@ -335,8 +356,8 @@ function buildPlan(
   // Xero, so its local mirror is deactivated UNCONDITIONALLY — lowering
   // coverage is the safe direction (it re-arms the self-heal, which
   // recomputes at execution time). Every other active link is the multi-delta
-  // contract and is kept.
-  let baselineCents = 0;
+  // contract and is kept. Notes resolved in Xero are coverage too (#3635 C3).
+  let baselineCents = options.resolvedCoveredCents;
   for (const link of ordered) {
     if (!link.active) {
       continue;
@@ -426,8 +447,8 @@ function buildPlan(
   } else if (plannedCoveredCents < target) {
     const remainderCents = target - plannedCoveredCents;
     manualReviewReason = repairable
-      ? `Planned coverage still lands ${remainderCents} cents short of the provider-backed cash refund target; no recoverable local note fills it. The planned changes are safe to apply — once the ledger is honest, the daily credit-reconciliation self-heal issues one note for exactly the uncovered remainder. Never void anything to force an exact landing.`
-      : `Active coverage is ${remainderCents} cents short of the provider-backed cash refund target and no recoverable inactive note fills it. If the notes exist in Xero, record their statuses (--record-statuses) and re-run; otherwise the daily credit-reconciliation self-heal issues the missing note.`;
+      ? `Planned coverage still lands ${formatCents(remainderCents, format)} short of the provider-backed cash refund target; no recoverable local note fills it. The planned changes are safe to apply — once the ledger is honest, the daily credit-reconciliation self-heal issues one note for exactly the uncovered remainder. Never void anything to force an exact landing.`
+      : `Active coverage is ${formatCents(remainderCents, format)} short of the provider-backed cash refund target and no recoverable inactive note fills it. If the notes exist in Xero, record their statuses (--record-statuses) and re-run; otherwise the daily credit-reconciliation self-heal issues the missing note.`;
   }
 
   return {
@@ -435,7 +456,7 @@ function buildPlan(
     bookingId: payment.bookingId,
     refundedAmountCents: payment.refundedAmountCents,
     coverageTargetCents: target,
-    cashEvidenceSource: options.evidence.source,
+    cashEvidenceSource: options.eligible.evidence.source,
     activeCoveredCents,
     plannedCoveredCents,
     repairable,
@@ -487,16 +508,20 @@ const EXECUTOR_LIFECYCLE_CREATE_STATUSES = [
  * call — which is why these statuses must block at all. PARTIAL is
  * conservative rather than a proven mint path: a supported Payment-scoped
  * PARTIAL retry routes to the follow-up repair, which reuses the existing
- * note instead of calling `createXeroCreditNote`. `manuallyResolvedAt` is
- * deliberately NOT mirrored here — resolving gates nothing in the retry
- * machinery, so a resolved-but-replayable FAILED row can still mint and
- * still blocks. SUCCEEDED and CANCELLED rows cannot re-execute and never
- * block.
+ * note instead of calling `createXeroCreditNote`. `manuallyResolvedAt` IS
+ * mirrored here, the same way (#3635, `INV-INT-025`): an operation an officer
+ * resolved in Xero is done, `getXeroOperationRetryMeta` refuses it, and the
+ * retry claims and the queued-retry drain refuse it too, so it can never mint
+ * again and must not fence the payment's link repair. The resolve route
+ * refuses while a queued retry of the row overlaps its mark, so a credit-note
+ * retry inside its provider call is not resolved under it; the window that
+ * remains is the one `INV-INT-025` states. SUCCEEDED and CANCELLED rows cannot
+ * re-execute and never block.
  */
 const RETRYABLE_CREATE_STATUSES = ["FAILED", "PARTIAL"];
 
 /**
- * REQUEUE rows (`XERO_OPERATION_REQUEUE_TYPE`, `xero-operation-queue.ts`)
+ * REQUEUE rows (`XERO_REQUEUE_OPERATION_TYPE`, `xero-operation-queue.ts`)
  * carry the original operation's entityType/localModel/localId; the
  * background retry drain claims them PENDING→RUNNING and executes the
  * ORIGINAL operation via `retryXeroSyncOperation` — minting while the
@@ -519,10 +544,7 @@ async function findBlockingRefundCreditNoteOperationId(
 ): Promise<string | null> {
   const operation = await db.xeroSyncOperation.findFirst({
     where: {
-      direction: "OUTBOUND",
-      entityType: "CREDIT_NOTE",
-      localModel: "Payment",
-      localId: paymentId,
+      ...paymentCreditNoteOperationWhere(paymentId),
       OR: [
         {
           operationType: "CREATE",
@@ -532,9 +554,11 @@ async function findBlockingRefundCreditNoteOperationId(
           operationType: "CREATE",
           status: { in: RETRYABLE_CREATE_STATUSES },
           replayable: true,
+          // The query-side spelling of `isResolvedInXero` (`INV-INT-025`).
+          manuallyResolvedAt: null,
         },
         {
-          operationType: "REQUEUE",
+          operationType: XERO_REQUEUE_OPERATION_TYPE,
           status: { in: BLOCKING_REQUEUE_STATUSES },
         },
       ],
@@ -546,19 +570,33 @@ async function findBlockingRefundCreditNoteOperationId(
 
 async function planForPayment(
   payment: RepairPayment,
-  db: Prisma.TransactionClient
+  db: Prisma.TransactionClient,
+  format: ClubFormat
 ): Promise<StripeRefundNoteLinkRepairPlan> {
-  const pendingOperationId = await findBlockingRefundCreditNoteOperationId(
-    payment.id,
-    db
-  );
-  const evidence = await resolveStripeCashRefundEvidence(payment, db);
+  // #3635 C3: a note resolved in Xero whose amount cannot be read is refused,
+  // as the enqueue refuses it: coverage it cannot size cannot be planned
+  // around. Reported through the same blocked plan.
+  const resolved = await readResolvedRefundCreditNoteCoverage(payment.id, db);
+  const pendingOperationId =
+    resolved.unreadableOperationIds[0] ??
+    (await findBlockingRefundCreditNoteOperationId(payment.id, db));
+  const eligible = await resolveRefundNoteEligibleCash(payment, db);
   const links = await db.xeroObjectLink.findMany({
     where: REFUND_NOTE_LINK_WHERE(payment.id),
     select: LINK_SELECT,
   });
   const assessed = await assessLinks(payment.id, links, db);
-  return buildPlan(payment, assessed, { pendingOperationId, evidence });
+  return buildPlan(
+    payment,
+    assessed,
+    {
+      pendingOperationId,
+      eligible,
+      resolvedCoveredCents: resolved.coveredCents,
+      unreadableResolvedOperationId: resolved.unreadableOperationIds[0] ?? null,
+    },
+    format
+  );
 }
 
 /**
@@ -582,7 +620,9 @@ function planNeedsAttention(plan: StripeRefundNoteLinkRepairPlan): boolean {
  * Xero expects no credit note, and scanning those buried the real findings in
  * noise (#2901 review F6).
  */
-export async function findStripeRefundNoteLinkRepairs(options?: {
+export async function findStripeRefundNoteLinkRepairs(
+  format: ClubFormat,
+  options?: {
   paymentIds?: string[];
 }): Promise<StripeRefundNoteLinkRepairReport> {
   const payments = await prisma.payment.findMany({
@@ -604,7 +644,7 @@ export async function findStripeRefundNoteLinkRepairs(options?: {
 
   const plans: StripeRefundNoteLinkRepairPlan[] = [];
   for (const payment of payments) {
-    const plan = await planForPayment(payment, prisma);
+    const plan = await planForPayment(payment, prisma, format);
     if (planNeedsAttention(plan)) {
       plans.push(plan);
     }
@@ -631,10 +671,12 @@ type ApplyTransactionOutcome =
  * claims must match the plan exactly and coverage is re-summed after them —
  * any divergence rolls that payment back and reports it, applying nothing.
  */
-export async function applyStripeRefundNoteLinkRepairs(options?: {
+export async function applyStripeRefundNoteLinkRepairs(
+  format: ClubFormat,
+  options?: {
   paymentIds?: string[];
 }): Promise<StripeRefundNoteLinkRepairApplyResult> {
-  const report = await findStripeRefundNoteLinkRepairs(options);
+  const report = await findStripeRefundNoteLinkRepairs(format, options);
 
   let appliedPayments = 0;
   let reactivatedLinks = 0;
@@ -673,7 +715,7 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
               skipped: "The payment no longer exists or is not Stripe-sourced.",
             };
           }
-          const freshPlan = await planForPayment(payment, tx);
+          const freshPlan = await planForPayment(payment, tx, format);
           if (!freshPlan.repairable) {
             return {
               skipped:
@@ -732,16 +774,18 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
           }
 
           // Post-claim verification (#2901 review F4/F10): re-sum coverage
-          // through the shared seam. A racing writer that INSERTED an active
-          // link after the re-plan (the outbox executor completing) shows up
-          // here, and the payment rolls back instead of compounding with it.
-          const verifiedCoveredCents = await sumCoveredRefundCreditNoteCents(
+          // through the enqueue's own seam, resolved notes included (#3635
+          // C3). A racing writer that INSERTED an active link after the
+          // re-plan (the outbox executor completing) shows up here, and the
+          // payment rolls back instead of compounding with it.
+          const verifiedCoveredCents = await sumRefundCreditNoteCoverageCents(
             payment.id,
+            await readResolvedRefundCreditNoteCoverage(payment.id, tx),
             tx
           );
           if (verifiedCoveredCents !== freshPlan.plannedCoveredCents) {
             throw new Error(
-              `Coverage verification after the claims found ${verifiedCoveredCents} cents where the plan promised ${freshPlan.plannedCoveredCents}; a concurrent writer changed the links, rolled back.`
+              `Coverage verification after the claims found ${formatCents(verifiedCoveredCents, format)} where the plan promised ${formatCents(freshPlan.plannedCoveredCents, format)}; a concurrent writer changed the links, rolled back.`
             );
           }
 

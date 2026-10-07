@@ -1,4 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The environment's zone, PINNED (#3567 review). `TZ` is stubbed to it around
+ * every test below, so this file answers the same on a machine whose own `TZ`
+ * is anything else. It is what `APP_TIME_ZONE` fell back to before #3567
+ * deleted it, and what the seed reader answers when no zone is stored.
+ */
+const ENVIRONMENT_CLUB_ZONE = "Pacific/Auckland";
+beforeEach(() => {
+  vi.stubEnv("TZ", ENVIRONMENT_CLUB_ZONE);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import { NextRequest } from "next/server";
 
 // Route-level gating for the admin member-email choice on account-deletion
@@ -85,6 +98,8 @@ vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/audit", () => ({
   logAudit: h.logAudit,
   createAuditLog: h.createAuditLog,
+  // #3454: the erasure's two-factor clear takes the canonical request context.
+  getAuditRequestContext: () => ({ id: null, ipAddress: null, userAgent: null }),
 }));
 vi.mock("@/lib/booking-cancel", () => ({ cancelBooking: h.cancelBooking }));
 vi.mock("@/lib/adult-member-hosting-review", () => ({
@@ -99,10 +114,10 @@ vi.mock("@/lib/access-roles", () => ({
   memberHoldsPrivilegedRole: h.memberHoldsPrivilegedRole,
 }));
 vi.mock("@/lib/admin-account-guards", async () => {
-  const actual = (await vi.importActual("@/lib/admin-account-guards")) as typeof import("@/lib/admin-account-guards");
+  const actual = (await vi.importActual("@/lib/admin-account-guards",)) as typeof import("@/lib/admin-account-guards");
   return { ...actual, wouldRemoveLastFullAdmin: h.wouldRemoveLastFullAdmin };
 });
-vi.mock("@/lib/access-role-definitions", () => ({ MEMBER_ACCESS_ROLE_SELECT: {} }));
+vi.mock("@/lib/access-role-definitions", () => ({ MEMBER_ACCESS_ROLE_SELECT: {}, }));
 vi.mock("@/lib/email", () => ({
   sendAccountDeletionApprovedEmail: h.sendAccountDeletionApprovedEmail,
   sendAccountDeletionRejectedEmail: h.sendAccountDeletionRejectedEmail,
@@ -122,7 +137,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/deletion-requests/[id]/route";
-import { APP_TIME_ZONE } from "@/config/operational";
 import { getTodayDateOnly } from "@/lib/date-only";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
@@ -161,7 +175,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.requireAdmin.mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
+    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] }, },
   });
   h.prisma.deletionRequest.findUnique.mockResolvedValue({
     id: "req-1",
@@ -323,10 +337,11 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
         status: "APPROVED",
         member: {
           ...member,
-          firstName: "Deleted",
-          lastName: "Member",
+          // Adopter-era shape: only the permanent reserved address signal is
+          // present. The retired five-field copy would report this as live.
           email: "deleted-m1@deleted.invalid",
-          active: false,
+          deletedAt: null,
+          active: true,
         },
       });
 
@@ -476,7 +491,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
       blocker: {
         code: "LAST_FULL_ADMIN_GUARD",
         message: expect.stringContaining("last Full Admin"),
-        remedy: expect.stringContaining("another active account Full Admin access"),
+        remedy: expect.stringContaining("another active account Full Admin access",),
       },
     });
     expect(h.prisma.member.update).not.toHaveBeenCalled();
@@ -523,6 +538,8 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
         data: expect.objectContaining({
           active: false,
           deletedAt: expect.any(Date),
+          // #2941 (INV-PRIV-022): erased with the rest of the person.
+          dietaryRequirements: null,
         }),
       }),
     );
@@ -647,7 +664,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     });
     const claimOrder =
       h.prisma.deletionRequest.updateMany.mock.invocationCallOrder[0];
-    expect(claimOrder).toBeLessThan(h.cancelBooking.mock.invocationCallOrder[0]);
+    expect(claimOrder).toBeLessThan(h.cancelBooking.mock.invocationCallOrder[0],);
   });
 
   it("refuses to start an approval a rejection already won, cancelling nothing", async () => {
@@ -1231,8 +1248,8 @@ describe("POST /api/admin/deletion-requests/[id] deciding a released request (#2
     // part of it rather than of a preceding read.
     expect(h.prisma.deletionRequest.updateMany).toHaveBeenCalledTimes(1);
     expect(
-      h.prisma.deletionRequest.updateMany.mock.calls[0][0].where,
-    ).toEqual({ id: "req-1", status: "PENDING", reviewedAt: null });
+      h.prisma.deletionRequest.updateMany.mock.calls[0][0].where
+    ).toEqual({ id: "req-1", status: "PENDING", reviewedAt: null, });
     // Nothing decided and nothing said: the member is not emailed a rejection
     // that did not happen.
     expect(h.sendAccountDeletionRejectedEmail).not.toHaveBeenCalled();
@@ -1528,7 +1545,8 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
     // different zone names can still name the same day (`America/Chicago` gives
     // Denver's answer at this instant), and then the bound below proves nothing.
     /*
-     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * THE ENVIRONMENT'S ZONE PASSED ON PURPOSE (#3123; the `APP_TIME_ZONE`
+     * constant it used to be was deleted in #3567). Everywhere else an explicit
      * zone exists to get OFF the environment; here the environment IS the
      * subject of the assertion — the line measures what the environment
      * authority answers so it can prove the persisted zone answers differently.
@@ -1536,7 +1554,7 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
      * and the premise would stop tracking the environment it is guarding.
      */
     expect(
-      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      getTodayDateOnly(ENVIRONMENT_CLUB_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this bound cannot tell the two apart.",
     ).not.toBe("2026-06-30T00:00:00.000Z");

@@ -22,6 +22,11 @@ export default function AdminHealthPage() {
   // `lastRefresh` is a real INSTANT — the moment the health payload was
   // fetched — so it is shown in the club's persisted zone, not the viewer's
   // (CT-4, #2870; INV-CONFIG-002).
+  //
+  // Its locale is the club's recorded one since #3566: the binding carries it,
+  // so this line and every row stamp beneath it (`formatDate`) follow the one
+  // setting. Before that, the kernel read `APP_LOCALE` and this line alone
+  // stayed New Zealand English on a club with another locale.
   const clubTime = useClubTime();
   const { data, loading, error, lastRefresh, refresh } = useHealthData();
 

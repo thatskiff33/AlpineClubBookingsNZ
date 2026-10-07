@@ -34,8 +34,9 @@ vi.mock("@/components/admin/occupancy-calendar", () => ({
 import RosterPage from "@/app/(admin)/admin/roster/page"
 import type { ReactNode } from "react"
 import { ClubTimeProvider } from "@/components/club-time-provider"
-import { APP_TIME_ZONE } from "@/config/operational"
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone"
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 function roster(date = "2026-07-01", guestName = "Aroha Guest") {
   const [firstName, lastName] = guestName.split(" ")
@@ -342,7 +343,7 @@ describe("admin roster page draft transitions", () => {
    * THE DISCRIMINATING ONE (CT-4, #2870).
    *
    * Every test above renders under the default `CLUB_TIME_TEST_ZONE`, which is
-   * deliberately the zone `APP_TIME_ZONE` also resolves to — so the provider read
+   * deliberately the environment's default zone too — so the provider read
    * and the environment read this page used to do return the same day, and the
    * whole file passes against either.
    *
@@ -374,13 +375,13 @@ describe("admin roster page draft transitions", () => {
     // `answerKey` makes the chooser verify each candidate's literal against its
     // own zone, so `chosen.day` is provably not the environment's; the variable
     // below is only for the negative assertion.
-    const environmentDay = dayIn(APP_TIME_ZONE)
+    const environmentDay = dayIn(ENVIRONMENT_CLUB_ZONE)
 
     const fetchMock = successfulFetch()
     vi.stubGlobal("fetch", fetchMock)
     render(<RosterPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
       ),
     })
     await waitFor(() => expect(getRosterCalls(fetchMock).length).toBeGreaterThan(0))

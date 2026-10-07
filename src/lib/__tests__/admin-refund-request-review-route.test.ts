@@ -104,6 +104,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 }));
 
 import { PUT } from "@/app/api/admin/refund-requests/[id]/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("PUT /api/admin/refund-requests/[id]", () => {
   beforeEach(() => {
@@ -222,6 +223,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
         refundRequestId: "refund_1",
       },
       idempotencyKeyPrefix: "refund_request_refund_1",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment_1",
@@ -409,6 +411,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       formatClubInstantDate(
         requireInstant(new Date("2026-07-01T00:00:00.000Z")),
         requireClubTimeZone("America/Denver"),
+        CLUB_FORMAT_TEST,
       ),
       "This fixture no longer distinguishes a calendar-day read from an instant " +
         "one, so the assertion below cannot fail for the right reason.",
@@ -467,6 +470,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
         refundRequestId: "refund_1",
       },
       idempotencyKeyPrefix: "refund_request_refund_1",
+      format: CLUB_FORMAT_TEST,
     };
 
     function auditMetadata(action: string) {

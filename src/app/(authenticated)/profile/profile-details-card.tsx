@@ -41,11 +41,13 @@ interface ProfileDetailsCardProps {
     postalPostalCode: string;
     postalCountry: string;
     occupation?: string;
+    dietaryRequirements?: string;
     lodgeScreenPhoneOptIn?: boolean;
   };
   returnTo?: string | null;
   ageTier?: string;
   showOccupation?: boolean;
+  showDietaryRequirements?: boolean;
 }
 
 const PROFILE_DETAILS_FORM_ID = "profile-details-form";
@@ -150,6 +152,7 @@ export function ProfileDetailsCard({
   returnTo,
   ageTier,
   showOccupation,
+  showDietaryRequirements,
 }: ProfileDetailsCardProps) {
   const { isEditing, isExpanded, setIsEditing, setIsExpanded, setIsSaving } =
     useProfileDetails();
@@ -195,6 +198,7 @@ export function ProfileDetailsCard({
           showSubmitButton={false}
           ageTier={ageTier}
           showOccupation={showOccupation}
+          showDietaryRequirements={showDietaryRequirements}
         />
       </CardContent>
     </Card>

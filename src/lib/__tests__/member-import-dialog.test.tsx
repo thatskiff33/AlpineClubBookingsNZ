@@ -6,8 +6,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemberImportDialog } from "@/app/(admin)/admin/members/_components/member-import-dialog";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import type { ImportResult } from "@/app/(admin)/admin/members/_types";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const fetchMock = vi.fn();
+
+// #2941: the dialog reads the member-field flags (dietary column on/off) for
+// its preview. Served from a mock so the settings read does not consume the
+// import POST's queued fetch response.
+vi.mock("@/lib/use-member-fields-settings", async () => {
+  const { DEFAULT_MEMBER_FIELDS_SETTINGS } = await import("@/config/member-fields");
+  return { useMemberFieldsSettings: () => DEFAULT_MEMBER_FIELDS_SETTINGS };
+});
 
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
@@ -90,7 +99,7 @@ function renderImportDialog() {
   // supplied here, and `America/Denver` is chosen because it is not
   // `APP_TIME_ZONE`'s own fallback.
   render(
-    <ClubTimeProvider zone="America/Denver">
+    <ClubTimeProvider zone="America/Denver" locale={CLUB_FORMAT_TEST.locale}>
       <MemberImportDialog
         open
         onOpenChange={vi.fn()}

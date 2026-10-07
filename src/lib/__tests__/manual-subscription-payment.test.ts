@@ -49,6 +49,7 @@ vi.mock("@/lib/xero-subscription-invoices", () => new Proxy({}, { get: () => xer
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { sendMembershipPaymentRecordedEmail } from "@/lib/email/membership";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import logger from "@/lib/logger";
 import {
   applyManualSubscriptionPayment,
@@ -396,6 +397,7 @@ describe("manual mark-paid member notification (#2260)", () => {
 
     expect(sendMembershipPaymentRecordedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: null }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -422,6 +424,7 @@ describe("manual mark-paid member notification (#2260)", () => {
 
     expect(sendMembershipPaymentRecordedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: null }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -443,6 +446,7 @@ describe("manual mark-paid member notification (#2260)", () => {
 
     expect(sendMembershipPaymentRecordedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: null }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -464,6 +468,7 @@ describe("manual mark-paid member notification (#2260)", () => {
 
     expect(sendMembershipPaymentRecordedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: null }),
+      CLUB_FORMAT_TEST,
     );
   });
 

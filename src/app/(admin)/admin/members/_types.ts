@@ -38,7 +38,7 @@ export interface Member {
   archivedReason: string | null;
   /**
    * True when an approved deletion request has anonymised this member (#2620).
-   * Resolved server-side from the anonymisation markers, because deletion stamps
+   * Resolved server-side from the canonical deletion predicate, because deletion stamps
    * neither `cancelledAt` nor `archivedAt` and so is otherwise invisible in this
    * row. Drives the "Deleted" lifecycle chip and takes the row out of bulk
    * selection — a deleted account is never a bulk-action target.
@@ -90,6 +90,12 @@ export interface MemberForm {
   lastName: string;
   gender: Gender | "";
   occupation: string;
+  /**
+   * #2941: collected only when CREATING a member while the club has the field
+   * ON. Editing from the list never carries it — the list DTO holds no dietary
+   * value (INV-PRIV-022) — so an edit leaves the stored value alone.
+   */
+  dietaryRequirements: string;
   email: string;
   phoneCountryCode: string;
   phoneAreaCode: string;

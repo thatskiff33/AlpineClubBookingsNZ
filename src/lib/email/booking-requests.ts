@@ -2,6 +2,7 @@ import {
   bookingRequestApprovedTemplate,
   bookingRequestDeclinedTemplate,
   bookingRequestPaymentExpiredTemplate,
+  bookingRequestQuoteAcceptedTemplate,
   bookingRequestQuoteTemplate,
   bookingRequestVerificationTemplate,
   schoolAttendeeConfirmationTemplate,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- Public booking request flow (issue #707) ----
 
@@ -84,7 +86,9 @@ export async function sendBookingRequestApprovedEmail(params: {
   // Lodge the request is for (multi-lodge): overlays that lodge's
   // identity via prepareEmailMessage; null keeps club-wide identity.
   lodgeId?: string | null;
-}): Promise<EmailSendOutcome> {
+},
+  format: ClubFormat,
+): Promise<EmailSendOutcome> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const payUrl = `${baseUrl}/pay/${params.token}`;
 
@@ -102,7 +106,7 @@ export async function sendBookingRequestApprovedEmail(params: {
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       expiresAt: params.expiresAt,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "booking-request-approved",
     templateData: {
@@ -113,7 +117,7 @@ export async function sendBookingRequestApprovedEmail(params: {
       checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       priceCents: params.priceCents,
-      price: formatMoneyCents(params.priceCents),
+      price: formatMoneyCents(params.priceCents, format),
       bookingReference: params.bookingReference,
       // PERSISTED zone, matching the HTML body two blocks up (#2870, CT-4).
       // A saved body override re-renders the WHOLE email from this object
@@ -126,6 +130,34 @@ export async function sendBookingRequestApprovedEmail(params: {
       // different DAY. `emailClubDateTime` is the same accessor the default body
       // uses, so the override and the default can no longer disagree.
       expiresAt: emailClubDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendBookingRequestQuoteAcceptedEmail(params: {
+  bookingContext: BookingEmailSourceContext;
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  lodgeId?: string | null;
+}, format: ClubFormat): Promise<EmailSendOutcome> {
+  return sendEmail({
+    to: params.email,
+    lodgeId: params.lodgeId,
+    subject: `Quote accepted — awaiting booking team review — ${CLUB_NAME}`,
+    html: await renderEmailHtml(() => bookingRequestQuoteAcceptedTemplate(params, format)),
+    bookingContext: classifyBookingOwnerContext(params.bookingContext),
+    templateName: "booking-request-quote-accepted",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      price: formatMoneyCents(params.priceCents, format),
     },
   });
 }
@@ -152,7 +184,9 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
   bookingReference: string;
   expiresAt: Date;
   lodgeId?: string | null;
-}): Promise<EmailSendOutcome> {
+},
+  format: ClubFormat,
+): Promise<EmailSendOutcome> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const payUrl = `${baseUrl}/pay/${params.token}`;
 
@@ -168,7 +202,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       expiresAt: params.expiresAt,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "split-guest-payment-link",
     templateData: {
@@ -179,7 +213,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       priceCents: params.priceCents,
-      price: formatMoneyCents(params.priceCents),
+      price: formatMoneyCents(params.priceCents, format),
       bookingReference: params.bookingReference,
       // PERSISTED zone — see the identical note on `booking-request-approved`
       // above. Same value, same override branch, same defect.
@@ -208,7 +242,9 @@ export async function sendBookingRequestQuoteEmail(params: {
   // Lodge the request is for (multi-lodge): overlays that lodge's
   // identity via prepareEmailMessage; null keeps club-wide identity.
   lodgeId?: string | null;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const respondUrl = `${baseUrl}/booking-requests/respond/${params.token}`;
 
@@ -232,7 +268,7 @@ export async function sendBookingRequestQuoteEmail(params: {
       expiresAt: params.expiresAt,
       schoolName: params.schoolName,
       isReminder: params.isReminder,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "booking-request-quote",
     templateData: {
@@ -245,7 +281,7 @@ export async function sendBookingRequestQuoteEmail(params: {
       requestType: params.requestType,
       schoolName: params.schoolName ?? "",
       quoteOptions: params.options
-        .map((option) => `${option.label}: ${formatMoneyCents(option.totalCents)}`)
+        .map((option) => `${option.label}: ${formatMoneyCents(option.totalCents, format)}`)
         .join("\n"),
       expiresAt: emailClubDateTime(params.expiresAt),
     },

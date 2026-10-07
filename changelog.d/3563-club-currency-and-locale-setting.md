@@ -9,20 +9,18 @@
   new setting, so a club running in New Zealand dollars stays in New Zealand
   dollars and nobody has to do anything. From then on the recorded setting is
   the authority for the setting: changing `CURRENCY` or `LOCALE` on the server
-  no longer changes what the page shows. **Keep those server settings in place
-  all the same.** The pages that display money and dates have not been moved
-  onto the new setting yet, so until they are, those two values are still what
-  every amount and date on the site is written from. Removing them because this
-  page now exists would leave the site showing New Zealand dollars while the
-  page shows your club's real choice.
+  no longer changes what the page shows. **Keep those server settings in
+  place, and keep them matching this page.** Every **amount** the site writes
+  is still worked out from them, and removing them would leave the site
+  writing New Zealand dollars while the page shows your club's real choice.
 
-  **No screen looks any different yet, and that is deliberate.** This change
-  records the club's choice; the pages that display money and dates are moved
-  onto it in the changes that follow. The screen says so plainly rather than
-  letting an operator save a new currency and wonder why nothing moved. No
-  amount already recorded is rewritten or re-converted either — an amount of
-  8450 cents is still 8450 cents, and this setting only ever decides how one is
-  written.
+  **This entry is the setting; #3564's entry below is the screens.** On its
+  own this change only records the club's choice — which is why it is worth
+  reading #3564's entry in this release before you decide what to expect,
+  because that is where the screens are moved onto it and where the ones that
+  have not moved are named. No amount already recorded is rewritten or
+  re-converted by either — an amount of 8450 cents is still 8450 cents, and
+  this setting only ever decides how one is written.
 
   Changing either value needs an explicit confirmation and is written to the
   audit log with who did it and what it was before. Only a Full Administrator

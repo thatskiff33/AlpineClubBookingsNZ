@@ -146,6 +146,7 @@ const CLUB_DAY = requireCalendarDate("2026-07-01");
 
 import { LodgeSelect } from "@/components/lodge-select";
 import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const EXPECTED_SELECT = {
   where: { id: "default" },
@@ -184,7 +185,7 @@ describe("legacy install: module-settings load path tolerates the stale row", ()
   });
 
   it("loadClubModuleSettings ignores multiLodge and reads via the explicit select", async () => {
-    const payload = await loadClubModuleSettings();
+    const payload = await loadClubModuleSettings(CLUB_FORMAT_TEST);
 
     // multiLodge is not a module key, so it never leaks into normalised settings.
     expect(Object.keys(payload.settings)).toEqual([...MODULE_KEYS]);

@@ -12,6 +12,7 @@ import {
   describeBookingMemberNightConflictNights,
 } from "@/lib/booking-member-night-conflict-messages";
 import { useHelpWidgetHint } from "@/components/help-widget/help-widget-context";
+import { useClubFormat } from "@/components/club-format-provider";
 import { DatesStep } from "./_components/dates-step";
 import { GuestsStep } from "./_components/guests-step";
 import { WaitlistAlternateLodges } from "./_components/waitlist-alternate-lodges";
@@ -26,6 +27,7 @@ import { useBookingWizard } from "./_hooks/use-booking-wizard";
 const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");
 
 export default function BookPage() {
+  const format = useClubFormat();
   const {
     step,
     setStep,
@@ -107,6 +109,9 @@ export default function BookPage() {
     addFamilyMemberAsGuest,
     addMemberGuest,
     memberGuestConfig,
+    familyMembersLoaded,
+    familyMembersLoadFailed,
+    retryFamilyMembersLoad,
     memberGuestAddError,
     handleRemoveConflictGuest,
     handleDateSelect,
@@ -380,7 +385,7 @@ export default function BookPage() {
                       took them. */}
                   <p className="mt-1">
                     {[
-                      describeBookingMemberNightConflictNights(conflict),
+                      describeBookingMemberNightConflictNights(conflict, format),
                       describeBookingMemberNightConflictBooking(conflict),
                     ]
                       .filter(Boolean)
@@ -599,6 +604,9 @@ export default function BookPage() {
           memberGuestEnabled={memberGuestConfig.enabled}
           memberGuestOpenSearchEnabled={memberGuestConfig.openSearchEnabled}
           addMemberGuest={addMemberGuest}
+          familyMembersLoaded={familyMembersLoaded}
+          familyMembersLoadFailed={familyMembersLoadFailed}
+          retryFamilyMembersLoad={retryFamilyMembersLoad}
           memberGuestAddError={memberGuestAddError}
           capacityShortNights={capacityShortNights}
           capacityShortMessage={capacityShortMessage}

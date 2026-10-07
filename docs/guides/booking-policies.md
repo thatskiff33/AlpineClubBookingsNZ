@@ -436,6 +436,14 @@ because there is nowhere to ask yet.
    until something is saved from it. Reload the page if you need to be sure you
    are looking at current values.
 
+### School teacher hut-leader assignments
+
+**Assign school teachers as hut leaders** is off by default. Leave it off unless
+your club wants every named teacher on a newly approved school request to receive
+a hut-leader assignment and PIN email. Off retains teachers as named school
+contacts; officers use the normal hut-leader assignment tools. The policy is read
+when approval starts, so changing it affects later approvals only.
+
 ## Settings reference
 
 | Setting | Page | What it controls | Default | Notes / constraints |
@@ -456,10 +464,12 @@ because there is nowhere to ask yet.
 | Adult members who count | Adult Member Hosting | Either or both of: on the same booking; on another booking on the same account | Inherit (lodge and club) — the built-in default is "on the same booking" | At least one must be ticked when you set your own; there are two options and no others |
 | Exception capacity handling | Adult Member Hosting | Whether a future exception request holds the affected capacity while it waits | None — you must choose | Required on every save; the same hold deadline applies |
 | Charge the change fee on both bookings | Cancellation (club-wide) | Whether a member who moves two of their own bookings together, because one relies on the other for adult supervision, pays the change fee on both | on — charge both | Club-wide only, like the non-member hold beside it; the fee *tiers* stay per lodge. Off charges only the booking the member was editing |
+| Payments that arrive after a booking was cancelled | Cancellation (club-wide) | Whether a card payment that goes through after its booking was cancelled is refunded to the card automatically, or held for a treasurer to approve | Refund them automatically | Club-wide only. Changing it needs **finance edit** access as well as bookings edit; without it the control is read-only. "A treasurer approves each refund" holds the money as an item under **Payments**, in the refund tasks, until someone with finance edit access refunds it to the card or keeps it with a note (kept money is then recorded in Xero as a paid invoice); see [Payments](payments.md). It never changes what a cancellation itself refunds |
 | Paid-up adult member required | Configured on [Subscription Lockout](subscription-lockout.md), not here | Refuses a booking with no paid-up adult member on it, when either somebody staying is being repriced for an unpaid subscription or the member who made the booking has one | Off (only applies when you choose "let them book, at non-member rates") | Always holds the bed while a request is pending; not configurable |
 | Show indicative pricing | Public Requests | Price shown on the public request form | off | — |
 | Quote response window | Public Requests | Days a quote link stays valid | 14 | 1–60 days |
 | Reminder lead time | Public Requests | Days before expiry to remind the requester | 3 | 0–30, must be shorter than the window |
+| Assign school teachers as hut leaders | Public Requests | Whether future school approvals automatically create teacher hut-leader assignments and PIN emails | off | Teachers remain named school contacts either way; read at approval start |
 | Attendee first prompt / reminder | Public Requests | Timing for both guest-naming chases: the school attendee-confirmation prompt and the member whole-lodge "who is coming with you?" reminder (which escalates to daily from two days out, with a last one on the arrival morning) | 14 / 3 days | Prompt 0–90 (0 = off, both chases); reminder 1–30 |
 
 ## Troubleshooting

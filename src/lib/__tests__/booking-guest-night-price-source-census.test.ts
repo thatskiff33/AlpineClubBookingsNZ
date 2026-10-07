@@ -12,6 +12,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 const REPO = process.cwd();
 
 const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
+  ["src/lib/school-pending-adult-resolution.ts", [
+    /bookingGuestNight\.updateMany\([\s\S]*?priceSource:\s*group\.priceSource/,
+  ]],
   [
     "e2e/setup/seed-second-lodge.ts",
     [/bookingGuestNight\.create\([\s\S]*?data:\s*\{[\s\S]*?priceSource:\s*"SOLD"/],
@@ -60,6 +63,10 @@ const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
     [
       /bookingGuestNight\.updateMany\([\s\S]*?priceSource:\s*"OFFICER_PRICED"/,
       /bookingGuestNight\.create\([\s\S]*?priceSource:\s*"OFFICER_PRICED"/,
+      // #3531 3b: the rate-derived backfill's compare-and-set, fenced on the
+      // price and provenance the row was planned from, writing RATE_DERIVED -
+      // in this module because it is the one that rewrites a night row in place.
+      /bookingGuestNight\.updateMany\([\s\S]*?priceSource:\s*"RATE_DERIVED"/,
     ],
   ],
   [
@@ -90,6 +97,7 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
   string,
   { direct: number; nested: number }
 >([
+  ["src/lib/school-pending-adult-resolution.ts", { direct: 1, nested: 0 }],
   ["e2e/setup/seed-second-lodge.ts", { direct: 1, nested: 0 }],
   ["prisma/demo-seed.ts", { direct: 1, nested: 0 }],
   ["src/app/api/bookings/[id]/guests/route.ts", { direct: 0, nested: 1 }],
@@ -98,7 +106,7 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
   ["src/lib/booking-modify-plan.ts", { direct: 1, nested: 0 }],
   ["src/lib/booking-request.ts", { direct: 2, nested: 0 }],
   ["src/lib/booking-request-shared.ts", { direct: 0, nested: 1 }],
-  ["src/lib/stored-night-price-repair-store.ts", { direct: 2, nested: 0 }],
+  ["src/lib/stored-night-price-repair-store.ts", { direct: 3, nested: 0 }],
   ["src/lib/waitlist.ts", { direct: 1, nested: 0 }],
 ]);
 

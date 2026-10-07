@@ -22,6 +22,12 @@ import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
+import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
+import { DIETARY_REQUIREMENTS_LABEL } from "@/lib/member-dietary-field";
+import {
+  grantMembershipAdminDietaryAccess,
+  readMemberDietaryRequirementsByIds,
+} from "@/lib/member-dietary";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -112,10 +118,9 @@ export async function GET(req: NextRequest) {
       : []),
   ];
 
-  // Build where clause (same logic as list endpoint)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {};
-  const andConditions: Record<string, unknown>[] = [];
+  const andConditions: Record<string, unknown>[] = notDeletedAccountWhere();
 
   if (q) {
     andConditions.push({
@@ -280,16 +285,18 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const members = await prisma.member.findMany({
+    const members = (await prisma.member.findMany({
       where,
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       select: {
+        id: true,
         title: true,
         firstName: true,
         lastName: true,
         gender: true,
         occupation: true,
         email: true,
+        deletedAt: true,
         phoneCountryCode: true,
         phoneAreaCode: true,
         phoneNumber: true,
@@ -325,10 +332,23 @@ export async function GET(req: NextRequest) {
           take: 1,
         },
       },
-    });
+    })).filter((member) => !isDeletedAccountRecord(member));
 
-    // Column descriptors. Optional fields gated by club settings are filtered
-    // out below so the header row and every data row stay aligned.
+    // #2941 (INV-PRIV-022): the dietary/allergy column exists only while the
+    // club has the field ON and the exporting admin holds membership access,
+    // and its values come from the one dietary door — never from the select
+    // above, which cannot name the column.
+    const dietaryGrant = flags.showDietaryRequirements
+      ? await grantMembershipAdminDietaryAccess(guard, "view")
+      : null;
+    const dietaryById = dietaryGrant
+      ? await readMemberDietaryRequirementsByIds(
+          dietaryGrant,
+          members.map((member) => member.id),
+        )
+      : null;
+
+    // Optional fields are filtered so the header and data rows stay aligned.
     type MemberRow = (typeof members)[number];
     const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
       [
@@ -355,6 +375,17 @@ export async function GET(req: NextRequest) {
               {
                 header: "Occupation",
                 value: (m: MemberRow) => csvEscape(m.occupation || ""),
+              },
+            ]
+          : []),
+        ...(dietaryById
+          ? [
+              {
+                header: DIETARY_REQUIREMENTS_LABEL,
+                // csvEscape quotes embedded newlines and neutralises a leading
+                // formula character, exactly as for Comments.
+                value: (m: MemberRow) =>
+                  csvEscape(dietaryById.get(m.id) ?? ""),
               },
             ]
           : []),
@@ -491,6 +522,9 @@ export async function GET(req: NextRequest) {
           familyGroup: sp.get("familyGroup"),
         },
         rowCount: members.length,
+        // Whether the file carried the privacy-sensitive dietary/allergy
+        // column — a fact about the export, never a value from it.
+        includesDietaryRequirements: dietaryById !== null,
       },
     });
 

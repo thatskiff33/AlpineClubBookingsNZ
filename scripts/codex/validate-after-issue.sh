@@ -72,6 +72,6 @@ else
 fi
 
 if [[ "$INCLUDE_LINT" -eq 1 ]]; then
-  echo "== npm run lint =="
-  npm run lint
+  echo "== pnpm run lint =="
+  pnpm run lint
 fi

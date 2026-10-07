@@ -1,11 +1,11 @@
 import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
-  PaymentStatus,
   Prisma,
 } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { captureRefundState } from "@/lib/payment-transaction-status";
 
 /**
  * What happens when a booking modification payment lands on a booking the club
@@ -270,7 +270,7 @@ export function automaticCancelledBookingRefundTaskReasons(
  *
  * WHAT IT DOES NOT CLOSE, STATED RATHER THAN IMPLIED. A hand-completion that
  * commits AFTER this read but before or during the Stripe refund is not caught
- * here: `resolveManualRefundTask` takes no advisory lock, and closing the window
+ * here: `resolveManualRefundTask` takes no advisory lock for this kind (#3582), and closing the window
  * would mean holding `pg_advisory_xact_lock(1)` across a provider round trip,
  * which `docs/CONCURRENCY_AND_LOCKING.md` forbids outright. What the fence does is
  * shrink the exposure from "any time in the hours or days the task sits OPEN" to
@@ -378,10 +378,16 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       // booking may have been deleted afterwards. Matching only this path's own
       // sentence would then miss that row and raise a duplicate — an OPEN task
       // asking an operator to hand back money Stripe has already returned.
+      //
+      // #3639: and the webhook's treasurer-approval task for this capture, which
+      // is already the human decision this raise would ask for.
       where: {
         bookingId,
         paymentId,
-        reason: { in: automaticCancelledBookingRefundTaskReasons(paymentIntentId) },
+        OR: [
+          { reason: { in: automaticCancelledBookingRefundTaskReasons(paymentIntentId) } },
+          { lateCaptureApprovalIntentId: paymentIntentId },
+        ],
       },
       select: { id: true },
     });
@@ -393,18 +399,24 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       where: { stripePaymentIntentId: paymentIntentId },
       select: { status: true, refundedAmountCents: true, amountCents: true },
     });
-    if (
-      settled &&
-      (settled.refundedAmountCents >= (settled.amountCents || amountCents) ||
-        settled.status === PaymentStatus.REFUNDED ||
-        settled.status === PaymentStatus.PARTIALLY_REFUNDED)
-    ) {
+    // #3639 (delta D4): the one "already refunded" test, which reads the
+    // refunded total rather than the status a browser confirm can rewrite. A
+    // capture Stripe has returned in full needs no task. One returned only in
+    // part still leaves money the club holds against a deleted booking, so the
+    // task is raised - for what is still held, not the full amount, or its
+    // completion would be refused forever as already refunded.
+    const refundState = settled
+      ? captureRefundState({ ...settled, amountCents: settled.amountCents || amountCents })
+      : null;
+    if (refundState && refundState.heldCents === 0) {
       logger.info(
         { bookingId, paymentId, paymentIntentId },
         "Skipped raising the deleted-booking modification refund task: Stripe had already refunded this capture",
       );
       return { taskId: null, created: false, alreadyRefunded: true };
     }
+    const heldAmountCents =
+      refundState?.anyRefunded === true ? Math.min(amountCents, refundState.heldCents) : amountCents;
 
     const task = await tx.manualRefundTask.create({
       // `status: OPEN` is written EXPLICITLY even though the schema defaults to
@@ -415,13 +427,13 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       data: {
         bookingId,
         paymentId,
-        amountCents,
+        amountCents: heldAmountCents,
         // #2797: Stripe captured a booking-modification payment against a
         // booking that had already been deleted (#2700, INV-ADDPAY-036). Typed
         // so a consumer need not sniff the reason string; `raisedAmountCents`
         // records the fixed amount this task was raised with.
         kind: ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE,
-        raisedAmountCents: amountCents,
+        raisedAmountCents: heldAmountCents,
         reason,
         status: ManualRefundTaskStatus.OPEN,
       },

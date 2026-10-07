@@ -50,6 +50,7 @@ import {
 } from "@/lib/booking-modification-lines";
 import type { HutFeeItemCodeResolver } from "@/lib/xero-mappings";
 import { lineTotalCents } from "@/lib/__tests__/helpers/xero-lines";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const FULL = "type-full";
 const NON_MEMBER = "type-non-member";
@@ -117,7 +118,7 @@ describe("buildModificationDocumentLineItems", () => {
       { guests: [{ ...guest("a"), nights: nights("2026-08-14", [8000, 8000], false) }, { ...guest("b"), nights: nights("2026-08-14", [8000], false) }], promoAdjustmentCents: 0 },
       8000,
     );
-    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() });
+    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() }, CLUB_FORMAT_TEST);
     expect(items).toEqual([
       {
         description: "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
@@ -136,7 +137,7 @@ describe("buildModificationDocumentLineItems", () => {
       { guests: [{ ...guest("a"), nights: nights("2026-08-14", [8000, 8000], false) }], promoAdjustmentCents: 0 },
       -16000,
     );
-    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 20000, document: "SUPPLEMENTARY_INVOICE", context: context() });
+    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 20000, document: "SUPPLEMENTARY_INVOICE", context: context() }, CLUB_FORMAT_TEST);
     expect(items).toEqual([
       {
         description: "1 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026",
@@ -156,7 +157,7 @@ describe("buildModificationDocumentLineItems", () => {
       { guests: [{ ...guest("a"), nights: nights("2026-08-14", [8000, 8000, 8000], false) }], promoAdjustmentCents: 0 },
       -8000,
     );
-    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 2500, document: "MODIFICATION_CREDIT_NOTE", context: context() });
+    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 2500, document: "MODIFICATION_CREDIT_NOTE", context: context() }, CLUB_FORMAT_TEST);
     console.info(
       ["", "Modification credit note lines (two guests 14-16 Aug; one guest removed, the other extended a night, late-change fee $25):", ...items.map((i) => `  ${i.quantity} x $${i.unitAmount?.toFixed(2)}  ${i.description}  [${i.itemCode ?? i.accountCode}]`)].join("\n"),
     );
@@ -176,7 +177,7 @@ describe("buildModificationDocumentLineItems", () => {
       { guests: [{ ...lockedOut, nights: nights("2026-08-14", [8000], false) }], promoAdjustmentCents: 0 },
       8000,
     );
-    const [item] = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() });
+    const [item] = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() }, CLUB_FORMAT_TEST);
     expect(item.description).toBe("1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026");
     expect(item.itemCode).toBe("HUT-NONMEMBER-ADULT");
   });
@@ -190,14 +191,14 @@ describe("buildModificationDocumentLineItems", () => {
     const own = buildModificationDocumentLineItems({
       lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE",
       context: context({ promo: { xeroItemCode: "PROMO", xeroAccountCode: "260" } }),
-    });
+    }, CLUB_FORMAT_TEST);
     expect(own).toEqual([
       { description: "Promotion SUMMER25 reduced by $10.00", quantity: 1, unitAmount: 10, taxType: "OUTPUT2", itemCode: "PROMO", accountCode: "260" },
     ]);
-    const fallback = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() });
+    const fallback = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() }, CLUB_FORMAT_TEST);
     expect(fallback[0]).toMatchObject({ itemCode: "HUT-NONMEMBER-ADULT" });
     expect(fallback[0].accountCode).toBeUndefined();
-    const credited = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "MODIFICATION_CREDIT_NOTE", context: context() });
+    const credited = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "MODIFICATION_CREDIT_NOTE", context: context() }, CLUB_FORMAT_TEST);
     expect(credited[0].unitAmount).toBe(-10);
   });
 
@@ -207,7 +208,7 @@ describe("buildModificationDocumentLineItems", () => {
       { guests: [{ ...guest("a"), nights: nights("2026-08-14", [8000], false) }], promoAdjustmentCents: 0 },
       8000,
     );
-    const [item] = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context({ seasonType: null }) });
+    const [item] = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context({ seasonType: null }) }, CLUB_FORMAT_TEST);
     expect(item.itemCode).toBe("HUT");
   });
 
@@ -222,7 +223,7 @@ describe("buildModificationDocumentLineItems", () => {
       promoAdjustmentCents: 0,
     };
     const lines = linesOf(before, after, 3000);
-    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() });
+    const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE", context: context() }, CLUB_FORMAT_TEST);
     console.info(
       ["", "Supplementary invoice lines (date move 14-16 Aug -> 15-17 Aug, 16th repriced):", ...items.map((i) => `  ${i.quantity} x $${i.unitAmount?.toFixed(2)}  ${i.description}  [${i.itemCode ?? i.accountCode}]`)].join("\n"),
     );
@@ -266,7 +267,7 @@ describe("resolveModificationDocumentLineItems", () => {
       document: "SUPPLEMENTARY_INVOICE",
       billedCents: 8000,
       billedFigures: { priceDiffCents: 8000, changeFeeCents: 0 },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result.lineItems).toHaveLength(1);
     expect(result.record).toEqual({ source: "STORED", reason: null, storedSumCents: 8000, sharesSumCents: null, billedCents: 8000, lineCount: 1, shareCount: 0 });
     expect(mocks.getHutFeeSeasonType).toHaveBeenCalledWith(day("2026-08-14"), "lodge-1");
@@ -279,7 +280,7 @@ describe("resolveModificationDocumentLineItems", () => {
       document: "SUPPLEMENTARY_INVOICE",
       billedCents: 9000,
       billedFigures: { priceDiffCents: 9000, changeFeeCents: 0 },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result.lineItems).toBeNull();
     expect(result.record).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, sharesSumCents: null, billedCents: 9000, lineCount: 0, shareCount: 0 });
     expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
@@ -298,7 +299,7 @@ describe("resolveModificationDocumentLineItems", () => {
       bookingModificationId: "mod_1",
       document: "MODIFICATION_CREDIT_NOTE",
       billedCents: 16000,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(mocks.bookingModificationFindUnique).toHaveBeenCalledWith({
       where: { id: "mod_1" },
       select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
@@ -315,7 +316,7 @@ describe("resolveModificationDocumentLineItems", () => {
       document: "SUPPLEMENTARY_INVOICE",
       billedCents: 8000,
       billedFigures: { priceDiffCents: 8000, changeFeeCents: 0 },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result).toEqual({
       lineItems: null,
       record: { source: "FALLBACK_SINGLE_LINE", reason: "NARRATION_UNAVAILABLE", storedSumCents: null, sharesSumCents: null, billedCents: 8000, lineCount: 0, shareCount: 0 },
@@ -328,7 +329,7 @@ describe("resolveModificationDocumentLineItems", () => {
       bookingModificationId: "mod_1",
       document: "MODIFICATION_CREDIT_NOTE",
       billedCents: 16000,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(rowRead.record.reason).toBe("NARRATION_UNAVAILABLE");
   });
 
@@ -343,7 +344,7 @@ describe("resolveModificationDocumentLineItems", () => {
       row: { priceLines: removedLines, priceDiffCents: -16000, changeFeeCents: 0 },
       document: "MODIFICATION_CREDIT_NOTE",
       billedCents: 16000,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result.record.source).toBe("STORED");
     expect(lineTotalCents(result.lineItems ?? [])).toBe(16000);
   });
@@ -368,7 +369,7 @@ describe("review share lines (2c)", () => {
       changeFeeCents: 0,
       document: "SUPPLEMENTARY_INVOICE",
       context: context(),
-    });
+    }, CLUB_FORMAT_TEST);
     console.info(
       ["", "Supplementary invoice lines (parked edit; one review share of $22.75 settled as a charge):", ...items.map((i) => `  ${i.quantity} x $${i.unitAmount?.toFixed(2)}  ${i.description}  [${i.itemCode ?? i.accountCode}]`)].join("\n"),
     );
@@ -388,7 +389,7 @@ describe("review share lines (2c)", () => {
       changeFeeCents: 0,
       document: "MODIFICATION_CREDIT_NOTE",
       context: context(),
-    });
+    }, CLUB_FORMAT_TEST);
     expect(items.map((i) => [i.description, i.unitAmount, i.accountCode ?? i.itemCode])).toEqual([
       ["Adjustment agreed with member: over-collected", 40, "201"],
       ["Adjustment agreed with member", -5, "HUT"],
@@ -408,7 +409,7 @@ describe("review share lines (2c)", () => {
       changeFeeCents: 1000,
       document: "SUPPLEMENTARY_INVOICE",
       context: context(),
-    });
+    }, CLUB_FORMAT_TEST);
     expect(items.map((i) => i.description)).toEqual([
       "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "Adjustment agreed with member: rounding agreed",
@@ -465,7 +466,7 @@ describe("review share lines (2c)", () => {
       document: "SUPPLEMENTARY_INVOICE",
       billedCents: 2275,
       billedFigures: { priceDiffCents: 2275, changeFeeCents: 0 },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(result.lineItems?.map((i) => i.description)).toEqual(["Adjustment agreed with member: owing"]);
     expect(result.record).toEqual({
       source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 2275, billedCents: 2275, lineCount: 1, shareCount: 1,

@@ -15,8 +15,19 @@ import {
 } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
+  OwnDependantIdentityRefusedError,
+} from "@/lib/booking-dependant-identity";
+import {
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
 import { ApiError } from "@/lib/api-error";
-import type { CalendarDate } from "@/lib/club-time";
+import type {
+  CalendarDate,
+  ClubDateFormat,
+} from "@/lib/club-time";
 import {
   assertOtherLodgeExists,
   requestCarriesOtherLodgeElection,
@@ -143,6 +154,15 @@ import {
   type BatchModifyInput,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify-validation";
+import {
+  applyGuestMemberLinkDietary,
+  bookingGuestDietaryCreateData,
+  bookingGuestDietaryUpdateData,
+  planGuestRenameDietary,
+  resolveBookingGuestDietary,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 type ProposedGuestPricingInput = {
   bookingGuestId?: string | null;
@@ -587,6 +607,10 @@ export function resolveGuestMemberLinks({
     // Narrow gate 3 — placeholder-only. NEVER member→member: a guest that already
     // carries a member identity keeps the same lock a rename keeps, so the
     // reversal can never silently transfer a booking to a different member.
+    // "Placeholder" here means an UNLINKED party row, named or not (ADR-001's
+    // "unlinked placeholders only"): an officer may name "Guest 3" and then link
+    // that person's member record. What a named row's dietary note does on the
+    // link is decided by `applyGuestMemberLinkDietary` (#3029, `INV-MOD-059`).
     if (guest.isMember || guest.memberId) {
       throw new ApiError(GUEST_MEMBER_LINK_PLACEHOLDER_ONLY_MESSAGE, 400);
     }
@@ -648,7 +672,7 @@ export type GuestPlan = {
    */
   guestMemberLinkNames: Map<
     string,
-    { firstName: string | null; lastName: string | null }
+    { firstName: string | null; lastName: string | null; ageTier: AgeTier | null }
   >;
   /**
    * The resolved reciprocal other-club rate election (Other Lodges epic).
@@ -703,6 +727,7 @@ export async function prepareGuestPlan(
     memberGuestPolicy,
     subscriptionLockoutMode,
     today,
+    format,
     now = new Date(),
   }: {
     booking: LoadedBookingForModify;
@@ -755,6 +780,8 @@ export async function prepareGuestPlan(
      * host's.
      */
     today: Date;
+    /** The guard's refusal copy (#3566); threaded for the reason `today` is. */
+    format: ClubDateFormat;
     now?: Date;
   },
 ): Promise<GuestPlan> {
@@ -829,6 +856,41 @@ export async function prepareGuestPlan(
   // would be a query for nothing.
   if (otherLodgeElection.requested) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);
+  }
+  /**
+   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`) — the save half of what
+   * `modify-quote` asked. A free-text row this edit ADDS, or an existing one it
+   * RENAMES onto a new name, named as one of the booking OWNER's recorded
+   * dependants needs a live declaration; untouched rows are not re-asked.
+   *
+   * BEFORE the member resolution below, against the ids the party CLAIMS
+   * (`claimedMemberPathIds`, #3451 review): after it, this 409 versus the
+   * resolution's collapsed refusal answered "is that other id a real member?" for
+   * free. The resolution still refuses any claimed id that does not resolve. The
+   * read runs on `tx` (`INV-LOCK-004`) and takes no lock. An approved policy
+   * exception's replay is checked too, against the answers frozen on the request.
+   */
+  {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+      bookerMemberId: ownerMemberId,
+      party: [
+        ...(input.addGuests ?? []),
+        ...renamedGuestsForDependantCheck(
+          booking.guests,
+          input.guestUpdates,
+          input.removeGuestIds,
+        ),
+      ],
+      memberPathMemberIds: claimedMemberPathIds(input.addGuests ?? []),
+      declarations: input.dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      throw new OwnDependantIdentityRefusedError(
+        dependantIdentityRefusal,
+        ownerMemberId,
+      );
+    }
   }
   const { members: linkedMembers, boundary } =
     await resolveLinkedBookingMembersWithBoundary(
@@ -922,7 +984,7 @@ export async function prepareGuestPlan(
   // same `linkedMembers` the boundary machinery produced.
   const guestMemberLinkNames = new Map<
     string,
-    { firstName: string | null; lastName: string | null }
+    { firstName: string | null; lastName: string | null; ageTier: AgeTier | null }
   >(
     guestMemberLinks.map((link) => {
       const member = linkedMembers.get(link.memberId);
@@ -931,6 +993,8 @@ export async function prepareGuestPlan(
         {
           firstName: member?.firstName ?? null,
           lastName: member?.lastName ?? null,
+          // #3029: the dietary link rule compares the MEMBER's tier with the row's.
+          ageTier: member?.ageTier ?? null,
         },
       ];
     }),
@@ -1070,7 +1134,7 @@ export async function prepareGuestPlan(
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
   if (totalGuestCount > lodgeCapacity) {
     throw new ApiError(
-      `A booking cannot exceed ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`),
       400,
     );
   }
@@ -1085,24 +1149,7 @@ export async function prepareGuestPlan(
     // Supplied by the caller from outside this transaction (`INV-LOCK-004`) —
     // see the `today` parameter's docblock.
     today,
-  });
-
-  const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
-  const adminReviewReason = requiresAdminReview
-    ? ADULT_SUPERVISION_REVIEW_REASON
-    : null;
-
-  const reviewUpdate = resolveModifyReviewUpdate({
-    booking,
-    // #2526: an ADMIN executing a member's reviewed proposal must not
-    // auto-approve the adult-supervision review — that rule was never on the
-    // officer's card. Member semantics open it PENDING, which keeps the #1422
-    // check-in block armed until a human actually looks.
-    role: guestAuthorizationRole,
-    actorId,
-    nowFlagged: requiresAdminReview,
-    memberReviewJustification: input.memberReviewJustification,
-  });
+  }, format);
 
   // D-12 facts for the two kinds of row in the proposed party (#2543): the stored
   // status for a row already on the booking, and the status
@@ -1119,6 +1166,38 @@ export async function prepareGuestPlan(
         guest.memberGuestConsent?.consentStatus ?? null,
       ]),
   );
+  /** The proposed row's consent: stored for a kept row, planned for an added one. */
+  const proposedConsentStatus = (guest: {
+    bookingGuestId: string | null;
+    memberId?: string | null;
+  }) =>
+    guest.bookingGuestId
+      ? consentStatusByGuestId.get(guest.bookingGuestId) ?? null
+      : addedConsentByMemberId.get(guest.memberId ?? "") ?? null;
+
+  // Only an agreed adult counts (#3770, owner decision), read through the same
+  // D-12 facts the paid-up-adult requirement below uses.
+  const requiresAdminReview = requiresAdultSupervisionReview(
+    guestsForPricing.map((guest) => ({
+      ageTier: guest.ageTier,
+      consentStatus: proposedConsentStatus(guest),
+    })),
+  );
+  const adminReviewReason = requiresAdminReview
+    ? ADULT_SUPERVISION_REVIEW_REASON
+    : null;
+
+  const reviewUpdate = resolveModifyReviewUpdate({
+    booking,
+    // #2526: an ADMIN executing a member's reviewed proposal must not
+    // auto-approve the adult-supervision review — that rule was never on the
+    // officer's card. Member semantics open it PENDING, which keeps the #1422
+    // check-in block armed until a human actually looks.
+    role: guestAuthorizationRole,
+    actorId,
+    nowFlagged: requiresAdminReview,
+    memberReviewJustification: input.memberReviewJustification,
+  });
 
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
@@ -1174,13 +1253,9 @@ export async function prepareGuestPlan(
         // D-12: a row already on the booking is judged by its stored
         // consentStatus; a row this modification ADDS is judged by the consent
         // columns `planMemberGuestConsentWrites` has just decided for it.
-        operationallyPresent: guest.bookingGuestId
-          ? isOperationallyPresentConsent(
-              consentStatusByGuestId.get(guest.bookingGuestId) ?? null,
-            )
-          : isOperationallyPresentConsent(
-              addedConsentByMemberId.get(guest.memberId ?? "") ?? null,
-            ),
+        operationallyPresent: isOperationallyPresentConsent(
+          proposedConsentStatus(guest),
+        ),
       })),
     });
     if (nonMemberPricing?.violation) {
@@ -2538,6 +2613,29 @@ function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
   };
 }
 
+/**
+ * #3029 (W15, `INV-MOD-059`): what the dietary rule needs about one linked row —
+ * the row as it was before the link, and the name the link writes onto it.
+ */
+function guestMemberLinkDietary(
+  guest: { id: string; firstName: string; lastName: string; ageTier: AgeTier; memberId?: string | null },
+  link: {
+    memberId: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    ageTier?: AgeTier | null;
+    consentColumns?: MemberGuestConsentColumns;
+  },
+) {
+  return {
+    guestId: guest.id,
+    memberId: link.memberId,
+    memberGuestConsent: link.consentColumns,
+    previous: guest,
+    linkedName: { firstName: link.firstName, lastName: link.lastName, ageTier: link.ageTier },
+  };
+}
+
 export async function applyGuestChanges(
   tx: Prisma.TransactionClient,
   {
@@ -2554,6 +2652,7 @@ export async function applyGuestChanges(
     inProgressPlan,
     otherLodgeElection,
     otherLodgeRatedGuestIds,
+    guestDietarySeeding,
   }: {
     bookingId: string;
     newCheckIn: Date;
@@ -2575,6 +2674,7 @@ export async function applyGuestChanges(
         memberId: string;
         firstName?: string | null;
         lastName?: string | null;
+        ageTier?: AgeTier | null;
         consentColumns?: MemberGuestConsentColumns;
       }
     >;
@@ -2609,6 +2709,14 @@ export async function applyGuestChanges(
      * which is correct for the existing unit tests that pass no election either.
      */
     otherLodgeRatedGuestIds?: ReadonlySet<string>;
+    /**
+     * #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the
+     * transaction. REQUIRED: an added linked member is seeded from their
+     * profile, and a placeholder newly linked to a member is filled from theirs
+     * only if the row holds no value yet. Nothing else here names the value —
+     * a date change, a rename or a reprice leaves it exactly as it was.
+     */
+    guestDietarySeeding: BookingGuestDietarySeeding;
   },
 ): Promise<{ createdGuests: BookingGuest[] }> {
   const createdGuests: BookingGuest[] = [];
@@ -2616,6 +2724,21 @@ export async function applyGuestChanges(
     (guestNameUpdates ?? []).map((update) => [update.guestId, update]),
   );
   const linkByGuestId = guestMemberLinks ?? new Map();
+  // #3029 S2 (`INV-MOD-059`): a non-member rename to somebody else clears the
+  // predecessor's dietary note; a spelling fix or a placeholder being named
+  // keeps it — the same same-occupant rule the held-party rewrite uses.
+  const guestRowsById = new Map(
+    [...remainingGuests, ...(inProgressPlan?.proposedExistingGuests ?? []).map((entry) => entry.guest)]
+      .map((guest) => [guest.id, guest]),
+  );
+  const renameDietary = planGuestRenameDietary(
+    (guestNameUpdates ?? []).flatMap((update) => {
+      const row = guestRowsById.get(update.guestId);
+      return row
+        ? [{ guestId: update.guestId, previous: row, next: update }]
+        : [];
+    }),
+  );
 
   type BreakdownGuest = {
     nightDates: Date[];
@@ -2790,6 +2913,7 @@ export async function applyGuestChanges(
                 lastName: nameUpdate.lastName,
               }
             : {}),
+          ...bookingGuestDietaryUpdateData(renameDietary(entry.guest.id)),
           ...(link
             ? {
                 isMember: true,
@@ -2809,6 +2933,12 @@ export async function applyGuestChanges(
       });
     }
 
+    // #3029 (W11): an added guest's snapshot, seeded once, here.
+    const addedDietary = await resolveBookingGuestDietary(
+      tx,
+      guestDietarySeeding,
+      inProgressPlan.proposedAddedGuests.map((entry) => entry.guest),
+    );
     for (const [a, entry] of inProgressPlan.proposedAddedGuests.entries()) {
       const g = entry.guest;
       const guest = await tx.bookingGuest.create({
@@ -2829,6 +2959,7 @@ export async function applyGuestChanges(
           // `buildMemberGuestConsentWrite` and spread only when present, so a
           // family-scope or non-member guest writes exactly what it wrote before.
           ...(g.memberGuestConsent ?? {}),
+          ...bookingGuestDietaryCreateData(addedDietary[a]),
         },
       });
       const envelope = await syncGuestNights(
@@ -2849,6 +2980,17 @@ export async function applyGuestChanges(
       createdGuests.push(guest);
     }
 
+    // #3029 (W15): a row this edit linked to a member — the one rule that decides
+    // whether the value already on it is that member's, or somebody else's.
+    await applyGuestMemberLinkDietary(
+      tx,
+      guestDietarySeeding,
+      inProgressPlan.proposedExistingGuests.flatMap((entry) => {
+        const link = linkByGuestId.get(entry.guest.id);
+        return link ? [guestMemberLinkDietary(entry.guest, link)] : [];
+      }),
+    );
+
     return { createdGuests };
   }
 
@@ -2862,6 +3004,8 @@ export async function applyGuestChanges(
 
   const addedGuestStartIndex = remainingGuests.length;
   const addList = normalizedAddGuests ?? [];
+  // #3029 (W12): each added guest's snapshot, seeded once, here.
+  const addedDietary = await resolveBookingGuestDietary(tx, guestDietarySeeding, addList);
   for (const [i, g] of addList.entries()) {
     const guestPriceIndex = addedGuestStartIndex + i;
     const bg = priceBreakdown.guests[guestPriceIndex];
@@ -2891,6 +3035,7 @@ export async function applyGuestChanges(
           .rateMembershipTypeId,
         // Member-guest consent (MG2 #2307) — see the in-progress branch above.
         ...(g.memberGuestConsent ?? {}),
+        ...bookingGuestDietaryCreateData(addedDietary[i]),
       },
     });
     const envelope = await syncGuestNights(
@@ -2944,6 +3089,7 @@ export async function applyGuestChanges(
               lastName: nameUpdate.lastName,
             }
           : {}),
+        ...bookingGuestDietaryUpdateData(renameDietary(remainingGuest.id)),
         ...(link
           ? {
               isMember: true,
@@ -3005,6 +3151,18 @@ export async function applyGuestChanges(
       },
     });
   }
+
+  // #3029 (W15): a row this edit linked to a member keeps its value only when it
+  // was a placeholder or already described that member; any other person's
+  // note is replaced from the member's profile, or cleared.
+  await applyGuestMemberLinkDietary(
+    tx,
+    guestDietarySeeding,
+    remainingGuests.flatMap((guest) => {
+      const link = linkByGuestId.get(guest.id);
+      return link ? [guestMemberLinkDietary(guest, link)] : [];
+    }),
+  );
 
   return { createdGuests };
 }

@@ -9,15 +9,42 @@ The Playwright browser suite is a separate thing with its own document —
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md). The journeys each suite is expected to
 cover live in [`END_TO_END_TEST_MATRIX.md`](END_TO_END_TEST_MATRIX.md).
 
-Run it with `npm test` (`vitest run`). It needs `DATABASE_URL` set to any value —
+Run it with `pnpm test` (`vitest run`). It needs `DATABASE_URL` set to any value —
 an unreachable dummy is correct and a live seeded database is not — so
 `prisma.config.ts` resolves. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for
 the full local gate.
 
+## CI shards and the required check
+
+Pull-request and `main` CI run the complete unit suite in four independent
+Vitest file shards (`pnpm test --shard=1/4` through `4/4`). Each shard checks
+out the whole tree and full Git history: a disk-scanning census still sees all
+source files, and every test file, including each census and frozen-clock test,
+is assigned to exactly one shard. All shards use the same `vitest.config.mts`
+and its ordered setup files. The clock-rollover canary still runs the unsharded
+suite on `main` and nightly; it is not a pull-request check.
+
+`verify` remains the single required status context. It runs lint, typecheck,
+knip, the production build and its proofs without a `needs:` edge or job-level
+condition, then `scripts/ci/require-test-shards.mjs` checks that all four shard
+jobs from the **same Actions run attempt** completed successfully. Missing,
+duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
+bounded wait all fail `verify`; a job that never reported cannot silently pass.
+Re-run the whole workflow rather than only a failed job if a partial re-run
+leaves successful shards absent from the new attempt. This does not add a
+branch-protection context. Coverage collection and thresholds were absent
+before sharding and remain absent; adding them is a separate project.
+
+`scripts/ci/require-test-shards.test.mjs` checks the gate and exercises Vitest
+5's actual run sequencer against the discovered file set. `vitest list --shard`
+does **not** apply sharding in this version, so comparing four `list` outputs
+would falsely suggest every file runs four times.
+
 ## Shared setup
 
-`vitest.config.mts` points every test file at two setup files, in order —
-`vitest.clock-setup.ts` then `vitest.setup.ts`. Between them they:
+`vitest.config.mts` points every test file at three setup files, in order —
+`vitest.clock-setup.ts`, `vitest.async-local-storage-setup.ts`, then
+`vitest.setup.ts`. Between them they:
 
 - **freeze the clock** — the rest of this page;
 - stub `server-only` (a Next.js guard with no meaning in the Node test
@@ -28,6 +55,26 @@ the full local gate.
 - **set React Testing Library's async window to 4,000ms** under jsdom — the
   section below.
 
+It also names one **global** setup, `vitest.global-setup.ts`, which runs once
+per run in the main process, not in every worker, so it has no place in that
+order. It clears the scratch folders Vitest leaks into the system temp directory
+(#3671). Vitest never removes its root `os.tmpdir()/<nanoid>` folder, so every
+run leaks one, and a project's folder survives any run that is killed or whose
+delete fails. The sweep starts a detached child process that the run does not
+wait for. It removes a folder only when all of these hold:
+
+- the name is exactly a nanoid;
+- it holds nothing but real `ssr/` or `client/` directories of Vitest's files,
+  never a link;
+- the newest modification time of the folder and of those marker directories is
+  more than 24 hours old;
+- it is not this run's own folder.
+
+A live run refreshes its own folders every ten minutes. The full explanation,
+including what the guards do and do not guarantee, is the docstring of
+`scripts/lib/vitest-temp-sweep.ts`. The tests are in
+`scripts/__tests__/vitest-temp-sweep.test.ts`.
+
 The `.mts` extension is deliberate, not incidental (#2864). Vite reads a plain
 `.ts` config as CommonJS, so from 8.2.1 it warns on every run that this file
 uses ESM syntax, and once `configLoader: "native"` becomes vite's default such a
@@ -37,6 +84,14 @@ reads directly. It is the narrow fix: the alternative — `"type": "module"` in
 the file is now ESM, it has no `__dirname`; the `@` alias is built from
 `import.meta.dirname` instead. If you rename it again, `frozen-test-clock.test.ts`
 reads it from disk by name and will fail loudly rather than silently skip.
+
+Vitest 5 clears mock call histories before each test while keeping mock
+implementations. A test cannot assert calls made while a statically imported
+module was evaluated during collection: that history has already been cleared.
+For a module-registration assertion, call `vi.resetModules()` and dynamically
+`import()` the module inside the test, then inspect the mock calls. See
+`src/lib/__tests__/public-layout-config.test.ts` for the cache-registration
+example.
 
 ## The RTL async window is 4,000ms, not the 1,000ms default
 
@@ -159,7 +214,7 @@ RTL window forced back to its 1,000ms default** — the same both-directions pro
 
 ## Which project typechecks a test
 
-`npm run typecheck` runs three TypeScript projects, and between them they must
+`pnpm run typecheck` runs three TypeScript projects, and between them they must
 read every tracked `.ts`, `.tsx`, `.mts` and `.cts` file in the repository
 except `.semgrep/tests/acb-client-server-boundary.tsx` and
 `.semgrep/tests/acb-unsafe-raw-sql.ts`. Those two files are deliberately broken
@@ -232,7 +287,7 @@ becomes a silent zero. It got there in stages (programme #2694, issues
 slice at a time, and the ratchet was deleted once the count reached zero — a
 ratchet whose baseline is empty is a compiler option with extra steps. From
 here it is an ordinary compiler error like any other, caught by
-`npm run typecheck` and in the editor.
+`pnpm run typecheck` and in the editor.
 
 The Playwright project (`tsconfig.e2e.json`) inherits the flag and has been
 held to it since #3363, so anything that project includes (`e2e/**`, including
@@ -391,7 +446,7 @@ generalised.
    shows the two guards a suite like that needs: it asserts up front that the
    UTC day and the club day really are different (a fixture that drifted out of
    the divergence window would otherwise pass vacuously), and it asserts that
-   `APP_TIME_ZONE` is still `Pacific/Auckland`, so a contributor doing what rule
+   the environment's zone is still `Pacific/Auckland`, so a contributor doing what rule
    6 below describes gets one clear environment failure instead of five that
    read like product bugs. A suite that keeps the DEFAULT instant but hard-codes
    fixture dates against it should assert that too — `night-occupancy-parity.test.ts`
@@ -461,25 +516,24 @@ generalised.
 
    **The chooser's own guard has a test, and it needs a mocked environment zone
    to have one.** `src/lib/__tests__/helpers/club-time-zone.test.ts` is the only
-   place that pins `APP_TIME_ZONE` through `vi.mock("@/config/operational")`, and
-   the reason is worth knowing before writing a similar guard: on a machine where
-   `TZ` is unset and the system zone is New Zealand, the host and `APP_TIME_ZONE`
-   resolve to the SAME zone, so the two halves of "differ from both rivals" are
-   the same assertion and dropping one changes nothing. Measured on #2870,
-   deleting the host half killed **0 of 124** across every importing suite. The
-   two rivals have to be made to disagree, and `APP_TIME_ZONE` is read once at
-   module load, so only a module mock moves it. Keep that mock in a file of its
-   own: group D's `club-zone-choice.ts` records that mocking that module inside a
-   COMPONENT suite changes what the file's other tests see, because `APP_LOCALE`
-   and `APP_CURRENCY` reach money and date formatting in the same render graph.
+   place that pins the environment's zone, by mocking the one-export
+   `helpers/environment-club-zone.ts` (it was `APP_TIME_ZONE` in the
+   `src/config/operational.ts` #3567 deleted), and the reason is worth knowing
+   before writing a similar guard: on a machine where `TZ` is unset and the
+   system zone is New Zealand, the host and the environment resolve to the SAME
+   zone, so the two halves of "differ from both rivals" are the same assertion
+   and dropping one changes nothing. Measured on #2870, deleting the host half
+   killed **0 of 124** across every importing suite. The two rivals have to be
+   made to disagree, and the value is read once at module load, so only a module
+   mock moves it.
 
    **A pin read at module load needs a re-imported graph, not `withTimeZone`.**
    `withTimeZone` moves the process's zone for the duration of a call, which
    catches arithmetic evaluated per call — but a module-level
    `Intl.DateTimeFormat` is built once at import, so a wrong `timeZone` pin on one
    survives it. `vi.resetModules()` plus a dynamic `import()` under a pinned `TZ`
-   re-evaluates `@/config/operational` and catches it; assert inside the block
-   that `APP_TIME_ZONE` really moved, or the test proves nothing. Both mechanisms
+   re-evaluates the module under test and catches it; assert inside the block
+   that the zone really moved, or the test proves nothing. Both mechanisms
    are used together in `calendar-client-club-time.test.ts` and
    `calendar-recurrence.test.ts`, and a review measured what happens when only one
    file has the second: the identical wrong pin killed 1 in the file that had it
@@ -516,11 +570,13 @@ generalised.
    `member-guest-probe-guard.test.ts` measures its privacy timing floor with
    `process.hrtime.bigint()` for exactly that reason: the guard itself reads
    `performance.now()`, so the test deliberately measures with a different API.
-6. **Remember `APP_TIME_ZONE` follows `process.env.TZ`**
-   (`src/config/operational.ts`). Setting `TZ=UTC` to simulate the CI runner
-   also moves the *club* zone to UTC, so a timezone bug can silently pass. To
-   reproduce a UTC runner with an NZ club, force
-   `timeZone = "Pacific/Auckland"` explicitly as well.
+6. **Remember the environment's zone follows `process.env.TZ`.** The seed
+   reader (`club-time-zone-env.ts`) answers `TZ || NEXT_PUBLIC_TZ ||
+   "Pacific/Auckland"` whenever no zone is stored — which is every unit test
+   that does not mock the stored zone. Setting `TZ=UTC` to simulate the CI runner
+   therefore also moves such a suite's *club* zone to UTC, so a timezone bug can
+   silently pass. To reproduce a UTC runner with an NZ club, supply
+   `"Pacific/Auckland"` as the club's zone explicitly as well.
 
    **Do not set `TZ` from Git Bash — it is a silent no-op, and this advice used
    to send you straight into it.** Measured independently by three lanes on epic
@@ -549,14 +605,13 @@ generalised.
    `browser-viewer-zone-matrix.test.ts` are the worked examples, and each asserts
    its rows really diverge before asserting anything else.
 
-   **Since CT-1 (#2989) that is true of `APP_TIME_ZONE` and NOT of the club
-   timezone itself**, and the difference is the whole point of the change. The
-   club's civil time is now the persisted `ClubTimeSettings.timeZone`, read
+   **Since CT-1 (#2989) that is true of the seed and NOT of a stored club
+   timezone**, and the difference is the whole point of the change. The
+   club's civil time is the persisted `ClubTimeSettings.timeZone`, read
    through `getClubTimeZone()` (`src/lib/club-time-zone-settings.ts`), and
    `process.env.TZ` cannot move it once a row exists — `INV-CONFIG-002`. So a
-   suite covering club-time behaviour sets the persisted value, and a suite
-   covering a *not-yet-migrated* display call site still has to force
-   `APP_TIME_ZONE` as above until CT-6 retires it. If you are writing a test that
+   suite covering club-time behaviour sets the persisted value; since #3567
+   there is no environment constant left for a display call site to read. If you are writing a test that
    proves the database beats the environment, **prove the environment read is
    live in the same file**: assert that with no persisted row the reader really
    does return the environment's zone. Without that leg the first assertion
@@ -683,7 +738,7 @@ sudo apt-get install -y faketime
 # reaches the real calendar fails on every retry, so this does not soften the
 # signal; only a slowness flake passes.
 FAKETIME_DONT_FAKE_MONOTONIC=1 faketime -f '+366d' \
-  npm test -- --testTimeout=30000 --hookTimeout=30000 --retry=2
+  pnpm test --testTimeout=30000 --hookTimeout=30000 --retry=2
 ```
 
 ### Any workflow that runs the suite must check out full git history
@@ -708,13 +763,13 @@ anyone would look: the canary has no `pull_request` trigger, so no PR check sees
 it, and a developer's clone has full history exactly like `ci.yml`, so a local
 run cannot see it either.
 
-`npm run ci:workflowcheck` (`scripts/ci/check-workflow-suite-checkout-depth.mjs`,
+`pnpm run ci:workflowcheck` (`scripts/ci/check-workflow-suite-checkout-depth.mjs`,
 a step in the `verify` job) is what keeps them matched. It parses
 `.github/workflows/*.yml`, works out from the parsed shell command which jobs run
 the **whole** suite — wrapped invocations included, which is why the canary's
-`faketime -f '${{ matrix.offset }}' npm test -- …` counts — and fails when such a
+`faketime -f '${{ matrix.offset }}' pnpm test …` counts — and fails when such a
 job has no `actions/checkout` step with `fetch-depth: 0`. A job that runs only
-**targeted** files (`npx vitest run <path>`) needs full history only when one of
+**targeted** files (`pnpm exec vitest run <path>`) needs full history only when one of
 those files reads the repository's own history, which is why `migration-drift`
 and `data-migration-verification` are correct checking out shallow.
 
@@ -738,7 +793,7 @@ different "today") and would fail suites that are perfectly correct.
 ```bash
 # Reproduce a specific rollover — this is the date #2443 predicted would break
 # the two subscription-gate suites, and it does.
-TEST_CLOCK_ISO=2026-12-02T00:00:00.000Z npx vitest run \
+TEST_CLOCK_ISO=2026-12-02T00:00:00.000Z pnpm exec vitest run \
   src/lib/__tests__/phase2-guest-subscription.test.ts
 ```
 
@@ -772,11 +827,15 @@ never runs for a browser spec, there is no `optOutOfFrozenClock` there, and
 
 ### The rule
 
-**Every civil date a browser spec derives comes from the club's day**, which is
-`E2E_TODAY_NZ` / `relDateOnly` in
-[`../prisma/e2e-fixtures.ts`](../prisma/e2e-fixtures.ts) — one clock read for the
-whole date space, frozen once per process, formatted through `Intl` with an
-explicit zone. Date arithmetic is `shiftDateOnly` from the same module. A spec
+**Every relative fixture date a browser spec derives comes from the club's
+day captured for that prepared E2E stack**, which is `E2E_TODAY_NZ` /
+`relDateOnly` in [`../prisma/e2e-fixtures.ts`](../prisma/e2e-fixtures.ts).
+`scripts/e2e-stack.sh prepare` captures it before seeding; `run` reads the same
+ignored date file and exports `E2E_FIXTURE_TODAY_NZ` to Playwright. Without a
+shared date, a run crossing club midnight can move a Monday-aligned fixture a
+whole week between the seed and spec (#3702). Direct imports without the
+environment variable read the current club date through `Intl` with an explicit
+zone. Date arithmetic is `shiftDateOnly` from the same module. A spec
 that calls `new Date()` and reads `getFullYear()`/`getMonth()`/`getDate()` off it
 is reading the **runner's** calendar, which is a different day from the club's for
 roughly the last twelve hours of every UTC day — and on the last day of a month,
@@ -797,7 +856,7 @@ unit-side ones that bought the frozen clock).
 | [`e2e-calendar-navigation.test.ts`](../src/lib/__tests__/e2e-calendar-navigation.test.ts) | That `walkCalendarToMonth` still derives its own direction from the month the calendar is showing, and that the retroactive spec's hop bound stays tight enough to be a real check. |
 
 All three are **disk-scanning**: they read `e2e/` from the filesystem, so they
-have no import edge to the files they scan and `npm run test:related` can never
+have no import edge to the files they scan and `pnpm run test:related` can never
 select them from a diff. Run them by name when a change touches `e2e/`.
 
 ### The walk reads the calendar rather than being told
@@ -1004,7 +1063,7 @@ focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
 listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
 `.focus()` passes it, which is a stated limit rather than an oversight — the
 module says why, and names the four surfaces that still hand-roll their
-attention. It scans the tree from disk, so `npm run test:related` cannot reach
+attention. It scans the tree from disk, so `pnpm run test:related` cannot reach
 it; run it by name when an admin file gains a scroll or a focus.
 
 ## A fake store applies `where` through one evaluator
@@ -1162,7 +1221,7 @@ So:
 ### Selecting the censuses a change can reach
 
 A census reads source from disk, so it has no import edge to what it scans and
-`npm run test:related` can never select it from a diff — `AGENTS.md` says so, and
+`pnpm run test:related` can never select it from a diff — `AGENTS.md` says so, and
 says the class stays CI-caught by design. A lane that wants to catch one *before*
 CI has to pick the set by grep, and **grepping for the paths your diff changed
 under-selects**. #2958 measured how (#3323).
@@ -1199,8 +1258,8 @@ merge or a move can quietly disarm; a hard-coded path is the other.
 [`money-number-input-guard.test.ts`](../src/lib/__tests__/money-number-input-guard.test.ts)
 is in this family and is worth knowing about **before** you trip it, because it
 polices markup rather than a call site. `INV-MONEY-003` says a box someone types
-dollars into is `type="text"` with `inputMode="decimal"` — `MONEY_INPUT_PROPS`
-from [`money-input.ts`](../src/lib/money-input.ts) — never `type="number"`, and
+dollars into is `type="text"` with `inputMode="decimal"` through
+[`MoneyInput`](../src/components/ui/money-input.tsx), never `type="number"`, and
 this guard is the mechanical half of that rule. It walks every non-test `.tsx`
 under `src/` with the TypeScript parser, decides from each `type="number"`
 control's own `id`, `value`, `placeholder` and bound label whether it holds
@@ -1225,13 +1284,13 @@ Two things it does differently from the censuses above, both deliberate:
   tell you whether it would have caught the defect it was written for.
 
 Like every disk-scanning test here it has no import edge to the `.tsx` files it
-reads, so `npm run test:related` cannot select it from a diff. Run it by name
+reads, so `pnpm run test:related` cannot select it from a diff. Run it by name
 when a change adds or edits a numeric input.
 
 ### Suites that time out under load and pass alone
 
-Running the whole suite natively on Windows was measured and rejected in
-`AGENTS.md` (§5, "Per-issue pipeline") because a few suites hit vitest's
+Running the whole suite natively on Windows was measured and rejected as the
+local gate (`AGENTS.md` → "Per-issue pipeline" leaves the full suite to CI) because a few suites hit vitest's
 5,000ms `testTimeout` under parallel load and pass the moment they run alone —
 a gate that red-lights the test it exists to protect is not a gate. The same
 suites can go red inside a by-name batch of disk-scanning censuses, which is
@@ -1249,11 +1308,11 @@ cannot show both is a claim rather than evidence:
    budget, 5,000ms unless the `it()` carries an inline one. Nothing else
    qualifies. A suite that fails on an **assertion** is never in this class,
    whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
-   drift, the "known-environmental failure" in `AGENTS.md`) is a different
+   drift, the known-environmental failure this section is the home of) is a different
    class, and #2886 removed two suites that had been excused as
    "load-sensitive" when they were failing deterministically on Windows for
    real reasons (the shell-out section above).
-2. An isolated re-run of that one file — `npx vitest run <path>` — passes.
+2. An isolated re-run of that one file — `pnpm exec vitest run <path>` — passes.
 
 When both hold: record the red as environmental in your evidence, naming the
 suite and the isolated re-run that passed, and move on. Do not raise
@@ -1263,7 +1322,7 @@ limit under an ordinary batch is a candidate for an inline per-test budget,
 measured and reasoned where it is written; that is a change with its own issue.
 
 **The entries.** Every one carries a figure measured on this repository, not an
-inherited assertion. Isolated means `npx vitest run <that file>`; "under load"
+inherited assertion. Isolated means `pnpm exec vitest run <that file>`; "under load"
 means one vitest invocation over a by-name batch of every test file that reads
 the tree from disk, on a machine doing nothing else. Measured 19 September 2026
 on #3395 at `706a80a91` (vitest 4.1.11, Node 24, a 20-core Windows 11 host)
@@ -1316,6 +1375,16 @@ passed alone immediately afterwards. That is the evidence of the limit being
 crossed; a lane running any such batch beside another lane's tests, a build, or
 a typecheck is where it will be crossed again.
 
+## Mocking a money seam: never in a test that asserts its money
+
+The rule is `INV-OPS-015` ([`invariants/operations.md`](invariants/operations.md));
+the seams and what each decides are `MONEY_SEAMS` in
+`src/lib/__tests__/money-seam-mock-census.test.ts`, which fails the build on an
+offender. To keep a seam real while stubbing its neighbours, spread the real
+module (`...((await importOriginal()) as typeof import("…"))`) and answer the
+seam's own reads truthfully: a ledger read that returns `[]` while the fixture
+carries a live ask is the #543 shape, and the census cannot see it.
+
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 
 A fourth convention in the same family — written the obvious way, a suite that
@@ -1360,12 +1429,12 @@ Two controls enforce this, and they are complementary rather than redundant:
 
 - the helper's parameter is **required** (it accepts `undefined`, because a route
   that passes no options is legitimate), so a bare `evaluateRequireAdminMock()`
-  is a compile error that `npm run typecheck` catches;
+  is a compile error that `pnpm run typecheck` catches;
 - `require-admin-mock-forwarding-contract.test.ts` parses every test file that
   mentions the helper and fails on the shapes the type system cannot see —
   `evaluateRequireAdminMock({})` compiles cleanly and is just as inert. It reads
   `src/` from disk, so it has no import edge to the suites it scans and
-  `npm run test:related` will not select it. Run it directly.
+  `pnpm run test:related` will not select it. Run it directly.
 
 ### Prove the gate, not the guard
 
@@ -1470,7 +1539,7 @@ narrowing only removes callers, so its refusals are sound and its admissions mea
 degraded silently would reintroduce the blindness it exists to remove.
 
 It reads `src/` from disk for the enumeration, so like the forwarding contract
-above it has no import edge to the routes it covers and `npm run test:related`
+above it has no import edge to the routes it covers and `pnpm run test:related`
 will not select it. **Run it by name when you touch admin authorization, the
 route-to-area map, or either guard.**
 

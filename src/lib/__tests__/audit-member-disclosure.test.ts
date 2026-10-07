@@ -28,6 +28,7 @@ import {
   readDeclaredMemberText,
 } from "@/lib/audit-member-disclosure";
 import { getAuditTimelinePage } from "@/lib/audit-query";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ACTOR = "officer-1";
 const SUBJECT = "member-1";
@@ -87,6 +88,7 @@ async function timelineEntry(
     member: { findMany: async () => [] },
   };
   const page = await getAuditTimelinePage({
+    format: CLUB_FORMAT_TEST,
     db: db as never,
     where: {},
     page: 1,

@@ -19,6 +19,13 @@ const mockTransaction = vi.fn();
 const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     /*
@@ -30,6 +37,9 @@ vi.mock("@/lib/prisma", () => ({
       means exactly what it meant before.
     */
     manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    // #3341: the REAL supersede reads the live ADDITIONAL asks a mint retires.
+    // The fixture payment carries none, so the ledger holds none.
+    paymentTransaction: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as any)(fn);
@@ -140,6 +150,9 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   recordSkippedXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({ queueOperationId: "op6", message: "skipped" }),
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn().mockResolvedValue({ released: 0, queueOperationIds: [] }),
 }));
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: vi.fn().mockResolvedValue({ released: 0, queueOperationIds: [], outcome: "none-queued" }),
+}));
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
   queueXeroBookingEditSettlement: vi.fn().mockResolvedValue(undefined),
 }));
@@ -164,8 +177,11 @@ vi.mock("@/lib/payment-recovery", () => ({
   queueRefundRecoveryOperation: vi.fn().mockResolvedValue(undefined),
   getStripePaymentMethodId: vi.fn().mockReturnValue(null),
 }));
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: vi.fn().mockResolvedValue([]),
+// #3341 (`INV-OPS-015`): the ADDITIONAL supersede stays REAL. The price
+// increases here mint an ask, so it runs - over a ledger that, like the fixture
+// payment, holds no earlier live ask, which the prisma double above answers.
+vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/chore-cleanup", () => ({
@@ -182,6 +198,8 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit1" }),
+  // #3809: a paid booking's reduction asks whether credit is applied; none here.
+  deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {
@@ -268,6 +286,7 @@ import {
   hostingMemberRow,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
@@ -751,6 +770,7 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
     const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
 
     await removeBookingGuestInTransaction({
+      format: CLUB_FORMAT_TEST,
       today: CLUB_TODAY_DATE_ONLY,
       tx: tx as any,
       bookingId: "bk1",

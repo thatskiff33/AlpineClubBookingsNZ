@@ -12,6 +12,7 @@ import {
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,12 +22,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   calendarDayFromPayload,
   formatPayloadCalendarDay,
 } from "../_lib/calendar-day";
-import { formatCents } from "@/lib/pricing";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import {
@@ -35,9 +36,10 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { PromoRedemptionsPanel } from "./promo-redemptions-panel";
+import { type ClubDateFormat } from "@/lib/club-time";
 
 interface RedemptionsPromoSummary {
   id: string;
@@ -147,8 +149,8 @@ function formatPromoDateInput(value: string | null) {
   return calendarDayFromPayload(value) ?? "";
 }
 
-function formatPromoDateDisplay(value: string | null) {
-  return formatPayloadCalendarDay(value, "");
+function formatPromoDateDisplay(value: string | null, format: ClubDateFormat) {
+  return formatPayloadCalendarDay(value, format, "");
 }
 
 export function PromoCodesPageClient({
@@ -156,6 +158,15 @@ export function PromoCodesPageClient({
 }: {
   permissionMatrix: AdminPermissionMatrix;
 }) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const format = useClubFormat();
+  const { currencyCode } = format;
   // The Xero reference data (chart-of-accounts + items) is finance area, fetched
   // only when the create/edit form opens. Gate it at finance `view` so a viewer
   // with promo (bookings) access but not finance never fetches into a 403; the
@@ -482,7 +493,7 @@ export function PromoCodesPageClient({
     setType(promo.type);
     setPercentOff(promo.percentOff != null ? String(promo.percentOff) : "");
     setValueDollars(
-      promo.valueCents != null ? (promo.valueCents / 100).toFixed(2) : ""
+      promo.valueCents != null ? formatCentsPlain(promo.valueCents) : ""
     );
     setFreeNightsPerIndividual(
       promo.freeNightsPerIndividual != null ? String(promo.freeNightsPerIndividual) : ""
@@ -492,13 +503,13 @@ export function PromoCodesPageClient({
     );
     setFixedNightlyPriceDollars(
       promo.fixedNightlyPriceCents != null
-        ? (promo.fixedNightlyPriceCents / 100).toFixed(2)
+        ? formatCentsPlain(promo.fixedNightlyPriceCents)
         : ""
     );
     setFixedNightlyMode(promo.fixedNightlyMode ?? "CAP_ONLY");
     setMaxNightlyValueDollars(
       promo.maxNightlyValueCents != null
-        ? (promo.maxNightlyValueCents / 100).toFixed(2)
+        ? formatCentsPlain(promo.maxNightlyValueCents)
         : ""
     );
     setMaxGuestsPerBooking(
@@ -743,7 +754,7 @@ export function PromoCodesPageClient({
       case "PERCENTAGE":
         return `${promo.percentOff}% off per individual`;
       case "FIXED_AMOUNT":
-        return `${formatCents(promo.valueCents || 0)} off per individual`;
+        return `${formatCents(promo.valueCents || 0, format)} off per individual`;
       case "FREE_NIGHTS": {
         const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual !== 1 ? "s" : ""} per booking`;
         if (promo.lifetimeFreeNightsCap != null) {
@@ -753,7 +764,7 @@ export function PromoCodesPageClient({
       }
       case "FIXED_NIGHTLY_PRICE": {
         const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only";
-        return `${formatCents(promo.fixedNightlyPriceCents || 0)} per eligible night · ${mode}`;
+        return `${formatCents(promo.fixedNightlyPriceCents || 0, format)} per eligible night · ${mode}`;
       }
       default:
         return "";
@@ -926,11 +937,11 @@ export function PromoCodesPageClient({
               <span className="text-muted-foreground">Valid:</span>{" "}
               <span className="font-medium">
                 {promo.validFrom
-                  ? formatPromoDateDisplay(promo.validFrom)
+                  ? formatPromoDateDisplay(promo.validFrom, format)
                   : "Any time"}
                 {" - "}
                 {promo.validUntil
-                  ? formatPromoDateDisplay(promo.validUntil)
+                  ? formatPromoDateDisplay(promo.validUntil, format)
                   : "No expiry"}
               </span>
             </div>
@@ -948,7 +959,7 @@ export function PromoCodesPageClient({
             )}
             {promo.maxNightlyValueCents != null && (
               <Badge variant="outline">
-                Up to {formatCents(promo.maxNightlyValueCents)}/night
+                Up to {formatCents(promo.maxNightlyValueCents, format)}/night
               </Badge>
             )}
             {promo.membersOnly && (
@@ -1152,17 +1163,16 @@ export function PromoCodesPageClient({
 
                 {type === "FIXED_AMOUNT" && (
                   <div className="space-y-2">
-                    <Label htmlFor="valueDollars">Amount off per individual ({APP_CURRENCY})</Label>
+                    <Label htmlFor="valueDollars">Amount off per individual ({currencyCode})</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                         $
                       </span>
-                      <Input
+                      <MoneyInput
                         id="valueDollars"
-                        {...MONEY_INPUT_PROPS}
                         className="pl-7"
                         value={valueDollars}
-                        onChange={(e) => setValueDollars(e.target.value)}
+                        onValueChange={setValueDollars}
                         required
                         {...valueDollarsHint.fieldProps}
                       />
@@ -1221,18 +1231,17 @@ export function PromoCodesPageClient({
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="fixedNightlyPrice">
-                        Fixed nightly price per eligible individual ({APP_CURRENCY})
+                        Fixed nightly price per eligible individual ({currencyCode})
                       </Label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                           $
                         </span>
-                        <Input
+                        <MoneyInput
                           id="fixedNightlyPrice"
-                          {...MONEY_INPUT_PROPS}
                           className="pl-7"
                           value={fixedNightlyPriceDollars}
-                          onChange={(e) => setFixedNightlyPriceDollars(e.target.value)}
+                          onValueChange={setFixedNightlyPriceDollars}
                           required
                           {...fixedNightlyPriceHint.fieldProps}
                         />
@@ -1268,18 +1277,17 @@ export function PromoCodesPageClient({
               {type !== "FIXED_AMOUNT" && type !== "FIXED_NIGHTLY_PRICE" && (
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="maxNightlyValue">
-                    Maximum nightly value covered (optional, {APP_CURRENCY})
+                    Maximum nightly value covered (optional, {currencyCode})
                   </Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                       $
                     </span>
-                    <Input
+                    <MoneyInput
                       id="maxNightlyValue"
-                      {...MONEY_INPUT_PROPS}
                       className="pl-7"
                       value={maxNightlyValueDollars}
-                      onChange={(e) => setMaxNightlyValueDollars(e.target.value)}
+                      onValueChange={setMaxNightlyValueDollars}
                       placeholder="Unlimited"
                     />
                   </div>

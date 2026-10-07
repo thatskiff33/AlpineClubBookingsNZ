@@ -58,10 +58,21 @@ vi.mock("@/lib/booking-date-modification-service", () => ({
   adminShiftBookingDates: h.adminShiftBookingDates,
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// #3565: both date doors resolve the club's format before the service runs, and
+// the prisma double above has no `clubFormatSettings` to read it from.
+vi.mock("@/lib/club-format-server", async () => {
+  const { bindClubFormat } = await import("@/lib/club-format-bound");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+  return {
+    clubFormatValues: vi.fn(async () => CLUB_FORMAT_TEST),
+    clubFormat: vi.fn(async () => bindClubFormat(CLUB_FORMAT_TEST)),
+  };
+});
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { PUT as PUT_MODIFY } from "@/app/api/bookings/[id]/modify/route";
 import { PUT as PUT_MODIFY_DATES } from "@/app/api/bookings/[id]/modify-dates/route";
 import {
@@ -114,10 +125,14 @@ function quote(
 }
 
 function offer(overrides: Partial<LinkedMoveQuote> = {}) {
-  return new SameOwnerCoverageLinkedMoveRequiredError(quote(overrides), {
-    acceptStateKey: ACCEPT_KEY,
-    declineStateKey: DECLINE_KEY,
-  });
+  return new SameOwnerCoverageLinkedMoveRequiredError(
+    quote(overrides),
+    {
+      acceptStateKey: ACCEPT_KEY,
+      declineStateKey: DECLINE_KEY,
+    },
+    CLUB_FORMAT_TEST,
+  );
 }
 
 const ANSWER = {

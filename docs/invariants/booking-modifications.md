@@ -523,6 +523,20 @@ that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
 
+Applied credit is held to the same tier (#3809, owner decision A). On a PAID
+or COMPLETED booking, the part of the reduction the captured money's basis
+cannot return - all of it with nothing captured - is given back from the
+applied credit, capped at it, tiered by the card tier with the fixed fee once,
+card-first (`calculateAppliedCreditRestore`), through `giveBackAppliedCredit`
+(`INV-PAY-113`), with no election. A booking paid by card and credit gets what
+an all-card one would. The member's credit-ledger key is taken before any
+`Payment` row write; the mirror then falls to the ledger's figure. In Xero the
+give-back is always an invoice-allocated note of its own, worded as account
+credit and scoped; edit notes wait for the deallocation. Every guest-removal door, the
+consent decline and expiry included, queues that Xero leg. The quote and the
+"Booking Modified" email state the amount. A booking still owing (CONFIRMED or
+PAYMENT_PENDING) gives nothing back: its reduction lowers what it owes.
+
 ## INV-MOD-012
 
 A pre-payment reduction can drop `finalPriceCents` BELOW the account credit
@@ -1238,48 +1252,48 @@ non-negative integer `BookingGuestNight.priceCents` and those prices sum to
 
 **`priceCents` is nullable, and a `NULL` is the column's own statement that the
 night's sold price is NOT KNOWN** (#3170, epic #2797). It joins the class this
-rule already had — an absent row, a negative row, a non-integer row — as an
-ABSENCE of usable evidence. It is never a zero: a stored `0` is a real sold price
+rule already had — an absent, negative or non-integer row — as an ABSENCE of
+usable evidence. It is never a zero: a stored `0` is a real sold price
 (a comped night) and reconciles like any other. So the definition above does not
-change shape, and that is why it can be restated in one sentence: **a strand
-holding a `NULL` night is not exact, and goes to a person.** An evenly-split
+change shape and restates in one sentence: **a strand holding a `NULL` night is
+not exact, and goes to a person.** An evenly-split
 backfilled strand carries an integer on every night, so it still reconciles and
-still prices as exact — the consequence this rule was written to preserve.
+still prices as exact — the consequence this rule was written to preserve. A
+`RATE_DERIVED` row (#3531) is exact night by night: the backfill writes it only
+where the rate table, over the strand as sold, reproduces the stored total.
 
 Only a PARKED edit writes a `NULL`, and only for a night it cannot value: one the
 strand already held whose row carried no usable money, or one the edit newly puts
 that strand on while its stored total is frozen. A night an edit BUYS at a price
-the member is charged always carries that integer.
+the member is charged carries that integer.
 
 The rest of this rule: how a blank is filled and what the repair does not
-repair `INV-MOD-036` to `INV-MOD-040`; where it holds, the five paths that park
-and every other night-price writer `INV-MOD-041` to `INV-MOD-048`; the limits it
-does not close and where all of it is pinned `INV-MOD-049` to `INV-MOD-054`.
+repair, `INV-MOD-036` to `-040`; where it holds, the five paths that park and
+every other night-price writer, `INV-MOD-041` to `-048`; the limits it does not
+close and where all of it is pinned, `INV-MOD-049` to `-054`.
 
 ## INV-MOD-036
 
 **A `NULL` may be filled in afterwards by a PERSON, and by nothing else** (#3191,
-epic #2797; owner decision 31 Aug 2026). Settling the review that the park
-raised may now also record what each of that guest strand's unpriced nights sold
-for, under four conditions, none of which is optional:
+epic #2797; owner decision 31 Aug 2026). Review settlement may record each
+unpriced night's sold price only under these four conditions:
 
 - **the officer types every figure.** A partial answer is refused rather than
   completed, and there is no derivation anywhere in that path - no even split, no
   rate lookup, no rounding, no defaulted zero.
 
-- **the figures reconcile.** Together with the strand's already-priced nights
-  they must come to `BookingGuest.priceCents` adjusted by the settled amount -
-  minus a refund, plus a charge - which is what makes the strand exact under the
-  definition above, and is therefore what stops it parking again. The strand's
-  stored total is re-based to that sum in the same write, so what it is worth and
-  what its nights say cannot disagree afterwards;
+- **the figures reconcile.** Together with already-priced nights they must
+  sum to `BookingGuest.priceCents` adjusted by the settlement: minus a refund,
+  plus a charge. Re-base the strand's stored total to that sum in the same write
+  so the strand is exactly priced and does not park again;
 
-- **an existing price is never rewritten.** Every write is fenced on
-  `priceCents: null`, so a night that already carries a figure - a real stored
-  `0` included - cannot be touched by this path at all, and a race becomes a
-  refusal rather than a lost update. The strand's total is fenced on its previous
-  value the same way. `src/lib/stored-night-price-repair-store.ts` is the one
-  module in the tree permitted to update an existing night row's price in place;
+- **this repair never rewrites an existing price.** Every night write is fenced
+  on `priceCents: null`; stored `0` is protected. The strand total is fenced on
+  its previous value; a race refuses the repair.
+  `src/lib/stored-night-price-repair-store.ts` alone fills NULL prices.
+  #3794 also permits `school-pending-adult-resolution.ts` to reconcile accepted
+  quote terms while naming pending SCHOOL adults: proved, already-priced
+  held-night IDs only, NULL refusal, and exact affected-count rollback;
 
 - **it is audited as a money-affecting act**, in its own entry
   (`booking-payment.stored-night-price.record`, category `payment`) rather than
@@ -1767,9 +1781,10 @@ Five things about that re-price are load-bearing:
   to `critical`. A closure that issues one names the settled share, never the
   re-priced strands (`INV-MOD-058`);
 - **in the same transaction as the strand write**, under the claim that write
-  already holds, fenced on all four columns. This path takes no advisory lock, so
-  a concurrent edit that moved any of them is a 409 that rolls the whole
-  completion back rather than a lost update, and the repaired strand must be one
+  already holds, fenced on all four columns. Under the completion's `lock(1)`
+  (#3582) edits queue; a lock-free writer that moved any of them is a 409 that
+  rolls the completion back rather than a lost update, and the repaired
+  strand must be one
   of the booking's own at the value just written to it — nothing else
   cross-checks a review context's strand id against its task's booking.
 
@@ -1927,3 +1942,38 @@ single line, the reason under `requestPayload.priceLines`. Never a partial set.
 Pinned by the `booking-modification-lines`, `booking-modification-document-lines`
 and `xero-modification-line-items` suites, one sum assertion per edit site, and
 the supplementary-invoice and refund-document suites.
+
+## INV-MOD-059
+
+A booking guest's dietary/allergy value (`BookingGuest.dietaryRequirements`,
+#3029) is a SNAPSHOT of one stay. Who may read it is `INV-PRIV-022`; this is its
+lifecycle.
+
+- **Seeded once**, when the row is first created, from the linked member's
+  CURRENT profile value, only while the toggle is ON (read before the
+  transaction, `INV-LOCK-004`), and never while
+  that member's consent to be on the booking is PENDING. A non-member starts
+  empty. Turning the toggle ON backfills nothing.
+- **Independent afterwards.** A profile edit never rewrites it; the one admin
+  edit (`bookings:edit`, matched to the occupant the editor saw) never writes the
+  profile and is not a booking modification (`INV-MOD-001`).
+- **Preserved** by date moves, removal, promotion, price repair and
+  arrive/depart, which never name the column.
+- **One same-occupant rule** (`isSameBookingGuestOccupant`): the same member id;
+  for a non-member, a generated placeholder being named, or the same name or an
+  unambiguous spelling correction at the same age tier. A non-member renamed
+  (modification or school list), rewritten or linked to anybody else loses the
+  value; a member now on the row is seeded from their own profile. A row that
+  passes keeps its value, and one becoming a member's is filled only if empty,
+  as a granted consent is.
+- **Rebuilds carry by identity, never position.** An approval that rebuilds
+  or rewrites a held party locks its rows first; a rebuild carries a value only
+  on a member id, or an exact non-member name and tier, unique on both sides.
+  The cross-lodge offer carries every row; an admin copy re-seeds
+  (`INV-GUEST-011`).
+- **Limits.** Any hold release (correction, release route, quote expiry,
+  cancellation) strands a value entered on the held booking; the next hold
+  starts afresh. Drain limits: the migration ledger.
+
+Pinned by `member-dietary-booking-lifecycle.test.ts` and the writer census in
+`member-dietary-access-census.test.ts`.

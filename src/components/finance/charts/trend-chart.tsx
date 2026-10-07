@@ -14,6 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   type FinanceValueType,
   formatFinanceAxisTick,
@@ -53,6 +54,7 @@ export function TrendChart({
   height = 300,
   emptyMessage = "No data available for this period.",
 }: TrendChartProps) {
+  const format = useClubFormat();
   if (data.length === 0 || series.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
@@ -94,7 +96,8 @@ export function TrendChart({
               {matched?.name ?? entry.name}:{" "}
               {formatFinanceValue(
                 Number(entry.value ?? 0),
-                matched?.valueType ?? axisValueType
+                matched?.valueType ?? axisValueType,
+                format
               )}
             </p>
           );
@@ -121,7 +124,7 @@ export function TrendChart({
         stroke="#94a3b8"
         width={64}
         tickFormatter={(value: number) =>
-          formatFinanceAxisTick(value, axisValueType)
+          formatFinanceAxisTick(value, axisValueType, format)
         }
       />
       <Tooltip content={renderTooltip} />

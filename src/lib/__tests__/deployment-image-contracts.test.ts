@@ -67,6 +67,33 @@ describe("deployment image contracts", () => {
     expect(compose).toContain("target: builder");
   });
 
+  it("hands NODE_BUILD_OPTIONS to every image build in Compose, not only the app's (#3824)", () => {
+    const lines = directivesOnly(readRepoFile("docker-compose.yml")).split("\n");
+    // Every `build:` block, by indentation: the key line plus every deeper line.
+    // A census rather than a named pair, so a third builder-stage service cannot
+    // quietly miss the setting the way `migrate` did. The short form
+    // (`build: .`) is matched too: it yields an empty block and fails, because it
+    // cannot carry build args at all.
+    const buildBlocks: string[] = [];
+    lines.forEach((line, index) => {
+      const opener = /^(\s*)build:(\s|$)/.exec(line);
+      if (!opener) return;
+      const indent = opener[1].length;
+      const body: string[] = [];
+      for (const next of lines.slice(index + 1)) {
+        if (next.trim() !== "" && next.search(/\S/) <= indent) break;
+        body.push(next);
+      }
+      buildBlocks.push(body.join("\n"));
+    });
+
+    // The x-app-service anchor and the migrate service, at least.
+    expect(buildBlocks.length).toBeGreaterThanOrEqual(2);
+    for (const block of buildBlocks) {
+      expect(block).toContain("NODE_OPTIONS: ${NODE_BUILD_OPTIONS:-}");
+    }
+  });
+
   it("publishes app and migration images to GHCR after CI passes", () => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
 
@@ -646,7 +673,7 @@ describe("deployment image contracts", () => {
     // #2946. The audit used to be a STEP near the front of `verify`. Actions
     // skips every later step in a job once one fails, so when a high-severity
     // advisory landed in a transitive dependency on 17 August (#2945) it took
-    // lint, the file-size ratchet, `prisma generate`, typecheck, knip, `npm test`
+    // lint, the file-size ratchet, `prisma generate`, typecheck, knip, `pnpm test`
     // and the build down with it — on every branch, silently, while the other
     // required checks stayed green. The check list read "one dependency thing is
     // red"; the suite had not run. #2947 restored it and the first real run
@@ -693,19 +720,39 @@ describe("deployment image contracts", () => {
       );
       expect(verify.length).toBeGreaterThan(0);
       expect(verify).not.toContain("npm audit");
+      expect(verify).not.toContain("pnpm audit");
       // The gates that were skipped must all still be in `verify`, and none of
-      // them may have acquired a condition of its own on the way out.
+      // them may have acquired a condition of its own on the way out. #3431
+      // moves the suite itself to independent shard jobs but keeps its
+      // fail-closed bridge as a step in this required job.
       for (const step of [
-        "run: npm run lint",
-        "run: npm run quality:budget",
-        "run: npm run db:generate",
-        "run: npm run typecheck",
-        "run: npx knip",
-        "run: npm test",
-        "run: npm run build",
+        "run: pnpm run lint",
+        "run: pnpm run quality:budget",
+        "run: pnpm run db:generate",
+        "run: pnpm run typecheck",
+        "run: pnpm exec knip",
+        "run: node scripts/ci/require-test-shards.mjs",
+        "run: pnpm run build",
       ]) {
         expect(verify, `verify no longer runs \`${step}\``).toContain(step);
       }
+    });
+
+    // #3843: the advisory `dependency-review` job judges the same report the
+    // same way as the required job, through the one canonical wrapper. Run bare,
+    // `pnpm audit` would disagree with the required gate over a MITIGATED record.
+    it("routes the advisory dependency-review audit through the same wrapper (#3843)", () => {
+      const workflow = readRepoFile(".github/workflows/ci.yml");
+      const job = directivesOnly(
+        workflow.slice(
+          workflow.indexOf("  dependency-review:"),
+          workflow.indexOf("  dependency-audit:"),
+        ),
+      );
+      expect(job.length).toBeGreaterThan(0);
+      expect(job).toMatch(/^ +run: node scripts\/ci\/audit-dependencies\.mjs$/m);
+      expect(job).not.toContain("pnpm audit");
+      expect(job).not.toContain("continue-on-error");
     });
 
     // The generalisation of the two job-level assertions above, applied to every
@@ -803,5 +850,204 @@ describe("deployment image contracts", () => {
     expect(dockerfile).not.toMatch(
       /^COPY --from=builder \/app\/\.next\/static \.\/\.next\/static$/m,
     );
+  });
+});
+
+/**
+ * #3673: this repository installs with pnpm, in the strict layout, and
+ * `npm install`/`npm ci` out of habit must fail loudly instead of quietly writing
+ * a second lockfile.
+ * Every guard below is one a tidy-up could remove without anything else going
+ * red, which is why each is pinned here rather than trusted.
+ */
+describe("package manager contract (#3673)", () => {
+  const WORKFLOWS = filesUnder(".github/workflows", [".yml", ".yaml"]);
+
+  it("pins pnpm once, in `packageManager`, and makes npm's install refuse", () => {
+    const pkg = JSON.parse(readRepoFile("package.json")) as {
+      packageManager?: string;
+      engines?: Record<string, string>;
+      overrides?: unknown;
+      allowScripts?: unknown;
+    };
+    expect(pkg.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/);
+    // `engines.pnpm` is a floor (the major this configuration needs), not a
+    // second copy of the pin: bumping `packageManager` inside the major is a
+    // one-field edit.
+    expect(pkg.engines?.pnpm).toMatch(/^>=\d+$/);
+    const floor = Number(pkg.engines?.pnpm?.slice(2));
+    expect(Number(pkg.packageManager?.slice("pnpm@".length).split(".")[0])).toBeGreaterThanOrEqual(floor);
+    // Not a semver range, so npm can never satisfy it; with `engine-strict`
+    // below it is the backstop that stops `npm install`/`npm ci` before they
+    // write a package-lock.json or a node_modules tree (today npm usually fails
+    // even earlier, on the `catalog:` specifiers or the missing npm lockfile).
+    expect(pkg.engines?.npm).toBe("please-use-pnpm");
+    expect(readRepoFile(".npmrc")).toMatch(/^engine-strict=true$/m);
+    // npm-only fields pnpm ignores: their settings live in pnpm-workspace.yaml.
+    expect(pkg.overrides).toBeUndefined();
+    expect(pkg.allowScripts).toBeUndefined();
+  });
+
+  it("keeps the strict layout, the overrides and the build allowlist in pnpm-workspace.yaml", () => {
+    const workspace = readRepoFile("pnpm-workspace.yaml");
+    expect(workspace).toMatch(/^nodeLinker: isolated$/m);
+    expect(workspace).toMatch(/^overrides:$/m);
+    expect(workspace).toMatch(/^ {2}next-auth>nodemailer: "catalog:"$/m);
+    expect(workspace).toMatch(/^ {2}"@auth\/core>nodemailer": "catalog:"$/m);
+    expect(workspace).toMatch(/^allowBuilds:$/m);
+  });
+
+  /*
+    #3673 review: these settings decide which third-party code runs at install
+    time and what the audit may overlook, so they are pinned EXACTLY. A key added
+    under `allowBuilds:` would run a new install script; `strictDepBuilds: false`
+    would let an unlisted one run with only a warning; `dangerouslyAllowAllBuilds`
+    would run all of them; `auditConfig` (its `ignoreGhsas` list) was shown to
+    turn `pnpm audit` green over a real advisory; `registry` would move where
+    packages AND advisories come from; `minimumReleaseAge: 0` would drop pnpm's
+    one-day hold on fresh releases.
+  */
+  it("pins which install scripts run, and forbids the settings that would widen that or blind the audit", () => {
+    const workspace = readRepoFile("pnpm-workspace.yaml");
+    const lines = workspace.split(/\r?\n/);
+    const start = lines.indexOf("allowBuilds:");
+    expect(start).toBeGreaterThan(-1);
+    const entries: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (!/^\s/.test(line)) break;
+      entries.push(line.trim());
+    }
+    // Which packages, and allowed or denied, is the contract. The exact version
+    // lives only in pnpm-workspace.yaml, so a reviewed bump is a one-line edit
+    // there (CONTRIBUTING.md, "Package manager: pnpm"). Every allowed entry must
+    // carry an exact version: a bare name would approve every future version.
+    const parsed = entries.map((entry) => {
+      const m = /^"?(@?[^@"]+)(?:@([^"]+))?"?:\s*(true|false)$/.exec(entry);
+      expect(m, `unreadable allowBuilds entry: ${entry}`).not.toBeNull();
+      return { name: m![1], version: m![2], allowed: m![3] === "true" };
+    });
+    expect(parsed.map(({ name, allowed }) => `${name}=${allowed}`)).toEqual([
+      "@prisma/engines=true",
+      "@sentry/cli=true",
+      "core-js=false",
+      "esbuild=true",
+      "prisma=true",
+      "unrs-resolver=true",
+    ]);
+    for (const entry of parsed.filter((e) => e.allowed)) {
+      expect(entry.version, `${entry.name} must be pinned to an exact version`).toMatch(
+        /^\d+\.\d+\.\d+(?: \|\| \d+\.\d+\.\d+)*$/,
+      );
+    }
+
+    const topLevelKeys = lines
+      .map((line) => /^([A-Za-z][\w-]*):/.exec(line)?.[1])
+      .filter((key): key is string => key !== undefined);
+    for (const forbidden of [
+      "dangerouslyAllowAllBuilds",
+      "strictDepBuilds",
+      "auditConfig",
+      "registry",
+      "registries",
+      "minimumReleaseAge",
+      "onlyBuiltDependencies",
+      "neverBuiltDependencies",
+    ]) {
+      expect(topLevelKeys, `pnpm-workspace.yaml must not set \`${forbidden}\``).not.toContain(forbidden);
+    }
+    // Nested spellings too, e.g. an ignore list under some other key.
+    expect(workspace).not.toMatch(/ignoreGhsas|ignoreCves/);
+
+    // A run never installs by itself (AGENTS.md: an install needs authorisation),
+    // and the virtual store stays inside each worktree.
+    expect(workspace).toMatch(/^verifyDepsBeforeRun: error$/m);
+    expect(workspace).toMatch(/^enableGlobalVirtualStore: false$/m);
+  });
+
+  it("has one lockfile, and refuses an npm one in CI and in git", () => {
+    const root = readdirSync(process.cwd());
+    expect(root).toContain("pnpm-lock.yaml");
+    expect(root).not.toContain("package-lock.json");
+    expect(root).not.toContain("npm-shrinkwrap.json");
+    expect(readRepoFile(".gitignore")).toMatch(/^\/package-lock\.json$/m);
+
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const verify = directivesOnly(
+      workflow.slice(workflow.indexOf("  verify:"), workflow.indexOf("  migration-drift:")),
+    );
+    const refuse = verify.indexOf("- name: Refuse an npm lockfile");
+    const install = verify.indexOf("- name: Install dependencies");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(refuse);
+    const refuseStep = verify.slice(refuse, verify.indexOf("- name:", refuse + 1));
+    expect(refuseStep).toContain("package-lock.json");
+    expect(refuseStep).toContain("npm-shrinkwrap.json");
+    expect(refuseStep).toMatch(/exit "\$found"/);
+  });
+
+  it("installs with pnpm from the lockfile in every workflow, never with npm", () => {
+    for (const file of WORKFLOWS) {
+      const directives = directivesOnly(readRepoFile(file));
+      expect(directives, `${file} still caches npm`).not.toMatch(/^\s*cache: npm\s*$/m);
+      expect(directives, `${file} still runs npm ci`).not.toMatch(/\bnpm (ci|install)\b/);
+      expect(directives, `${file} still runs npx`).not.toMatch(/(?<![\w-])npx /);
+      expect(directives, `${file} still runs npm audit`).not.toMatch(/(?<!p)npm audit/);
+
+      // `cache: pnpm` needs pnpm on PATH, so every job that caches the store
+      // must set pnpm up BEFORE setup-node — the other order fails the job.
+      const jobs = directives.split(/^ {2}(?=[\w-]+:\s*$)/m);
+      for (const job of jobs) {
+        const cache = job.search(/^\s*cache: pnpm\s*$/m);
+        if (cache === -1) continue;
+        const pnpmSetup = job.indexOf("uses: pnpm/action-setup@");
+        const nodeSetup = job.indexOf("uses: actions/setup-node@");
+        expect(pnpmSetup, `${file}: a job caches pnpm without setting pnpm up`).toBeGreaterThan(-1);
+        expect(pnpmSetup, `${file}: pnpm must be set up before setup-node`).toBeLessThan(nodeSetup);
+      }
+      for (const install of directives.match(/^\s*run: pnpm install\b[^\n]*/gm) ?? []) {
+        expect(install, `${file}: CI installs must be frozen`).toContain("--frozen-lockfile");
+      }
+    }
+  });
+
+  it("builds the image with the pinned pnpm and the frozen lockfile", () => {
+    const dockerfile = directivesOnly(readRepoFile("Dockerfile"));
+    // The version is read from package.json, never written here a second time.
+    expect(dockerfile).toContain(
+      `npm install -g "$(node -p "require('/tmp/package-manager/package.json').packageManager")"`,
+    );
+    expect(dockerfile).not.toMatch(/pnpm@\d/);
+    expect(dockerfile).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    // #3843: the lockfile records each `patchedDependencies` patch's hash, so
+    // the reviewed patches must reach the deps stage before its frozen install.
+    const deps = dockerfile.slice(
+      dockerfile.indexOf("FROM base AS deps"),
+      dockerfile.indexOf("FROM base AS builder"),
+    );
+    expect(deps).toMatch(/^COPY patches \.\/patches\/$/m);
+    expect(deps.indexOf("COPY patches")).toBeLessThan(deps.indexOf("pnpm install --frozen-lockfile"));
+    // Git does not track an empty directory, so once the last patch is retired
+    // `COPY patches` would fail on a missing source. The tracked placeholder
+    // keeps the directory, and the image build, whole with no patch in it.
+    expect(readdirSync(path.join(process.cwd(), "patches"))).toContain(".gitkeep");
+    // pnpm checks patch DATES before every `pnpm run`, so the builder must take
+    // patches/ from the deps layer (older than its install), AFTER `COPY . .`,
+    // or a cached deps layer fails the build with "Patches were modified".
+    const builder = dockerfile.slice(
+      dockerfile.indexOf("FROM base AS builder"),
+      dockerfile.indexOf("FROM node:24.17-alpine AS runner"),
+    );
+    expect(builder).toMatch(/^COPY --from=deps \/app\/patches \.\/patches\/$/m);
+    expect(builder.indexOf("COPY . .")).toBeLessThan(builder.indexOf("COPY --from=deps /app/patches"));
+    const firstPnpm = builder.search(/^RUN pnpm\b/m);
+    expect(firstPnpm).toBeGreaterThan(-1);
+    expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(firstPnpm);
+    expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
+    // npm is used once, to install pnpm, and then removed in the SAME layer, so
+    // the builder and migrate images carry pnpm and no npm/npx.
+    const base = dockerfile.slice(0, dockerfile.indexOf("FROM base AS deps"));
+    expect(base).toContain("/usr/local/lib/node_modules/npm");
+    expect(base).toContain("/usr/local/bin/npx");
   });
 });

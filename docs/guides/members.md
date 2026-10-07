@@ -69,6 +69,10 @@ cents; dates are NZ date-only.
 2. Optionally tick **Send account setup invites**. Rows with a cancelled date are
    created inactive and never invited; rows matching an existing member are skipped
    unchanged.
+3. While [**Dietary/allergy information**](member-fields.md#dietaryallergy-information-is-privacy-sensitive)
+   is on, a **Dietary/allergy information** column is imported too (any age,
+   up to 500 characters; a longer value blocks the row). While it is off, or if
+   your admin role lacks membership edit access, that column is ignored.
 
 ### Send login invites and password resets
 
@@ -108,6 +112,11 @@ cents; dates are NZ date-only.
 
 1. Click **Export CSV** to download the current filtered list (view access can
    export).
+2. While **Dietary/allergy information** is on, and you hold membership access,
+   the file includes a **Dietary/allergy information** column. That column is
+   privacy-sensitive health information: store and share the file only as your
+   club's privacy policy allows. The export's audit entry records that the column
+   was included, never its contents.
 
 ### The member detail page
 
@@ -118,7 +127,14 @@ admin can open it; membership edit is needed only after choosing a section's
 than with a screenshot:
 
 - **Contact & Personal** — name, email, phone, DOB, occupation, addresses,
-  comments (a privileged member's login email is Full-Admin-only to change).
+  comments (a privileged member's login email is Full-Admin-only to change), and
+  — only while the club has it on and you hold membership access —
+  **Dietary/allergy information**. It is never sent to Xero, and editing it
+  records only that it changed. Editing it here changes the profile only: a
+  booking the member is already on keeps its own copy for that stay (see
+  [Bookings](bookings.md#dietaryallergy-information-for-a-stay)). Creating a
+  member collects it too; the quick editor opened from the member list does not
+  show it, and saving there leaves it untouched.
 - **Account & Access** — user type, login, access roles, status, induction, and
   lodge access. Only one member per email address can sign in, so ticking **Can
   Login** here is refused with "A member with this email already exists" when the

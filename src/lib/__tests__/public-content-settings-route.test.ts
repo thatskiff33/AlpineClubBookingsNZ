@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => {
   const values = { requireAdmin: vi.fn(), findUnique: vi.fn(), upsert: vi.fn(), auditCreate: vi.fn(), revalidatePath: vi.fn() };
   const prisma = {
     publicContentSettings: { findUnique: values.findUnique, upsert: values.upsert },
-    pageContent: { findMany: vi.fn().mockResolvedValue([]) },
+    pageContent: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     auditLog: { create: values.auditCreate },
     $transaction: vi.fn(),
   };
@@ -19,6 +19,7 @@ vi.mock("@/lib/audit", () => ({
   getAuditRequestContext: () => ({}),
 }));
 
+import { Prisma } from "@prisma/client";
 import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults";
 import { GET, PUT } from "@/app/api/admin/public-content-settings/route";
 
@@ -92,5 +93,27 @@ describe("public content settings route", () => {
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "content", level: "edit" } });
     expect(mocks.auditCreate).toHaveBeenCalledOnce();
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/", "layout");
+  });
+
+  // #3852: the published-page check runs before the transaction, so a page
+  // deleted in between reaches the upsert as a foreign-key failure. That is the
+  // same "not available" answer the check gives, not a 500.
+  it("answers 400, not 500, when the chosen Book Now page is deleted mid-save", async () => {
+    mocks.prisma.pageContent.findUnique.mockResolvedValue({ published: true });
+    mocks.upsert.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Foreign key constraint violated", {
+      code: "P2003", clientVersion: "test",
+    }));
+    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, annualFees: true, showBookNow: true, bookNowTarget: "PAGE", bookNowPageId: "page-1", committeePhotoDisplay: "NONE" };
+    const response = await PUT(new Request("http://localhost/api/admin/public-content-settings", { method: "PUT", body: JSON.stringify(body) }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "The selected Book Now page is not published." });
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("still lets any other save failure escape", async () => {
+    mocks.upsert.mockRejectedValue(new Error("deadlock detected"));
+    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, annualFees: true, showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null, committeePhotoDisplay: "NONE" };
+    await expect(PUT(new Request("http://localhost/api/admin/public-content-settings", { method: "PUT", body: JSON.stringify(body) }))).rejects.toThrow("deadlock detected");
   });
 });

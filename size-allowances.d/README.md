@@ -18,7 +18,7 @@ branches cannot conflict over files they do not share.
 
 That is not a local trick, it is a rule: **an artifact every lane adds an entry
 to is a directory of per-lane fragments, never one shared file.** It lives in
-`AGENTS.md` -> "Change Discipline", and
+`AGENTS.md` -> "Change discipline", and
 [`changelog.d/README.md`](../changelog.d/README.md) - the original of the
 pattern - carries the full statement, the other instances, and when
 `merge=union` is the right remedy instead. This directory being one *instance*
@@ -37,7 +37,11 @@ knowingly, not to get past a red check.
 
 1. Create `size-allowances.d/<pr-number>-<short-slug>.md`, for example
    `size-allowances.d/2980-membership-type-policy.md`. The name must not be
-   `README.md`, and the file must end in `.md`.
+   `README.md`, and the file must end in `.md`. Use a portable direct-child name
+   (interior spaces and Unicode are fine, including existing leading `-` or
+   `_` names). Path separators, control and invisible format characters, and
+   Windows-reserved filename characters (`< > : " / \\ | ? *`) and device names
+   such as `CON.md` are not.
 2. Give it one entry per file, each three fields on their own lines. Anything
    else in the file — a heading, a paragraph, blank lines — is prose the gate
    ignores, so write for the reviewer as well as the tool.
@@ -102,8 +106,12 @@ Two rules keep that true:
   left lying around to be re-used. If you split the file after writing the
   allowance, delete the entry.
 
-Merged files can therefore be swept from this directory in bulk at any time,
-the same way compiled changelog fragments are. Nothing depends on them.
+The release compiler sweeps merged, committed fragments from this directory
+when it compiles a changelog release, leaving this `README.md`, untracked drafts,
+branch-only commits and locally edited files untouched. Run its dry-run first
+from a checkout based on refreshed `origin/main`, and commit the reported
+deletions with the release. Nothing in the file-size gate depends on spent
+fragments.
 
 One consequence worth knowing: after merging `main` into a long-lived branch,
 an allowance that came in with `main` may report as unused if your branch also

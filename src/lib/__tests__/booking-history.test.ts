@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("buildBookingHistoryItems", () => {
   it("shows the stored money source and a classified compatibility fallback on modification history", () => {
@@ -45,7 +46,7 @@ describe("buildBookingHistoryItems", () => {
       ],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(items.find((item) => item.id === "modification-mod-stored")?.detail).toContain(
       "stored booking build-up ($100.00), confirmed",
@@ -102,7 +103,7 @@ describe("buildBookingHistoryItems", () => {
       ],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     const withLines = items.find((item) => item.id === "modification-mod-lines")?.detail ?? "";
     expect(withLines).toContain(
@@ -140,7 +141,7 @@ describe("buildBookingHistoryItems", () => {
       ],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     const detail = items.find((item) => item.id === "modification-mod-unknown")?.detail;
     expect(detail).toContain("stored sold-price evidence was not exact enough to use");
@@ -183,7 +184,7 @@ describe("buildBookingHistoryItems", () => {
       ],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     const detail = items.find(
       (item) => item.id === `modification-mod-${classification}`,
@@ -251,7 +252,7 @@ describe("buildBookingHistoryItems", () => {
           createdAt: new Date("2026-04-07T12:00:00Z"),
         },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(items.map((item) => item.title)).toEqual([
       "Booking cancelled",
@@ -285,7 +286,7 @@ describe("buildBookingHistoryItems", () => {
       modifications: [],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(items[0].title).toBe("Payment recorded");
     expect(items[0].occurredAt.toISOString()).toBe("2026-04-08T14:00:00.000Z");
@@ -324,7 +325,7 @@ describe("buildBookingHistoryItems", () => {
         modifications: [],
         refundRequests: [],
         auditLogs: [],
-      });
+      }, CLUB_FORMAT_TEST);
     }
 
     /*
@@ -411,7 +412,7 @@ describe("buildBookingHistoryItems", () => {
           duplicatePaymentIntentId: "pi_link_dup",
         },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     const dup = items.find(
       (item) => item.title === "Duplicate capture auto-refunded"
@@ -433,11 +434,59 @@ describe("buildBookingHistoryItems", () => {
       modifications: [],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(
       items.some((item) => item.title === "Duplicate capture auto-refunded")
     ).toBe(false);
+    expect(items.map((item) => item.title)).toEqual(["Booking created"]);
+  });
+
+  // #3638 review (SSOT F9): the settlement markers were "admin-visible" in the
+  // acceptance criterion and visible nowhere. The staff timeline shows them.
+  const secondInstrumentMarker = {
+    id: "event-marker-1",
+    occurredAt: new Date("2026-04-06T12:00:00Z"),
+    amountCents: 27000,
+    title: "May have been paid twice (card and Xero)",
+    detail: "Xero reported this booking's invoice paid after a card payment had already settled it. Xero invoice INV-3638.",
+    tone: "danger" as const,
+  };
+
+  it("renders a settlement marker on the staff timeline (#3638)", () => {
+    const items = buildBookingHistoryItems({
+      audience: "staff",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [],
+      settlementMarkers: [secondInstrumentMarker],
+    }, CLUB_FORMAT_TEST);
+
+    const marker = items.find((item) => item.id === "settlement-marker-event-marker-1");
+    expect(marker).toEqual({
+      id: "settlement-marker-event-marker-1",
+      occurredAt: secondInstrumentMarker.occurredAt,
+      category: "Payment",
+      title: "May have been paid twice (card and Xero)",
+      detail: secondInstrumentMarker.detail,
+      amountDisplay: "$270.00",
+      tone: "danger",
+    });
+  });
+
+  it("never renders a settlement marker for a member, even when handed one (#3638)", () => {
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [],
+      settlementMarkers: [secondInstrumentMarker],
+    }, CLUB_FORMAT_TEST);
+
     expect(items.map((item) => item.title)).toEqual(["Booking created"]);
   });
 });
@@ -467,7 +516,7 @@ describe("buildBookingHistoryItems — unapplied credit election (#2265)", () =>
           createdAt: new Date("2026-04-02T10:00:00Z"),
         },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
   }
 
   it("names the amount that went unapplied and quotes the member's LIVE balance, never the elected figure", () => {
@@ -514,6 +563,23 @@ describe("buildBookingHistoryItems — unapplied credit election (#2265)", () =>
 
     expect(item?.detail).toContain("$0.00 of account credit available");
     expect(item?.detail).toContain("balance was not reduced");
+  });
+
+  it("says credit spent and then returned was RETURNED, not 'not reduced' (#3864)", () => {
+    const item = build(
+      JSON.stringify({
+        source: "payment-reconciliation",
+        creditElectionCents: 5000,
+        paidAmountCents: 20000,
+        availableCreditCents: 5000,
+        refundableCents: 5000,
+        creditReturnedCents: 5000,
+      })
+    ).find((entry) => entry.id === "audit-audit-election");
+
+    expect(item?.detail).toContain("The credit applied to this booking was returned to your balance");
+    expect(item?.detail).toContain("$50.00 of account credit available");
+    expect(item?.detail).not.toContain("balance was not reduced");
   });
 
   it("omits the availability figure entirely on a legacy row that carries no balance", () => {
@@ -570,7 +636,7 @@ describe("buildBookingHistoryItems — a manually settled extra (#2397)", () => 
       modifications: [],
       refundRequests: [],
       auditLogs,
-    });
+    }, CLUB_FORMAT_TEST);
   }
 
   it("renders the manual settlement of the extra, naming the amount", () => {
@@ -663,7 +729,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
       refundRequests: [],
       auditLogs: [],
       financialReviewPending,
-    });
+    }, CLUB_FORMAT_TEST);
   }
 
   const rowFor = (id: string, pending: boolean) =>
@@ -709,7 +775,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
       modifications: [modification("mod-new", -12000, "2026-06-01T10:00:00Z")],
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(items.find((item) => item.id === "modification-mod-new")?.tone).toBe(
       "success",
@@ -736,7 +802,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
       refundRequests: [],
       auditLogs: [],
       financialReviewPending: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const free = items.find((item) => item.id === "modification-mod-free");
     const priced = items.find((item) => item.id === "modification-mod-priced");
@@ -785,7 +851,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
       modifications: [],
       refundRequests: [],
       auditLogs: incidentRows,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const opened = items.find((item) => item.id === "audit-audit-incident");
     expect(opened?.title).toBe("Adult member cover flagged");
@@ -821,7 +887,7 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
       modifications: [],
       refundRequests: [],
       auditLogs: incidentRows,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // NOT "the list is empty" — the booking-created row is always there, so an
     // empty list would mean the builder had failed rather than withheld anything.

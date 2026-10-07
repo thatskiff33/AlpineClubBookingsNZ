@@ -5,7 +5,9 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
+import { useLodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 import { GuestForm, type GuestData } from "@/components/guest-form";
+import { partyNeedsSupervisionJustification } from "@/app/(authenticated)/book/_components/member-guest-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -46,10 +48,12 @@ import {
   formatClubDate,
   formatClubWeekdayDate,
   parseCalendarDate,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 
 import { formatCents, formatSignedCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
 
@@ -61,15 +65,18 @@ type BookingPaymentMethod = "stripe" | "internet_banking";
  * night before. An empty or malformed value renders as itself rather than
  * throwing while the operator is still choosing dates.
  */
-function formatLodgeNight(value: string | null): string {
+function formatLodgeNight(value: string | null, format: ClubDateFormat): string {
   const day = value === null ? null : parseCalendarDate(value);
-  return day ? formatClubDate(day) : (value ?? "");
+  return day ? formatClubDate(day, format) : (value ?? "");
 }
 
 /** {@link formatLodgeNight}, weekday-bearing — "Thu, 16 Apr 2026". */
-function formatLodgeNightWithWeekday(value: string | null): string {
+function formatLodgeNightWithWeekday(
+  value: string | null,
+  format: ClubDateFormat,
+): string {
   const day = value === null ? null : parseCalendarDate(value);
-  return day ? formatClubWeekdayDate(day) : (value ?? "");
+  return day ? formatClubWeekdayDate(day, format) : (value ?? "");
 }
 
 /**
@@ -116,6 +123,7 @@ interface SelectedMember {
 }
 
 export default function AdminBookPage() {
+  const format = useClubFormat();
   const clubTime = useClubTime();
   const router = useRouter();
   // Booking on behalf writes POST /api/bookings, which admits only a
@@ -139,6 +147,7 @@ export default function AdminBookPage() {
     reload: reloadLodges,
   } = useLodgeOptions("admin");
   const [lodgeId, setLodgeId] = useState<string | null>(null);
+  const lodgeSettingsHref = useLodgeCapacitySettingsHref(lodgeId);
   const activeLodgeIdRef = useRef<string | null>(lodgeId);
   const dateSelectionSequenceRef = useRef(0);
   const dateSelectionAbortRef = useRef<AbortController | null>(null);
@@ -205,10 +214,9 @@ export default function AdminBookPage() {
    *
    * IT DOES NOT MAKE SUCH A LODGE BOOKABLE. `POST /api/bookings` refuses any
    * party above the lodge's capacity before the waitlist fallback, so at zero
-   * the create still fails — with "a booking cannot exceed 0 guests", which at
-   * least names the cause. Whether such a lodge should be bookable at all is a
-   * product question this issue does not settle; the member path meets the same
-   * refusal.
+   * the create still fails. Since #3407 (owner decision, 14 Sep 2026) the
+   * refusal says the lodge is not set up for bookings yet, and the calendar
+   * offers the officer no night there; the member path is the same.
    */
   const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
   /** Derived once, so the three add-guest affordances cannot disagree. */
@@ -645,14 +653,10 @@ export default function AdminBookPage() {
     }
   }
 
-  const requiresAdminReviewLocal = (() => {
-    if (guests.length === 0) return false;
-    const hasAdult = guests.some((g) => g.ageTier === "ADULT");
-    const hasMinor = guests.some(
-      (g) => g.ageTier === "YOUTH" || g.ageTier === "CHILD" || g.ageTier === "INFANT",
-    );
-    return hasMinor && !hasAdult;
-  })();
+  // The server's adult-supervision rule (#3770). An officer's add is written
+  // consent-free and CONFIRMED, so every adult on this page counts — the same
+  // answer the server gives an on-behalf create.
+  const requiresAdminReviewLocal = partyNeedsSupervisionJustification(guests);
 
   // Internet Banking is an optional module; only offer it when it's on.
   useEffect(() => {
@@ -1084,6 +1088,7 @@ export default function AdminBookPage() {
               lodgeId={lodgeId}
               allowPastDates={allowPastDates}
               allowFullDates
+              lodgeSettingsHref={lodgeSettingsHref}
             />
           </CardContent>
         </Card>
@@ -1097,8 +1102,8 @@ export default function AdminBookPage() {
               Add Guests
               {checkIn && checkOut && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  {formatLodgeNight(checkIn)} -{" "}
-                  {formatLodgeNight(checkOut)} ({nights} night
+                  {formatLodgeNight(checkIn, format)} -{" "}
+                  {formatLodgeNight(checkOut, format)} ({nights} night
                   {nights !== 1 ? "s" : ""})
                 </span>
               )}
@@ -1227,13 +1232,13 @@ export default function AdminBookPage() {
                 <div>
                   <span className="text-muted-foreground">Check-in:</span>{" "}
                   <span className="font-medium">
-                    {formatLodgeNightWithWeekday(checkIn)}
+                    {formatLodgeNightWithWeekday(checkIn, format)}
                   </span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Check-out:</span>{" "}
                   <span className="font-medium">
-                    {formatLodgeNightWithWeekday(checkOut)}
+                    {formatLodgeNightWithWeekday(checkOut, format)}
                   </span>
                 </div>
                 <div>
@@ -1255,7 +1260,7 @@ export default function AdminBookPage() {
                       {g.isMember ? "Member" : "Non-member"})
                     </span>
                     <span className="font-medium">
-                      {formatCents(priceQuote.guests[i]?.priceCents || 0)}
+                      {formatCents(priceQuote.guests[i]?.priceCents || 0, format)}
                     </span>
                   </div>
                 ))}
@@ -1265,23 +1270,23 @@ export default function AdminBookPage() {
                 <>
                   <div className="border-t pt-4 flex justify-between text-sm">
                     <span>Subtotal</span>
-                    <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                    <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                   </div>
                   <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
                     <span>Promo adjustment ({appliedPromo.code})</span>
-                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
+                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents, format)}</span>
                   </div>
                   {appliedCreditCents > 0 && (
                     <div className="flex justify-between text-sm text-success-11">
                       <span>Account credit</span>
-                      <span>-{formatCents(appliedCreditCents)}</span>
+                      <span>-{formatCents(appliedCreditCents, format)}</span>
                     </div>
                   )}
                   <div className="flex justify-between font-bold text-lg">
                     <span>
                       {appliedCreditCents > 0 ? "Remaining to pay" : "Total"}
                     </span>
-                    <span>{formatCents(remainingToPay)}</span>
+                    <span>{formatCents(remainingToPay, format)}</span>
                   </div>
                 </>
               ) : (
@@ -1290,11 +1295,11 @@ export default function AdminBookPage() {
                     <>
                       <div className="border-t pt-4 flex justify-between text-sm">
                         <span>Subtotal</span>
-                        <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                        <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                       </div>
                       <div className="flex justify-between text-sm text-success-11">
                         <span>Account credit</span>
-                        <span>-{formatCents(appliedCreditCents)}</span>
+                        <span>-{formatCents(appliedCreditCents, format)}</span>
                       </div>
                     </>
                   )}
@@ -1304,7 +1309,7 @@ export default function AdminBookPage() {
                     <span>
                       {appliedCreditCents > 0 ? "Remaining to pay" : "Total"}
                     </span>
-                    <span>{formatCents(remainingToPay)}</span>
+                    <span>{formatCents(remainingToPay, format)}</span>
                   </div>
                 </>
               )}
@@ -1313,7 +1318,7 @@ export default function AdminBookPage() {
                 <div className="rounded-md bg-success-3 border border-success-6 p-4 mt-2">
                   <p className="text-sm text-success-11 mb-2">
                     {selectedMember.firstName} has{" "}
-                    <strong>{formatCents(availableCreditCents)}</strong> in account
+                    <strong>{formatCents(availableCreditCents, format)}</strong> in account
                     credit
                   </p>
                   <label className="flex items-center gap-2 text-sm text-success-11 cursor-pointer">
@@ -1441,7 +1446,7 @@ export default function AdminBookPage() {
 
           {isRetroactive && (
             <div className="rounded-md bg-muted border border-border p-3 text-sm text-muted-foreground">
-              Recording a past stay ({formatLodgeNight(checkIn)}). The
+              Recording a past stay ({formatLodgeNight(checkIn, format)}). The
               member email is optional (you choose on confirm); drafts are not
               available for retroactive bookings.
             </div>

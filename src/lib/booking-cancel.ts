@@ -1,15 +1,15 @@
 import { prisma } from "./prisma";
-import { cancelPaymentIntentIfCancellable, cancelSetupIntentIfCancellable } from "./stripe";
+import { cancelPaymentIntentIfCancellableWithResult, cancelSetupIntentIfCancellable } from "./stripe";
+import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import { isXeroConnected } from "./xero";
-import {
-  calculateAppliedCreditRestore,
-  calculateRefundAmount,
-  daysUntilDate,
-  loadCancellationPolicy,
-} from "./cancellation";
+import { daysUntilDate, loadCancellationPolicy } from "./cancellation";
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
+import {
+  paidCancellationBranch,
+  writePaidCancellationEvent,
+} from "./paid-cancellation-event";
 import { formatCents } from "./utils";
 import {
   BookingEventType,
@@ -19,6 +19,7 @@ import {
 } from "@prisma/client";
 import {
   createCancellationCredit,
+  deriveBookingAppliedCreditCents,
   lockMemberCreditLedger,
   restoreCreditFromBooking,
 } from "./member-credit";
@@ -31,8 +32,14 @@ import {
 } from "./xero-operation-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
+import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   applyLocalRefundAllocation,
+  foldIntoTransactionRefundedAmount,
+  lockPaymentForRefundedTotal,
   markPaymentIntentTransactionFailed,
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -45,7 +52,16 @@ import {
   enqueuePaymentIntentCancellationRecovery,
   markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError,
+  runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import {
+  findGroupCancellationChildDebt,
+  groupCancellationRefundNote,
+  organiserChildCancelBasis,
+  reserveOrganiserChildRefund,
+} from "@/lib/organiser-child-refund";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
@@ -63,12 +79,15 @@ import {
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { releasePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 // `INV-SSOT` (#3030): the one home for `ManualRefundTask.reason`'s column width,
 // beside the same table's `note` width, which this repository already keeps there.
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { stripeRefundMirrorShowsCapture } from "@/lib/booking-payment-state";
 
 // #3497: the cancellable sets live in `booking-cancel-eligibility.ts`, a leaf
 // module the member-facing doors also read — one home, no copy.
@@ -77,13 +96,25 @@ import {
   isCancellableBookingStatus,
   memberCancelRefusal,
 } from "@/lib/booking-cancel-eligibility";
+import type { ClubFormat } from "@/lib/club-format";
+import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
+import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import {
+  alertManualPartPaymentCancel,
+  kickClearingNoteForUnpaidRest,
+  PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
+  PartPaymentChangedError,
+  raisePartPaymentReviewTask,
+  readPartPaymentAtCancel,
+  recordPartPaymentInClaim,
+} from "@/lib/internet-banking-part-payment-at-cancel";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
 // subset of CANCELLABLE_BOOKING_STATUSES. This is the exact WHERE set for the
 // #1311 status-guarded claim-first: a booking that has left this set under the
-// advisory lock (e.g. a concurrent quote-accept converting AWAITING_REVIEW ->
-// PENDING) must NOT be clobbered to CANCELLED.
+// advisory lock (e.g. a concurrent officer approval converting AWAITING_REVIEW
+// -> PENDING) must NOT be clobbered to CANCELLED.
 const NO_PAYMENT_CANCELLABLE_STATUSES: readonly string[] = [
   "WAITLISTED",
   "WAITLIST_OFFERED",
@@ -154,9 +185,9 @@ type CancelBookingResponse =
  * `options.requireRequestHold` (#1406): when `true`, the caller asserts it is
  * releasing a held booking-request slot that MUST still be AWAITING_REVIEW (the
  * admin "Release hold" route and `declineBookingRequest`). If the outer read
- * finds any other status — e.g. a concurrent quote-accept already flipped the
- * hold AWAITING_REVIEW -> PENDING — cancel refuses with a 409 BEFORE branch
- * dispatch and takes no side effect, so a just-accepted booking is never routed
+ * finds any other status — e.g. officer approval (`approveBookingRequest`, not
+ * requester acceptance, #3415) already converted it to PENDING — cancel refuses
+ * with a 409 BEFORE branch dispatch and no side effect, so a just-converted booking is never routed
  * into the generic PENDING branch and clobbered (its brand-new payment links
  * revoked). This guard stays ESSENTIAL even though the PENDING branch is now
  * itself status-guarded claim-first under lock(1) (#1547): that branch only
@@ -183,6 +214,7 @@ export async function cancelBooking(
   sessionUserId: string,
   sessionUserRole: string,
   ipAddress: string,
+  format: ClubFormat,
   refundMethod: "card" | "credit" = "card",
   options: {
     suppressCustomerNotification?: boolean;
@@ -223,6 +255,7 @@ export async function cancelBooking(
     sessionUserId,
     sessionUserRole,
     ipAddress,
+    format,
     refundMethod,
     options.suppressCustomerNotification ?? false,
     options.hasBookingsEditAccess ?? false,
@@ -238,6 +271,7 @@ export async function cancelBooking(
       bookingId,
       sessionUserId,
       ipAddress,
+      format,
       notifyMember
     );
     // If this booking hosts a group, clean up the joiners the PENDING-only sweep
@@ -250,7 +284,8 @@ export async function cancelBooking(
     await settleGroupBookingOnOrganiserCancel(
       bookingId,
       sessionUserId,
-      ipAddress
+      ipAddress,
+      format,
     ).catch((err) =>
       logger.error(
         { err, bookingId },
@@ -283,6 +318,7 @@ async function cancelLinkedProvisionalChildBookings(
   parentBookingId: string,
   sessionUserId: string,
   ipAddress: string,
+  format: ClubFormat,
   notifyMember = true
 ) {
   const children = await prisma.booking.findMany({
@@ -349,6 +385,8 @@ async function cancelLinkedProvisionalChildBookings(
       if (childOwnerMemberId) {
         await restoreCreditFromBooking(childOwnerMemberId, fresh.id, tx);
       }
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
       return fresh;
     });
 
@@ -393,6 +431,7 @@ async function cancelLinkedProvisionalChildBookings(
         child.checkIn,
         child.checkOut,
         0,
+        format,
         "card",
         0,
         child.lodgeId
@@ -408,7 +447,7 @@ async function cancelLinkedProvisionalChildBookings(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-    }).catch(
+    }, format).catch(
       (err) =>
         logger.error(
           { err, bookingId: child.id },
@@ -423,6 +462,7 @@ async function performBookingCancellation(
   sessionUserId: string,
   sessionUserRole: string,
   ipAddress: string,
+  format: ClubFormat,
   refundMethod: "card" | "credit" = "card",
   suppressCustomerNotification = false,
   hasBookingsEditAccess = false,
@@ -547,18 +587,18 @@ async function performBookingCancellation(
   //
   // The admin "Release hold" route and `declineBookingRequest` release a held
   // booking-request slot they expect to still be AWAITING_REVIEW. This OUTER
-  // read is UN-locked, so a concurrent quote-accept
-  // (`convertBookingRequestToBooking`) can flip the hold AWAITING_REVIEW ->
-  // PENDING before it runs. Without this guard the PENDING snapshot would be
-  // dispatched straight into the generic PENDING branch below and clobber the
-  // just-accepted booking to CANCELLED and revoke its brand-new payment links.
+  // read is UN-locked, so officer approval (`approveBookingRequest`; requester
+  // acceptance keeps the hold, #3415) can convert it to PENDING before it runs.
+  // Without this guard the PENDING snapshot would be dispatched straight into
+  // the generic PENDING branch below and clobber the just-converted booking to
+  // CANCELLED and revoke its brand-new payment links.
   // The PENDING branch is now itself status-guarded claim-first under lock(1)
   // (#1547), but that only rejects a booking that has LEFT PENDING; a
-  // just-accepted booking genuinely IS PENDING, so it passes the branch's own
+  // just-converted booking genuinely IS PENDING, so it passes the branch's own
   // under-lock guard. This pre-dispatch check therefore remains the ONLY
-  // protection for the accept-then-release race. Refuse with a 409 loser (NO
+  // protection for the approve-then-release race. Refuse with a 409 loser (NO
   // side effect) BEFORE branch dispatch so a now-PENDING booking is never
-  // cancelled by a hold-release. An accept that commits AFTER this read but
+  // cancelled by a hold-release. An approval that commits AFTER this read but
   // BEFORE the AWAITING_REVIEW branch takes pg_advisory_xact_lock(1) is caught
   // by that branch's under-lock re-read (the NO_PAYMENT_CANCELLABLE_STATUSES
   // guard) — the two together fully close the race. Opt-in only: callers
@@ -569,7 +609,7 @@ async function performBookingCancellation(
     return {
       status: 409,
       error:
-        "This hold can no longer be released (it may have just been accepted).",
+        "This hold can no longer be released (it was just approved or cancelled).",
     };
   }
 
@@ -582,13 +622,13 @@ async function performBookingCancellation(
     // call, so the only hazard is a state CLOBBER, not a double money-move —
     // the "claim-first without durable recovery inverts a crash into money
     // LOSS" caveat does not apply here. The clobber: a held AWAITING_REVIEW
-    // booking can be converted to PENDING by a concurrent quote-accept
-    // (`approveBookingRequest` in booking-request.ts). Under the two-tier lock
-    // protocol (#1881) that accept takes the GLOBAL `pg_advisory_xact_lock(1)`
+    // booking can be converted to PENDING by officer approval
+    // (`approveBookingRequest`; acceptance keeps the hold, #3415). Under the
+    // two-tier protocol (#1881) approval takes the GLOBAL `pg_advisory_xact_lock(1)`
     // FIRST (then the per-lodge lock) and status-guards its AWAITING_REVIEW →
     // PENDING flip. This branch takes the SAME global lock(1) and both the
     // under-lock re-read gate below AND a status-guarded `updateMany` on the
-    // CANCELLED flip, so cancel and accept mutually exclude on the shared key
+    // CANCELLED flip, so cancel and approval mutually exclude on the shared key
     // and neither can clobber the other: the race loser observes a
     // non-cancellable status (re-read gate or count 0) and aborts cleanly with a
     // 409, running none of the side effects below. This mirrors the paid
@@ -609,13 +649,20 @@ async function performBookingCancellation(
       payment: true, member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
+      heldForBookingRequest: { select: { status: true } },
     },
       });
       // Race loser / retry: under the lock the booking has left the no-payment
-      // set (a concurrent quote-accept converted it, or another cancel already
-      // claimed it). Do NOT flip status, detach, reconcile, or run any side
+      // set (a concurrent officer approval converted it, or another cancel
+      // already claimed it). Do NOT flip status, detach, reconcile, or run any side
       // effects.
       if (!fresh || !NO_PAYMENT_CANCELLABLE_STATUSES.includes(fresh.status)) {
+        return { claimed: false as const };
+      }
+      // An accepted request intentionally keeps its AWAITING_REVIEW hold until
+      // an officer approves or declines it. This is inside the global-lock
+      // re-read so a generic hold-release cannot race the accept transition.
+      if (fresh.heldForBookingRequest?.status === "ACCEPTED") {
         return { claimed: false as const };
       }
       if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
@@ -651,6 +698,7 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       if (wasAwaitingReview) {
+        await releasePendingAdultNights({ db: tx, bookingId });
         // Detach any booking-request pointer to this hold so a later re-quote
         // creates a fresh hold instead of reusing this now-cancelled row
         // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates
@@ -675,6 +723,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:no-payment" });
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -708,9 +758,9 @@ async function performBookingCancellation(
     });
 
     // Loser contract (mirrors the paid single-flight path, #1160): a concurrent
-    // quote-accept / cancel that transitioned the row out of the no-payment set
-    // gets a real 409. This MUST be non-200 so a caller never treats a clobbered
-    // accept as a successful cancel. Every cancelBooking caller forwards this
+    // officer approval / cancel that transitioned the row out of the no-payment
+    // set gets a real 409. This MUST be non-200 so a caller never treats a
+    // clobbered conversion as a successful cancel. Every cancelBooking caller forwards this
     // 409 (release-hold, member cancel, admin review-reject) or aborts safely
     // (deletion-requests, which never passes a no-payment-holding status).
     if (!claim.claimed) {
@@ -770,6 +820,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -778,7 +829,7 @@ async function performBookingCancellation(
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
-      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
         .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
     }
 
@@ -829,6 +880,10 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
+      // #3792 (INV-LOCK-002): the member credit-ledger key before the Payment row
+      // write, the order the inbound credit-note sync takes them in. #3369: no member, no key.
+      const pendingCreditLedgerMemberId = bookingOwner(fresh).memberId;
+      if (pendingCreditLedgerMemberId) await lockMemberCreditLedger(pendingCreditLedgerMemberId, tx);
       if (fresh.payment) {
         await tx.payment.update({
           where: { id: fresh.payment.id },
@@ -862,6 +917,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:pending" });
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
       // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -918,7 +975,8 @@ async function performBookingCancellation(
       actorMemberId: sessionUserId,
       reason: appendReturnedCreditSentence(
         "Cancelled before payment. No payment was taken.",
-        creditRestoredCents
+        creditRestoredCents,
+        format,
       ),
     });
 
@@ -930,6 +988,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -937,7 +996,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after pending cancellation"));
 
     return {
@@ -959,9 +1018,22 @@ async function performBookingCancellation(
   // (paidAmountCents already nets out refundedAmountCents). Eligibility is
   // ledger-only (see the helper), so the folded-mirror never-captured IB
   // population and mirror-only legacy rows stay out of the refund path.
-  const paidRefundPathEligible = await paymentEligibleForPaidCancelPath(
-    booking.payment
-  );
+  // #3643 (`INV-PAY-107`): Xero may show part of an internet banking invoice
+  // paid while the payment is still PENDING here (the inbound sync settles only
+  // a fully paid invoice). Read live, before any transaction; recognised cash
+  // routes the cancel into the paid path, where the claim records it. Money
+  // the app cannot credit (DECISION 2) is an officer's cancel on the unpaid
+  // path, with no clearing note, a hand-back task, a repair finding until that
+  // task is closed, and a treasurer alert.
+  const partPaymentRead = await readPartPaymentAtCancel(booking);
+  const manualPartPayment = partPaymentRead?.kind === "manual" ? partPaymentRead : null;
+  if (manualPartPayment && sessionUserRole !== "ADMIN" && !hasBookingsEditAccess) {
+    return { status: 409, error: PART_PAYMENT_MANUAL_MEMBER_REFUSAL };
+  }
+  const partPayment = partPaymentRead?.kind === "recognise" ? partPaymentRead : null;
+  const paidRefundPathEligible =
+    partPayment !== null ||
+    (await paymentEligibleForPaidCancelPath(booking));
 
   // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without a payment the
   // paid refund path can claim: never-captured payments (including the
@@ -1020,7 +1092,7 @@ async function performBookingCancellation(
       // A capture landed between the outer read and this lock: refuse with the
       // standard 409 so a retry routes into the paid path and gets the tiered
       // refund (never flatten a now-captured payment here).
-      if (await paymentEligibleForPaidCancelPath(fresh.payment, tx)) {
+      if (await paymentEligibleForPaidCancelPath(fresh, tx)) {
         return { claimed: false as const };
       }
       if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
@@ -1094,16 +1166,34 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       await reconcileCancelledBookingBedAllocations(fresh, tx);
+      // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): money the app cannot
+      // credit is a hand-back task, committed with the cancel it belongs to.
+      const partPaymentReviewTaskRaised =
+        manualPartPayment && fresh.payment
+          ? await raisePartPaymentReviewTask(tx, bookingId, fresh.payment.id, manualPartPayment)
+          : false;
 
       // 100% restore — ledger truth, NO override argument (owner decision:
       // nothing was captured, so no cancellation-policy tiering).
       // #3369: an organisation-owned booking has no member ledger, so there
       // is nothing to restore. Zero is the fact, not a fallback -- credit can
       // only have been applied from a member's own account in the first place.
+      // #3809 (F2): money WAS captured (a reduction refunded the whole card):
+      // the credit is tiered as the paid path tiers it, not restored whole.
       const restoreMemberId = bookingOwner(fresh).memberId;
-      const creditRestoredCents = restoreMemberId
-        ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
-        : 0;
+      const tiered = restoreMemberId && freshPaymentCaptured && fresh.payment
+        ? await refundedPaymentCreditRestore(tx, { bookingId, booking: { ...fresh, payment: fresh.payment }, todayAtClub })
+        : null;
+      const appliedAtCancelCents = tiered ? await deriveBookingAppliedCreditCents(bookingId, tx) : 0;
+      const creditRestoredCents = !restoreMemberId
+        ? 0
+        : tiered
+          ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx, tiered.creditToRestoreCents)
+          : await restoreCreditFromBooking(restoreMemberId, bookingId, tx);
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger) -
+      // unless the tier kept credit (#3809), which the ledger keeps so owed(b) reaches zero.
+      const creditKept = tiered ? { keptCents: appliedAtCancelCents - creditRestoredCents, policyKeptCents: tiered.appliedCreditBaseCents - creditRestoredCents } : { keptCents: 0 };
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, ...creditKept, site: "booking-cancel:unpaid" });
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
@@ -1119,6 +1209,7 @@ async function performBookingCancellation(
           bookingId,
           fresh.payment.xeroInvoiceId,
           tx,
+          format,
         );
       }
       const xeroAllocated = await tx.memberCreditNoteAllocation.aggregate({
@@ -1159,6 +1250,9 @@ async function performBookingCancellation(
         freshPaymentCaptured,
         creditRestoredCents,
         xeroAllocatedAppliedCreditCents,
+        partPaymentReviewTaskRaised,
+        // #3809: the tiered credit's frozen figures, for a later review's netting (`INV-PAY-113`).
+        creditLedger: tiered ? { ...creditKept, policyKeptCents: creditKept.policyKeptCents ?? 0, keptBeyondPolicyCents: creditKept.keptCents - (creditKept.policyKeptCents ?? 0), appliedCreditCents: appliedAtCancelCents, creditRestoredCents, appliedCreditBaseCents: tiered.appliedCreditBaseCents } : null,
       };
     });
 
@@ -1184,6 +1278,8 @@ async function performBookingCancellation(
       freshPaymentCaptured,
       creditRestoredCents,
       xeroAllocatedAppliedCreditCents,
+      partPaymentReviewTaskRaised,
+      creditLedger,
     } = claim;
 
     if (creditRestoredCents > 0) {
@@ -1226,13 +1322,12 @@ async function performBookingCancellation(
     // src/lib/xero-inbound/credit-note-repairs.ts). Subtract exactly those
     // (floored at 0) so the clearing note never over-allocates the invoice.
     const xeroClearingAmountCents =
-      fresh.payment?.xeroInvoiceId && !freshPaymentCaptured
-        ? Math.max(
-            0,
-            fresh.finalPriceCents +
-              fresh.payment.changeFeeCents -
-              xeroAllocatedAppliedCreditCents
-          )
+      fresh.payment?.xeroInvoiceId && !freshPaymentCaptured && !manualPartPayment
+        ? unpaidInvoiceClearingAmountCents({
+            finalPriceCents: fresh.finalPriceCents,
+            changeFeeCents: fresh.payment.changeFeeCents,
+            xeroAllocatedAppliedCreditCents,
+          })
         : 0;
 
     if (fresh.payment?.id && xeroClearingAmountCents > 0) {
@@ -1241,6 +1336,9 @@ async function performBookingCancellation(
           {
             bookingId,
             refundAmountCents: xeroClearingAmountCents,
+            // #3535 (`INV-PAY-017`): nobody paid this invoice, so the note
+            // says it was cleared, never that a card refund was made.
+            clearsUnpaidInvoice: true,
           },
           {
             createdByMemberId: sessionUserId,
@@ -1275,7 +1373,7 @@ async function performBookingCancellation(
       details: freshPaymentCaptured
         ? "Confirmed booking cancelled; previously captured payment keeps its refund history (status preserved, no Xero clearing note queued)"
         : xeroClearingAmountCents > 0
-          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
+          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${formatCents(xeroClearingAmountCents, format)} to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
       metadata: {
@@ -1284,6 +1382,7 @@ async function performBookingCancellation(
         xeroClearingAmountCents,
         xeroAllocatedAppliedCreditCents,
         queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
+        partPaymentReviewTaskRaised,
         creditRestoredCents,
         ...notifyAuditFields,
       },
@@ -1296,10 +1395,16 @@ async function performBookingCancellation(
       reason: appendReturnedCreditSentence(
         freshPaymentCaptured
           ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
-          : "Cancelled before payment was captured. Nothing was charged.",
-        creditRestoredCents
+          : manualPartPayment
+            ? "Cancelled as unpaid. A payment recorded against the invoice is left for the treasurer to settle by hand."
+            : "Cancelled before payment was captured. Nothing was charged.",
+        creditRestoredCents,
+        format,
       ),
+      // A ledger figure only, never a refund decision (`isPaidCancellationDecisionSnapshot`).
+      ...(creditLedger ? { snapshot: { ledger: creditLedger } } : {}),
     });
+    if (manualPartPayment) await alertManualPartPaymentCancel(fresh, manualPartPayment, format);
 
     if (notifyMember) {
       sendBookingCancelledEmail(
@@ -1309,6 +1414,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -1316,7 +1422,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after confirmed cancellation"));
 
     return {
@@ -1344,10 +1450,8 @@ async function performBookingCancellation(
   // computed (credit and card tiers can differ) and everything downstream —
   // policy math, branches, events, emails, audit — sees one consistent
   // method. The cancel-preview surface returns both methods' figures, so
-  // preview parity holds.
-  if (booking.payment?.source === "INTERNET_BANKING") {
-    refundMethod = "credit";
-  }
+  // preview parity holds. Decided in `cancel-refund-method.ts`; applied in the
+  // claim, off the payment re-read under its row lock (#3793).
 
   // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
   //
@@ -1382,8 +1486,8 @@ async function performBookingCancellation(
 
     const fresh = await tx.booking.findUnique({
       where: { id: bookingId },
-      include: {
-      payment: true, member: true,
+      // #3793: only the payment's id before its row lock; nothing that decides money.
+      include: { payment: { select: { id: true } }, member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
     },
@@ -1398,6 +1502,30 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
+    // #3792 (INV-LOCK-002): the member credit-ledger key third, before the Payment
+    // row, the order the inbound credit-note sync takes them in. #3369: no member, no key.
+    const paidCreditLedgerMemberId = bookingOwner(fresh).memberId;
+    if (paidCreditLedgerMemberId) await lockMemberCreditLedger(paidCreditLedgerMemberId, tx);
+    // #3793: #3640's Payment row lock, then the re-read the money comes from: a refund
+    // writer takes no advisory lock, so only the id is taken from the read above.
+    await lockPaymentForRefundedTotal(tx, fresh.payment.id);
+    let lockedPayment = await tx.payment.findUnique({ where: { id: fresh.payment.id } });
+    if (!lockedPayment) return { claimed: false as const };
+    // #3643: record the part payment Xero showed as captured money and queue
+    // the unpaid rest's clearing note, exactly once, before eligibility is
+    // re-derived. Anything that moved since the read throws, rolling back.
+    let clearingOperationId: string | null = null;
+    if (partPayment) {
+      const recognised = await recordPartPaymentInClaim(
+        tx,
+        bookingId,
+        lockedPayment.id,
+        partPayment,
+        sessionUserId,
+      );
+      lockedPayment = recognised.payment;
+      clearingOperationId = recognised.clearingOperationId;
+    }
     // #1491: the same paid-path eligibility as the outer gate, re-derived
     // under the lock (the outer read is stale by definition here). A
     // genuinely captured PARTIALLY_REFUNDED payment claims; the folded-mirror
@@ -1405,13 +1533,24 @@ async function performBookingCancellation(
     // if racing writes degrade the payment between the reads, refusing the
     // claim (409) is the safe outcome.
     const freshPaidPathEligible = await paymentEligibleForPaidCancelPath(
-      fresh.payment,
+      { ...fresh, payment: lockedPayment },
       tx
     );
     if (!freshPaidPathEligible) {
+      // #3643 (D7): never commit a recorded receipt on a refused claim.
+      if (partPayment) throw new PartPaymentChangedError();
       return { claimed: false as const };
     }
-    const payment = fresh.payment;
+    const payment = lockedPayment;
+    // #3653 (`INV-PAY-114`): a joiner cancelling a booking the group organiser
+    // paid for by card. Its refund goes back to the ORGANISER's card, out of
+    // the combined payment, with no account-credit option; the policy tiers
+    // what remains after refunds already made AND owed.
+    const organiserCard = paidByOrganiserCard({ ...fresh, payment })
+      ? await organiserChildCancelBasis(tx, fresh, payment)
+      : null;
+    const forcedMethod = forcedCancelRefundMethod(payment.source, organiserCard !== null);
+    refundMethod = forcedMethod === "credit" ? "credit" : forcedMethod === "organiser_card" ? "card" : refundMethod;
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
     // capture ledger BEFORE executing new refunds. The inbound reconcile
@@ -1428,7 +1567,7 @@ async function performBookingCancellation(
         where: {
           paymentId: payment.id,
           status: {
-            in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+            in: [...CAPTURED_TRANSACTION_STATUS_LIST],
           },
         },
         orderBy: { createdAt: "asc" },
@@ -1443,16 +1582,14 @@ async function performBookingCancellation(
         if (foldedCents <= 0) {
           break;
         }
-        const headroomCents = row.amountCents - row.refundedAmountCents;
-        if (headroomCents <= 0) {
-          continue;
-        }
-        const bumpCents = Math.min(headroomCents, foldedCents);
-        await tx.paymentTransaction.update({
-          where: { id: row.id },
-          data: { refundedAmountCents: row.refundedAmountCents + bumpCents },
+        // Capped at the row's headroom, as an increment through the shared
+        // compare-and-set (#3640): the charge.refunded webhook takes no lock,
+        // so a card refund it commits between this read and the write survives.
+        foldedCents -= await foldIntoTransactionRefundedAmount({
+          paymentTransactionId: row.id,
+          amountCents: foldedCents,
+          store: tx,
         });
-        foldedCents -= bumpCents;
       }
     }
 
@@ -1464,16 +1601,32 @@ async function performBookingCancellation(
     // is worth. Paid-path twin of the #1015/#1029 unpaid-invoice clearing rule.
     // Computed BEFORE the credit restore so the applied-credit slice can be
     // tiered off the same base/tier as the card slice (#1164 / D7).
-    const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
-    const refundableBaseCents =
-      Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
-      payment.changeFeeCents;
     // #3123 — THE REFUND TIER. The club's day, resolved before this
     // transaction opened (`INV-LOCK-004`); it used to be the container's,
     // projected out of `APP_TIME_ZONE`, which tiered every club behind
     // Greenwich one day short of its own published cancellation policy.
     const days = daysUntilDate(fresh.checkIn, todayAtClub);
     const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId, tx);
+    // #3611: refund, restore and what the club keeps, from one call
+    // (`paid-cancellation-money.ts`); the figures are the ones this path always
+    // computed. The applied rows are read here, under lock(1), for the kept figure.
+    const restoreMemberId = bookingOwner(fresh).memberId;
+    const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
+    const money = paidCancellationMoney({
+      payment: organiserCard
+        ? { ...payment, refundedAmountCents: organiserCard.committedRefundCents }
+        : payment,
+      finalPriceCents: fresh.finalPriceCents,
+      appliedCreditCents,
+      restoresToMemberLedger: restoreMemberId !== null,
+      days,
+      policy,
+      refundMethod,
+      capAppliedCredit: await bookingReducedThroughCreditGiveBack(bookingId, tx),
+    });
+    const { paidAmountCents, refundableBaseCents } = money;
+    let refundAmountCents = money.refundAmountCents;
+    let refundPercentage = money.refundPercentage;
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card
@@ -1507,30 +1660,46 @@ async function performBookingCancellation(
     // cancellation fee than one who underpaid, which is worse.
     let creditRestoredCents = 0;
     if (payment.creditAppliedCents > 0) {
-      const { creditRestoredCents: creditToRestore } = calculateAppliedCreditRestore(
-        payment.creditAppliedCents,
-        refundableBaseCents,
-        days,
-        policy,
-      );
       // #3369: see above -- no member, no ledger, nothing to restore.
-      const restoreMemberId = bookingOwner(fresh).memberId;
       creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(
             restoreMemberId,
             bookingId,
             tx,
-            creditToRestore,
+            money.creditToRestoreCents,
           )
         : 0;
     }
-
-    const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-      refundableBaseCents,
-      days,
-      policy,
-      refundMethod
-    );
+    // The restore caps itself at the applied rows, which the helper predicted;
+    // were they ever to differ, the ledger records what was actually restored.
+    let ledgerKeptCents = money.ledgerKeptCents;
+    if (creditRestoredCents !== money.creditRestoredCents) {
+      logger.warn(
+        { bookingId, predicted: money.creditRestoredCents, restored: creditRestoredCents },
+        "Booking ledger: a cancellation restored a different amount of credit than predicted; the kept figure follows the restore (#3611)",
+      );
+      ledgerKeptCents = cancellationKeptCents({
+        retainedAmountCents: money.retainedAmountCents,
+        appliedCreditCents,
+        creditRestoredCents,
+      });
+    }
+    // Review D1: money the policy never tiered (paid above price, applied rows the
+    // mirror does not count) lands in the ledger's figure too. Said out loud, and
+    // frozen below, so it is never mistaken for a cancellation fee.
+    if (ledgerKeptCents !== money.policyKeptCents) {
+      logger.warn(
+        {
+          bookingId,
+          ledgerKeptCents,
+          policyKeptCents: money.policyKeptCents,
+          paidAboveRefundableCents: money.paidAboveRefundableCents,
+          appliedCreditBeyondMirrorCents: money.appliedCreditBeyondMirrorCents,
+          appliedCreditAboveRefundableCents: money.appliedCreditAboveRefundableCents,
+        },
+        "Booking ledger: a cancellation keeps money beyond what its policy keeps; the retained line says so (#3611)",
+      );
+    }
     const shouldFailAdditionalPayment =
       hasOutstandingAdditionalPaymentIntent(payment);
 
@@ -1614,9 +1783,68 @@ async function performBookingCancellation(
     // minting credit alongside a cash payout is a double refund. The policy
     // MATH is unchanged — refundMethod is already coerced to "credit" for an
     // internet-banking payment above, which is the owner-decided tier (28 Jul).
-    const manualDisposition = Boolean(payment.manuallyMarkedPaidAt);
+    // #3653: the organiser child's debt, written with the claim, clamped to
+    // what the combined payment and the child still hold. Nothing is returned
+    // when that payment no longer holds money, and the cancel says so.
+    //
+    // The debt shares its key with the organiser's own cancellation of the
+    // group. A debt already under that key was written by the group's
+    // cancellation, which tiered and owes this child's refund; the joiner's
+    // cancel landing behind it refunds nothing more of its own (the base above
+    // already nets that debt out) and reports the group's refund as the
+    // group's.
+    let organiserChildDebtId: string | null = null;
+    let groupCancellationRefundCents = 0;
+    let retainedAmountCents = money.retainedAmountCents;
+    if (organiserCard) {
+      const key = organiserCard.settlement
+        ? buildOrganiserChildCancellationRefundKey(organiserCard.settlement.id, bookingId)
+        : null;
+      const groupDebt = organiserCard.settlement
+        ? await findGroupCancellationChildDebt(tx, organiserCard.settlement.id, bookingId)
+        : null;
+      if (groupDebt) {
+        groupCancellationRefundCents = groupDebt.amountCents;
+        refundAmountCents = 0;
+      } else if (key && organiserCard.settlement && refundAmountCents > 0) {
+        const debt = await reserveOrganiserChildRefund(tx, {
+          key,
+          settlement: organiserCard.settlement,
+          childBookingId: bookingId,
+          childPayment: payment,
+          amountCents: refundAmountCents,
+          overCap: "clamp",
+        });
+        refundAmountCents = debt?.amountCents ?? 0;
+        organiserChildDebtId = debt?.id ?? null;
+      } else {
+        refundAmountCents = 0;
+      }
+      // F4 (review of #3870): a clamp, a payment that holds nothing, or the
+      // group's debt changes what this cancel returns, so every figure frozen
+      // from it - the event's retained and percentage, the ledger's kept - is
+      // re-derived from the FINAL amount, never the policy's first answer.
+      if (refundAmountCents !== money.refundAmountCents) {
+        retainedAmountCents = Math.max(paidAmountCents - refundAmountCents, 0);
+        refundPercentage =
+          refundableBaseCents > 0
+            ? Math.min(100, Math.round((refundAmountCents * 100) / refundableBaseCents))
+            : 0;
+        ledgerKeptCents = cancellationKeptCents({
+          retainedAmountCents,
+          appliedCreditCents,
+          creditRestoredCents,
+        });
+      }
+    }
+    const manualDisposition = !organiserCard && Boolean(payment.manuallyMarkedPaidAt);
+    const branch = paidCancellationBranch({
+      manualDisposition,
+      refundMethod,
+      refundAmountCents,
+    });
     let manualRefundTaskId: string | null = null;
-    if (manualDisposition && refundAmountCents > 0) {
+    if (branch === "manual") {
       const task = await tx.manualRefundTask.create({
         data: {
           bookingId,
@@ -1636,7 +1864,7 @@ async function performBookingCancellation(
         select: { id: true },
       });
       manualRefundTaskId = task.id;
-    } else if (refundMethod === "credit" && refundAmountCents > 0) {
+    } else if (branch === "credit") {
       await applyLocalRefundAllocation({
         paymentId: payment.id,
         amountCents: refundAmountCents,
@@ -1676,7 +1904,7 @@ async function performBookingCancellation(
     // ledger dedupes on refund id.
     let cardRefundPlan: RefundAllocationSlice[] | null = null;
     let plannedCardRefundCents = 0;
-    if (refundMethod === "card" && refundAmountCents > 0) {
+    if (refundMethod === "card" && refundAmountCents > 0 && !organiserCard) {
       const { slices, plannedAmountCents } = await planStripeRefundAllocation({
         paymentId: payment.id,
         amountCents: refundAmountCents,
@@ -1694,6 +1922,18 @@ async function performBookingCancellation(
         });
       }
     }
+
+    // #3611: the stay is taken back and what the policy keeps posts as one
+    // CANCELLATION_FEE, from the figures frozen above — under the lock(1) this
+    // claim took first, in this transaction (design §5.1).
+    await postCancellationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: fresh.lodgeId,
+      keptCents: ledgerKeptCents,
+      policyKeptCents: money.policyKeptCents,
+      site: "booking-cancel:paid",
+    });
 
     // #2576 §6. Cancellation is the first change class the owner names, and it
     // is the one that removes attendance outright: cancelling the booking a
@@ -1716,22 +1956,52 @@ async function performBookingCancellation(
       }),
     });
 
+    // #3639: the CANCELLED event and its policy snapshot commit WITH the claim.
+    // The snapshot is the decision record the Stripe webhook reads before it
+    // refunds a late notice (`INV-PAY-106`); written after commit, a notice
+    // landing in the gap — or after a failed write — found no decision and
+    // refunded money a 0%-tier cancel had kept. See `writePaidCancellationEvent`.
+    await writePaidCancellationEvent(tx, {
+      bookingId,
+      actorMemberId: sessionUserId,
+      branch,
+      days,
+      refundPercentage,
+      refundAmountCents, paidAmountCents,
+      tier: { refundMethod, refundableBaseCents }, // #3835: what the tier ran on
+      changeFeeCents: payment.changeFeeCents,
+      retainedAmountCents,
+      ledger: {
+        keptCents: ledgerKeptCents,
+        policyKeptCents: money.policyKeptCents,
+        keptBeyondPolicyCents: ledgerKeptCents - money.policyKeptCents,
+        appliedCreditCents,
+        creditRestoredCents,
+        appliedCreditBaseCents: money.appliedCreditBaseCents,
+      },
+    });
+
     return {
       claimed: true as const,
-      fresh,
+      fresh: { ...fresh, payment }, // #3793: the audit records the locked re-read
       payment,
       creditRestoredCents,
       refundAmountCents,
       refundPercentage,
       refundableBaseCents,
-      paidAmountCents,
       days,
       shouldFailAdditionalPayment,
       cardRefundPlan,
       plannedCardRefundCents,
-      manualDisposition,
       manualRefundTaskId,
+      clearingOperationId,
+      branch,
+      organiserChildDebtId,
+      groupCancellationRefundCents,
     };
+  }).catch((err: unknown) => {
+    if (err instanceof PartPaymentChangedError) return { claimed: false as const };
+    throw err;
   });
 
   // Loser contract: a concurrent cancel / retry that failed to claim gets a
@@ -1751,13 +2021,15 @@ async function performBookingCancellation(
     refundAmountCents,
     refundPercentage,
     refundableBaseCents,
-    paidAmountCents,
     days,
     shouldFailAdditionalPayment,
     cardRefundPlan,
     plannedCardRefundCents,
-    manualDisposition,
     manualRefundTaskId,
+    clearingOperationId,
+    branch,
+    organiserChildDebtId,
+    groupCancellationRefundCents,
   } = claim;
   const paymentId = payment.id;
 
@@ -1767,6 +2039,9 @@ async function performBookingCancellation(
       "Restored previously applied credit on cancellation"
     );
   }
+
+  // #3643: the unpaid rest's clearing note was queued in the claim; kick it.
+  await kickClearingNoteForUnpaidRest(bookingId, clearingOperationId);
 
   // ── Phase 2 — external work, AFTER tx1 committed ──────────────────
   // The claim already stands; no failure below may abort it.
@@ -1803,7 +2078,7 @@ async function performBookingCancellation(
   // The durable ManualRefundTask committed in tx1. Nothing here touches Xero
   // (this feature never does), nothing mints member credit, and no Stripe
   // refund is planned — a cash settlement has no card slice to plan against.
-  if (manualDisposition && refundAmountCents > 0) {
+  if (branch === "manual") {
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
@@ -1812,8 +2087,8 @@ async function performBookingCancellation(
       sessionUserId,
       details:
         payment.changeFeeCents > 0
-          ? `Manual refund task for ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
-          : `Manual refund task for ${refundPercentage}% = ${refundAmountCents} cents`,
+          ? `Manual refund task for ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)}`
+          : `Manual refund task for ${refundPercentage}% = ${formatCents(refundAmountCents, format)}`,
       ipAddress,
       metadata: {
         refundMethod: "manual",
@@ -1825,17 +2100,6 @@ async function performBookingCancellation(
         manualRefundTaskId,
         ...notifyAuditFields,
       },
-    });
-
-    await recordCancellationEvent({
-      bookingId,
-      actorMemberId: sessionUserId,
-      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% refund under the policy in effect at the time, to be paid back by the club by hand (cash / off-Xero settlement).`,
-      refundMethod: "manual",
-      refundPercentage,
-      paidAmountCents,
-      settledAmountCents: refundAmountCents,
-      changeFeeCents: payment.changeFeeCents,
     });
 
     // Deliberately NO BookingEventType.REFUNDED here: nothing has been refunded
@@ -1850,6 +2114,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
+        format,
         "manual",
         creditRestoredCents,
         fresh.lodgeId
@@ -1866,14 +2131,14 @@ async function performBookingCancellation(
       refundAmountCents,
       bookingId,
       reason: `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId, manualRefundTaskId },
         "Failed to alert admins about a manual refund task"
       )
     );
 
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after manual-refund cancellation"));
 
     return {
@@ -1885,13 +2150,13 @@ async function performBookingCancellation(
         refundMethod: "manual",
         creditRestoredCents: creditRestoredCents || undefined,
         manualRefundTaskId: manualRefundTaskId ?? undefined,
-        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents)} has been raised for an admin to pay back by hand.`,
+        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents, format)} has been raised for an admin to pay back by hand.`,
       },
     };
   }
 
   // ── Credit branch: ledger writes already happened in tx1 ──────────
-  if (refundMethod === "credit" && refundAmountCents > 0) {
+  if (branch === "credit") {
     try {
       const queuedCreditNote = await enqueueXeroAccountCreditNoteOperation(
         paymentId,
@@ -1923,8 +2188,8 @@ async function performBookingCancellation(
       bookingId,
       sessionUserId,
       details: payment.changeFeeCents > 0
-        ? `Credit ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents as account credit`
-        : `Credit ${refundPercentage}% = ${refundAmountCents} cents as account credit`,
+        ? `Credit ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)} as account credit`
+        : `Credit ${refundPercentage}% = ${formatCents(refundAmountCents, format)} as account credit`,
       ipAddress,
       metadata: {
         refundMethod: "credit",
@@ -1937,19 +2202,6 @@ async function performBookingCancellation(
       },
     });
 
-    // CANCELLED (post-payment) — the CREDITED settlement event is written by
-    // createCancellationCredit (member-credit.ts) inside tx1.
-    await recordCancellationEvent({
-      bookingId,
-      actorMemberId: sessionUserId,
-      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% credit refund under the policy in effect at the time.`,
-      refundMethod: "credit",
-      refundPercentage,
-      paidAmountCents,
-      settledAmountCents: refundAmountCents,
-      changeFeeCents: payment.changeFeeCents,
-    });
-
     if (notifyMember) {
       sendBookingCancelledEmail(
         { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
@@ -1958,6 +2210,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
+        format,
         "credit",
         creditRestoredCents,
         fresh.lodgeId
@@ -1965,7 +2218,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after credit cancellation"));
 
     return {
@@ -1977,13 +2230,67 @@ async function performBookingCancellation(
         refundMethod: "credit",
         creditAmountCents: refundAmountCents,
         creditRestoredCents: creditRestoredCents || undefined,
-        message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents)} added to your account.`,
+        message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents, format)} added to your account.`,
+      },
+    };
+  }
+
+  // ── #3653: a joiner's booking the organiser paid for by card ───────
+  // The debt committed with the claim; its executor makes the refund out of the
+  // combined payment and records it - refund row, mirror, Xero note, REFUNDED
+  // event - only once Stripe has answered. A failure leaves it owed for the
+  // recovery runner, which alerts on exhaustion.
+  if (branch === "card" && organiserChildDebtId) {
+    await runPaymentRecoveryOperationNow(organiserChildDebtId, format);
+    await cleanupPromoRedemption(bookingId);
+    logBookingCancellationAudit({
+      booking: fresh,
+      bookingId,
+      sessionUserId,
+      details: `Refund ${refundPercentage}% = ${formatCents(refundAmountCents, format)} to the group organiser's card, who paid for this booking`,
+      ipAddress,
+      metadata: {
+        refundMethod: "card",
+        refundTo: "organiser",
+        refundAmountCents,
+        refundPercentage,
+        refundableBaseCents,
+        changeFeeCents: payment.changeFeeCents,
+        creditRestoredCents,
+        ...notifyAuditFields,
+      },
+    });
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
+        refundAmountCents,
+        format,
+        "card",
+        creditRestoredCents,
+        fresh.lodgeId
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    }
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
+      .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after organiser-card cancellation"));
+    return {
+      status: 200,
+      data: {
+        success: true,
+        refundAmountCents,
+        refundPercentage,
+        refundMethod: "card",
+        creditRestoredCents: creditRestoredCents || undefined,
+        message: `Booking cancelled. The group organiser paid for this booking, so ${formatCents(refundAmountCents, format)} (${refundPercentage}%) is being refunded to the organiser's card.`,
       },
     };
   }
 
   // ── Card branch: Stripe refund ────────────────────────────────────
-  if (refundAmountCents > 0) {
+  if (branch === "card") {
     let stripeRefundId: string | undefined;
 
     // The refund debt was persisted INSIDE the claim transaction (F2, #1349):
@@ -2003,6 +2310,7 @@ async function performBookingCancellation(
     if (cardRefundPlan && plannedCardRefundCents > 0) {
       try {
         const refundResult = await refundPaymentTransactions({
+          format,
           paymentId,
           amountCents: plannedCardRefundCents,
           allocation: cardRefundPlan,
@@ -2088,8 +2396,8 @@ async function performBookingCancellation(
       bookingId,
       sessionUserId,
       details: payment.changeFeeCents > 0
-        ? `Refund ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
-        : `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
+        ? `Refund ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)}`
+        : `Refund ${refundPercentage}% = ${formatCents(refundAmountCents, format)}`,
       ipAddress,
       metadata: {
         refundMethod: "card",
@@ -2103,16 +2411,6 @@ async function performBookingCancellation(
       },
     });
 
-    await recordCancellationEvent({
-      bookingId,
-      actorMemberId: sessionUserId,
-      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% card refund under the policy in effect at the time.`,
-      refundMethod: "card",
-      refundPercentage,
-      paidAmountCents,
-      settledAmountCents: refundAmountCents,
-      changeFeeCents: payment.changeFeeCents,
-    });
     await recordBookingEvent({
       bookingId,
       type: BookingEventType.REFUNDED,
@@ -2129,6 +2427,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -2136,7 +2435,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after card refund cancellation"));
 
     return {
@@ -2148,7 +2447,7 @@ async function performBookingCancellation(
         refundMethod: "card",
         creditRestoredCents: creditRestoredCents || undefined,
         stripeRefundId,
-        message: `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents)} processed.`,
+        message: `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents, format)} processed.`,
       },
     };
   }
@@ -2158,31 +2457,29 @@ async function performBookingCancellation(
   // tx1, so there is no money movement left here — only the narrative work.
   await cleanupPromoRedemption(bookingId);
 
+  // #3653 (F4): the group's cancellation already owes this child's refund to
+  // the organiser's card; this cancel adds none of its own, and says whose it is.
+  const groupRefundNote =
+    groupCancellationRefundCents > 0 ? groupCancellationRefundNote(groupCancellationRefundCents, format) : null;
   logBookingCancellationAudit({
     booking: fresh,
     bookingId,
     sessionUserId,
-    details: "No refund per cancellation policy",
+    details: groupRefundNote
+      ? `No refund of its own: ${groupRefundNote}`
+      : "No refund per cancellation policy",
     ipAddress,
     metadata: {
       refundAmountCents: 0,
       refundPercentage,
       refundMethod: "card",
+      ...(groupRefundNote
+        ? { refundTo: "organiser", groupCancellationRefundCents }
+        : {}),
       creditRestoredCents,
       failedOutstandingAdditionalPayment: shouldFailAdditionalPayment,
       ...notifyAuditFields,
     },
-  });
-
-  await recordCancellationEvent({
-    bookingId,
-    actorMemberId: sessionUserId,
-    policySummary: `Cancelled ${days} day(s) before check-in: no refund was due under the policy in effect at the time.`,
-    refundMethod: "card",
-    refundPercentage,
-    paidAmountCents,
-    settledAmountCents: 0,
-    changeFeeCents: payment.changeFeeCents,
   });
 
   if (notifyMember) {
@@ -2193,6 +2490,7 @@ async function performBookingCancellation(
       fresh.checkIn,
       fresh.checkOut,
       0,
+      format,
       "card",
       creditRestoredCents,
       fresh.lodgeId
@@ -2200,7 +2498,7 @@ async function performBookingCancellation(
   }
 
   // Trigger waitlist processing for freed dates
-  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
     .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after no-refund cancellation"));
 
   return {
@@ -2211,8 +2509,9 @@ async function performBookingCancellation(
       refundPercentage: 0,
       refundMethod: "card",
       creditRestoredCents: creditRestoredCents || undefined,
-      message:
-        "Booking cancelled. No refund applicable per cancellation policy.",
+      message: groupRefundNote
+        ? `Booking cancelled. ${groupRefundNote}`
+        : "Booking cancelled. No refund applicable per cancellation policy.",
     },
   };
 }
@@ -2319,44 +2618,6 @@ function logBookingCancellationAudit({
   }
 }
 
-/**
- * Write the durable CANCELLED BookingEvent (issue #740). For a cancellation
- * after a captured payment, the policy snapshot + settled/retained amounts are
- * frozen here so the narrative can be rebuilt exactly later, even after the
- * AuditLog has been retention-pruned. Pre-payment cancellations carry no
- * snapshot. Call after the cancellation has committed.
- */
-async function recordCancellationEvent(params: {
-  bookingId: string;
-  actorMemberId: string;
-  policySummary: string;
-  refundMethod: "card" | "credit" | "manual";
-  refundPercentage: number;
-  paidAmountCents: number;
-  settledAmountCents: number;
-  changeFeeCents: number;
-}): Promise<void> {
-  const retainedAmountCents = Math.max(
-    params.paidAmountCents - params.settledAmountCents,
-    0
-  );
-  await recordBookingEvent({
-    bookingId: params.bookingId,
-    type: BookingEventType.CANCELLED,
-    actorMemberId: params.actorMemberId,
-    amountCents: params.paidAmountCents,
-    snapshot: {
-      policySummary: params.policySummary,
-      refundMethod: params.refundMethod,
-      refundPercentage: params.refundPercentage,
-      paidAmountCents: params.paidAmountCents,
-      settledAmountCents: params.settledAmountCents,
-      retainedAmountCents,
-      changeFeeCents: params.changeFeeCents,
-    },
-  });
-}
-
 // #1491: paid-cancel-path eligibility, shared with the cancel-preview route
 // so the preview can never contradict the executed money outcome. A
 // PARTIALLY_REFUNDED payment is eligible only on LEDGER evidence (a captured
@@ -2364,10 +2625,25 @@ async function recordCancellationEvent(params: {
 // path's refund executors allocate against ledger rows: a mirror-only legacy
 // payment would claim and then throw (credit method) or plan zero slices
 // (card method). Mirror-only rows stay in the preserve branch (#1473).
+//
+// #3653 (`INV-PAY-114`): it takes the BOOKING, not the payment, because one
+// population's captured value lives in no transaction row. A joiner's booking
+// the organiser paid for by card has a mirror the settle path wrote from the
+// group's combined payment, and the organiser child refund executor writes its
+// refunds straight onto that mirror. After a reduction it is
+// PARTIALLY_REFUNDED with no ledger row at all, and the remaining money is
+// real: it sits in the organiser's payment. Such a child is captured for this
+// gate; the paid path then refunds through `organiserChildCancelBasis`, which
+// sizes from the organiser's payment and plans nothing when it holds nothing.
 export async function paymentEligibleForPaidCancelPath(
-  payment: { id: string; status: string } | null | undefined,
+  booking: {
+    organiserSettled: boolean;
+    parentBookingId: string | null;
+    payment: { id: string; status: string; source: string } | null | undefined;
+  },
   db: Prisma.TransactionClient | typeof prisma = prisma
 ) {
+  const payment = booking.payment;
   if (!payment) {
     return false;
   }
@@ -2377,11 +2653,14 @@ export async function paymentEligibleForPaidCancelPath(
   if (payment.status !== "PARTIALLY_REFUNDED") {
     return false;
   }
+  if (paidByOrganiserCard({ ...booking, payment })) {
+    return true;
+  }
   const capturedTransaction = await db.paymentTransaction.findFirst({
     where: {
       paymentId: payment.id,
       status: {
-        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+        in: [...CAPTURED_TRANSACTION_STATUS_LIST],
       },
     },
     select: { id: true },
@@ -2391,15 +2670,11 @@ export async function paymentEligibleForPaidCancelPath(
 
 // #1473/#1491: capture evidence for cancel-time decisions. Ledger truth
 // first — any transaction row that holds/held money — because the aggregate
-// mirror lies in both directions: the inbound reconcile folds invoice-applied
-// modification credit notes into refundedAmountCents/PARTIALLY_REFUNDED on
-// never-captured IB payments (pure bookkeeping, zero cash), and the pre-#1473
-// cancel flow used to flatten captured statuses to FAILED. For STRIPE rows
-// with no ledger rows (pre-ledger data) the refund mirror IS trustworthy:
-// Stripe refunds require a captured charge, and the invoice-side fold cannot
-// reach an uncaptured Stripe booking (its Xero invoice is only issued
-// at/after capture).
-async function paymentHasCaptureEvidence(
+// mirror lies in both directions (the invoice-side fold on never-captured IB
+// payments, and the pre-#1473 cancel flow flattening captured statuses to
+// FAILED); then the pre-ledger STRIPE mirror, whose one home is
+// `stripeRefundMirrorShowsCapture`.
+export async function paymentHasCaptureEvidence(
   payment: {
     id: string;
     source: string;
@@ -2412,18 +2687,12 @@ async function paymentHasCaptureEvidence(
     where: {
       paymentId: payment.id,
       status: {
-        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+        in: [...CAPTURED_TRANSACTION_STATUS_LIST],
       },
     },
     select: { id: true },
   });
-  return Boolean(
-    capturedTransaction ||
-      (payment.source === "STRIPE" &&
-        (payment.status === "REFUNDED" ||
-          payment.status === "PARTIALLY_REFUNDED" ||
-          payment.refundedAmountCents > 0))
-  );
+  return Boolean(capturedTransaction) || stripeRefundMirrorShowsCapture(payment);
 }
 
 // #1547: every cancel branch that restores applied credit appends this line to
@@ -2432,10 +2701,11 @@ async function paymentHasCaptureEvidence(
 // sentence renders the club's configured currency (#3325).
 function appendReturnedCreditSentence(
   reason: string,
-  creditRestoredCents: number
+  creditRestoredCents: number,
+  format: ClubFormat,
 ): string {
   return creditRestoredCents > 0
-    ? `${reason} ${formatCents(creditRestoredCents)} of applied account credit was returned.`
+    ? `${reason} ${formatCents(creditRestoredCents, format)} of applied account credit was returned.`
     : reason;
 }
 
@@ -2478,8 +2748,23 @@ async function cancelOutstandingPaymentIntents({
 
   for (const paymentIntentId of paymentIntentIds) {
     try {
-      await cancelPaymentIntentIfCancellable(paymentIntentId);
-      await markPaymentIntentTransactionFailed({ paymentIntentId });
+      // #3638: the local row is marked FAILED only when Stripe confirms the
+      // intent is dead. An intent Stripe will not cancel has usually just
+      // succeeded with the webhook still in flight; writing FAILED over it
+      // was a lie the webhook then had to overwrite (booking-delete refuses
+      // the same write for the same reason). The row is left for the
+      // webhook's cancelled-booking late-capture handler, which records the
+      // capture and refunds it in full.
+      const result =
+        await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
+      if (isPaymentIntentCancelConfirmed(result)) {
+        await markPaymentIntentTransactionFailed({ paymentIntentId });
+      } else {
+        logger.warn(
+          { paymentIntentId, status: result.paymentIntent.status },
+          "Cancelled booking: Stripe would not cancel the PaymentIntent, so its row is left for the late-capture handler (#3638)"
+        );
+      }
     } catch (err) {
       logger.error(
         { err, paymentIntentId },

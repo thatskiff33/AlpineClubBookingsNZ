@@ -18,6 +18,7 @@ import {
   sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
   #3340 scope item 6 — THE CENSUS GUARD.
@@ -384,7 +385,7 @@ describe("INV-PAY-047: every live booking's money balances", () => {
         label: scenario.label,
         row,
         residualCents: residual,
-      });
+      }, CLUB_FORMAT_TEST);
 
       // The headline assertion: NOTHING built by the production sizing rule may
       // leave money the price says is owed that no ask is collecting.
@@ -413,9 +414,10 @@ describe("INV-PAY-047: every live booking's money balances", () => {
       label: "a seeded mis-sized booking",
       row: misSized,
       residualCents: residual,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(message).toContain("INV-PAY-047");
-    expect(message).toContain("Residual 7000 cents");
+    // #3533: the sentence states the amount, not the storage form.
+    expect(message).toContain("Residual $70.00");
     expect(message).toContain("the uncollected ask");
     expect(message).toContain("change fees");
   });
@@ -497,8 +499,8 @@ const ASK_MINTING_DOORS: readonly {
      * is the same rule, and it now folds in the unpaid balance of the ask its
      * mint is about to retire exactly as the other four do.
      */
-    door: "src/lib/edit-financial-review-charge.ts",
-    sizedIn: "src/lib/edit-financial-review-charge.ts",
+    door: "src/lib/edit-financial-review-charge-sync.ts",
+    sizedIn: "src/lib/edit-financial-review-charge-sync.ts",
     reachedBy: "sizeReviewChargeAsk",
     builtWith: "sizeReviewChargeAsk",
   },

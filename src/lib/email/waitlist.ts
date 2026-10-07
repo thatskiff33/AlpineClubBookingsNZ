@@ -13,6 +13,7 @@ import {
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- Waitlist emails ----
 
@@ -70,6 +71,7 @@ export async function sendWaitlistOfferEmail(
   // reprice for same-lodge offers, or the offered lodge's quote for a
   // cross-lodge offer.
   priceCents: number,
+  format: ClubFormat,
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   // A cross-lodge offer passes the OFFERED lodge here so the message
   // carries that lodge's identity.
@@ -96,6 +98,7 @@ export async function sendWaitlistOfferEmail(
       expiresAt,
       bookingId,
       priceCents,
+      format,
       crossLodgeOffer,
       subscriptionMemberRateNotice,
     )),
@@ -110,7 +113,7 @@ export async function sendWaitlistOfferEmail(
       checkOut: emailCalendarDay(checkOut),
       guestCount,
       // The price the member pays on confirmation (repriced at offer time, #1035).
-      price: formatMoneyCents(priceCents),
+      price: formatMoneyCents(priceCents, format),
       expiresAt: emailClubDateTime(expiresAt),
       bookingId,
       ...(crossLodgeOffer

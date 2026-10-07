@@ -11,12 +11,17 @@ import {
 } from "@/lib/xero-sync";
 import {
   getXeroOperationRetryMeta,
+  refuseRetryIfResolvedInXero,
+  retryAbandonedItsClaim,
   retryXeroSyncOperation,
+  XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
-
-// test seam
-export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
+import type { ClubFormat } from "@/lib/club-format";
+import { STALE_RUNNING_XERO_OPERATION_MINUTES } from "@/lib/xero-stale-operations";
+import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
+import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
 // Operation IDs are cuids, so the key stays well under the idempotency-key
@@ -73,7 +78,7 @@ async function claimQueuedRetryOperation(operationId: string) {
   // precondition the resulting WHERE is identical to the pre-consolidation
   // inline claim.
   return claimXeroSyncOperationToRunning(operationId, {
-    operationType: XERO_OPERATION_REQUEUE_TYPE,
+    operationType: XERO_REQUEUE_OPERATION_TYPE,
   });
 }
 
@@ -89,6 +94,9 @@ export async function enqueueXeroSyncOperationRetry(
     throw new XeroOperationRetryError("Xero operation not found.", 404);
   }
 
+  // #3635 (`INV-INT-025`): an operation an officer resolved in Xero is done,
+  // so the retry and requeue routes answer 409 rather than queue it.
+  refuseRetryIfResolvedInXero(operation);
   const retryMeta = getXeroOperationRetryMeta(operation);
   if (!retryMeta.supported) {
     throw new XeroOperationRetryError(
@@ -100,7 +108,7 @@ export async function enqueueXeroSyncOperationRetry(
   const existingQueuedRetry = await prisma.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
-      operationType: XERO_OPERATION_REQUEUE_TYPE,
+      operationType: XERO_REQUEUE_OPERATION_TYPE,
       status: {
         in: ["PENDING", "RUNNING"],
       },
@@ -120,7 +128,7 @@ export async function enqueueXeroSyncOperationRetry(
   const queuedOperation = await startXeroSyncOperation({
     direction: operation.direction,
     entityType: operation.entityType,
-    operationType: XERO_OPERATION_REQUEUE_TYPE,
+    operationType: XERO_REQUEUE_OPERATION_TYPE,
     localModel: operation.localModel ?? undefined,
     localId: operation.localId ?? undefined,
     status: "PENDING",
@@ -165,14 +173,16 @@ export interface ProcessQueuedXeroOperationRetriesResult {
   skipped: number;
 }
 
-export async function processQueuedXeroOperationRetries(options?: {
-  limit?: number;
-}): Promise<ProcessQueuedXeroOperationRetriesResult> {
+export async function processQueuedXeroOperationRetries(
+  options: { limit?: number } | undefined,
+  /** The club's format (#3565), resolved once by the caller — never per queued row. */
+  format: ClubFormat,
+): Promise<ProcessQueuedXeroOperationRetriesResult> {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.xeroSyncOperation.findMany({
     where: {
       status: "PENDING",
-      operationType: XERO_OPERATION_REQUEUE_TYPE,
+      operationType: XERO_REQUEUE_OPERATION_TYPE,
     },
     orderBy: {
       createdAt: "asc",
@@ -210,8 +220,9 @@ export async function processQueuedXeroOperationRetries(options?: {
     }
 
     try {
-      const replayResult = await retryXeroSyncOperation(originalOperationId, {
+      const replayResult = await retryXeroSyncOperation(originalOperationId, format, {
         createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+        requeueOperationId: queuedOperation.id,
       });
 
       await completeXeroSyncOperation(queuedOperation.id, {
@@ -224,6 +235,37 @@ export async function processQueuedXeroOperationRetries(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (error instanceof XeroOperationResolvedInXeroError) {
+        // #3635 (`INV-INT-025`): a retry queued before an officer resolved the
+        // operation in Xero. `retryXeroSyncOperation` re-read the row and
+        // refused it, so nothing ran; the queued row is closed as skipped, not
+        // failed, because nothing went wrong and nothing is left to do.
+        // Recorded as what this retry SAW (review N6): the mark it read may
+        // have been withdrawn afterwards, because this very retry was running
+        // when the resolve checked - in which case the operation is unresolved
+        // and nothing ran.
+        await completeXeroSyncOperation(queuedOperation.id, {
+          status: "CANCELLED",
+          responsePayload: {
+            originalOperationId,
+            skipped: "resolved-in-xero",
+            reason: error.message,
+            note: "Nothing ran. The operation read as resolved in Xero when this retry started; if that mark was then withdrawn because this retry was running, the operation is unresolved and can be retried or resolved again.",
+          },
+        });
+        result.skipped += 1;
+        continue;
+      }
+      if (error instanceof XeroRefundCreditNoteInFlightError) {
+        // #3880: another refund note on this payment is mid-raise. Nothing ran,
+        // so this retry waits its turn in PENDING, reason kept, as the outbox does.
+        await prisma.xeroSyncOperation.updateMany({
+          where: { id: queuedOperation.id, status: "RUNNING" },
+          data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: error.message },
+        });
+        result.skipped += 1;
+        continue;
+      }
       logger.error(
         {
           err: error,
@@ -232,10 +274,52 @@ export async function processQueuedXeroOperationRetries(options?: {
         },
         "Failed queued Xero operation retry"
       );
-      await failXeroSyncOperation(queuedOperation.id, error);
+      await failXeroSyncOperation(queuedOperation.id, error, undefined, {
+        lastErrorMessage: await describeQueuedRetryFailure(originalOperationId, error),
+      });
       result.failed += 1;
     }
   }
 
   return result;
+}
+
+/**
+ * #3462: what the REQUEUE row's failure says. The REQUEUE row is never
+ * replayable itself (replaying a replay compounds the state), so its message
+ * has to send the operator to the row that IS: it names the original
+ * operation and reads that row's status AFTER the attempt, so it says where
+ * the original actually stands rather than where it should.
+ */
+async function describeQueuedRetryFailure(
+  originalOperationId: string,
+  error: unknown,
+): Promise<string> {
+  const cause = xeroSyncErrorText(error).replace(/\.\s*$/, "");
+  const original = await prisma.xeroSyncOperation
+    .findUnique({
+      where: { id: originalOperationId },
+      select: { status: true, entityType: true, operationType: true },
+    })
+    .catch(() => null);
+  const head = `Retry of Xero operation ${originalOperationId}${
+    original ? ` (${original.entityType} ${original.operationType})` : ""
+  } failed: ${cause}.`;
+  if (!original) {
+    return `${head} The original operation could not be read; find it in the operations list before requeueing.`;
+  }
+  if (original.status === "FAILED") {
+    // "Back to FAILED" only when this retry claimed the original and its
+    // abandon really returned it; otherwise the original never moved.
+    return retryAbandonedItsClaim(error)
+      ? `${head} The original operation is back to FAILED — fix the cause and requeue it again.`
+      : `${head} The original operation is FAILED; fix the cause, then requeue it.`;
+  }
+  if (original.status === "PARTIAL") {
+    return `${head} The original operation is still PARTIAL — fix the cause and requeue it again.`;
+  }
+  if (original.status === "RUNNING") {
+    return `${head} The original operation is still RUNNING; if it stays RUNNING past ${STALE_RUNNING_XERO_OPERATION_MINUTES} minutes, use Mark failed on it, fix the cause and requeue it again.`;
+  }
+  return `${head} The original operation is now ${original.status}.`;
 }

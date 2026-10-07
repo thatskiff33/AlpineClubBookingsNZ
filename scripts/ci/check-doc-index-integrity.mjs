@@ -41,7 +41,7 @@
  *    decode replaces one with U+FFFD before every other check here sees it,
  *    so it needs the raw buffer. See {@link findInvalidUtf8Bytes}.
  *
- *   npm run docs:indexcheck                       # check, non-zero on any problem
+ *   pnpm run docs:indexcheck                       # check, non-zero on any problem
  *   node scripts/ci/check-doc-index-integrity.mjs  # same
  *
  * ## The `INV-` namespace was already occupied
@@ -75,7 +75,7 @@
  * the common case.
  *
  * Anchor-style citations (`…#inv-cap-021`) are deliberately not handled here.
- * `npm run docs:linkcheck` already validates fragments against real headings, and
+ * `pnpm run docs:linkcheck` already validates fragments against real headings, and
  * duplicating it would give two places to disagree.
  */
 import { execFileSync, spawnSync } from "node:child_process";
@@ -180,13 +180,12 @@ export const CITATION_EXEMPT_FILES = new Set([
  * The repository's front doors, for the reachability walk.
  *
  * `docs/README.md` is the documentation hub named by the house rule ("every doc
- * must be reachable from a hub"); the other four are the entry points a reader
+ * must be reachable from a hub"); the other three are the entry points a reader
  * or an agent actually starts from, and each links into `docs/` directly.
  */
 export const REACHABILITY_ROOTS = [
   "README.md",
   "AGENTS.md",
-  "CLAUDE.md",
   "CONTRIBUTING.md",
   "docs/README.md",
 ];
@@ -1535,8 +1534,8 @@ export function auditIndexRows(files) {
  * restated the same facts seven times. Two budgets make the rule mechanical:
  *
  *  - an index row's description is at most {@link INDEX_ROW_WORD_CAP} words —
- *    the cap `SCHEME.md` §5.2 states, and the reason the index still fits the
- *    always-read core; it has no exceptions and no ratchet;
+ *    the cap `SCHEME.md` §5.2 states, which keeps each grep hit a complete,
+ *    scannable line; it has no exceptions and no ratchet;
  *  - an invariant entry is at most {@link INVARIANT_ENTRY_WORD_BUDGET} words
  *    unless {@link WORD_BUDGET_REGISTER} carries an approved exception for it
  *    (its own fixed ceiling, the deciding issue and the reason it cannot be
@@ -1845,8 +1844,8 @@ export function auditWordBudgets(files) {
         problems.push(
           `${INVARIANT_INDEX}:${number} — the description for ${match[1]} is ${words} ` +
             `words; the cap is ${INDEX_ROW_WORD_CAP} (SCHEME.md §5.2), with no exceptions ` +
-            "and no ratchet. The index is the part of the invariants everybody reads in " +
-            "full, and the cap is what keeps it inside the always-read core. Say what " +
+            "and no ratchet. An agent finds a rule by grepping the index, and the cap keeps " +
+            "each row a complete, scannable line. Say what " +
             "the rule covers, not what it says; the entry itself holds the rule.",
         );
       }
@@ -2588,7 +2587,7 @@ export function findFilesHiddenFromTextScan(repoRoot) {
  * Scope is Markdown, because a doc is a page a reader reads: the assets beside
  * them (`docs/images/**`, the lobby-display HTML mockups, the Codex profile
  * TOMLs) are referenced from their own pages and are covered by
- * `npm run docs:linkcheck` instead.
+ * `pnpm run docs:linkcheck` instead.
  */
 export function auditDocReachability(files) {
   const markdown = new Set(

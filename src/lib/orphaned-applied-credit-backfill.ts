@@ -50,6 +50,7 @@ import {
 import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import { formatCents } from "@/lib/utils";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // The full client, not a nested TransactionClient: the heal path opens its own
 // per-booking $transaction, so it must not run inside another one.
@@ -225,6 +226,9 @@ export interface OrphanedAppliedCreditHealResult {
 export async function healOrphanedAppliedCredits(options?: {
   store?: BackfillStore;
 }): Promise<OrphanedAppliedCreditHealResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const store = options?.store ?? prisma;
   const { scanned, findings } = await findOrphanedAppliedCredits({ store });
   const healed: OrphanedAppliedCreditHealResult["healed"] = [];
@@ -283,7 +287,7 @@ export async function healOrphanedAppliedCredits(options?: {
           outcome: "success",
           summary: "Orphaned applied credit restored by backfill",
           // The club's configured currency, through the one formatter (#3325).
-          details: `Restored ${formatCents(restoredCents)} of applied account credit orphaned by a pre-#1547 cancellation`,
+          details: `Restored ${formatCents(restoredCents, format)} of applied account credit orphaned by a pre-#1547 cancellation`,
           metadata: { restoredCents, appliedRowCount: recheck.appliedRowCount },
         },
         tx

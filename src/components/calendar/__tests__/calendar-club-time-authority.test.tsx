@@ -32,6 +32,7 @@ import { CalendarView } from "../calendar-view";
 import { EventDialog } from "../event-dialog";
 import { MonthCalendar } from "../month-calendar";
 import { DayEventsDialog } from "../day-events-dialog";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * The events calendar reads the CLUB's timezone from `ClubTimeProvider`, and
@@ -95,7 +96,7 @@ afterEach(() => {
 });
 
 function renderInClubZone(ui: ReactElement, zone: ClubTimeZone) {
-  return render(<ClubTimeProvider zone={zone}>{ui}</ClubTimeProvider>);
+  return render(<ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{ui}</ClubTimeProvider>);
 }
 
 describe("CalendarView opens on the CLUB's month", () => {
@@ -107,7 +108,7 @@ describe("CalendarView opens on the CLUB's month", () => {
   beforeEach(() => {
     vi.setSystemTime(new Date(PINNED_NOW));
     const chosen = divergentClubZone((z) =>
-      formatClubMonthYear(startOfCalendarMonth(clubToday(z))),
+      formatClubMonthYear(startOfCalendarMonth(clubToday(z)), CLUB_FORMAT_TEST),
     );
     zone = chosen.zone;
     expectedHeading = chosen.expected;
@@ -227,7 +228,7 @@ describe("EventDialog reads and writes CLUB civil time", () => {
   it("heads the read-only view with the club's day and time", () => {
     const instant = requireInstant(EVENT_STARTS_AT);
     const { zone, expected, environmentAnswer, hostAnswer } = divergentClubZone(
-      (z) => formatClubInstantTime(instant, z),
+      (z) => formatClubInstantTime(instant, z, CLUB_FORMAT_TEST),
     );
     renderInClubZone(
       <EventDialog
@@ -325,7 +326,7 @@ describe("the grid and the day list time events in the club's zone", () => {
 
   it("labels a month-grid chip with the club's time", () => {
     const { zone, expected, environmentAnswer, hostAnswer } = divergentClubZone(
-      (z) => formatClubInstantTime(instant, z),
+      (z) => formatClubInstantTime(instant, z, CLUB_FORMAT_TEST),
     );
     const day = clubWallTimeOf(instant, zone).date;
     renderInClubZone(
@@ -346,7 +347,7 @@ describe("the grid and the day list time events in the club's zone", () => {
 
   it("labels a day-detail row with the club's time", () => {
     const { zone, expected, environmentAnswer, hostAnswer } = divergentClubZone(
-      (z) => formatClubInstantTime(instant, z),
+      (z) => formatClubInstantTime(instant, z, CLUB_FORMAT_TEST),
     );
     const day = clubWallTimeOf(instant, zone).date;
     renderInClubZone(

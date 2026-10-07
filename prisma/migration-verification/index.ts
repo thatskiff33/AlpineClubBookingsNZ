@@ -17,6 +17,11 @@ import addMemberParentPartnerExclusion from "./20260929010000_add_member_parent_
 import repairLocalMidnightDatesOfBirth from "./20260814010000_repair_local_midnight_dates_of_birth";
 import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_guest_copy";
 import relocaleProofExceptionRequestIdentities from "./20260930010000_relocale_proof_exception_request_identities";
+import addMemberSessionsRevokedAt from "./20261009010000_add_member_sessions_revoked_at";
+import backfillMemberSessionsRevokedAt from "./20261009020000_backfill_member_sessions_revoked_at";
+import dropPaymentRefundCurrencyDefault from "./20261012010000_drop_payment_refund_currency_default";
+import addSchoolTeacherHutLeaderPolicy from "./20261101010000_add_school_teacher_hut_leader_policy";
+import addPendingSchoolAdultCapacity from "./20261101020000_add_pending_school_adult_capacity";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -56,4 +61,9 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   backfillHistoricalAuditCategories,
   backfillSchoolBookingsToOrganisations,
   addMemberParentPartnerExclusion,
+  addMemberSessionsRevokedAt,
+  backfillMemberSessionsRevokedAt,
+  dropPaymentRefundCurrencyDefault,
+  addSchoolTeacherHutLeaderPolicy,
+  addPendingSchoolAdultCapacity,
 ];

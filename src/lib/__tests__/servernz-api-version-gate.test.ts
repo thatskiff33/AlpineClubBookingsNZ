@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #49, `INV-INT-025`: the version gate lives INSIDE `resolveConnection`, so no
+ * #49, `INV-INT-026`: the version gate lives INSIDE `resolveConnection`, so no
  * server-bound function in `servernz-api.ts` can reach the server past it, and
  * the only opt-out is the version call itself. This suite drives the REAL
  * module against a stubbed `fetch`, so "nothing was sent" means no fetch at

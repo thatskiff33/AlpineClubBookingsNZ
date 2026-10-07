@@ -19,8 +19,13 @@ import {
   type CalendarDate,
 } from "@/lib/club-time";
 import { addDaysDateOnly } from "@/lib/date-only";
+import { guestConsentStatus } from "@/lib/member-guest-consent";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
+import {
+  bookingGuestDietaryCreateData,
+  type BookingGuestDietaryWrite,
+} from "@/lib/member-dietary-booking-writes";
 import {
   type BookingGuestInput,
   BookingReviewJustificationRequiredError,
@@ -62,7 +67,13 @@ export function resolveAdminReviewFields(args: {
   adminReviewedAt: Date | null;
   blockForReview: boolean;
 } {
-  const flagged = requiresAdultSupervisionReview(args.guests);
+  // The planned party: a cross-family row carries its planned consent (#3770).
+  const flagged = requiresAdultSupervisionReview(
+    args.guests.map((guest) => ({
+      ageTier: guest.ageTier,
+      consentStatus: guestConsentStatus(guest),
+    })),
+  );
   if (!flagged) {
     return {
       requiresAdminReview: false,
@@ -156,12 +167,18 @@ export type PricedGuest = {
  * derived from the priced nights (min night, last night + 1 day); a guest with
  * no priced nights falls back to the booking range. Every guest — contiguous or
  * not — gets per-night rows so the data model is uniform.
+ *
+ * `dietary` is REQUIRED and index-aligned with `guests` (#3029, `INV-MOD-059`):
+ * what each new row carries, as `resolveBookingGuestDietary` decided it inside
+ * the caller's transaction. Required so a new create site cannot forget to seed,
+ * and opaque so this builder never holds the value itself.
  */
 export function buildGuestCreateData(
   guests: BookingGuestInput[],
   price: { guests: PricedGuest[] },
   checkIn: Date,
-  checkOut: Date
+  checkOut: Date,
+  dietary: readonly BookingGuestDietaryWrite[],
 ) {
   return guests.map((g, i) => {
     // #3167 (epic #2797) one level up from the per-night rule below: every call
@@ -204,6 +221,8 @@ export function buildGuestCreateData(
       // explicit nulls instead would write the same values through a different
       // code path for every booking the club has ever made, for no gain.
       ...(g.memberGuestConsent ?? {}),
+      // #3029: the stay's dietary/allergy snapshot, or no key at all.
+      ...bookingGuestDietaryCreateData(dietary[i]),
       nights: {
         create: nightDates.map((stayDate, k) => ({
           stayDate,

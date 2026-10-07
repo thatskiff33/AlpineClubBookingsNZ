@@ -67,7 +67,7 @@ describe("POST /api/bookings/[id]/cancel notify choice (issue #1705)", () => {
 
     expect(res.status).toBe(200);
     expect(h.cancelBooking).toHaveBeenCalledTimes(1);
-    const options = h.cancelBooking.mock.calls[0][5];
+    const options = h.cancelBooking.mock.calls[0][6];
     expect(options).toMatchObject({ notifyMember: false });
   });
 
@@ -76,7 +76,7 @@ describe("POST /api/bookings/[id]/cancel notify choice (issue #1705)", () => {
 
     expect(res.status).toBe(200);
     expect(h.cancelBooking).toHaveBeenCalledTimes(1);
-    const options = h.cancelBooking.mock.calls[0][5];
+    const options = h.cancelBooking.mock.calls[0][6];
     expect(options.notifyMember).toBeUndefined();
   });
 
@@ -102,8 +102,8 @@ describe("POST /api/bookings/[id]/cancel notify choice (issue #1705)", () => {
 
     expect(res.status).toBe(200);
     expect(h.cancelBooking).toHaveBeenCalledTimes(1);
-    expect(h.cancelBooking.mock.calls[0][4]).toBe("credit");
-    expect(h.cancelBooking.mock.calls[0][5].notifyMember).toBeUndefined();
+    expect(h.cancelBooking.mock.calls[0][5]).toBe("credit");
+    expect(h.cancelBooking.mock.calls[0][6].notifyMember).toBeUndefined();
   });
 
   it("rejects a non-boolean notifyMember with 400", async () => {
@@ -123,7 +123,7 @@ describe("POST /api/bookings/[id]/cancel notify choice (issue #1705)", () => {
 
     expect(res.status).toBe(200);
     expect(h.cancelBooking).toHaveBeenCalledTimes(1);
-    expect(h.cancelBooking.mock.calls[0][5]).toMatchObject({
+    expect(h.cancelBooking.mock.calls[0][6]).toMatchObject({
       enforceStartedStayBlock: true,
     });
   });
