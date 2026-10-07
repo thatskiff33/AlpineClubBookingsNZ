@@ -82,7 +82,7 @@ import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-alloc
 import { bookingOwner } from "@/lib/booking-owner";
 import { cancelRefundableBaseCents, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
-import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { postGroupCancelChildLedgerLines, postGroupSettlementRefundLedgerLine } from "@/lib/booking-ledger-group-settlement-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -107,7 +107,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import { deserializeRefundPlan, readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan, isMirrorRefundPlan, mirrorPlanRefundedCents } from "@/lib/group-settlement-refund-plan";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
@@ -330,10 +330,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // row must not say no payment was taken.
   let owedByChildId = new Map<string, number>();
   let totalRefundCents = 0;
-  const mirrorPlan =
-    settlement != null &&
-    readPerChildRefundPlan(settlement.refundPlan) === null &&
-    (settlement.refundPlan != null || !settlement.stripePaymentIntentId);
+  const mirrorPlan = settlement != null && isMirrorRefundPlan(settlement);
 
   if (settlement && mirrorPlan && settlement.refundPlan != null) {
     // A previous (crash-interrupted) run already computed + persisted the plan.
@@ -381,6 +378,8 @@ export async function settleGroupBookingOnOrganiserCancel(
   for (const cents of refundByChildId.values()) {
     totalRefundCents += cents;
   }
+  // #3854: the plan as frozen, which a failed card refund below does not clear.
+  const plannedMirrorRefunds = new Map(refundByChildId);
 
   // Refund + settlement flip, guarded on SUCCEEDED so it fires exactly once
   // across re-drives: the plan survives this flip, so a re-drive after the flip
@@ -541,23 +540,25 @@ export async function settleGroupBookingOnOrganiserCancel(
           previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },
         });
         await revokePaymentLinksForBooking(child.id, tx);
+        // #3854 F2: the payment re-read under lock(1) (an edit refund's completion takes it too), so the
+        // mirror never overwrites a refund paid since the load, nor the kept figure over-state by it.
+        const payment = child.payment
+          ? await tx.payment.findUniqueOrThrow({ where: { id: child.payment.id }, select: { id: true, status: true, amountCents: true, refundedAmountCents: true } })
+          : null;
         // #3653: a per-child refund's mirror and note are its executor's.
-        if (mirrorPlan && refundForChild > 0 && child.payment) {
+        if (mirrorPlan && refundForChild > 0 && payment) {
           // Ledger bypass is acceptable here: these organiser-settled child
           // payments have no PaymentTransaction rows (they were paid via the
           // combined settlement PI, not per-child intents), so there is no
           // ledger to post against — the per-child refundedAmountCents is the
           // record of record for these refunds.
-          const nextRefunded = Math.min(
-            child.payment.amountCents,
-            child.payment.refundedAmountCents + refundForChild
-          );
+          const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
           await tx.payment.update({
-            where: { id: child.payment.id },
+            where: { id: payment.id },
             data: {
               refundedAmountCents: nextRefunded,
               status:
-                nextRefunded >= child.payment.amountCents
+                nextRefunded >= payment.amountCents
                   ? PaymentStatus.REFUNDED
                   : PaymentStatus.PARTIALLY_REFUNDED,
             },
@@ -585,7 +586,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           // -active organiser-settled child, over the same status set this loop
           // claims. `GroupBooking.status` is not in that query at all.
           const queued = await enqueueXeroRefundCreditNoteOperation(
-            child.payment.id,
+            payment.id,
             refundForChild,
             { createdByMemberId: sessionUserId, store: tx }
           );
@@ -605,17 +606,17 @@ export async function settleGroupBookingOnOrganiserCancel(
         // never drags in the organiser or the other joiners.
         await reconcileHostingReviewForSystemCancellation(child.id, tx);
         // #3611: the child's stay is taken back under the lock(1) this
-        // transaction took first, and NOTHING is kept on the child: it holds no
-        // settlement line (the organiser paid, through one group intent), so a
-        // fee here would leave owed(child) at the fee. Where the kept money
-        // belongs is #3583's to decide. Posts only for a child confirmed on the
-        // ledger, which today none is — the group settle marks it PAID itself.
-        await postCancellationLedgerLines({
-          store: tx,
-          bookingId: child.id,
-          lodgeId: child.lodgeId,
-          keptCents: 0,
-          site: "group-cancel:organiser-settled-child",
+        // transaction took first. #3854: beside the mirror above, its plan's
+        // refund posts; the club keeps the child's share of the settlement less
+        // every refund made or owed on it, so owed(b) is zero once they post.
+        // Posts only for a child confirmed on the ledger, which the group
+        // settle does since #3854.
+        await postGroupCancelChildLedgerLines(tx, {
+          child: { ...child, payment },
+          settlement,
+          mirrorPlan,
+          refundForChild,
+          plannedRefundCents: plannedMirrorRefunds.get(child.id) ?? 0,
         });
         return queuedOperationId;
       });
@@ -853,10 +854,14 @@ export async function executeGroupSettlementRefundPlan(
     });
     // ACTIVE children still belong to the inline loop / reaper resume path,
     // which cancel + mirror atomically; touching them here could double-apply.
-    if (!child || child.status !== BookingStatus.CANCELLED) continue;
-    if (!child.payment || child.payment.refundedAmountCents > 0) continue;
+    if (!child || child.status !== BookingStatus.CANCELLED || !child.payment) continue;
+    if (child.payment.refundedAmountCents > 0) {
+      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
+      await prisma.$transaction((tx) => postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild }));
+      continue;
+    }
 
-    const nextRefunded = Math.min(child.payment.amountCents, refundForChild);
+    const nextRefunded = mirrorPlanRefundedCents(child.payment, refundForChild);
     // Conditional write: organiser-settled child payments receive refunds
     // ONLY from this module, so refundedAmountCents === 0 means unmirrored.
     // Mirror and durable Xero outbox insertion are one atomic unit.  Previously
@@ -882,6 +887,8 @@ export async function executeGroupSettlementRefundPlan(
         nextRefunded,
         { store: tx }
       );
+      // #3854: as the inline loop posts it, under the same key.
+      await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
       return { applied: true, queuedOperationId: queued.queueOperationId };
     });
     if (!mirrorResult.applied) continue;
