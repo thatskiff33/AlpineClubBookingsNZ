@@ -3165,9 +3165,9 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
    * exactly what it gets from the unredacted payload.
    */
   it("resolves every queue type's target from its STORED (redacted) payload exactly as from the queued one (#3971)", async () => {
-    const { sanitizeForJson } = await vi.importActual<typeof import("@/lib/xero-sync")>(
+    const { sanitizeForJson } = (await vi.importActual(
       "@/lib/xero-sync"
-    );
+    )) as typeof import("@/lib/xero-sync");
     const handlerArgsFor = async (
       queueType: (typeof XERO_OUTBOX_QUEUE_TYPES)[number],
       requestPayload: unknown
