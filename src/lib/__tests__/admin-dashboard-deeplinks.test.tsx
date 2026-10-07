@@ -6,6 +6,8 @@ vi.mock("@/lib/prisma", () => ({
     // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
     manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
     // when it is ABSENT, and the page then falls back to the environment — the
     // very defect CT-4 removes, silently, with nothing able to tell. Every test
@@ -61,6 +63,7 @@ import { prisma } from "@/lib/prisma";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
 } from "@/lib/additional-ledger-gap";
 
 function mockDashboardCounts({
@@ -479,6 +482,7 @@ describe("admin dashboard deep links", () => {
           amountCents: true,
           refundedAmountCents: true,
           ...netCollectedCaptureEvidenceSelect,
+          ...netCollectedCardRefundSelect,
           booking: { select: netCollectedBookingSelect },
         },
         where: {

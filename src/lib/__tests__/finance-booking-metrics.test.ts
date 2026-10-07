@@ -13,6 +13,8 @@ const { mockPrisma, mockLogger } = vi.hoisted(() => ({
     // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
     manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     // #3637: Net collected cash reads its own payments (every booking in the
     // window, whatever its status), not the status-listed bookings above.
     payment: {
@@ -178,6 +180,9 @@ function netCollectedPaymentRows(
             // captured ledger row, so a refunded status counts as before.
             source: "STRIPE",
             _count: { transactions: 1 },
+            // #3372 (7 Oct 2026): no card refund outstanding.
+            recoveryOperations: [],
+            refunds: [],
             booking: {
               checkIn: row.checkIn,
               checkOut: row.checkOut,
@@ -410,10 +415,14 @@ describe("finance-booking-metrics", () => {
       additionalLedgerGapBookings: 0,
       refundedCents: 2000,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 40000,
-      refundsOwedCents: 0,
-      creditsOwedCents: 0,
+      // Not asked for (`includeRefundsAndCreditsOwed`): read once per page.
+      refundsOwedCents: null,
+      creditsOwedCents: null,
       creditAppliedCents: 1000,
       changeFeeCents: 500,
     });
@@ -1533,7 +1542,10 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
       })),
     );
 
-    const metrics = await getFinanceBookingMetrics({ realized: QUERY.realized });
+    const metrics = await getFinanceBookingMetrics({
+      realized: QUERY.realized,
+      includeRefundsAndCreditsOwed: true,
+    });
 
     expect(metrics.paymentSummary.netCollectedCents).toBe(
       NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents,
@@ -1545,5 +1557,18 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
     expect(metrics.paymentSummary.creditsOwedCents).toBe(
       REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedCreditsOwedCents,
     );
+  });
+
+  it("reads Refunds owed and Credits owed only when asked, so a page with two windows reads them once", async () => {
+    mockBookingRows([]);
+    mockPrisma.manualRefundTask.findMany.mockClear();
+    mockPrisma.memberCredit.groupBy.mockClear();
+
+    const comparison = await getFinanceBookingMetrics({ realized: QUERY.realized });
+
+    expect(comparison.paymentSummary.refundsOwedCents).toBeNull();
+    expect(comparison.paymentSummary.creditsOwedCents).toBeNull();
+    expect(mockPrisma.manualRefundTask.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.memberCredit.groupBy).not.toHaveBeenCalled();
   });
 });

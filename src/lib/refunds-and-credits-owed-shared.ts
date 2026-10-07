@@ -15,10 +15,12 @@
  */
 export interface RefundsAndCreditsOwed {
   /**
-   * Every refund the club has promised back by hand and not yet paid: the open
-   * hand-back tasks, summed by the same rule Net Collected subtracts them with
-   * (`openHandBackOwedCents`). A task leaves this figure when it is completed
-   * (paid back) or dismissed.
+   * Every refund owed and not yet paid (owner, 7 Oct 2026), each part summed by
+   * the rule Net Collected subtracts it with: open hand-back tasks
+   * (`openTaskOwedCents`), card refunds Stripe has not yet paid
+   * (`openCardRefundOwedCents`), and late card charges awaiting the
+   * treasurer's refund-or-keep decision (`isLateCaptureAwaitingDecisionTask`).
+   * Each leaves this figure when it is paid, dismissed or kept.
    */
   refundsOwedCents: number;
   /**
@@ -29,6 +31,14 @@ export interface RefundsAndCreditsOwed {
   creditsOwedCents: number;
 }
 
-/** The on-screen note both figures carry, so every surface says the same thing. */
+/** The two figures' labels, one spelling for every surface and the Reports CSV. */
+export const REFUNDS_OWED_LABEL = "Refunds owed";
+export const CREDITS_OWED_LABEL = "Credits owed";
+
+/**
+ * The on-screen note both figures carry, so every surface says the same thing.
+ * It names no "above": on the dashboard card nothing above it has dates or
+ * filters (#3372 review, F4u).
+ */
 export const REFUNDS_AND_CREDITS_OWED_NOTE =
-  "As at today, across the club: not limited to the dates or filters above.";
+  "As at today, across the club: not limited to any dates or filters.";

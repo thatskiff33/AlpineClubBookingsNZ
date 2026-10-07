@@ -34,6 +34,8 @@ import {
   upsertPaymentIntentTransaction,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
+// #3372: the one plan parser, shared with the "Refunds owed" net-out.
+import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import {
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   // Type-only, so it adds nothing to this module's runtime import graph.
@@ -2002,32 +2004,6 @@ async function processRefundSupersededPaymentOperation(
     paymentIntentId: operation.paymentIntentId,
     refundedAmountCents: outstandingCents,
   });
-}
-
-/** Parse a persisted allocation plan (#1097); null when absent or malformed. */
-function parseRefundAllocationPlan(
-  value: unknown,
-): RefundAllocationSlice[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const slices: RefundAllocationSlice[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") return null;
-    const { paymentTransactionId, amountCents } = entry as Record<
-      string,
-      unknown
-    >;
-    if (
-      typeof paymentTransactionId !== "string" ||
-      !paymentTransactionId ||
-      typeof amountCents !== "number" ||
-      !Number.isInteger(amountCents) ||
-      amountCents <= 0
-    ) {
-      return null;
-    }
-    slices.push({ paymentTransactionId, amountCents });
-  }
-  return slices;
 }
 
 async function processBookingModificationRefundOperation(

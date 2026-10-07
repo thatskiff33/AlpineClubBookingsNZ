@@ -391,33 +391,35 @@ export type HandBackTaskRow = {
 
 const OPEN_TASK_STATUS = "OPEN" satisfies ManualRefundTaskStatus;
 const HAND_BACK_KIND = "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind;
+const LATE_CAPTURE_KIND = "DELETED_BOOKING_LATE_CAPTURE" satisfies ManualRefundTaskKind;
 
 /**
  * THE REFUND STILL OWED BY HAND: money the club has promised back and not yet
  * paid. Owner decisions on #3372: 3 Oct 2026 for a cancelled booking ("subtract
  * the refund owed"), 7 Oct 2026 for a live one ("subtract it immediately":
- * money promised back isn't the club's). Two readers ask it, so they cannot
- * disagree: `getNetCollectedCashParts` takes it off a payment's Net Collected
- * straight away, and the "Refunds owed" figure (`readRefundsAndCreditsOwed`)
- * sums it club-wide until each task is paid.
+ * money promised back isn't the club's). Read through `openTaskOwedCents`,
+ * which also answers the late captures below, by `getNetCollectedCashParts`
+ * (off a payment's Net Collected straight away) and by the "Refunds owed"
+ * figure (`readRefundsAndCreditsOwed`, club-wide until each task is paid).
  *
  * Every task that promises money back by hand is a `CANCELLED_BOOKING_HAND_BACK`:
  * a cancellation's (`booking-cancel.ts`), an edit's refund (`INV-PAY-117`)
  * and an approved refund request's (`INV-PAY-118`), which reuse the kind and
  * are told apart only by their occurrence key
- * (`isNonCancellationHandBackTask`). All of them count, on any booking, so this reads no key prefix. Only
- * COMPLETING a task writes `refundedAmountCents`
- * (`manual-refund-task-resolution.ts`), so an open one is not yet off the
- * payment and nothing is taken off twice.
+ * (`isNonCancellationHandBackTask`). All of them count, on any booking, so
+ * this reads kind and status only, never a key prefix. Only COMPLETING a task
+ * writes `refundedAmountCents` (`manual-refund-task-resolution.ts`), so an
+ * open one is not yet off the payment and nothing is taken off twice.
  *
  * - OPEN tasks only: a COMPLETED one is already on `refundedAmountCents`, and a
  *   DISMISSED one moved nothing.
  * - A part-payment review shares the kind but carries no amount and records
  *   money settled in Xero (`isPartPaymentReviewTask`), so it owes nothing here.
- * - A task with no kind (`kind` null) is read as a hand-back: the column was
- *   added on 19 Aug 2026 with no backfill, and before then the only task raised
- *   on a booking that is not deleted was a cancellation's hand-back (the
- *   late-capture kinds are raised on DELETED bookings).
+ * - A task with no kind (`kind` null) counts too. The column was added on
+ *   19 Aug 2026 with no backfill. On a booking that is not deleted such a row
+ *   is a cancellation's hand-back; on a DELETED booking it is a #2700 late
+ *   capture (`isLateCaptureAwaitingDecisionTask`), which `openTaskOwedCents`
+ *   takes out before asking this, so no row counts twice.
  * - Not an `EDIT_FINANCIAL_REVIEW`: its amount is a figure an officer has still
  *   to price and confirm, and "nothing is due" is a legitimate close
  *   (DISMISSED), so it is not yet money promised back.
@@ -433,4 +435,54 @@ export function openHandBackOwedCents(
         !isPartPaymentReviewTask(task),
     )
     .reduce((sum, task) => sum + Math.max(0, task.amountCents ?? 0), 0);
+}
+
+/**
+ * #3372 (owner, 7 Oct 2026: "count as owed"): IS THIS A LATE CARD CHARGE
+ * AWAITING THE TREASURER'S REFUND-OR-KEEP DECISION? The one home for that
+ * question. Such a charge counts in "Refunds owed" until the treasurer keeps
+ * it (dismisses the task) or refunds it (completes it).
+ *
+ * - An OPEN `DELETED_BOOKING_LATE_CAPTURE`: a capture held for a treasurer on a
+ *   cancelled booking (#3639, `lateCaptureApprovalIntentId` set,
+ *   `INV-PAY-106`), or a change payment captured on a deleted booking (#2700,
+ *   `INV-ADDPAY-036`). Both kinds of row ask the same question.
+ * - An OPEN task with no kind on a DELETED booking: a #2700 row raised before
+ *   the kind column existed. The only task raised on a deleted booking is a
+ *   late capture.
+ *
+ * The capture is recorded on the payment before the task is raised, so its
+ * money is inside `amountCents` and Net Collected takes it off while it waits
+ * (`getNetCollectedCashParts`); once kept it counts as collected.
+ */
+export function isLateCaptureAwaitingDecisionTask(
+  task: Pick<HandBackTaskRow, "status" | "kind">,
+  booking: { deletedAt: Date | null },
+): boolean {
+  if (task.status !== OPEN_TASK_STATUS) return false;
+  if (task.kind === LATE_CAPTURE_KIND) return true;
+  return task.kind === null && booking.deletedAt !== null;
+}
+
+/**
+ * What a booking's open tasks owe back, in two parts that never overlap: late
+ * charges awaiting the treasurer (`isLateCaptureAwaitingDecisionTask`) and
+ * refunds still owed by hand (`openHandBackOwedCents`, over the rest). Net
+ * Collected and "Refunds owed" both read it, so a task is never counted in one
+ * part by one figure and the other part by the other.
+ */
+export function openTaskOwedCents(
+  tasks: ReadonlyArray<HandBackTaskRow>,
+  booking: { deletedAt: Date | null },
+): { handBackCents: number; lateCaptureCents: number } {
+  const lateCaptures = tasks.filter((task) => isLateCaptureAwaitingDecisionTask(task, booking));
+  return {
+    handBackCents: openHandBackOwedCents(
+      tasks.filter((task) => !isLateCaptureAwaitingDecisionTask(task, booking)),
+    ),
+    lateCaptureCents: lateCaptures.reduce(
+      (sum, task) => sum + Math.max(0, task.amountCents ?? 0),
+      0,
+    ),
+  };
 }

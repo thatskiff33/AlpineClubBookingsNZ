@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
-import { netCollectedBookingSelect, netCollectedCaptureEvidenceSelect } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
+} from "@/lib/additional-ledger-gap";
 import { formatNetCollectedBreakdown, summarizeCollectedCash } from "@/lib/payment-net-collected";
 import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
@@ -164,6 +168,8 @@ async function getStats() {
         refundedAmountCents: true,
         // #3372: a refunded status counts only with capture evidence.
         ...netCollectedCaptureEvidenceSelect,
+        // #3372 (7 Oct 2026): card refunds not yet paid come off straight away.
+        ...netCollectedCardRefundSelect,
         booking: { select: netCollectedBookingSelect },
       },
     }),

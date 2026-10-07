@@ -6,10 +6,16 @@ import {
   isCapturedPaymentStatus,
   paymentShowsCaptureEvidence,
 } from "@/lib/booking-payment-state";
+import { sumInternetBankingLateCashCreditCents } from "@/lib/internet-banking-late-cash-credit";
 import {
-  openHandBackOwedCents,
+  openTaskOwedCents,
   type HandBackTaskRow,
 } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  openCardRefundOwedCents,
+  type CardRefundOperationRow,
+  type RecordedCardRefundRow,
+} from "@/lib/open-card-refund-owed";
 import {
   cancelledBookingKeptCreditCents,
   type BookingCreditAmountRow,
@@ -19,21 +25,38 @@ import {
 /**
  * The line beneath a Net Collected headline that sums a set of payments (the
  * dashboard card): "{paid} paid", then whichever of refunded or credited, owed
- * back on a cancellation, and account credit a cancellation kept (owner
- * decision on #3372, 3 Oct 2026) is non-zero, so the headline's arithmetic is
- * on screen. `null` when there is nothing but the paid figure; the wording of
- * the first two parts is `formatPaidRefundedBreakdown`'s.
+ * back by hand, card refunds not yet paid, late card charges awaiting the
+ * treasurer, late bank payments credited back, and account credit a
+ * cancellation kept (owner decisions on #3372, 3 and 7 Oct 2026) is non-zero,
+ * so the headline's arithmetic is on screen. `null` when there is nothing but
+ * the paid figure; the wording of the first two parts is
+ * `formatPaidRefundedBreakdown`'s.
  */
 export function formatNetCollectedBreakdown(
   summary: Pick<
     CollectedCashSummary,
-    "capturedGrossCents" | "refundedCents" | "handBackOwedCents" | "keptCreditCents"
+    | "capturedGrossCents"
+    | "refundedCents"
+    | "handBackOwedCents"
+    | "cardRefundOwedCents"
+    | "lateCaptureOwedCents"
+    | "lateCashCreditedCents"
+    | "keptCreditCents"
   >,
   formatCents: (cents: number) => string,
 ): string | null {
   const extras = [
     summary.handBackOwedCents > 0
       ? `${formatCents(summary.handBackOwedCents)} owed back by hand`
+      : null,
+    summary.cardRefundOwedCents > 0
+      ? `${formatCents(summary.cardRefundOwedCents)} card refunds not yet paid`
+      : null,
+    summary.lateCaptureOwedCents > 0
+      ? `${formatCents(summary.lateCaptureOwedCents)} late card charges awaiting the treasurer`
+      : null,
+    summary.lateCashCreditedCents > 0
+      ? `${formatCents(summary.lateCashCreditedCents)} late bank payments credited back`
       : null,
     summary.keptCreditCents > 0
       ? `plus ${formatCents(summary.keptCreditCents)} account credit kept on cancellation`
@@ -72,13 +95,35 @@ export interface CollectedCashSummary {
    */
   handBackOwedCents: number;
   /**
+   * Card refunds started and not yet paid by Stripe, taken off straight away
+   * (owner, #3372, 7 Oct 2026: "count in both"; `openCardRefundOwedCents`),
+   * capped at what is left after the hand-back.
+   */
+  cardRefundOwedCents: number;
+  /**
+   * Late card charges on a cancelled booking awaiting the treasurer's
+   * refund-or-keep decision (owner, #3372, 7 Oct 2026: "count as owed";
+   * `isLateCaptureAwaitingDecisionTask`), capped at what is left. Once kept,
+   * they count as collected.
+   */
+  lateCaptureOwedCents: number;
+  /**
+   * On a CANCELLED booking, bank-transfer cash that arrived after the cancel
+   * and was credited to the member's account
+   * (`sumInternetBankingLateCashCreditCents`): it never moves
+   * `refundedAmountCents`, and it is in "Credits owed", so it is not kept.
+   * Capped at what is left.
+   */
+  lateCashCreditedCents: number;
+  /**
    * Account credit applied to CANCELLED bookings that the cancellation kept
    * (owner decision on #3372, 3 Oct 2026; `cancelledBookingKeptCreditCents`).
    * Zero for a live booking: credit it spent is not money kept.
    */
   keptCreditCents: number;
   /**
-   * `capturedGrossCents - refundedCents - handBackOwedCents +
+   * `capturedGrossCents - refundedCents - handBackOwedCents -
+   * cardRefundOwedCents - lateCaptureOwedCents - lateCashCreditedCents +
    * keptCreditCents`, exactly: per payment, the parts
    * `getNetCollectedPaymentParts` returns. No payment adds less than nothing
    * and one that never took money adds nothing (beyond credit a cancellation
@@ -97,9 +142,9 @@ export interface NetCollectedBookingScopeFields {
 
 /**
  * The booking a payment belongs to, as far as a Net Collected figure needs it:
- * the scope's `deletedAt`, its open hand-back tasks (owner decisions on #3372,
- * 3 and 7 Oct 2026), and for a CANCELLED booking the credit rows the 3 Oct
- * decision reads. The relation names are Prisma's, so a select hands
+ * the scope's `deletedAt`, its open tasks (hand-backs and late captures; owner
+ * decisions on #3372, 3 and 7 Oct 2026), and for a CANCELLED booking the credit
+ * rows the 3 Oct decision reads and the late bank-payment credit (F2). The relation names are Prisma's, so a select hands
  * them in as loaded (`netCollectedBookingSelect` in `additional-ledger-gap.ts`);
  * each is required, so a surface cannot leave one out and read a smaller figure.
  */
@@ -154,10 +199,13 @@ export interface NetCollectedPaymentRow {
   /** Capture evidence (`netCollectedCaptureEvidenceSelect`): `_count` counts CAPTURED ledger rows only. */
   source: string;
   _count: { transactions: number };
+  /** Card refunds not yet paid, and the refunds to net them against (`netCollectedCardRefundSelect`). */
+  recoveryOperations: ReadonlyArray<CardRefundOperationRow>;
+  refunds: ReadonlyArray<RecordedCardRefundRow>;
   booking: NetCollectedBookingFields;
 }
 
-/** One payment's part of a Net Collected figure, in its four pieces. */
+/** One payment's part of a Net Collected figure, in its pieces. */
 export interface NetCollectedPaymentParts {
   /** `amountCents` if the payment took money, else 0. */
   capturedGrossCents: number;
@@ -165,6 +213,12 @@ export interface NetCollectedPaymentParts {
   heldCashCents: number;
   /** The booking's open hand-back, as far as the money it took covers. */
   handBackOwedCents: number;
+  /** Its card refunds not yet paid, as far as what is left covers. */
+  cardRefundOwedCents: number;
+  /** Late card charges awaiting the treasurer, as far as what is left covers. */
+  lateCaptureOwedCents: number;
+  /** On a cancelled booking, late bank-transfer cash credited back. */
+  lateCashCreditedCents: number;
   /** Applied credit a cancellation kept; 0 unless the booking is cancelled. */
   keptCreditCents: number;
 }
@@ -187,37 +241,71 @@ export function netCollectedPaymentTookMoney(
   return paymentShowsCaptureEvidence(payment, payment._count.transactions > 0);
 }
 
-/** A payment as the CASH half of the per-payment rule reads it: no credit rows. */
+/** A payment as the CASH half of the per-payment rule reads it: no applied-credit rows. */
 export type NetCollectedCashRow = Omit<NetCollectedPaymentRow, "booking"> & {
-  booking: Pick<NetCollectedBookingFields, "status" | "manualRefundTasks">;
+  booking: Pick<
+    NetCollectedBookingFields,
+    "status" | "deletedAt" | "manualRefundTasks" | "creditsFromCancellation"
+  >;
 };
 
 /**
  * THE CASH HALF of the one per-payment rule (`getNetCollectedPaymentParts`):
- * what the payment took, what of it the club still holds, and the open
- * hand-back refund taken off straight away, on a cancelled or a live booking
- * alike (owner decisions on #3372, 3 and 7 Oct 2026; `openHandBackOwedCents`).
- * Exported for the booking detail's "Non-refundable
- * amount retained" line, which is this booking's cash part of Net Collected
- * and so can never read higher than what Net Collected counts for it.
+ * what the payment took, what of it the club still holds, and what is owed
+ * back out of it, each taken off straight away and each capped at what the
+ * ones before it left, so no cent comes off twice (owner decisions on #3372,
+ * 3 and 7 Oct 2026):
+ *
+ * 1. an open hand-back refund owed by hand, on any booking
+ *    (`openTaskOwedCents`);
+ * 2. card refunds started and not yet paid by Stripe
+ *    (`openCardRefundOwedCents`, net of slices already recorded);
+ * 3. late card charges awaiting the treasurer's refund-or-keep decision
+ *    (`isLateCaptureAwaitingDecisionTask`);
+ * 4. on a CANCELLED booking, late bank-transfer cash credited to the member
+ *    (`sumInternetBankingLateCashCreditCents`), which "Credits owed" counts.
+ *
+ * Exported for the booking detail's "Non-refundable amount retained" line,
+ * which is this booking's cash part of Net Collected and so can never read
+ * higher than what Net Collected counts for it.
  */
 export function getNetCollectedCashParts(
   payment: NetCollectedCashRow,
 ): Omit<NetCollectedPaymentParts, "keptCreditCents"> {
   const { status, booking } = payment;
   const captured = status !== null && netCollectedPaymentTookMoney({ ...payment, status });
-  const remainingCents = captured
+  let leftCents = captured
     ? getRemainingRefundableCents({ ...payment, status })
     : 0;
   const capturedGrossCents = captured ? payment.amountCents : 0;
-  const handBackOwedCents = Math.min(
-    openHandBackOwedCents(booking.manualRefundTasks),
-    remainingCents,
+  const takeOff = (owedCents: number): number => {
+    const cents = Math.min(Math.max(0, owedCents), leftCents);
+    leftCents -= cents;
+    return cents;
+  };
+  const tasks = openTaskOwedCents(booking.manualRefundTasks, booking);
+  const handBackOwedCents = takeOff(tasks.handBackCents);
+  const cardRefundOwedCents = takeOff(
+    captured ? openCardRefundOwedCents({ ...payment, status }) : 0,
+  );
+  const lateCaptureOwedCents = takeOff(tasks.lateCaptureCents);
+  const lateCashCreditedCents = takeOff(
+    booking.status === CANCELLED_BOOKING_STATUS
+      ? sumInternetBankingLateCashCreditCents(
+          booking.creditsFromCancellation.map((credit) => ({
+            ...credit,
+            description: credit.description ?? null,
+          })),
+        )
+      : 0,
   );
   return {
     capturedGrossCents,
-    heldCashCents: remainingCents - handBackOwedCents,
+    heldCashCents: leftCents,
     handBackOwedCents,
+    cardRefundOwedCents,
+    lateCaptureOwedCents,
+    lateCashCreditedCents,
   };
 }
 
@@ -228,11 +316,13 @@ export function getNetCollectedCashParts(
  *
  * - Cash (`getNetCollectedCashParts`): what the payment took and has not
  *   refunded or credited back (`getRemainingRefundableCents`): 0 if it never
- *   took money (`netCollectedPaymentTookMoney`), never below 0. A hand-back
- *   refund still owed by hand is treated as gone straight away
- *   (`openHandBackOwedCents`), on a cancelled booking (3 Oct 2026, so only
- *   what the policy keeps counts) and on a live one (7 Oct 2026: an edit's
- *   refund (`INV-PAY-117`) or an approved refund request's (`INV-PAY-118`)).
+ *   took money (`netCollectedPaymentTookMoney`), never below 0. Money owed
+ *   back out of it is treated as gone straight away: a hand-back refund owed
+ *   by hand, on a cancelled booking (3 Oct 2026, so only what the policy keeps
+ *   counts) and on a live one (7 Oct 2026: an edit's refund (`INV-PAY-117`) or
+ *   an approved refund request's (`INV-PAY-118`)); a card refund not yet paid,
+ *   and a late card charge awaiting the treasurer (7 Oct 2026); and on a
+ *   cancelled booking, late bank-transfer cash credited back.
  * - On a CANCELLED booking, applied account credit the cancellation kept
  *   counts too (`cancelledBookingKeptCreditCents`). A live booking's credit is
  *   spent on a stay, not kept, so it adds none.
@@ -306,11 +396,13 @@ export function sumRefundedAndCreditedCents(
  * then marks it FAILED (`booking-cancel.ts`) - or a refund above its own
  * capture, subtract from OTHER bookings' money.
  *
- * Two more facts, both inside `getNetCollectedPaymentParts`: a hand-back
- * refund still owed by hand counts as gone before its task is completed, on
- * any booking (owner decisions on #3372, 3 and 7 Oct 2026); and on a CANCELLED
- * booking applied account credit the cancellation KEPT counts (credit restored
- * to the member does not). A live booking's applied credit is not in
+ * More facts, all inside `getNetCollectedPaymentParts`: money owed back out of
+ * a payment counts as gone straight away - a hand-back refund owed by hand on
+ * any booking, a card refund Stripe has not yet paid, a late card charge
+ * awaiting the treasurer, and on a cancelled booking late bank-transfer cash
+ * credited back (owner decisions on #3372, 3 and 7 Oct 2026); and on a
+ * CANCELLED booking applied account credit the cancellation KEPT counts
+ * (credit restored to the member does not). A live booking's applied credit is not in
  * `amountCents` (`INV-PAY-047`) and does not count.
  *
  * Cash is payment-derived and deliberately NOT allocated over stay nights.
@@ -324,23 +416,32 @@ export function sumRefundedAndCreditedCents(
 export function summarizeCollectedCash(
   payments: ReadonlyArray<NetCollectedPaymentRow>,
 ): CollectedCashSummary {
-  let capturedGrossCents = 0;
-  let heldCashCents = 0;
-  let handBackOwedCents = 0;
-  let keptCreditCents = 0;
+  const sums = {
+    capturedGrossCents: 0,
+    heldCashCents: 0,
+    handBackOwedCents: 0,
+    cardRefundOwedCents: 0,
+    lateCaptureOwedCents: 0,
+    lateCashCreditedCents: 0,
+    keptCreditCents: 0,
+  };
   for (const payment of netCollectedScopedPayments(payments)) {
     const parts = getNetCollectedPaymentParts(payment);
-    capturedGrossCents += parts.capturedGrossCents;
-    heldCashCents += parts.heldCashCents;
-    handBackOwedCents += parts.handBackOwedCents;
-    keptCreditCents += parts.keptCreditCents;
+    for (const key of Object.keys(sums) as Array<keyof typeof sums>) {
+      sums[key] += parts[key];
+    }
   }
+  const { heldCashCents, ...rest } = sums;
   return {
-    capturedGrossCents,
-    refundedCents: capturedGrossCents - heldCashCents - handBackOwedCents,
-    handBackOwedCents,
-    keptCreditCents,
-    netCollectedCents: heldCashCents + keptCreditCents,
+    ...rest,
+    refundedCents:
+      sums.capturedGrossCents -
+      heldCashCents -
+      sums.handBackOwedCents -
+      sums.cardRefundOwedCents -
+      sums.lateCaptureOwedCents -
+      sums.lateCashCreditedCents,
+    netCollectedCents: heldCashCents + sums.keptCreditCents,
   };
 }
 

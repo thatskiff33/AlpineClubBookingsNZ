@@ -6,6 +6,8 @@ vi.mock("@/lib/prisma", () => ({
     // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
     manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
     // when it is ABSENT, and the page then falls back to the environment — the
     // very defect CT-4 removes, silently, with nothing able to tell. Every test
@@ -77,6 +79,7 @@ import {
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
 } from "@/lib/additional-ledger-gap";
 
 /*
@@ -200,12 +203,18 @@ function mockStats() {
       // refunded status needs to count (#3372).
       source: "STRIPE",
       _count: { transactions: 1 },
+      recoveryOperations: [],
+      refunds: [],
+      recoveryOperations: [],
+      refunds: [],
       booking: { deletedAt: null, manualRefundTasks: [] },
     },
     {
       status: "PENDING",
       amountCents: 90_000,
       refundedAmountCents: 0,
+      recoveryOperations: [],
+      refunds: [],
       booking: { deletedAt: null, manualRefundTasks: [] },
     },
   ] as any);
@@ -355,6 +364,8 @@ describe("admin dashboard officer key cards", () => {
       refundedAmountCents: true,
       // Net Collected's capture evidence (#3372, owner's rule on PR #3811).
       ...netCollectedCaptureEvidenceSelect,
+      // Card refunds not yet paid, and the refunds that net them (#3372, 7 Oct 2026).
+      ...netCollectedCardRefundSelect,
       // The one shared booking select (#3372, owner decision 3 Oct 2026).
       booking: { select: netCollectedBookingSelect },
     });
@@ -376,7 +387,11 @@ describe("admin dashboard officer key cards", () => {
         status: "SUCCEEDED",
         amountCents: 123_400,
         refundedAmountCents: 0,
-        booking: { deletedAt: null, manualRefundTasks: [] },
+        recoveryOperations: [],
+        refunds: [],
+        recoveryOperations: [],
+      refunds: [],
+      booking: { deletedAt: null, manualRefundTasks: [] },
       },
     ] as any);
 
@@ -421,7 +436,7 @@ describe("admin dashboard officer key cards", () => {
       ">$620.00 paid, $270.00 refunded or credited, $125.00 owed back by hand, plus $20.00 account credit kept on cancellation</p>",
     );
     // Beside it, as at today and club-wide (owner, 7 Oct 2026).
-    expect(html).toContain('<dt class="text-muted-foreground">Refunds owed</dt><dd class="font-medium text-foreground">$135.00</dd>');
+    expect(html).toContain('<dt class="text-muted-foreground">Refunds owed</dt><dd class="font-medium text-foreground">$165.00</dd>');
     expect(html).toContain('<dt class="text-muted-foreground">Credits owed</dt><dd class="font-medium text-foreground">$85.00</dd>');
     expect(html).toContain("As at today, across the club");
   });

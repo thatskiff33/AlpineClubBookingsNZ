@@ -27,7 +27,7 @@ import {
   netCollectedFixtureBooking,
   netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
-import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
+import { netCollectedBookingSelect, netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 const EXPECTED_REPORT_STATUS_VALUES = [
@@ -44,6 +44,8 @@ const mockPrisma = {
   // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
   manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
   memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+  // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+  paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
   booking: { findMany: vi.fn() },
   // #3372: Net Collected reads its own payments, in the one Net Collected
   // booking scope, not the report cohort's status list.
@@ -179,6 +181,9 @@ function netCollectedPaymentRows(
     .filter((booking) => booking.payment !== null)
     .map((booking) => ({
       bookingId: booking.id,
+      // #3372 (7 Oct 2026): no card refund outstanding unless a case says so.
+      recoveryOperations: [],
+      refunds: [],
       ...booking.payment,
       booking: { deletedAt: booking.deletedAt ?? null, manualRefundTasks: [] },
     }));
@@ -312,6 +317,9 @@ describe("admin reports route", () => {
         where: { kind: PaymentTransactionKind.ADDITIONAL },
         select: { kind: true, status: true, amountCents: true },
       },
+      // #3372 (7 Oct 2026): card refunds not yet paid, and the refunds that net them.
+      recoveryOperations: netCollectedCardRefundSelect.recoveryOperations,
+      refunds: netCollectedCardRefundSelect.refunds,
       // The one shared booking select (#3372, owner decision 3 Oct 2026).
       booking: { select: netCollectedBookingSelect },
     });

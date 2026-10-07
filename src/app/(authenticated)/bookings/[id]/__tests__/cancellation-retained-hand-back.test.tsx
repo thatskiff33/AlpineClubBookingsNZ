@@ -48,6 +48,8 @@ function cancelledMarkedPaid(
       creditAppliedCents: 0,
       changeFeeCents: 0,
       _count: { transactions: 1 },
+      recoveryOperations: [],
+      refunds: [],
       ...payment,
     },
   };

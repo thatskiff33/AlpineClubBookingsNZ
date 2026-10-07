@@ -23,7 +23,8 @@ const LIVE = {
 };
 // A card payment with a captured ledger row: the capture evidence a refunded
 // status needs to count in Net Collected (`getNetCollectedPaymentParts`).
-const CARD = { source: "STRIPE", _count: { transactions: 1 } };
+// #3372 (7 Oct 2026): no card refund outstanding unless a case says so.
+const CARD = { source: "STRIPE", _count: { transactions: 1 }, recoveryOperations: [], refunds: [] };
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -305,6 +306,9 @@ describe("admin reports helpers", () => {
       capturedGrossCents: 20_000,
       refundedCents: 8_500,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 11_500,
     });
@@ -335,6 +339,9 @@ describe("admin reports helpers", () => {
       capturedGrossCents: 20_000,
       refundedCents: 15_000,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 5_000,
     });
@@ -357,6 +364,9 @@ describe("admin reports helpers", () => {
       capturedGrossCents: 5_000,
       refundedCents: 1_000,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 4_000,
     });

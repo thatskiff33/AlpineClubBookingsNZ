@@ -1,4 +1,3 @@
-import { REFUNDS_AND_CREDITS_OWED_NOTE } from "@/lib/refunds-and-credits-owed-shared";
 import {
   formatClubDayMonth,
   requireCalendarDate,
@@ -27,6 +26,11 @@ import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-da
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
+import {
+  CREDITS_OWED_LABEL,
+  REFUNDS_AND_CREDITS_OWED_NOTE,
+  REFUNDS_OWED_LABEL,
+} from "@/lib/refunds-and-credits-owed-shared";
 import { formatCents } from "@/lib/utils";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
@@ -73,7 +77,9 @@ export async function buildBookingsDashboard(
     lodgeId,
   };
   const [metrics, comparison] = await Promise.all([
-    getFinanceBookingMetrics(query),
+    // #3372: this window shows Refunds owed and Credits owed; the comparison
+    // does not, so the page reads them once.
+    getFinanceBookingMetrics({ ...query, includeRefundsAndCreditsOwed: true }),
     selection.comparison
       ? getFinanceBookingMetrics({
           realized: {
@@ -159,7 +165,7 @@ export async function buildBookingsDashboard(
       // status, deleted ones left out), so it answers as the dashboard,
       // Payments and Reports do.
       description:
-        "Captured payments less refunds and credits, and less refunds still owed back by hand, for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
+        "Captured payments less refunds and credits, and less money still owed back (refunds owed by hand, card refunds not yet paid, late card charges awaiting a decision), for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
       // #3372 (3 Oct 2026): kept account credit and hand-backs owed come from
       // this app's credit and refund-task rows too, so not "payment-derived".
       footnote:
@@ -169,15 +175,17 @@ export async function buildBookingsDashboard(
     },
     // #3372 (owner, 7 Oct 2026): beside Net Collected, what is still owed back.
     {
-      title: "Refunds owed",
-      value: formatDollarsDisplay(metrics.paymentSummary.refundsOwedCents, format),
+      title: REFUNDS_OWED_LABEL,
+      value: formatDollarsDisplay(metrics.paymentSummary.refundsOwedCents ?? 0, format),
+      // #3372 review (F5): each comes off Net Collected only for its own
+      // booking, which may sit outside this range or be deleted.
       description:
-        "Refunds the club has promised back by hand and not yet paid. Net Collected already takes them off.",
+        "Refunds promised back and not yet paid: by hand, by card while Stripe has not yet paid them, and late card charges awaiting the treasurer's decision. Each is taken off Net Collected for its own booking, so only those in this range come off the figure beside it.",
       footnote: REFUNDS_AND_CREDITS_OWED_NOTE,
     },
     {
-      title: "Credits owed",
-      value: formatDollarsDisplay(metrics.paymentSummary.creditsOwedCents, format),
+      title: CREDITS_OWED_LABEL,
+      value: formatDollarsDisplay(metrics.paymentSummary.creditsOwedCents ?? 0, format),
       description:
         "Account credit issued to members and not yet used on a booking.",
       footnote: REFUNDS_AND_CREDITS_OWED_NOTE,

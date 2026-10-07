@@ -225,6 +225,8 @@ describe("finance booking metrics route", () => {
       },
     });
     expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith({
+      // #3372: one request, so it carries Refunds owed and Credits owed.
+      includeRefundsAndCreditsOwed: true,
       realized: {
         from: "2026-04-01",
         to: "2026-04-10",

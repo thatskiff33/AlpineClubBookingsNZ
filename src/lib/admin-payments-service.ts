@@ -20,6 +20,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
   summarizeNetCollectedWithLedgerGap,
 } from "@/lib/additional-ledger-gap";
 import { getPaymentNetOfRefundsCents } from "@/lib/booking-payment-state";
@@ -157,7 +158,10 @@ type PaymentCandidate = {
   additionalPaymentStatus: string | null;
   updatedAt: Date;
   transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
-  refunds: Array<{ updatedAt: Date }>;
+  // #3372 (7 Oct 2026): the list's activity column reads `updatedAt`; Net
+  // Collected nets card refunds not yet paid against the rest.
+  refunds: Array<{ updatedAt: Date } & NetCollectedPaymentRow["refunds"][number]>;
+  recoveryOperations: NetCollectedPaymentRow["recoveryOperations"];
   _count: NetCollectedPaymentRow["_count"]; // #3372: Net Collected's capture evidence
   booking: {
     id: string;
@@ -480,7 +484,12 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         transactions: {
           select: { updatedAt: true, kind: true, status: true, amountCents: true },
         },
-        refunds: { select: { updatedAt: true } },
+        // #3372 (7 Oct 2026): card refunds not yet paid, and the recorded
+        // refunds that net them, beside this list's own activity column.
+        recoveryOperations: netCollectedCardRefundSelect.recoveryOperations,
+        refunds: {
+          select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select },
+        },
         booking: {
           select: {
             id: true,
@@ -513,7 +522,10 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     });
 
     const candidatePaymentIds = candidates.map((payment) => payment.id);
-    const [activityOperations, invoiceEvidence] = await Promise.all([
+    // #3372 (owner, 7 Oct 2026): Refunds owed and Credits owed are as at
+    // today and club-wide, not filtered, so they are read beside the list's
+    // other reads rather than after them.
+    const [activityOperations, invoiceEvidence, owed] = await Promise.all([
       candidatePaymentIds.length
         ? prisma.xeroSyncOperation.findMany({
             where: {
@@ -533,6 +545,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
       // #3467: "is there an invoice" is the one evidence rule, read in its set
       // form — the payment's stored id, else an active PRIMARY_INVOICE link.
       readBookingInvoiceEvidenceForPayments(candidates),
+      readRefundsAndCreditsOwed(),
     ]);
     const activityByRecord = buildXeroActivityByRecord(activityOperations);
 
@@ -674,8 +687,6 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     // over exactly the payments the tile counts.
     const { collected, ledgerGap } =
       summarizeNetCollectedWithLedgerGap(filteredCandidates);
-    // #3372 (owner, 7 Oct 2026): as at today and club-wide, not filtered.
-    const owed = await readRefundsAndCreditsOwed();
     const summary = {
       netCollectedCents: collected.netCollectedCents,
       refundsOwedCents: owed.refundsOwedCents,

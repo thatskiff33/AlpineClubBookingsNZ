@@ -15,6 +15,8 @@ vi.mock("@/lib/prisma", () => ({
     // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
     manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     member: { count: vi.fn(), findMany: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
     payment: {
@@ -289,6 +291,8 @@ describe("Admin Payments API", () => {
       // #3372: Net Collected's capture evidence (one captured ledger row).
       _count: { transactions: 1 },
       refunds: [],
+      // #3372 (7 Oct 2026): no card refund outstanding.
+      recoveryOperations: [],
       booking: {
         id: "b1",
         status: "PAID",
