@@ -1482,6 +1482,23 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       );
     });
 
+    it("MUTATION (#3935): a card method never stores the cash wording - not representable, and dropped if a cast caller passes it", async () => {
+      bankTransferPayment(3500);
+      mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
+        refundMethod: "card",
+        // @ts-expect-error cash wording is accepted only with the internet-banking method
+        noteWording: "cash",
+        reviewTaskId: "task_1",
+      });
+
+      const payload = mocks.startXeroSyncOperation.mock.calls[0]![0].requestPayload;
+      expect(payload).toMatchObject({ refundMethod: "card" });
+      expect(payload).not.toHaveProperty("noteWording");
+    });
+
     it("MUTATION: two sibling reviews' equal $10 refunds are a note each, not one folded into the other", async () => {
       bankTransferPayment(2000);
       await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_1" });

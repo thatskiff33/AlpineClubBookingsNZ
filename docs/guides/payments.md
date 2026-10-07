@@ -316,8 +316,9 @@ Work the amount out from that evidence and the booking's payment history, then:
   did the club pay the member back?**: **By bank transfer** or **In cash**. Your
   answer only sets the wording on the Xero credit note ("Refunded in cash" for
   cash), including when the booking has since been cancelled and the refund goes
-  to Xero as a refund note. The system never guesses cash from a payment being marked paid by hand,
-  and if you leave it blank the note says the money went back by bank transfer;
+  to Xero as a refund note. The system never guesses cash from a payment being
+  marked paid by hand, and if you leave it blank the note says the money went
+  back by bank transfer;
 - if, on the evidence, nothing is owed, click **No adjustment**. That closes the
   review as *looked at, nothing due* — it moves no money and records none as
   having moved. A note is required, and it should say what the evidence showed.

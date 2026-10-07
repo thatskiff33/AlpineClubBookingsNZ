@@ -13,7 +13,7 @@ reason: the builder is where the note's words are chosen and its retry payload
   moving one option out of the builder would split that choice in two.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3290
+lines: 3296
 reason: the enqueue writes the payload and the dispatcher reads it back in this
   file; a field carried by both must be added in both, beside refundMethod.
 

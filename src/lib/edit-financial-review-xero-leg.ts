@@ -122,9 +122,10 @@ function enqueueCancelledReviewRefundNote(
 ) {
   return enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
     createdByMemberId: actingMemberId,
-    refundMethod: refundMethodForEditReviewRoute(route) === "internet-banking" ? "internet-banking" : "card",
     // #3935: the officer's "In cash" answer words this note too; nothing else moves.
-    ...(handedBackInCash(route) ? { noteWording: "cash" as const } : {}),
+    ...(refundMethodForEditReviewRoute(route) === "internet-banking"
+      ? { refundMethod: "internet-banking" as const, ...(handedBackInCash(route) ? { noteWording: "cash" as const } : {}) }
+      : { refundMethod: "card" as const }),
     reviewTaskId: taskId,
     ...(store ? { store } : {}),
   });

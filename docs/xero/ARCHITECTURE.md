@@ -814,8 +814,9 @@ the payment (`enqueueXeroRefundCreditNoteOperation`), unallocated and settled by
 its own refund payment from the card clearing or bank-transfer refund account,
 worded by the route (`INV-PAY-101`), or *Refunded in cash* when the officer
 answers "In cash" on a hand-back (#3935, `INV-PAY-116`: `noteWording` on the
-payload, words only, never in the key or the settlement) - so the cancelled invoice is never reopened
-and the clearing or bank account has a document for every cent that left. The
+payload, words only, never in the key or the settlement) - so the cancelled
+invoice is never reopened and the clearing or bank account has a document for
+every cent that left. The
 hand-back's row is queued inside the completion transaction, after its ledger
 allocation, so it commits or rolls back with the money; the card refund's is
 queued after the Stripe call, since a note is capped at the cash Stripe has

@@ -36,6 +36,7 @@ import {
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import {
   readModificationNoteWording,
+  readRefundNoteWording,
   type CashRefundMethod,
   type ModificationNoteWording,
   type RefundNoteWording,
@@ -786,23 +787,26 @@ export async function enqueueXeroBookingInvoiceUpdateOperation(
   };
 }
 
+/**
+ * How the money went back (`INV-PAY-101`, #3529), from the caller that made
+ * the settlement decision. Omitted, the executor reads the payment's source:
+ * Stripe money can only have left through Stripe.
+ *
+ * #3935 (`INV-PAY-116`): the officer's "In cash" answer on a review's
+ * hand-back words the note too - words only, never in the key or the
+ * settlement - and is representable only beside the internet-banking method,
+ * so a card note can never be asked to say it.
+ */
+type RefundMethodAndNoteWording =
+  | { refundMethod: "internet-banking"; noteWording?: RefundNoteWording }
+  | { refundMethod?: CashRefundMethod; noteWording?: undefined };
+
 export async function enqueueXeroRefundCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: {
+  options?: RefundMethodAndNoteWording & {
     createdByMemberId?: string;
     store?: Prisma.TransactionClient;
-    /**
-     * How the money went back (`INV-PAY-101`, #3529), from the caller that
-     * made the settlement decision. Omitted, the executor reads the payment's
-     * source: Stripe money can only have left through Stripe.
-     */
-    refundMethod?: CashRefundMethod;
-    /**
-     * #3935 (`INV-PAY-116`): the officer's "In cash" answer on a review's
-     * hand-back. Words only - never in the key, never the settlement.
-     */
-    noteWording?: RefundNoteWording;
     /**
      * #3635 round-3 R4: the late capture this note answers, recorded on the
      * note so its refunds are noted once per capture
@@ -1012,7 +1016,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
       refundAmountCents: noteAmountCents,
       watermarkCents,
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
-      ...(options?.noteWording ? { noteWording: options.noteWording } : {}),
+      // Normalised at write time too (a cast or untyped caller): cash wording
+      // is stored only with the internet-banking method (`readRefundNoteWording`).
+      ...(readRefundNoteWording(options) ? { noteWording: "cash" as const } : {}),
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
       ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
