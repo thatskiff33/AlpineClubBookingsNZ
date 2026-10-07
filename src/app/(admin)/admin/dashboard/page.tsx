@@ -736,7 +736,9 @@ export default async function AdminDashboardPage() {
           {canViewPayments && (
             <Link href="/admin/payments" className="group">
               <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
-                <CardContent className="flex items-center justify-between gap-3 py-4">
+                {/* #3372: on a narrow screen the figures stack under the
+                    title rather than squeezing beside it. */}
+                <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
                     Net Collected This Month
@@ -746,7 +748,7 @@ export default async function AdminDashboardPage() {
                       exact cents, so the arithmetic on the card adds up. The subline
                       makes no claim about when money arrived: the month is the
                       one each payment record was created in. */}
-                  <div className="text-right">
+                  <div className="sm:text-right">
                     <div className="text-xl font-semibold text-foreground">
                       {money.cents(stats.netCollectedThisMonth.netCollectedCents)}
                     </div>
@@ -762,7 +764,8 @@ export default async function AdminDashboardPage() {
                     <RefundsAndCreditsOwedList
                       owed={stats.refundsAndCreditsOwed}
                       formatCents={money.cents}
-                      className="mt-1 flex flex-col items-end"
+                      className="mt-1 flex flex-col sm:items-end"
+                      stacked
                     />
                   </div>
                 </CardContent>

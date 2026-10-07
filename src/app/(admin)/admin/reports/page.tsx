@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
+import { CREDITS_OWED_LABEL, REFUNDS_OWED_LABEL } from "@/lib/refunds-and-credits-owed-shared";
 import dynamic from "next/dynamic";
 import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reconciliation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -363,8 +364,8 @@ export default function ReportsPage() {
     }
     rows.push(["Booked Revenue", formatCentsPlain(data.summary.totalRevenueCents)]);
     rows.push(["Net Collected", formatCentsPlain(data.summary.netCollectedCents)]);
-    rows.push(["Refunds owed (as at today)", formatCentsPlain(data.summary.refundsOwedCents)]);
-    rows.push(["Credits owed (as at today)", formatCentsPlain(data.summary.creditsOwedCents)]);
+    rows.push([`${REFUNDS_OWED_LABEL} (as at today)`, formatCentsPlain(data.summary.refundsOwedCents)]);
+    rows.push([`${CREDITS_OWED_LABEL} (as at today)`, formatCentsPlain(data.summary.creditsOwedCents)]);
     if (additionalLedgerGapWarning) {
       rows.push(["Net Collected Warning", additionalLedgerGapWarning]);
       rows.push([

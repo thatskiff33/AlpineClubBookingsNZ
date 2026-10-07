@@ -43,6 +43,7 @@ beforeEach(() => {
 });
 
 import ReportsPage from "@/app/(admin)/admin/reports/page";
+import { CREDITS_OWED_LABEL, REFUNDS_OWED_LABEL } from "@/lib/refunds-and-credits-owed-shared";
 import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
@@ -67,6 +68,8 @@ const EMPTY_REPORT = {
     },
     totalRevenueCents: 0,
     netCollectedCents: 0,
+    refundsOwedCents: 0,
+    creditsOwedCents: 0,
     additionalLedgerGapCents: 0,
     additionalLedgerGapBookings: 0,
     outstandingAdditionalCents: 0,
@@ -322,6 +325,8 @@ describe("ReportsPage quick ranges", () => {
               ...EMPTY_REPORT.summary,
               totalRevenueCents: 10_000,
               netCollectedCents: 7_500,
+              refundsOwedCents: 16_500,
+              creditsOwedCents: 8_500,
               additionalLedgerGapCents: 2_100,
               additionalLedgerGapBookings: 1,
               outstandingAdditionalCents: 2_500,
@@ -364,6 +369,10 @@ describe("ReportsPage quick ranges", () => {
     const csv = await blob.text();
     expect(csv).toContain("Booked Revenue,100.00");
     expect(csv).toContain("Net Collected,75.00");
+    // #3372 (owner, 7 Oct 2026): the shared labels, marked as at today.
+    expect(csv).toContain(`${REFUNDS_OWED_LABEL} (as at today),165.00`);
+    expect(csv).toContain(`${CREDITS_OWED_LABEL} (as at today),85.00`);
+    expect(csv).toContain("Refunds owed (as at today),165.00");
     expect(csv).toContain(
       "Net Collected Warning,Net Collected may understate by $21.00",
     );

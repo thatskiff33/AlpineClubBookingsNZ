@@ -5,6 +5,11 @@
  * Section per the sidebar's `buildAdminNavSections`. The separate `/finance` workspace
  * (the finance-scope help) lives in `../finance.ts`.
  */
+import {
+  CREDITS_OWED_LABEL,
+  REFUNDS_AND_CREDITS_OWED_NOTE,
+  REFUNDS_OWED_LABEL,
+} from "@/lib/refunds-and-credits-owed-shared";
 import { entry, help, type HelpEntry } from "../types";
 
 export const adminFinanceHelpEntries: HelpEntry[] = [
@@ -162,7 +167,8 @@ export const adminFinanceHelpEntries: HelpEntry[] = [
           title: "How report metrics are counted",
           details: [
             "Booked Revenue allocates each booking's integer-cent final price across every lodge night in its complete stay, with any remainder assigned deterministically, before the selected date range is sliced. It is allocated booking value, not collected cash, and money is displayed to exact cents in the page and exports.",
-            "Net Collected is the captured payment amount less refunds and credits for overlapping bookings of any status: cancelled bookings count only what the club kept of what was paid (money not refunded, credited or owed back by hand, plus account credit the cancellation kept; nothing if never paid), and deleted bookings never count, whichever Deleted view is chosen. It comes from payments (and, on a cancelled booking, its account-credit and hand-back records) and is not allocated across stay nights; Outstanding Additions is shown separately. If an additional payment is marked collected without a matching captured payment record, a warning names how much Net Collected may understate and tells you to ask a developer to reconcile the affected payment ledgers before trusting the figure; the same warning is included in CSV and PDF exports.",
+            "Net Collected is the captured payment amount less refunds and credits for overlapping bookings of any status. Money still owed back comes off straight away, on any booking: a refund owed by hand, a card refund Stripe has not yet paid, or a late card charge awaiting the treasurer's refund-or-keep decision. Cancelled bookings count only what the club kept of what was paid (plus account credit the cancellation kept, less late bank payments credited back; nothing if never paid), and deleted bookings never count, whichever Deleted view is chosen. It comes from payments and their refund records (and the booking's refund tasks and account-credit records) and is not allocated across stay nights; Outstanding Additions is shown separately. If an additional payment is marked collected without a matching captured payment record, a warning names how much Net Collected may understate and tells you to ask a developer to reconcile the affected payment ledgers before trusting the figure; the same warning is included in CSV and PDF exports.",
+            `${REFUNDS_OWED_LABEL} and ${CREDITS_OWED_LABEL} sit beside Net Collected: every refund owed and not yet paid, and every member's account credit not yet used. ${REFUNDS_AND_CREDITS_OWED_NOTE} Each comes off Net Collected only for its own booking. Both are in the CSV.`,
             "Booking and revenue totals include only Pending, Payment Pending, Confirmed, Paid, Awaiting Review, and Completed bookings whose stays overlap the selected nights.",
             "Occupancy keeps its narrower operational meaning: only Paid and Completed bookings occupy beds, and custodian bed holds remain excluded.",
           ],
