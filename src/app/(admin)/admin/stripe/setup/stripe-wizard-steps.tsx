@@ -372,7 +372,7 @@ export function VerifyConnectionStep({
   );
 }
 
-/** Step 4 — "Webhook" (optional/skippable): endpoint URL + signing secret + test event. */
+/** Step 4 — "Webhook" (optional/skippable): endpoint URL + signing secret + one verified event. */
 export function WebhookStep({
   context,
   helpers,
@@ -399,7 +399,7 @@ export function WebhookStep({
         await writeCredential("webhook_secret", webhookSecret.trim());
       setWebhookSecret("");
       setSuccess(
-        "Signing secret saved. Send a test event from Stripe, then re-check below.",
+        "Signing secret saved. In Stripe, Resend a recent delivery to this endpoint, then re-check below.",
       );
       helpers.refresh();
     } catch (saveError) {
@@ -523,7 +523,7 @@ export function WebhookStep({
         <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
-            Verified — a Stripe test event reached this app and its signature
+            Verified — a Stripe event reached this app and its signature
             checked out.
           </span>
         </div>
@@ -532,8 +532,8 @@ export function WebhookStep({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {context.credentials.webhook_secret.set
-              ? "Signing secret saved but no test event has verified yet. In Stripe, use “Send test webhook” on your endpoint, then re-check."
-              : "Not verified yet. Add the signing secret above, send a Stripe test event, then re-check. You can skip this step for now."}
+              ? "Signing secret saved but no event has verified yet. In Stripe Workbench, open this endpoint, select a recent delivery and click Resend (or wait for the next payment), then re-check."
+              : "Not verified yet. Add the signing secret above, Resend a recent delivery from Stripe, then re-check. You can skip this step for now."}
           </span>
         </div>
       )}

@@ -86,7 +86,7 @@ describe("stripe-config resolvers", () => {
 });
 
 /**
- * The webhook route calls this on EVERY signature-verified test-mode event,
+ * The webhook route calls this on EVERY signature-verified event (live or test, #3975),
  * before idempotency handling, and since #2723 every credential mutation mints a
  * seven-year `security`/`important` audit row. A row per delivery of a freshness
  * timestamp buries the secret changes an operator came to the log for, so the

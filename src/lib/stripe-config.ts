@@ -137,12 +137,12 @@ async function readWebhookMarkerFreshness(): Promise<{
 }
 
 /**
- * Record that a Stripe TEST-MODE webhook event verified. Best-effort: a weak
+ * Record that a signature-verified Stripe webhook event (live or test, #3975) arrived. Best-effort: a weak
  * auth secret (WeakAuthSecretError) or any store error must NEVER break webhook
  * processing, so this swallows failures.
  *
  * IT WRITES ONLY WHEN THE ANSWER WOULD CHANGE (#2723). The webhook route calls
- * this on EVERY signature-verified test-mode event, before idempotency handling,
+ * this on EVERY signature-verified event, before idempotency handling,
  * so a replay or a retry storm arrives here many times over. Since #2723 every
  * credential mutation mints a `security`/`important` audit row, which is kept
  * for seven years — and a row per delivery of a freshness timestamp buries the
@@ -207,7 +207,7 @@ export interface StripeSetupState {
   /** Any stored Stripe credential fails to decrypt (the auth secret changed). */
   needsReentry: boolean;
   /**
-   * A webhook test event verified AND the marker is fresh — i.e. it was recorded
+   * A signature-verified webhook event arrived AND the marker is fresh — i.e. it was recorded
    * at or after the current webhook secret was last written. A signing-secret
    * swap makes the secret newer than the marker, so the badge drops to amber
    * even before verify-reset physically removes the marker.

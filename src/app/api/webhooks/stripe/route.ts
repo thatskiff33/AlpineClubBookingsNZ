@@ -92,15 +92,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Freshness-scoped webhook-verified marker (#2082): a signature-verified
-  // TEST-MODE event proves the wizard's endpoint + signing secret are wired
-  // through the exact production resolver/HMAC path. Only test-mode events set
-  // it (live traffic never marks setup "verified"); it is best-effort and never
-  // affects the webhook response, and verify-reset drops it on any credential
-  // change so a green badge cannot survive a signing-secret swap.
-  if (event.livemode === false) {
-    await recordStripeWebhookVerified();
-  }
+  // Freshness-scoped webhook-verified marker (#2082). Any signature-verified
+  // event, live or test, proves the wizard's endpoint and signing secret are
+  // wired through the exact production resolver/HMAC path (#3975: Stripe's
+  // dashboard no longer sends test events to a live endpoint, so a test-only
+  // rule left a live-only club unable to verify). Best-effort, never affects
+  // the webhook response, written at most once per secret, and verify-reset
+  // drops it on any credential change so a green badge cannot survive a
+  // signing-secret swap.
+  await recordStripeWebhookVerified();
 
   const result = await processStripeWebhookEvent(event);
   return NextResponse.json(result.body, result.init);

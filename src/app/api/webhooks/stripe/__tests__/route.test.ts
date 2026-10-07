@@ -66,7 +66,7 @@ describe("Stripe webhook route — fail-closed + verified marker (#2082)", () =>
     expect(mockConstructWebhookEvent).not.toHaveBeenCalled();
   });
 
-  it("records the verified marker only for a TEST-MODE event", async () => {
+  it("records the verified marker for a signature-verified TEST-MODE event", async () => {
     mockGetWebhookSecret.mockResolvedValue("whsec_test");
     mockConstructWebhookEvent.mockResolvedValue({
       id: "evt_test",
@@ -79,7 +79,9 @@ describe("Stripe webhook route — fail-closed + verified marker (#2082)", () =>
     expect(mockProcessEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT record the marker for a LIVE-MODE event", async () => {
+  // #3975: Stripe's Workbench can only Resend a live delivery to a live
+  // endpoint, so a live-only club verifies from a live event or never.
+  it("records the verified marker for a signature-verified LIVE-MODE event (#3975)", async () => {
     mockGetWebhookSecret.mockResolvedValue("whsec_live");
     mockConstructWebhookEvent.mockResolvedValue({
       id: "evt_live",
@@ -88,7 +90,7 @@ describe("Stripe webhook route — fail-closed + verified marker (#2082)", () =>
     });
     const res = await POST(signedRequest());
     expect(res.status).toBe(200);
-    expect(mockRecordVerified).not.toHaveBeenCalled();
+    expect(mockRecordVerified).toHaveBeenCalledTimes(1);
     expect(mockProcessEvent).toHaveBeenCalledTimes(1);
   });
 
