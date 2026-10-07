@@ -47,6 +47,14 @@ export type FinishedStayQuote = {
   loading: boolean;
 };
 
+const EMPTY_QUOTE: FinishedStayQuote = {
+  figures: null,
+  forSettlementMethod: "",
+  confirmOverCapacity: false,
+  overCapacityNights: null,
+  loading: false,
+};
+
 /**
  * Per-card quotes, keyed by request id like the decision drafts, so one card's
  * figures or overbooking warning never arm another card's approval.
@@ -56,15 +64,7 @@ export function useFinishedStayQuotes(onError: (message: string) => void) {
   const patch = (id: string, next: Partial<FinishedStayQuote>) =>
     setQuotes((current) => ({
       ...current,
-      [id]: {
-        figures: null,
-        forSettlementMethod: "",
-        confirmOverCapacity: false,
-        overCapacityNights: null,
-        loading: false,
-        ...current[id],
-        ...next,
-      },
+      [id]: { ...(current[id] ?? EMPTY_QUOTE), ...next },
     }));
   async function requestQuote(
     id: string,
