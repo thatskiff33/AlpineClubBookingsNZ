@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import { CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +36,6 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { calendarDayFromPayload } from "../_lib/calendar-day";
 import { formatCents } from "@/lib/pricing";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -105,7 +105,7 @@ const emptyForm: EventFormState = {
 // behind UTC (INV-DATE-019). The rendered shape — the stored `yyyy-MM-dd` — is
 // unchanged.
 function formatStoredDate(value: string) {
-  return calendarDayFromPayload(value) ?? value;
+  return calendarDateOfSerialisedDbDateOrNull(value) ?? value;
 }
 
 /**

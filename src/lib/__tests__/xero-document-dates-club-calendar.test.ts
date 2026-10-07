@@ -114,6 +114,12 @@ vi.mock("@/lib/prisma", () => ({
       count: vi.fn().mockResolvedValue(0),
     },
     memberCredit: {
+      // #3836: the engine's one batch predicate, read from the same aggregate mock.
+      groupBy: async ({ where }: { where: { appliedToBookingId: { in: string[] } } }) => {
+        const { _sum } = await mocks.memberCreditAggregate();
+        return where.appliedToBookingId.in.map((appliedToBookingId) => ({ appliedToBookingId, _sum }));
+      },
+      findUnique: async () => null,
       aggregate: mocks.memberCreditAggregate,
       findMany: mocks.memberCreditFindMany,
       updateMany: mocks.memberCreditUpdateMany,
@@ -661,7 +667,14 @@ describe.each(CLUB_DAY_CASES)(
       mocks.creditNoteAllocationGroupBy.mockResolvedValue([]);
       mocks.transaction.mockImplementation(async (run: (tx: unknown) => unknown) =>
         run({
+          booking: { findUnique: async () => ({ status: "PAID" }) },
           memberCredit: {
+            // #3836: the engine's one batch predicate, read from the same aggregate mock.
+            groupBy: async ({ where }: { where: { appliedToBookingId: { in: string[] } } }) => {
+              const { _sum } = await mocks.memberCreditAggregate();
+              return where.appliedToBookingId.in.map((appliedToBookingId) => ({ appliedToBookingId, _sum }));
+            },
+            findUnique: async () => null,
             aggregate: mocks.memberCreditAggregate,
             findMany: mocks.memberCreditFindMany,
             updateMany: mocks.memberCreditUpdateMany,

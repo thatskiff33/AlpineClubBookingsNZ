@@ -784,6 +784,34 @@ deallocation, membership-cancellation credit note, membership-cancellation
 contact update, group-settlement invoice, group-settlement invoice void,
 membership subscription invoice, and kept late-capture invoice (#3635).
 
+**A card booking paid entirely by account credit (#3836, `INV-PAY-024`)** is
+confirmed at $0 and invoiced at its full price, like every card booking, so the
+credit is all that pays the invoice. The invoice operation allocates it with
+the same engine a card-and-credit booking uses (#1641,
+`allocateAppliedCreditForBooking`), on the raise and on every replay: a payment
+that captured nothing (`isCreditOnlyCardPayment`) passes the cash-captured gate
+without its status being read: every credit-covered settle writes it
+`SUCCEEDED` and a cancel leaves it so, on the paid path. The engine's stamps,
+unique slices and per-slice links make every re-run allocate nothing more. The
+engine is also the one gate for a cancel (#3836, bank transfers included): on a
+`CANCELLED` booking, or one with a restore row, it only finishes slices already
+committed - which the cancel's clearing note was sized net of - and never plans
+or mints new ones, so the invoice is never credited both by a clearing note and
+by an allocation. The repair pass's cancelled-open-invoice arm waits while the
+booking's invoice or applied-credit allocation operation is unfinished. The
+inbound credit-note repair writes the ledger's applied credit to the payment's
+`creditAppliedCents` uncapped: the old cap at the card amount ($0 here) zeroed
+it, and a cap at the booking's worth would cut a booking reduced before #3809,
+which keeps all its credit at a cancel (owner decision, 4 Oct 2026); the worth
+cap belongs to the cancel alone, for #3809's bookings. A mirror the old cap
+already clipped to the card amount is read from the ledger by the cancel, its
+preview and the refunded-card restore (`cancelTieredAppliedCreditCents`). An invoice raised
+before #3836 is left owing until the booking repair pass's
+`UNALLOCATED_APPLIED_CREDIT` finding queues the applied-credit allocation
+operation (`docs/MAINTENANCE.md`); a cancelled one is never queued, since the
+cancelled-open-invoice arm clears its invoice with a note instead. After a cancel the restored
+credit is noteless until spent (#2717), as for a bank transfer.
+
 **An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
 (`member-credit.ts`), the give-back of applied credit that the pre-payment
 clamp, a credit-paid booking's financial-review share (#3791, `INV-PAY-113`)
@@ -869,8 +897,10 @@ is closed again and no unallocated note is raised for it. The note is queued
 after the commit, as every edit's is; if that queue fails, the repair pass
 (`MISSING_MODIFICATION_CREDIT_NOTE`) re-queues it at the give-back the edit's
 history row records - none where the tier gave nothing back - never at the
-whole reduction. A card-path booking paid by credit has no allocation to release
-(#3836); there the note alone takes the give-back off the invoice. Every
+whole reduction. A card-path booking paid entirely by credit has its credit
+allocated too since #3836, so it deallocates the same way; one invoiced before
+#3836 whose allocation has not yet run has none to release, and there the note
+alone takes the give-back off the invoice. Every
 guest-removal door queues this leg through `queueGuestRemovalXeroSettlement`,
 the consent decline and expiry included, which before #3809 queued nothing.
 A note worded as account credit moved no cash, so the inbound credit-note sync

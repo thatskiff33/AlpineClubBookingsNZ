@@ -268,7 +268,9 @@ export function calendarDateOfSerialisedDbDate(value: string): CalendarDate {
 export function calendarDateOfSerialisedDbDateOrNull(
   value: string | null | undefined,
 ): CalendarDate | null {
-  return value == null ? null : parseCalendarDate(value.slice(0, 10));
+  // `typeof`, not `== null`: these values arrive over `fetch` with no runtime
+  // schema check, and a number or object must not throw `.slice` out of a render.
+  return typeof value === "string" ? parseCalendarDate(value.slice(0, 10)) : null;
 }
 
 /**

@@ -1,8 +1,7 @@
 import "server-only";
 
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
+  formatStayDate,
 } from "@/lib/club-time";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import type { ClubFormat } from "@/lib/club-format";
@@ -112,8 +111,8 @@ async function isPublicContentEnabled(gate: PublicContentGate): Promise<boolean>
  * and `formatRange` would give an en dash and collapse a shared year.
  */
 function dateRange(start: Date, end: Date, format: ClubFormat): string {
-  const from = formatClubDate(calendarDateOfDateOnlyInstant(start), format);
-  const to = formatClubDate(calendarDateOfDateOnlyInstant(end), format);
+  const from = formatStayDate(start, format);
+  const to = formatStayDate(end, format);
   return `${from} to ${to}`;
 }
 

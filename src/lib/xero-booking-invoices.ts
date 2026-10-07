@@ -96,6 +96,7 @@ import {
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { isCreditOnlyCardPayment } from "@/lib/credit-only-card-payment";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -269,7 +270,7 @@ export function buildInvoiceLineItems(
  *
  * Card-gated for three reasons: (1) Internet-Banking invoices allocate via their own
  * fire-after outbox op (#1620) — running it here would double-drive them; (2) a card
- * invoice is only raised after capture (payment SUCCEEDED); (3) a full-price capture
+ * invoice follows capture, or a $0 credit-only settle (#3836); (3) a full-price capture
  * carries `creditAppliedCents = 0` and must NOT allocate — its invoice is settled in
  * full by real cash, and the settle gave its applied credit back locally (#3864; a
  * pre-#3864 double-pay by an operator's LOCAL restore), not by a Xero note (which
@@ -293,7 +294,7 @@ async function settleCardAppliedCreditAllocation(
   bookingId: string,
   createdByMemberId?: string
 ): Promise<void> {
-  // Proceed ONLY for a card cash capture that recorded a credit-reduced mirror
+  // Proceed ONLY for a card payment that recorded a credit-reduced mirror
   // (`creditAppliedCents > 0`). The positive test also skips on 0 / a missing
   // mirror (legacy full-price captures, no-credit bookings), which is required:
   // allocating against a full-price-paid invoice would over-allocate.
@@ -301,12 +302,11 @@ async function settleCardAppliedCreditAllocation(
   // `status === "SUCCEEDED"`: a repay-after-refund payment aggregates to
   // PARTIALLY_REFUNDED at invoice time even though its repay capture settles
   // the invoice, and skipping here would strand the applied slice outstanding.
-  // A fully-refunded-out payment (net 0) still must not allocate.
+  // A fully-refunded-out payment (net 0) still must not allocate; a credit-only one does (#3836).
   if (
-    payment.source === PaymentSource.INTERNET_BANKING ||
-    !isCapturedPaymentStatus(payment.status) ||
-    payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0 ||
-    !(payment.creditAppliedCents > 0)
+    !isCreditOnlyCardPayment(payment) &&
+    (payment.source === PaymentSource.INTERNET_BANKING || !(payment.creditAppliedCents > 0) ||
+      !isCapturedPaymentStatus(payment.status) || payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0)
   ) {
     return;
   }

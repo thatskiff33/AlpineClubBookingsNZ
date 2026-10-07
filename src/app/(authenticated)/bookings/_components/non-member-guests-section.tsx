@@ -8,7 +8,7 @@ import {
   type BookingMoneyReconciliationView,
 } from "@/lib/booking-money-reconciliation-audience";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
-import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 
 // #1975: one genuine #738 split child, shaped for the parent's "Your non-member
 // guests" section. Any status (a cancelled or bumped child must still show).
@@ -98,8 +98,8 @@ export function NonMemberGuestsSection({
                           `formatNZDate` projected it through `APP_TIME_ZONE`,
                           which is a day early for any club west of Greenwich.
                         */}
-                        {formatClubDate(calendarDateOfDateOnlyInstant(child.checkIn), money.format)}{" "}
-                        - {formatClubDate(calendarDateOfDateOnlyInstant(child.checkOut), money.format)}
+                        {formatStayDate(child.checkIn, money.format)}{" "}
+                        - {formatStayDate(child.checkOut, money.format)}
                       </p>
                     ) : null}
                     <p className="text-xs font-medium text-info-11 underline">
