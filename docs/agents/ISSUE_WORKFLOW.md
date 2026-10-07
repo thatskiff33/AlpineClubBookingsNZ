@@ -109,8 +109,9 @@ found nearby is filed as a new issue.
 ## Risk And Attendance
 
 High and critical issues are not suitable for unattended coding runs. They can
-be planned, mapped, or reviewed, but implementation needs human review of the
-plan and resulting PR before merge.
+be planned, mapped, or reviewed; their PRs merge on the `AGENTS.md` merge gate
+(#3959) with the lenses their risk requires, and any open owner decision in
+them waits for the owner.
 
 Low and medium issues may be suitable for an autonomous local run only when the
 issue has complete scope and validation commands and does not touch money

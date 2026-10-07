@@ -3,8 +3,8 @@
 Phased delivery plan for multi-lodge support. Each phase is one or more
 PRs; no phase bundles schema, money-path logic, and UI in a single change.
 Risk labels set the review lenses under the `AGENTS.md` merge gate (#3959):
-a High/Critical item gets three lenses, and any open owner decision in it waits
-for the owner.
+each item gets the lenses AGENTS.md requires for its risk, and any open owner
+decision in it waits for the owner.
 
 Phases 0–1 are prerequisites for everything else. Phases 4, 5, and 6 are
 independent of each other once phase 3 lands and can proceed in any order.
@@ -92,8 +92,8 @@ Per ADR-001 sequencing, across several PRs:
   migration PR; verify each step against
   `BLUE_GREEN_MIGRATION_POLICY.md`.
 
-**Risk: High (schema/migrations on booking-critical tables). Owner
-approval required.**
+**Risk: High (schema/migrations on booking-critical tables). Merges on the
+`AGENTS.md` merge gate with the lenses its risk requires.**
 
 ## Phase 3 — Capacity, pricing, and booking-transaction core
 
@@ -139,8 +139,9 @@ fixtures before changing logic. Cross-lodge isolation (a full lodge A
 never blocks a booking at lodge B, and vice versa) is the headline
 regression risk.
 
-**Risk: Critical (money and booking capacity). Owner approval and staging
-soak required before the phase-1 "second lodge" guard is lifted.**
+**Risk: Critical (money and booking capacity). Merges on the `AGENTS.md` merge
+gate; lifting the phase-1 "second lodge" guard in production is an owner
+operation, after a staging soak.**
 
 ## Phase 4 — Access scoping and booking eligibility
 
@@ -172,7 +173,8 @@ Implementation decisions beyond the plan text:
   UI-only), default-open: no restriction rows means every active member
   can book every active lodge.
 
-**Risk: High (auth boundaries). Owner approval required.**
+**Risk: High (auth boundaries). Merges on the `AGENTS.md` merge gate with the
+lenses its risk requires.**
 
 ## Phase 5 — Chores and roster
 
@@ -366,8 +368,8 @@ up.
   opt into alternate lodges; the processor offers a freed bed
   cross-lodge per the configured order, and acceptance creates a fresh
   booking at the offered lodge and cancels the waitlist entry — never a
-  lodgeId mutation. Risk: High (waitlist/money paths); owner review
-  before merge.
+  lodgeId mutation. Risk: High (waitlist/money paths); merges on
+  the `AGENTS.md` merge gate.
 
   *Progress note (2026-07-03):* implemented end to end on this branch.
   Expand migration `20260708000500_add_cross_lodge_waitlist` adds the
