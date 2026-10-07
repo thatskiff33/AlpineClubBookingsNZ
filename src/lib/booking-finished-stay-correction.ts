@@ -24,6 +24,7 @@
  */
 
 import { ApiError } from "@/lib/api-error";
+import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import {
   calendarDateOfDateOnlyInstant,
   eachCalendarDate,
@@ -262,34 +263,28 @@ export function finishedStayRemovedPortion(args: {
 
 /** Read the promotion rows `finishedStayRemovedPortion` values removed nights with (#3276). */
 export async function loadRemovalPromoRows(
-  db: {
-    bookingGuestNightAdjustment: {
-      findMany(args: {
-        where: { bookingId: string };
-        select: {
-          bookingGuestId: true;
-          amountCents: true;
-          bookingGuestNight: { select: { bookingGuestId: true; stayDate: true } };
-        };
-      }): Promise<
-        Array<{
-          bookingGuestId: string | null;
-          amountCents: number | null;
-          bookingGuestNight: { bookingGuestId: string; stayDate: Date } | null;
-        }>
-      >;
-    };
-  },
+  db: PrismaTransactionClient,
   bookingId: string,
 ): Promise<RemovalPromoRows> {
   const rows = await db.bookingGuestNightAdjustment.findMany({
     where: { bookingId },
-    select: {
-      bookingGuestId: true,
-      amountCents: true,
-      bookingGuestNight: { select: { bookingGuestId: true, stayDate: true } },
-    },
+    select: { bookingGuestId: true, bookingGuestNightId: true, amountCents: true },
   });
+  // A night-scope row names its night by id; resolve those to (guest, day) with
+  // a direct read rather than through the relation (`INV-MONEY-028`'s census).
+  const nightIds = rows.flatMap((row) => (row.bookingGuestNightId ? [row.bookingGuestNightId] : []));
+  const nights = nightIds.length
+    ? await db.bookingGuestNight.findMany({
+        where: { id: { in: nightIds } },
+        select: { id: true, bookingGuestId: true, stayDate: true },
+      })
+    : [];
+  const nightKeyById = new Map(
+    nights.map((night) => [
+      night.id,
+      `${night.bookingGuestId}|${calendarDateOfDateOnlyInstant(storedDateOnly(night.stayDate))}`,
+    ]),
+  );
   const byNight = new Map<string, number | null>();
   const byGuest = new Map<string, number | null>();
   const add = (map: Map<string, number | null>, key: string, amount: number | null) => {
@@ -297,12 +292,9 @@ export async function loadRemovalPromoRows(
     map.set(key, prior === undefined ? amount : prior === null || amount === null ? null : prior + amount);
   };
   for (const row of rows) {
-    if (row.bookingGuestNight) {
-      const key = `${row.bookingGuestNight.bookingGuestId}|${calendarDateOfDateOnlyInstant(storedDateOnly(row.bookingGuestNight.stayDate))}`;
-      add(byNight, key, row.amountCents);
-    } else if (row.bookingGuestId) {
-      add(byGuest, row.bookingGuestId, row.amountCents);
-    }
+    const nightKey = row.bookingGuestNightId ? nightKeyById.get(row.bookingGuestNightId) : undefined;
+    if (nightKey) add(byNight, nightKey, row.amountCents);
+    else if (row.bookingGuestId) add(byGuest, row.bookingGuestId, row.amountCents);
   }
   return { byNight, byGuest };
 }

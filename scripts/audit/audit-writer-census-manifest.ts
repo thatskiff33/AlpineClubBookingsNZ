@@ -3067,7 +3067,7 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // is none — the acknowledgement's disclosure for the same action, kept as it
   // is today by the owner-approved blueprint (INV-PRIV-018). `internalNotes`
   // never reaches the row; only `internalNoteRecorded` does.
-  "src/lib/booking-change-request-admin-decision.ts::executeFinishedStayApproval#0":
+  "src/lib/booking-change-request-admin-decision.ts::runFinishedStayApproval#0":
     "booking-change-request.approve",
   // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
   // refusal without one — and which `notifyMemberOfRefusal` emails as well.

@@ -485,7 +485,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:117",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1062",
+  "src/lib/booking-batch-modification-service.ts:1068",
   "src/lib/booking-cancel.ts:527",
   "src/lib/booking-date-modification-service.ts:396",
   "src/lib/booking-delete.ts:120",
@@ -495,7 +495,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-guest-removal-service.ts:785",
   "src/lib/booking-linked-date-move-service.ts:240",
   "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:614",
+  "src/lib/booking-modify-validation.ts:618",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:232",
@@ -782,7 +782,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/booking-change-request-admin-decision.ts:61",
+  "src/lib/booking-change-request-admin-decision.ts:79",
   "src/lib/cron-additional-payment-reminders.ts:437",
   "src/lib/cron-confirm-pending.ts:190",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",

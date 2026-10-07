@@ -741,6 +741,7 @@ function deferred() {
       where: { id: "default" },
       create: { id: "default", bedAllocation: true },
       update: { bedAllocation: true },
+      select: { id: true },
     });
     await prisma.bedAllocationSettings.deleteMany({ where: { id: LODGE_ID } });
     await prisma.bedAllocationSettings.create({
@@ -785,6 +786,7 @@ function deferred() {
       await prisma.clubModuleSettings.update({
         where: { id: "default" },
         data: { bedAllocation: prior?.bedAllocation ?? false },
+        select: { id: true },
       });
     }
   }, 60_000);
