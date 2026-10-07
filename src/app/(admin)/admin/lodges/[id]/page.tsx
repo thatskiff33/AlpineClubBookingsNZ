@@ -27,7 +27,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { LodgeCapacityGuidance } from "@/components/admin/lodge-capacity-guidance";
+import {
+  LodgeCapacityGuidance,
+  lodgeCapacityLoweringWarningId,
+} from "@/components/admin/lodge-capacity-guidance";
 import { LODGE_CAPACITY_OVERRIDE_FIELD_ID } from "@/components/admin/lodge-capacity-settings-link";
 import {
   MAX_CONFIGURED_LODGE_CAPACITY,
@@ -70,6 +73,9 @@ const CAPACITY_SOURCE_LABELS: Record<string, string> = {
   // removed); a lodge with no beds and no override now resolves to 0.
   unconfigured_lodge: "not configured yet",
 };
+
+/** The capacity guidance block; the field's `aria-describedby` names it too. */
+const LODGE_CAPACITY_GUIDANCE_ID = "lodge-capacity-guidance";
 
 export default function LodgeConfigurationHubPage() {
   const params = useParams<{ id: string }>();
@@ -495,7 +501,7 @@ export default function LodgeConfigurationHubPage() {
                 min={MIN_CONFIGURED_LODGE_CAPACITY}
                 max={MAX_CONFIGURED_LODGE_CAPACITY}
                 // Described, not a live region: see LodgeCapacityGuidance.
-                aria-describedby="lodge-capacity-fallback-hint lodge-capacity-guidance lodge-capacity-guidance-lowering"
+                aria-describedby={`lodge-capacity-fallback-hint ${LODGE_CAPACITY_GUIDANCE_ID} ${lodgeCapacityLoweringWarningId(LODGE_CAPACITY_GUIDANCE_ID)}`}
                 value={capacityOverride}
                 onChange={(e) => setCapacityOverride(e.target.value)}
                 disabled={!canEdit}
@@ -518,7 +524,7 @@ export default function LodgeConfigurationHubPage() {
               zero (additional lodges).
             </p>
             <LodgeCapacityGuidance
-              id="lodge-capacity-guidance"
+              id={LODGE_CAPACITY_GUIDANCE_ID}
               capacityInput={capacityOverride}
               savedCapacityInput={savedCapacityOverride}
               activeBedCount={activeBedCount}

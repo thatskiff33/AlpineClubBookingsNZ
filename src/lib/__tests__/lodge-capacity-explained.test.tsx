@@ -533,6 +533,9 @@ describe("the not-set-up notice's link lands on this field (#3407 round 3, F2)",
  */
 describe("lowering the capacity warns what it removes (#3440)", () => {
   const LOWERING = /^Lowering the capacity/;
+  const SETTING = /^Setting a capacity of/;
+  const setting = (field: HTMLInputElement) =>
+    capacityNotices(field).find((text) => SETTING.test(text));
   const lowering = (field: HTMLInputElement) =>
     capacityNotices(field).find((text) => LOWERING.test(text));
 
@@ -574,14 +577,9 @@ describe("lowering the capacity warns what it removes (#3440)", () => {
     expect(lowering(field)).toBeUndefined();
   });
 
-  it("says nothing without shareable doubles, a saved figure, or a valid figure", async () => {
+  it("says nothing without shareable doubles or a valid figure", async () => {
     let field = await open(0, 30);
     await waitFor(() => expect(field.value).toBe("30"));
-    await typeCapacity(field, "24");
-    expect(lowering(field)).toBeUndefined();
-    cleanup();
-
-    field = await open(5, null);
     await typeCapacity(field, "24");
     expect(lowering(field)).toBeUndefined();
     cleanup();
@@ -590,6 +588,25 @@ describe("lowering the capacity warns what it removes (#3440)", () => {
     await waitFor(() => expect(field.value).toBe("30"));
     await typeCapacity(field, "");
     expect(lowering(field)).toBeUndefined();
+  });
+
+  it("warns when the lodge has no saved capacity, which bounds nothing", async () => {
+    const field = await open(5, null);
+    await typeCapacity(field, "24");
+    expect(lowering(field)).toBeUndefined();
+    expect(setting(field)).toContain(
+      "Setting a capacity of 24 removes 5 partner spots this lodge has now.",
+    );
+    await typeCapacity(field, "26");
+    expect(setting(field)).toContain("removes 3 partner spots");
+    await typeCapacity(field, "29");
+    expect(setting(field)).toBeUndefined();
+  });
+
+  it("says nothing for a blank saved capacity on a lodge with no doubles", async () => {
+    const field = await open(0, null);
+    await typeCapacity(field, "24");
+    expect(setting(field)).toBeUndefined();
   });
 
   it("does not stop the save", async () => {

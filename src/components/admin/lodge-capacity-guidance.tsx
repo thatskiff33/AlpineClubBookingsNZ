@@ -51,10 +51,19 @@ export function LodgeCapacityGuidance(props: LodgeCapacityGuidanceProps) {
       <LodgeCapacityExplanation {...props} />
       <LodgeCapacityLoweringWarning
         {...props}
-        id={`${props.id}-lowering`}
+        id={lodgeCapacityLoweringWarningId(props.id)}
       />
     </>
   );
+}
+
+/**
+ * The id of the lowering warning rendered beside the guidance `id` (#3440).
+ * The field's `aria-describedby` reads it from here, so the reference cannot
+ * drift from the element (`INV-SSOT-001`).
+ */
+export function lodgeCapacityLoweringWarningId(guidanceId: string): string {
+  return `${guidanceId}-lowering`;
 }
 
 type LodgeCapacityGuidanceProps = {
@@ -165,8 +174,9 @@ function LodgeCapacityExplanation({
 /**
  * Warns, before the save, how many partner-shared spots lowering the capacity
  * would remove (#3440). Compared with the SAVED figure, so it appears on the
- * transition only: nothing when raising, unchanged, cleared, with no saved
- * figure to compare against, or on a lodge with no shareable doubles. The count
+ * transition only: nothing when raising, unchanged, cleared, or on a lodge
+ * with no shareable doubles. A blank saved figure bounds nothing, so it counts
+ * as unbounded headroom and any typed figure can remove spots. The count
  * comes from `resolvePartnerSpotsLostByCapacityChange`, which reads the same
  * headroom rule the server resolves with (`INV-CAP-031`, `INV-SSOT-001`).
  *
@@ -190,10 +200,14 @@ function LodgeCapacityLoweringWarning({
   if (activeBedCount === null || activeDoubleBedCount <= 0) return null;
   const typed = parseConfiguredLodgeCapacity(capacityInput);
   const saved = parseConfiguredLodgeCapacity(savedCapacityInput);
-  if (typed.kind !== "valid" || saved.kind !== "valid") return null;
+  if (typed.kind !== "valid" || saved.kind === "invalid") return null;
 
+  // A blank saved figure is not "nothing to compare with": it bounds nothing,
+  // so every shareable double already has a partner spot, and typing a figure
+  // can remove them (`resolvePartnerSharedHeadroom`).
+  const savedCapacity = saved.kind === "valid" ? saved.capacity : null;
   const lost = resolvePartnerSpotsLostByCapacityChange({
-    savedCapacity: saved.capacity,
+    savedCapacity,
     proposedCapacity: typed.capacity,
     activeBedCount,
     activeDoubleBedCount,
@@ -202,9 +216,20 @@ function LodgeCapacityLoweringWarning({
 
   return (
     <p id={id} className="rounded-md bg-warning-3 p-2 text-xs text-warning-11">
-      Lowering the capacity from {saved.capacity} to {typed.capacity} removes{" "}
-      {lost} partner spot{lost === 1 ? "" : "s"} on this lodge&apos;s shareable
-      double beds. Raise it again before saving if you want to keep them.
+      {savedCapacity === null ? (
+        <>
+          Setting a capacity of {typed.capacity} removes {lost} partner spot
+          {lost === 1 ? "" : "s"} this lodge has now. Raise it before saving if
+          you want to keep {lost === 1 ? "it" : "them"}.
+        </>
+      ) : (
+        <>
+          Lowering the capacity from {savedCapacity} to {typed.capacity}{" "}
+          removes {lost} partner spot{lost === 1 ? "" : "s"} on this
+          lodge&apos;s shareable double beds. Raise it again before saving if
+          you want to keep {lost === 1 ? "it" : "them"}.
+        </>
+      )}
     </p>
   );
 }
