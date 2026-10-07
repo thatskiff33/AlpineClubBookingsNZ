@@ -103,7 +103,7 @@ export default async function MyBookingsPage() {
           nights: BOOKING_MONEY_RECONCILIATION_SELECT.guests.select.nights,
         },
       },
-      promoRedemption: BOOKING_MONEY_RECONCILIATION_SELECT.promoRedemption,
+      promoRedemptions: BOOKING_MONEY_RECONCILIATION_SELECT.promoRedemptions,
       nightAdjustments: BOOKING_MONEY_RECONCILIATION_SELECT.nightAdjustments,
       // #796 discriminator: a group joiner also links to its organiser via
       // parentBookingId, so the list needs the join row to tell it apart from a

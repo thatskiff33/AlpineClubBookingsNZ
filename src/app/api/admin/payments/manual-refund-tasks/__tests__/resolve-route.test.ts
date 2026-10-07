@@ -331,3 +331,35 @@ describe("what the operator is told afterwards", () => {
     expect(body.message).toContain("It moved no money and raised no invoice");
   });
 });
+
+describe("the officer's cash-or-bank answer on a hand-settled refund (#3536)", () => {
+  const completion = {
+    resolution: "completed",
+    confirmed: true,
+    note: "Handed back at the lodge.",
+    confirmedAmountCents: 7_300,
+    direction: "REFUND_TO_MEMBER",
+  };
+
+  it("passes the answer through, and null when none was given", async () => {
+    await POST(request({ ...completion, handedBackInCash: true }), { params });
+    expect(mocks.resolveManualRefundTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ handedBackInCash: true }),
+      CLUB_FORMAT_TEST,
+    );
+    await POST(request(completion), { params });
+    expect(mocks.resolveManualRefundTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ handedBackInCash: null }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("refuses it on a dismissal, which hands nothing back", async () => {
+    const response = await POST(
+      request({ resolution: "dismissed", confirmed: true, note: "Nothing owed.", handedBackInCash: true }),
+      { params },
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.resolveManualRefundTask).not.toHaveBeenCalled();
+  });
+});

@@ -600,6 +600,7 @@ export const rateLimiters = {
   memberGuestAddProbe: { id: "member-guest-add-probe", limit: 15, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** The daily backstop for the above (#2388): 50 cross-family add attempts per member per day. */
   memberGuestAddProbeDaily: { id: "member-guest-add-probe-daily", limit: 50, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Guest promo-code lookup (#3492): 30 per 15 min, member-scoped; the lookup is also audited. */ promoGuestCodeLookup: { id: "promo-guest-code-lookup", limit: 30, windowSeconds: 15 * 60 } as RateLimitConfig,
   // AI help assistant (#2211, C3). These caps only throttle abuse/burst; the
   // real spend cap is the monthly budget gate (checkAiBudget) in the route —
   // authSensitive so a degraded shared-store fallback cannot be used to multiply
@@ -695,6 +696,5 @@ export const rateLimiters = {
   clubPostImageUpload: { id: "club-post-image-upload", limit: 30, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
-// test seam
-// Export for testing
+// Test seam: exported for testing
 export { store as _testStore };

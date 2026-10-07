@@ -221,4 +221,39 @@ describe("getFailedXeroOperationOverview", () => {
       state: "REPAIRED",
     });
   });
+
+  // #3827 review F2 (`INV-PAY-118`): the payment's pointer and refund payment
+  // belong to its ONE refund note. A refund request's own note is a separate
+  // document; its failure stays ACTIVE so the operations panel offers Retry.
+  it.each([
+    ["its payload", { requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundRequestId: "rr_1" } }],
+    ["its key alone", { requestPayload: null }],
+  ])("keeps a failed refund request's note active, named by %s", async (_label, overrides) => {
+    mocks.prisma.xeroSyncOperation.findMany.mockImplementation(async ({ where }: any) =>
+      where?.status === "FAILED"
+        ? [
+            makeOperation({
+              id: "request_note_failed",
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              localModel: "Payment",
+              localId: "payment_3",
+              correlationKey: "payment:payment_3:refund-request-credit-note:rr_1:v1",
+              ...overrides,
+            }),
+          ]
+        : []
+    );
+    mocks.prisma.payment.findMany.mockResolvedValue([
+      { id: "payment_3", xeroRefundCreditNoteId: "cn_cancel" },
+    ]);
+    mocks.prisma.xeroObjectLink.findMany.mockImplementation(async ({ where }: any) =>
+      where?.role === "REFUND_PAYMENT" ? [{ localId: "payment_3" }] : []
+    );
+
+    const overview = await getFailedXeroOperationOverview();
+
+    expect(overview.activeFailedCount).toBe(1);
+    expect(overview.resolutions.get("request_note_failed")).toMatchObject({ state: "ACTIVE" });
+  });
 });

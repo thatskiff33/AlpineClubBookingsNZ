@@ -58,3 +58,20 @@ export function bookingFinalPriceCents({
 }): number {
   return totalPriceCents + promoAdjustmentCents;
 }
+
+/**
+ * A booking's headline DISCOUNT: what its promotions took off, as the one
+ * figure `Booking.discountCents` stores — `max(0, -promoAdjustmentCents)`
+ * (`INV-MONEY-031`). Derived from the signed adjustment, never summed from the
+ * codes' own discounts: a code that RAISES a night (`SET_PRICE` above the
+ * night's price) beside one that discounts would otherwise store a discount
+ * larger than the booking's net reduction (#3827). Each redemption keeps its
+ * own figures.
+ */
+export function bookingDiscountCents({
+  promoAdjustmentCents,
+}: {
+  promoAdjustmentCents: number;
+}): number {
+  return Math.max(0, -promoAdjustmentCents);
+}

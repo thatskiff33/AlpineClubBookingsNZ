@@ -19,6 +19,7 @@ import {
 } from "@/lib/email-message-notes";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
+import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
 
 type EmailTemplateAudience = "member" | "admin" | "system";
 export type NotificationDeliveryModeValue = "always" | "content_only" | "disabled";
@@ -383,7 +384,10 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
     "localId",
     "latestErrorMessage",
   ],
-  "refund-request-approved": ["adminNotes"],
+  // #3827 (D-3813-7): {{amount}} left the default body for the composed
+  // {{refundSentence}}; it stays allowed so an override saved from the old
+  // default keeps validating and rendering.
+  "refund-request-approved": ["adminNotes", "amount"],
   "refund-request-declined": ["adminNotes"],
   "age-up-invitation": ["resetUrl", "targetAgeTier", "targetAgeTierMinAge"],
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
@@ -455,6 +459,12 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "checkIn",
     "checkOut",
   ],
+  // #3827 (D-3813-7): an approved appeal is refunded to the card OR promised
+  // by bank transfer, and only {{refundSentence}} says which. An override
+  // saved from the old default ("processed to your original payment method"
+  // around {{amount}}) would tell an internet-banking member the wrong thing,
+  // so the editor flags it as stale and a re-save must put the token back.
+  "refund-request-approved": ["refundSentence"],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -1421,6 +1431,11 @@ export function sampleValue(token: string): string {
   // branch of bookingBumpedRebookAction.
   if (token === "rebookLabel") return "Book Again";
   if (token === "rebookPath") return "/book";
+  // #3827 (D-3813-7): previewed as the card arm, which is what the shipped
+  // default always said; the bank-transfer arms are the sender's other branches.
+  if (token === "refundSentence") {
+    return refundRequestApprovedRefundSentence(12345, 0, () => "$123.45");
+  }
   if (token === "refundOutcomeNote") {
     return duplicateCaptureRefundOutcomeParagraph(false);
   }
@@ -1983,6 +1998,10 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // in REQUIRED_SUBJECT_TEMPLATE_TOKENS above.
   "handBackConflictLabel",
   "refundMessage",
+  // #3827 (D-3813-7): the approved appeal's refund sentence, composed by
+  // `refundRequestApprovedRefundSentence` - a card refund reported, a bank
+  // transfer the club still has to send promised.
+  "refundSentence",
   "refundedAmount",
   "remainingAmount",
   "remainingCredit",
