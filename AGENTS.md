@@ -256,8 +256,9 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
 - **Drafts until ready:** reviewed, findings fixed, no residuals, CI green.
   Then one ready comment on the issue and PR: what was built, lenses and
   findings, fixes, validation run and not run, stated limits, that no
-  production data or live providers were used, and whether it merges
-  autonomously or waits for the owner. Also comment when you claim.
+  production data or live providers were used, residual risks and
+  carry-forward issues. That comment is the merge gate's evidence (#3959):
+  once it is complete and clean, merge. Also comment when you claim.
 
 ## Residual risks are resolved in the PR
 
@@ -285,16 +286,19 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
    Compare `main`'s CI before calling a failure pre-existing. Add a justified
    `knip.jsonc` carve-out rather than deleting live code knip can't trace.
    Required checks and protection: [`CONTRIBUTING.md`](CONTRIBUTING.md#branch-protection).
-3. **Risk gate.** Autonomous merge on green CI is allowed for docs, agent
-   workflow, UI copy, labels, help text and other Low/Medium-risk work that
-   touches no money movement, capacity, membership or family lifecycle, schema
-   or migrations, auth/security/privacy, deployment or live-provider behaviour.
-   Everything else needs an explicit owner approval comment on the PR; hand it
-   off with evidence and wait. A PR touching a `.github/CODEOWNERS` path also
-   needs the owner's GitHub Approve. Epic children may merge into their
-   `epic/**` branch on review and green CI without owner approval — nothing
-   reaches `main`, a fork or production — and the `epic/…` → `main` PR always
-   needs owner approval ([`EPIC_PLAYBOOK.md`](docs/agents/EPIC_PLAYBOOK.md)).
+3. **Merge gate (owner decision, 7 Oct 2026, #3959).** An agent merges any PR,
+   at any risk level, once it is complete; every required check is green on
+   its exact head; it is reviewed with the lenses this file requires for its
+   risk, with every finding fixed or rejected with reasons; it is not a draft
+   and has no conflicts; and it carries the full Ready-to-Merge comment (what
+   was done, lenses and findings, validation run and not run, residual risks
+   — none open — and carry-forward issues, filed and linked). If anything in
+   it is unclean, fix it first; don't merge around it. No owner Approve or
+   approval comment is needed; the code-owner requirement is removed. A
+   genuine open owner *decision* (`needs-decision`, an unanswered option
+   list) still waits for the owner, and production operations stay
+   owner-only. Epic children merge into their `epic/**` branch on the same
+   terms ([`EPIC_PLAYBOOK.md`](docs/agents/EPIC_PLAYBOOK.md)).
 4. **Merge** with a merge commit; once eligible and waiting only on CI, arm
    `gh pr merge <n> --auto --merge`. The linked issue closes only then.
 5. **Close out** the issue in plain English — what shipped, the PR, review
@@ -324,9 +328,7 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
 - **The approval comment is self-authenticating by author, and only by author**
   (#2713): agents are `thatskiff33-agents`, the owner is `thatskiff33`. Check
   the author, not the words. Never write approval wording into your own comments.
-- **The code-owner rule — its one home** (#3341, applied 2 Oct 2026): a PR
-  touching a `.github/CODEOWNERS` path needs the owner's Approve, and a later
-  push dismisses it. The Approve is the lock; the comment stays the gate agents
-  check ([`CONTRIBUTING.md`](CONTRIBUTING.md#branch-protection)). Ownership
-  includes CI workflows and `.npmrc` (#3853), including bot-opened epic-sync
-  PRs that touch workflows.
+- **The code-owner rule — retired 7 Oct 2026 (#3959).** The owner removed the
+  code-owner requirement from branch protection; merging follows the merge gate
+  in "Completion and Merge". `.github/CODEOWNERS` may stay for review routing,
+  but it gates nothing (it formerly did: #3341, #3853).

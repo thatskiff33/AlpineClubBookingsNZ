@@ -61,6 +61,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
+import { organiserChildCommittedRefundFrom, readPerChildRefundPlan } from "@/lib/group-settlement-refund-plan";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 
@@ -199,11 +200,16 @@ export async function organiserChildRefundedCents(
   db: Db,
   payment: { id: string; refundedAmountCents: number },
 ): Promise<number> {
+  return Math.max(payment.refundedAmountCents, await recordedRefundCents(db, payment.id));
+}
+
+/** Σ the payment's `PaymentRefund` rows that count as money back (`isRecordedRefundStatus`). */
+async function recordedRefundCents(db: Db, paymentId: string): Promise<number> {
   const recorded = await db.paymentRefund.aggregate({
-    where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
+    where: { paymentId, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
     _sum: { amountCents: true },
   });
-  return Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0);
+  return recorded._sum.amountCents ?? 0;
 }
 
 /**
@@ -217,11 +223,15 @@ export async function organiserChildCommittedRefundCents(
   payment: { id: string; refundedAmountCents: number },
   paymentIntentId: string,
 ): Promise<number> {
-  const [refundedCents, committed] = await Promise.all([
-    organiserChildRefundedCents(db, payment),
+  const [recorded, committed] = await Promise.all([
+    recordedRefundCents(db, payment.id),
     committedCents(db, paymentIntentId, payment.id),
   ]);
-  return refundedCents + committed.childOwedCents;
+  // The one formula, shared with the booking-ledger census (#3854 F1).
+  return organiserChildCommittedRefundFrom(payment.refundedAmountCents, {
+    recordedRefundCents: recorded,
+    childOwedCents: committed.childOwedCents,
+  });
 }
 
 /**
@@ -489,47 +499,6 @@ export async function planOrganiserCancelChildRefunds({
     }
     return plan;
   });
-}
-
-/**
- * The settlement's frozen plan, in the shape #3653 writes:
- * `{ perChildRefunds: { childId: cents } }`. The children sit one level down
- * ON PURPOSE: the pre-#3653 reader takes every top-level integer as a child's
- * share of ONE combined refund, so it reads this shape as an empty plan and
- * moves no money, rather than misreading it.
- */
-export function readPerChildRefundPlan(value: unknown): Map<string, number> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const children = (value as Record<string, unknown>).perChildRefunds;
-  if (!children || typeof children !== "object" || Array.isArray(children)) return null;
-  const plan = new Map<string, number>();
-  for (const [childId, cents] of Object.entries(children as Record<string, unknown>)) {
-    if (typeof cents === "number" && Number.isInteger(cents) && cents > 0) plan.set(childId, cents);
-  }
-  return plan;
-}
-
-/**
- * The settlement's frozen plan in the shape a group cancel wrote BEFORE #3653:
- * `{childId: cents}`, each child's share of ONE combined Stripe refund. The one
- * reader of that shape (`INV-SSOT`), for the group cancel that finishes such a
- * plan and the audit that explains the mirrors it wrote. Defensive: only
- * non-negative integer cents survive, and a non-object (or a #3653 per-child
- * plan, whose one key holds an object) reads as empty - the plan is applied
- * verbatim on a re-drive, so a corrupt entry degrades to "no refund for that
- * child" rather than crashing the cleanup.
- */
-export function deserializeRefundPlan(value: unknown): Map<string, number> {
-  const plan = new Map<string, number>();
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return plan;
-  }
-  for (const [childId, cents] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof cents === "number" && Number.isInteger(cents) && cents >= 0) {
-      plan.set(childId, cents);
-    }
-  }
-  return plan;
 }
 
 function serializePerChildRefundPlan(plan: Map<string, number>): Prisma.InputJsonValue {

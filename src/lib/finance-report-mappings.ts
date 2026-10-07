@@ -23,9 +23,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { formatCents, formatSignedCents } from "@/lib/utils";
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
   requireStoredCalendarDay,
+  formatStayDate,
 } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import type { ClubFormat } from "@/lib/club-format";
@@ -236,15 +235,13 @@ function snapshotEnd(snapshot: FinanceSnapshotRecord): Date {
  * loudly rather than quietly labelling the wrong period.
  */
 function formatSnapshotPeriodEnd(value: Date, format: ClubFormat): string {
-  return formatClubDate(
-    calendarDateOfDateOnlyInstant(
-      requireStoredCalendarDay(value, {
-        subject: "A finance snapshot's fallback period label",
-        instead:
-          "A real timestamp rendered as a bare day is a projection, and both " +
-          "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
-      }),
-    ),
+  return formatStayDate(
+    requireStoredCalendarDay(value, {
+      subject: "A finance snapshot's fallback period label",
+      instead:
+        "A real timestamp rendered as a bare day is a projection, and both " +
+        "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
+    }),
     format,
   );
 }
