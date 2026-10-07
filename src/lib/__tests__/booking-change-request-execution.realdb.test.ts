@@ -724,6 +724,111 @@ function deferred() {
     60_000,
   );
 
+  it.each([
+    // Credit equal to the worth after the correction: settled at $0 with the
+    // fee PAID BY THAT CREDIT — nothing given back, nothing lost.
+    ["covers the price and the fee", 3 * STORED_NIGHT_CENTS, "PAID", 0],
+    // Less credit: the remainder of price plus fee is still owed.
+    ["covers part of it", 10_000, "PAYMENT_PENDING", 3 * STORED_NIGHT_CENTS - 10_000],
+  ] as const)(
+    "#3955 F1: on an unpaid stay whose applied credit %s, the clamp and the zero-dollar decision read the worth, so the fee is kept",
+    async (_name, creditCents, status, owedAfterCents) => {
+      await seed({
+        secondGuest: true,
+        unpaid: { invoiced: false },
+        requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+      });
+      await prisma.memberCredit.create({
+        data: {
+          memberId: OWNER_ID,
+          amountCents: -creditCents,
+          type: "BOOKING_APPLIED",
+          appliedToBookingId: BOOKING_ID,
+          description: "Applied at booking",
+        },
+      });
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { creditAppliedCents: creditCents } });
+      const fee = STORED_NIGHT_CENTS;
+
+      expect(await approve(OFFICER_ID)).toMatchObject({ outcome: "executed", changeFeeCents: fee });
+
+      const memberCredit = await import("@/lib/member-credit");
+      const paymentState = await import("@/lib/booking-payment-state");
+      const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+      // Price after the removal: one guest, two stored nights.
+      expect(booking.finalPriceCents).toBe(2 * STORED_NIGHT_CENTS);
+      expect(booking.payment?.changeFeeCents).toBe(fee);
+      // Not one cent of credit was given back: the bare price is below the
+      // credit, but the worth (price plus fee) is not.
+      expect(await memberCredit.deriveBookingAppliedCreditCents(BOOKING_ID, prisma)).toBe(creditCents);
+      expect(await prisma.memberCredit.count({ where: { memberId: OWNER_ID, amountCents: { gt: 0 } } })).toBe(0);
+      expect(booking.status).toBe(status);
+      expect(
+        paymentState.bookingAmountOwedCents({
+          finalPriceCents: booking.finalPriceCents,
+          changeFeeCents: booking.payment?.changeFeeCents ?? null,
+          appliedCreditCents: creditCents,
+        }),
+      ).toBe(owedAfterCents);
+      if (status === "PAID") {
+        // The $0 settle's identity: price + recorded fee = cash (none) + credit.
+        expect(booking.payment!.amountCents + booking.payment!.creditAppliedCents).toBe(
+          booking.finalPriceCents + booking.payment!.changeFeeCents,
+        );
+      }
+    },
+    60_000,
+  );
+
+  it("#3955 X4: a primary invoice persisted while the correction runs refuses the fee write, and nothing is applied", async () => {
+    await seed({
+      secondGuest: true,
+      unpaid: { invoiced: false },
+      requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+    });
+    const { FINISHED_STAY_INVOICE_RAISED_MESSAGE } = await import("@/lib/booking-finished-stay-correction");
+    // An invoice create persisting its link: it holds the payment row, not yet
+    // committed, while the approval reads "no invoice" and routes its fee to
+    // the primary invoice.
+    const holding = deferred();
+    const release = deferred();
+    const persist = prisma.$transaction(
+      async (tx) => {
+        await tx.payment.update({ where: { id: PAYMENT_ID }, data: { xeroInvoiceId: "race-3750-late-invoice" } });
+        holding.resolve();
+        await release.promise;
+      },
+      { timeout: 30_000 },
+    );
+    await holding.promise;
+    const approval = approve(OFFICER_ID);
+    const approvalSettled = approval.then(
+      () => "executed",
+      (error: unknown) => error,
+    );
+    // Long enough for the approval to reach its claimed fee write and queue
+    // on the row the persist holds (real clock; the suite's Date is frozen).
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    release.resolve();
+    await persist;
+
+    const outcome = await approvalSettled;
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toBe(FINISHED_STAY_INVOICE_RAISED_MESSAGE);
+    // Nothing applied: the request is still pending, both guests are on the
+    // stay, and no fee was recorded beside the invoice that does not bill it.
+    expect(await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } })).toMatchObject({
+      status: "REQUESTED",
+      version: 1,
+    });
+    expect(await prisma.bookingGuest.count({ where: { bookingId: BOOKING_ID } })).toBe(2);
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).toMatchObject({
+      changeFeeCents: 0,
+      xeroInvoiceId: "race-3750-late-invoice",
+    });
+    expect(await prisma.bookingModification.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+  }, 60_000);
+
   it("a nights-only change is charged the same-day share of the nights it removes, never the ordinary late fee (owner, 7 Oct)", async () => {
     // A tier that would make moving check-in one day later a "more lenient"
     // move, so the ordinary late-change fee would charge a share of the WHOLE
