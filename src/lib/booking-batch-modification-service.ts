@@ -98,7 +98,7 @@ import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { hasCapturedPayment, hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
@@ -156,6 +156,7 @@ import {
   assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
+  FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE,
   finishedStayRemovalFeeCents,
   finishedStayRemovedPortion,
   loadRemovalPromoRows,
@@ -1659,6 +1660,20 @@ export async function modifyBookingBatch({
             settlementMethod: input.settlementMethod ?? "card",
           })
         : 0;
+    // #3750 (owner D3): an unpaid stay still owes the retained share, "as if
+    // they had paid and then were being refunded less the cancellation fee".
+    // Where nothing was captured, the amount owed lives on the issued Xero
+    // invoice, which the edit corrects by the net of the reduction and this fee.
+    // With no captured payment AND no issued invoice there is nothing that
+    // carries the fee — the pay step charges the booking's price alone — so the
+    // correction is refused rather than silently dropping the charge.
+    if (
+      removalFeeCents > 0 &&
+      !hasCapturedPayment(booking.payment) &&
+      !hasIssuedPrimaryXeroInvoice(booking)
+    ) {
+      throw new ApiError(FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE, 409);
+    }
 
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is

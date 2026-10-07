@@ -461,6 +461,7 @@ describe("booking change requests", () => {
         },
         body: JSON.stringify({
           status: "APPROVED",
+          execute: false,
           adminNotes: "Handled manually through the booking edit flow.",
         }),
       }
@@ -519,6 +520,7 @@ describe("booking change requests", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: "APPROVED",
+          execute: false,
           adminNotes: "Edit applied via /modify",
           linkedModificationId: "mod-7",
         }),
@@ -564,6 +566,7 @@ describe("booking change requests", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: "APPROVED",
+          execute: false,
           adminNotes: "x",
           linkedModificationId: "mod-9",
         }),
@@ -700,6 +703,7 @@ describe("booking change requests", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: "APPROVED",
+          execute: false,
           adminNotes: "x",
           linkedModificationId: "mod-missing",
         }),

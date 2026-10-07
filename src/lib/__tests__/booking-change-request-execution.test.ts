@@ -118,6 +118,7 @@ function requestRow(overrides: Record<string, unknown> = {}) {
     bookingId: "booking-1",
     requestedByMemberId: "member-1",
     requestedChanges: storedRequest(),
+    reason: "Our niece stayed both nights.",
     ...overrides,
   };
 }
@@ -127,6 +128,7 @@ const finishedBooking = {
   checkOut: new Date("2026-06-14T00:00:00.000Z"),
   status: "COMPLETED",
   guests: [{ id: "g2" }, { id: "g1" }],
+  payment: { amountCents: 12_000, creditAppliedCents: 0 },
 };
 
 function run(overrides: Partial<Parameters<typeof approveAndExecuteLockedPeriodChangeRequest>[0]> = {}) {
@@ -240,6 +242,9 @@ describe("approveAndExecuteLockedPeriodChangeRequest (#3750)", () => {
         settlementMethod: "card",
         // The member is always told, with the amount due.
         notifyMember: true,
+        // Owner D1: added member guests face the member's own rules (#2526).
+        reviewedMemberProposal: true,
+        memberReviewJustification: "Our niece stayed both nights.",
       },
     });
     expect(args).not.toHaveProperty("waiveChangeFee");
@@ -435,5 +440,40 @@ describe("lockedPeriodRequestToBatchInput (#3750)", () => {
       stayStart: "2026-06-11",
       stayEnd: "2026-06-13",
     });
+  });
+});
+
+describe("approveAndExecuteLockedPeriodChangeRequest — review round (#3955)", () => {
+  it("defaults the refund to the way the booking was paid: a credit-paid stay gets credit", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...finishedBooking,
+      payment: { amountCents: 0, creditAppliedCents: 12_000 },
+    });
+    expect(await run()).toMatchObject({ outcome: "executed", settlementMethod: "credit" });
+    const [args] = mocks.modifyBookingBatch.mock.calls[0] as [{ input: Record<string, unknown> }];
+    expect(args.input.settlementMethod).toBe("credit");
+  });
+
+  it("keeps the officer's explicit choice", async () => {
+    await run({ settlementMethod: "credit" });
+    const [args] = mocks.modifyBookingBatch.mock.calls[0] as [{ input: Record<string, unknown> }];
+    expect(args.input.settlementMethod).toBe("credit");
+  });
+
+  it("a dry run answers the figures and rolls everything back: no link, no commit, no provider work", async () => {
+    const result = await run({ dryRun: true });
+    expect(result).toEqual({
+      outcome: "quoted",
+      priceDiffCents: 4_500,
+      changeFeeCents: 0,
+      additionalAmountCents: 4_500,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 0,
+      capacityOverridden: false,
+      settlementMethod: "card",
+    });
+    expect(mocks.calls).not.toContain("link");
+    expect(mocks.calls).not.toContain("commit");
+    expect(mocks.deferred).not.toHaveBeenCalled();
   });
 });

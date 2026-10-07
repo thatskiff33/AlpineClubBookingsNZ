@@ -346,6 +346,10 @@ const FINISHED_STAY_CORRECTION_INPUT_KEYS: ReadonlySet<string> = new Set<
   "settlementMethod",
   "confirmOverCapacity",
   "notifyMember",
+  // Owner D1 (7 Oct 2026): the member rules apply to what the member asked
+  // for, and the member's own reason travels with a supervision review.
+  "reviewedMemberProposal",
+  "memberReviewJustification",
 ]);
 
 export const FINISHED_STAY_CORRECTION_FIELD_MESSAGE =

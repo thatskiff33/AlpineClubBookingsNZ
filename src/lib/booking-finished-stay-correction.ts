@@ -200,6 +200,9 @@ export interface RemovalPromoRows {
 export const FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE =
   "A night this change removes has no recorded price, so the same-day charge on it cannot be worked out. Nothing has been applied; the request is still pending.";
 
+export const FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE =
+  "This stay is unpaid and has no issued invoice, so there is nothing to carry the same-day charge on the guests or nights this change removes. Nothing has been applied; issue the booking's invoice or take its payment, then approve again.";
+
 export function finishedStayRemovedPortion(args: {
   readonly storedGuests: ReadonlyArray<StoredGuestForRemoval>;
   /** The proposed stay of every guest the correction KEEPS; a guest absent here is removed. */

@@ -18,6 +18,7 @@ import type {
   BatchModifyInput,
   BookingModificationSettlementMethod,
 } from "@/lib/booking-modify";
+import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 
 /**
  * Approve-and-execute for a LOCKED_PERIOD change request on a FINISHED stay
@@ -235,8 +236,33 @@ export type LockedPeriodExecutionResult =
       refundAmountCents: number;
       accountCreditAmountCents: number;
       capacityOverridden: boolean;
+      /** The refund arm actually used — the officer's choice or the way it was paid. */
+      settlementMethod: BookingModificationSettlementMethod;
       followUpFailed?: true;
-    };
+    }
+  | ({ outcome: "quoted" } & FinishedStayCorrectionFigures);
+
+/**
+ * The figures an executed approval would produce (P2 on #3955), returned by a
+ * dry run: the same transaction, the same claim and the same canonical edit,
+ * rolled back before commit so the officer sees exactly what approving does.
+ */
+export interface FinishedStayCorrectionFigures {
+  priceDiffCents: number;
+  changeFeeCents: number;
+  additionalAmountCents: number;
+  refundAmountCents: number;
+  accountCreditAmountCents: number;
+  capacityOverridden: boolean;
+  settlementMethod: BookingModificationSettlementMethod;
+}
+
+/** Thrown to roll a dry run back, carrying what it would have done. */
+class FinishedStayDryRun extends Error {
+  constructor(readonly figures: FinishedStayCorrectionFigures) {
+    super("finished-stay correction dry run");
+  }
+}
 
 export async function approveAndExecuteLockedPeriodChangeRequest(params: {
   requestId: string;
@@ -265,6 +291,12 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
    */
   preTransaction: BatchModificationPreTransaction;
   ipAddress: string;
+  /**
+   * P2 on #3955: run everything — locks, claim, the canonical edit — and roll
+   * it back before commit, answering `quoted` with the figures. No provider
+   * work runs and nothing is written.
+   */
+  dryRun?: boolean;
   db?: ExecutionDb;
 }): Promise<LockedPeriodExecutionResult> {
   const db = params.db ?? prisma;
@@ -272,7 +304,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
 
   let deferredPostCommit: (() => Promise<void>) | null = null;
 
-  const result = await db.$transaction(
+  const result: LockedPeriodExecutionResult = await db.$transaction(
     async (tx): Promise<LockedPeriodExecutionResult> => {
       // (1) Only the immutable lock key before the locks.
       const preRead = await tx.bookingChangeRequest.findUnique({
@@ -310,6 +342,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
           bookingId: true,
           requestedByMemberId: true,
           requestedChanges: true,
+          reason: true,
         },
       });
       if (!request || request.kind !== "LOCKED_PERIOD") {
@@ -333,6 +366,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
           checkOut: true,
           status: true,
           guests: { select: { id: true } },
+          payment: { select: { amountCents: true, creditAppliedCents: true } },
         },
       });
       if (!booking) return { outcome: "notFound" };
@@ -381,13 +415,24 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
 
       // (7) The canonical service, on THIS transaction. Its refusals throw and
       // roll the claim back with everything else.
+      const settlementMethod =
+        params.settlementMethod ?? defaultCorrectionSettlementMethod(booking.payment);
       const modified = await modifyBookingBatch({
         bookingId: request.bookingId,
         actor: { id: actorMemberId, role: "ADMIN" },
         input: {
           ...requestedInput,
           ...(params.confirmOverCapacity ? { confirmOverCapacity: true } : {}),
-          settlementMethod: params.settlementMethod ?? "card",
+          // P2 on #3955: the officer's choice, else back the way it was paid.
+          settlementMethod,
+          // Owner D1 (7 Oct 2026): an added member guest faces the rules a
+          // member's own edit does — consent, family boundary, bookability, the
+          // supervision review — exactly as a policy-exception approval (#2526).
+          reviewedMemberProposal: true,
+          // The member's own words, for a supervision review this opens.
+          ...(request.reason?.trim()
+            ? { memberReviewJustification: request.reason.trim() }
+            : {}),
           // The member hears about the change from the canonical change email,
           // with the amount due and how to pay it — never suppressed here.
           notifyMember: true,
@@ -399,6 +444,18 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         preTransaction: params.preTransaction,
         finishedStayCorrection: { changeRequestId: requestId },
       });
+
+      if (params.dryRun) {
+        throw new FinishedStayDryRun({
+          priceDiffCents: modified.priceDiffCents,
+          changeFeeCents: modified.changeFeeCents,
+          additionalAmountCents: modified.additionalAmountCents,
+          refundAmountCents: modified.refundAmountCents,
+          accountCreditAmountCents: modified.accountCreditAmountCents,
+          capacityOverridden: modified.capacityOverridden,
+          settlementMethod,
+        });
+      }
 
       // (8) Join the request to what it produced, in the same transaction.
       await tx.bookingChangeRequest.update({
@@ -421,9 +478,15 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         refundAmountCents: modified.refundAmountCents,
         accountCreditAmountCents: modified.accountCreditAmountCents,
         capacityOverridden: modified.capacityOverridden,
+        settlementMethod,
       };
     },
-  );
+  ).catch((error: unknown) => {
+    if (error instanceof FinishedStayDryRun) {
+      return { outcome: "quoted" as const, ...error.figures };
+    }
+    throw error;
+  });
 
   // (9) After commit. The approval and the change are already durable.
   if (result.outcome === "executed" && deferredPostCommit) {

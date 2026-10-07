@@ -187,7 +187,8 @@ export async function PATCH(
     details: parsed.data.adminNotes?.trim() || null,
     // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
     // reads today rather than widening it: `adminNotes` is #2562's member-facing
-    // half, already emailed to them with this decision, while `internalNotes`
+    // half, which they read on their own booking page (a locked-period decision
+    // sends no email of its own — #3750 corrected this comment), while `internalNotes`
     // reaches no member surface and is not in this row at all.
     memberDisclosure: parsed.data.adminNotes?.trim()
       ? { visibility: "member-facing", text: parsed.data.adminNotes.trim() }
