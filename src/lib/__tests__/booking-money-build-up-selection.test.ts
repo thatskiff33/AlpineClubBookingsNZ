@@ -41,13 +41,13 @@ describe("#3369 a school's booker-slot allocation in the projection", () => {
         checkOut: parseDateOnly("2026-08-03"),
         totalPriceCents: 10_000,
         guests: [],
-        promoRedemption: {
+        promoRedemptions: [{
           priceAdjustmentCents: -3_000,
           allocations: [
             { memberId: null, priceAdjustmentCents: -2_000 },
             { memberId: BOOKER, priceAdjustmentCents: -1_000 },
           ],
-        },
+        }],
         nightAdjustments: [],
       },
       { purpose: "XERO_PROMO_LINE" },
@@ -64,7 +64,7 @@ describe("#3369 a school's booker-slot allocation in the projection", () => {
           checkOut: parseDateOnly("2026-08-03"),
           totalPriceCents: 10_000,
           guests: [],
-          promoRedemption: null,
+          promoRedemptions: [],
           nightAdjustments: [],
         },
         { purpose: "XERO_PROMO_LINE" },
@@ -228,7 +228,7 @@ describe("#3277 canonical D3 build-up selection", () => {
               ],
             },
           ],
-          promoRedemption: null,
+          promoRedemptions: [],
           nightAdjustments: [],
         }),
       },
@@ -270,7 +270,7 @@ describe("#3277 canonical D3 build-up selection", () => {
           checkIn: parseDateOnly("2026-08-01"),
           checkOut: parseDateOnly("2026-08-02"),
           totalPriceCents: 20_000,
-          promoRedemption: null,
+          promoRedemptions: [],
           nightAdjustments: [
             {
               bookingGuestId: "guest-direct",

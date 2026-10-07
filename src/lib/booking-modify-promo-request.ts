@@ -1,0 +1,175 @@
+import type { BatchModifyInput } from "@/lib/booking-modify-validation";
+import {
+  normalizePromoCodeInput,
+  SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
+} from "@/lib/promo-code-list-rules";
+
+// #3827: how an edit's request names the promo codes the booking should carry
+// — one reader of the plural `promoCodes` and the legacy `promoCode` /
+// `removePromoCode`, shared by the save, the preview and the predicates that
+// ask whether a request changes codes at all. Pure; no Prisma.
+
+/** One entry of the code list an edit asks the booking to carry (#3827). */
+export type RequestedPromoCode = {
+  code: string;
+  promoGuestIds?: string[];
+  promoAddedGuestIndexes?: number[];
+  /** Apply fresh even when the booking already carries this code. */
+  reapply: boolean;
+};
+
+/**
+ * The codes an edit asks the booking to carry afterwards, in order — or `null`
+ * when it says nothing about codes and every code the booking has is simply
+ * re-priced. THE ONE READING of the three request shapes (#3827): the plural
+ * `promoCodes`; the legacy `removePromoCode` (none); and the legacy single
+ * `promoCode`, which has always meant "replace the booking's code with this
+ * one, applied fresh".
+ */
+export type PromoCodeRequestFields = Pick<
+  BatchModifyInput,
+  "promoCode" | "promoGuestIds" | "promoAddedGuestIndexes" | "removePromoCode" | "promoCodes"
+>;
+
+export function requestedPromoCodeList(input: PromoCodeRequestFields): RequestedPromoCode[] | null {
+  if (input.promoCodes) {
+    return input.promoCodes.map((entry) => ({
+      code: normalizePromoCodeInput(entry.code),
+      ...(entry.promoGuestIds ? { promoGuestIds: entry.promoGuestIds } : {}),
+      ...(entry.promoAddedGuestIndexes
+        ? { promoAddedGuestIndexes: entry.promoAddedGuestIndexes }
+        : {}),
+      reapply: Boolean(entry.promoGuestIds?.length || entry.promoAddedGuestIndexes?.length),
+    }));
+  }
+  if (input.removePromoCode) return [];
+  if (input.promoCode) {
+    return [
+      {
+        code: normalizePromoCodeInput(input.promoCode),
+        ...(input.promoGuestIds ? { promoGuestIds: input.promoGuestIds } : {}),
+        ...(input.promoAddedGuestIndexes
+          ? { promoAddedGuestIndexes: input.promoAddedGuestIndexes }
+          : {}),
+        reapply: true,
+      },
+    ];
+  }
+  return null;
+}
+
+/**
+ * The code list an edit asks for, read against the codes the booking already
+ * carries (#3827). Every request shape — the plural `promoCodes` and the legacy
+ * `promoCode` / `removePromoCode` alike — names the BOOKER's codes, and a
+ * working-bee discount is not the booker's code: the system applied it, and the
+ * booker cannot type it.
+ *
+ * WHICH OF THE TWO READINGS DEPENDS ON THE CLUB'S `multiPromoCodes` SWITCH, and
+ * that is the point of passing it (REQUIRED, never defaulted):
+ * - ON (D-3813-3): a stored internal code the list leaves out is carried,
+ *   first, rather than silently dropped — the booker's codes combine with it.
+ * - OFF (#3826): a booking holds one code, as it always has, so the request
+ *   means exactly what it meant before multi-code existed: a code replaces the
+ *   working-bee discount and a removal removes it. Nothing is carried, so a
+ *   single-code club sees no behaviour change while the switch is off.
+ */
+export function requestedPromoCodeListFor(
+  input: PromoCodeRequestFields,
+  stored: ReadonlyArray<{ code: string; internal: boolean }>,
+  multiPromoCodes: boolean,
+): RequestedPromoCode[] | null {
+  const requested = requestedPromoCodeList(input);
+  if (requested === null || !multiPromoCodes) return requested;
+  const listed = new Set(requested.map((entry) => entry.code));
+  const carried = stored
+    .filter((code) => code.internal && !listed.has(code.code))
+    .map((code) => ({ code: code.code, reapply: false }));
+  return [...carried, ...requested];
+}
+
+/**
+ * The refusal an edit earns for naming codes through the legacy ONE-code
+ * fields (`promoCode`, `removePromoCode`) on a booking that carries more than
+ * one of the booker's own codes, or null (#3828). Those fields have always
+ * meant "the booking's code is now this one" and "the booking has no code", so
+ * on such a booking either would silently release every other member's code. A
+ * working-bee discount is not the booker's code and is not counted. The plural
+ * `promoCodes` names the whole list and is never refused here. Read by the save
+ * (`applyPromoCodeChanges`) and the preview alike, from the redemptions each
+ * already holds.
+ */
+export function oneCodeFieldsOnSeveralCodesRefusal(
+  input: PromoCodeRequestFields,
+  stored: ReadonlyArray<{ internal: boolean }>,
+): string | null {
+  if (input.promoCodes || (!input.promoCode && !input.removePromoCode)) return null;
+  const bookerCodes = stored.filter((code) => !code.internal).length;
+  return bookerCodes > 1 ? SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE : null;
+}
+
+/**
+ * Can the club's `multiPromoCodes` switch change what this request means
+ * (#3826)? Only when it asks for several codes (the switch may refuse them) or
+ * the booking carries a working-bee code (the switch decides whether it is
+ * carried). Otherwise either answer reads the request the same way, so a
+ * caller skips the read and passes `true`.
+ */
+export function promoRequestReadsMultiPromoSwitch(
+  input: PromoCodeRequestFields,
+  stored: ReadonlyArray<{ internal: boolean }>,
+): boolean {
+  const requested = requestedPromoCodeList(input);
+  return requested !== null && (requested.length > 1 || stored.some((code) => code.internal));
+}
+
+/**
+ * The stored redemption an entry KEEPS — re-priced in place, never released and
+ * re-applied — or undefined when the entry applies its code fresh. One answer
+ * for the save and the preview (#3827).
+ */
+export function keptStoredPromoRedemption<R>(
+  entry: Pick<RequestedPromoCode, "code" | "reapply">,
+  storedByCode: ReadonlyMap<string, R>,
+): R | undefined {
+  return entry.reapply ? undefined : storedByCode.get(entry.code);
+}
+
+/**
+ * A requested list as `promoCodeListRefusal` reads it: the booker's own codes,
+ * and whether a stored working-bee (internal) code rides beside them.
+ */
+export function splitRequestedPromoCodes(
+  requested: readonly Pick<RequestedPromoCode, "code">[],
+  stored: ReadonlyArray<{ promoCode: { code: string; internal: boolean } }>,
+): { typedCodes: string[]; workPartyApplied: boolean } {
+  const internal = new Set(
+    stored.filter((redemption) => redemption.promoCode.internal).map((redemption) => redemption.promoCode.code),
+  );
+  return {
+    typedCodes: requested.filter((entry) => !internal.has(entry.code)).map((entry) => entry.code),
+    workPartyApplied: requested.some((entry) => internal.has(entry.code)),
+  };
+}
+
+/** Does this edit ask for any promo-code change at all? */
+export function requestChangesPromoCodes(input: PromoCodeRequestFields): boolean {
+  return requestedPromoCodeList(input) !== null;
+}
+
+/**
+ * The promo change an edit asked for, as `describePromoChangeNotApplied` names
+ * it when the change is dropped (#3179): the codes asked for, joined in order,
+ * or a removal. Read through `requestedPromoCodeList`, so the plural and the
+ * legacy fields cannot be described two ways (#3827).
+ */
+export function requestedPromoCodeChange(input: PromoCodeRequestFields): {
+  requestedPromoCode: string | undefined;
+  removePromoCodeRequested: boolean;
+} {
+  const list = requestedPromoCodeList(input);
+  return {
+    requestedPromoCode: list && list.length > 0 ? list.map((entry) => entry.code).join(", ") : undefined,
+    removePromoCodeRequested: list !== null && list.length === 0,
+  };
+}

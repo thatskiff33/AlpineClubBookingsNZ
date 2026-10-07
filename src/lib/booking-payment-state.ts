@@ -169,6 +169,21 @@ export function getRemainingRefundableCents(
 }
 
 /**
+ * #3827 (`INV-PAY-117`): the remaining refundable cash LESS the edit refunds
+ * the club has promised back by bank transfer and not yet sent. The one
+ * arithmetic for the server cap (`refundableCashNetOfOpenHandBacks`, which
+ * reads the promised sum) and the screens that show that cap from a loaded
+ * row (`sumOpenNonCancellationHandBackCents`), so the ceiling a screen offers is
+ * the ceiling the route enforces.
+ */
+export function getRemainingRefundableCentsNetOf(
+  payment: BookingPaymentState | null | undefined,
+  promisedBackCents: number
+): number {
+  return Math.max(0, getRemainingRefundableCents(payment) - promisedBackCents);
+}
+
+/**
  * #3372: ONE payment row's amount net of what has gone back out of it —
  * `amountCents - refundedAmountCents`, with NO status gate and no floor. It is
  * the figure the payments list's "Amount (net)" column shows for every row
@@ -228,14 +243,22 @@ export function formatPaidRefundedBreakdown(
  * non-refundable change fee. The cap is why a stale mirror cannot pay out more
  * than the booking is worth; the refunded term is why an understated mirror
  * would (#3640).
+ *
+ * #3827 (`INV-PAY-117`): "not yet handed back" also excludes the edit refunds
+ * already PROMISED back by hand (`openNonCancellationHandBackCents`, the sum of the
+ * payment's open edit refund hand-backs), REQUIRED so no caller can forget it:
+ * a cancellation must not refund or credit cash the treasurer still owes on an
+ * earlier edit's task.
  */
 export function cancelRefundableBaseCents(input: {
   amountCents: number;
   refundedAmountCents: number;
+  openNonCancellationHandBackCents: number;
   finalPriceCents: number;
   changeFeeCents: number;
 }): number {
-  const paidAmountCents = input.amountCents - input.refundedAmountCents;
+  const paidAmountCents =
+    input.amountCents - input.refundedAmountCents - input.openNonCancellationHandBackCents;
   return (
     Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
     input.changeFeeCents
@@ -259,6 +282,12 @@ export function cancelRefundableBaseCents(input: {
 export function cancelAppliedCreditBaseCents(input: {
   amountCents: number;
   refundedAmountCents: number;
+  /**
+   * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-117`):
+   * cash already promised back, which counts as paid no more here than it does
+   * in `cancelRefundableBaseCents`, so the cap reads the same paid figure.
+   */
+  openNonCancellationHandBackCents: number;
   finalPriceCents: number;
   changeFeeCents: number;
   creditAppliedCents: number;
@@ -379,4 +408,54 @@ export function editReviewSettlementPaymentId(booking: {
   payment: EditReviewSettlementPayment;
 }): string | null {
   return editReviewSettlementPayment(booking)?.id ?? null;
+}
+
+/**
+ * #3194 / #3536: the payment an edit review's REFUND comes back out of, and its
+ * source - the stored task id where it has one, else the booking's own captured
+ * payment re-asked now. `chooseEditReviewSettlementRoute` picks its refund route
+ * from this, and the settle queue asks it ahead of time so the cash-or-bank
+ * question is offered only where the club pays the money back by hand.
+ */
+export function editReviewRefundSettlementPayment(task: {
+  paymentId: string | null;
+  payment: { source: string } | null | undefined;
+  booking: {
+    status: string;
+    payment: (BookingPaymentState & { id: string; source: string }) | null | undefined;
+  };
+}): { id: string; source: string | null } | null {
+  if (task.paymentId !== null) {
+    return { id: task.paymentId, source: task.payment?.source ?? null };
+  }
+  const backfilled = editReviewSettlementPayment(task.booking);
+  return backfilled ? { id: backfilled.id, source: backfilled.source } : null;
+}
+
+/**
+ * #3536: THE one test of "this refund goes back on the card" for a payment
+ * `editReviewRefundSettlementPayment` returned (`INV-SSOT`).
+ * `chooseEditReviewSettlementRoute` takes the `stripe-refund` route exactly when
+ * this is true, and `editReviewRefundIsPaidBackByHand` below is exactly its
+ * complement over a non-null payment, so a new `PaymentSource` cannot be sent
+ * down one route by the chooser and offered the other by the settle screen. A
+ * missing source counts as NOT a card, matching the chooser's ledger fallback.
+ */
+export function editReviewRefundGoesBackOnCard(payment: {
+  source: string | null;
+}): boolean {
+  return payment.source === "STRIPE";
+}
+
+/**
+ * #3536: a refund on this review would be paid back by hand - the
+ * `local-allocation` route - because the money behind it did not go out on a
+ * card. Only the officer knows whether that hand-back was cash or a bank
+ * transfer, so this is where the screen asks.
+ */
+export function editReviewRefundIsPaidBackByHand(
+  task: Parameters<typeof editReviewRefundSettlementPayment>[0],
+): boolean {
+  const payment = editReviewRefundSettlementPayment(task);
+  return payment !== null && !editReviewRefundGoesBackOnCard(payment);
 }

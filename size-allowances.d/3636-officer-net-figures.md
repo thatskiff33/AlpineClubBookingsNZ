@@ -14,16 +14,11 @@ reason: the Net Collected This Month card's read, its breakdown line and the
   of its own, not part of relabelling a figure.
 
 file: src/app/(admin)/admin/payments/page.tsx
-lines: 1415
+lines: 1412
 reason: the net tile, its hints, the tolerant summary reader and the
   ledger-gap warning (its count in the club number format, #3637) belong beside the tiles they describe in this one client
   page; splitting the page is a separate refactor that would move the tiles
   away from the list whose filters decide their figures.
-
-file: src/app/(admin)/admin/refund-requests/page.tsx
-lines: 885
-reason: three lines relabel "Paid" and "Remaining" in place and say which is
-  gross and which is refundable; there is no seam worth cutting for a label.
 
 file: src/app/api/admin/reports/route.ts
 lines: 367

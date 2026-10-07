@@ -1,0 +1,1 @@
+- **The sharp image dependency is updated to its security patch (#3962).** Upgrade sharp to 0.35.5 and re-seal the freshly reviewed braces mitigation inputs without changing its coverage, patch or expiry.

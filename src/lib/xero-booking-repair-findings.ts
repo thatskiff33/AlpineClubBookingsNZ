@@ -15,12 +15,15 @@ import type {
 } from "./xero-booking-repair-types";
 import { buildMemberName } from "./xero-booking-repair-analysis";
 import {
-  getOperationQueueTypeHint,
+  isAdmissibleRepairOperation,
   isSuccessfulXeroOperation,
   readStoredXeroAmountCents,
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
+import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
+import { toRetryableOperationMatch } from "./xero-booking-repair-object-resolution";
 
 export function addAction(
   actionMap: Map<string, BookingXeroRepairAction>,
@@ -140,6 +143,31 @@ export function addUnsettledRefundCreditNoteFindings(
       actionKeys: [action.key],
     });
   }
+  // #3827 review (`INV-PAY-118`): a refund request's own note answers no other
+  // arm, so its failed or partial create is reported here, with its Retry.
+  for (const operation of paymentOperations) {
+    if (
+      operation.entityType !== "CREDIT_NOTE" ||
+      operation.operationType !== "CREATE" ||
+      !["FAILED", "PARTIAL"].includes(operation.status) ||
+      isResolvedInXero(operation) ||
+      !isRefundRequestNoteOperation(operation)
+    ) {
+      continue;
+    }
+    const match = toRetryableOperationMatch(operation);
+    const actionKeys = match ? [addAction(actionMap, buildRetryAction(bookingId, match)).key] : [];
+    addFinding(findings, {
+      code: "BLOCKED_BY_XERO_OPERATION",
+      severity: "warning",
+      summary: match
+        ? "A refund request's Xero refund credit note failed or did not finish. Retry it to raise the note for the amount paid back."
+        : "A refund request's Xero refund credit note failed or did not finish, and cannot be retried here. Raise it by hand in Xero.",
+      safeToAutoApply: Boolean(match),
+      details: { operationId: operation.id, operationStatus: operation.status },
+      actionKeys,
+    });
+  }
 }
 
 export function buildManualReviewAction(bookingId: string, reason: string) {
@@ -195,7 +223,7 @@ function collectXeroAmountEvidence(params: {
       // #1427: an op of a DIFFERENT queueType is another money object's
       // ledger (e.g. an account-credit note beside the invoice-applied
       // note) — it must not pollute this object's evidence.
-      !operationQueueTypeCompatible(operation, params.payloadQueueType)
+      !isAdmissibleRepairOperation(operation, params.payloadQueueType)
     ) {
       continue;
     }
@@ -220,27 +248,6 @@ function collectXeroAmountEvidence(params: {
   }
 
   return evidence;
-}
-
-// #1427: is this operation the queueType we are recovering evidence for? A
-// DIFFERENT queueType belongs to another money object (a modification holds
-// BOTH an invoice-applied credit-note op and an account-credit-note op —
-// same entityType and operationType, different amounts) and must never be
-// read as this object's evidence. getOperationQueueTypeHint resolves the
-// kind across every ledger era (column, payload, correlation-key segment —
-// executors overwrite payloads at dispatch and the #1347 column backfill
-// copied from those overwritten payloads, so the key segment is decisive
-// for pre-column executed rows). Rows carrying no hint at all stay
-// admissible.
-function operationQueueTypeCompatible(
-  operation: XeroOperationRecord,
-  payloadQueueType: string | undefined
-): boolean {
-  if (!payloadQueueType) {
-    return true;
-  }
-  const queueType = getOperationQueueTypeHint(operation);
-  return queueType === null || queueType === payloadQueueType;
 }
 
 // #1427: recover the amount a Xero money object was actually enqueued or
@@ -275,6 +282,13 @@ export function recoverStoredXeroAmountCents(params: {
 }): {
   amountCents: number;
   source: "operation-request" | "link" | "operation-response";
+  /**
+   * #3536: the request payload the amount was read from, on an
+   * `operation-request` answer, so a repair that re-queues the document can
+   * carry the rest of what that attempt said - the note's wording - from the
+   * same record rather than re-deciding it.
+   */
+  requestPayload?: unknown;
 } | null {
   const operations = params.operations
     .filter(
@@ -284,7 +298,7 @@ export function recoverStoredXeroAmountCents(params: {
         (!params.objectId ||
           !operation.xeroObjectId ||
           operation.xeroObjectId === params.objectId) &&
-        operationQueueTypeCompatible(operation, params.payloadQueueType)
+        isAdmissibleRepairOperation(operation, params.payloadQueueType)
     )
     .sort((a, b) => {
       const aExact = params.objectId && a.xeroObjectId === params.objectId ? 0 : 1;
@@ -307,7 +321,7 @@ export function recoverStoredXeroAmountCents(params: {
   for (const operation of operations) {
     const amountCents = readStoredXeroAmountCents(operation.requestPayload);
     if (amountCents !== null) {
-      return { amountCents, source: "operation-request" };
+      return { amountCents, source: "operation-request", requestPayload: operation.requestPayload };
     }
   }
 

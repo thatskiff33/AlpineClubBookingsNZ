@@ -36,7 +36,7 @@ vi.mock("@/lib/prisma", () => ({
       default - no review is open - so every pre-#3032 assertion in this file
       means exactly what it meant before.
     */
-    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     // #3341: the REAL supersede reads the live ADDITIONAL asks a mint retires.
     // The fixture payment carries none, so the ledger holds none.
     paymentTransaction: { findMany: vi.fn().mockResolvedValue([]) },
@@ -116,6 +116,8 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({
@@ -412,7 +414,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       additionalPaymentStatus: null,
     },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     ...overrides,
   };
@@ -533,6 +535,8 @@ function makeTx(
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
@@ -549,7 +553,7 @@ function makeTx(
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     // #1982: default lodge capacity is a self-healed DB override.
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),

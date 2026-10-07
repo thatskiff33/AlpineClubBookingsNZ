@@ -862,7 +862,7 @@ async function loadBookingCandidates(
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
-      promoRedemption: {
+      promoRedemptions: {
         select: {
           priceAdjustmentCents: true,
           allocations: {

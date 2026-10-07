@@ -45,6 +45,16 @@ function makeTx(promoRows: Record<string, Record<string, unknown>>) {
         );
         return row ?? null;
       }),
+      // #3827: the incoming codes are resolved by code unlocked, then re-read
+      // by id under the lock — two `findMany`s around the lock.
+      findMany: vi.fn(async ({ where }: { where: { code?: { in: string[] }; id?: { in: string[] } } }) => {
+        calls.push({ op: where.id ? "promoCode.read-by-id" : "promoCode.resolve-by-code" });
+        return Object.values(promoRows).filter(
+          (candidate) =>
+            where.code?.in.includes(candidate.code as string) ||
+            where.id?.in.includes(candidate.id as string),
+        );
+      }),
       update: vi.fn(async ({ where }: { where: { id: string } }) => {
         calls.push({ op: "promoCode.update", id: where.id });
         return {};
@@ -52,6 +62,7 @@ function makeTx(promoRows: Record<string, Record<string, unknown>>) {
     },
     promoCodeLodge: { findMany: vi.fn(async () => []) },
     promoRedemption: {
+      findFirst: vi.fn(async () => null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         calls.push({ op: "promoRedemption.create" });
         return { id: "redemption-new", ...data };
@@ -121,12 +132,12 @@ function runSwap(tx: ReturnType<typeof makeTx>["tx"]) {
       lodgeId: "lodge-1",
       // Outgoing code sorts AFTER the incoming one, so a naive
       // "lock what you are about to use" would take them out of order.
-      promoRedemption: {
+      promoRedemptions: [{
         id: "redemption-old",
         promoCodeId: "promo-z",
         bookingId: "booking-1",
         memberId: "member-1",
-      },
+      }],
     } as unknown as ApplyArgs[1]["booking"],
     bookingId: "booking-1",
     input: { promoCode: "newcode" } as unknown as ApplyArgs[1]["input"],
@@ -140,6 +151,7 @@ function runSwap(tx: ReturnType<typeof makeTx>["tx"]) {
         isMember: true,
         perNightRates: [5000, 5000],
         nightDates: [new Date("2026-08-01T00:00:00Z"), new Date("2026-08-02T00:00:00Z")],
+        consentStatus: null,
       },
     ],
   });
@@ -175,9 +187,9 @@ describe("applyPromoCodeChanges promo row locking (#2299)", () => {
 
     // The id-only pre-lookup, then the lock, then the authoritative read.
     const ops = calls.map((call) => call.op);
-    const firstLookup = ops.indexOf("promoCode.findUnique");
+    const firstLookup = ops.indexOf("promoCode.resolve-by-code");
     const lastLock = ops.lastIndexOf("lock");
-    const lockedRead = ops.indexOf("promoCode.findUnique", lastLock);
+    const lockedRead = ops.indexOf("promoCode.read-by-id", lastLock);
     expect(firstLookup).toBeLessThan(lastLock);
     expect(lockedRead).toBeGreaterThan(lastLock);
   });
@@ -190,12 +202,12 @@ describe("applyPromoCodeChanges promo row locking (#2299)", () => {
       booking: {
         memberId: "member-1",
         lodgeId: "lodge-1",
-        promoRedemption: {
+        promoRedemptions: [{
           id: "redemption-old",
           promoCodeId: "promo-z",
           bookingId: "booking-1",
           memberId: "member-1",
-        },
+        }],
       } as unknown as ApplyArgs[1]["booking"],
       bookingId: "booking-1",
       input: { removePromoCode: true } as unknown as ApplyArgs[1]["input"],

@@ -56,7 +56,10 @@ const TIERS = {
 } satisfies Record<string, CancellationRule[]>;
 
 const paymentUpdate = vi.fn();
-const tx = { payment: { update: paymentUpdate } } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
+// #3827 (composed by #3829): no open by-hand refund task on file, so the
+// refundable cash is the payment's own.
+const NO_HAND_BACKS = { manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) } };
+const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */
 function creditPaidBooking(overrides: { status?: string; payment?: Record<string, unknown>; memberId?: string | null } = {}) {
@@ -205,6 +208,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
 
     const cancel = paidCancellationMoney({
       payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: mirror },
+      openNonCancellationHandBackCents: 0,
       finalPriceCents: 15_000,
       appliedCreditCents: mirror,
       restoresToMemberLedger: true,
@@ -218,6 +222,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
     // A card-paid $200 booking: $50 refunded at 100%, then the cancel tiers $150.
     const card = paidCancellationMoney({
       payment: { amountCents: 20_000, refundedAmountCents: 5_000, changeFeeCents: 0, creditAppliedCents: 0 },
+      openNonCancellationHandBackCents: 0,
       finalPriceCents: 15_000,
       appliedCreditCents: 0,
       restoresToMemberLedger: true,
@@ -300,7 +305,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     const settlementOptions = await calculateModificationSettlementOptions({
       booking,
       netChargeCents: -15_000,
-      db: {} as never,
+      db: NO_HAND_BACKS as never,
       todayAtClub: TODAY,
     });
     return applyPaymentAdjustments(tx, {
@@ -355,7 +360,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     credit.policy = [{ daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 1_000 }];
     credit.applied = 4_500;
     const booking = creditPaidBooking({ payment: { amountCents: 500, source: PaymentSource.STRIPE, creditAppliedCents: 4_500 } });
-    const settlementOptions = await calculateModificationSettlementOptions({ booking, netChargeCents: -5_000, db: {} as never, todayAtClub: TODAY });
+    const settlementOptions = await calculateModificationSettlementOptions({ booking, netChargeCents: -5_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY });
     const result = await applyPaymentAdjustments(tx, {
       booking, priceDiffCents: -5_000, changeFeeCents: 0, settlementOptions, settlementMethod: "card", todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
     });
@@ -403,6 +408,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
   const cancelCredit = (mirror: number, finalPriceCents: number, policy: CancellationRule[], cap = true) =>
     paidCancellationMoney({
       payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: mirror },
+      openNonCancellationHandBackCents: 0,
       finalPriceCents,
       appliedCreditCents: mirror,
       restoresToMemberLedger: true,
@@ -427,6 +433,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
     // A card-paid $200 booking: $5 refunded, then the cancel tiers $150.
     const card = paidCancellationMoney({
       payment: { amountCents: 20_000, refundedAmountCents: 500, changeFeeCents: 0, creditAppliedCents: 0 },
+      openNonCancellationHandBackCents: 0,
       finalPriceCents: 15_000,
       appliedCreditCents: 0,
       restoresToMemberLedger: true,
@@ -441,6 +448,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
   it("MUTATION: the preview a member is shown names the same restore as the cancel", () => {
     const preview = calculateCancellationPreview({
       payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 19_500 },
+      openNonCancellationHandBackCents: 0,
       finalPriceCents: 15_000,
       checkIn: CHECK_IN,
       policyRules: TIERS["50% with a $20 fee"],
@@ -459,7 +467,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
 
   it("money paid counts first: $100 paid and $150 applied on a $150 booking tiers $100 of money and $50 of credit", () => {
     expect(
-      cancelAppliedCreditBaseCents({ amountCents: 10_000, refundedAmountCents: 0, finalPriceCents: 15_000, changeFeeCents: 0, creditAppliedCents: 15_000, capAtWorth: true }),
+      cancelAppliedCreditBaseCents({ amountCents: 10_000, refundedAmountCents: 0, openNonCancellationHandBackCents: 0, finalPriceCents: 15_000, changeFeeCents: 0, creditAppliedCents: 15_000, capAtWorth: true }),
     ).toBe(5_000);
   });
 
@@ -471,6 +479,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
     expect(
       calculateCancellationPreview({
         payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 20_000 },
+        openNonCancellationHandBackCents: 0,
         finalPriceCents: 15_000,
         checkIn: CHECK_IN,
         policyRules: TIERS[tier],
@@ -493,7 +502,7 @@ describe("#3809: the quote previews the give-back the save makes", () => {
       reductionCents,
       cardBasisCents,
       todayAtClub: TODAY,
-      db: {} as never,
+      db: NO_HAND_BACKS as never,
     });
 
   it.each([

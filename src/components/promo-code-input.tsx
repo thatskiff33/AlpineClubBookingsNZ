@@ -21,6 +21,29 @@ export interface PromoResult {
   // Set when this discount came from a selected work party event rather
   // than a manually entered promo code.
   workPartyEvent?: { id: string; name: string; discountPercent: number } | null;
+  // #3492: on a booking carrying several codes, the guests the BOOKER chose for
+  // a booker-picks-guests code (resent when the list is re-priced), and the
+  // guest a guest-code chip named ("applies to Sam only").
+  promoGuestIndexes?: number[];
+  appliesTo?: string;
+}
+
+/** A party guest as the promo widgets name them. */
+export type PromoPartyGuest = { firstName?: string; lastName?: string; isMember?: boolean };
+
+/** A party guest's name, or "Guest N" (1-based) where none is known yet. */
+export function promoGuestName(guest: PromoPartyGuest | undefined, index: number): string {
+  const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
+  return name || `Guest ${index + 1}`;
+}
+
+/**
+ * THE label of a "choose promo guests" checkbox (#2266, #3492; `INV-SSOT-001`):
+ * the guest's name, marked "(member)" for a member. Every promo widget that
+ * asks the booker which guests a code covers draws it from here.
+ */
+export function promoGuestCheckboxLabel(guest: PromoPartyGuest | undefined, index: number): string {
+  return `${promoGuestName(guest, index)}${guest?.isMember ? " (member)" : ""}`;
 }
 
 interface PromoCodeInputProps {
@@ -36,6 +59,8 @@ interface PromoCodeInputProps {
     memberId?: string;
     stayStart?: string;
     stayEnd?: string;
+    /** On an edit: the row this guest already is (sent only with `bookingId`). */
+    bookingGuestId?: string;
   }[];
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
@@ -54,6 +79,13 @@ interface PromoCodeInputProps {
   // only — so a switch-off club's promo preview stops sizing its adjustment on
   // discounted rates the quote beside it will not give.
   forBookingEdit?: boolean;
+  /**
+   * #3492: the booking an edit preview is for. The server reads its guests'
+   * stored consent (owner-checked, one 404 for unowned and missing), so a
+   * confirmed guest already on the booking is priced as the save prices them
+   * (D-3492-4). Each guest's `bookingGuestId` travels only with it.
+   */
+  bookingId?: string;
 }
 
 export function PromoCodeInput({
@@ -68,6 +100,7 @@ export function PromoCodeInput({
   disabled = false,
   disabledReason,
   forBookingEdit = false,
+  bookingId,
 }: PromoCodeInputProps) {
   const format = useClubFormat();
   const [code, setCode] = useState(appliedPromo?.code || "");
@@ -110,6 +143,7 @@ export function PromoCodeInput({
             ...(g.memberId ? { memberId: g.memberId } : {}),
             ...(g.stayStart ? { stayStart: g.stayStart } : {}),
             ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
+            ...(bookingId && g.bookingGuestId ? { bookingGuestId: g.bookingGuestId } : {}),
           })),
           ...(selectionRequired ? { promoGuestIndexes: selectedGuestIndexes } : {}),
           ...(forMemberId ? { forMemberId } : {}),
@@ -117,6 +151,7 @@ export function PromoCodeInput({
           // #2770: sent only when it is true, so the create flows' request
           // bodies are byte-identical to what they send today.
           ...(forBookingEdit ? { forBookingEdit: true } : {}),
+          ...(bookingId ? { bookingId } : {}),
         }),
       });
 
@@ -182,12 +217,6 @@ export function PromoCodeInput({
     setError("");
   }
 
-  function guestLabel(index: number) {
-    const guest = guests[index];
-    const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
-    const label = name || `Guest ${index + 1}`;
-    return `${label}${guest?.isMember ? " (member)" : ""}`;
-  }
 
   return (
     <div className="space-y-2">
@@ -252,7 +281,7 @@ export function PromoCodeInput({
                   onChange={(event) => toggleGuestIndex(index, event.target.checked)}
                   className="rounded border-input"
                 />
-                <span>{guestLabel(index)}</span>
+                <span>{promoGuestCheckboxLabel(guests[index], index)}</span>
               </label>
             ))}
           </div>
