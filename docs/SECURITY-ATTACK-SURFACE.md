@@ -1119,7 +1119,7 @@ Verified controls already present and intentionally preserved:
   report-shape change would otherwise turn this required gate green everywhere,
   permanently and silently.
 - The audit's only other passing verdict is MITIGATED, never CLEAN (#3843):
-  one reviewed advisory under an expiring, code-owned, owner-approved record.
+  one reviewed advisory under an expiring, owner-approved record.
   The conditions it requires are stated once, in
   [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md)
   -> "When the wrapper says MITIGATED"; it covers only the copy the audit can

@@ -6028,7 +6028,7 @@ describe("processStoredXeroInboundEvents", () => {
     });
   });
 
-  it("repairs applied-credit ledger state atomically under the advisory lock and clamps to the payment amount", async () => {
+  it("repairs applied-credit ledger state atomically under the advisory lock and writes the ledger's applied total", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {
         id: "evt_clamp",
@@ -6093,8 +6093,10 @@ describe("processStoredXeroInboundEvents", () => {
         {
           id: "pay_booking_1",
           bookingId: "bk234567890",
-          // The applied-credit aggregate below (5000) exceeds this payment amount,
-          // so the write must clamp to amountCents (2000), never over-credit.
+          // The applied-credit aggregate below (5000) exceeds this payment's
+          // card amount (2000); the mirror is the ledger's 5000 (#3836), never
+          // clipped to the card, nor to the booking's worth - a booking reduced
+          // before #3809 keeps all its credit at a cancel.
           amountCents: 2000,
           creditAppliedCents: 0,
           booking: {
@@ -6164,11 +6166,11 @@ describe("processStoredXeroInboundEvents", () => {
         },
       },
     );
-    // Clamped to the payment amount, not the raw 5000 aggregate.
+    // The ledger's figure, not clipped to the card amount.
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "pay_booking_1" },
       data: {
-        creditAppliedCents: 2000,
+        creditAppliedCents: 5000,
       },
     });
   });

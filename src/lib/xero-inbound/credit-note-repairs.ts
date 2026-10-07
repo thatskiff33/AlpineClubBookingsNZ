@@ -817,7 +817,6 @@ export async function repairAccountCreditAllocationBusinessState(
       select: {
         id: true,
         bookingId: true,
-        amountCents: true,
         creditAppliedCents: true,
         booking: {
           select: {
@@ -858,9 +857,9 @@ export async function repairAccountCreditAllocationBusinessState(
     // exclude those per-member writers, so a BOOKING_APPLIED repair could
     // interleave with a concurrent spend/restore of the same member's ledger.
     // Without serialization two concurrent credit-note events for one payment can
-    // also interleave and transiently under-set creditAppliedCents; the clamp
-    // keeps the applied total within the payment amount (invariant (b),(d),
-    // #1234). DB-only work: no external Xero call runs inside this transaction.
+    // also interleave and transiently under-set creditAppliedCents; the write
+    // is the ledger's applied total, read under the lock (invariant (b),(d),
+    // #1234; #3836). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
       const creditLedgerMemberId = bookingOwner(payment.booking).memberId;
       // #3369: this whole repair is about a MEMBER's applied credit — the
@@ -1082,10 +1081,13 @@ export async function repairAccountCreditAllocationBusinessState(
           amountCents: true,
         },
       });
-      const appliedCreditTotalCents = Math.min(
-        Math.max(-(aggregate._sum.amountCents ?? 0), 0),
-        payment.amountCents
-      );
+      // #3836: the ledger's figure, uncapped. A cap at the card amount zeroed a
+      // credit-only booking's mirror and clipped a card-and-credit one's; a cap
+      // at the booking's worth cut a booking reduced before #3809, which keeps
+      // all its credit at a cancel (owner decision, 4 Oct 2026). The worth cap
+      // belongs to the cancel alone, for #3809's bookings
+      // (`cancelAppliedCreditBaseCents`).
+      const appliedCreditTotalCents = Math.max(-(aggregate._sum.amountCents ?? 0), 0);
 
       // Compare against the payment's current creditAppliedCents read under the
       // lock; the pre-loop snapshot can be stale, so the write only fires on a

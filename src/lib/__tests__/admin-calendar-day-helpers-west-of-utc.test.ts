@@ -35,7 +35,7 @@
  * moves a birthday across a year boundary, and the day decides an age tier,
  * which decides a price band.
  *
- * `formatMemberCalendarDay` renders `stats.lastStay` — the `_max` of a member's
+ * `formatMemberHistoryPreview` renders `stats.lastStay` — the `_max` of a member's
  * booking `checkOut`, a lodge night — in the member page's history preview. The
  * summary strip three lines above it decodes the same value correctly, so a
  * projection here shows one member's last stay on two different days on one
@@ -47,10 +47,7 @@ import { describe, expect, it } from "vitest";
 
 
 import { formatFamilyGroupCalendarDay } from "@/lib/admin-family-group-ui-helpers";
-import {
-  formatMemberCalendarDay,
-  formatMemberHistoryPreview,
-} from "@/lib/admin-member-detail-helpers";
+import { formatMemberHistoryPreview } from "@/lib/admin-member-detail-helpers";
 
 /**
  * The premise, asserted rather than assumed. If this zone ever stopped being
@@ -90,29 +87,7 @@ describe("formatFamilyGroupCalendarDay keeps the STORED day west of UTC", () => 
   });
 });
 
-describe("formatMemberCalendarDay keeps the STORED lodge night west of UTC", () => {
-  it("renders a stored check-out as its own day, not the evening before", () => {
-    expect(
-      formatMemberCalendarDay("2026-07-04T00:00:00.000Z", CLUB_FORMAT_TEST),
-      "INV-DATE-019: `stats.lastStay` is the `_max` of a member's booking " +
-        "checkOut, a @db.Date lodge night. The summary strip on the same page " +
-        "decodes it as the stored day, so a projection here puts one member's " +
-        "last stay on two different days three lines apart.",
-    ).toBe("4 Jul 2026");
-  });
-
-  it("renders the bare spelling of that same day identically", () => {
-    expect(formatMemberCalendarDay("2026-07-04", CLUB_FORMAT_TEST)).toBe("4 Jul 2026");
-  });
-
-  it("returns the caller's fallback for a value it cannot read", () => {
-    // It degrades rather than throwing, because these values are fed straight
-    // from an API payload into a rendered row and a throw in that position
-    // blanks the whole page.
-    expect(formatMemberCalendarDay("not-a-date", CLUB_FORMAT_TEST)).toBe("—");
-    expect(formatMemberCalendarDay("", CLUB_FORMAT_TEST, "unknown")).toBe("unknown");
-  });
-
+describe("formatMemberHistoryPreview keeps the STORED lodge night west of UTC", () => {
   it("carries through to the member page's history preview line", () => {
     // The call site the straddle was actually on: the preview and the summary
     // strip render the same `stats.lastStay`.

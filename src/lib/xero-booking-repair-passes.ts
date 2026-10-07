@@ -569,6 +569,13 @@ async function applyQueuedAction(
       action.resultMessage = result.message;
       return;
     }
+    case "QUEUE_APPLIED_CREDIT_ALLOCATION": {
+      // #3836: the engine re-reads the ledger and allocates only what is unallocated.
+      const result = await deps.enqueueXeroAppliedCreditAllocationOperation(String(action.payload.bookingId));
+      action.status = result.queueOperationId ? "queued" : "skipped";
+      action.resultMessage = result.message;
+      return;
+    }
     case "REQUEUE_XERO_OPERATION": {
       const result = await deps.enqueueXeroSyncOperationRetry(
         String(action.payload.operationId)

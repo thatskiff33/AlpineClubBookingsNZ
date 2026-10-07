@@ -1420,6 +1420,9 @@ export async function sendBookingModifiedEmail(params: {
    * instead (`INV-SSOT`, "prefer unrepresentable over policed").
    */
   financialReviewPending: boolean;
+  /** #3916: the refund went to the group organiser's card (#3653). REQUIRED, like `financialReviewPending`;
+   * the settlement's own `result.organiserChildRefund !== null`, never recomputed. */
+  refundReturnedToOrganiser: boolean;
   /**
    * #3827 (D-3813-6, `INV-PAY-117`): the refund is a bank transfer the club
    * still has to send. REQUIRED, as `financialReviewPending` is; the template's
@@ -1485,6 +1488,7 @@ export async function sendBookingModifiedEmail(params: {
           bookingModifiedRefundSentence(
             formatMoneyCents(params.refundAmountCents, format),
             params.refundByBankTransfer,
+            params.refundReturnedToOrganiser,
           ),
           accountCreditAmountCents > 0
             ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`

@@ -350,16 +350,16 @@ Keep unrelated refactors out of feature and bugfix PRs.
 
 ## Merging
 
-Automated agents follow the `AGENTS.md` "Completion and Merge" risk gate, the
+Automated agents follow the `AGENTS.md` "Completion and Merge" merge gate, the
 one statement of who may merge what. Always merge with a merge commit; never
 squash or force-push.
 
 ### Branch protection
 
 `main` is branch-protected; force-pushes and branch deletions are blocked. The
-code-owner rule itself — what needs an Approve and how agents treat it — is
-`AGENTS.md` → "Pre-authorisation and attributability". What is applied today
-is below, followed by the owner's checklist for rebuilding it.
+code-owner requirement was removed on 7 Oct 2026 (#3959); who may merge what is
+`AGENTS.md` → "Completion and Merge". What is applied today is below, followed by
+the owner's checklist for rebuilding it.
 
 #### Required checks applied today
 
@@ -415,8 +415,9 @@ Measured 19 Aug 2026: the nine contexts above, `strict: false` (requiring
 up-to-date branches serialises the queue behind full re-runs),
 `required_approving_review_count: 0` (a pull request is required, a human
 approval is not — #2713/#2948), `enforce_admins: false`. Code-owner review
-and stale-approval dismissal are applied (2 Oct 2026, #3341): see "Rebuilding
-the code-owner configuration" below.
+and stale-approval dismissal were applied on 2 Oct 2026 (#3341) and removed by
+the owner on 7 Oct 2026 (#3959); "Rebuilding the code-owner configuration"
+below is kept as the record of how to re-apply it, should the owner choose to.
 
 **Advisory, and deliberately NOT required** — a finding is investigated, but
 it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
