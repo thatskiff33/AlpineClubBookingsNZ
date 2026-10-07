@@ -1,4 +1,5 @@
 import { loadModificationLinesAuditFields } from "@/lib/booking-modification-lines";
+import { editRefundGoesBackByHand } from "@/lib/edit-refund-hand-back";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -359,6 +360,8 @@ export async function DELETE(
         */
         financialReviewPending: result.financialReviewPending,
         refundReturnedToOrganiser: result.organiserChildRefund !== null,
+        // D-3813-6: an internet-banking refund is the club's to send.
+        refundByBankTransfer: editRefundGoesBackByHand(result),
         lodgeId: result.booking.lodgeId,
         // Removing a guest can raise the price when it invalidates a group
         // promo the remaining guests relied on. Surface the increase when a

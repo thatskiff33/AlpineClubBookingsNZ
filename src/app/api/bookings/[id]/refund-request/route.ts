@@ -6,7 +6,11 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { sendAdminRefundRequestAlert } from "@/lib/email";
-import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import {
+  getRemainingRefundableCents,
+  getRemainingRefundableCentsNetOf,
+} from "@/lib/booking-payment-state";
+import { refundAppealHandedBackCents } from "@/lib/edit-refund-hand-back";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
 import { clubFormat } from "@/lib/club-format-server";
@@ -138,10 +142,29 @@ export async function POST(
 
   const { reason, requestedAmountCents } = parsed.data;
 
-  const maxRefundable = getRemainingRefundableCents(booking.payment);
-  if (maxRefundable <= 0) {
+  if (getRemainingRefundableCents(booking.payment) <= 0) {
     return NextResponse.json(
       { error: "No successful payment was captured for this booking" },
+      { status: 400 }
+    );
+  }
+
+  // #3827 (`INV-PAY-118`): what the member may ask for is the refundable cash
+  // NET of every refund the club has already promised back by bank transfer
+  // and not yet sent, and of the account credit already minted from a late
+  // bank transfer - the same figure the approval caps at. Advisory here and
+  // read without a lock: an appeal moves no money, and the approval re-reads
+  // it under `lock(1)` before anything is approved.
+  const maxRefundable = getRemainingRefundableCentsNetOf(
+    booking.payment,
+    await refundAppealHandedBackCents(prisma, booking.payment),
+  );
+  if (maxRefundable <= 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Everything still refundable on this booking is already being returned to you, by bank transfer or as account credit, so there is nothing further to appeal for.",
+      },
       { status: 400 }
     );
   }

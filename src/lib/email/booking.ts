@@ -1,4 +1,5 @@
 import { loadBookingAppliedCredit } from "@/lib/booking-confirmation-credit";
+import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
   type BookingCalendarLinks,
@@ -53,7 +54,6 @@ import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
-import { editRefundNote } from "@/lib/booking-edit-refund-copy";
 import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
@@ -67,6 +67,7 @@ import {
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 
 /**
  * #2328 (review): what the confirmation renders when the applied-credit read
@@ -102,6 +103,7 @@ export async function sendBookingConfirmedEmail(
     discountCents?: number;
     promoAdjustmentCents?: number;
     promoCode?: string;
+    promoLines?: ReadonlyArray<PromoCodeAdjustment>; // #3828: a row per code
     // Booking's lodge (multi-lodge phase 8): the email carries this lodge's
     // name, travel note, and door code. Omitted/null resolves the club's
     // default lodge — including its real door code, so always thread the
@@ -221,6 +223,7 @@ export async function sendBookingConfirmedEmail(
     promoAdjustmentCents,
     format,
     options?.promoCode,
+    options?.promoLines,
   )
     .map((row) => `${row.label}: ${row.value}\n`)
     .join("");
@@ -1420,6 +1423,12 @@ export async function sendBookingModifiedEmail(params: {
   /** #3916: the refund went to the group organiser's card (#3653). REQUIRED, like `financialReviewPending`;
    * the settlement's own `result.organiserChildRefund !== null`, never recomputed. */
   refundReturnedToOrganiser: boolean;
+  /**
+   * #3827 (D-3813-6, `INV-PAY-117`): the refund is a bank transfer the club
+   * still has to send. REQUIRED, as `financialReviewPending` is; the template's
+   * own field says why.
+   */
+  refundByBankTransfer: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 },
@@ -1471,9 +1480,20 @@ export async function sendBookingModifiedEmail(params: {
           params.refundAmountCents > 0 || accountCreditAmountCents > 0 || params.appliedCreditGivenBackCents > 0,
       })
     : "";
+  // #3827: the refund sentence is the template's own (D-3813-6), and a split
+  // payment's credit share follows it (D-3813-5).
   const settlementNote =
     params.refundAmountCents > 0
-      ? editRefundNote(params.refundAmountCents, params.refundReturnedToOrganiser, format)
+      ? [
+          bookingModifiedRefundSentence(
+            formatMoneyCents(params.refundAmountCents, format),
+            params.refundByBankTransfer,
+            params.refundReturnedToOrganiser,
+          ),
+          accountCreditAmountCents > 0
+            ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`
+            : "",
+        ].filter(Boolean).join(" ")
       : accountCreditAmountCents > 0
         ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`
         : params.additionalAmountCents > 0

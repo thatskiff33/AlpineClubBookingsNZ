@@ -175,6 +175,89 @@ Two consequences to expect:
   it, the edit removes the code from the booking rather than pretending it still
   applies. Nobody loses anything, because nobody had anything.
 
+### Several codes on one booking
+
+Once the **Several promo codes on one booking** module is switched on, a booking
+can carry more than one code — for example two members sharing a group booking,
+each using their own free nights. The booker chooses every code; nothing is
+added for them. The rules (`INV-MONEY-038`, `INV-MONEY-039`):
+
+- **A night is discounted once.** Each code covers only the nights no earlier
+  code has already discounted. A member's own free-night code covers only that
+  member's nights.
+- **The booker's order decides.** Where two codes could cover the same night,
+  the code earlier in the booker's list wins. The order is saved with the
+  booking and can be changed by editing the booking. A code that would be left
+  with no night to discount is refused with "Already covered by" the code that
+  holds them.
+- **A working-bee discount goes first.** It takes its working-bee nights before
+  any code, and the codes cover the rest.
+- **Each code keeps its own limits.** Uses, unique members and free-night
+  budgets are counted per code, exactly as for a single code.
+- **Removing a guest removes only their code.** When a re-price leaves a code
+  nothing to discount — its holder left, or another code now covers its nights
+  — that code alone is removed and the member is told which one and why. The
+  other codes stay.
+
+**A guest who has not yet accepted their place gets no discount.** A member
+added from outside the booker's family waits as *pending* until they accept.
+Until then no code — not even one typed at booking — discounts their nights.
+When they accept, the booking's codes are applied again over their nights. On a
+paid booking the **whole** reduction goes back — this is not a cancellation, so
+no cancellation-policy percentage applies — and it goes back **the way the
+booking was paid**: cash first — to the card, or for internet banking a bank
+transfer the treasurer sends from the **Money to settle** card (beside the usual
+refund credit note in Xero) — and whatever the cash cannot cover goes back as
+the account credit it was paid with. Nobody is asked to choose. The owner gets the usual booking-changed email. A decline uses up
+nothing. The price stays as it was until the booking is next edited when:
+- a paid or invoiced booking's price would *rise*;
+- the reduction cannot all go back the way it was paid (the cash still
+  refundable and the credit applied do not add up to the price, for example
+  after an earlier change kept part of a payment) — the codes then use nothing;
+- an edit is still under financial review, the booking is waiting for officer
+  review or on the waitlist, or the stay has started.
+
+#### How the booker chooses the codes: guest chips
+
+On the booking's review step, on its edit panel, and on Admin → Book on
+Behalf, the booker sees each code they could use as a **chip** (#3492):
+
+- **Their own codes**, as before.
+- **Their guests' codes**, grouped under the guest who holds them and marked
+  "applies to *name* only". A code two staying guests both hold is offered
+  once, marked with both names; a code the booker holds too is offered as the
+  booker's own. Only a guest member's codes that are assigned to them, active,
+  and allowed at this lodge are offered — and only codes in the **own nights**
+  assignment mode (the default). A code in the "booker picks guests" mode, or a
+  group fixed-nightly code, can only be booked with by its own member, so it is
+  never offered as somebody else's guest chip.
+
+Nothing is applied until the booker presses a chip or types a code. With the
+module on they can add several and change their order with **Move earlier**
+and **Move later** beside each code; every amount on the review step is the
+amount in that order. A working-bee discount combines with them on the review
+step: it covers its own nights first and each code is priced after it. Editing
+a booking saves the whole list, in its new order. With the module **off**, the
+chips are still offered but a booking takes one code and a working bee stands
+alone, exactly as before — and a booking that already carries several codes
+(the module was on when they were added) shows them read-only on its edit
+panel: they cannot be added, removed or swapped until the module is back on,
+because a one-code change would release every other member's code. The edit
+panel shows "Checking promo codes…" until it knows whether the module is on.
+
+**Whose codes are shown is a privacy decision.** A guest's codes appear only
+when the guest is in the booker's family, or is a member from outside the
+family whom the booking treats as **confirmed** — they (or someone answering
+for them) accepted their place, the club does not ask guests to accept and only
+notifies them, an officer added them, or the booking was made before guest
+consent existed. A guest who is still pending, or who declined, never shows a
+chip. So on a new booking only family guests' codes appear; a friend's appear
+on the booking's edit panel once they are confirmed, and the edit panel prices
+them as the save will. The booker sees only each code and what it gives — not the
+description you wrote for it, not how much of it is used. Every lookup is
+written to the audit log as `promo_code.guest_lookup` (see the
+[audit log guide](audit-log.md#guest-promo-code-lookups-3492)).
+
 ## Settings reference
 
 | Setting | What it controls | Default | Notes / constraints |
@@ -191,6 +274,7 @@ Two consequences to expect:
 | Xero Item Code / Account Code | Post the discount line to a specific Xero item/account | none | Item's mapped account wins over the account code |
 | Restrict to Lodges | Limit redemption to chosen lodges | all lodges | Multi-lodge only |
 | Assign to Specific Members | Limit use to named members, with a scope choice | none | Own-nights-only or whole booking |
+| Several promo codes on one booking (Admin → Modules) | Whether one booking may carry more than one code | off | A rollout switch (#3826): while off, a second code on a booking is refused and a code entered on a booking with a working-bee discount replaces it, as before. Turn it on only after the upgrade that added it has fully cut over |
 
 ## After upgrading to this release
 
@@ -221,6 +305,15 @@ That is the intended correction, not a fault.
 | A member says one guest on their booking got the discount and another did not | The code ran out of uses partway through their edit; everyone who already had it keeps it and new people are priced normally | Nothing to do — see [What happens when a booking is edited and the code has run out](#what-happens-when-a-booking-is-edited-and-the-code-has-run-out); the redemptions report shows who benefited |
 | **Benefits given** sits above the limit after you lowered it | Members who already had the discount keep it; the club does not bill back a promise already made | Nothing to do — it comes back under the limit as those bookings pass, and no new member is given the code meanwhile |
 | No promo codes appear | None have been created (the demo seed ships none) | Click **Add Promo Code** to create one |
+| A second code is refused with "Already covered by …" | Every night it could discount already carries an earlier code in the booker's list | Move it earlier in the booking's list, or leave it off — see [Several codes on one booking](#several-codes-on-one-booking) |
+| A code gave a guest's nights nothing | The guest is still pending acceptance; no code discounts their nights until they accept | Nothing to do — the codes are applied again when they accept |
+| A guest accepted but the price did not drop | The booking's lower price could not all go back the way it was paid, or the booking was under review, waitlisted or already under way | Edit the booking: the ordinary edit re-prices its codes |
+| "Only one promo code can be used on a booking" | The **Several promo codes on one booking** module is off | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
+| A guest's code does not appear as a chip | The guest is from outside the booker's family and is not confirmed yet (on a new booking, no outside guest's codes appear at all); or the code is in the "booker picks guests" mode or is a group fixed-nightly code, which only its own member can book with; or it is inactive, expired, used up, or not allowed at this lodge | Ask the guest to accept their place; the chip then appears on the booking's edit panel. Otherwise check the code's assignment mode and settings |
+| The booker cannot add a second chip | The **Several promo codes on one booking** module is off, so a booking takes one code | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
+| A booking's edit panel lists its codes but offers no way to change them | The booking carries several codes and the **Several promo codes on one booking** module is off | Turn it on (Admin → Modules); other changes to the booking still re-price its codes meanwhile |
+| "Too many requests. Your guests' promo codes can't be checked just now" under the promo codes | The guest-code lookup is limited to 30 a quarter-hour per member; until it answers, no guest chip is offered and the edit panel shows a several-code booking's codes without changes | Wait a few minutes and reload; an ordinary booking uses a handful |
+| "We couldn't check your guests' promo codes just now" | The guest-code lookup failed | Reload the page; if it keeps happening, check the server log |
 
 ## Related links
 

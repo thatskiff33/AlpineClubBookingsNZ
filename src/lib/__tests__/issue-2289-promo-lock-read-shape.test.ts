@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolvePromoInTransaction } from "@/lib/booking-create-promo";
+import { resolvePromotionsInTransaction } from "@/lib/booking-create-promo";
 import { BookingPromoError } from "@/lib/booking-create-types";
 import { requireCalendarDate } from "@/lib/club-time";
 
@@ -29,10 +29,12 @@ const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 //
 // Nothing threw and nothing was logged. The fix is structural: the raw statement
 // takes the LOCK ONLY (`$executeRaw`, result never read) and the promo is read
-// back through `tx.promoCode.findUnique`, which Prisma maps.
+// back through the Prisma model, which Prisma maps. Since #3827 the lock is
+// keyed on the immutable id (`lockPromoCodeRowsForUpdate`, sorted) and the read
+// is `tx.promoCode.findMany` by id under it.
 //
 // So these tests hand the transaction BOTH shapes at once: `$queryRaw` returns
-// the lying row exactly as the broken deployment did, and `promoCode.findUnique`
+// the lying row exactly as the broken deployment did, and the model read
 // returns the true one. Code that reads the raw result gets the silent wrong
 // answer; code that reads through the model gets the right one. Revert the fix
 // and every test in the first block fails.
@@ -103,18 +105,25 @@ function truePromoRow(overrides: Record<string, unknown> = {}) {
 
 function makeTx(
   promoRow: Record<string, unknown> | null,
-  options: { lockedRowCount?: number } = {},
+  options: {
+    /** What the UNLOCKED resolve by code sees; defaults to the row itself. */
+    resolvedRow?: { id: string; code: string } | null;
+  } = {},
 ) {
-  const { lockedRowCount = 1 } = options;
+  const resolvedRow =
+    options.resolvedRow !== undefined
+      ? options.resolvedRow
+      : promoRow
+        ? { id: promoRow.id as string, code: promoRow.code as string }
+        : null;
   const calls: string[] = [];
   const tx = {
-    // The lock. Returns an affected-row count, like the real `$executeRaw`, and
-    // carries no column names at all — which is the entire point of the fix.
-    // The count is the load-bearing part: `FOR UPDATE` locks nothing when it
-    // matches nothing, so 0 means this transaction holds no lock on the code.
+    // The lock, keyed on the id. Returns an affected-row count, like the real
+    // `$executeRaw`, and carries no column names at all — which is the entire
+    // point of the fix.
     $executeRaw: vi.fn(async () => {
       calls.push("lock");
-      return lockedRowCount;
+      return 1;
     }),
     // Kept on the stub deliberately: if the production code ever reads a promo
     // through raw SQL again, it gets the lying row and these tests fail.
@@ -123,9 +132,13 @@ function makeTx(
       return [LYING_RAW_ROW];
     }),
     promoCode: {
-      findUnique: vi.fn(async () => {
-        calls.push("promoCode.findUnique");
-        return promoRow;
+      findMany: vi.fn(async ({ where }: { where: { id?: unknown } }) => {
+        if (where.id) {
+          calls.push("promoCode.read-by-id");
+          return promoRow ? [promoRow] : [];
+        }
+        calls.push("promoCode.resolve-by-code");
+        return resolvedRow ? [resolvedRow] : [];
       }),
     },
     promoCodeAssignment: { findMany: vi.fn(async () => []) },
@@ -141,14 +154,15 @@ function makeTx(
   return { tx, calls };
 }
 
-type ResolveTx = Parameters<typeof resolvePromoInTransaction>[0];
+type ResolveTx = Parameters<typeof resolvePromotionsInTransaction>[0];
 
 const CHECK_IN = new Date(Date.UTC(2026, 6, 1));
 
 function resolve(tx: ReturnType<typeof makeTx>["tx"]) {
-  return resolvePromoInTransaction(tx as unknown as ResolveTx, {
-      todayAtClub: CLUB_TODAY_FOR_TEST,
-    promoCodeStr: "winter",
+  return resolvePromotionsInTransaction(tx as unknown as ResolveTx, {
+    todayAtClub: CLUB_TODAY_FOR_TEST,
+    sources: [{ promoCodeStr: "winter", allowInternal: false }],
+    lockRows: true,
     effectiveMemberId: "member-1",
     checkIn: CHECK_IN,
     guests: [
@@ -184,21 +198,25 @@ describe("booking creation reads the locked promo through Prisma, not the raw ro
     vi.clearAllMocks();
   });
 
-  it("locks with $executeRaw and reads with promoCode.findUnique, in that order", async () => {
+  it("resolves the id unlocked, locks with $executeRaw, then reads by id through the model", async () => {
     const { tx, calls } = makeTx(truePromoRow());
 
     await resolve(tx);
 
-    expect(calls.slice(0, 2)).toEqual(["lock", "promoCode.findUnique"]);
+    expect(calls.slice(0, 3)).toEqual([
+      "promoCode.resolve-by-code",
+      "lock",
+      "promoCode.read-by-id",
+    ]);
     expect(tx.$queryRaw).not.toHaveBeenCalled();
-    // The lock is a real FOR UPDATE on the normalised code, not a bare read.
+    // The lock is a real FOR UPDATE on the code's immutable id, not a bare read.
     const [strings, ...values] = tx.$executeRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       ...unknown[],
     ];
     expect(strings.join("?")).toContain("FOR UPDATE");
     expect(strings.join("?")).toContain('"PromoCode"');
-    expect(values[0]).toBe("WINTER");
+    expect(values[0]).toBe("promo-1");
   });
 
   it("ENFORCES the total-redemption cap that the lying row silently disabled", async () => {
@@ -219,7 +237,7 @@ describe("booking creation reads the locked promo through Prisma, not the raw ro
     // Two free nights at 5,000 cents each. Under the raw read,
     // `freeNightsPerIndividual` was undefined, `?? 0` made it zero free nights,
     // and the member was charged the full 10,000 having been quoted this.
-    expect(resolved.promoFreeNightsUsed).toBe(2);
+    expect(resolved.redemptions[0]?.freeNightsUsed).toBe(2);
     expect(resolved.discountCents).toBe(10_000);
   });
 
@@ -244,53 +262,46 @@ describe("booking creation reads the locked promo through Prisma, not the raw ro
   });
 });
 
-// The half of "lock raw, read typed" that only exists because the statement was
-// SPLIT. One `SELECT * … FOR UPDATE` returned the row and the lock together, so
-// a row this transaction had not locked could not be in its result. Two
-// statements can disagree: `FOR UPDATE` locks nothing when it matches nothing,
-// and READ COMMITTED (the repo default, relied on deliberately — see
-// `member-merge.ts`) gives the follow-up read a FRESH snapshot, so a promo code
-// INSERTED or RENAMED between them comes back unlocked. Applying it would let
-// two concurrent bookings both read `currentRedemptions = 0` and both redeem a
-// single-use code.
-//
-// The affected-row count `$executeRaw` already returns is what closes that, so
-// these tests drive it directly. Delete the `lockedRowCount > 0` check in
-// `booking-create-promo.ts` and the first two fail: the promo is applied, at a
-// full discount, with nothing holding its row lock.
-describe("a promo the lock did not match is never applied unlocked (#2289)", () => {
+// The half of "lock raw, read typed" that only exists because the lock and the
+// read are separate statements. READ COMMITTED (the repo default, relied on
+// deliberately — see `member-merge.ts`) gives each statement a FRESH snapshot,
+// so a code INSERTED or RENAMED between them must never be applied off a row
+// nothing locked: two concurrent bookings could then both read
+// `currentRedemptions = 0` and both redeem a single-use code. Since #3827 the
+// lock is keyed on the id the unlocked resolve found, and the read by id is
+// checked against the code as typed.
+describe("a promo the lock does not hold is never applied (#2289, #3827)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("refuses when the lock matched no row but the read would find one", async () => {
-    // The race, exactly: `SELECT 1 … FOR UPDATE` matched nothing (count 0), the
-    // admin's INSERT then committed, and the unlocked row is now visible.
-    const { tx } = makeTx(truePromoRow(), { lockedRowCount: 0 });
+  it("refuses a code created or renamed TO the typed text after the unlocked resolve", async () => {
+    // The resolve saw nothing; the row exists by the time anyone could read it.
+    const { tx, calls } = makeTx(truePromoRow(), { resolvedRow: null });
 
     await expect(resolve(tx)).rejects.toThrow("Promo code not found");
-    // Same refusal the single-statement form produced for this interleaving.
     await expect(resolve(tx)).rejects.toBeInstanceOf(BookingPromoError);
+    // Nothing was locked, so nothing was read: no cap decision off an
+    // unserialised row.
+    expect(calls.filter((call) => call !== "promoCode.resolve-by-code")).toEqual([]);
   });
 
-  it("does not even read a promo it failed to lock", async () => {
-    const { tx, calls } = makeTx(
-      truePromoRow({ maxRedemptionsTotal: 1, currentRedemptions: 0 }),
-      { lockedRowCount: 0 },
-    );
+  it("refuses a code renamed AWAY between the resolve and the lock", async () => {
+    const { tx } = makeTx(truePromoRow({ code: "SPRING" }), {
+      resolvedRow: { id: "promo-1", code: "WINTER" },
+    });
 
     await expect(resolve(tx)).rejects.toThrow("Promo code not found");
-
-    // No lock means no read and therefore no cap decision: a slot cannot be
-    // consumed off a row nothing is serialising on.
-    expect(tx.promoCode.findUnique).not.toHaveBeenCalled();
-    expect(calls).toEqual(["lock"]);
   });
 
-  it("reads and applies normally as soon as the lock matched its row", async () => {
-    const { tx, calls } = makeTx(truePromoRow(), { lockedRowCount: 1 });
+  it("reads and applies normally when the locked row still reads as typed", async () => {
+    const { tx, calls } = makeTx(truePromoRow());
 
     await expect(resolve(tx)).resolves.toMatchObject({ discountCents: 10_000 });
-    expect(calls.slice(0, 2)).toEqual(["lock", "promoCode.findUnique"]);
+    expect(calls.slice(0, 3)).toEqual([
+      "promoCode.resolve-by-code",
+      "lock",
+      "promoCode.read-by-id",
+    ]);
   });
 });

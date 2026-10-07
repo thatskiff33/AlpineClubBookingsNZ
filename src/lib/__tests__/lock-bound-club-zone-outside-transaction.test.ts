@@ -217,11 +217,14 @@ const PURE_CALLEES = [
   // and all three take the club's day as a required parameter:
   // `calculateModificationSettlementOptions` (the reduction refund's tier),
   // `applyPromoCodeChanges` + `calculateModificationChangeFee`, and
-  // `resolvePromoInTransaction` — which additionally holds a `FOR UPDATE` lock
-  // on the promo row itself by the time it needs the day.
+  // `resolvePromotionsInTransaction` — which additionally holds `FOR UPDATE`
+  // locks on the promo rows themselves by the time it needs the day. #3827's
+  // orchestrator and the guest-acceptance re-price run under the same locks.
   "src/lib/booking-modify-settlement.ts",
   "src/lib/booking-modify-plan.ts",
   "src/lib/booking-create-promo.ts",
+  "src/lib/booking-promotions.ts",
+  "src/lib/booking-guest-acceptance-reprice.ts",
   // The person-night callees (#3123 review). `buildApprovalGuestCreates` runs on
   // the caller's `tx` in all three approval pipelines;
   // `booking-batch-modification-service.ts` is here for a subtler reason and is

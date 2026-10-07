@@ -28,6 +28,12 @@ every rule the system must never break. Each rule has a permanent id
 (`INV-CAP-021`, `INV-MONEY-004`), a one-line description, and the file it lives
 in. Cite rules by id, never by line number.
 
+## Project goals
+
+[`GOALS.md`](../GOALS.md) sets out where the project is heading — robustness,
+tested releases, then a pilot club live without the maintainer — and the
+method, scope and finish line for each.
+
 ## Domain and invariants
 
 - [`../DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — the invariant index.

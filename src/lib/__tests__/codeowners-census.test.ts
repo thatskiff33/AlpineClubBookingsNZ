@@ -37,6 +37,17 @@ const OWNER = "@thatskiff33";
  * (`booking-ledger-group-settlement-*.ts`, the census's `-group.ts`), and
  * #3836's applied-credit allocation (`credit-only-card-payment.ts`,
  * `xero-applied-credit-*.ts`, `xero-booking-repair-applied-credit.ts`).
+ * And (#3829, epic #3813 composed with main at 185 of 1250, 14.8%): nine
+ * new money modules, each owned by an existing glob rather than a widened one -
+ * the by-hand refund task and its refusal (`edit-refund-hand-back.ts`,
+ * `manual-refund-task-settlement-refusal.ts`, `refund-event-outside-settlement.ts`),
+ * the refund-request credit note (`refund-request-credit-note.ts`,
+ * `xero-refund-request-credit-note-outbox.ts`), late internet-banking cash
+ * credit (`internet-banking-late-cash-credit.ts`), the multi-code price delta
+ * and request reader (`booking-modification-promo-delta.ts`,
+ * `booking-modify-promo-request.ts`) and the settlement options split out of
+ * `booking-modify-settlement.ts` (`booking-modify-settlement-options.ts`):
+ * 194 of 1271, 15.3%.
  */
 const MAX_OWNED_SRC_LIB_SHARE = 0.16;
 

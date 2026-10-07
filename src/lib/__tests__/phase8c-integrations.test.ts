@@ -372,6 +372,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
@@ -405,6 +406,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
@@ -437,6 +439,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
@@ -467,6 +470,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
@@ -497,6 +501,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);

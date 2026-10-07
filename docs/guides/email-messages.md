@@ -112,6 +112,28 @@ it — or nothing whatsoever. Put one of those tokens on its own, with no label 
 your own in front of it, and the email reads correctly whether or not the value
 exists.
 
+`{{paymentNote}}` on the **Booking Modified** message is another: it says what
+happens to the money for the change, and the wording follows how the booking was
+paid. A card refund reads "A refund of $X has been processed to your original
+payment method." A refund on a booking paid by internet banking or in cash reads
+"The club will refund $X to you by bank transfer." — it is promised, not
+reported, because a treasurer still has to send it from the **Money to settle**
+card (see the [payments guide](payments.md#pay-back-a-refund-for-a-cash-booking))
+(#3827). A reduction that goes back partly to the card and partly as account
+credit names both.
+
+`{{refundSentence}}` on the **Refund Appeal Approved** message works the same
+way. A card refund reads "A refund of $X will be processed to your original
+payment method."; on a booking paid by internet banking it reads "The club will
+refund $X to you by bank transfer.", and a booking paid partly by card names
+both parts (#3827). `{{amount}}` is still available to a saved override, but it
+cannot say which way the money goes, so use `{{refundSentence}}`.
+
+`{{promoSummary}}` on a booking that carries several promo codes shows one
+`Promo adjustment (CODE)` line per code, each with its own amount, while
+`{{promoCode}}` names every code, comma-separated (#3828). A booking with one
+code reads exactly as before.
+
 One of these blocks is several lines at once: **`{{ical}}`** on the Booking
 Confirmed message renders a short add-to-calendar section — a link that
 downloads the stay as a calendar file (`.ics`), plus links for Google Calendar
@@ -302,8 +324,9 @@ Two consequences worth knowing before you edit one:
   change.** A refund, account credit added, account credit the booking had used
   being returned to the member (a reduction on a booking paid with credit), an
   amount still to pay — whichever apply, already worded and with the amount in
-  them. A refund names where it went: the member's original payment method, or,
-  on a group booking the organiser paid for by card, the group organiser's card.
+  them. A refund names where it went: the member's original payment method, a
+  bank transfer the club will send, or, on a group booking the organiser paid
+  for by card, the group organiser's card.
   Keep it on a line of its own, with no `$` or label in front.
 - **The pre-arrival reminder's chore sentence only appears for clubs that run a
   roster.** `{{checkoutChoreNote}}` on **Pre-arrival Information** produces the

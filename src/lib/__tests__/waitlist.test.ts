@@ -135,7 +135,7 @@ const mockTx = {
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
     findMany: vi.fn().mockResolvedValue([]),
   },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
     findMany: vi.fn().mockResolvedValue([]),
     updateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -455,7 +455,7 @@ describe("processWaitlistForDates", () => {
       memberId: "m1",
       lodgeId: "lodge-1",
       waitlistAlternateLodges: [],
-      promoRedemption: null,
+      promoRedemptions: [],
     };
 
     mockTxBookingFindMany.mockResolvedValue([candidate]);
@@ -496,7 +496,7 @@ describe("processWaitlistForDates", () => {
         { id: "g2", ageTier: "ADULT", isMember: true, memberId: null, nights: [] },
       ],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
@@ -616,7 +616,7 @@ describe("processWaitlistForDates", () => {
         firstName: "John",
         lastName: "Doe",
       },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -707,7 +707,7 @@ describe("processWaitlistForDates", () => {
         firstName: "John",
         lastName: "Doe",
       },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -798,7 +798,7 @@ describe("processWaitlistForDates", () => {
         firstName: "John",
         lastName: "Doe",
       },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -863,7 +863,7 @@ describe("processWaitlistForDates", () => {
         { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
       ],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
@@ -919,11 +919,11 @@ describe("processWaitlistForDates", () => {
         { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
       ],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
-      promoRedemption: {
+      promoRedemptions: [{
         id: "pr1",
         guestTargets: [],
         promoCode: { id: "promo1", assignments: [] },
-      },
+      }],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
@@ -973,7 +973,7 @@ describe("processWaitlistForDates", () => {
       finalPriceCents: 20000,
       guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
@@ -985,12 +985,12 @@ describe("processWaitlistForDates", () => {
     });
     // The wiring defect the recorder exists to catch: a stored redemption whose
     // recorded total nothing in the engine's (empty) build-up accounts for.
-    mockTx.promoRedemption.findUnique.mockResolvedValueOnce({
+    mockTx.promoRedemption.findMany.mockResolvedValueOnce([{
       id: "pr-stale",
       promoCodeId: "pc1",
       priceAdjustmentCents: -500,
       allocations: [{ memberId: "m1", priceAdjustmentCents: -500 }],
-    });
+    }]);
 
     const logger = (await import("@/lib/logger")).default;
     const { sendWaitlistOfferEmail } = await import("@/lib/email");
@@ -1031,7 +1031,7 @@ describe("processWaitlistForDates", () => {
       finalPriceCents: 20000,
       guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
@@ -1067,7 +1067,7 @@ describe("processWaitlistForDates", () => {
         { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
       ],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
-      promoRedemption: null,
+      promoRedemptions: [],
     };
     mockTxBookingFindMany.mockResolvedValue([candidate]);
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
@@ -1120,7 +1120,7 @@ describe("processWaitlistForDates", () => {
       memberId: "m1",
       lodgeId: "lodge-1",
       waitlistAlternateLodges: [],
-      promoRedemption: null,
+      promoRedemptions: [],
     };
 
     mockTxBookingFindMany.mockResolvedValue([candidate]);
@@ -1165,7 +1165,7 @@ describe("processWaitlistForDates", () => {
       memberId: "m1",
       lodgeId: "lodge-1",
       waitlistAlternateLodges: [],
-      promoRedemption: null,
+      promoRedemptions: [],
     };
 
     mockTxBookingFindMany.mockResolvedValue([candidate]);
@@ -1218,7 +1218,7 @@ describe("processWaitlistForDates", () => {
       memberId: "m1",
       lodgeId: "lodge-1",
       waitlistAlternateLodges: [],
-      promoRedemption: null,
+      promoRedemptions: [],
     };
 
     mockTxBookingFindMany.mockResolvedValue([candidate]);
@@ -1799,7 +1799,7 @@ describe("expireStaleOffers", () => {
         guests: [{ id: `g-${id}`, ageTier: "ADULT", isMember: true, memberId: `m-${id}`, nights: [] }],
         member: { id: `m-${id}`, email: `${id}@test.com`, firstName: id, lastName: "Next" },
         waitlistAlternateLodges: [],
-        promoRedemption: null,
+        promoRedemptions: [],
       };
     }
 

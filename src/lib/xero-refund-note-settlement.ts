@@ -36,6 +36,7 @@ import {
 } from "@/lib/xero-invoice-payments";
 import { xeroCalendarDateText } from "@/lib/xero-provider-dates";
 import { readResolvedRefundCreditNoteCoverage } from "@/lib/xero-resolved-in-xero-fences";
+import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -206,6 +207,13 @@ export function refundCreditNoteCompletion(input: {
   /** The row's earlier response, kept beneath the fields written here. */
   priorResponse?: Record<string, unknown> | null;
   extraResponse?: Record<string, unknown>;
+  /**
+   * #3827 (D-3813-8): the refund request this note is that request's own note
+   * for, read off the row's payload (`readRefundRequestIdFromPayload`). It is
+   * linked under its own role, so the one-refund-note machinery never treats
+   * it as this payment's single note. Absent for every other refund note.
+   */
+  refundRequestId?: string | null;
 }): XeroSyncOperationCompletion {
   const { paymentId, creditNoteId, creditNoteNumber, outcome } = input;
   const paymentLinks: XeroObjectLinkInput[] = outcome.payments.map((payment) => ({
@@ -255,7 +263,7 @@ export function refundCreditNoteCompletion(input: {
         xeroObjectType: "CREDIT_NOTE",
         xeroObjectId: creditNoteId,
         xeroObjectNumber: creditNoteNumber,
-        role: "REFUND_CREDIT_NOTE",
+        role: input.refundRequestId ? REFUND_REQUEST_CREDIT_NOTE_ROLE : "REFUND_CREDIT_NOTE",
         ...(input.noteLinkMetadata ? { metadata: input.noteLinkMetadata } : {}),
       },
       ...paymentLinks,
@@ -584,6 +592,8 @@ export async function finishRefundCreditNoteSettlement(input: {
   fallbackPaymentDate: () => Promise<string>;
   priorResponse?: Record<string, unknown> | null;
   recordOnly?: boolean;
+  /** #3827 (D-3813-8): see `refundCreditNoteCompletion`. */
+  refundRequestId?: string | null;
 }): Promise<RefundNoteSettlementOutcome> {
   const settled = await settleRefundNoteFromXero(input);
   await completeXeroSyncOperation(
@@ -598,6 +608,7 @@ export async function finishRefundCreditNoteSettlement(input: {
       outcome: settled.outcome,
       priorResponse: input.priorResponse,
       extraResponse: { interruptedAttemptCompleted: true },
+      refundRequestId: input.refundRequestId,
     }),
     settled.outcome.refundPaymentErr ? { keepSucceeded: true } : undefined,
   );

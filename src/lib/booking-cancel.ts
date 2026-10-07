@@ -33,6 +33,7 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
@@ -62,7 +63,7 @@ import {
   reserveOrganiserChildRefund,
 } from "@/lib/organiser-child-refund";
 import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
-import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -1182,7 +1183,12 @@ async function performBookingCancellation(
       // the credit is tiered as the paid path tiers it, not restored whole.
       const restoreMemberId = bookingOwner(fresh).memberId;
       const tiered = restoreMemberId && freshPaymentCaptured && fresh.payment
-        ? await refundedPaymentCreditRestore(tx, { bookingId, booking: { ...fresh, payment: fresh.payment }, todayAtClub })
+        ? await refundedPaymentCreditRestore(tx, {
+            bookingId,
+            booking: { ...fresh, payment: fresh.payment },
+            openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, fresh.payment.id),
+            todayAtClub,
+          })
         : null;
       const appliedAtCancelCents = tiered ? await deriveBookingAppliedCreditCents(bookingId, tx) : 0;
       const creditRestoredCents = !restoreMemberId
@@ -1616,6 +1622,9 @@ async function performBookingCancellation(
       payment: organiserCard
         ? { ...payment, refundedAmountCents: organiserCard.committedRefundCents }
         : payment,
+      // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
+      // such a task also holds, so none can appear before this cancel commits.
+      openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,
@@ -2776,15 +2785,18 @@ async function cancelOutstandingPaymentIntents({
 }
 
 /**
- * Clean up promo redemption if booking used a promo code.
+ * Release every promo redemption the booking carries (#3826: one per code),
+ * through the one booking-level release in `promo.ts`, which reads the rows
+ * inside its own transaction. The probe outside it only spares a booking with
+ * no code — almost every booking — an empty transaction.
  */
 async function cleanupPromoRedemption(bookingId: string) {
-  const redemption = await prisma.promoRedemption.findUnique({
+  const anyRedemption = await prisma.promoRedemption.findFirst({
     where: { bookingId },
+    select: { id: true },
   });
-  if (redemption) {
-    await prisma.$transaction(async (tx) => {
-      await deletePromoRedemptionAndAdjustCount(tx, redemption);
-    });
-  }
+  if (!anyRedemption) return;
+  await prisma.$transaction(async (tx) => {
+    await releaseBookingPromoRedemptions(tx, bookingId);
+  });
 }
