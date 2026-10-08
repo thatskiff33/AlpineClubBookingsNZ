@@ -399,6 +399,43 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
       ).toBe(true);
     }
   });
+
+  it("delivers every variable the #3413 pending-school-adult gate reads (#3964)", () => {
+    /*
+      DERIVED FROM THE GATE, not copied from it. Both variables were documented
+      in CONFIGURATION.md and set by the runbook, and neither was in any env
+      file, so the declared-and-read case above never judged them: the runbook
+      step that switches #3413 on silently changed nothing inside the
+      container. Reading the names straight out of the gate means a third
+      acknowledgement added there is judged here without anyone listing it.
+      The gate reads an injected `env` map (defaulting to `process.env`), so
+      both spellings are matched.
+    */
+    const gateFile = "src/lib/pending-school-adults-gate.ts";
+    const gateReads = [
+      ...new Set(
+        [...readRepoFile(gateFile).matchAll(/\b(?:process\.)?env\.([A-Z][A-Z0-9_]*)\b/g)].map(
+          (match) => match[1],
+        ),
+      ),
+    ].sort();
+    expect(
+      gateReads.length,
+      `${gateFile} parsed to fewer than two environment reads — if the gate ` +
+        "changed how it reads its acknowledgements, teach this case the new shape " +
+        "rather than letting it pass on nothing",
+    ).toBeGreaterThanOrEqual(2);
+
+    const anchorKeys = deliveredKeys(BASE_COMPOSE);
+    const missing = gateReads.filter((name) => !anchorKeys.has(name));
+    expect(
+      missing,
+      `${gateFile} reads these, but docker-compose.yml's x-app-environment ` +
+        "anchor does not pass them through, so setting them in .env changes " +
+        "nothing inside the container and the gate can never open (#3964, " +
+        "INV-CONFIG-004). Add each one to the anchor with an empty default.",
+    ).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

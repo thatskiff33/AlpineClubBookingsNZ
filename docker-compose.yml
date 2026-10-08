@@ -231,6 +231,15 @@ x-app-environment: &app-environment
   # src/lib/config-transfer/bootstrap-import.ts, which no-ops on an empty value.
   # A container path, so it also needs a mount; empty disables it.
   CONFIG_BUNDLE_IMPORT_PATH: ${CONFIG_BUNDLE_IMPORT_PATH:-}
+  # The #3413 pending-school-adult write gate, src/lib/pending-school-adults-gate.ts
+  # (#3964). Admissions open only when BOTH are exactly `1`; empty, `true` or
+  # anything else keeps the gate closed, so the empty defaults are the safe,
+  # disabled state. Before #3964 neither was named here, so the runbook step
+  # that sets them changed nothing inside the container and the feature could
+  # never be switched on. Set them in the project `.env` (or the deploy's own
+  # environment) only as docs/PRODUCTION_UPGRADE_RUNBOOK.md's #3413 section says.
+  PENDING_SCHOOL_ADULTS_ENABLED: ${PENDING_SCHOOL_ADULTS_ENABLED:-}
+  BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED: ${BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED:-}
 
 x-app-service: &app-service
   image: ${APP_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-app:local}

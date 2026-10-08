@@ -512,6 +512,14 @@ validator, deploy the new runtime, check canonical capacity readers, and set
 `PENDING_SCHOOL_ADULTS_ENABLED=1`. The application requires both values exactly;
 the migration override is not a write permission.
 
+The application reads both from its container environment. `docker-compose.yml`
+passes both through its `x-app-environment` block, empty by default (#3964), so set
+them in the project `.env` and recreate the app containers — the next deploy does
+that. A value set only in the deploy command's environment reaches the containers
+that deploy starts, but not the next deploy's, which then closes the gate again. To
+disable, empty `PENDING_SCHOOL_ADULTS_ENABLED` in `.env` and recreate the app
+containers the same way.
+
 To roll back after activation, first disable `PENDING_SCHOOL_ADULTS_ENABLED`,
 resolve or explicitly cancel every request with a pending adult, and prove both
 queries return zero before running this migration's `rollback.sql`:
