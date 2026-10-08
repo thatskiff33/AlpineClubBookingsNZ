@@ -92,6 +92,9 @@ export async function loadBookingDetail(id: string) {
         select: {
           amountCents: true,
           description: true,
+          // The restore test reads both (`isCancellationCreditRestoreRow`).
+          type: true,
+          restoredFromBookingId: true,
         },
       },
       modifications: {

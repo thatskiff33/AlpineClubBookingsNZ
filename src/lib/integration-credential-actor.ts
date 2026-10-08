@@ -68,7 +68,7 @@ import type { AuthSecretSource } from "@/lib/integration-crypto";
 export const CREDENTIAL_SYSTEM_ACTORS = [
   /** Google's OAuth round-trip succeeded; the non-secret verified marker is stamped. */
   "google-verify-callback",
-  /** A signature-verified Stripe TEST-MODE webhook event stamped the marker. */
+  /** A signature-verified Stripe webhook event, live or test (#3975), stamped the marker, or took back one that raced a signing-secret swap. */
   "stripe-webhook-verify",
   /** The shared-post sync registered this install for pushes and stored the issued secret. */
   "servernz-push-registration",
