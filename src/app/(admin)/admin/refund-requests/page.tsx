@@ -28,11 +28,10 @@ import {
 } from "@/hooks/use-admin-area-edit-access"
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
-import { getRemainingRefundableCents } from "@/lib/booking-payment-state"
+import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
-import { parseInstant, type BoundClubTime, type ClubDateFormat } from "@/lib/club-time"
-import { formatPayloadCalendarDay } from "../_lib/calendar-day"
+import { parseInstant, type BoundClubTime, formatStayDateOrNull } from "@/lib/club-time"
 import { MoneyInput } from "@/components/ui/money-input"
 import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents, formatCentsPlain } from "@/lib/utils"
@@ -76,6 +75,8 @@ interface RefundRequestData {
       amountCents: number
       refundedAmountCents: number
       stripePaymentIntentId: string | null
+      // #3827: every hand-back still promised back by bank transfer.
+      manualRefundTasks?: Array<{ amountCents: number | null }>
     } | null
   }
   member: {
@@ -127,13 +128,6 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
   }
 
   return clubTime.instantDateTime(instant)
-}
-
-// A booking's check-in/check-out is a CALENDAR DATE — a `@db.Date` column the
-// API serialises as UTC midnight. It takes no zone; reading it through one
-// named the night before for any club behind UTC (INV-DATE-019).
-function formatStayDay(value: string, format: ClubDateFormat) {
-  return formatPayloadCalendarDay(value, format)
 }
 
 export default function RefundRequestsPage() {
@@ -375,11 +369,12 @@ export default function RefundRequestsPage() {
     // #2932: compare in integer cents, render ONCE through the canonical plain
     // formatter. This divided both amounts by 100 and compared the resulting
     // doubles - float money arithmetic into a money box (`INV-MONEY-003`).
-    // The ceiling is the one remaining-refundable helper the approve route
-    // already decides by, and there is an ELSE: a request whose booking has no
-    // captured payment used to leave the amount prefilled for the request
-    // viewed before it (#2932 review).
-    const max = getRemainingRefundableCents(req.booking.payment)
+    // The ceiling is the figure the approve route decides by - since #3827 net
+    // of the hand-backs still promised back and the late-cash credit
+    // (`INV-PAY-118`) - and there is
+    // an ELSE: a request whose booking has no captured payment used to leave
+    // the amount prefilled for the request viewed before it (#2932 review).
+    const max = refundAppealCeiling(req.booking.payment, req.booking.creditsFromCancellation)
     const requested = req.requestedAmountCents
     setApprovedAmount(max > 0 ? formatCentsPlain(Math.min(requested || max, max)) : "")
   }
@@ -465,7 +460,7 @@ export default function RefundRequestsPage() {
                         req.booking.creditsFromCancellation
                       )
                     : null
-                  const maxRefundable = getRemainingRefundableCents(payment)
+                  const maxRefundable = refundAppealCeiling(payment, req.booking.creditsFromCancellation)
                   const isReviewing = reviewingRefundId === req.id
 
                   return (
@@ -492,11 +487,11 @@ export default function RefundRequestsPage() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Check-in:</span>{" "}
-                            {formatStayDay(req.booking.checkIn, format)}
+                            {formatStayDateOrNull(req.booking.checkIn, format) ?? "—"}
                           </div>
                           <div>
                             <span className="text-muted-foreground">Check-out:</span>{" "}
-                            {formatStayDay(req.booking.checkOut, format)}
+                            {formatStayDateOrNull(req.booking.checkOut, format) ?? "—"}
                           </div>
                           {payment && (
                             <>

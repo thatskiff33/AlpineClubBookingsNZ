@@ -107,7 +107,7 @@ let observerClient: PrismaClient;
      * A $200 PAID booking, confirmed on the ledger, paid entirely by $200 of
      * account credit: nothing captured. `ib-allocated` is a bank-transfer
      * booking whose credit is allocated against its Xero invoice;
-     * `card-invoiced` is the card path's, whose credit never was (#3836).
+     * `card-invoiced` is the card path's, whose credit was never allocated before #3836 (the repair pass now queues it).
      */
     async function creditPaidBooking(shape: "ib-allocated" | "card-invoiced" | "card-and-credit", rule: (typeof TIERS)[number]["rule"]) {
       const mixed = shape === "card-and-credit";
@@ -149,7 +149,7 @@ let observerClient: PrismaClient;
       await prisma.memberCredit.create({
         data: {
           memberId: MEMBER_ID, amountCents: appliedCents, type: "ADMIN_ADJUSTMENT", description: "race 3809 opening balance",
-          // A spent credit carries a note (#2717); the card path never allocated it (#3836).
+          // A spent credit carries a note (#2717); the card path never allocated it before #3836.
           ...(shape !== "card-invoiced" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
         },
       });
@@ -333,7 +333,7 @@ let observerClient: PrismaClient;
       expect(await owed()).toBe(0);
     });
 
-    it("the card path, its credit never allocated against the invoice (#3836): no deallocation, the give-back's allocated note, and the member's app credit", async () => {
+    it("the card path, invoiced before #3836 with its credit never allocated: no deallocation, the give-back's allocated note, and the member's app credit", async () => {
       await creditPaidBooking("card-invoiced", TIERS[0]!.rule);
 
       const result = await removeLeavingGuest();
@@ -428,6 +428,7 @@ let observerClient: PrismaClient;
       expect(capped).toBe(false);
       const preview = calculateCancellationPreview({
         payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 20_000 },
+        openNonCancellationHandBackCents: 0,
         finalPriceCents: 15_000,
         checkIn: CHECK_IN,
         policyRules: [{ daysBeforeStay: 0, ...rule }],
@@ -458,7 +459,7 @@ let observerClient: PrismaClient;
       const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
       await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: rule });
       const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
-      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never });
+      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, openNonCancellationHandBackCents: 0, todayAtClub: "2026-07-01" as never });
 
       await cancelAt(rule);
 
@@ -479,7 +480,7 @@ let observerClient: PrismaClient;
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 10_000, status: "REFUNDED" } });
       const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
       const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
-      expect(await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never })).toBeNull();
+      expect(await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, openNonCancellationHandBackCents: 0, todayAtClub: "2026-07-01" as never })).toBeNull();
 
       await cancelAt(FIFTY_LESS_TWENTY);
 

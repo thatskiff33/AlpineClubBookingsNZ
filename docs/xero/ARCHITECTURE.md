@@ -636,8 +636,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
-| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. The note is recorded (payment field, covering link, the row's `xeroObjectId`) in one transaction the moment Xero returns it, so an attempt that dies before its payment leaves a FAILED row naming its note; the retry and repair legs and the repair tool finish it through one read-back-then-settle (`xero-refund-note-settlement.ts`, `INV-PAY-111`): the payment or the skip, PARTIAL if the payment fails, one note-keyed payment key, dated the note's own day, and never a second payment on a note Xero already shows paid, part-paid or allocated. Rows written before #3548 with neither are listed by the reconciliation report and the repair tool (`xero-refund-note-unsettled.ts`) and settled only by an operator. |
-| `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. |
+| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment, except that each refund request (appeal) paid back by bank transfer gets its own note when its task is marked paid back, for the amount paid back, keyed by the request (`payment:<id>:refund-request-credit-note:<request>:v1`) and linked under its own role `REFUND_REQUEST_CREDIT_NOTE` (#3827, owner decision D-3813-8, `INV-PAY-118`). That role is selected by none of the one-note machinery (the link normaliser in `xero-sync.ts`, `cleanupStaleCanonicalXeroObjectLinks`, the drift report), never takes `Payment.xeroRefundCreditNoteId`, and is left out of `findCanonicalPaymentRefundCreditNote`'s fallbacks, so a cancellation's note and a request's never absorb each other. The booking repair tool and the failed-operations panel leave a request's note out of everything that answers for the payment's one refund note (`isRefundRequestNoteOperation`), and the request's note is queued in the same transaction as the completion that records its refund. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. The note is recorded (payment field, covering link, the row's `xeroObjectId`) in one transaction the moment Xero returns it, so an attempt that dies before its payment leaves a FAILED row naming its note; the retry and repair legs and the repair tool finish it through one read-back-then-settle (`xero-refund-note-settlement.ts`, `INV-PAY-111`): the payment or the skip, PARTIAL if the payment fails, one note-keyed payment key, dated the note's own day, and never a second payment on a note Xero already shows paid, part-paid or allocated. Rows written before #3548 with neither are listed by the reconciliation report and the repair tool (`xero-refund-note-unsettled.ts`) and settled only by an operator. |
+| `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. Two booking-edit wordings (#3536) — *Invoice correction — nothing refunded* (an unpaid pay-on-account invoice lowered) and *Refunded in cash* (an edit-review refund paid back by hand, when the resolving officer says it went in cash; never inferred, `INV-PAY-116`) — ride beside the method as `noteWording`, which retries and the repair tool carry forward; words only, no settlement changes. |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
 | `xero-modification-credit-notes` | Negative booking-modification credit notes. Itemised the same way, every sign inverted, only when the note returns the whole reduction (#3530). |
 | `xero-modification-line-items` | The itemised lines on a booking-edit document (#3530): loads the codes the original invoice uses, renders one Xero line per stored line, one `Adjustment agreed with member: <note>` line per COMPLETED review share settled against the modification (stage 2c — how a parked edit's closure reads on its invoice or note), and the fee line; records `{source, reason, storedSumCents, sharesSumCents, billedCents}`. Selection is `booking-modification-document-lines` (pure); the per-line sentence is `booking-modification-lines`; the share rows are `edit-financial-review-charge-shape`'s. |
@@ -645,7 +645,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
 | `xero-group-settlement-invoices` | Combined ORGANISER_PAYS internet-banking invoice across joiner bookings. |
 | `xero-group-settlement-invoice-outbox` | The combined invoice's outbox identity (#3642): the per-attempt CREATE key (attempt 0 keeps the pre-#3642 key), the VOID keys, the object-link shape, and the CREATE enqueue (`newAttempt` asks for a new invoice; otherwise the current attempt is returned or re-driven under its key). |
-| `xero-group-settlement-invoice-lines` | The combined invoice's lines, built from the settlement's committed CONFIRMED children with each joiner's promotion line, and their total; the create worker raises nothing unless it equals the settlement's (#3642). |
+| `xero-group-settlement-invoice-lines` | The combined invoice's lines, built from the settlement's committed CONFIRMED children with each joiner's promotion lines (one per code, #3828), and their total; the create worker raises nothing unless it equals the settlement's (#3642). |
+| `xero-promo-adjustment-lines` | The promotion lines of a booking invoice: one coded line per promo code, or one recorded aggregate fallback (#3828, `INV-MONEY-040`). |
 | `xero-group-settlement-invoice-voids` | The combined invoice's replayable VOIDs — after the group is cancelled (`INV-PAY-035`) and after the settlement abandons it (`INV-PAY-105`, #3642) — and the one read of that invoice's state in Xero: both VOIDs read it first, so an already-void invoice completes and one carrying money alerts instead of failing for ever. Pre-#3642 code reads an abandon VOID row as a cancellation VOID and leaves it FAILED (fails closed; retry after roll-forward). |
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
 | `xero-account-class` | Leaf, pure: the ONE reading of a Xero account's CLASS (#2717), shared by the admin account pickers and the finance reports so they cannot come to disagree about what an expense account is. |
@@ -783,6 +784,34 @@ deallocation, membership-cancellation credit note, membership-cancellation
 contact update, group-settlement invoice, group-settlement invoice void,
 membership subscription invoice, and kept late-capture invoice (#3635).
 
+**A card booking paid entirely by account credit (#3836, `INV-PAY-024`)** is
+confirmed at $0 and invoiced at its full price, like every card booking, so the
+credit is all that pays the invoice. The invoice operation allocates it with
+the same engine a card-and-credit booking uses (#1641,
+`allocateAppliedCreditForBooking`), on the raise and on every replay: a payment
+that captured nothing (`isCreditOnlyCardPayment`) passes the cash-captured gate
+without its status being read: every credit-covered settle writes it
+`SUCCEEDED` and a cancel leaves it so, on the paid path. The engine's stamps,
+unique slices and per-slice links make every re-run allocate nothing more. The
+engine is also the one gate for a cancel (#3836, bank transfers included): on a
+`CANCELLED` booking, or one with a restore row, it only finishes slices already
+committed - which the cancel's clearing note was sized net of - and never plans
+or mints new ones, so the invoice is never credited both by a clearing note and
+by an allocation. The repair pass's cancelled-open-invoice arm waits while the
+booking's invoice or applied-credit allocation operation is unfinished. The
+inbound credit-note repair writes the ledger's applied credit to the payment's
+`creditAppliedCents` uncapped: the old cap at the card amount ($0 here) zeroed
+it, and a cap at the booking's worth would cut a booking reduced before #3809,
+which keeps all its credit at a cancel (owner decision, 4 Oct 2026); the worth
+cap belongs to the cancel alone, for #3809's bookings. A mirror the old cap
+already clipped to the card amount is read from the ledger by the cancel, its
+preview and the refunded-card restore (`cancelTieredAppliedCreditCents`). An invoice raised
+before #3836 is left owing until the booking repair pass's
+`UNALLOCATED_APPLIED_CREDIT` finding queues the applied-credit allocation
+operation (`docs/MAINTENANCE.md`); a cancelled one is never queued, since the
+cancelled-open-invoice arm clears its invoice with a note instead. After a cancel the restored
+credit is noteless until spent (#2717), as for a bank transfer.
+
 **An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
 (`member-credit.ts`), the give-back of applied credit that the pre-payment
 clamp, a credit-paid booking's financial-review share (#3791, `INV-PAY-113`)
@@ -865,8 +894,10 @@ is closed again and no unallocated note is raised for it. The note is queued
 after the commit, as every edit's is; if that queue fails, the repair pass
 (`MISSING_MODIFICATION_CREDIT_NOTE`) re-queues it at the give-back the edit's
 history row records - none where the tier gave nothing back - never at the
-whole reduction. A card-path booking paid by credit has no allocation to release
-(#3836); there the note alone takes the give-back off the invoice. Every
+whole reduction. A card-path booking paid entirely by credit has its credit
+allocated too since #3836, so it deallocates the same way; one invoiced before
+#3836 whose allocation has not yet run has none to release, and there the note
+alone takes the give-back off the invoice. Every
 guest-removal door queues this leg through `queueGuestRemovalXeroSettlement`,
 the consent decline and expiry included, which before #3809 queued nothing.
 A note worded as account credit moved no cash, so the inbound credit-note sync
@@ -1534,9 +1565,37 @@ transaction.
 
 This verification is deliberately booking-wide. Inexact provenance on one
 night does not prevent a reconciling aggregate promotion line from being
-verified. It also does not change group-settlement invoice totals or introduce
-the child promotion line that path already omits; those are separate accounting
-shape decisions, not compatibility fallbacks.
+verified. It does not change group-settlement invoice totals; the combined
+group invoice carries each child's promotion line since #3642.
+
+### One promotion line per promo code (#3828, `INV-MONEY-040`)
+
+A booking may carry several promo codes (#3492), and the treasurer reconciles
+each on its own line. `xero-promo-adjustment-lines.ts` plans the promotion
+lines of a per-booking invoice and of each group-settlement child:
+
+- **One code, or none:** the single line, unchanged in description, `taxType`,
+  quantity, signed amount, coding and operation payload.
+- **Several codes:** one `Promo adjustment - CODE` line per code with a
+  non-zero adjustment, in the booker's order, each coded by
+  `resolvePromoLineCodes` for its own code, at that redemption's recorded
+  build-up. The operation's `requestPayload.promoLines` records the split.
+- **Fallback:** when a code's rows do not reconcile to its redemption
+  (`CODE_BUILDUP_NOT_KNOWN`) or the codes do not sum to the verified aggregate
+  (`CODE_LINES_DO_NOT_SUM`), one aggregate `Promo adjustment - A, B` line at the
+  generic promotion coding, with the reason in `promoLines`. The invoice total
+  never depends on the split.
+
+The invoice-update path passes every line whose description starts
+`Promo adjustment` through untouched, so a several-code invoice keeps all its
+promotion lines. Edit documents code each stored `PROMO_DELTA` by the code it
+names (`INV-MOD-058`); a code the edit released is looked up by code. A
+several-code edit whose per-code changes do not add up stores one line naming
+no code, coded generically. Where the booking held several codes before the
+edit, each line also records them (`codesBefore`), so a booking that lost every
+code is still coded per line once the released redemptions are deleted; a lone
+line without it on a booking with no code left is coded generically, as a
+one-code booking's removal always was (`INV-MONEY-040`).
 
 Stage 4 (#3278, `INV-MONEY-031`) also derives the complete booking-money
 reconciliation state from that same coherent booking snapshot before provider

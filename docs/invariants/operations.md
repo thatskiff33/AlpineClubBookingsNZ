@@ -69,8 +69,8 @@ rules first written here. #2765 extended it with the measured-audience half.
   lock key is MUTABLE, the affected-row count `$executeRaw` returns must also be
   checked, because `FOR UPDATE` locks nothing when it matches nothing and the
   follow-up read (READ COMMITTED, fresh snapshot) could otherwise return a row
-  nothing holds a lock on. Only `booking-create-promo.ts` locks on a mutable key
-  (`PromoCode.code`); every other site keys on an immutable cuid.
+  nothing holds a lock on. Since #3827 every site keys on an immutable cuid;
+  creation resolves `PromoCode.code` to one first.
   **Validate what you cannot model:** a statement Prisma genuinely cannot express
   (only the rate limiter's atomic `CASE … RETURNING` upsert) passes its rows
   through `decodeRawRows` (`src/lib/raw-sql-rows.ts`), which throws naming the

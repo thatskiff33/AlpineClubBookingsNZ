@@ -22,9 +22,18 @@ import {
   calculateRefundAmount,
   type CancellationRule,
 } from "@/lib/cancellation";
+import { cancellationKeptCents } from "@/lib/cancellation-kept";
+
+// The kept formula lives in a Prisma-free module (#3854) so the census can use
+// it; re-exported here for readers already holding this module.
+export { cancellationKeptCents };
 
 export type PaidCancellationMoney = {
-  /** Money taken for the booking, net of earlier refunds (`amountCents - refundedAmountCents`). */
+  /**
+   * Money taken for the booking, net of earlier refunds and of edit refunds
+   * already promised back by hand (`amountCents - refundedAmountCents -
+   * openNonCancellationHandBackCents`, `INV-PAY-117`).
+   */
   paidAmountCents: number;
   /** The slice the tier applies to: paid, capped at price plus change fee, less the change fee. */
   refundableBaseCents: number;
@@ -63,21 +72,9 @@ export type PaidCancellationMoney = {
   appliedCreditAboveRefundableCents: number;
 };
 
-/** The one formula for what the club keeps on a cancellation (design §5.1). */
-export function cancellationKeptCents({
-  retainedAmountCents,
-  appliedCreditCents,
-  creditRestoredCents,
-}: {
-  retainedAmountCents: number;
-  appliedCreditCents: number;
-  creditRestoredCents: number;
-}): number {
-  return retainedAmountCents + appliedCreditCents - creditRestoredCents;
-}
-
 export function paidCancellationMoney({
   payment,
+  openNonCancellationHandBackCents,
   finalPriceCents,
   appliedCreditCents,
   restoresToMemberLedger,
@@ -92,6 +89,12 @@ export function paidCancellationMoney({
     changeFeeCents: number;
     creditAppliedCents: number;
   };
+  /**
+   * The payment's open edit refund hand-backs (`openNonCancellationHandBackCents`,
+   * #3827 `INV-PAY-117`), read under the cancel's locks: cash promised back on an
+   * earlier edit that this cancellation must not refund or credit a second time.
+   */
+  openNonCancellationHandBackCents: number;
   finalPriceCents: number;
   /** The credit the booking's applied rows actually hold (`deriveBookingAppliedCreditCents`). */
   appliedCreditCents: number;
@@ -103,9 +106,19 @@ export function paidCancellationMoney({
   /** `bookingReducedThroughCreditGiveBack`: whether the credit base is capped (`INV-PAY-115`). */
   capAppliedCredit: boolean;
 }): PaidCancellationMoney {
-  const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
-  const refundableBaseCents = cancelRefundableBaseCents({ ...payment, finalPriceCents });
-  const appliedCreditBaseCents = cancelAppliedCreditBaseCents({ ...payment, finalPriceCents, capAtWorth: capAppliedCredit });
+  const paidAmountCents =
+    payment.amountCents - payment.refundedAmountCents - openNonCancellationHandBackCents;
+  const refundableBaseCents = cancelRefundableBaseCents({
+    ...payment,
+    openNonCancellationHandBackCents,
+    finalPriceCents,
+  });
+  const appliedCreditBaseCents = cancelAppliedCreditBaseCents({
+    ...payment,
+    openNonCancellationHandBackCents,
+    finalPriceCents,
+    capAtWorth: capAppliedCredit,
+  });
   const creditToRestoreCents =
     payment.creditAppliedCents > 0
       ? calculateAppliedCreditRestore(appliedCreditBaseCents, refundableBaseCents, days, policy)

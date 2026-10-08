@@ -253,14 +253,17 @@ describe("#3123 reshaped seams keep their required club day", () => {
 
   it("the booking edit policy still has the call sites this migration threaded", () => {
     // The widest cascade in the group, pinned as a COUNT so a new caller cannot
-    // be added without this file being read. Eleven `getBookingEditPolicy` calls
+    // be added without this file being read. Twelve `getBookingEditPolicy` calls
     // and two `bookingStayHasStarted` calls, measured on the migrated tree; the
     // third is #3672's payer switch (`group-late-joiner.ts`) and the fourth
     // #3663's hold release (`internet-banking-payment-cron.ts`), each handed
     // the club's today from `clubTodayForStartedStay`, read outside the lock.
     // #3635 added three: the hold job's pre-read check (C1), the unreadable
     // bound's (`internet-banking-hold-kept.ts`, F5) and the group reaper's
-    // unreadable arm (`cron-group-settlement-reaper.ts`, C5).
+    // unreadable arm (`cron-group-settlement-reaper.ts`, C5). #3827 added a
+    // twelfth `getBookingEditPolicy`: a guest's acceptance re-prices only a
+    // booking a member could edit for a stay yet to start, on the club's day
+    // the consent service resolved before its transaction.
     const sources = productionSources();
     let policyCalls = 0;
     let startedCalls = 0;
@@ -270,7 +273,7 @@ describe("#3123 reshaped seams keep their required club day", () => {
       policyCalls += callArguments(code, "getBookingEditPolicy").length;
       startedCalls += callArguments(code, "bookingStayHasStarted").length;
     }
-    expect(policyCalls).toBe(11);
+    expect(policyCalls).toBe(12);
     expect(startedCalls).toBe(7);
   });
 });

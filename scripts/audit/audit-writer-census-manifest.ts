@@ -610,13 +610,22 @@ export const AUDIT_CENSUS_TOTALS = {
   // `src/lib/organiser-child-refund-executor.ts`, categorised `booking` like the
   // legacy group replay's row with the same action. RE-MEASURED with
   // `pnpm run audit:census`, not incremented.
-  // 497 -> 498 (#3819): `LODGE_SETTINGS_UPDATED` from the new
+  // 497 -> 498 (#3827, epic #3813): `booking.modify.promo_reprice`, the edit-shaped record a
+  // guest's acceptance writes when it re-prices the booking's promo codes and
+  // moves money, `booking` at the site like the guest-removal edit it mirrors.
+  // 498 -> 499 (#3492, epic #3813): `promo_code.guest_lookup`, the record every guest
+  // promo-code chip lookup writes (`src/lib/promo-guest-codes.ts`), one awaited
+  // `createStructuredAuditLog`, categorised `privacy` at the site like the
+  // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
+  // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
+  // tree composed by #3829.
+  // 499 -> 500 (#3819): `LODGE_SETTINGS_UPDATED` from the new
   // `/api/admin/lodge-settings/school-hut-leaders` PUT, recording one lodge's
   // "Who can be hut leader for school bookings" before and after. Categorised
   // `admin` at the site like its sibling lodge-settings writer, and pinned in
   // `LODGE_GATED_ADMIN_CATEGORIES_2765` under INV-PRIV-013's uniformity rule.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 498,
+  writeSites: 500,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -708,7 +717,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // `pnpm run audit:census`.
     // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
     // above. RE-MEASURED with `pnpm run audit:census`.
-    logAudit: { total: 271, uncategorised: 0 },
+    // 271 -> 272 (#3827, composed by #3829): the guest-acceptance re-price record, above.
+    logAudit: { total: 272, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -808,7 +818,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // `sanitizeAuditMetadata`. Again the row COUNT is unchanged and only the
     // FORM moved, which is what this per-sink pin exists to surface.
     // 9 -> 10 (#2822): the email-inheritance effective-source change event.
-    createStructuredAuditLog: { total: 10, uncategorised: 0 },
+    // 10 -> 11 (#3492): the guest promo-code lookup, above.
+    createStructuredAuditLog: { total: 11, uncategorised: 0 },
     // 71 -> 72 (#2352 MC-03D): the page-content deletion, above.
     // 72 -> 70 (#2581 child 2): the two dependants writes, above.
     // 70 -> 69 (#2581 child 2 review): the age-up handoff write, above. No
@@ -922,7 +933,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `booking` like the legacy group replay's row with the same action - the
     // same readers, and no member-facing disclosure. Composed (epic #3678 with
     // `main`) and RE-MEASURED with `pnpm run audit:census`: 106.
-    booking: 106,
+    // 106 -> 107 (#3827, composed by #3829): the guest-acceptance re-price record — a booking's
+    // money changing, read by booking officers like every `booking.modify.*`.
+    booking: 107,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1248,7 +1261,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // not: Admin > Audit Log is a support-area screen with no per-category
     // filter, so they read it there in full. What the category picks is the AI
     // Diagnostics correlation entry, which for `privacy` needs membership too.
-    privacy: 20,
+    // 20 -> 21 (#3492): the guest promo-code lookup, above.
+    privacy: 21,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,

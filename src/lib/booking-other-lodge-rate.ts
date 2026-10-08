@@ -328,6 +328,8 @@ export interface OtherLodgeRateExemptionRequest extends OtherLodgeRateInput {
   guestStayRanges?: { length: number } | null;
   promoCode?: unknown;
   removePromoCode?: unknown;
+  /** #3827: any code list — even an empty one, which removes every code — is a promo change. */
+  promoCodes?: unknown;
 }
 
 /**
@@ -370,7 +372,8 @@ export function requestIsOtherLodgeRateElectionOnly(
     input.removeGuestIds?.length ||
     input.guestStayRanges?.length ||
     input.promoCode ||
-    input.removePromoCode
+    input.removePromoCode ||
+    input.promoCodes !== undefined
   );
 }
 

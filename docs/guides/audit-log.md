@@ -492,7 +492,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-498 now record a category, measured on every build rather than estimated.
+500 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -514,7 +514,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 498 places does it —
+platform’s own recording step, which is how every one of the 500 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -796,6 +796,22 @@ person to look at and never acted on automatically: a member trying five
 different weekends to find one that suits a friend produces exactly the same
 pattern as somebody probing, and only a human who knows both people can tell
 them apart. Treat it as a conversation to have if it keeps happening.
+
+### Guest promo-code lookups (#3492)
+
+When a booker reaches the review step or the booking's edit panel with member
+guests on the booking, the app looks up which of those guests' assigned promo codes it may offer as chips.
+Each lookup writes one `promo_code.guest_lookup` entry, category `privacy`.
+
+| Action | Written when | What it contains |
+| --- | --- | --- |
+| `promo_code.guest_lookup` | Each lookup that reads a booking's guests or names at least one member guest, from the booking wizard, the booking edit panel or Book on Behalf | Who asked, the booking (when it exists), how many guests were looked at, **which members' codes were shown**, and how many codes. When an officer books on a member's behalf, the officer is recorded as the one who asked, and the member they booked for is in the entry's details (`onBehalfOfMemberId`). Kept for two years (`sensitive_access`) |
+
+Only the codes of family guests, or of guests the booking treats as confirmed
+(they accepted, the club only notifies, an officer added them, or the booking
+predates guest consent), are ever read, and the booker sees only each code and
+its benefit. The
+booker's own activity history shows the entry's title and nothing else.
 
 ### Issue-report screenshot entries (#2703)
 

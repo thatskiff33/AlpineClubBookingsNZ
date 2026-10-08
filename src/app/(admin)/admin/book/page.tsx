@@ -24,7 +24,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { LodgeOptionsUnavailableNotice } from "@/components/admin/lodge-options-status";
-import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+import { type PromoResult } from "@/components/promo-code-input";
+import { BookingPromoCodes, PromoAdjustmentRows } from "@/components/booking-promo-codes";
+import { appliedPromosFinalPriceCents, createRequestPromoFields } from "@/components/promo-code-list-client";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import {
@@ -45,29 +47,23 @@ import {
 } from "@/lib/booking-dependant-identity";
 import {
   countClubNights,
-  formatClubDate,
   formatClubWeekdayDate,
   parseCalendarDate,
   type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 
-import { formatCents, formatSignedCents } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
 import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
 
-/**
- * A lodge night held in state as a `yyyy-MM-dd` string (#2474) — a CALENDAR
- * DATE, which takes no timezone at all (CT-4, #2870). The old spelling parsed
- * it to a UTC-midnight `Date` and handed that to the INSTANT formatter, which
- * projected it through `APP_TIME_ZONE`; for a club behind UTC that named the
- * night before. An empty or malformed value renders as itself rather than
- * throwing while the operator is still choosing dates.
- */
+// A lodge night held in state as `yyyy-MM-dd`. An empty or malformed value
+// renders as itself rather than throwing while the operator is still choosing
+// dates (#3511: kernel stay-date helper).
 function formatLodgeNight(value: string | null, format: ClubDateFormat): string {
-  const day = value === null ? null : parseCalendarDate(value);
-  return day ? formatClubDate(day, format) : (value ?? "");
+  return formatStayDateOrNull(value, format) ?? value ?? "";
 }
 
 /** {@link formatLodgeNight}, weekday-bearing — "Thu, 16 Apr 2026". */
@@ -222,7 +218,7 @@ export default function AdminBookPage() {
   /** Derived once, so the three add-guest affordances cannot disagree. */
   const atPartySizeCeiling =
     partySizeCeiling !== null && guests.length >= partySizeCeiling;
-  const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
+  const [appliedPromos, setAppliedPromos] = useState<PromoResult[]>([]);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
@@ -369,7 +365,7 @@ export default function AdminBookPage() {
     setGuests([]);
     setNotes("");
     setPriceQuote(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
@@ -403,7 +399,7 @@ export default function AdminBookPage() {
     setGuests([]);
     setNotes("");
     setPriceQuote(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
@@ -453,7 +449,7 @@ export default function AdminBookPage() {
     // invalidates for.
     onPartyRepriced: () => {
       setPriceQuote(null);
-      setAppliedPromo(null);
+      setAppliedPromos([]);
       setUseCredit(false);
     },
     reloadFamily: loadEligibleFamily,
@@ -484,7 +480,7 @@ export default function AdminBookPage() {
     setCheckIn(null);
     setCheckOut(null);
     setPriceQuote(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setUseCredit(false);
     setError("");
     setAllowPastDates(false);
@@ -704,8 +700,7 @@ export default function AdminBookPage() {
         checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId,
@@ -793,8 +788,7 @@ export default function AdminBookPage() {
         checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId,
@@ -848,7 +842,7 @@ export default function AdminBookPage() {
 
   const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
   const finalPriceBeforeCredit = priceQuote
-    ? (appliedPromo?.finalPriceCents ?? priceQuote.totalPriceCents)
+    ? appliedPromosFinalPriceCents(priceQuote.totalPriceCents, appliedPromos)
     : 0;
   const appliedCreditCents = useCredit
     ? Math.min(availableCreditCents, finalPriceBeforeCredit)
@@ -1266,16 +1260,13 @@ export default function AdminBookPage() {
                 ))}
               </div>
 
-              {appliedPromo && appliedPromo.promoAdjustmentCents !== 0 ? (
+              {appliedPromos.some((promo) => promo.promoAdjustmentCents !== 0) ? (
                 <>
                   <div className="border-t pt-4 flex justify-between text-sm">
                     <span>Subtotal</span>
                     <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                   </div>
-                  <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
-                    <span>Promo adjustment ({appliedPromo.code})</span>
-                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents, format)}</span>
-                  </div>
+                  <PromoAdjustmentRows applied={appliedPromos} palette="admin" />
                   {appliedCreditCents > 0 && (
                     <div className="flex justify-between text-sm text-success-11">
                       <span>Account credit</span>
@@ -1381,14 +1372,15 @@ export default function AdminBookPage() {
                   onChange={setExpectedArrivalTime}
                 />
               </div>
-              <PromoCodeInput
+              <BookingPromoCodes
                 checkIn={checkIn!}
                 checkOut={checkOut!}
                 guests={guests}
-                onPromoApplied={setAppliedPromo}
-                appliedPromo={appliedPromo}
+                applied={appliedPromos}
+                onChange={setAppliedPromos}
                 forMemberId={selectedMember.id}
                 lodgeId={lodgeId}
+                ownCodes={[]}
               />
             </CardContent>
           </Card>

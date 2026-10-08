@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => {
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
   bookingRequestUpdateMany: vi.fn(),
-  promoRedemptionFindUnique: vi.fn(),
+  promoRedemptionFindFirst: vi.fn(),
   // #3123: the club's day is resolved once, before the claim transaction opens.
   // The delegate is NOT optional on this mock: `getClubTimeZone` is fail-soft on
   // a missing one and degrades silently to the environment, so leaving it off
@@ -82,7 +82,7 @@ const mocks = vi.hoisted(() => {
   revokePaymentLinksForBooking: vi.fn(),
   // #1547: promo cleanup, so a credit-carrying cancel can prove restore does
   // not disturb the promo lifecycle.
-  deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn(),
   // The tx client handed to the paid-path claim callback, captured so tests
   // can prove the #1349 recovery enqueue ran INSIDE the claim transaction.
   lastTx: null as unknown,
@@ -97,6 +97,8 @@ const mocks = vi.hoisted(() => {
   // #3643 (owner decision 28 Sep 2026): the DECISION 2 hand-back task, raised
   // inside the unpaid claim.
   txManualRefundTaskFindFirst: vi.fn(),
+  // #3827 (`INV-PAY-117`): the open edit refund hand-backs on the payment.
+  txManualRefundTaskAggregate: vi.fn(),
   txManualRefundTaskCreate: vi.fn(),
   // #3653: a joiner's own cancel of a booking the organiser paid for by card.
   txSettlementFindFirst: vi.fn(),
@@ -135,7 +137,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.paymentTransactionFindFirst,
     },
     promoRedemption: {
-      findUnique: mocks.promoRedemptionFindUnique,
+      findFirst: mocks.promoRedemptionFindFirst,
     },
     promoCode: {
       update: vi.fn(),
@@ -258,7 +260,7 @@ vi.mock("@/lib/payment-link", () => ({
 }));
 
 vi.mock("@/lib/promo", () => ({
-  deletePromoRedemptionAndAdjustCount: mocks.deletePromoRedemptionAndAdjustCount,
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
 }));
 
 vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
@@ -381,6 +383,10 @@ describe("cancelBooking credit refunds", () => {
               aggregate: mocks.txMemberCreditAggregate,
             },
             manualRefundTask: {
+              // #3827 (`INV-PAY-117`): no open edit refund hand-back on file
+              // unless a test says otherwise.
+              aggregate: async (...args: unknown[]) =>
+                (await mocks.txManualRefundTaskAggregate(...args)) ?? { _sum: { amountCents: null } },
               // #3835: the reviews settled before the cancel, frozen on its event.
               findMany: vi.fn().mockResolvedValue([]),
               findFirst: mocks.txManualRefundTaskFindFirst,
@@ -415,7 +421,7 @@ describe("cancelBooking credit refunds", () => {
     mocks.foldIntoTransactionRefundedAmount.mockImplementation(
       async ({ amountCents }: { amountCents: number }) => amountCents,
     );
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
       fullRefundDays: 60,
@@ -1655,6 +1661,43 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment_5", amountCents: 20000 })
     );
+  });
+
+  it("#3827 (INV-PAY-117): tiers off the cash NOT already promised back on an open edit refund hand-back", async () => {
+    // $200 taken, the booking now worth $250 after an edit whose $50 refund
+    // task is still open: the cancel may return only the other $150.
+    const booking6 = {
+      id: "booking_6",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "PAID",
+      finalPriceCents: 25000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_6",
+        bookingId: "booking_6",
+        amountCents: 20000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_6",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(booking6);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(booking6);
+    mocks.txManualRefundTaskAggregate.mockResolvedValueOnce({ _sum: { amountCents: 5000 } });
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 15000, refundPercentage: 100 });
+
+    const result = await cancelBooking("booking_6", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(result.status).toBe(200);
+    expect(mocks.txManualRefundTaskAggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ paymentId: "payment_6", status: "OPEN" }) }),
+    );
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(15000, expect.anything(), expect.anything(), "card");
   });
 
   it("cancels outstanding additional payment intents and marks them failed on credit refunds", async () => {
@@ -3462,8 +3505,7 @@ describe("cancelBooking credit refunds", () => {
       mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
       mocks.restoreCreditFromBooking.mockResolvedValue(2000);
       // A promo redemption exists for this booking.
-      const redemption = { id: "redemption_nc", bookingId: "bk_nc" };
-      mocks.promoRedemptionFindUnique.mockResolvedValue(redemption);
+      mocks.promoRedemptionFindFirst.mockResolvedValue({ id: "redemption_nc" });
 
       const result = await cancelBooking(
         "bk_nc",
@@ -3477,12 +3519,36 @@ describe("cancelBooking credit refunds", () => {
       expect(result.status).toBe(200);
       // The promo cleanup fires exactly once — credit restore never disturbs the
       // promo lifecycle.
-      expect(mocks.promoRedemptionFindUnique).toHaveBeenCalledTimes(1);
-      expect(mocks.deletePromoRedemptionAndAdjustCount).toHaveBeenCalledTimes(1);
-      expect(mocks.deletePromoRedemptionAndAdjustCount).toHaveBeenCalledWith(
+      expect(mocks.promoRedemptionFindFirst).toHaveBeenCalledTimes(1);
+      expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledTimes(1);
+      // #3826: the one booking-level release, which reads and releases every
+      // redemption the booking carries inside its own transaction (its
+      // two-code behaviour is pinned in multi-promo-redemptions.test.ts).
+      expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledWith(
         expect.anything(),
-        redemption
+        "bk_nc"
       );
+    });
+
+    it("opens no promo transaction for a booking that carries no code (#3826)", async () => {
+      const booking = neverCapturedBooking();
+      mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+      mocks.restoreCreditFromBooking.mockResolvedValue(2000);
+      mocks.promoRedemptionFindFirst.mockResolvedValue(null);
+
+      const result = await cancelBooking(
+        "bk_nc",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.releaseBookingPromoRedemptions).not.toHaveBeenCalled();
     });
   });
 
@@ -3954,7 +4020,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     // #1547: no-payment branches call restoreCreditFromBooking (no-op here);
@@ -4117,7 +4183,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     // #1547: no-payment branches call restoreCreditFromBooking (no-op here).
@@ -4386,7 +4452,11 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
-            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+            manualRefundTask: {
+              findMany: vi.fn().mockResolvedValue([]),
+              // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
+              aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
+            },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
@@ -4415,7 +4485,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     mocks.revokePaymentLinksForBooking.mockResolvedValue(undefined);

@@ -36,8 +36,9 @@ const ROUTE_PATH = join(
  */
 const MONEY_BEARING_FIELDS = [
   "applyCreditCents",
-  "promoCodeStr",
-  "promoGuestIndexes",
+  // #3827: the booker's codes, in their order — the plural list the route
+  // builds from `promoCodes` or the legacy single `promoCode`.
+  "promoCodes",
   "workPartyEventId",
   "groupDiscount",
 ] as const;

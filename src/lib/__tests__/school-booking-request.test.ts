@@ -246,9 +246,9 @@ import {
   approveMemberWholeLodgeRequest,
   approveSchoolBookingRequest,
   createSchoolBookingRequest,
-  generateSchoolGuests,
   resolveSchoolGuestOverride,
 } from "@/lib/school-booking-request";
+import { generateSchoolGuests } from "@/lib/school-booking-constants";
 // #2739: the night rows this pipeline writes are the #1036 locked prices the
 // #2337 member link then prices against, so the join is asserted here with the
 // real reader and the real engine rather than described in a comment.

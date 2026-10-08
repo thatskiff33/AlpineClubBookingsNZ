@@ -480,6 +480,9 @@ describe("feature route map", () => {
       "twoFactor",
       "magicLink",
       "googleLogin",
+      // multiPromoCodes (#3826) — a rollout switch on how many codes the shared
+      // booking routes may persist; it owns no route of its own to gate.
+      "multiPromoCodes",
     ];
 
     const gatedFlags = new Set<string>(

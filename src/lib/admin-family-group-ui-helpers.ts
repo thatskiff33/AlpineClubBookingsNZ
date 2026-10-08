@@ -1,11 +1,9 @@
 import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
-  parseCalendarDate,
   parseInstant,
   type BoundClubTime,
   type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 
 export interface MemberOption {
@@ -224,22 +222,16 @@ export function normalizeFamilyEmail(email: string) {
  * A `@db.Date` calendar day — a date of birth — in the house medium shape,
  * with NO ZONE APPLIED.
  *
- * Accepts both spellings such a column reaches the browser in: Prisma's
- * UTC-midnight ISO instant and a bare `yyyy-MM-dd`. The bare form is tried
- * first because it is unambiguous; the instant branch then reads the
- * UTC-midnight encoding in UTC, which is the identity for every club rather
- * than a projection.
+ * Decoding and formatting are `formatStayDateOrNull`'s (#3511, `INV-SSOT-001`):
+ * it accepts both spellings such a column reaches the browser in, Prisma's
+ * UTC-midnight ISO instant and a bare `yyyy-MM-dd`, and this adds only the
+ * surface's "Not provided" placeholder.
  */
 export function formatFamilyGroupCalendarDay(
   value: string | null | undefined,
   format: ClubDateFormat,
 ) {
-  if (!value) return "Not provided";
-  const bare = parseCalendarDate(value);
-  if (bare !== null) return formatClubDate(bare, format);
-  const instant = parseInstant(value);
-  if (instant === null) return "Not provided";
-  return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
+  return formatStayDateOrNull(value, format) ?? "Not provided";
 }
 
 /**

@@ -986,6 +986,33 @@ describe("itemised modification notes (#3530)", () => {
     );
   });
 
+  it.each([
+    ["invoice-correction", "Invoice correction — nothing refunded"],
+    ["cash", "Refunded in cash"],
+  ] as const)(
+    "words a %s note with the owner's #3536 words and records it so a replay says the same",
+    async (noteWording, words) => {
+      await createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING_ID,
+        refundAmountCents: 8000,
+        bookingModificationId: "cmmodification01",
+        noteWording,
+      });
+
+      const note = builtCreditNote();
+      expect(note.reference).toBe(`${words} - Booking cmbookin`);
+      expect(note.lineItems?.[0]?.description).toBe(
+        `${words} - Booking cmbookin - booking change cmmodifi`,
+      );
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({ noteWording }),
+        }),
+      );
+    },
+  );
+
   it("a note that returns less than the reduction keeps the single method line and says why", async () => {
     await createXeroCreditNoteForModification({
       format: CLUB_FORMAT_TEST,

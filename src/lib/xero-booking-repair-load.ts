@@ -23,6 +23,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "./payment-recovery-keys";
+import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import {
   editReviewChargeShareTaskSelect,
   editReviewChargeShareTaskWhere,
@@ -44,7 +45,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
+import { isPartPaymentReviewTask, NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
@@ -399,6 +400,8 @@ export async function loadAuditData(
             kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
             // A part-payment review is not cash that arrived (below).
             partPaymentReviewPaymentId: null,
+            // #3827 (`INV-PAY-117`): nor is an edit's refund hand-back.
+            ...NOT_NON_CANCELLATION_HAND_BACK_WHERE,
           },
           select: { bookingId: true, paymentId: true },
         })
@@ -438,6 +441,7 @@ export async function loadAuditData(
           [] as Array<{ appliedToBookingId: string; _sum: { amountCents: number | null } }>
         ),
   ]);
+  const unallocatedAppliedCreditByBookingId = await unallocatedAppliedCreditCentsByBooking(bookingIds, deps.prisma);
   const allocatedAppliedCreditByBookingId = new Map(
     appliedCreditAllocations.map((row) => [
       row.appliedToBookingId,
@@ -687,6 +691,7 @@ export async function loadAuditData(
     ),
     xeroAllocatedAppliedCreditCents:
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
+    unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     openEditReviewChargeIntentRecoveryModificationIds:
       editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
       new Set<string>(),

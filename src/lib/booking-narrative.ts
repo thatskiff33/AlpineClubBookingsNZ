@@ -39,17 +39,15 @@
 import { BookingEventType } from "@prisma/client";
 import { formatCents } from "@/lib/utils";
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
   requireStoredCalendarDay,
   type BoundClubTime,
+  formatStayDate,
 } from "@/lib/club-time";
 import type {
   CancellationEventSnapshot,
   BumpEventSnapshot,
 } from "@/lib/booking-events";
-import { isDuplicateCaptureRefundEvent } from "@/lib/duplicate-capture-refund-event";
-import { isSupersededAdditionalRefundEvent } from "@/lib/superseded-additional-refund-event";
+import { isRefundOutsideBookingSettlement } from "@/lib/refund-event-outside-settlement";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
@@ -176,15 +174,13 @@ function sortedByOccurredAt(events: NarrativeEvent[]): NarrativeEvent[] {
  * notice. Same composition as `emailCalendarDay`, deliberately.
  */
 function storedNight(value: Date, format: ClubFormat): string {
-  return formatClubDate(
-    calendarDateOfDateOnlyInstant(
-      requireStoredCalendarDay(value, {
-        subject: "A booking narrative's lodge night",
-        instead:
-          "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
-          "which reads it in the club's persisted zone.",
-      }),
-    ),
+  return formatStayDate(
+    requireStoredCalendarDay(value, {
+      subject: "A booking narrative's lodge night",
+      instead:
+        "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
+        "which reads it in the club's persisted zone.",
+    }),
     format,
   );
 }
@@ -353,20 +349,16 @@ function buildCancelledNarrative(
   );
 
   if (paidEvent) {
-    // #2008 — the #1992 duplicate-capture auto-refund is recorded as a REFUNDED
-    // event too, but it settles a SECOND capture on an already-PAID booking and
-    // leaves the booking's own settlement untouched. It must NEVER be picked up
-    // here as this cancellation's settlement clause (that would falsely claim
-    // the member was refunded), so it is excluded from the settlement finder.
-    // #3340 is the second member of that class, excluded for the same reason: a
-    // capture against an intent a later edit had already replaced, refunded by
-    // the recovery queue, leaving the settlement untouched.
+    // #2008 / #3340 / #3827: a refund that settles something OTHER than the
+    // booking (a duplicate capture, a superseded intent, an edit's refund sent
+    // back by hand while the booking was live) must NEVER be picked up as this
+    // cancellation's settlement clause, which would falsely claim the member
+    // was refunded. `isRefundOutsideBookingSettlement` is the one list.
     const settlementEvent = events.find(
       (e) =>
         (e.type === BookingEventType.REFUNDED ||
           e.type === BookingEventType.CREDITED) &&
-        !isDuplicateCaptureRefundEvent(e) &&
-        !isSupersededAdditionalRefundEvent(e)
+        !isRefundOutsideBookingSettlement(e)
     );
     return buildCancelledPostPaymentNarrative(
       paidEvent,

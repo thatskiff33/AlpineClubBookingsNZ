@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
         },
         include: {
           guests: { include: { nights: true } },
-          promoRedemption: {
+          promoRedemptions: {
             select: {
               priceAdjustmentCents: true,
               allocations: {

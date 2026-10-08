@@ -260,6 +260,13 @@ export const SINGLETONS: SingletonSpec[] = [
       "commsPortal",
     ],
     excluded: {
+      multiPromoCodes:
+        "a rollout switch, not a club preference (#3826, epic #3813): it may " +
+        "only be turned on once THIS deployment has cut over to the release " +
+        "that introduced it, because while it is off the previous release can " +
+        "still be rolled back to safely. Whether that has happened is a fact " +
+        "about one deployment, so an imported `true` could switch it on " +
+        "mid-upgrade on a target that has not",
       memberLodgeRoster:
         "turning the roster on discloses one member's stay pattern to every " +
         "other member who can book that lodge, and the per-lodge name detail " +

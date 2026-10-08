@@ -45,7 +45,7 @@ repository scripts over a browser or MCP round trip.
 ## Subagents
 
 Follow `AGENTS.md` → "Orchestration Model". The main session owns claims,
-worktrees, GitHub writes, PRs, CI, risk gates, merges and cross-lane conflict
+worktrees, GitHub writes, PRs, CI, the merge gate, merges and cross-lane conflict
 checks. Delegate bulk implementation to implementor subagents inside the issue's
 dedicated worktree; they commit locally but never push or touch GitHub. Parallel
 lanes are allowed only when their code surfaces do not clash.
@@ -237,6 +237,19 @@ record the reason and result in the PR.
 For concurrency-sensitive work, the orchestrator also reviews the open PRs and
 last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
 contracts, and records the relevant PR numbers in the PR lock-impact section.
+
+## Sekreton sandbox checks
+
+The isolated Sekreton sandbox uses [`.sekreton/config.toml`](../../.sekreton/config.toml)
+for setup and the quick lint/knip checks. Setup reads the Node version from
+`.nvmrc` and pnpm spec from `package.json`, installs frozen dependencies, and
+generates Prisma with a placeholder database URL. A failed Node download stops
+setup before extraction. The provider must put `SETUP_TOOL_DIR/bin` on `PATH`;
+the fallback archive targets Linux x86-64.
+
+These quick checks fit the task sandbox. The orchestrator remains responsible
+for the local validation in `AGENTS.md`; PR CI owns the full unit suite, build,
+migration and E2E gates before merge.
 
 ## Checking `main` after a merge
 

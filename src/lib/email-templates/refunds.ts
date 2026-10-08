@@ -13,6 +13,7 @@
  * sender does live in `src/lib/email/booking.ts` — booking-scoped, so the
  * per-booking "No emails" switch withholds it.
  */
+import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 
 import { escapeHtml } from "./escape";
@@ -60,6 +61,11 @@ function refundRequestOutcomeLayout(data: {
 export function refundRequestApprovedTemplate(data: {
   firstName: string;
   amountCents: number | null;
+  /**
+   * #3827 (D-3813-7): the part of the approved amount the club sends by bank
+   * transfer (an officer task), 0 when a card refund carries all of it.
+   */
+  bankTransferCents: number;
   adminNotes: string | null;
   checkIn: Date;
   checkOut: Date;
@@ -70,7 +76,8 @@ export function refundRequestApprovedTemplate(data: {
     firstName: data.firstName,
     headingText: "Refund Appeal Approved",
     outcomeSentence:
-      "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") has been approved. A refund of " + formatCents(data.amountCents ?? 0, format) + " will be processed to your original payment method.",
+      "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") has been approved. " +
+      refundRequestApprovedRefundSentence(data.amountCents ?? 0, data.bankTransferCents, (cents) => formatCents(cents, format)),
     outcomeTone: "success",
     adminNotes: data.adminNotes,
   });
