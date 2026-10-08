@@ -475,8 +475,9 @@ cutover. Then let the warm-up gate (step 16) pass and step 17 perform the cutove
 ### 2.4 Windowed migration deploy sequence
 
 Use this instead of the normal blue/green flow whenever any pending migration is
-declared `old_code_compatible=windowed` in the safety ledger. Four migrations are
-in that class:
+declared `old_code_compatible=windowed` in the safety ledger. The ledger is the
+authority, and `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+lists every one; these are in that class:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) —
   covered immediately below;
@@ -485,6 +486,13 @@ in that class:
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) — additive DDL,
   but an old hosting worker ignores the new tokens and can process a new worker's
   live claim, so mixed old/new workers are forbidden.
+- `20260810010000_backfill_booking_request_guest_nights` (#2739, ledgered by
+  #3933) — data only, no DDL. The previous colour's held-booking reassignment
+  rewrites a guest's dates and price without rewriting the night rows this
+  backfill inserts, so a quote accepted in a mixed window leaves stale nights
+  that both releases invoice from. Its `rollback.sql` holds no statements by
+  design: keep the rows, and refresh the invoice of any request the old colour
+  approved after migrate.
 - `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
   DDL with a deliberately incompatible write protocol. The previous runtime can
   attempt an overlap that the new triggers reject and cannot decode the new safe
@@ -1609,9 +1617,9 @@ already broken, so the boundary moves back to **step 13 (migrate)** and the
 recovery paths are forward to cutover, the migration's own `rollback.sql`, or the
 verified backup.
 
-**The ledger now holds six real `windowed` rows** — the three long-standing ones,
-#3271's, and #3369's pair — and they are not the only migrations in that class.
-Check for all of them:
+**The ledger holds several real `windowed` rows** — list them with the `awk`
+line in [§2.4](#24-windowed-migration-deploy-sequence) — and they are not the
+only migrations in that class. Among them:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) is
   declared `old_code_compatible=windowed`. It drops `MembershipLockoutSettings.enabled`,
@@ -1640,6 +1648,11 @@ Check for all of them:
   token-fenced claim. It ships a no-op `rollback.sql`; old/new worker overlap is
   forbidden in both deploy and rollback directions. Pending windowed migrations
   share **one** window.
+- `20260810010000_backfill_booking_request_guest_nights` (#2739) is declared
+  `windowed` by #3933 although it holds no DDL: its inserted night rows go stale
+  under the previous colour's held-booking reassignment, and both releases
+  invoice from them. Its `rollback.sql` deliberately holds no statements; going
+  back keeps the rows, with booking-request approvals and quoting paused.
 - `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
   `windowed` because the previous runtime can attempt writes rejected by the new
   trigger and cannot decode that safe refusal. Use [§2.4.3](#243-3271-parentpartner-exclusivity-backstop):

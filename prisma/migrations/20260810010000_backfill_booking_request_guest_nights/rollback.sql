@@ -1,0 +1,36 @@
+-- Operational rollback for 20260810010000_backfill_booking_request_guest_nights
+-- (#2739; ledgered old_code_compatible=windowed by #3933).
+--
+-- INTENTIONALLY NO STATEMENTS. This file exists because a windowed ledger row
+-- must ship a reverse script beside its migration; the reverse here is a
+-- decision, not SQL.
+--
+-- The migration's own header predates its ledger row and says it is "not
+-- `windowed`" and that "there is no rollback.sql". Both were true when it was
+-- written. #3933 declared it windowed under the rule #3468 settled in
+-- docs/BLUE_GREEN_MIGRATION_POLICY.md, because the previous colour's in-place
+-- held-booking reassignment rewrites a guest's dates and price WITHOUT
+-- rewriting that guest's night rows, and this backfill is what gives those
+-- guests night rows to go stale. migration.sql is not edited: Prisma checksums
+-- it.
+--
+-- WHY NOTHING IS UNDONE. Every inserted BookingGuestNight row describes the
+-- stay the guest already had, at cents that sum exactly to the guest's stored
+-- priceCents and match the even split the invoice builder already synthesises
+-- for a guest with no night rows. The previous release reads these rows
+-- without error. Deleting them would only return the guests to the state this
+-- migration fixed: invisible to the bed-allocation board, the planner and the
+-- awaiting-a-bed count, on a confirmed booking.
+--
+-- TO RETURN TO THE PREVIOUS RELEASE. Keep the rows. Only start the old release
+-- with booking-request approvals and quoting paused, or the stale-row exposure
+-- the window was declared for comes back with it.
+--
+-- RECOVERY IF THE PREVIOUS COLOUR RAN AFTER THIS MIGRATION. Any booking request
+-- approved at a different quote option from the one its hold was taken at,
+-- while pre-#2739 code was serving, can carry night rows describing the hold's
+-- dates and total; both releases invoice from stored night rows in preference
+-- to the guest's flat total. Re-raise or refresh the invoice for each such
+-- request. To discard the rows themselves, restore the pre-migration backup:
+-- this file does not try to tell a backfilled row from one written later for
+-- the same guest, and a wrong guess there deletes a correct night.
