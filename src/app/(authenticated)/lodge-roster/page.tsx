@@ -56,7 +56,8 @@ export default async function LodgeRosterPage() {
     (lodge) =>
       lodge.people.length > 0 ||
       lodge.groups.length > 0 ||
-      lodge.custodians.length > 0
+      lodge.custodians.length > 0 ||
+      lodge.heldNights.length > 0
   );
 
   // ADR-002 presentation rule: with exactly one active lodge, its name is
@@ -124,7 +125,8 @@ function LodgeSection({
   const empty =
     lodge.people.length === 0 &&
     lodge.groups.length === 0 &&
-    lodge.custodians.length === 0;
+    lodge.custodians.length === 0 &&
+    lodge.heldNights.length === 0;
 
   return (
     <Card>
@@ -146,6 +148,28 @@ function LodgeSection({
           </p>
         ) : (
           <ul className="divide-y">
+            {/*
+              Whole-lodge held nights first, as ONE row for the lodge, naming
+              nobody (#3474, owner decision 6 Oct 2026: "Show holds on
+              roster"). The booking calendar shows a held night as full; with a
+              head count beside it a member could tell held from full by
+              subtraction, so the roster says it outright instead — the same
+              reasoning as the custodian row below. The payload carries the
+              nights and nothing else, so there is no party, holder or purpose
+              here to render.
+            */}
+            {lodge.heldNights.length > 0 ? (
+              <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2">
+                <span className="font-medium">
+                  Reserved for a private booking
+                  <span className="sr-only">, </span>
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    whole lodge
+                  </span>
+                </span>
+                <Nights nights={lodge.heldNights} format={format} />
+              </li>
+            ) : null}
             {/*
               Custodians first, and stated outright. A custodian's bed is an
               ordinary occupied bed on the booking calendar so that the bed

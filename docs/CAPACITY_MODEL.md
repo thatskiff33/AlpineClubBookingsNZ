@@ -544,6 +544,19 @@ notices, neither of them a validation error (#1653, #2724):
   officer who lowers the figure to clear it silently zeroes every
   partner-shared slot the card above is displaying.
 
+**Lowering a saved capacity (#3440).** A separate warning, compared with the
+saved figure rather than a pure function of what is typed, appears when an
+officer types a lower capacity that removes partner-shared spots: it names the
+old and new figures and how many spots go. The count is
+`resolvePartnerSpotsLostByCapacityChange` in
+`src/lib/lodge-effective-capacity.ts`, the difference between the headroom the
+saved and the typed figures give through `resolvePartnerSharedHeadroom`. A blank
+saved figure bounds nothing, so it counts as unbounded headroom: typing any
+figure that leaves fewer spots than the lodge's doubles warns, in the wording
+"Setting a capacity of N removes M partner spots this lodge has now." It says
+nothing when raising, when unchanged, or when the lodge has no shareable
+doubles, and it never blocks the save.
+
 A figure outside the save bounds (a whole number from 1 to 100,000) is refused
 by `/api/admin/lodge-settings`; both editors of the field carry the same bounds
 as `min`/`max`, and the notice names the range rather than predicting a save
@@ -628,7 +641,11 @@ Enforcement lives in `capacity.ts` (the `wholeLodgeHeld` flag) and
 - **Availability calendars** — `checkCapacityForGuestRanges` (day view) and
   `getMonthAvailability` (month calendar, `/api/availability`) both report a held
   night as full, so a held-but-not-full night is indistinguishable from a
-  genuinely full lodge on public surfaces (decision 6).
+  genuinely full lodge on public surfaces (decision 6). The one member surface
+  that says otherwise is the member lodge roster, where a club runs it: it lists
+  the held nights as "reserved for a private booking", without naming or
+  counting the party, so its head count cannot be used to tell held from full
+  by subtraction (#3474, `INV-PRIV-017`).
 - **The capacity-warnings cron** — reports a held night as a full lodge, so the
   nightly fullness alert fires (#2681). Before that it had no hold handling at
   all, and a lodge under an exclusive whole-lodge hold never triggered a warning.
@@ -660,7 +677,9 @@ members/public (decision 6):
   `bookingsOverlap` / `sameLodgeNullTolerant` helpers.
 - `getLodgeHeldNights(lodgeId, checkIn, checkOut)` (`capacity.ts`) is the admin
   companion to `getLodgeCapacityStatus` (which takes no date range) for
-  reporting which nights in a range are whole-lodge-held.
+  reporting which nights in a range are whole-lodge-held. The member lodge
+  roster (#3474) is also a consumer, for clubs running it, and lists the held
+  nights without naming or counting the party.
 
 **Bed-allocation short-circuit (#120, admin-only).** A held booking implicitly
 occupies the whole lodge, so it needs no per-bed allocation. The bed-allocation

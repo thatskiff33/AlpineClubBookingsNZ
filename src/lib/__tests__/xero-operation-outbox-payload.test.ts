@@ -155,6 +155,26 @@ describe("xero operation outbox payload parsing", () => {
     });
   });
 
+  it("MUTATION (#3935): carries a refund note's cash wording only beside the internet-banking method", () => {
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "REFUND_CREDIT_NOTE",
+        refundAmountCents: 2500,
+        refundMethod: "internet-banking",
+        noteWording: "cash",
+      })
+    ).toMatchObject({ refundMethod: "internet-banking", noteWording: "cash" });
+    for (const raw of [
+      { refundMethod: "card", noteWording: "cash" },
+      { refundMethod: "internet-banking", noteWording: "invoice-correction" },
+      { noteWording: "cash" },
+    ]) {
+      expect(
+        readQueuedOutboxPayload({ queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2500, ...raw })
+      ).toHaveProperty("noteWording", undefined);
+    }
+  });
+
   it("tells the abandon VOID from the cancellation VOID by the invoice it names (#3642)", () => {
     expect(
       readQueuedOutboxPayload({

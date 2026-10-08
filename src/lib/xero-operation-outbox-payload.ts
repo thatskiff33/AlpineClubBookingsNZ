@@ -1,10 +1,8 @@
 import type { EntranceFeeCategory } from "@prisma/client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
-  parseRefundMethod,
-  readModificationNoteWording,
-  type ModificationNoteWording,
-  type RefundMethod,
+  parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
+  type ModificationNoteWording, type RefundMethod, type RefundNoteWording,
 } from "@/lib/xero-refund-method";
 
 export const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
@@ -103,6 +101,7 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // the bank account its settling payment posts to. Absent on rows queued
   // before the field existed; the executor then reads the payment's source.
   refundMethod?: RefundMethod;
+  noteWording?: RefundNoteWording; // #3935 (`INV-PAY-116`): a review hand-back's cash answer.
   // #3635: the late capture this note answers, and its refund's club day.
   paymentIntentId?: string;
   documentDate?: string;
@@ -345,6 +344,7 @@ export function readQueuedOutboxPayload(
       refundAmountCents,
       watermarkCents: readNumber(payload.watermarkCents) ?? undefined,
       refundMethod: parseRefundMethod(payload.refundMethod) ?? undefined,
+      noteWording: readRefundNoteWording(payload),
       paymentIntentId: readString(payload.paymentIntentId) ?? undefined,
       documentDate: readString(payload.documentDate) ?? undefined,
     };
