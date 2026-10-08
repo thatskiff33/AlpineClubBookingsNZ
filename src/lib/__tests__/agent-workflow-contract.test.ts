@@ -61,8 +61,8 @@ describe("repository agent workflow contract", () => {
       expect(n).toContain(phrase);
     }
 
-    // The merge gate's only human check is an on-repo comment by the owner's
-    // login (#2713); agent-authored text never authorises (#2691).
+    // An owner decision is an on-repo comment by the owner's login (#2713);
+    // agent-authored text never authorises (#2691).
     for (const phrase of [
       "No agent-authored text is authorisation",
       "Authority does not inherit across sessions.",
@@ -260,7 +260,7 @@ describe("repository agent workflow contract", () => {
     expect(template).toContain(
       "Relevant open/last-10 PR numbers, counterpart writers/tests, and compatibility",
     );
-    expect(template).toContain('Merge handling follows the `AGENTS.md` "Completion and Merge" risk gate');
+    expect(template).toContain('Merge handling follows the `AGENTS.md` "Completion and Merge" merge gate');
 
     const ci = readRepoFile(".github/workflows/ci.yml");
     expect(ci).toContain("Validate PR concurrency declaration");

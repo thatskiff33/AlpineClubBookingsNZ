@@ -47,10 +47,10 @@ import {
 } from "@/lib/booking-dependant-identity";
 import {
   countClubNights,
-  formatClubDate,
   formatClubWeekdayDate,
   parseCalendarDate,
   type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 
 import { formatCents } from "@/lib/utils";
@@ -59,17 +59,11 @@ import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
 
-/**
- * A lodge night held in state as a `yyyy-MM-dd` string (#2474) — a CALENDAR
- * DATE, which takes no timezone at all (CT-4, #2870). The old spelling parsed
- * it to a UTC-midnight `Date` and handed that to the INSTANT formatter, which
- * projected it through `APP_TIME_ZONE`; for a club behind UTC that named the
- * night before. An empty or malformed value renders as itself rather than
- * throwing while the operator is still choosing dates.
- */
+// A lodge night held in state as `yyyy-MM-dd`. An empty or malformed value
+// renders as itself rather than throwing while the operator is still choosing
+// dates (#3511: kernel stay-date helper).
 function formatLodgeNight(value: string | null, format: ClubDateFormat): string {
-  const day = value === null ? null : parseCalendarDate(value);
-  return day ? formatClubDate(day, format) : (value ?? "");
+  return formatStayDateOrNull(value, format) ?? value ?? "";
 }
 
 /** {@link formatLodgeNight}, weekday-bearing — "Thu, 16 Apr 2026". */
