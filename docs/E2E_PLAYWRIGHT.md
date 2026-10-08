@@ -24,7 +24,7 @@ the demo seed (`prisma/demo-seed.ts`).
 | `e2e/internet-banking.spec.ts` | Internet Banking settlement (Critical) | With Xero **absent**, a card PAYMENT_PENDING booking is switched to Internet Banking; the detail page shows the Internet Banking card with a `BOOKING-…` reference and does not crash (the Xero invoice is queued but never sent while disconnected). Toggles the Xero + Internet Banking modules on for its run and restores them |
 | `e2e/membership-application.spec.ts` | Membership application (High) | Public application submit; both nominators agree through the real `/nominations/<token>` pages; admin approves; the applicant then exists as a member |
 | `e2e/additional-payment-chase.spec.ts` | Outstanding additional payment (#2350, High) | The officer loop for money still owed after a booking change: the bookings list filtered to **Additional Payment: Still owing** marks the booking **Partly paid** with the amount due (its status chip still reading Paid); the booking page's **Additional payment outstanding** panel names the amount and reports nobody has been chased yet; **Resend payment request email** sends and the message is captured from mailpit; a second click inside the hour is refused instead of sending. The owing booking is **seeded** (`ADDITIONAL_OWED_BOOKING_ID`) rather than raised through an admin edit, because raising a real one mints a Stripe PaymentIntent and this journey must run whether or not Stripe test-mode keys are configured |
-| `e2e/admin-reports.spec.ts` | Base Reports stay-night reporting (#2368, Medium) | Selects the seeded CONFIRMED booking's three historical stay nights even though the row was created when the current demo seed ran; verifies its full $135 Booked Revenue allocation and booking-level Net Collected Cash, its one distinct guest/current status, and the deliberate 0% occupancy because utilisation remains PAID/COMPLETED-only. The browser then drives the From/To controls and verifies the Booked Revenue, Net Collected Cash, Outstanding Additions, and Booked Revenue by Day labels. |
+| `e2e/admin-reports.spec.ts` | Base Reports stay-night reporting (#2368, Medium) | Selects the seeded CONFIRMED booking's three historical stay nights even though the row was created when the current demo seed ran; verifies its full $135 Booked Revenue allocation and booking-level Net Collected, its one distinct guest/current status, and the deliberate 0% occupancy because utilisation remains PAID/COMPLETED-only. The browser then drives the From/To controls and verifies the Booked Revenue, Net Collected, Outstanding Additions, and Booked Revenue by Day labels. |
 | `e2e/member-guest-consent.spec.ts` | Member-guest consent (#2307, Critical) | A cross-family add persists PENDING; the target answers **Yes** on the booking page's `#consent` card and the guest list badge flips to Consented; on a second booking she answers **No** on an unpaid stay and the booker's guest list no longer names her. Plus the delegate route's privacy edge — a signed-in non-delegate, including the booker, gets one neutral page from `/bookings/consent/<guestId>` with no booking facts on it, indistinguishable from a fabricated id. Toggles the `memberGuests` module on for its run and restores it; books its own stay windows per attempt, because a PENDING row holds a person-night and a retry on the same nights would be refused by the member-night guard |
 | `e2e/member-guest-find.spec.ts` | Member-guest finder + privacy (#2308, High) | One journey per find mode — exact email (the shipped default) and the name type-ahead a club has deliberately switched on — plus a module-off assertion that the surface is simply absent. Its browser assertions run LAST in the serial file, so a navigation failure cannot skip the privacy ones |
 | `e2e/multi-lodge/member-guest-edit-path.spec.ts` | Member-guest edit path + admin parity (#2309, High) | Adding a member guest while EDITING a booking, in the multi-lodge project because the edit path reaches capacity and pricing through lodge-scoped code. A member opens an existing booking, asserts the Guests card header carries the signed-off two-button shape (`+ Add Member Guest` then `+ Add Non-Member Guest`, and no generic `+ Add Guest`), finds a cross-family member by exact email, sees the honest pre-save promise ("will be emailed when you save this change, and their bed is held until they answer") on the new row, saves, and the consent request lands in mailpit. Then a **Booking Officer** — the #1376 persona, deliberately, because the exact-email box has to work for a role with no membership access — does the same on another booking and gets the other rule: the admin sentence inside the opened finder states the member is added immediately and told, and the ADDED notice arrives rather than a consent request |
@@ -192,9 +192,12 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   fixtures and the stay-window horizon. Likewise **every seeded booking date is
   relative** (`DEMO_BOOKING_WINDOWS` / the window fixtures in
   `prisma/e2e-fixtures.ts`), so nothing rots red as wall-clock advances and the
-  seasons never need manual extension. The production first-run seed
-  (`prisma/seed.ts`) keeps its fixed real-world season dates — only the demo/E2E
-  database is relativized.
+  seasons never need manual extension. Seeded windows slide a weekday per run
+  date while a stay window's Monday holds for a week, so `stayWindow` skips
+  every Monday whose nights a seeded booking holds (`SEEDED_BOOKING_WINDOWS`,
+  #4002); a new seeded booking window must be added to that list. The
+  production first-run seed (`prisma/seed.ts`) keeps its fixed real-world season
+  dates — only the demo/E2E database is relativized.
 
 ## Seeded fixtures and personas
 
@@ -557,8 +560,8 @@ Four rules follow, and a new spec must satisfy all four:
 
   Those retry bands cost calendar navigation: a spec reaches its dates by
   clicking the wizard calendar's "Next ›" one month at a time, bounded by
-  `MAX_MONTH_HOPS` in `e2e/helpers/booking.ts`. Base 0–15 × attempt 0–2 needs at
-  most 14 hops on any run date and the bound is 24, so nothing in range can run
+  `MAX_MONTH_HOPS` in `e2e/helpers/booking.ts`. Base 0–15 × attempt 0–2 needs
+  at most 16 hops (measured over a year of run dates) and the bound is 24, so nothing in range can run
   out — and if a future base or stride does, `selectCalendarDay` now fails on the
   month it could not reach rather than timing out on a day button.
 

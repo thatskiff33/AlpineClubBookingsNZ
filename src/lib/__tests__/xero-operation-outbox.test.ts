@@ -3141,9 +3141,9 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
         localId: "charge_1",
         localModel: "MembershipSubscriptionCharge",
         createdByMemberId: "admin_1",
+        // #3971: what the enqueue writes - no id; the charge is `localId`.
         requestPayload: {
           queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE",
-          chargeId: "charge_1",
         },
       },
       handler: mocks.createXeroMembershipSubscriptionInvoice,
@@ -3226,6 +3226,71 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
 
     // No queue type slipped through to the incomplete-payload failure.
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #3971 GUARD (`INV-INT-026`): a queued payload is stored through the
+   * persisting redactor (`sanitizeForJson` -> `redactSensitiveRecord`), and the
+   * worker reads the STORED row, never the object it was queued with. A key the redactor blanks
+   * therefore never reaches the worker: `chargeId` matched the Stripe `charge`
+   * rule, and every membership subscription invoice failed looking for a charge
+   * of id "[REDACTED]". For every queue type this runs the real sanitizer over
+   * the fixture's payload and requires the worker to call its handler with
+   * exactly what it gets from the unredacted payload.
+   */
+  it("resolves every queue type's target from its STORED (redacted) payload exactly as from the queued one (#3971)", async () => {
+    const { sanitizeForJson } = (await vi.importActual(
+      "@/lib/xero-sync"
+    )) as typeof import("@/lib/xero-sync");
+    const handlerArgsFor = async (
+      queueType: (typeof XERO_OUTBOX_QUEUE_TYPES)[number],
+      requestPayload: unknown
+    ) => {
+      vi.clearAllMocks();
+      const fixture = fixtures[queueType];
+      mocks.findManyOperations.mockResolvedValue([{ ...fixture.op, requestPayload }]);
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      return fixture.handler.mock.calls;
+    };
+
+    for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
+      const queued = fixtures[queueType].op.requestPayload;
+      const stored = sanitizeForJson(queued);
+      const fromQueued = await handlerArgsFor(queueType, queued);
+      const fromStored = await handlerArgsFor(queueType, stored);
+
+      expect(
+        fromQueued,
+        `INV-INT-026 (#3971): ${queueType} did not reach its handler from the payload it was queued with`
+      ).toHaveLength(1);
+      expect(
+        fromStored,
+        `INV-INT-026 (#3971): ${queueType}'s worker resolves a different target once its payload is stored through the persisting redactor. A load-bearing id is being blanked; take it from the row's localId or rename the key, never weaken the redactor.`
+      ).toEqual(fromQueued);
+      expect(
+        JSON.stringify(fromStored),
+        `INV-INT-026 (#3971): ${queueType}'s handler received a redacted value`
+      ).not.toContain("[REDACTED]");
+    }
+  });
+
+  it("invoices the row's localId for a subscription row stored before #3971 with a blanked chargeId", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        ...fixtures.MEMBERSHIP_SUBSCRIPTION_INVOICE.op,
+        requestPayload: { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE", chargeId: "[REDACTED]" },
+      },
+    ]);
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(mocks.createXeroMembershipSubscriptionInvoice).toHaveBeenCalledWith({
+      chargeId: "charge_1",
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_subscription_charge_1",
+    });
   });
 
   // #3642 (SSOT F7): one queue type, two VOIDs. A payload that names its invoice

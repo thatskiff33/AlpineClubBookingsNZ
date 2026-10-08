@@ -273,7 +273,7 @@ describe("ReportsPage quick ranges", () => {
       ".reports-print-card",
     );
     const collectedCashCard = screen
-      .getByText("Net Collected Cash")
+      .getByText("Net Collected")
       .closest(".reports-print-card");
     const outstandingAdditionsCard = screen
       .getByText("Outstanding Additions")
@@ -283,6 +283,32 @@ describe("ReportsPage quick ranges", () => {
     expect(outstandingAdditionsCard).toHaveTextContent("$135.00");
     expect(screen.getByText("Booked Revenue by Month")).toBeVisible();
     expect(screen.getByText(/Price allocated to selected stay nights/)).toBeVisible();
+  });
+
+  it("prints the ledger-gap warning's booking count in the club number format (#3637)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ...EMPTY_REPORT,
+            summary: {
+              ...EMPTY_REPORT.summary,
+              netCollectedCents: 7_500,
+              additionalLedgerGapCents: 2_100,
+              additionalLedgerGapBookings: 1_234,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    render(<ReportsPage />);
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent(
+      "Net Collected may understate by $21.00: 1,234 overlapping bookings record an additional payment",
+    );
   });
 
   it("exports stay-night booked revenue and collected cash with unambiguous CSV labels", async () => {
@@ -324,7 +350,7 @@ describe("ReportsPage quick ranges", () => {
     render(<ReportsPage />);
     const warning = await screen.findByRole("alert");
     expect(warning).toHaveTextContent(
-      "Net Collected Cash may understate by $21.00",
+      "Net Collected may understate by $21.00",
     );
     expect(warning).toHaveTextContent(
       "Ask a developer to reconcile that payment's ledger before trusting this figure.",
@@ -337,9 +363,9 @@ describe("ReportsPage quick ranges", () => {
     const blob = createObjectUrl.mock.calls[0][0] as Blob;
     const csv = await blob.text();
     expect(csv).toContain("Booked Revenue,100.00");
-    expect(csv).toContain("Net Collected Cash,75.00");
+    expect(csv).toContain("Net Collected,75.00");
     expect(csv).toContain(
-      "Net Collected Cash Warning,Net Collected Cash may understate by $21.00",
+      "Net Collected Warning,Net Collected may understate by $21.00",
     );
     expect(csv).toContain("Possible Additional Ledger Gap,21.00");
     expect(csv).toContain("Bookings With An Additional Ledger Gap,1");
