@@ -1455,6 +1455,50 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       );
     });
 
+    it("MUTATION (#3935): the officer's cash answer rides the payload as words only - the same keys and amounts as the bank-transfer note", async () => {
+      bankTransferPayment(3500);
+      mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
+        refundMethod: "internet-banking",
+        noteWording: "cash",
+        reviewTaskId: "task_1",
+      });
+
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          idempotencyKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          requestPayload: {
+            queueType: "REFUND_CREDIT_NOTE",
+            refundAmountCents: 2500,
+            watermarkCents: 3500,
+            refundMethod: "internet-banking",
+            noteWording: "cash",
+            reviewTaskId: "task_1",
+          },
+        })
+      );
+    });
+
+    it("MUTATION (#3935): a card method never stores the cash wording - not representable, and dropped if a cast caller passes it", async () => {
+      bankTransferPayment(3500);
+      mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
+        refundMethod: "card",
+        // @ts-expect-error cash wording is accepted only with the internet-banking method
+        noteWording: "cash",
+        reviewTaskId: "task_1",
+      });
+
+      const payload = mocks.startXeroSyncOperation.mock.calls[0]![0].requestPayload;
+      expect(payload).toMatchObject({ refundMethod: "card" });
+      expect(payload).not.toHaveProperty("noteWording");
+    });
+
     it("MUTATION: two sibling reviews' equal $10 refunds are a note each, not one folded into the other", async () => {
       bankTransferPayment(2000);
       await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_1" });
@@ -2374,6 +2418,36 @@ describe("processQueuedXeroOutboxOperations", () => {
     });
   });
 
+  it("MUTATION (#3935): dispatches a review hand-back's cash wording to the builder", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_cash_note_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 2500,
+          watermarkCents: 3500,
+          refundMethod: "internet-banking",
+          noteWording: "cash",
+          reviewTaskId: "task_1",
+        },
+      },
+    ]);
+    mocks.createXeroCreditNote.mockResolvedValue("cn_cash_1");
+
+    await processQueuedXeroOutboxOperations({ limit: 5 });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 2500, expect.objectContaining({
+      syncOperationId: "op_cash_note_1",
+      watermarkCents: 3500,
+      refundMethod: "internet-banking",
+      noteWording: "cash",
+      reviewTaskId: "task_1",
+    }));
+  });
+
   it("MUTATION (#3880): a refund-note row whose payment has another note mid-raise goes back to PENDING, reason kept, never FAILED", async () => {
     mocks.findManyOperations.mockResolvedValue([
       {
@@ -3067,9 +3141,9 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
         localId: "charge_1",
         localModel: "MembershipSubscriptionCharge",
         createdByMemberId: "admin_1",
+        // #3971: what the enqueue writes - no id; the charge is `localId`.
         requestPayload: {
           queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE",
-          chargeId: "charge_1",
         },
       },
       handler: mocks.createXeroMembershipSubscriptionInvoice,
@@ -3152,6 +3226,71 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
 
     // No queue type slipped through to the incomplete-payload failure.
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #3971 GUARD (`INV-INT-026`): a queued payload is stored through the
+   * persisting redactor (`sanitizeForJson` -> `redactSensitiveRecord`), and the
+   * worker reads the STORED row, never the object it was queued with. A key the redactor blanks
+   * therefore never reaches the worker: `chargeId` matched the Stripe `charge`
+   * rule, and every membership subscription invoice failed looking for a charge
+   * of id "[REDACTED]". For every queue type this runs the real sanitizer over
+   * the fixture's payload and requires the worker to call its handler with
+   * exactly what it gets from the unredacted payload.
+   */
+  it("resolves every queue type's target from its STORED (redacted) payload exactly as from the queued one (#3971)", async () => {
+    const { sanitizeForJson } = (await vi.importActual(
+      "@/lib/xero-sync"
+    )) as typeof import("@/lib/xero-sync");
+    const handlerArgsFor = async (
+      queueType: (typeof XERO_OUTBOX_QUEUE_TYPES)[number],
+      requestPayload: unknown
+    ) => {
+      vi.clearAllMocks();
+      const fixture = fixtures[queueType];
+      mocks.findManyOperations.mockResolvedValue([{ ...fixture.op, requestPayload }]);
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      return fixture.handler.mock.calls;
+    };
+
+    for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
+      const queued = fixtures[queueType].op.requestPayload;
+      const stored = sanitizeForJson(queued);
+      const fromQueued = await handlerArgsFor(queueType, queued);
+      const fromStored = await handlerArgsFor(queueType, stored);
+
+      expect(
+        fromQueued,
+        `INV-INT-026 (#3971): ${queueType} did not reach its handler from the payload it was queued with`
+      ).toHaveLength(1);
+      expect(
+        fromStored,
+        `INV-INT-026 (#3971): ${queueType}'s worker resolves a different target once its payload is stored through the persisting redactor. A load-bearing id is being blanked; take it from the row's localId or rename the key, never weaken the redactor.`
+      ).toEqual(fromQueued);
+      expect(
+        JSON.stringify(fromStored),
+        `INV-INT-026 (#3971): ${queueType}'s handler received a redacted value`
+      ).not.toContain("[REDACTED]");
+    }
+  });
+
+  it("invoices the row's localId for a subscription row stored before #3971 with a blanked chargeId", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        ...fixtures.MEMBERSHIP_SUBSCRIPTION_INVOICE.op,
+        requestPayload: { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE", chargeId: "[REDACTED]" },
+      },
+    ]);
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(mocks.createXeroMembershipSubscriptionInvoice).toHaveBeenCalledWith({
+      chargeId: "charge_1",
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_subscription_charge_1",
+    });
   });
 
   // #3642 (SSOT F7): one queue type, two VOIDs. A payload that names its invoice

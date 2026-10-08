@@ -131,6 +131,10 @@ regexes = ['''^e7c1b93a5d0f4826$''']
 description = "The pinned SHA-256 of one fixture proposal snapshot in the #3252 migration-verification file (`prisma/migration-verification/20260930010000_relocale_proof_exception_request_identities.ts`), a digest of public test data that authorises nothing. The CAUSE was the identifier, not the value: `generic-api-key` fires on any identifier containing `api`/`key`/`token`/`secret`/`auth`/`access`, and the constant was first named `ESCAPING_HASH` - measured with the pinned v8.28.0 image, the same 64-hex value behind `ESCAPED_PARTY_HASH` scans clean, which is what the constant is now called. The literal is still forgiven because commit fe2f4a072 in the PR's history carries the old line, the history scan re-reports it at every merge that carries it forward, and this file's header rules out fingerprints for exactly that reason. Only this exact literal is forgiven. If a future fixture trips this rule, rename the identifier first; add a value here only when the tripping line is already in history."
 regexes = ['''^bbbd2b447299d6f849655b881b1c8978b9904a229223e00ae25c6964f5c062cb$''']
 
+[[allowlists]]
+description = "The `idempotencyKey` of the fixture `MembershipSubscriptionCharge` the #3971 real-PostgreSQL proof seeds (`src/lib/__tests__/xero-subscription-invoice-retry.realdb.test.ts`). It is a unique-column value for a throwaway row in the disposable race database and authorises nothing. `generic-api-key` fires on the `idempotencyKey` identifier, not the value. The literal is forgiven because commit 6664bf772 in the PR's history carries the line, and this file's header rules out fingerprints. Only this exact literal is forgiven."
+regexes = ['''^race-3971-charge-key$''']
+
 # ---------------------------------------------------------------------------
 # Repository-owned rules
 # ---------------------------------------------------------------------------
