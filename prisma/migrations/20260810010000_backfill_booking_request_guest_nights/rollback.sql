@@ -54,7 +54,10 @@
 -- refreshing first re-sends the stale night prices. The repair is the officer
 -- tool "Record what these nights sold for" in the booking's Admin tools card
 -- (#3214, src/lib/stored-night-price-strand-reconcile.ts); run it on a release
--- that includes #3214, never on the previous colour. To discard the rows
+-- that includes #3214, never on the previous colour. Normal invoice-state
+-- checks still apply: if refresh refuses a paid or credited document, stop
+-- and reconcile that document rather than bypassing the refusal.
+-- To discard the rows
 -- themselves, restore the pre-migration backup: this file does not try to tell
 -- a backfilled row from one written later for the same guest, and a wrong
 -- guess there deletes a correct night.

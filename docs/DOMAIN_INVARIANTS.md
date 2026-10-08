@@ -173,7 +173,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-005` | A split guest portion always settles or is notified, never stranded |
 | `INV-CAP-006` | Bed-allocation eligibility is a status-only superset of capacity-holding |
 | `INV-CAP-032` | Every guest-creating path writes the canonical `BookingGuestNight` set, half-open and cents-exact |
-| `INV-CAP-035` | The guest-night backfill is idempotent; re-run it verbatim after cutover |
+| `INV-CAP-035` | Guest-night backfill: windowed deploy; repair stored nights before invoice refresh |
 | `INV-CAP-007` | Auto-allocated stays are room-continuous per booking, with bounded fallback |
 | `INV-CAP-008` | Allocation preferences are per lodge and advisory, never safety overrides |
 | `INV-CAP-009` | Automated placement never mixes one booking's minors with another's adult; manual warns |
