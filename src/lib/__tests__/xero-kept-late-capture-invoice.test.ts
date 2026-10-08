@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   createXeroPaymentForInvoice: vi.fn(),
   creditBackLateCaptureRefunds: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
+  findClose: vi.fn(),
+  upsertLink: vi.fn(),
+  noteClose: vi.fn(),
 }));
 
 const db = vi.hoisted(() => {
@@ -54,6 +57,13 @@ vi.mock("@/lib/xero-sync", () => ({
   completeXeroSyncOperation: (...a: unknown[]) =>
     mocks.completeXeroSyncOperation(...a),
   failXeroSyncOperation: (...a: unknown[]) => mocks.failXeroSyncOperation(...a),
+  upsertXeroObjectLink: (...a: unknown[]) => mocks.upsertLink(...a),
+}));
+vi.mock("@/lib/late-capture-paid-another-way", () => ({
+  findLateCaptureRefundPaidAnotherWay: (...a: unknown[]) => mocks.findClose(...a),
+}));
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",
 }));
 vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: async () => ({
@@ -87,6 +97,7 @@ vi.mock("@/lib/xero-invoice-payments", () => ({
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
   creditBackLateCaptureRefunds: (...a: unknown[]) =>
     mocks.creditBackLateCaptureRefunds(...a),
+  notePaidAnotherWayCloseOnReceipt: (...a: unknown[]) => mocks.noteClose(...a),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -144,6 +155,9 @@ beforeEach(() => {
   });
   mocks.createXeroPaymentForInvoice.mockResolvedValue("pay_kept");
   mocks.creditBackLateCaptureRefunds.mockResolvedValue(undefined);
+  mocks.findClose.mockResolvedValue(null);
+  mocks.upsertLink.mockResolvedValue({});
+  mocks.noteClose.mockResolvedValue(null);
   mocks.getResolvedAccountMapping.mockResolvedValue({
     code: "200",
     itemCode: null,
@@ -201,6 +215,16 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
       });
     }
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit").
+  it("MUTATION: queues the receipt of an APPROVED capture whose card refund was closed as paid another way", async () => {
+    mocks.taskFindUnique.mockResolvedValue({ status: "COMPLETED" });
+    mocks.findClose.mockResolvedValue({ id: "close-1" });
+    await expect(enqueue()).resolves.toMatchObject({ queueOperationId: "op_kept" });
+    expect(mocks.findClose).toHaveBeenCalledWith("pi_kept", db);
+    // Read under the task's lock, like the status.
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.findClose.mock.invocationCallOrder[0]);
   });
 
   it("returns the task's live row, in any state but CANCELLED, rather than queue a second", async () => {
@@ -348,6 +372,44 @@ describe("createXeroKeptLateCaptureInvoice", () => {
     }
   });
 
+  it("MUTATION: sends the receipt of an approved capture whose card refund was closed as paid another way", async () => {
+    mocks.taskFindUnique.mockResolvedValue({ status: "COMPLETED" });
+    mocks.findClose.mockResolvedValue({ id: "close-1" });
+    await expect(createXeroKeptLateCaptureInvoice({ syncOperationId: "op_kept" })).resolves.toBe("inv_kept");
+    expect(mocks.createInvoices).toHaveBeenCalledTimes(1);
+  });
+
+  // #3924 round 6: the receipt, THEN the close's note - never the other way round.
+  it("MUTATION: records the receipt's link and queues a waiting close's note in ONE transaction under the task lock, after the invoice exists and before the row completes", async () => {
+    await createXeroKeptLateCaptureInvoice({ syncOperationId: "op_kept" });
+
+    const order = (mock: { mock: { invocationCallOrder: number[] } }, index = 0) =>
+      mock.mock.invocationCallOrder[index];
+    // The send-time decision's lock, then this transaction's.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    expect(order(mocks.createInvoices)).toBeLessThan(order(mocks.executeRaw, 1));
+    expect(order(mocks.executeRaw, 1)).toBeLessThan(order(mocks.upsertLink));
+    expect(order(mocks.upsertLink)).toBeLessThan(order(mocks.noteClose));
+    expect(order(mocks.noteClose)).toBeLessThan(order(mocks.completeXeroSyncOperation));
+    expect(mocks.upsertLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "ManualRefundTask",
+        localId: "task_kept",
+        role: KEPT_LATE_CAPTURE_INVOICE_ROLE,
+        xeroObjectId: "inv_kept",
+      }),
+      { store: db },
+    );
+    expect(mocks.noteClose).toHaveBeenCalledWith({ paymentIntentId: "pi_kept", clubZone: "Pacific/Auckland", store: db });
+  });
+
+  it("a failed note step fails the run, so its retry writes the link and the note together", async () => {
+    mocks.noteClose.mockRejectedValueOnce(new Error("database blip"));
+    await expect(createXeroKeptLateCaptureInvoice({ syncOperationId: "op_kept" })).rejects.toThrow("database blip");
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_kept", expect.any(Error));
+  });
+
   it("once its invoice exists, records the missing payment whatever the task says now", async () => {
     mocks.taskFindUnique.mockResolvedValue({ status: "COMPLETED" });
     mocks.linkFindFirst.mockImplementation(
@@ -361,6 +423,8 @@ describe("createXeroKeptLateCaptureInvoice", () => {
     expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledWith(
       expect.objectContaining({ invoiceId: "inv_kept", amountCents: 24000 }),
     );
+    // The run that wrote the link queued any waiting note with it.
+    expect(mocks.noteClose).not.toHaveBeenCalled();
   });
 
   it("is PARTIAL when the payment fails", async () => {

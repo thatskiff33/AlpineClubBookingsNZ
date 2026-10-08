@@ -24,7 +24,9 @@ import {
 import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import type { PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 
@@ -36,8 +38,12 @@ export interface DeadCardRefundPanelRow {
   raisedAt: string;
   owedCents: number;
   wholeAmountOnly: boolean;
-  /** Whether closing it queues a Xero refund credit note: there is an invoice to credit. */
-  takesXeroRefundNote: boolean;
+  /**
+   * How closing it is recorded in Xero: a bank-transfer refund note queued with
+   * the close (`now`); a late card charge recorded as a receipt first, with the
+   * note after it (`after-receipt`); or no note (`none`).
+   */
+  xeroRefundNote: PaidAnotherWayXeroNote;
   /** Its last failure looked like a timeout or network error: Stripe may have refunded. */
   stripeMayHaveRefunded: boolean;
 }
@@ -58,6 +64,23 @@ export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
 
 type PaidBack = "full" | "partial";
 
+/** What the dialog says, before the close, about Xero (#3924 rounds 5 and 6). */
+const XERO_REFUND_NOTE_PROMISE: Record<PaidAnotherWayXeroNote, string> = {
+  now: "A Xero refund credit note for the amount, as a bank transfer, is queued when you close it.",
+  "after-receipt":
+    "Xero has no record of this late card charge yet. Closing it records the charge in Xero as a payment received into the Stripe account, then queues a Xero refund credit note for the amount, as a bank transfer, against it.",
+  none: "No Xero refund credit note is raised: there is no Xero invoice for this money to credit. Record the refund in Xero by hand if it needs one.",
+};
+
+/** What the message after the close says it queued in Xero (`CardRefundPaidAnotherWayResult.xeroQueued`). */
+function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefined): string {
+  if (xeroQueued === "refund-note") return "Its Xero refund credit note, as a bank transfer, is queued.";
+  if (xeroQueued === "receipt-then-refund-note") {
+    return "The late card charge is queued to be recorded in Xero as a payment received into the Stripe account; its refund credit note, as a bank transfer, follows once it is.";
+  }
+  return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
+}
+
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"): the card refunds
  * Stripe gave up on, each with a "Paid another way" close.
@@ -70,8 +93,10 @@ type PaidBack = "full" | "partial";
  * in full" (the amount is what is owed) or "Paid back part of it" (an amount
  * below that, with a warning naming what stops being owed) - never inferred
  * from the amount (owner, 8 Oct 2026). A note saying how the member was paid
- * back is required. It says up front whether a Xero refund note is raised and
- * that a refund made in the Stripe dashboard is not closed here. A refusal
+ * back is required. It says up front whether a Xero refund note is raised - and,
+ * for a late card charge Xero has no record of, that the charge is recorded as
+ * a receipt first (#3924 round 6) - and that a refund made in the Stripe
+ * dashboard is not closed here. A refusal
  * shows in the dialog through `FocusedActionError`; a 409 also refreshes the
  * list. The dialog holds only the refund's id and reads the row from the list
  * (#3924 round 5, UX F1): if the refresh drops the row the dialog closes and
@@ -188,11 +213,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
               target.owedCents - amountCents,
               format,
             )} is no longer owed.`;
-      toast.success(
-        data.xeroRefundNoteQueued === true
-          ? `${recorded} Its Xero refund credit note, as a bank transfer, is queued.`
-          : `${recorded} No Xero refund credit note was queued: check the refund is recorded in Xero.`,
-      );
+      toast.success(`${recorded} ${xeroQueuedMessage(data.xeroQueued)}`);
       close();
       router.refresh();
     } catch {
@@ -265,11 +286,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
               Refunded it in the Stripe dashboard instead? Do not close it here: wait for that refund to show on
               the payment.
             </p>
-            <p className="text-muted-foreground">
-              {target?.takesXeroRefundNote
-                ? "A Xero refund credit note for the amount, as a bank transfer, is queued when you close it."
-                : "No Xero refund credit note is raised: there is no Xero invoice for this money to credit. Record the refund in Xero by hand if it needs one."}
-            </p>
+            <p className="text-muted-foreground">{target ? XERO_REFUND_NOTE_PROMISE[target.xeroRefundNote] : null}</p>
             <p className="font-medium text-foreground">
               {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
             </p>

@@ -16,6 +16,10 @@ import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import type { Prisma } from "@prisma/client";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
+import { paidAnotherWayCloseXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 
 /**
  * #1350 / #3639 / #3635: the Xero correction that follows a refund of a late
@@ -232,4 +236,45 @@ export async function finishApprovedLateCaptureRefundAfterReplay(operation: {
     approvedByMemberId: task?.completedByMemberId ?? null,
     manualRefundTaskId: task?.id ?? null,
   });
+}
+
+/**
+ * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit";
+ * `INV-PAY-121`): THE SECOND STEP for a late capture whose approved refund
+ * Stripe gave up on and the treasurer closed as paid another way. The close
+ * queued the capture's receipt; this queues the close's bank-transfer refund
+ * note against it (`INV-PAY-101`), for exactly the amount paid back, keyed on
+ * the close's record (`paidAnotherWayTaskId`) and dated the day it closed.
+ *
+ * Run ONLY by the receipt's worker, inside the transaction that writes the
+ * receipt's link, under the approval task's row lock
+ * (`recordReceiptThenQueueItsPaidAnotherWayNote`). Until that link exists the
+ * close's bank cash is outside what any refund note may answer
+ * (`readPaidAnotherWayCash`), so the note cannot be sized earlier by anyone;
+ * inside the transaction the link is visible, so this sizes it in full.
+ *
+ * Only a close whose key says its note waits for the receipt
+ * (`after-receipt`): one that queued its note itself, or raises none, is left
+ * alone. Returns the queued row's id, or null when none was queued. Throws, so
+ * a failure rolls back the link with it and the worker's retry runs both.
+ */
+export async function notePaidAnotherWayCloseOnReceipt(params: {
+  paymentIntentId: string;
+  clubZone: ClubTimeZone;
+  store: Prisma.TransactionClient;
+}): Promise<string | null> {
+  const close = await findLateCaptureRefundPaidAnotherWay(params.paymentIntentId, params.store);
+  if (!close || paidAnotherWayCloseXeroNote(close) !== "after-receipt" || close.paymentId === null) return null;
+  const amountCents = Math.max(0, close.amountCents ?? 0);
+  if (amountCents === 0) return null;
+  const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, amountCents, {
+    refundMethod: "internet-banking",
+    paidAnotherWayTaskId: close.id,
+    ...(close.completedAt
+      ? { documentDate: xeroDocumentDateFromInstant(close.completedAt, params.clubZone) }
+      : {}),
+    ...(close.completedByMemberId ? { createdByMemberId: close.completedByMemberId } : {}),
+    store: params.store,
+  });
+  return queued.queueOperationId;
 }

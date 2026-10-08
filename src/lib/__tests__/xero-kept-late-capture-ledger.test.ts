@@ -25,14 +25,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    settled from the Stripe account - the caps `xero-booking-invoice.test.ts`
  *    pins;
  *  - the change payment's supplementary invoice (case e2): released as the
- *    gross ask paid from Stripe, which `xero-supplementary-invoices.test.ts` pins.
+ *    gross ask paid from Stripe, which `xero-supplementary-invoices.test.ts` pins;
+ *  - (#3924 round 6) the "Paid another way" close's own writes - the money on
+ *    the payment, its record, and the one Xero row it queues - whose order and
+ *    locks `card-refund-paid-another-way.test.ts` pins. What it queues is the
+ *    REAL enqueue, and the receipt's worker and the cash evidence are real.
  */
 
 type Doc =
   | { kind: "invoice"; id: string; cents: number; date: string; existing?: boolean }
   | { kind: "payment"; invoiceId: string; cents: number; date: string }
   | { kind: "clearing-note"; invoiceId: string; cents: number; existing?: boolean }
-  | { kind: "refund-note"; cents: number; date: string; paymentIntentId?: string };
+  | { kind: "refund-note"; cents: number; date: string; paymentIntentId?: string; refundMethod?: string };
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -58,6 +62,7 @@ const h = vi.hoisted(() => {
       if ("lt" in e) return (actual as number) < (e.lt as number);
       if ("in" in e) return (e.in as unknown[]).includes(actual);
       if ("notIn" in e) return !(e.notIn as unknown[]).includes(actual);
+      if ("startsWith" in e) return typeof actual === "string" && actual.startsWith(e.startsWith as string);
       if ("not" in e) return e.not === null ? actual !== null && actual !== undefined : actual !== e.not;
       if ("path" in e) {
         const payload = (actual ?? {}) as Record<string, unknown>;
@@ -124,13 +129,23 @@ const h = vi.hoisted(() => {
     booking: delegate("booking"),
     xeroObjectLink: delegate("xeroObjectLink"),
     xeroSyncOperation: delegate("xeroSyncOperation"),
+    paymentRecoveryOperation: delegate("paymentRecoveryOperation"),
     $executeRaw: async () => 0,
   };
   db.$transaction = async (fn: (tx: unknown) => Promise<unknown>) => fn(db);
 
+  // An upsert, as the real writer's: the same object under the same role is one link.
   function writeLinks(links: Array<Record<string, unknown>> | undefined) {
     for (const link of links ?? []) {
-      table("xeroObjectLink").push({ id: id("link"), active: true, ...link } as Row);
+      const same = table("xeroObjectLink").find(
+        (row) =>
+          row.localModel === link.localModel &&
+          row.localId === link.localId &&
+          row.role === link.role &&
+          row.xeroObjectId === link.xeroObjectId,
+      );
+      if (same) Object.assign(same, link);
+      else table("xeroObjectLink").push({ id: id("link"), active: true, ...link } as Row);
     }
   }
   return { state, id, db, table, writeLinks };
@@ -176,7 +191,9 @@ vi.mock("@/lib/xero-sync", () => ({
       .filter((l) => l.localModel === "Payment" && l.localId === paymentId && l.role === "REFUND_CREDIT_NOTE" && l.active)
       .reduce((sum, l) => sum + ((l.metadata as { amountCents: number }).amountCents ?? 0), 0),
   findCanonicalPaymentRefundCreditNote: async () => null,
-  upsertXeroObjectLink: async () => undefined,
+  upsertXeroObjectLink: async (link: Record<string, unknown>) => {
+    h.writeLinks([link]);
+  },
   failXeroSyncOperation: async (operationId: string) => {
     const row = h.table("xeroSyncOperation").find((r) => r.id === operationId)!;
     row.status = "FAILED";
@@ -297,8 +314,11 @@ vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
 import { planKeptLateCaptureXeroRecord, finishKeptLateCaptureXeroRecord } from "@/lib/late-capture-kept-xero";
 import {
   createXeroKeptLateCaptureInvoice,
+  enqueueXeroKeptLateCaptureInvoiceOperation,
   settleKeptLateCaptureRecordOnApproval,
 } from "@/lib/xero-kept-late-capture-invoice";
+import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
+import { buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import {
   creditBackLateCaptureRefunds,
   noteLateCaptureRefunds,
@@ -451,6 +471,7 @@ async function runRefundNoteModel(note: Row) {
     refundAmountCents: number;
     paymentIntentId?: string;
     documentDate?: string;
+    refundMethod?: string;
   };
   const paymentId = note.localId as string;
   const intent = payload.paymentIntentId;
@@ -484,7 +505,13 @@ async function runRefundNoteModel(note: Row) {
   if (cents <= 0) return;
   const noteId = h.id("cn");
   note.xeroObjectId = noteId;
-  h.state.ledger.push({ kind: "refund-note", cents, date: payload.documentDate ?? "today", paymentIntentId: intent });
+  h.state.ledger.push({
+    kind: "refund-note",
+    cents,
+    date: payload.documentDate ?? "today",
+    paymentIntentId: intent,
+    refundMethod: payload.refundMethod,
+  });
   h.writeLinks([
     {
       localModel: "Payment",
@@ -531,6 +558,9 @@ function books() {
     } else if (doc.kind === "clearing-note") {
       income -= doc.cents;
       receivable -= doc.cents;
+    } else if (doc.refundMethod === "internet-banking") {
+      // #3924 round 6: a bank-transfer note is settled from the bank account (`bankAccount`).
+      income -= doc.cents;
     } else {
       // An unallocated refund note settled by a Stripe refund payment.
       income -= doc.cents;
@@ -538,6 +568,13 @@ function books() {
     }
   }
   return { income, stripe, receivable };
+}
+
+/** The club's bank account, from the documents sent: what bank-transfer refund notes paid out. */
+function bankAccount() {
+  return -h.state.ledger
+    .filter((d): d is Extract<Doc, { kind: "refund-note" }> => d.kind === "refund-note" && d.refundMethod === "internet-banking")
+    .reduce((sum, d) => sum + d.cents, 0);
 }
 
 /** What really happened: the capture, net of every refund Stripe paid. */
@@ -930,5 +967,167 @@ describe("C2: the repair tool's refund of a late capture Xero never received", (
     // as nothing net moved in Stripe.
     expect(books()).toEqual({ income: 0, stripe: 0, receivable: 0 });
     expect(books().stripe).toBe(realStripe());
+  });
+});
+
+/**
+ * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit"; `INV-PAY-121`):
+ * the treasurer approves refunding the late charge, every Stripe retry fails,
+ * and they pay the member back by bank and close it as "Paid another way". The
+ * charge never left the Stripe account, so Xero records it as a receipt, then a
+ * bank-transfer refund note against it: the charge nets to nil, the Stripe
+ * account shows the deposit and the bank account the payment.
+ */
+describe("round 6: a late charge's refund paid another way - record the receipt, then credit it", () => {
+  const CLOSED_AT = new Date("2026-06-20T02:00:00.000Z"); // 20 Jun at the club
+  const CLOSE = "close_1";
+
+  /** "Refund to card", whose Stripe refund never goes through: its card refund row, retries spent. */
+  async function approveButStripeGivesUp() {
+    task().status = "COMPLETED";
+    await settleKeptLateCaptureRecordOnApproval({ manualRefundTaskId: TASK, paymentIntentId: INTENT, store: h.db as never });
+    h.table("paymentRecoveryOperation").push({
+      id: "op_dead",
+      idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey(INTENT),
+      status: "FAILED",
+      attempts: 5,
+    });
+  }
+
+  /** MODEL of the close's writes (see the file docblock), then the one Xero row it queues - the real enqueues. */
+  async function closePaidAnotherWay(cents: number) {
+    const recorded = (await readLateCaptureXeroReceipt(INTENT)).kind === "recorded";
+    const payment = h.table("payment").find((p) => p.id === PAYMENT)!;
+    payment.refundedAmountCents = (payment.refundedAmountCents as number) + cents;
+    h.table("manualRefundTask").push({
+      id: CLOSE,
+      bookingId: BOOKING,
+      paymentId: PAYMENT,
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      status: "COMPLETED",
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op_dead", {
+        xeroRefundNote: recorded ? "now" : "after-receipt",
+      }),
+      amountCents: cents,
+      completedAt: CLOSED_AT,
+      completedByMemberId: "treasurer",
+    });
+    if (recorded) {
+      await enqueueXeroRefundCreditNoteOperation(PAYMENT, cents, {
+        refundMethod: "internet-banking",
+        paidAnotherWayTaskId: CLOSE,
+        store: h.db as never,
+      });
+    } else {
+      const queued = await enqueueXeroKeptLateCaptureInvoiceOperation({
+        manualRefundTaskId: TASK,
+        bookingId: BOOKING,
+        paymentIntentId: INTENT,
+        capturedCents: capture().amountCents as number,
+        capturedOn: CAPTURE_DAY,
+        store: h.db as never,
+      });
+      expect(queued.queueOperationId).not.toBeNull();
+    }
+  }
+
+  const noteRows = () => h.table("xeroSyncOperation").filter((r) => r.queueType === "REFUND_CREDIT_NOTE");
+  const keptInvoices = () => h.state.ledger.filter((d) => d.kind === "invoice" && !d.existing);
+
+  for (const primaryInvoice of [null, { cents: 30000 }]) {
+    const label = primaryInvoice ? "(b) cleared invoice" : "(a) no invoice";
+
+    it(`${label}: paid back in full - the receipt, then the note; nil income, the Stripe deposit and the bank payment`, async () => {
+      seed({ primaryInvoice });
+      await approveButStripeGivesUp();
+      await closePaidAnotherWay(24000);
+
+      // Before the receipt is in Xero: no note, and nothing may size one.
+      expect(noteRows()).toHaveLength(0);
+      const payment = h.table("payment").find((p) => p.id === PAYMENT)!;
+      expect((await resolveRefundNoteEligibleCash(payment as never)).eligibleCashCents).toBe(0);
+
+      await runOutbox();
+
+      expect(books()).toEqual({ income: 0, stripe: 24000, receivable: 0 });
+      expect(books().stripe).toBe(realStripe());
+      expect(bankAccount()).toBe(-24000);
+      expect(keptInvoices()).toEqual([expect.objectContaining({ cents: 24000, date: CAPTURE_DAY })]);
+      // Dated the day the treasurer closed it, and keyed on the close.
+      expect(refundNotes()).toEqual([expect.objectContaining({ cents: 24000, date: "2026-06-20", refundMethod: "internet-banking" })]);
+      expect(noteRows()).toEqual([expect.objectContaining({ correlationKey: expect.stringContaining(`paid-another-way:${CLOSE}`) })]);
+      // Nothing is left for the nightly self-heal.
+      expect(await selfHealAfterGrace()).toBe(0);
+      expect(refundNotes()).toHaveLength(1);
+    });
+
+    it(`${label}: paid back in part - the GROSS receipt, a note for what was paid back, and the rest stays income`, async () => {
+      seed({ primaryInvoice });
+      await approveButStripeGivesUp();
+      await closePaidAnotherWay(10000);
+      await runOutbox();
+      expect(books()).toEqual({ income: 14000, stripe: 24000, receivable: 0 });
+      expect(bankAccount()).toBe(-10000);
+      expect(await selfHealAfterGrace()).toBe(0);
+    });
+
+    it(`${label}: MUTATION - whatever order the outbox runs its rows in, the note never credits the booking's invoice`, async () => {
+      seed({ primaryInvoice });
+      await approveButStripeGivesUp();
+      await closePaidAnotherWay(24000);
+      // Notes first, then the receipt, then notes again.
+      for (const note of noteRows().filter((r) => r.status === "PENDING")) await runRefundNoteModel(note);
+      expect(refundNotes()).toHaveLength(0);
+      await runOutbox();
+      const noteLinks = h.table("xeroObjectLink").filter((l) => l.role === "REFUND_CREDIT_NOTE");
+      const receipt = h.table("xeroObjectLink").find((l) => l.role === "KEPT_LATE_CAPTURE_INVOICE")!;
+      expect(noteLinks).toEqual([
+        expect.objectContaining({ metadata: expect.objectContaining({ invoiceId: receipt.xeroObjectId }) }),
+      ]);
+      expect(books()).toEqual({ income: 0, stripe: 24000, receivable: 0 });
+    });
+  }
+
+  it("(b) MUTATION: before the receipt is in Xero the nightly self-heal finds no gap, so it never raises a card note on the cleared invoice", async () => {
+    seed({ primaryInvoice: { cents: 30000 } });
+    await approveButStripeGivesUp();
+    await closePaidAnotherWay(24000);
+    const missing = await getRefundsMissingXeroCreditNotes({
+      limit: 50,
+      now: new Date(Date.now() + 72 * 60 * 60 * 1000),
+    });
+    expect(missing.count).toBe(0);
+  });
+
+  it("a receipt already in Xero (kept and sent, then reopened and approved): the close's note is queued with it, and no second receipt", async () => {
+    seed({});
+    await keep();
+    await runOutbox();
+    reopen();
+    await approveButStripeGivesUp();
+    await closePaidAnotherWay(24000);
+    expect(noteRows()).toHaveLength(1);
+    await runOutbox();
+    expect(books()).toEqual({ income: 0, stripe: 24000, receivable: 0 });
+    expect(bankAccount()).toBe(-24000);
+    expect(keptInvoices()).toHaveLength(1);
+  });
+
+  it("a receipt whose Stripe payment failed (PARTIAL) is retried: the payment is recorded, and the close's note is never queued twice", async () => {
+    seed({});
+    await approveButStripeGivesUp();
+    await closePaidAnotherWay(24000);
+    h.state.failNextPayment = true; // PARTIAL: the link is written, the payment is retried
+    await runOutbox();
+    expect(noteRows()).toHaveLength(1);
+    const row = h.table("xeroSyncOperation").find((r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE")!;
+    expect(row.status).toBe("PARTIAL");
+    row.status = "RUNNING"; // the retry
+    await createXeroKeptLateCaptureInvoice({ syncOperationId: row.id });
+    await runOutbox();
+    // One note, never a second for the retry.
+    expect(noteRows()).toHaveLength(1);
+    expect(books()).toEqual({ income: 0, stripe: 24000, receivable: 0 });
+    expect(bankAccount()).toBe(-24000);
   });
 });

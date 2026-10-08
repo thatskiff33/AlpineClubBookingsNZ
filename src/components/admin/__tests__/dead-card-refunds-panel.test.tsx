@@ -44,7 +44,7 @@ function row(overrides: Partial<DeadCardRefundPanelRow> = {}): DeadCardRefundPan
     raisedAt: "2026-06-20T00:00:00.000Z",
     owedCents: 15_000,
     wholeAmountOnly: false,
-    takesXeroRefundNote: true,
+    xeroRefundNote: "now",
     stripeMayHaveRefunded: false,
     ...overrides,
   };
@@ -87,8 +87,32 @@ describe("the Paid another way dialog", () => {
   });
 
   it("says no Xero note is raised where there is no invoice to credit", () => {
-    openDialog(row({ takesXeroRefundNote: false }));
+    openDialog(row({ xeroRefundNote: "none" }));
     expect(screen.getByText(/No Xero refund credit note is raised: there is no Xero invoice/)).toBeInTheDocument();
+  });
+
+  // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit").
+  it("MUTATION: says a late card charge Xero has no record of is recorded as a receipt first, then credited", () => {
+    openDialog(row({ xeroRefundNote: "after-receipt" }));
+    expect(
+      screen.getByText(
+        "Xero has no record of this late card charge yet. Closing it records the charge in Xero as a payment received into the Stripe account, then queues a Xero refund credit note for the amount, as a bank transfer, against it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No Xero refund credit note is raised/)).not.toBeInTheDocument();
+  });
+
+  it("MUTATION: after a receipt-first close, the message says the note follows the receipt", async () => {
+    openDialog(row({ xeroRefundNote: "after-receipt" }));
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
+    respond(200, { success: true, xeroQueued: "receipt-then-refund-note" });
+    fireEvent.click(closeButton());
+
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "Closed. $150.00 recorded as paid back in full. The late card charge is queued to be recorded in Xero as a payment received into the Stripe account; its refund credit note, as a bank transfer, follows once it is.",
+    );
   });
 
   it("MUTATION: makes the treasurer choose full or part - nothing is chosen for them, and no amount is shown until they do", () => {
@@ -165,7 +189,7 @@ describe("the Paid another way dialog", () => {
     openDialog();
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer, ref 123" } });
-    respond(200, { success: true, xeroRefundNoteQueued: true });
+    respond(200, { success: true, xeroQueued: "refund-note" });
     fireEvent.click(closeButton());
 
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
@@ -187,7 +211,7 @@ describe("the Paid another way dialog", () => {
     fireEvent.click(partChoice());
     fireEvent.change(amountBox(), { target: { value: "100.00" } });
     fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
-    respond(200, { success: true, xeroRefundNoteQueued: false });
+    respond(200, { success: true, xeroQueued: "nothing" });
     fireEvent.click(closeButton());
 
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
@@ -251,7 +275,7 @@ describe("#3924 round 5 (UX F1): the dialog reads its refund from the list, so a
     rerender(<DeadCardRefundsPanel rows={[row({ owedCents: 9_000 })]} />);
 
     expect(amountBox().value).toBe("90.00");
-    respond(200, { success: true, xeroRefundNoteQueued: true });
+    respond(200, { success: true, xeroQueued: "refund-note" });
     fireEvent.click(closeButton());
     await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
     expect(mocks.fetch).toHaveBeenCalledWith(

@@ -87,23 +87,39 @@ export function refundRequestHandBackOccurrenceKey(refundRequestId: string): str
  * can tell it from a card refund.
  *
  * #3924 round 5 (owner, 8 Oct 2026: "Raise a refund note for all"): the key
- * also records whether the close queued its Xero refund note. Every kind does
- * where the payment has an invoice to credit; one with none ends in
- * `CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX`. The cash evidence reads that,
- * not the invoice as it stands later, so an invoice linked after the close
- * never makes the nightly self-heal raise a card note for bank money.
+ * also records how the close's Xero refund note is raised
+ * (`PaidAnotherWayXeroNote`), so the cash evidence reads the close's own
+ * answer, never the invoice as it stands later - an invoice linked after the
+ * close never makes the nightly self-heal raise a card note for bank money:
+ *
+ * - `now` (no suffix): queued with the close, where there is an invoice to
+ *   credit;
+ * - `after-receipt` (`:note-after-receipt`; #3924 round 6, owner, 8 Oct 2026:
+ *   "Record receipt, then credit"): a late card charge Xero holds no receipt
+ *   for. The close queues the charge's receipt, and the receipt's worker raises
+ *   the note once the receipt is in Xero (`INV-PAY-110`, `INV-PAY-121`);
+ * - `none` (`:no-xero-note`): nothing to credit, and no receipt the app can
+ *   record.
  */
 export const CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX = "card-refund-paid-another-way:";
 const CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX = ":no-xero-note";
+const CARD_REFUND_PAID_ANOTHER_WAY_NOTE_AFTER_RECEIPT_SUFFIX = ":note-after-receipt";
+
+/** How a paid-another-way close's bank-transfer Xero refund note is raised; see the key's docblock. */
+export type PaidAnotherWayXeroNote = "now" | "after-receipt" | "none";
+
+const PAID_ANOTHER_WAY_KEY_SUFFIX: Record<PaidAnotherWayXeroNote, string> = {
+  now: "",
+  "after-receipt": CARD_REFUND_PAID_ANOTHER_WAY_NOTE_AFTER_RECEIPT_SUFFIX,
+  none: CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX,
+};
 
 /** The one occurrence key of one card refund operation's paid-another-way close. */
 export function cardRefundPaidAnotherWayOccurrenceKey(
   paymentRecoveryOperationId: string,
-  { xeroRefundNote }: { xeroRefundNote: boolean },
+  { xeroRefundNote }: { xeroRefundNote: PaidAnotherWayXeroNote },
 ): string {
-  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${
-    xeroRefundNote ? "" : CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX
-  }`;
+  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote]}`;
 }
 
 /**
@@ -145,28 +161,37 @@ export function isCardRefundPaidAnotherWayTask(task: {
   );
 }
 
+/** A paid-another-way record's key, split into the operation it closed and how its note is raised. */
+function readPaidAnotherWayKey(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): { operationId: string; xeroRefundNote: PaidAnotherWayXeroNote } | null {
+  if (!isCardRefundPaidAnotherWayTask(task) || task.occurrenceKey === null) return null;
+  const rest = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
+  for (const xeroRefundNote of ["after-receipt", "none"] as const) {
+    const suffix = PAID_ANOTHER_WAY_KEY_SUFFIX[xeroRefundNote];
+    if (rest.endsWith(suffix)) {
+      const operationId = rest.slice(0, -suffix.length);
+      return operationId.length > 0 ? { operationId, xeroRefundNote } : null;
+    }
+  }
+  return rest.length > 0 ? { operationId: rest, xeroRefundNote: "now" } : null;
+}
+
 /** The operation a paid-another-way record closed, read off its key; null for any other task. */
 export function paymentRecoveryOperationIdOfPaidAnotherWay(task: {
   kind: ManualRefundTaskKind | string | null;
   occurrenceKey: string | null;
 }): string | null {
-  if (!isCardRefundPaidAnotherWayTask(task) || task.occurrenceKey === null) return null;
-  const rest = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
-  const id = rest.endsWith(CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX)
-    ? rest.slice(0, -CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX.length)
-    : rest;
-  return id.length > 0 ? id : null;
+  return readPaidAnotherWayKey(task)?.operationId ?? null;
 }
 
-/** Whether a paid-another-way close queued its Xero refund note, read off its key; false for any other task. */
-export function paidAnotherWayCloseTookXeroRefundNote(task: {
+/** How a paid-another-way close's Xero refund note is raised, read off its key; null for any other task. */
+export function paidAnotherWayCloseXeroNote(task: {
   kind: ManualRefundTaskKind | string | null;
   occurrenceKey: string | null;
-}): boolean {
-  return (
-    paymentRecoveryOperationIdOfPaidAnotherWay(task) !== null &&
-    !(task.occurrenceKey ?? "").endsWith(CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX)
-  );
+}): PaidAnotherWayXeroNote | null {
+  return readPaidAnotherWayKey(task)?.xeroRefundNote ?? null;
 }
 
 /** The same question as a `ManualRefundTask` where fragment: every paid-another-way record. */

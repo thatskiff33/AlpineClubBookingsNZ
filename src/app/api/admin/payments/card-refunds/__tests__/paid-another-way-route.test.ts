@@ -56,7 +56,7 @@ beforeEach(() => {
     amountCents: 5_000,
     owedCents: 5_000,
     paidBack: "full",
-    xeroRefundNoteQueued: false,
+    xeroQueued: "nothing",
   });
 });
 
@@ -110,7 +110,7 @@ describe("what the close needs", () => {
       note: "Bank transfer, ref 123",
       actingMemberId: "treasurer-1",
     });
-    await expect(response.json()).resolves.toMatchObject({ success: true, xeroRefundNoteQueued: false });
+    await expect(response.json()).resolves.toMatchObject({ success: true, xeroQueued: "nothing" });
     expect(revalidatePath).toHaveBeenCalledWith("/admin/stuck-states");
   });
 

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   aggregate: vi.fn(),
   findTasks: vi.fn(),
   findOperations: vi.fn(),
+  receiptRecorded: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -29,6 +30,10 @@ vi.mock("@/lib/prisma", () => ({
     manualRefundTask: { findMany: mocks.findTasks },
     paymentRecoveryOperation: { findMany: mocks.findOperations },
   },
+}));
+
+vi.mock("@/lib/late-capture-paid-another-way", () => ({
+  paidAnotherWayCloseReceiptRecorded: (...args: unknown[]) => mocks.receiptRecorded(...args),
 }));
 
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
@@ -45,6 +50,7 @@ beforeEach(() => {
   mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
   mocks.findTasks.mockResolvedValue([]);
   mocks.findOperations.mockResolvedValue([]);
+  mocks.receiptRecorded.mockResolvedValue(false);
 });
 
 describe("resolveStripeCashRefundEvidence — provider-ledger rule", () => {
@@ -331,5 +337,38 @@ describe("resolveStripeCashRefundEvidence - a card refund closed as paid another
     mocks.findTasks.mockResolvedValue([noted]);
     await resolveStripeCashRefundEvidence(payment);
     expect(mocks.findOperations).not.toHaveBeenCalled();
+    expect(mocks.receiptRecorded).not.toHaveBeenCalled();
+  });
+
+  // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit").
+  describe("a late charge's close whose note waits for the charge's receipt", () => {
+    const waiting = {
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: "card-refund-paid-another-way:op-late:note-after-receipt",
+      amountCents: 5000,
+    };
+
+    it("MUTATION: legacy mirror: before the receipt is in Xero it is not cash any note may answer", async () => {
+      mocks.findTasks.mockResolvedValue([waiting]);
+      const evidence = await resolveStripeCashRefundEvidence(payment);
+      expect(evidence.source).toBe("legacy-mirror");
+      expect(evidence.cashRefundCents).toBe(5000);
+      expect(mocks.receiptRecorded).toHaveBeenCalledWith(waiting, expect.anything());
+    });
+
+    it("MUTATION: provider ledger: before the receipt it is not added to the card rows", async () => {
+      mocks.groupBy.mockResolvedValue([{ status: "succeeded", _sum: { amountCents: 2000 }, _count: { _all: 1 } }]);
+      mocks.findTasks.mockResolvedValue([waiting]);
+      const evidence = await resolveStripeCashRefundEvidence(payment);
+      expect(evidence.cashRefundCents).toBe(2000);
+    });
+
+    it("once the receipt is in Xero it is noted cash on both paths, for the note the receipt's worker queues", async () => {
+      mocks.receiptRecorded.mockResolvedValue(true);
+      mocks.findTasks.mockResolvedValue([waiting]);
+      expect((await resolveStripeCashRefundEvidence(payment)).cashRefundCents).toBe(10000);
+      mocks.groupBy.mockResolvedValue([{ status: "succeeded", _sum: { amountCents: 2000 }, _count: { _all: 1 } }]);
+      expect((await resolveStripeCashRefundEvidence(payment)).cashRefundCents).toBe(7000);
+    });
   });
 });

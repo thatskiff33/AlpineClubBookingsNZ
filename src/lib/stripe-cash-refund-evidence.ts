@@ -42,7 +42,9 @@
  *   and one that did not never does (`readPaidAnotherWayCash`): the provider
  *   path adds the noted closes to its rows, the legacy path takes the un-noted
  *   ones off the mirror. Read from the close's persisted record, never the
- *   operation's wording.
+ *   operation's wording. A close whose note waits for a late capture's receipt
+ *   (#3924 round 6) counts as noted only once that receipt is in Xero; until
+ *   then the legacy path takes it off the mirror too.
  *
  * Stated limits. The first two are fail-safe: they can only UNDER-state cash,
  * so the pipeline under-flags a genuine refund note and can never mint one.
@@ -195,7 +197,10 @@ export async function resolveStripeCashRefundEvidence(
   const accountCreditCents = await accountCreditDispositionCents(db, payment.bookingId);
 
   return {
-    cashRefundCents: Math.max(0, mirrorCents - accountCreditCents - paidAnotherWay.unnotedCents),
+    cashRefundCents: Math.max(
+      0,
+      mirrorCents - accountCreditCents - paidAnotherWay.unnotedCents - paidAnotherWay.awaitingReceiptCents,
+    ),
     countedRefundCents: 0,
     refundLedgerRowCount: 0,
     accountCreditCents,

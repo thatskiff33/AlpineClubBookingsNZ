@@ -54,7 +54,7 @@ const DEAD = {
   raisedAt: "2026-06-20T00:00:00.000Z",
   owedCents: 15_000,
   wholeAmountOnly: false,
-  takesXeroRefundNote: true,
+  xeroRefundNote: "now",
   stripeMayHaveRefunded: false,
 };
 
