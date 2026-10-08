@@ -561,7 +561,7 @@ Four rules follow, and a new spec must satisfy all four:
   Those retry bands cost calendar navigation: a spec reaches its dates by
   clicking the wizard calendar's "Next ›" one month at a time, bounded by
   `MAX_MONTH_HOPS` in `e2e/helpers/booking.ts`. Base 0–15 × attempt 0–2 needs
-  about 15 hops at most and the bound is 24, so nothing in range can run
+  at most 16 hops (measured over a year of run dates) and the bound is 24, so nothing in range can run
   out — and if a future base or stride does, `selectCalendarDay` now fails on the
   month it could not reach rather than timing out on a day button.
 

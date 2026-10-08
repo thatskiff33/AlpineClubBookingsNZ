@@ -242,7 +242,7 @@ export function stayWindow(index: number): StayWindow {
 //    headroom; stayWindow still throws loudly if a run date ever changes that.
 //  - Calendar month hops. A spec reaches these dates by clicking the booking
 //    calendar's "Next ›" one month at a time, bounded by MAX_MONTH_HOPS in
-//    e2e/helpers/booking.ts (24). Stay index 60 is at most ≈ 18 month hops, so
+//    e2e/helpers/booking.ts (24). Stay index 60 is at most 19 month hops (measured over a year of run dates), so
 //    even a calendar-driven spec clears it — and the specs on the highest bases
 //    (locked-out-pickup-and-pay) create their bookings over the API and never
 //    open the calendar at all. This ceiling was missed when the stride was first
