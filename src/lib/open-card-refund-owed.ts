@@ -100,6 +100,11 @@ export interface CardRefundOperationRow {
   allocationPlan: unknown;
   paymentTransactionId: string | null;
   createdAt: Date;
+  /**
+   * When it closed; null while open (and on a row closed before the column was
+   * written). A closed operation takes no refund recorded after it.
+   */
+  succeededAt: Date | null;
 }
 
 /** A refund recorded on the payment (`PaymentRefund`), as the net-out reads it. */
@@ -140,7 +145,8 @@ export function isOwedCardRefundOperation(operation: Pick<CardRefundOperationRow
 }
 
 /** One slice of an operation, as the net-out fills it. */
-interface OwedSlice {
+export interface CardRefundSlice {
+  /** "" on a ledger refund with no plan yet: it names no transaction. */
   paymentTransactionId: string;
   amountCents: number;
   /**
@@ -167,7 +173,7 @@ interface OwedSlice {
  *   before its first Stripe call): one unfillable slice of its amount, which the
  *   per-payment cap bounds, as the worker's own derivation is.
  */
-function operationSlices(operation: CardRefundOperationRow): OwedSlice[] {
+function operationSlices(operation: CardRefundOperationRow): CardRefundSlice[] {
   const plan = parseRefundAllocationPlan(operation.allocationPlan);
   if (plan) {
     return plan.map((slice) => ({ ...slice, exact: true, filledCents: 0 }));
@@ -186,7 +192,7 @@ function operationSlices(operation: CardRefundOperationRow): OwedSlice[] {
 }
 
 /** Whether a slice takes this refund, of which `leftCents` is not yet placed. */
-function sliceTakes(slice: OwedSlice, refund: RecordedCardRefundRow, leftCents: number): boolean {
+function sliceTakes(slice: CardRefundSlice, refund: RecordedCardRefundRow, leftCents: number): boolean {
   if (slice.paymentTransactionId !== refund.paymentTransactionId) return false;
   if (slice.filledCents >= slice.amountCents) return false;
   return slice.exact
@@ -195,8 +201,23 @@ function sliceTakes(slice: OwedSlice, refund: RecordedCardRefundRow, leftCents: 
 }
 
 /**
- * What each of one payment's open card refunds still owes, in cents, keyed by
- * operation id, before the per-payment cap.
+ * Whether an operation can take a refund recorded at `recordedAt`: one raised
+ * at or before it and, once closed, closed at or after it (#3924 round-4 money
+ * review, M4). A closed operation's slices stop at its close - Stripe's own
+ * success records each slice before the close, and a "Paid another way" close
+ * counts as filled when it is made - so a refund recorded later is never a
+ * closed operation's. A row closed before `succeededAt` was written has no
+ * bound, as before.
+ */
+function operationWindowTakes(operation: CardRefundOperationRow, recordedAt: Date): boolean {
+  if (operation.createdAt.getTime() > recordedAt.getTime()) return false;
+  if (operation.status !== SUCCEEDED || operation.succeededAt === null) return true;
+  return recordedAt.getTime() <= operation.succeededAt.getTime();
+}
+
+/**
+ * Every card refund operation on one payment with its slices, each filled by
+ * the refunds already recorded on the payment that are its own.
  *
  * WHICH RECORDED REFUND IS WHOSE (#3924 money review, F1 and F2). A refund's
  * `PaymentRefund` row and its `refundedAmountCents` are written slice by slice,
@@ -204,13 +225,19 @@ function sliceTakes(slice: OwedSlice, refund: RecordedCardRefundRow, leftCents: 
  * `completePaymentRecoveryOperation`), and a partial failure leaves an operation
  * open with some slices sent. A row carries no link to the operation that sent
  * it, so each is matched by what a slice's own refund must look like: on that
- * slice's transaction, of exactly its amount, recorded after the operation was
- * raised (every operation's slices are unsent when it is raised: the refund
- * request's partial path enqueues only the remainder). Each row fills at most
- * one slice, and goes to the operation raised MOST RECENTLY before it with a
- * slice it fits - so a later operation's own refund, open or closed, is never
- * taken as an older open one's progress. Every card refund operation on the
- * payment takes part, closed ones included, though only open ones owe.
+ * slice's transaction, of exactly its amount, recorded inside the operation's
+ * window (`operationWindowTakes`: after it was raised and, once it closed, not
+ * after its close). A refund recorded BEFORE an operation was raised is never
+ * its: every writer that raises one after a partial inline refund carries only
+ * the remainder - the refund request's route enqueues the plan's unsent slices
+ * (a recording failure included, since round 4: `refundPaymentTransactions`
+ * wraps it in `PartialRefundError`), an edit's enqueues the amount less what
+ * was recorded, and a cancellation persists its plan before its first Stripe
+ * call. Each row fills at most one slice, and goes to the operation raised MOST
+ * RECENTLY before it with a slice it fits - so a later operation's own refund,
+ * open or closed, is never taken as an older open one's progress. Every card
+ * refund operation on the payment takes part, closed ones included, though only
+ * open ones owe.
  *
  * So an unrelated later refund of a different amount nets nothing. One of
  * exactly a still-unsent slice's amount, on its transaction, made with no
@@ -218,13 +245,14 @@ function sliceTakes(slice: OwedSlice, refund: RecordedCardRefundRow, leftCents: 
  * succeeded first time) is taken as that slice: for a refund the treasurer made
  * in the dashboard to settle a dead operation, that is the truth.
  */
-export function openCardRefundOwedByOperation(payment: CardRefundOwedPaymentRow): Map<string, number> {
+export function cardRefundSlicesByOperation(
+  payment: CardRefundOwedPaymentRow,
+): ReadonlyArray<{ operation: CardRefundOperationRow; slices: ReadonlyArray<CardRefundSlice> }> {
   const operations = payment.recoveryOperations
     .filter(isOwedCardRefundOperation)
     .map((operation) => ({ operation, slices: operationSlices(operation) }))
     .sort((left, right) => left.operation.createdAt.getTime() - right.operation.createdAt.getTime());
-  const owed = new Map<string, number>();
-  if (!operations.some(({ operation }) => operation.status !== SUCCEEDED)) return owed;
+  if (!operations.some(({ operation }) => operation.status !== SUCCEEDED)) return operations;
 
   const refunds = payment.refunds
     .filter((refund) => refund.paymentTransactionId !== null && isRecordedRefundStatus(refund.status))
@@ -233,7 +261,7 @@ export function openCardRefundOwedByOperation(payment: CardRefundOwedPaymentRow)
     let leftCents = Math.max(0, refund.amountCents);
     for (let index = operations.length - 1; index >= 0 && leftCents > 0; index -= 1) {
       const candidate = operations[index];
-      if (!candidate || candidate.operation.createdAt.getTime() > refund.createdAt.getTime()) continue;
+      if (!candidate || !operationWindowTakes(candidate.operation, refund.createdAt)) continue;
       const slice = candidate.slices.find((each) => sliceTakes(each, refund, leftCents));
       if (!slice) continue;
       const takenCents = Math.min(leftCents, slice.amountCents - slice.filledCents);
@@ -241,12 +269,26 @@ export function openCardRefundOwedByOperation(payment: CardRefundOwedPaymentRow)
       leftCents -= takenCents;
     }
   }
+  return operations;
+}
 
-  for (const { operation, slices } of operations) {
+/** What a slice has still to send, in cents. */
+export function unsentSliceCents(slice: CardRefundSlice): number {
+  return Math.max(0, slice.amountCents - slice.filledCents);
+}
+
+/**
+ * What each of one payment's open card refunds still owes, in cents, keyed by
+ * operation id, before the per-payment cap: its slices' unsent parts
+ * (`cardRefundSlicesByOperation`).
+ */
+export function openCardRefundOwedByOperation(payment: CardRefundOwedPaymentRow): Map<string, number> {
+  const owed = new Map<string, number>();
+  for (const { operation, slices } of cardRefundSlicesByOperation(payment)) {
     if (operation.status === SUCCEEDED) continue;
     owed.set(
       operation.id,
-      slices.reduce((sum, slice) => sum + Math.max(0, slice.amountCents - slice.filledCents), 0),
+      slices.reduce((sum, slice) => sum + unsentSliceCents(slice), 0),
     );
   }
   return owed;

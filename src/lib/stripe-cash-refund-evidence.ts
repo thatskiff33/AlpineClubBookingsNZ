@@ -35,6 +35,14 @@
  *   mirror). Pre-ledger genuine cash refunds keep self-healing; pre-ledger
  *   account-credit cancellations are excluded.
  *
+ * - #3924 round 4 (money review, M1; `INV-PAY-119`): a card refund the
+ *   treasurer closed as "Paid another way" raised `refundedAmountCents` with no
+ *   refund row. On both paths a close that took its own refund note (a
+ *   cancellation's card refund) counts, and one that did not never does
+ *   (`readPaidAnotherWayCash`): the provider path adds the noted closes to its
+ *   rows, the legacy path takes the un-noted ones off the mirror. Read from the
+ *   close's persisted record, never the operation's wording.
+ *
  * Stated limits. The first two are fail-safe: they can only UNDER-state cash,
  * so the pipeline under-flags a genuine refund note and can never mint one.
  * The third is NOT fail-safe in that direction and is the deliberate cost of
@@ -65,6 +73,7 @@
  *   row lands on `failed`.
  */
 import { Prisma } from "@prisma/client";
+import { readPaidAnotherWayCash } from "@/lib/card-refund-paid-another-way-cash";
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
@@ -73,7 +82,9 @@ import { prisma } from "@/lib/prisma";
 export interface StripeCashRefundEvidence {
   /**
    * Cents of Stripe CASH refund the Xero refund-note pipeline should cover
-   * for this payment. Never negative, never above `refundedAmountCents`.
+   * for this payment - plus any bank transfer a "Paid another way" close
+   * noted on it (#3924 round 4, `readPaidAnotherWayCash`). Never negative,
+   * never above `refundedAmountCents`.
    */
   cashRefundCents: number;
   /**
@@ -168,9 +179,11 @@ export async function resolveStripeCashRefundEvidence(
     )
     .reduce((sum, row) => sum + Math.max(0, row._sum.amountCents ?? 0), 0);
 
+  const paidAnotherWay = await readPaidAnotherWayCash(db, payment.id);
+
   if (refundLedgerRowCount > 0) {
     return {
-      cashRefundCents: Math.min(mirrorCents, countedRefundCents),
+      cashRefundCents: Math.min(mirrorCents, countedRefundCents + paidAnotherWay.notedCents),
       countedRefundCents,
       refundLedgerRowCount,
       accountCreditCents: 0,
@@ -181,7 +194,7 @@ export async function resolveStripeCashRefundEvidence(
   const accountCreditCents = await accountCreditDispositionCents(db, payment.bookingId);
 
   return {
-    cashRefundCents: Math.max(0, mirrorCents - accountCreditCents),
+    cashRefundCents: Math.max(0, mirrorCents - accountCreditCents - paidAnotherWay.unnotedCents),
     countedRefundCents: 0,
     refundLedgerRowCount: 0,
     accountCreditCents,

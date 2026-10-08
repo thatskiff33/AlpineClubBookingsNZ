@@ -76,19 +76,77 @@ export function refundRequestHandBackOccurrenceKey(refundRequestId: string): str
 }
 
 /**
+ * #3372 (owner, 7 Oct 2026: "Count + add close action"; #3924 round 4, M2,
+ * `INV-PAY-119`): THE OCCURRENCE-KEY PREFIX of the record a "Paid another way"
+ * close writes - a card refund Stripe gave up on, which the treasurer paid back
+ * by bank transfer instead (`closeCardRefundPaidAnotherWay`). One per
+ * `PaymentRecoveryOperation`, so the key is the duplicate fence and, with the
+ * kind, the marker. The row is born COMPLETED and never OPEN: it records money
+ * already sent, so the booking ledger's hand-back line has a completed task to
+ * stand on and the Xero cash evidence can tell it from a card refund.
+ */
+export const CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX = "card-refund-paid-another-way:";
+
+/** The one occurrence key of one card refund operation's paid-another-way close. */
+export function cardRefundPaidAnotherWayOccurrenceKey(paymentRecoveryOperationId: string): string {
+  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}`;
+}
+
+/**
  * #3827 (`INV-PAY-117`): the key prefixes of every hand-back that is NOT a
  * cancellation's - money promised back by bank transfer on a decision other
  * than a cancel (an edit's reduction, an approved refund request). The one
  * list the predicate and both query fragments below are built from.
+ *
+ * #3924 round 4 (M2): also a card refund's paid-another-way close. It is not a
+ * cancellation's hand-back in the sense these readers ask - no cancellation
+ * raised it, it is never OPEN, and its Xero note (a cancellation's card refund
+ * only) is queued by the close itself, not by a hand-back's completion - so
+ * the readers that select a cancellation's hand-backs by kind leave it out
+ * (the booking repair tool's late-cash evidence, the organisation hand-back's
+ * duplicate check), and the readers census polices any new one.
  */
 const NON_CANCELLATION_HAND_BACK_KEY_PREFIXES = [
   EDIT_REFUND_HAND_BACK_KEY_PREFIX,
   REFUND_REQUEST_HAND_BACK_KEY_PREFIX,
+  CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX,
 ] as const;
 
 function hasKeyPrefix(occurrenceKey: string | null, prefix: string): boolean {
   return occurrenceKey?.startsWith(prefix) ?? false;
 }
+
+/**
+ * #3924 round 4 (M2): IS THIS TASK A CARD REFUND'S PAID-ANOTHER-WAY CLOSE? The
+ * kind and the key prefix together, as the other non-cancellation hand-backs
+ * are asked. Never `lastError`'s wording: this row is the persisted evidence.
+ */
+export function isCardRefundPaidAnotherWayTask(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): boolean {
+  return (
+    task.kind === "CANCELLED_BOOKING_HAND_BACK" &&
+    hasKeyPrefix(task.occurrenceKey, CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX)
+  );
+}
+
+/** The operation a paid-another-way record closed, read off its key; null for any other task. */
+export function paymentRecoveryOperationIdOfPaidAnotherWay(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): string | null {
+  if (!isCardRefundPaidAnotherWayTask(task) || task.occurrenceKey === null) return null;
+  const id = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
+  return id.length > 0 ? id : null;
+}
+
+/** The same question as a `ManualRefundTask` where fragment: every paid-another-way record. */
+export const CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE = {
+  kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind,
+  status: "COMPLETED" satisfies ManualRefundTaskStatus,
+  occurrenceKey: { startsWith: CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX },
+} as const;
 
 /**
  * #3827 (`INV-PAY-117`): IS THIS TASK AN EDIT REFUND HAND-BACK? It is a
@@ -151,7 +209,7 @@ export function isNonCancellationHandBackTask(task: {
   kind: ManualRefundTaskKind | string | null;
   occurrenceKey: string | null;
 }): boolean {
-  return isEditRefundHandBackTask(task) || isRefundRequestHandBackTask(task);
+  return isEditRefundHandBackTask(task) || isRefundRequestHandBackTask(task) || isCardRefundPaidAnotherWayTask(task);
 }
 
 /**

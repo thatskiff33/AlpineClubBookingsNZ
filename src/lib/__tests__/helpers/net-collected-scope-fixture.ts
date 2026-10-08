@@ -322,6 +322,7 @@ type CardRefundOperationFixture = {
   allocationPlan: Array<{ paymentTransactionId: string; amountCents: number }> | null;
   paymentTransactionId: string | null;
   createdAt: Date;
+  succeededAt: Date | null;
 };
 
 type ReconciliationRow = FixtureRow & {
@@ -390,6 +391,7 @@ export const OWED_RECONCILIATION_PAYMENTS: ReadonlyArray<ReconciliationRow> = [
         allocationPlan: [{ paymentTransactionId: "txn-failed", amountCents: 15_000 }],
         paymentTransactionId: null,
         createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        succeededAt: null,
       },
     ],
     refunds: [],
@@ -420,6 +422,7 @@ export const OWED_RECONCILIATION_PAYMENTS: ReadonlyArray<ReconciliationRow> = [
         ],
         paymentTransactionId: null,
         createdAt: new Date("2026-06-21T00:00:00.000Z"),
+        succeededAt: null,
       },
     ],
     refunds: [

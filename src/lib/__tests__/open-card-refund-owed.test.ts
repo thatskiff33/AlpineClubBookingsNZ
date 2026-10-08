@@ -23,6 +23,7 @@ function operation(overrides: Partial<CardRefundOperationRow>): CardRefundOperat
     allocationPlan: null,
     paymentTransactionId: null,
     createdAt: at(10),
+    succeededAt: null,
     ...overrides,
   };
 }
@@ -210,5 +211,68 @@ describe("openCardRefundOwedCents attributes each recorded refund to the operati
       payment([operation({ status: "SUCCEEDED", amountCents: 5_000, allocationPlan: [{ paymentTransactionId: "txn-a", amountCents: 5_000 }] })], []),
     );
     expect(owed).toBe(0);
+  });
+
+  describe("#3924 round 4, M4: a closed operation takes no refund recorded after its close", () => {
+    // The lens's scenario: payment $500; op1 open [txnA $50, txnB $30]; op2,
+    // newer, closed as paid another way [txnA $50]; op1 then sends txnA $50.
+    const op1 = operation({
+      id: "op1",
+      amountCents: 8_000,
+      allocationPlan: [
+        { paymentTransactionId: "txn-a", amountCents: 5_000 },
+        { paymentTransactionId: "txn-b", amountCents: 3_000 },
+      ],
+      createdAt: at(10),
+    });
+    const op2Closed = operation({
+      id: "op2",
+      status: "SUCCEEDED",
+      amountCents: 5_000,
+      allocationPlan: [{ paymentTransactionId: "txn-a", amountCents: 5_000 }],
+      createdAt: at(20),
+      succeededAt: at(30),
+    });
+
+    it("op1's own later refund is op1's: it owes $30, not $80", () => {
+      const owed = openCardRefundOwedByOperation(
+        payment([op1, op2Closed], [refund({ paymentTransactionId: "txn-a", amountCents: 5_000, createdAt: at(40) })], {
+          amountCents: 50_000,
+          refundedAmountCents: 10_000,
+        }),
+      );
+      expect(Object.fromEntries(owed)).toEqual({ op1: 3_000 });
+    });
+
+    it("a refund recorded inside the closed operation's window is still its own", () => {
+      const owed = openCardRefundOwedByOperation(
+        payment([op1, op2Closed], [refund({ paymentTransactionId: "txn-a", amountCents: 5_000, createdAt: at(25) })], {
+          amountCents: 50_000,
+          refundedAmountCents: 5_000,
+        }),
+      );
+      expect(Object.fromEntries(owed)).toEqual({ op1: 8_000 });
+    });
+
+    it("a refund recorded exactly at the close is the closed operation's (at or before)", () => {
+      const owed = openCardRefundOwedByOperation(
+        payment([op1, op2Closed], [refund({ paymentTransactionId: "txn-a", amountCents: 5_000, createdAt: at(30) })], {
+          amountCents: 50_000,
+          refundedAmountCents: 5_000,
+        }),
+      );
+      expect(Object.fromEntries(owed)).toEqual({ op1: 8_000 });
+    });
+
+    it("a row closed before its close time was written keeps no bound, as before", () => {
+      const owed = openCardRefundOwedByOperation(
+        payment(
+          [op1, { ...op2Closed, succeededAt: null }],
+          [refund({ paymentTransactionId: "txn-a", amountCents: 5_000, createdAt: at(40) })],
+          { amountCents: 50_000, refundedAmountCents: 5_000 },
+        ),
+      );
+      expect(Object.fromEntries(owed)).toEqual({ op1: 8_000 });
+    });
   });
 });

@@ -811,6 +811,16 @@ export async function enqueueXeroRefundCreditNoteOperation(
     /** #3880: a review's refund on a CANCELLED booking - keyed on the task, and
      * noted per refund, capped by coverage, on a bank transfer as on a card. */
     reviewTaskId?: string;
+    /**
+     * #3924 round 4 (M3, `INV-PAY-119`): the record of a "Paid another way"
+     * close this note answers. Keyed on it, so the close's note is a row of its
+     * own beside any card delta on the payment - never deduplicated into a
+     * pending card note that happens to share its watermark - and sized by the
+     * stepped path against cash that counts the close
+     * (`readPaidAnotherWayCash`), so it comes out at exactly the amount paid
+     * back.
+     */
+    paidAnotherWayTaskId?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -949,7 +959,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
     "refund-credit-note",
     stepped ? watermarkCents : noteAmountCents,
     stepped ? "v2" : "v1",
-    ...reviewTaskKeyParts(options?.reviewTaskId)
+    ...reviewTaskKeyParts(options?.reviewTaskId),
+    ...(options?.paidAnotherWayTaskId ? ["paid-another-way", options.paidAnotherWayTaskId] : [])
   );
 
   // #3635: a non-Stripe payment issues one refund, so the resolved create for

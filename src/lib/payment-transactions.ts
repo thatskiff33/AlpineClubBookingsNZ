@@ -1425,13 +1425,29 @@ export async function refundPaymentTransactions({
       });
     }
 
-    await recordStripeRefundsAgainstTransaction({
-      paymentId,
-      paymentTransactionId: transaction.id,
-      refunds: [refund],
-      fallbackPaymentIntentId: transaction.stripePaymentIntentId,
-      store,
-    });
+    try {
+      await recordStripeRefundsAgainstTransaction({
+        paymentId,
+        paymentTransactionId: transaction.id,
+        refunds: [refund],
+        fallbackPaymentIntentId: transaction.stripePaymentIntentId,
+        store,
+      });
+    } catch (err) {
+      // #3924 round 4 (C2): Stripe refunded this slice but it could not be
+      // recorded. It is reported as a partial failure like a Stripe one, carrying
+      // only the slices BEFORE it - the ones refunded AND recorded - so every
+      // caller's recovery replays this slice under its same key (Stripe answers
+      // with the original refund and the ledger records it then) and never
+      // re-asks for a slice already recorded. A raw error here made the refund
+      // request's route enqueue the whole plan and the edit's the whole amount.
+      throw new PartialRefundError({
+        completedRefundCents,
+        refunds,
+        cause: err,
+        format,
+      });
+    }
 
     refunds.push({
       paymentIntentId: transaction.stripePaymentIntentId,
@@ -1462,6 +1478,19 @@ export class RefundAllocationRacedError extends Error {
   constructor() {
     super("Refund allocation raced another writer on the same payment");
     this.name = "RefundAllocationRacedError";
+  }
+}
+
+/**
+ * Raised when an allocation asks for more than the payment's captured
+ * transactions still hold, before anything is written. The message is the one
+ * callers already read (`settlementWriteRefusal`); the class lets a caller tell
+ * this refusal from a fault without matching it (#3924 round 4, C3).
+ */
+export class RefundAllocationExceedsCapturedError extends Error {
+  constructor() {
+    super("Refund amount exceeds captured payments");
+    this.name = "RefundAllocationExceedsCapturedError";
   }
 }
 
@@ -1526,7 +1555,7 @@ export async function applyLocalRefundAllocation({
       0
     );
     if (amountCents > totalRefundableCents) {
-      throw new Error("Refund amount exceeds captured payments");
+      throw new RefundAllocationExceedsCapturedError();
     }
 
     let remainingAmountCents = amountCents;

@@ -18,12 +18,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   groupBy: vi.fn(),
   aggregate: vi.fn(),
+  findTasks: vi.fn(),
+  findOperations: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     paymentRefund: { groupBy: mocks.groupBy },
     memberCredit: { aggregate: mocks.aggregate },
+    manualRefundTask: { findMany: mocks.findTasks },
+    paymentRecoveryOperation: { findMany: mocks.findOperations },
   },
 }));
 
@@ -39,6 +43,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.groupBy.mockResolvedValue([]);
   mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
+  mocks.findTasks.mockResolvedValue([]);
+  mocks.findOperations.mockResolvedValue([]);
 });
 
 describe("resolveStripeCashRefundEvidence — provider-ledger rule", () => {
@@ -246,6 +252,9 @@ describe("resolveStripeCashRefundEvidence — transaction client", () => {
         ]),
       },
       memberCredit: { aggregate: vi.fn() },
+      // #3924 round 4: a close written in the caller's own transaction is seen.
+      manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+      paymentRecoveryOperation: { findMany: vi.fn() },
     };
 
     const evidence = await resolveStripeCashRefundEvidence(
@@ -255,6 +264,72 @@ describe("resolveStripeCashRefundEvidence — transaction client", () => {
 
     expect(evidence.cashRefundCents).toBe(2500);
     expect(tx.paymentRefund.groupBy).toHaveBeenCalledTimes(1);
+    expect(tx.manualRefundTask.findMany).toHaveBeenCalledTimes(1);
     expect(mocks.groupBy).not.toHaveBeenCalled();
+    expect(mocks.findTasks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3924 round 4 (money review, M1; `INV-PAY-119`): a card refund closed as
+ * "Paid another way" raised the mirror with no refund row. Read from its
+ * persisted record (a COMPLETED task under its own key), never `lastError`.
+ */
+describe("resolveStripeCashRefundEvidence - a card refund closed as paid another way", () => {
+  const editClose = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-edit", amountCents: 4000 };
+  const cancelClose = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-cancel", amountCents: 3000 };
+  const operations = [
+    { id: "op-edit", idempotencyKey: "booking_modification_refund_recovery_mod-1", bookingId: "book_1" },
+    { id: "op-cancel", idempotencyKey: "booking_cancel_refund_recovery_book_1", bookingId: "book_1" },
+  ];
+
+  it("legacy mirror: an edit's close (no note of its own) is not cash the self-heal may note", async () => {
+    // $100 refunded on the mirror, no refund rows: $40 of it is an edit's card
+    // refund the treasurer paid back by bank. Without this the nightly self-heal
+    // raised a card note settled from the Stripe account for money the edit's
+    // own note already credited.
+    mocks.findTasks.mockResolvedValue([editClose]);
+    mocks.findOperations.mockResolvedValue(operations);
+
+    const evidence = await resolveStripeCashRefundEvidence(payment);
+
+    expect(evidence.source).toBe("legacy-mirror");
+    expect(evidence.cashRefundCents).toBe(6000);
+    expect(mocks.findTasks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentId: "pay_1",
+          status: "COMPLETED",
+          occurrenceKey: { startsWith: "card-refund-paid-another-way:" },
+        }),
+      }),
+    );
+  });
+
+  it("legacy mirror: a cancellation's close keeps its cash - its own note answers it", async () => {
+    mocks.findTasks.mockResolvedValue([editClose, cancelClose]);
+    mocks.findOperations.mockResolvedValue(operations);
+
+    const evidence = await resolveStripeCashRefundEvidence(payment);
+
+    expect(evidence.cashRefundCents).toBe(6000);
+  });
+
+  it("provider ledger: a cancellation's close is added to the card rows, so its note is sized against it", async () => {
+    mocks.groupBy.mockResolvedValue([{ status: "succeeded", _sum: { amountCents: 2000 }, _count: { _all: 1 } }]);
+    mocks.findTasks.mockResolvedValue([editClose, cancelClose]);
+    mocks.findOperations.mockResolvedValue(operations);
+
+    const evidence = await resolveStripeCashRefundEvidence(payment);
+
+    expect(evidence.source).toBe("provider-ledger");
+    expect(evidence.countedRefundCents).toBe(2000);
+    // $20 by card + the cancellation's $30 by bank; the edit's $40 never.
+    expect(evidence.cashRefundCents).toBe(5000);
+  });
+
+  it("no close on the payment reads no operations", async () => {
+    await resolveStripeCashRefundEvidence(payment);
+    expect(mocks.findOperations).not.toHaveBeenCalled();
   });
 });
