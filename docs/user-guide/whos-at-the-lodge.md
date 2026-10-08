@@ -29,7 +29,8 @@ turn it on.
 
 1. Sign in and choose **Who's at the lodge** from the menu.
 2. Each lodge you can book has its own card, with the people staying listed
-   underneath it.
+   underneath it. A card may show only a reserved row, when the whole lodge is
+   privately booked.
 3. Beside each name are the nights that person is here. A run of nights reads
    as a range; someone here for two separate stays shows both.
 
@@ -50,14 +51,21 @@ custodian, they appear with the nights they are there, marked as the custodian.
 That is deliberate: you should be able to see at a glance whether someone is
 looking after the place, rather than having to work it out.
 
+**Nights the whole lodge is privately booked say so.** If somebody has hired
+the entire lodge, those nights appear as **Reserved for a private booking**.
+It does not say who the booking is for or how many people are on it, and the
+people on that booking are not listed separately. This is why the booking
+calendar shows those nights as full even when the list has few or no names on
+them.
+
 **School and club groups show as the organisation.** A school booking reads as
 the school's name, never as the teachers or the pupils.
 
 **You will appear on this list too.** If your club has the roster switched on,
 your name and the nights you are staying are visible to every other member who
-can book that lodge. There is no way to hide yourself from it. If that worries
-you, talk to your club — they choose whether the roster runs at all, and how
-much of a name it shows.
+can book that lodge (a whole-lodge booking shows as reserved instead). There is
+no way to hide yourself from it. If that worries you, talk to your club — they
+choose whether the roster runs at all, and how much of a name it shows.
 
 **Nobody's dietary or allergy notes are here.** The roster never shows them, for
 you or anyone else. Only the club's booking officers and the hut leader running
@@ -68,11 +76,12 @@ finished. A booking somebody has made but not yet paid for does not appear, so
 the lodge may end up busier than the list suggests.
 
 **A group that had the lodge to itself shows as a group, not as people.** A
-booking that hired the whole lodge appears under its label rather than as a
-list of names, whatever its size. So does a party of eight or more that turned
-out to be the only booking in the building on every one of its nights. A
-smaller party that simply happened to be alone is still named — being the only
-people there on a quiet Tuesday is not the same as taking the place over.
+party of eight or more that turned out to be the only booking in the building
+on every one of its nights appears under its label rather than as a list of
+names. (A booking that hired the whole lodge is not listed at all; its nights
+show as reserved, as above.) A smaller party that simply happened to be alone
+is still named — being the only people there on a quiet Tuesday is not the same
+as taking the place over.
 
 ## Related links
 

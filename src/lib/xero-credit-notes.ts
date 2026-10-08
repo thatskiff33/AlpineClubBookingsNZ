@@ -72,8 +72,10 @@ import {
 import {
   buildRefundDocumentDescription,
   buildRefundDocumentReference,
+  readRefundNoteWording,
   resolveRefundNoteMethod,
 } from "@/lib/xero-refund-method";
+import type { RefundNoteWording } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 import {
@@ -100,6 +102,12 @@ export interface CreateXeroRefundCreditNoteOptions
    * only evidence and `defaultRefundMethodForPaymentSource` reads it.
    */
   refundMethod?: CashRefundMethod;
+  /**
+   * #3935 (`INV-PAY-116`): the officer said a review's hand-back went back in
+   * cash. Words only: the note still settles as `refundMethod` says, and it
+   * counts only beside the internet-banking method (`readRefundNoteWording`).
+   */
+  noteWording?: RefundNoteWording;
   /** #3635 round-3 R4: the late capture this note answers (its receipt is named). */
   paymentIntentId?: string;
   /** #3880: the operator's REQUEUE row this retry runs under - its own claim. */
@@ -227,6 +235,9 @@ export async function createXeroCreditNote(
     options?.refundMethod,
     payment.source,
   );
+  // #3935: what the note SAYS; the settlement still reads `refundMethod`.
+  const noteWording = readRefundNoteWording({ noteWording: options?.noteWording, refundMethod });
+  const documentWording = noteWording ?? refundMethod;
   // The credit note's own date decides which GST period and financial year the
   // refund lands in, so it is the club's calendar day (INV-DATE-019, #2834).
   // #3635 round-3 R3: a late capture's refund noted after the fact is dated the
@@ -442,6 +453,8 @@ export async function createXeroCreditNote(
     // a retry or a repair of this row keeps it a request's own note.
     ...(refundRequestId !== null ? { refundRequestId } : {}),
     ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
+    // #3935: the officer's cash answer rides the row, so a retry says the same.
+    ...(noteWording ? { noteWording } : {}),
     // #3880 F2: a delta run's watermark rides its row, so an operator retry of
     // a row this run created inline (no outbox queue type) re-enters delta
     // mode; `perDelta` marks the row of a per-refund note as its link is marked.
@@ -527,7 +540,7 @@ export async function createXeroCreditNote(
   const accountCode = refundMapping.code ?? "200";
   const refundLineItem: LineItem = {
     description: buildRefundDocumentDescription({
-      method: refundMethod,
+      method: documentWording,
       bookingId: payment.booking.id,
       stay: {
         checkIn: formatDateOnly(new Date(payment.booking.checkIn)),
@@ -557,7 +570,7 @@ export async function createXeroCreditNote(
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [refundLineItem],
     reference: buildRefundDocumentReference({
-      method: refundMethod,
+      method: documentWording,
       bookingId: payment.booking.id,
     }),
     status: CreditNote.StatusEnum.AUTHORISED,
