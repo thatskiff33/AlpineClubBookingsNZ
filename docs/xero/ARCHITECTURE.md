@@ -1599,25 +1599,33 @@ while the create was in flight, or a lost response replayed under the same
 idempotency key, which returns the original invoice
 (`xero-primary-invoice-fee-gap.ts`):
 
-- **Recorded before the link.** The create writes what the returned invoice
-  billed (its fee lines and its total) onto its operation's payload, then
-  persists the payment's link, then compares the fee the payment records with
-  the fee billed. A finished-stay correction claims its fee write against the
-  invoice link it read, so once the link is persisted every fee routed to the
-  primary invoice is recorded, and a later one refuses the correction.
+- **Measured at the link.** The create saves the payment's link and, in the
+  same transaction, writes onto its operation's payload what the returned
+  invoice billed (its fee lines and its total) and the fee the payment held at
+  that instant, read back from the link's own row update. The shortfall is
+  those two figures' difference — never the fee the payment records later,
+  which a later edit bills on its own document. A finished-stay correction
+  claims its fee write against the invoice link it read, so the row lock
+  orders the two: the figure read back holds every fee routed to the primary
+  invoice, and a later correction is refused.
 - **Billed on a supplementary invoice.** The shortfall is anchored on a
   correction that routed its fee to the primary invoice (`feeOnPrimaryInvoice`
   on its modification); none of those raised a document of its own. It is
   raised unpaid, like any edit's supplementary invoice, unless a captured
-  Stripe payment nets the shortfall beyond the primary invoice's total. Any
-  enqueue outcome other than a fresh operation is logged as an error.
-- **Retry-safe.** A run that dies after persisting the link is re-driven
-  through the create's "invoice already exists" exit, which re-runs the check
-  from the recorded figure. A shortfall already queued on one of the anchors
-  is not queued again, and no other edit's queued figure is raised.
-- **Limit (#3980).** The ordinary settled edit's fee increment is not claimed
+  Stripe payment holds it: the primary's Stripe payment is capped so the
+  card's applied credit (`cardAppliedCreditCents`) still fits on it
+  (`primaryInvoiceStripeCashCents`), and the cash that leaves over must cover
+  the shortfall. Any enqueue outcome other than a fresh operation is logged as
+  an error.
+- **Retry-safe.** A run that dies after saving the link is re-driven through
+  the create's "invoice already exists" exit, which re-runs the check from the
+  stored figures alone. A shortfall already queued on one of the anchors is not
+  queued again, and no other edit's queued figure is raised.
+- **Limits.** The ordinary settled edit's fee increment (#3980) is not claimed
   against the link, so its fee racing a create has no anchor: it is logged,
-  not billed.
+  not billed. An invoice linked without stored figures (before this check, or
+  outside the create) is not checked; the retry warns when its payment records
+  a fee.
 
 ## OAuth and token lifecycle (supporting flow)
 
