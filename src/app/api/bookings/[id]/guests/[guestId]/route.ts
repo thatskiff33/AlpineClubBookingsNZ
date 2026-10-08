@@ -359,6 +359,7 @@ export async function DELETE(
           docblock), and why this is a single hand-off rather than a query.
         */
         financialReviewPending: result.financialReviewPending,
+        refundReturnedToOrganiser: result.organiserChildRefund !== null,
         // D-3813-6: an internet-banking refund is the club's to send.
         refundByBankTransfer: editRefundGoesBackByHand(result),
         lodgeId: result.booking.lodgeId,

@@ -484,6 +484,8 @@ export async function isEditFinancialReviewChargeRecoveryDead(
     select: { status: true, attempts: true, nextRetryAt: true },
   });
   if (!row) return false;
+  // Not `!isPaymentRecoveryOperationInFlight`: a PENDING row with no retry time
+  // or its attempts spent is dead here, in flight there (see its docblock).
   const claimable = (CLAIMABLE_PAYMENT_RECOVERY_STATUSES as readonly PaymentRecoveryOperationStatus[])
     .includes(row.status);
   return claimable && (row.nextRetryAt === null || row.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS);

@@ -577,9 +577,10 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
 
 - **A booking's settlement lines converge from its payment rows, at the place
   the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
-  runs at the end of `reconcilePaymentAggregates` and from the three writers
+  runs at the end of `reconcilePaymentAggregates` and from the five writers
   that set the payment's columns themselves: the manual mark-paid settle, its
-  reversal, and the Xero payment-received receipt. It posts one line
+  reversal, the Xero payment-received receipt, and #3653's organiser-child
+  refund recorder and its pending-refund sweep (#3854). It posts one line
   per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
   when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
   refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
@@ -599,6 +600,13 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4's
   census names those as `REFUND_MIRROR_*` classes (`INV-MONEY-037`). A line
   whose source amount later changes is reported, not corrected.
+
+  **A group organiser's settlement posts on its children** (#3854). The group
+  settle confirms each child on the ledger and posts its share, its own price,
+  as `CARD_CAPTURE` or `BANK_RECEIPT` anchored `GROUP_SETTLEMENT`; a frozen
+  cancel plan posts the matching refund there (design §5.2). #3583's back-post
+  posts a child settled before it through the same planners and keys, so a
+  later live event finds its line posted.
 
 ## INV-MONEY-035
 
@@ -674,8 +682,8 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   the gate until the owner's `--acknowledged` file, kept outside the
   repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
   except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
-  #3583; poster #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
-  on bookings the real writers built.
+  #3583) while #3854's lines agree. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  on real-writer bookings.
 
 ## INV-MONEY-006
 

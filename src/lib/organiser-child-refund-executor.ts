@@ -35,6 +35,7 @@ import {
   organiserChildRefundReasonForKey,
 } from "@/lib/payment-recovery-keys";
 import { EXCLUDED_LEDGER_REFUND_STATUSES, isRecordedRefundStatus } from "@/lib/payment-transaction-status";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { lockPaymentForRefundedTotal, recordStripeRefundLedgerEntry } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import {
@@ -191,6 +192,11 @@ export async function processOrganiserChildRefundOperation(
       });
       queuedCreditNoteId = queued.queueOperationId;
     }
+    // #3854: the child's ledger converges from its refund rows here, as every
+    // other card refund's does at `reconcilePaymentAggregates` - which this
+    // recorder never reaches, since the child has no transaction row to derive
+    // a mirror from. Keyed by the refund row, so a replay posts nothing more.
+    await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
     const combined = await tx.paymentRefund.aggregate({
       where: { stripePaymentIntentId: operation.paymentIntentId, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
       _sum: { amountCents: true },
@@ -332,6 +338,8 @@ export async function reconcilePendingOrganiserChildRefunds(
           status: getNextRefundedPaymentStatus(current.status, current.amountCents, next) ?? current.status,
         },
       });
+      // #3854: the refund's ledger line is reversed with its row.
+      await syncBookingLedgerSettlements({ paymentId: current.id, store: tx });
       const settlement = await findCombinedCardSettlementForChild(tx, current.booking);
       if (settlement) {
         const combined = await tx.paymentRefund.aggregate({

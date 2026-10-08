@@ -473,7 +473,8 @@ async function unfinishedCardRefundDebts(
     where: {
       paymentId,
       status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] },
-      // Not dead: the recovery module's own rule (`isEditFinancialReviewChargeRecoveryDead`).
+      // Not dead: the recovery module's own rule (`isEditFinancialReviewChargeRecoveryDead`),
+      // not `isPaymentRecoveryOperationInFlight`, which still counts a stranded PENDING row.
       NOT: {
         status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
         OR: [{ nextRetryAt: null }, { attempts: { gte: MAX_PAYMENT_RECOVERY_ATTEMPTS } }],

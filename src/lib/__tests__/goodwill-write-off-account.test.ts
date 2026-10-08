@@ -48,6 +48,10 @@ const h = vi.hoisted(() => {
       }),
     },
     memberCredit: {
+      // #3836: the engine's one batch predicate.
+      groupBy: async ({ where }: { where: { appliedToBookingId: { in: string[] } } }) =>
+        where.appliedToBookingId.in.map((appliedToBookingId) => ({ appliedToBookingId, _sum: { amountCents: -state.appliedCents } })),
+      findUnique: async () => null,
       aggregate: async () => ({ _sum: { amountCents: -state.appliedCents } }),
       findMany: async () =>
         state.lots.map((l) => ({

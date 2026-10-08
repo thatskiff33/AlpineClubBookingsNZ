@@ -6,7 +6,7 @@ import {
   sumOutstandingCreditCents,
 } from "@/lib/member-credit-balances";
 import { OPEN_CARD_REFUND_OPERATION_WHERE } from "@/lib/open-card-refund-owed";
-import { deserializeRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan } from "@/lib/group-settlement-refund-plan";
 import {
   getNetCollectedCashParts,
   netCollectedPaymentTookMoney,

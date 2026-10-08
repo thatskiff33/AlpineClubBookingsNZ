@@ -48,6 +48,7 @@ import {
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
+import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
@@ -628,17 +629,8 @@ export async function enqueueXeroAppliedCreditAllocationOperation(
     };
   }
 
-  // Unallocated applied credit = BOOKING_APPLIED rows not yet stamped with an
-  // allocated Xero note (the ledger-truth predicate the handler also uses).
-  const appliedAgg = await prisma.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: "BOOKING_APPLIED",
-      xeroCreditNoteId: null,
-    },
-    _sum: { amountCents: true },
-  });
-  const appliedCents = Math.max(0, -(appliedAgg._sum.amountCents ?? 0));
+  // Unallocated applied credit: the engine's own predicate (#3836, one form).
+  const appliedCents = (await unallocatedAppliedCreditCentsByBooking([bookingId])).get(bookingId) ?? 0;
   if (appliedCents === 0) {
     return {
       queueOperationId: null,

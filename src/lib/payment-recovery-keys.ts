@@ -456,10 +456,13 @@ export function organiserChildRefundReasonForKey(key: string) {
 }
 export { ORGANISER_CHILD_REFUND_KEY_PREFIX };
 
-// Group organiser-cancel settlement refund (F3, #1351): one row per settlement,
-// keyed on the settlement. Its `paymentId` is only an anchor for the schema FK -
-// the money belongs to the children in the settlement's frozen `{childId: cents}`
-// plan - so a reader of the row's payment must recognise it by this key.
+// Group organiser-cancel settlement refund (F3, #1351): the organiser cancel's
+// durable retry of a pre-#3653 group settlement refund - ONE operation for the
+// whole group's plan, keyed on the settlement. Its `paymentId` is only an anchor
+// for the schema FK - the money belongs to the children in the settlement's
+// frozen `{childId: cents}` plan - so a reader of the row's payment must
+// recognise it by this key. Here, not in payment-recovery.ts, so a reader can
+// recognise one without importing the Prisma client.
 const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX = "group_settlement_refund_recovery_";
 export function buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId: string) {
   return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
