@@ -866,6 +866,8 @@ function deferred() {
         billed: gap.primaryInvoiceBilledFee(invoiceId, [
           { description: "Original Guest", quantity: 1, unitAmount: (2 * STORED_NIGHT_CENTS) / 100 },
         ]),
+        // Unpaid: no Stripe cash on the invoice.
+        primaryInvoiceCashCents: 0,
       });
 
       // The retry takes the create's "invoice already exists" exit — twice.
@@ -931,8 +933,14 @@ function deferred() {
           { description: "Original Guest", quantity: 1, unitAmount: (2 * STORED_NIGHT_CENTS) / 100 },
           { description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: fee / 100 },
         ]),
+        primaryInvoiceCashCents: 0,
       });
-      expect(atLink).toMatchObject({ billedChangeFeeCents: fee, recordedChangeFeeCentsAtLink: fee });
+      expect(atLink).toMatchObject({ billedChangeFeeCents: fee, recordedChangeFeeCentsAtLink: fee, primaryInvoiceCashCents: 0 });
+      // #3955 round 5, finding 4: stored with the link, in the same transaction.
+      expect(
+        (await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operation.id }, select: { requestPayload: true } }))
+          .requestPayload,
+      ).toMatchObject({ primaryInvoiceBilledFee: { primaryInvoiceCashCents: 0, recordedChangeFeeCentsAtLink: fee } });
 
       // A later edit records its own fee, billed on its own document.
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { changeFeeCents: { increment: 3_000 } } });

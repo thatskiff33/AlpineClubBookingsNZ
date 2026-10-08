@@ -98,10 +98,13 @@ import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { CHANGE_FEE_LINE_DESCRIPTION, changeFeeLineItem } from "@/lib/xero-modification-line-items";
 import {
-  cardAppliedCreditCents,
+  cardSettleAllocatesAppliedCredit,
+  cardSettleAppliedCreditCents,
+  existingPrimaryInvoiceStripePayment,
   persistPrimaryInvoiceLink,
   primaryInvoiceBilledFee,
   primaryInvoiceStripeCashCents,
+  primaryInvoiceStripePaymentReference,
   queuePrimaryInvoiceChangeFeeGap,
   recheckPrimaryInvoiceChangeFeeGap,
 } from "@/lib/xero-primary-invoice-fee-gap";
@@ -303,15 +306,15 @@ async function settleCardAppliedCreditAllocation(
   createdByMemberId?: string
 ): Promise<void> {
   // Proceed ONLY for a card cash capture that recorded a credit-reduced mirror
-  // (`cardAppliedCreditCents`, the one gate — the primary payment's cap reads
-  // it too). It skips a missing mirror (legacy full-price captures, no-credit
+  // (`cardSettleAllocatesAppliedCredit`, the one gate — the primary payment's
+  // cap reads it too, through `cardSettleAppliedCreditCents`). It skips a missing mirror (legacy full-price captures, no-credit
   // bookings): allocating against a full-price-paid invoice would over-allocate.
   // #1765 — capture evidence is "captured status + positive net cash", not
   // `status === "SUCCEEDED"`: a repay-after-refund payment aggregates to
   // PARTIALLY_REFUNDED at invoice time even though its repay capture settles
   // the invoice, and skipping here would strand the applied slice outstanding.
   // A fully-refunded-out payment (net 0) still must not allocate.
-  if (cardAppliedCreditCents(payment) === 0) return;
+  if (!cardSettleAllocatesAppliedCredit(payment)) return;
   const { allocateAppliedCreditForBooking } = await import(
     "@/lib/xero-applied-credit-allocation"
   );
@@ -808,17 +811,36 @@ export async function createXeroInvoiceForBooking(
     // `NaN` and `±Infinity` differ, which Xero's JSON cannot produce; for those
     // the cap falls to `netCapturedCents`, as an absent `amountDue` always has.
     // #3955 round 4 (finding 3): capped so the applied credit the settle below
-    // allocates still fits; cash it leaves over is a change-fee gap's.
+    // allocates still fits; cash it leaves over is a change-fee gap's. Round 5
+    // (finding 2): that credit is the allocation engine's own figure.
     const invoicePaymentCents = primaryInvoiceStripeCashCents({
       netCapturedCents,
       amountDueCents: providerAmountToCents(createdInvoice.amountDue),
-      appliedCreditCents: cardAppliedCreditCents(booking.payment),
+      appliedCreditCents: await cardSettleAppliedCreditCents(bookingId, booking.payment),
     });
-    const shouldRecordStripeInvoicePayment =
-      paymentSource === PaymentSource.STRIPE &&
-      paymentCaptured &&
-      invoicePaymentCents > 0;
-    const paymentSkipped = paymentCaptured && !shouldRecordStripeInvoicePayment;
+    const stripePaymentReference = primaryInvoiceStripePaymentReference(
+      booking.payment.stripePaymentIntentId ?? null,
+    );
+    const stripeCashToRecord =
+      paymentSource === PaymentSource.STRIPE && paymentCaptured && netCapturedCents > 0;
+    // #3955 round 5 (finding 4): a lost response retried under the same key
+    // gets back the ORIGINAL invoice; where it shows this payment already
+    // taken, the cap can reach zero. That payment is looked up and its link
+    // recorded, rather than the cash being skipped as nothing took it.
+    const existingStripePayment =
+      stripeCashToRecord && invoicePaymentCents === 0
+        ? existingPrimaryInvoiceStripePayment(createdInvoice, stripePaymentReference)
+        : null;
+    if (existingStripePayment) {
+      paymentResponseBody = existingStripePayment;
+      logger.info(
+        { bookingId, invoiceId: createdInvoice.invoiceID, paymentId: existingStripePayment.paymentID },
+        "The Xero invoice already carries this booking's Stripe payment from an earlier run; its link is recorded rather than a second payment",
+      );
+    }
+    const shouldRecordStripeInvoicePayment = stripeCashToRecord && invoicePaymentCents > 0;
+    const paymentSkipped =
+      paymentCaptured && !shouldRecordStripeInvoicePayment && !existingStripePayment;
     const paymentSkipReason = !paymentSkipped
       ? null
       : paymentSource === PaymentSource.INTERNET_BANKING
@@ -839,7 +861,7 @@ export async function createXeroInvoiceForBooking(
         // above are derived from `checkIn` and `createdAt` and were settled on
         // #2697; this payment was the remaining instant in this file.
         date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
-        reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
+        reference: stripePaymentReference,
       };
       const paymentIdempotencyKey = buildXeroIdempotencyKey(
         "payment",
@@ -863,7 +885,9 @@ export async function createXeroInvoiceForBooking(
             context: `createPayment(booking ${bookingId})`,
           }
         );
-        paymentResponseBody = paymentResponse.body;
+        // `createPayment` answers with a Payments envelope; the payment is
+        // its first entry, as every other caller reads it (#3955 round 5).
+        paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
       } catch (error) {
         paymentWriteError = error;
         logger.warn(
@@ -1105,15 +1129,23 @@ export async function createXeroInvoiceForBooking(
       }
     }
 
+    // The Stripe cash recorded against this invoice, computed ONCE (#3955
+    // round 5, finding 4): the payment Xero holds where there is one, else the
+    // figure it was sized at (a failed write is repaired at that figure).
+    const primaryInvoiceCashCents =
+      providerAmountToCents(paymentResponseBody?.amount) ??
+      (shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0);
+
     // Store the Xero invoice ID and number on the payment record, and — in the
-    // same transaction — what the invoice billed and the change fee the
-    // payment held at that instant (#3955 review X4, round 4 finding 1). The
-    // gap check and its retry read only those figures.
+    // same transaction — what the invoice billed, the change fee the payment
+    // held at that instant and the cash above (#3955 review X4, round 4
+    // finding 1). The gap check and its retry read only those figures.
     const feeAtLink = await persistPrimaryInvoiceLink({
       operationId: operationId!,
       paymentId: booking.payment.id,
       xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       billed: primaryInvoiceBilledFee(createdInvoice.invoiceID, createdInvoice.lineItems ?? lineItems),
+      primaryInvoiceCashCents,
     });
     await prisma.paymentTransaction.updateMany({
       where: {
@@ -1132,11 +1164,34 @@ export async function createXeroInvoiceForBooking(
     // under the same idempotency key, which returns the ORIGINAL invoice) bills
     // less fee than the payment records; the gap goes on a supplementary
     // invoice rather than being lost.
-    await queuePrimaryInvoiceChangeFeeGap({
+    const feeGap = await queuePrimaryInvoiceChangeFeeGap({
       bookingId,
       atLink: feeAtLink,
       createdByMemberId: options?.createdByMemberId,
     });
+
+    // #3955 round 5 (finding 3): a cap that left captured cash off the primary
+    // invoice, with no gap invoice taking it, is never silent. The cash stays
+    // on the bank side with no Xero document; a treasurer reconciles it.
+    const unrecordedStripeCashCents =
+      netCapturedCents - primaryInvoiceCashCents - feeGap.cashTakenCents;
+    const primaryInvoiceCashShortfall =
+      primaryInvoiceCashCents > 0 &&
+      primaryInvoiceCashCents < netCapturedCents &&
+      unrecordedStripeCashCents > 0
+        ? {
+            netCapturedCents,
+            invoicePaymentCents: primaryInvoiceCashCents,
+            gapInvoiceCashCents: feeGap.cashTakenCents,
+            unrecordedCashCents: unrecordedStripeCashCents,
+          }
+        : null;
+    if (primaryInvoiceCashShortfall) {
+      logger.warn(
+        { bookingId, invoiceId: createdInvoice.invoiceID, ...primaryInvoiceCashShortfall },
+        "Recorded less Stripe cash against the Xero invoice than was captured, and no change-fee gap invoice takes the remainder",
+      );
+    }
 
     // #1641 — allocate the member's applied credit against this just-raised card
     // invoice so it settles to PAID (effective cash + credit note) and is never left
@@ -1157,6 +1212,8 @@ export async function createXeroInvoiceForBooking(
         paymentError: paymentWriteError,
         paymentSkipped,
         paymentSkipReason: paymentSkipped ? paymentSkipReason : null,
+        // #3955 round 5 (finding 3): the captured cash no document records, or null.
+        primaryInvoiceCashShortfall,
         invoiceEmail: invoiceEmailResponseBody,
         invoiceEmailError,
         // #3001: which of the three faults it was. Read back through

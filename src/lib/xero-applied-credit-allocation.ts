@@ -22,6 +22,7 @@
 import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { unallocatedAppliedCents } from "@/lib/xero-applied-credit-unallocated";
 import { lockMemberCreditLedger } from "./member-credit";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
 import {
@@ -224,21 +225,6 @@ async function gatherAppliedCreditLots(
     });
   }
   return lots;
-}
-
-async function unallocatedAppliedCents(
-  bookingId: string,
-  db: Prisma.TransactionClient | typeof prisma,
-): Promise<number> {
-  const agg = await db.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-      xeroCreditNoteId: null,
-    },
-    _sum: { amountCents: true },
-  });
-  return Math.max(0, -(agg._sum.amountCents ?? 0));
 }
 
 // ---------------------------------------------------------------------------

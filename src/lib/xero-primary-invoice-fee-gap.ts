@@ -26,7 +26,7 @@
  * its anchors is not queued again.
  */
 import { PaymentSource } from "@prisma/client";
-import type { LineItem } from "xero-node";
+import type { Invoice, LineItem, Payment as XeroPayment } from "xero-node";
 
 import { hasCapturedPayment, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { FEE_ON_PRIMARY_INVOICE_PATH } from "@/lib/booking-finished-stay-correction";
@@ -38,8 +38,12 @@ import {
   CHANGE_FEE_LINE_DESCRIPTION,
   invoiceLineItemsTotalCents,
 } from "@/lib/xero-modification-line-items";
+import { unallocatedAppliedCents } from "@/lib/xero-applied-credit-unallocated";
 import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-outbox";
-import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  readQueuedOutboxPayload,
+  XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+} from "@/lib/xero-operation-outbox-payload";
 import { sanitizeForJson } from "@/lib/xero-sync";
 
 /** The change fee an invoice's lines bill: its change-fee lines, as Xero adds them. */
@@ -58,9 +62,17 @@ export interface PrimaryInvoiceBilledFee {
   readonly billedTotalCents: number;
 }
 
-/** What the invoice billed, and the fee its payment recorded when the link was saved. */
+/**
+ * What the invoice billed, the fee its payment recorded when the link was
+ * saved, and the Stripe cash recorded against the invoice
+ * (`primaryInvoiceCashCents`, #3955 round 5, finding 4): computed ONCE by the
+ * create and stored with the link, so the gap rule reads the figure the
+ * primary's payment was sized at rather than recomputing it from figures that
+ * may since have moved.
+ */
 export interface PrimaryInvoiceFeeAtLink extends PrimaryInvoiceBilledFee {
   readonly recordedChangeFeeCentsAtLink: number;
+  readonly primaryInvoiceCashCents: number;
 }
 
 export function primaryInvoiceBilledFee(
@@ -74,38 +86,53 @@ export function primaryInvoiceBilledFee(
   };
 }
 
-/**
- * #1641 / #3955 round 4 (finding 3): the applied account credit a CARD
- * invoice's settle allocates against the primary invoice — the payment's
- * credit-reduced mirror, for a card capture with net cash left. Zero for
- * internet banking (its own outbox op allocates), an uncaptured or refunded-out
- * payment, and a full-price capture (`creditAppliedCents = 0`), which must not
- * allocate. The settle's gate and the primary payment's cap both read it.
- */
-export function cardAppliedCreditCents(payment: {
+type CardSettlePayment = {
   source: PaymentSource | null;
   status: string;
   amountCents: number;
   refundedAmountCents: number | null;
   creditAppliedCents: number;
-}): number {
+};
+
+/**
+ * #1641: whether a CARD invoice's settle allocates applied account credit
+ * against the primary invoice at all — a card capture with net cash left whose
+ * mirror records credit applied. False for internet banking (its own outbox op
+ * allocates), an uncaptured or refunded-out payment, and a full-price capture
+ * (`creditAppliedCents = 0`), which must not allocate. The mirror is the GATE
+ * only; how much is allocated is the engine's figure
+ * ({@link cardSettleAppliedCreditCents}).
+ */
+export function cardSettleAllocatesAppliedCredit(payment: CardSettlePayment): boolean {
   const netCapturedCents = payment.amountCents - (payment.refundedAmountCents ?? 0);
-  if (
-    payment.source === PaymentSource.INTERNET_BANKING ||
-    !hasCapturedPayment(payment) ||
-    netCapturedCents <= 0 ||
-    !(payment.creditAppliedCents > 0)
-  ) {
-    return 0;
-  }
-  return payment.creditAppliedCents;
+  return (
+    payment.source !== PaymentSource.INTERNET_BANKING &&
+    hasCapturedPayment(payment) &&
+    netCapturedCents > 0 &&
+    payment.creditAppliedCents > 0
+  );
+}
+
+/**
+ * #3955 round 4 (finding 3) and round 5 (finding 2): the applied account credit
+ * the card settle will allocate against the primary invoice — the allocation
+ * engine's OWN figure (`unallocatedAppliedCents`, from the ledger), behind the
+ * settle's gate. The primary payment's cash cap reads this, so the cap and the
+ * allocation read one source and the allocation always fits.
+ */
+export async function cardSettleAppliedCreditCents(
+  bookingId: string,
+  payment: CardSettlePayment,
+): Promise<number> {
+  if (!cardSettleAllocatesAppliedCredit(payment)) return 0;
+  return unallocatedAppliedCents(bookingId, prisma);
 }
 
 /**
  * The Stripe cash recorded against the primary invoice: the net capture,
- * capped at what is due once the applied credit the settle allocates there is
- * allowed for — so that allocation always fits (Xero rejects one beyond the
- * amount due). An invoice built before a fee was recorded bills less than cash
+ * capped at what is due once the applied credit the settle allocates there
+ * (`cardSettleAppliedCreditCents`) is allowed for — so that allocation always
+ * fits (Xero rejects one beyond the amount due). An invoice built before a fee was recorded bills less than cash
  * plus credit; the cash this leaves over is the gap invoice's (finding 3).
  * `amountDueCents` null (Xero sent none) caps at the net capture alone.
  */
@@ -116,6 +143,33 @@ export function primaryInvoiceStripeCashCents(input: {
 }): number {
   if (input.amountDueCents === null) return input.netCapturedCents;
   return Math.max(0, Math.min(input.netCapturedCents, input.amountDueCents - input.appliedCreditCents));
+}
+
+/** The reference the primary invoice's Stripe payment is recorded under. */
+export function primaryInvoiceStripePaymentReference(stripePaymentIntentId: string | null): string {
+  return `Stripe ${stripePaymentIntentId ?? "payment"}`;
+}
+
+/**
+ * #3955 round 5, finding 4: the Stripe payment an earlier run of this create
+ * already recorded against the invoice Xero handed back — found on the
+ * invoice's own payments by its reference. A lost response retried under the
+ * same idempotency key returns the original invoice; where that shows the
+ * payment already taken, the cap can reach zero, and the run records this
+ * payment's link rather than skipping it as cash nothing took.
+ */
+export function existingPrimaryInvoiceStripePayment(
+  invoice: Pick<Invoice, "payments">,
+  reference: string,
+): XeroPayment | null {
+  return (
+    (invoice.payments ?? []).find(
+      (payment) =>
+        Boolean(payment.paymentID) &&
+        payment.reference === reference &&
+        String(payment.status ?? "").toUpperCase() !== "DELETED",
+    ) ?? null
+  );
 }
 
 /** The create operation's payload key the figures are kept under. */
@@ -133,6 +187,8 @@ export async function persistPrimaryInvoiceLink(input: {
   paymentId: string;
   xeroInvoiceNumber: string | null;
   billed: PrimaryInvoiceBilledFee;
+  /** The Stripe cash recorded against this invoice, computed once by the create. */
+  primaryInvoiceCashCents: number;
 }): Promise<PrimaryInvoiceFeeAtLink> {
   return prisma.$transaction(async (tx) => {
     const linked = await tx.payment.update({
@@ -143,6 +199,7 @@ export async function persistPrimaryInvoiceLink(input: {
     const atLink: PrimaryInvoiceFeeAtLink = {
       ...input.billed,
       recordedChangeFeeCentsAtLink: recordedChangeFeeCents(linked),
+      primaryInvoiceCashCents: input.primaryInvoiceCashCents,
     };
     const operation = await tx.xeroSyncOperation.findUnique({
       where: { id: input.operationId },
@@ -181,7 +238,8 @@ async function readPrimaryInvoiceFeeAtLink(
     !record ||
     typeof record.billedChangeFeeCents !== "number" ||
     typeof record.billedTotalCents !== "number" ||
-    typeof record.recordedChangeFeeCentsAtLink !== "number"
+    typeof record.recordedChangeFeeCentsAtLink !== "number" ||
+    typeof record.primaryInvoiceCashCents !== "number"
   ) {
     return null;
   }
@@ -190,6 +248,7 @@ async function readPrimaryInvoiceFeeAtLink(
     billedChangeFeeCents: record.billedChangeFeeCents,
     billedTotalCents: record.billedTotalCents,
     recordedChangeFeeCentsAtLink: record.recordedChangeFeeCentsAtLink,
+    primaryInvoiceCashCents: record.primaryInvoiceCashCents,
   };
 }
 
@@ -198,9 +257,20 @@ export type PrimaryInvoiceChangeFeeGapResult = {
   queueOperationId: string | null;
   /** The gap was already queued by an earlier run of this check. */
   alreadyQueued: boolean;
+  /**
+   * The Stripe cash the gap invoice records as paid (its whole figure, or
+   * nothing): the part of the capture the primary invoice's cap left over that
+   * a document takes (#3955 round 5, finding 3).
+   */
+  cashTakenCents: number;
 };
 
-const NO_GAP: PrimaryInvoiceChangeFeeGapResult = { gapCents: 0, queueOperationId: null, alreadyQueued: false };
+const NO_GAP: PrimaryInvoiceChangeFeeGapResult = {
+  gapCents: 0,
+  queueOperationId: null,
+  alreadyQueued: false,
+  cashTakenCents: 0,
+};
 
 /**
  * The create's "invoice already exists" exit re-runs the check from the
@@ -294,7 +364,7 @@ export async function queuePrimaryInvoiceChangeFeeGap(input: {
       { ...context, gapCents },
       "The booking's primary Xero invoice bills less change fee than its payment records, and no finished-stay correction routed a fee to it to anchor the remainder on (#3955 X4, #3980)",
     );
-    return { gapCents, queueOperationId: null, alreadyQueued: false };
+    return { gapCents, queueOperationId: null, alreadyQueued: false, cashTakenCents: 0 };
   }
 
   const anchorIds = anchors.map((anchor) => anchor.id);
@@ -308,7 +378,7 @@ export async function queuePrimaryInvoiceChangeFeeGap(input: {
         localModel: "BookingModification",
         localId: { in: anchorIds },
       },
-      select: { id: true },
+      select: { id: true, requestPayload: true },
     }),
     prisma.xeroObjectLink.findFirst({
       where: {
@@ -321,17 +391,24 @@ export async function queuePrimaryInvoiceChangeFeeGap(input: {
     }),
   ]);
   if (earlierOperation || earlierLink) {
+    // What the earlier run decided the gap invoice takes of the cash, as it queued it.
+    const earlier = readQueuedOutboxPayload(earlierOperation?.requestPayload);
+    const cashTakenCents =
+      earlier?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE && earlier.recordPayment === true
+        ? earlier.priceDiffCents + earlier.changeFeeCents
+        : 0;
     logger.info(
       { ...context, gapCents, queueOperationId: earlierOperation?.id ?? null },
       "The booking's primary Xero invoice change-fee gap is already queued (#3955 X4)",
     );
-    return { gapCents, queueOperationId: earlierOperation?.id ?? null, alreadyQueued: true };
+    return { gapCents, queueOperationId: earlierOperation?.id ?? null, alreadyQueued: true, cashTakenCents };
   }
 
   // Raised UNPAID like any edit's supplementary invoice, unless a captured
   // Stripe payment already holds the money: the cash the primary invoice's
-  // payment could not take (`primaryInvoiceStripeCashCents`, capped so the
-  // applied credit the settle allocates there fits) is the gap's (finding 3).
+  // payment did not take is the gap's (finding 3). What the primary took is
+  // the figure the create sized its payment at and stored with the link
+  // (`primaryInvoiceCashCents`, round 5 finding 4) - never recomputed here.
   const payment = await prisma.payment.findUnique({
     where: { bookingId },
     select: {
@@ -339,18 +416,10 @@ export async function queuePrimaryInvoiceChangeFeeGap(input: {
       status: true,
       amountCents: true,
       refundedAmountCents: true,
-      creditAppliedCents: true,
     },
   });
   const netCapturedCents = Math.max(0, (payment?.amountCents ?? 0) - (payment?.refundedAmountCents ?? 0));
-  const leftOverCashCents = payment
-    ? netCapturedCents -
-      primaryInvoiceStripeCashCents({
-        netCapturedCents,
-        amountDueCents: atLink.billedTotalCents,
-        appliedCreditCents: cardAppliedCreditCents(payment),
-      })
-    : 0;
+  const leftOverCashCents = payment ? netCapturedCents - atLink.primaryInvoiceCashCents : 0;
   const recordPayment =
     payment?.source === PaymentSource.STRIPE && hasCapturedPayment(payment) && leftOverCashCents >= gapCents;
 
@@ -379,11 +448,16 @@ export async function queuePrimaryInvoiceChangeFeeGap(input: {
       outcome,
       "The booking's primary Xero invoice bills less change fee than its payment records, and the supplementary invoice for the remainder was not queued (#3955 X4)",
     );
-    return { gapCents, queueOperationId: queued.queueOperationId, alreadyQueued: false };
+    return { gapCents, queueOperationId: queued.queueOperationId, alreadyQueued: false, cashTakenCents: 0 };
   }
   logger.warn(
     outcome,
     "The booking's primary Xero invoice was built before a change fee was recorded; the remainder is billed on a supplementary invoice (#3955 X4)",
   );
-  return { gapCents, queueOperationId: queued.queueOperationId, alreadyQueued: false };
+  return {
+    gapCents,
+    queueOperationId: queued.queueOperationId,
+    alreadyQueued: false,
+    cashTakenCents: recordPayment ? gapCents : 0,
+  };
 }

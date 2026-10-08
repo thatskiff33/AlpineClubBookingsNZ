@@ -62,6 +62,11 @@ const mocks = vi.hoisted(() => {
       findUnique: vi.fn(),
       update: tx.payment.update,
     },
+    // #3955 round 5: the allocation engine's own figure for the applied credit
+    // still to allocate (`unallocatedAppliedCents`); none unless a test says.
+    memberCredit: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
+    },
     // #3635 round-3 R1: no refund row names a late capture unless a test says so.
     paymentRefund: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -190,7 +195,12 @@ vi.mock("xero-node", () => ({
 // and when — the figures are saved with the link, in one transaction, and a
 // retry through the "invoice already exists" exit re-runs the check.
 const feeGap = vi.hoisted(() => ({
-  queuePrimaryInvoiceChangeFeeGap: vi.fn(),
+  queuePrimaryInvoiceChangeFeeGap: vi.fn(async () => ({
+    gapCents: 0,
+    queueOperationId: null as string | null,
+    alreadyQueued: false,
+    cashTakenCents: 0,
+  })),
   recheckPrimaryInvoiceChangeFeeGap: vi.fn(),
 }));
 const { queuePrimaryInvoiceChangeFeeGap } = feeGap;
@@ -400,6 +410,7 @@ beforeEach(() => {
 describe("createXeroInvoiceForBooking", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
     resetXeroRateLimitStateForTests();
     vi.stubEnv(
       "XERO_ENCRYPTION_KEY",
@@ -540,6 +551,8 @@ describe("createXeroInvoiceForBooking", () => {
       billedChangeFeeCents: 2_000,
       billedTotalCents: 12_000,
       recordedChangeFeeCentsAtLink: 3_000,
+      // Nothing captured, so no cash on the invoice.
+      primaryInvoiceCashCents: 0,
     };
     expect(mocks.prisma.payment.update).toHaveBeenCalledWith({
       where: { id: "pay_1" },
@@ -643,7 +656,7 @@ describe("createXeroInvoiceForBooking", () => {
 
     beforeEach(() => {
       mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({
-        body: { paymentID: "xpay_1" },
+        body: { payments: [{ paymentID: "xpay_1" }] },
       });
       mocks.allocateAppliedCreditForBooking.mockResolvedValue(undefined);
       mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
@@ -676,6 +689,7 @@ describe("createXeroInvoiceForBooking", () => {
       mocks.prisma.booking.findUnique.mockResolvedValue(
         cardCreditBooking({ amountCents: 8_500, creditAppliedCents: 2_000, changeFeeCents: 500 }),
       );
+      mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -2_000 } });
       mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
         body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100, amountDue: 100, status: "AUTHORISED" }] },
       });
@@ -689,10 +703,144 @@ describe("createXeroInvoiceForBooking", () => {
       expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalled();
     });
 
+    it("MUTATION #3955 round 5 (finding 2): the cap allows for the credit the engine will allocate, from the ledger - not the payment's mirror", async () => {
+      // The mirror says 20.00, but 30.00 of BOOKING_APPLIED credit is still
+      // unallocated on the ledger, which is what the engine allocates. The
+      // cash must leave 30.00 due, or the allocation would not fit.
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ amountCents: 8_500, creditAppliedCents: 2_000 }),
+      );
+      mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -3_000 } });
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+        body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100, amountDue: 100, status: "AUTHORISED" }] },
+      });
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(mocks.prisma.memberCredit.aggregate).toHaveBeenCalledWith({
+        where: { appliedToBookingId: "booking_1", type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+        _sum: { amountCents: true },
+      });
+      expect(mocks.xeroClientInstance.accountingApi.createPayment).toHaveBeenCalledWith(
+        "tenant_1",
+        expect.objectContaining({ amount: 70 }),
+        expect.anything(),
+      );
+    });
+
+    it("MUTATION #3955 round 5 (finding 3): cash the cap leaves off the invoice, with no gap invoice taking it, is logged and recorded on the operation", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ amountCents: 8_500, creditAppliedCents: 2_000 }),
+      );
+      mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -2_000 } });
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+        body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100, amountDue: 100, status: "AUTHORISED" }] },
+      });
+      mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({
+        body: { payments: [{ paymentID: "xpay_1", amount: 80 }] },
+      });
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      const shortfall = { netCapturedCents: 8_500, invoicePaymentCents: 8_000, gapInvoiceCashCents: 0, unrecordedCashCents: 500 };
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking_1", ...shortfall }),
+        expect.stringContaining("no change-fee gap invoice takes the remainder"),
+      );
+      expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+        "op_1",
+        expect.objectContaining({ responsePayload: expect.objectContaining({ primaryInvoiceCashShortfall: shortfall }) }),
+      );
+
+      // A gap invoice that records the 5.00 as paid takes it: nothing to report.
+      mocks.logger.warn.mockClear();
+      queuePrimaryInvoiceChangeFeeGap.mockResolvedValueOnce({
+        gapCents: 500,
+        queueOperationId: "op_gap",
+        alreadyQueued: false,
+        cashTakenCents: 500,
+      });
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(mocks.logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("no change-fee gap invoice takes the remainder"),
+      );
+      expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+        "op_1",
+        expect.objectContaining({ responsePayload: expect.objectContaining({ primaryInvoiceCashShortfall: null }) }),
+      );
+    });
+
+    it("MUTATION #3955 round 5 (finding 4): the cash the primary recorded is computed once and stored with the link", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ amountCents: 8_500, creditAppliedCents: 2_000 }),
+      );
+      mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -2_000 } });
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+        body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100, amountDue: 100, status: "AUTHORISED" }] },
+      });
+      mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({
+        body: { payments: [{ paymentID: "xpay_1", amount: 80 }] },
+      });
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
+        expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 8_000 }) }),
+      );
+      expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+        "op_1",
+        expect.objectContaining({
+          extraLinks: expect.arrayContaining([
+            expect.objectContaining({ role: "INVOICE_PAYMENT", xeroObjectId: "xpay_1" }),
+          ]),
+        }),
+      );
+    });
+
+    it("MUTATION #3955 round 5 (finding 4): a retry whose cap reaches zero records the payment the first run made, not a skip", async () => {
+      // Run 1 recorded 80.00 and died before saving the link. The retry's
+      // invoice shows it paid: 20.00 due, which the 20.00 of credit takes.
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ amountCents: 8_000, creditAppliedCents: 2_000 }),
+      );
+      mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -2_000 } });
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_1",
+              invoiceNumber: "INV-1",
+              total: 100,
+              amountDue: 20,
+              status: "AUTHORISED",
+              payments: [
+                { paymentID: "xpay_other", amount: 5, reference: "Stripe pi_other" },
+                { paymentID: "xpay_run1", amount: 80, reference: "Stripe pi_1" },
+              ],
+            },
+          ],
+        },
+      });
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+        "op_1",
+        expect.objectContaining({
+          responsePayload: expect.objectContaining({ paymentSkipped: false, primaryInvoiceCashShortfall: null }),
+          extraLinks: expect.arrayContaining([
+            expect.objectContaining({ role: "INVOICE_PAYMENT", xeroObjectId: "xpay_run1" }),
+          ]),
+        }),
+      );
+      expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
+        expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 8_000 }) }),
+      );
+    });
+
     it("#3955 round 4: records no cash when the applied credit leaves nothing due, and says why", async () => {
       mocks.prisma.booking.findUnique.mockResolvedValue(
         cardCreditBooking({ amountCents: 500, creditAppliedCents: 10_000, changeFeeCents: 500 }),
       );
+      mocks.prisma.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -10_000 } });
       mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
         body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100, amountDue: 100, status: "AUTHORISED" }] },
       });
@@ -2264,7 +2412,7 @@ describe("createXeroInvoiceForBooking", () => {
         },
       });
       mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({
-        body: { paymentID: "xpay_1" },
+        body: { payments: [{ paymentID: "xpay_1" }] },
       });
 
       await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
