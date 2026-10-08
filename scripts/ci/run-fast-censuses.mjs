@@ -3,7 +3,7 @@
  * The fast tree-wide censuses, run against whatever tree is checked out (#3513).
  *
  * `pnpm run ci:fast-censuses`                 run them all
- * `pnpm run ci:fast-censuses --base <ref>`    judge the file-size ratchet against <ref>
+ * `pnpm run ci:fast-censuses --base <ref>`    judge both tree-wide script checks against <ref>
  * `pnpm run ci:fast-censuses --summary <f>`   also write {ok, failed[]} as JSON to <f>
  *
  * WHAT THIS IS FOR. A census pins how many call sites of some shape exist
@@ -13,7 +13,7 @@
  * that is no longer the base. It has happened on every kind of merge this
  * repository does:
  *
- * - an epic sync: `.github/workflows/epic-branch-sync.yml` arms auto-merge on
+ * - an epic sync: `.github/workflows/epic-branch-sync.yml` used to arm auto-merge on
  *   a `main` -> `epic/**` pull request, and the epic branch carries no branch
  *   protection, so the composed tree used to land before any check had run on
  *   it. The epic found out on its next push;
@@ -27,7 +27,7 @@
  * can never select them from a diff — the class `AGENTS.md` leaves to CI. This
  * script is the cheap answer the owner chose on #3513 ("Cheap narrow check"):
  * run only those, on the composed tree, in well under a minute, rather than a
- * full CI cycle. The sync workflow runs it before it arms auto-merge; a lane
+ * full CI cycle. The sync workflow runs it before it merges; a lane
  * runs it locally after merging `origin/main` into its branch and before it
  * pushes or flips a pull request ready. It is NOT a required check and must not
  * become one through this file.
@@ -132,14 +132,10 @@ export const FAST_CENSUS_SUITES = [
 export const FAST_CENSUS_COMMANDS = [
   {
     name: "docs:indexcheck",
-    runner: "node",
-    script: "scripts/ci/check-doc-index-integrity.mjs",
     why: "invariant ids, index rows, word budgets and doc reachability",
   },
   {
     name: "quality:budget",
-    runner: "tsx",
-    script: "scripts/ci/check-file-size-budget.ts",
     acceptsBase: true,
     why: "the file-size ratchet and size-allowances.d/ ceilings",
   },
@@ -180,6 +176,20 @@ function run(args, env) {
   return result.status === 0;
 }
 
+/** Derive portable execution from package.json, refusing shell syntax (INV-SSOT-001). */
+export function commandArgs(name, scripts = require("../../package.json").scripts) {
+  const definition = scripts[name];
+  const match = typeof definition === "string" && definition.match(
+    /^(node|tsx) ([A-Za-z0-9_./-]+\.m?[ct]?js|[A-Za-z0-9_./-]+\.ts)(?: ([A-Za-z0-9_./= -]+))?$/,
+  );
+  if (!match) throw new Error(`INV-SSOT-001: unsupported package script for ${name}`);
+  return [
+    ...(match[1] === "tsx" ? [binOf("tsx")] : []),
+    match[2],
+    ...(match[3]?.split(" ").filter(Boolean) ?? []),
+  ];
+}
+
 export function parseArgs(argv) {
   const options = { base: undefined, summary: undefined };
   for (let i = 0; i < argv.length; i += 1) {
@@ -209,9 +219,9 @@ export function failedSuites(report, suitePaths, repoRoot = REPO_ROOT) {
   return suitePaths.filter((suitePath) => statusByPath.get(suitePath) !== "passed");
 }
 
-function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const env = { ...INERT_TEST_ENV, ...process.env };
+export function main(argv = process.argv.slice(2), inheritedEnv = process.env) {
+  const options = parseArgs(argv);
+  const env = { ...INERT_TEST_ENV, ...inheritedEnv };
   const failed = [];
 
   const missing = FAST_CENSUS_SUITES.map((s) => s.path).filter(
@@ -227,7 +237,7 @@ function main() {
   const scratch = mkdtempSync(path.join(os.tmpdir(), "fast-censuses-"));
   try {
     const reportPath = path.join(scratch, "vitest.json");
-    run(
+    const vitestPassed = run(
       [
         binOf("vitest"),
         "run",
@@ -240,14 +250,25 @@ function main() {
     );
     const report = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, "utf8")) : null;
     failed.push(...failedSuites(report, present));
+    if (!vitestPassed) failed.push("vitest process");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
 
   for (const command of FAST_CENSUS_COMMANDS) {
-    const args = command.runner === "tsx" ? [binOf("tsx"), command.script] : [command.script];
+    const args = commandArgs(command.name);
     if (command.acceptsBase && options.base) args.push("--base", options.base);
-    if (!run(args, env)) failed.push(command.name);
+    const commandEnv = { ...env };
+    if (command.name === "docs:indexcheck" && options.base) {
+      // A diagnostic of a locally composed tree has its own exact baseline,
+      // not the schedule/dispatch (or PR/push) identity of its parent process.
+      for (const key of [
+        "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_REF_NAME",
+        "GITHUB_BASE_REF", "PR_BASE_SHA", "PUSH_BASE_SHA",
+      ]) delete commandEnv[key];
+      commandEnv.DOC_INDEX_BASE_REF = options.base;
+    }
+    if (!run(args, commandEnv)) failed.push(command.name);
   }
 
   const ok = failed.length === 0;
@@ -266,12 +287,12 @@ function main() {
         '"Census tests and the merge hazard").\n',
     );
   }
-  process.exit(ok ? 0 : 1);
+  return { ok, failed };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    main();
+    process.exit(main().ok ? 0 : 1);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

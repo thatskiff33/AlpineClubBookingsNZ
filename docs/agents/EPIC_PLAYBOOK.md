@@ -239,21 +239,23 @@ runs the next epic.
   `.github/workflows/epic-branch-sync.yml` does this for you every six hours
   (00:20, 06:20, 12:20 and 18:20 UTC):
   one long-lived `main` → `epic/**` pull request per live integration branch,
-  auto-merge armed, so a clean sync needs nobody and a conflicted one waits for a
-  human — which is the correct division.
+  merged immediately when its composed-tree check passes and GitHub reports
+  `CLEAN`; other states wait for the next check or a human conflict resolution.
 
   **A sync lands only after a cheap check of the composed tree** (#3513,
   owner decision "Cheap narrow check", 6 Oct 2026). A clean sync used to merge
   seconds after it opened, before any of its checks had started, so the merge
   of `main` and the epic was first tested on the epic's next push. The workflow
   now merges `origin/main` into each epic branch locally, never pushing it, and
-  runs `pnpm run ci:fast-censuses` there: the tree-wide censuses that two sides,
-  each green against its own base, can compose into a stale count. Only a pass on
+  runs `pnpm run ci:fast-censuses --base <exact-epic-sha>` there: the tree-wide
+  censuses that two sides, each green against its own base, can compose into a
+  stale count. Only a pass on
   exactly that pair of commits lets the sync land. The workflow re-reads the
   epic tip just before acting and pins the merge to the tested `main` commit. A
-  pull request that is already mergeable is merged at once; otherwise
-  auto-merge is armed. Either way, a child landing on the epic in the
-  remaining seconds-to-minutes is caught by the epic's own push CI, as before. A
+  pull request that is `CLEAN` is merged at once; other states stay unarmed for
+  the next scheduled check. Prior auto-merge is disabled before acting. GitHub
+  has no base pin, so a child landing in the seconds between the remote epic-tip
+  read and the immediate merge can still ride along; epic push CI catches it. A
   failure leaves the pull request unarmed with a comment naming the failing
   checks — hand-sync it (below), run the same command on your merge branch, and
   re-derive each count ([`TESTING.md`](../TESTING.md) → "Census tests and the
@@ -282,7 +284,8 @@ runs the next epic.
   **A sync you open by hand gets the same description from a command.** Because
   `epic/**` takes no direct push, a hand sync is a merge branch: make it from
   `origin/epic/…`, run `git merge origin/main`, resolve and commit, run
-  `pnpm run ci:fast-censuses` and fix what it reports, then run
+  `pnpm run ci:fast-censuses --base origin/epic/<n>-<slug>` and fix what it
+  reports, then run
   `pnpm run epic:sync-body -- --branch epic/<n>-<slug> --out body.md`, check it
   with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>`, and open the
   pull request with `--body-file body.md`. The command reads the merge commit

@@ -1233,7 +1233,10 @@ your branch, and before you push or flip a pull request ready.** It catches the
 importer count against a base `main` had already left, and three green pull
 requests made a red `main` — while the composed tree is still on your machine.
 On a child of an epic, pass `--base origin/epic/<n>-<slug>` so the file-size
-ratchet judges against the branch you will merge into.
+ratchet and invariant retention judge against the branch you will merge into.
+The automated sync passes the exact pre-sync epic SHA. With an explicit base,
+the runner clears inherited GitHub event identity only for its diagnostic
+`docs:indexcheck` child; ordinary CI keeps its authoritative PR/push baseline.
 
 It is a convenience for a lane and the gate `epic-branch-sync.yml` applies
 before it lets a sync land (#3513, [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md)).

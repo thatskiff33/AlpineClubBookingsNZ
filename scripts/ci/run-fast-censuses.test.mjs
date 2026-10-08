@@ -8,9 +8,9 @@
  *    the runner keeps passing over a smaller set. Every entry must exist, and
  *    the two script checks must still be what `package.json` runs under their
  *    names.
- * 2. THE WORKFLOW STOPS GATING. `epic-branch-sync.yml` arms auto-merge only
+ * 2. THE WORKFLOW STOPS GATING. `epic-branch-sync.yml` merges immediately only
  *    when the censuses passed on the exact composed tree. An edit that moves
- *    the arm outside that branch, drops `--match-head-commit`, or hands the
+ *    the merge outside that branch, drops `--match-head-commit`, or hands the
  *    job that runs the composed tree's code a write token, is a workflow that
  *    still runs green and no longer does what its header says.
  *
@@ -18,18 +18,25 @@
  * below are about the order and presence of specific lines, which text answers
  * exactly.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { resolveInvariantBaselineRef } from "./check-doc-index-integrity.mjs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   FAST_CENSUS_COMMANDS,
   FAST_CENSUS_SUITES,
   failedSuites,
+  main,
+  commandArgs,
   parseArgs,
 } from "./run-fast-censuses.mjs";
+
+const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
+vi.mock("node:child_process", async (importOriginal) => ({ ...(await importOriginal()), spawnSync: spawn }));
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (relative) => readFileSync(path.join(REPO_ROOT, relative), "utf8");
@@ -79,13 +86,62 @@ describe("the fast census list", () => {
 
   it("runs each script check exactly as its package.json script does", () => {
     for (const command of FAST_CENSUS_COMMANDS) {
-      expect(existsSync(path.join(REPO_ROOT, command.script)), command.script).toBe(true);
-      expect(PACKAGE_SCRIPTS[command.name], command.name).toBe(`${command.runner} ${command.script}`);
+      const args = commandArgs(command.name);
+      const script = args.find((arg) => arg.startsWith("scripts/"));
+      expect(existsSync(path.join(REPO_ROOT, script)), command.name).toBe(true);
+      expect(PACKAGE_SCRIPTS[command.name], command.name).toContain(script);
     }
   });
 
   it("is reachable as pnpm run ci:fast-censuses", () => {
     expect(PACKAGE_SCRIPTS["ci:fast-censuses"]).toBe("node scripts/ci/run-fast-censuses.mjs");
+  });
+});
+
+describe("runner execution", () => {
+  function simulate(vitestStatus = 0) {
+    spawn.mockReset();
+    spawn.mockImplementation((_node, args) => {
+      const output = args.find((arg) => arg.startsWith("--outputFile="));
+      if (output) writeFileSync(output.slice("--outputFile=".length), JSON.stringify({
+        testResults: FAST_CENSUS_SUITES.map(({ path: suite }) => ({ name: path.join(REPO_ROOT, suite), status: "passed" })),
+      }));
+      return { status: output ? vitestStatus : 0 };
+    });
+  }
+
+  it.each([1, null])("fails Vitest process status %s even when every suite reports passed", (status) => {
+    simulate(status);
+    expect(main([], {})).toEqual({ ok: false, failed: ["vitest process"] });
+  });
+
+  it.each(["schedule", "workflow_dispatch"])("uses the exact diagnostic base under %s without changing other child identities", (event) => {
+    simulate();
+    const exactBase = execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+    const inherited = { GITHUB_EVENT_NAME: event, GITHUB_REF: "refs/heads/main", GITHUB_REF_NAME: "main", GITHUB_BASE_REF: "main", PR_BASE_SHA: "inherited-pr", PUSH_BASE_SHA: "inherited-push", DOC_INDEX_BASE_REF: "wrong-base" };
+    expect(main(["--base", exactBase], inherited).ok).toBe(true);
+    const docCall = spawn.mock.calls.find(([, args]) => args.includes("scripts/ci/check-doc-index-integrity.mjs"));
+    expect(docCall[2].env.DOC_INDEX_BASE_REF).toBe(exactBase);
+    expect(resolveInvariantBaselineRef(REPO_ROOT, docCall[2].env)).toBe(exactBase);
+    for (const key of Object.keys(inherited).filter((key) => key !== "DOC_INDEX_BASE_REF")) expect(docCall[2].env[key], key).toBeUndefined();
+    const budget = spawn.mock.calls.find(([, args]) => args.includes("scripts/ci/check-file-size-budget.ts"));
+    expect(budget[1].slice(-2)).toEqual(["--base", exactBase]);
+    expect(budget[2].env.GITHUB_EVENT_NAME).toBe(event);
+    expect(inherited.GITHUB_EVENT_NAME).toBe(event);
+  });
+
+  it("preserves ordinary event authority without an explicit diagnostic base", () => {
+    simulate();
+    main([], { GITHUB_EVENT_NAME: "pull_request", PR_BASE_SHA: "authoritative" });
+    const docCall = spawn.mock.calls.find(([, args]) => args.includes("scripts/ci/check-doc-index-integrity.mjs"));
+    expect(docCall[2].env.GITHUB_EVENT_NAME).toBe("pull_request");
+    expect(docCall[2].env.PR_BASE_SHA).toBe("authoritative");
+  });
+
+  it("derives invocation changes from package.json and refuses shell grammar", () => {
+    expect(commandArgs("check", { check: "node scripts/changed.mjs --strict" })).toEqual(["scripts/changed.mjs", "--strict"]);
+    expect(() => commandArgs("check", { check: "node scripts/check.mjs && echo pass" })).toThrow(/INV-SSOT-001/);
+    expect(() => commandArgs("missing", {})).toThrow(/INV-SSOT-001/);
   });
 });
 
@@ -125,7 +181,7 @@ describe("parseArgs", () => {
   });
 });
 
-describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", () => {
+describe("epic-branch-sync.yml gates immediate merges on the composed-tree censuses", () => {
   const censuses = jobBlock("censuses");
   const sync = jobBlock("sync");
 
@@ -174,7 +230,7 @@ describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", 
   it("merges main into the epic locally and runs pnpm run ci:fast-censuses on it", () => {
     const merge = censuses.indexOf('merge --no-edit --quiet "${main_sha}"');
     const install = censuses.indexOf("pnpm install --frozen-lockfile");
-    const run = censuses.indexOf("pnpm run ci:fast-censuses --summary");
+    const run = censuses.indexOf('pnpm run ci:fast-censuses --base "${epic_sha}" --summary');
     expect(merge).toBeGreaterThan(0);
     expect(install).toBeGreaterThan(merge);
     expect(run).toBeGreaterThan(install);
@@ -186,11 +242,10 @@ describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", 
     expect(sync).toContain("CENSUS_RESULTS: ${{ needs.censuses.outputs.results }}");
   });
 
-  it("merges or arms only inside the census-passed branch, pinned to the tested head", () => {
+  it("merges only inside the census-passed branch, pinned to the tested head", () => {
     const merges = [...sync.matchAll(/gh pr merge [^\n]*--merge\b[^\n]*/g)];
-    // One immediate merge (already CLEAN) and one auto-merge arm, nothing else.
-    expect(merges).toHaveLength(2);
-    expect(merges.filter((m) => /--auto\b/.test(m[0]))).toHaveLength(1);
+    expect(merges).toHaveLength(1);
+    expect(sync).not.toMatch(/gh pr merge [^\n]*--auto\b/);
 
     const gate = sync.indexOf('if [ "${census_status}" = "pass" ]');
     const disarm = sync.indexOf("--disable-auto");
@@ -198,12 +253,56 @@ describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", 
     for (const merge of merges) {
       expect(merge[0]).toContain('--match-head-commit "${tested_main}"');
       expect(merge.index).toBeGreaterThan(gate);
-      expect(disarm).toBeGreaterThan(merge.index);
+      expect(disarm).toBeLessThan(gate);
     }
     // The gate compares the tested SHAs with what would land now.
     const condition = sync.slice(gate, merges[0].index);
     expect(condition).toContain('"${head_now}" = "${tested_main}"');
     expect(condition).toContain('"${epic_now}" = "${tested_epic}"');
+  });
+
+  it("disarms deferred merges before reading tips and refuses to act if disarming fails", () => {
+    expect(sync).toContain('if ! gh pr merge "${existing}" --disable-auto >/dev/null; then');
+    const disable = sync.indexOf("--disable-auto");
+    const head = sync.indexOf('head_now="$(gh pr view');
+    expect(disable).toBeLessThan(head);
+    expect(sync.slice(disable, head)).toMatch(/continue\n\s*fi/);
+    expect(sync.slice(0, disable)).toContain('if [ "${auto_request}" = "true" ]; then');
+  });
+
+  it.each([
+    ["false", 0, true, false],
+    ["true", 0, true, true],
+    ["true", 1, false, true],
+    ["query-error", 0, false, false],
+    ["", 0, false, false],
+    ["null", 0, false, false],
+  ])("handles auto-merge state %s and disable exit %s before acting", (state, disableStatus, proceeds, disables) => {
+    const block = sync.slice(sync.indexOf('            if ! auto_request='), sync.indexOf('            # THE CENSUS GATE'));
+    expect(block).toContain("--jq '.autoMergeRequest != null'");
+    const output = execFileSync("bash", [], {
+      encoding: "utf8",
+      input: `gh() {
+        if [ "$2" = "view" ]; then
+          [ "$AUTO_STATE" != "query-error" ] || return 1
+          printf '%s\\n' "$AUTO_STATE"
+        else
+          disabled=1
+          return "$DISABLE_STATUS"
+        fi
+      }
+      disabled=0
+      for branch in epic/test; do
+        existing=1
+        ${block}
+        echo PROCEED
+      done
+      echo DID_DISABLE=$disabled`,
+      env: { ...process.env, AUTO_STATE: state, DISABLE_STATUS: String(disableStatus) },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(output.includes("PROCEED")).toBe(proceeds);
+    expect(output.includes("DID_DISABLE=1")).toBe(disables);
   });
 
   it("re-reads the epic tip from the remote right before the gate, since the head pin cannot cover it", () => {

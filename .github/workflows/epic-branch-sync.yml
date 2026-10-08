@@ -49,8 +49,8 @@ name: Epic branch sync
 #
 # It never resolves a conflict itself, never force-pushes, never pushes the
 # composed tree it checks, and never merges in the `epic -> main` direction.
-# Auto-merge means a clean sync whose censuses pass needs no human at all; a
-# conflicted one, or one whose censuses fail, waits for one, which is correct.
+# A CLEAN sync whose censuses pass merges immediately without a human. Other
+# states wait for another check, or a human when conflicts or censuses fail.
 
 on:
   schedule:
@@ -82,8 +82,8 @@ on:
         required: false
         type: string
 
-# Read-only by default. Only the `sync` job, which opens pull requests and arms
-# auto-merge, is granted write — and it runs no code from the composed tree.
+# Read-only by default. Only `sync`, which opens and merges pull requests,
+# is granted write — and it runs no code from the composed tree.
 permissions:
   contents: read
 
@@ -96,7 +96,7 @@ jobs:
   # merge `origin/main` into it LOCALLY — never pushed — install that composed
   # tree's own dependencies and run the fast tree-wide censuses on it. The
   # result per branch is handed to `sync` as a JSON output keyed by branch, with
-  # the two SHAs it tested, so `sync` arms auto-merge on exactly the tree that
+  # the two SHAs it tested, so `sync` merges immediately on exactly the tree that
   # was checked and nothing newer.
   #
   # WHY A SEPARATE JOB. This one executes the composed tree's code (`pnpm
@@ -105,7 +105,7 @@ jobs:
   # to the repository runs none of it. A census FAILURE does not fail this job —
   # it is a result, and `sync` reports it on the pull request. A crash here
   # leaves branches with no result, which `sync` treats as unchecked and does not
-  # arm: it fails closed.
+  # merge: it fails closed.
   #
   # WHAT ISOLATION IT HAS, AND WHAT IT CANNOT HAVE. There is deliberately no
   # dependency cache (`setup-node`'s `cache: pnpm`): a cache saved here would be
@@ -138,7 +138,7 @@ jobs:
       results: ${{ steps.check.outputs.results }}
     steps:
       # Full history: the merge needs both sides, and `quality:budget` and
-      # `docs:indexcheck` both compare against `origin/main`.
+      # `docs:indexcheck` both compare against the exact pre-sync epic SHA.
       - name: Check out full history
         uses: actions/checkout@v7
         with:
@@ -220,7 +220,7 @@ jobs:
               status="error"
             else
               rm -f "${summary}"
-              if untrusted pnpm run ci:fast-censuses --summary "${summary}"; then
+              if untrusted pnpm run ci:fast-censuses --base "${epic_sha}" --summary "${summary}"; then
                 status="pass"
               else
                 status="fail"
@@ -254,7 +254,7 @@ jobs:
           done
 
           # ONE RE-CHECK IN THE SAME RUN. `main` merges every few minutes, so it
-          # often moves while the first pass runs, and `sync` refuses to arm a
+          # often moves while the first pass runs, and `sync` refuses to merge a
           # tree nobody checked. Fetch once more (a public repository needs no
           # credential) and re-check every branch whose `main` or epic tip moved,
           # so a busy `main` costs one more pass rather than six hours. Once
@@ -428,6 +428,26 @@ jobs:
               needs_a_human="${needs_a_human} ${branch}(#${existing})"
             fi
 
+            # Remove a prior run's deferred merge before reading either tip.
+            # Failure to disarm leaves it unsafe to act, so wait for a later run.
+            if ! auto_request="$(gh pr view "${existing}" --json autoMergeRequest --jq '.autoMergeRequest != null')"; then
+              echo "${branch}: could not read auto-merge state; waiting."
+              echo "::endgroup::"
+              continue
+            fi
+            if [ "${auto_request}" != "true" ] && [ "${auto_request}" != "false" ]; then
+              echo "${branch}: unreadable auto-merge state; waiting."
+              echo "::endgroup::"
+              continue
+            fi
+            if [ "${auto_request}" = "true" ]; then
+              if ! gh pr merge "${existing}" --disable-auto >/dev/null; then
+                echo "${branch}: could not disable auto-merge; waiting."
+                echo "::endgroup::"
+                continue
+              fi
+            fi
+
             # THE CENSUS GATE (#3513). Merge only when the `censuses` job passed
             # on EXACTLY the tree this pull request would land: the same `main`
             # (the pull request's head) and the same epic tip. If either moved
@@ -449,18 +469,9 @@ jobs:
               # real history or the final epic -> main merge re-resolves
               # everything.
               #
-              # WHAT IS PINNED, EXACTLY. `--match-head-commit` makes GitHub
-              # refuse the merge if `main` (the head) is no longer the tested
-              # commit. The epic tip (the base) was re-read just above; GitHub
-              # offers no base pin, so a child merging into the epic in the
-              # seconds between that read and the merge would ride along
-              # unchecked. When the pull request is already CLEAN it is merged
-              # NOW, which shrinks that window to those seconds. Otherwise
-              # auto-merge is armed, pinned to the tested head, and the window
-              # is open until GitHub merges it — whatever lands on the epic in
-              # between is checked by the epic's own push CI, as it is today.
-              # stdout only is discarded, never stderr: only gh's own message
-              # tells "already armed" from "auto-merge is disabled here".
+              # The head pin protects the immediate merge. GitHub has no base
+              # pin: a child arriving in the seconds since the remote read can
+              # still ride along. Never extend that window with auto-merge.
               merge_state="$(gh pr view "${existing}" --json mergeStateStatus --jq .mergeStateStatus)" \
                 || merge_state="UNKNOWN"
               if [ "${merge_state}" = "CLEAN" ]; then
@@ -468,17 +479,9 @@ jobs:
                 gh pr merge "${existing}" --merge --match-head-commit "${tested_main}" >/dev/null \
                   || echo "${branch}: #${existing} could not be merged now; the next run re-checks."
               else
-                echo "${branch}: the fast censuses passed on the composed tree; arming auto-merge (${merge_state})."
-                gh pr merge "${existing}" --auto --merge --match-head-commit "${tested_main}" >/dev/null \
-                  || echo "${branch}: auto-merge could not be armed on #${existing} (it may already be)."
+                echo "${branch}: #${existing} is ${merge_state}; left unarmed for the next census check."
               fi
             else
-              # Anything short of a pass on this exact tree disarms an earlier
-              # run's auto-merge: the tree it approved is no longer the one that
-              # would land. "Not armed" is the usual reply, hence the message.
-              gh pr merge "${existing}" --disable-auto >/dev/null \
-                || echo "${branch}: auto-merge was not armed on #${existing}; nothing to disable."
-
               case "${census_status}" in
                 pass|current)
                   # `current`: the epic already contained the `main` the check
@@ -521,7 +524,7 @@ jobs:
                       "${failed_list}" \
                       "${fence}" \
                       "" \
-                      "Each side was green against its own base; together they disagree, usually a census count both sides re-measured. Hand-sync per \`docs/agents/EPIC_PLAYBOOK.md\`: merge \`origin/main\` into a merge branch off the epic, run \`pnpm run ci:fast-censuses\`, re-derive each count against that tree (never increment it), and open the hand sync. Run: ${RUN_URL}" \
+                      "Each side was green against its own base; together they disagree, usually a census count both sides re-measured. Hand-sync per \`docs/agents/EPIC_PLAYBOOK.md\`: merge \`origin/main\` into a merge branch off the epic, run \`pnpm run ci:fast-censuses --base origin/${branch}\`, re-derive each count against that tree (never increment it), and open the hand sync. Run: ${RUN_URL}" \
                       | gh pr comment "${existing}" --body-file - >/dev/null \
                       || echo "${branch}: could not comment the census failure on #${existing}."
                   fi
