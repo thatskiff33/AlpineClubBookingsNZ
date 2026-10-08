@@ -6,13 +6,14 @@
  * ledger, asks the pure planner what is missing, and writes that.
  *
  * WHERE IT RUNS. At the end of `reconcilePaymentAggregates` — the one place the
- * `Payment` mirror is derived from these same rows — and from the three paths
+ * `Payment` mirror is derived from these same rows — and from the five paths
  * that write their rows and the payment's columns themselves instead: the
- * manual mark-paid settle, its reversal (`INV-PAY-047`), and the Xero
- * payment-received path's Internet Banking receipt. One function, four named
- * call sites; not four definitions. The first cut claimed every writer ended
- * at the chokepoint; review of #3604 traced every writer and found the
- * receipt path did not.
+ * manual mark-paid settle, its reversal (`INV-PAY-047`), the Xero
+ * payment-received path's Internet Banking receipt, and (#3854) the #3653
+ * organiser-child refund recorder and its pending-refund sweep. One function,
+ * six named call sites; not six definitions. The first cut claimed every
+ * writer ended at the chokepoint; review of #3604 traced every writer and
+ * found the receipt path did not.
  *
  * WHAT IS SWALLOWED AND WHAT IS NOT (the lesson of #3590's review). Planning
  * and building the rows are pure: ANY throw there — a malformed plan, or a

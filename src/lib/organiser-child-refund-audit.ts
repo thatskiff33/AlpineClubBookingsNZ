@@ -5,7 +5,7 @@
  */
 import { BookingStatus, PaymentSource, type Prisma } from "@prisma/client";
 
-import { deserializeRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan } from "@/lib/group-settlement-refund-plan";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 

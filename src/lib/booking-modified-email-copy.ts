@@ -5,7 +5,20 @@
  * the time the email goes; a bank-transfer refund is an officer task the club
  * has still to carry out, so it is promised rather than reported.
  */
-export function bookingModifiedRefundSentence(amount: string, refundByBankTransfer: boolean): string {
+export function bookingModifiedRefundSentence(
+  amount: string,
+  refundByBankTransfer: boolean,
+  /**
+   * #3916: a joiner's booking the group organiser paid for by card refunds its
+   * reduction to the ORGANISER's card (#3653), not to anything the joiner paid
+   * with. The edit's own settlement answer (`organiserChildRefund !== null`),
+   * never recomputed here. Such a refund is a Stripe one, so never by hand.
+   */
+  refundReturnedToOrganiser: boolean,
+): string {
+  if (refundReturnedToOrganiser) {
+    return `A refund of ${amount} has been processed to the group organiser's card, because the group organiser paid for this booking.`;
+  }
   return refundByBankTransfer
     ? `The club will refund ${amount} to you by bank transfer.`
     : `A refund of ${amount} has been processed to your original payment method.`;

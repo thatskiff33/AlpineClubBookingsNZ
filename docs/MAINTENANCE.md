@@ -1433,6 +1433,37 @@ hand and resolved it in Xero, the app raises no refund note for it, so a refund
 of that capture raises the report-only
 `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`: record the refund by hand as well.
 
+**Credit-paid card bookings invoiced before #3836.** A card booking paid
+entirely with account credit was invoiced at its full price, but the credit was
+never allocated against the invoice, so Xero shows the whole booking owing and
+its reminders ask the member for money already paid. New bookings are allocated
+by the invoice operation itself. For bookings invoiced before the fix, the tool
+reports `UNALLOCATED_APPLIED_CREDIT` (critical) on a paid booking whose card
+payment captured nothing, whose invoice exists, and whose applied credit has no
+Xero note on record. Its `QUEUE_APPLIED_CREDIT_ALLOCATION` action is safe to
+auto-apply: it queues the same applied-credit allocation operation booking
+creation uses, which allocates the member's floating credit notes (minting one
+for credit that has none) up to what is still applied, and stamps it, so a
+re-run allocates nothing more. Where the booking's invoice or allocation
+operation is unfinished the tool offers that operation's retry instead, or
+waits, and never queues a second one. A cancelled booking is not reported here:
+the `CANCELLED_BOOKING_OPEN_INVOICE` finding clears its invoice with a note, and
+waits while the booking's invoice or allocation operation is unfinished, since
+that operation may still finish allocations the note must not repeat.
+
+If Xero refuses the allocation (a 4xx: typically the invoice was voided, or
+already settled by hand), the operation stays `FAILED` and the report offers its
+retry as a manual action only, never auto-applied, so a sweep does not re-run a
+refusal. An applied-credit operation cannot be marked "resolved in Xero": the
+local credit ledger's fences read only its status, so it is closed by a
+successful run. Read the operation's error, put the cause right in Xero (for
+example, remove a hand-made payment or allocation that already settles the
+invoice, so the member's credit note pays it as the app records), then apply the
+retry by its key: `--apply --apply-action <actionKey>`. Where the invoice was
+voided and must stay voided, leave the operation failed and take the booking to
+a developer: the member's credit note stays unallocated in Xero, and no tool
+here re-raises the invoice.
+
 ### Refund credit notes with no settlement on record (#3548)
 
 Before #3548, a refund credit note whose first attempt died between raising the
@@ -1651,7 +1682,9 @@ owed — against the ledger lines that project them, and prints:
   records, captured transactions and recorded card refunds with no live line
   of their own (`UNPOSTED_SETTLEMENT`), and money handed back before the
   posters existed — a legacy seed's refund, a V3 hand-back — that the balance
-  owed cannot yet see (`UNPOSTED_LEGACY_REFUND`);
+  owed cannot yet see (`UNPOSTED_LEGACY_REFUND`), and a group-settled child
+  with no lines whose planned lines would not agree outright
+  (`GROUP_SETTLEMENT_UNPOSTABLE`, below);
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
@@ -1749,8 +1782,22 @@ damaged — named by shape, since that path may still be live) holds the gate
 until each is corrected, or written off in the acknowledgement file, and
 `GROUP_SETTLEMENT_OFF_LEDGER` (children whose money moved only through the
 organiser's group settlement — no transaction, refund or credit row of their
-own, no credit, refund or change-fee figure — whose poster is #3854) is listed
-only. Every other class is an expected state, an in-flight refund among them:
+own, no credit, refund or change-fee figure — and that hold no line: since
+#3854 the settle posts them, and the back-post below posts the history) is
+listed only. The census names a child in that class only when the lines the
+back-post would post — which it plans in memory, from the same snapshot,
+through the back-post's own planners — would make it agree outright. Any
+other such child (shares that do not add up to what the settlement collected,
+a #3653 refund still owed whose retry is exhausted or still running, night
+rows that do not make the price) is the coverage gap
+`GROUP_SETTLEMENT_UNPOSTABLE`, which holds the gate and cannot itself be
+acknowledged (#3854). The summary splits it by what to do: **refused** by the
+back-post, or posted but still not agreeing — correct the history, then re-run;
+**posts with a class** (a refund still in flight, say) — run the back-post,
+then acknowledge the class the census then shows. A refund counts as in flight while the recovery runner will still
+make it — pending, processing, or failed with a retry scheduled and attempts
+left; once its retries are exhausted it is not, and the money it owes back
+holds the gate. Every other class is an expected state, an in-flight refund among them:
 acknowledge each instance with its reference, and a figure that moves after
 sign-off goes stale and holds the gate again, so nothing stays "in flight"
 unseen. The census takes no lock, so run it off-peak against
@@ -1804,13 +1851,18 @@ DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the repo
 
 **Reading the report.** One summary line — bookings, how many it posted (or
 would) and how many lines, how many had nothing to post, how many it cannot
-post, and how many group-settled children it left alone — then one line per
-booking that posts or cannot:
+post — then one line per booking that posts or cannot:
 
 - `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
   confirmation (one line per guest-night, an evenly split strand included), an
   old edit's change fee or the nights it moved, the cancellation with the kept
-  figure, and in brackets any census class the booking now shows.
+  figure, and in brackets any census class the booking now shows. A child a
+  group organiser settled (#3854) also names `group share (<cents>)` and, where
+  the organiser cancelled under a frozen refund plan whose refund was made,
+  `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
+  (the share less every refund made or still owed). A plan refund still being
+  retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
+  posts it when it goes through.
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
@@ -1818,15 +1870,26 @@ booking that posts or cannot:
   another writer held the booking; re-run. `UNEXPECTED_ERROR` — anything else
   (a legacy negative night price, for one), with its message. `EDIT_NOT_DERIVABLE`,
   `PRICE_LINES_DISAGREE`, `REBASE_MOVEMENT_UNREADABLE`, `LIVE_LINE_NOT_ONE_NIGHT`
-  — an old edit cannot be re-derived from what the rows hold. `CENSUS_WOULD_NOT_PASS`
+  — an old edit cannot be re-derived from what the rows hold.
+  `GROUP_SHARES_DO_NOT_RECONCILE` — the payments of the children a group
+  settlement paid do not add up to what it collected, so no share is guessed;
+  an officer looks at the group. A group-settled child (#3854) it refuses,
+  for this or any reason, holds the census's gate as
+  `GROUP_SETTLEMENT_UNPOSTABLE` (refused), or `NO_LINES` if it holds money of
+  its own: correct the history, then re-run. One it posts with a class — a
+  refund still in flight — also held as `GROUP_SETTLEMENT_UNPOSTABLE` (posts
+  with a class) until posted: run the back-post, then acknowledge the class
+  the census shows. `CENSUS_WOULD_NOT_PASS`
   — the lines it could post would leave the census disagreeing, gapped or
   finding a line wrong; the figures follow. What the back-post does not
   reconstruct, and so lists here: a review give-back or stand-in a closure made
   before #3582, a review refund an officer handed back by hand before #3599,
   and a legacy refund with no refund row. Each is for an officer to look at;
   report it on #3583 with the figures printed.
-- `LISTED <id>  GROUP_SETTLEMENT_OFF_LEDGER` — a group-settled child whose money
-  moved only through its organiser; its poster is #3854 (owner decision 2).
+
+Run the back-post only once the blue/green colour switch to the #3854 release
+is finished, and finish that switch before processing any organiser
+cancellation (the release's deploy note).
 
 **The owner's run.** Agents never touch production. Run it twice: first as a
 rehearsal on a restored backup, then for real.
@@ -1921,7 +1984,10 @@ unclassified disagreement, any coverage gap (a booking the back-post listed
 `KNOWN_DEFECT_HISTORY` booking until an officer corrects it or you write it off
 in the acknowledgement file on #3583 (owner decision 1), and every other class
 instance until you acknowledge it to the cent. `GROUP_SETTLEMENT_OFF_LEDGER` is
-listed only. The gate is open when `--fail-on-gap` exits 0 and the census prints
+listed only; a group-settled child whose planned lines would not agree
+outright — refused by the back-post (correct the history), or posted with a
+class to acknowledge (run the back-post, then acknowledge) — is never in it,
+but the gap `GROUP_SETTLEMENT_UNPOSTABLE`, which holds. The gate is open when `--fail-on-gap` exits 0 and the census prints
 `VERDICT: GATE_OPEN`. CI runs this same sequence on every pull request over a
 seeded history (`scripts/booking-ledger-seed-gate.sh`).
 
