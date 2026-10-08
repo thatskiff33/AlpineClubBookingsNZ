@@ -493,6 +493,15 @@ lists every one; these are in that class:
   that both releases invoice from. Its `rollback.sql` holds no statements by
   design: keep the rows, and refresh the invoice of any request the old colour
   approved after migrate.
+- `20260928020000_booking_owner_optional_member` and
+  `20260928030000_backfill_school_bookings_to_organisations` (#3369) — one
+  window, never applied apart. The first only relaxes `NOT NULL` and is
+  compatible on its own; it is windowed because without the second the database
+  would accept a booking with no owner. The second empties `Booking.memberId` on
+  every school booking, which the previous client reads as required, so the
+  draining colour errors on the first school booking it touches. Both ship a
+  `rollback.sql` and reverse in the opposite order; see
+  [§2.4.2](#242-3369-a-school-booking-has-an-organisation-not-an-invented-person).
 - `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
   DDL with a deliberately incompatible write protocol. The previous runtime can
   attempt an overlap that the new triggers reject and cannot decode the new safe
@@ -1544,6 +1553,17 @@ statement runs again.
   value. On a deployment that already runs the mandatory-category runtime the
   window writes no uncategorised record, so the re-run finds nothing.
 
+This step is for **every** deploy that applied either migration, not only the
+release in [§2.4.1](#241-2520-drop-familygroupmemberrole): that section's step
+9(a) list is the exact set one release window carried, and
+`20260810020000` is not in it because it shipped in an earlier release. If
+neither was pending in this deploy, skip this step. If the deploy ran under the
+windowed sequence in [§2.4](#24-windowed-migration-deploy-sequence), no old colour
+was serving between migrate and cutover, so the re-run finds nothing; it is
+still safe to run. A release that still has
+`20260810010000_backfill_booking_request_guest_nights` pending is windowed for
+that reason alone (#3933).
+
 Run both files again, verbatim, against the production database once cutover is
 complete:
 
@@ -1659,6 +1679,13 @@ only migrations in that class. Among them:
   stop every old process before the private repair, preserve the quiet-point
   backup, and do not restart old code until this migration's `rollback.sql` has
   removed the trigger protocol or the backup has been restored.
+- `20261101020000_add_pending_school_adult_capacity` (#3413) is `windowed`
+  although its schema change is additive: the previous colour never reads the new
+  pending-adult reservation nights and would undercount held beds. Keep
+  `PENDING_SCHOOL_ADULTS_ENABLED` off until the window has drained, and before its
+  `rollback.sql` disable writes and prove no pending adult remains; do not
+  restart old code first. See
+  [§2.4](#3413-pending-school-adult-capacity-activation).
 - **`v0.10.0` has one migration in that class too**, declared before the value
   existed. `20260707000100_backfill_org_age_tier_not_applicable` is
   `old_code_compatible=no`, and its `lock_impact_plan` states plainly that
