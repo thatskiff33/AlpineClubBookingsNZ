@@ -195,7 +195,7 @@ describe("contextual help registry", () => {
     expect(details).toContain("displayed to exact cents in the page and exports");
     expect(details).toContain("captured payment amount less refunds");
     expect(details).toContain("Outstanding Additions is shown separately");
-    expect(details).toContain("how much Net Collected Cash may understate");
+    expect(details).toContain("how much Net Collected may understate");
     expect(details).toContain("included in CSV and PDF exports");
     expect(details).toContain(
       "Pending, Payment Pending, Confirmed, Paid, Awaiting Review, and Completed",
