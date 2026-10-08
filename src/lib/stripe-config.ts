@@ -46,8 +46,9 @@ export const STRIPE_WRITABLE_CREDENTIAL_KEYS = [
 /**
  * Non-secret marker key recording that a Stripe webhook event, live or test
  * (#3975), was received AND signature-verified through the exact production
- * resolver/HMAC path, under the signing secret still stored. Stored in the same encrypted store (its value is an ISO timestamp — not
- * secret) so verify-reset and the needs-reentry aggregate treat it uniformly.
+ * resolver/HMAC path, under the signing secret still stored. Stored in the
+ * same encrypted store (its value is an ISO timestamp — not secret) so
+ * verify-reset and the needs-reentry aggregate treat it uniformly.
  * It is NEVER in the credential write allowlist — only the webhook route writes
  * it, and it is dropped by verify-reset whenever any Stripe credential changes.
  */
@@ -230,9 +231,9 @@ export interface StripeSetupState {
   needsReentry: boolean;
   /**
    * A signature-verified webhook event arrived AND the marker is fresh — i.e.
-   * it was recorded at or after the current webhook secret was last written. A signing-secret
-   * swap makes the secret newer than the marker, so the badge drops to amber
-   * even before verify-reset physically removes the marker.
+   * it was recorded at or after the current webhook secret was last written.
+   * A signing-secret swap makes the secret newer than the marker, so the badge
+   * drops to amber even before verify-reset physically removes the marker.
    */
   webhookVerified: boolean;
 }
