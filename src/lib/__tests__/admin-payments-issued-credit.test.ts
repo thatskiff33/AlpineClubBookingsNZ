@@ -68,10 +68,17 @@ describe("the payments list reads credit issued from a booking, not credit given
     await listAdminPayments(adminPaymentsQuerySchema.parse({ sort: "settlement" }));
 
     expect(mocks.paymentFindMany).toHaveBeenCalledTimes(2);
-    for (const [args] of mocks.paymentFindMany.mock.calls) {
-      expect(JSON.stringify(args)).toContain(
-        JSON.stringify({ where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } }, select: { amountCents: true, description: true } }),
-      );
+    // The relation's `where`, wherever the query hangs the booking (`select` on
+    // the candidate read, `include` on the page read). Its `select` is not
+    // pinned: #3372 widened it for the Net Collected kept-credit reader, which
+    // the filter costs nothing - a restore is always a `CANCELLATION_REFUND`.
+    type BookingRelation = { select?: { creditsFromCancellation?: { where?: unknown } } };
+    type FindManyArgs = { select?: { booking?: BookingRelation }; include?: { booking?: BookingRelation } };
+    for (const [args] of mocks.paymentFindMany.mock.calls as Array<[FindManyArgs]>) {
+      const booking = args.select?.booking ?? args.include?.booking;
+      expect(booking?.select?.creditsFromCancellation?.where).toEqual({
+        type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },
+      });
     }
   });
 });
