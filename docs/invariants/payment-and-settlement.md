@@ -1940,7 +1940,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The member is told the club WILL refund by bank transfer**
     (`refundRequestApprovedRefundSentence`); card wording is unchanged.
 
-## INV-PAY-119
+## INV-PAY-120
 
 - **A card refund not yet paid is owed until Stripe pays it or the treasurer
   closes it as paid another way** (#3372, owner 7 Oct 2026: "count in both",
@@ -1963,7 +1963,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     group settlement refunds counts as one club-wide amount (owner, 8 Oct 2026:
     "Separate club-wide line"; `legacyGroupSettlementRefundOwedCents`).
 
-## INV-PAY-120
+## INV-PAY-121
 
 - **"Paid another way" records the close as a completed hand-back and ends the
   refund** (#3372, owner 7 Oct 2026; 8 Oct: "Keep it together").

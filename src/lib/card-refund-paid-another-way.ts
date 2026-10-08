@@ -47,7 +47,7 @@ import {
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; 8 Oct 2026: "Keep it
- * together"): A DEAD CARD REFUND, CLOSED AS PAID ANOTHER WAY (`INV-PAY-120`).
+ * together"): A DEAD CARD REFUND, CLOSED AS PAID ANOTHER WAY (`INV-PAY-121`).
  *
  * A card refund operation whose retries are spent stays owed - in "Refunds
  * owed" and off Net Collected (`openCardRefundOwedCents`) - until the treasurer

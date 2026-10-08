@@ -3274,7 +3274,7 @@ all"). It refuses an organiser child's refund (#3653) and a group
 organiser-cancel settlement's refund (`isOwedCardRefundOperation`); a
 superseded intent's refund closes whole, never at nil, and only while its
 charge still holds exactly what it owes. The rules are
-`INV-PAY-119` and `INV-PAY-120`; the lock is registered as
+`INV-PAY-120` and `INV-PAY-121`; the lock is registered as
 `closeCardRefundPaidAnotherWay#1`. To verify:
 `card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts` and
 `card-refund-paid-another-way.realdb.test.ts` (a double click closes once; a
