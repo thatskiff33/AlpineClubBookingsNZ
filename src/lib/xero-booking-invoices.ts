@@ -842,12 +842,26 @@ export async function createXeroInvoiceForBooking(
       );
     }
     const shouldRecordStripeInvoicePayment = stripeCashToRecord && invoicePaymentCents > 0;
+    // #3955 round 6 (F1): the cash the returned invoice already holds. Where the
+    // cap is zero and the reference lookup missed, it is an earlier payment the
+    // lookup could not match - a floor for the stored figure, and the reason
+    // the skip below gives, rather than "nothing is left due".
+    const earlierInvoicePaymentCents = stripeCashToRecord
+      ? Math.max(0, providerAmountToCents(createdInvoice.amountPaid) ?? 0)
+      : 0;
+    const earlierPaymentUnmatched =
+      stripeCashToRecord &&
+      invoicePaymentCents === 0 &&
+      !existingStripePayment &&
+      earlierInvoicePaymentCents > 0;
     const paymentSkipped =
       paymentCaptured && !shouldRecordStripeInvoicePayment && !existingStripePayment;
     const paymentSkipReason = !paymentSkipped
       ? null
       : paymentSource === PaymentSource.INTERNET_BANKING
         ? "Internet Banking invoice payments are reconciled from Xero instead of recorded as Stripe bank payments."
+        : earlierPaymentUnmatched
+          ? "An earlier payment is present on the invoice but not matched by reference; no further cash is recorded against it."
         : netCapturedCents > 0
           ? "Nothing is left due on the invoice once its applied account credit is allowed for; no cash is recorded against it."
           : (booking.payment.refundedAmountCents ?? 0) > 0
@@ -1134,10 +1148,15 @@ export async function createXeroInvoiceForBooking(
 
     // The Stripe cash recorded against this invoice, computed ONCE (#3955
     // round 5, finding 4): the payment Xero holds where there is one, else the
-    // figure it was sized at (a failed write is repaired at that figure).
-    const primaryInvoiceCashCents =
+    // figure it was sized at, floored (round 6, F1) at the cash the invoice
+    // already held. If the payment write failed, the operator repair does NOT
+    // size at this figure: it sizes by the stored invoice total
+    // (`readStoredInvoiceTotalCents`, xero-operation-retry.ts), tracked in #4010.
+    const primaryInvoiceCashCents = Math.max(
       providerAmountToCents(paymentResponseBody?.amount) ??
-      (shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0);
+        (shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0),
+      earlierInvoicePaymentCents,
+    );
 
     // Store the Xero invoice ID and number on the payment record, and — in the
     // same transaction — what the invoice billed, the change fee the payment

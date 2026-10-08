@@ -83,7 +83,7 @@ export function reviewInvoiceReductionCents({
   appliedBeforeCents,
   givenBackCents,
 }: {
-  /** `bookingIsUnpaid`: credit short of the price for a reason other than a review's give-back. */
+  /** `bookingIsUnpaid`: credit short of the booking's worth (price plus recorded fee) for a reason other than a review's give-back. */
   unpaid: boolean;
   previousFinalPriceCents: number;
   finalPriceCents: number;
@@ -308,7 +308,7 @@ export async function giveBackCancelledShareCredit({
 /**
  * How much of a review share on a booking with no captured payment is the
  * member's applied credit coming back: never more than is applied, and on an
- * UNPAID booking - credit short of the price - never more than the headroom
+ * UNPAID booking - credit short of the booking's worth (price plus recorded fee) - never more than the headroom
  * the booking's review re-prices left (`reviewRepriceHeadroomCents`), so a
  * review cannot raise what the member owes (orchestrator decision on #3791).
  * `null` headroom means the booking is fully paid and is not held to it.

@@ -837,6 +837,93 @@ describe("createXeroInvoiceForBooking", () => {
       );
     });
 
+    describe("MUTATION #3955 round 6 (F1): the stored primary cash is floored at the invoice's own amountPaid", () => {
+      // Cap zero: 20.00 due, taken by the 20.00 of applied credit.
+      const retryInvoice = (extra: Record<string, unknown>) => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(
+          cardCreditBooking({ amountCents: 8_000, creditAppliedCents: 2_000 }),
+        );
+        mocks.prisma.memberCredit.groupBy.mockResolvedValue([{ appliedToBookingId: "booking_1", _sum: { amountCents: -2_000 } }]);
+        mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+          body: {
+            invoices: [
+              { invoiceID: "inv_1", invoiceNumber: "INV-1", total: 100, amountDue: 20, status: "AUTHORISED", ...extra },
+            ],
+          },
+        });
+      };
+
+      it("a missed reference lookup with amountPaid above zero stores that cash and says an earlier payment was not matched", async () => {
+        retryInvoice({
+          amountPaid: 80,
+          payments: [{ paymentID: "xpay_other", amount: 80, reference: "Stripe pi_other" }],
+        });
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+        expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
+          expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 8_000 }) }),
+        );
+        expect(mocks.logger.warn).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining("earlier payment is present on the invoice but not matched by reference"),
+        );
+        expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+          "op_1",
+          expect.objectContaining({
+            responsePayload: expect.objectContaining({
+              paymentSkipped: true,
+              paymentSkipReason: expect.stringContaining("not matched by reference"),
+            }),
+          }),
+        );
+      });
+
+      it("a found reference lookup records that payment's link and gives no unmatched reason", async () => {
+        retryInvoice({
+          amountPaid: 80,
+          payments: [{ paymentID: "xpay_run1", amount: 80, reference: "Stripe pi_1" }],
+        });
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
+          expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 8_000 }) }),
+        );
+        expect(mocks.logger.warn).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining("not matched by reference"),
+        );
+        expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+          "op_1",
+          expect.objectContaining({
+            responsePayload: expect.objectContaining({ paymentSkipped: false }),
+          }),
+        );
+      });
+
+      it("an amountPaid of zero stores zero and keeps the 'nothing is left due' reason", async () => {
+        retryInvoice({ amountPaid: 0, payments: [] });
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
+          expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 0 }) }),
+        );
+        expect(mocks.logger.warn).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining("not matched by reference"),
+        );
+        expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+          "op_1",
+          expect.objectContaining({
+            responsePayload: expect.objectContaining({
+              paymentSkipped: true,
+              paymentSkipReason: expect.stringContaining("Nothing is left due"),
+            }),
+          }),
+        );
+      });
+    });
+
     it("#3955 round 4: records no cash when the applied credit leaves nothing due, and says why", async () => {
       mocks.prisma.booking.findUnique.mockResolvedValue(
         cardCreditBooking({ amountCents: 500, creditAppliedCents: 10_000, changeFeeCents: 500 }),
