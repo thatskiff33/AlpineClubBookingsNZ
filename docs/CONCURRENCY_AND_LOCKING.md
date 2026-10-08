@@ -4564,16 +4564,23 @@ paid the member back another way, and records the money with
 `lock(1)` first (`INV-LOCK-001`): it moves a payment's `refundedAmountCents`
 and closes a refund debt in one commit, and every edit, acceptance, paid cancel
 and refund appeal reads those two separately to size a refund net of what is
-promised back. Under the key it re-reads the row and the payment, refuses a row
-that is not dead (a status the worker would claim, with `attempts >= MAX`), and
-claims it with a status-guarded `updateMany` on exactly that before any money
-moves; a lost claim writes nothing. The payment row lock
-(`applyLocalRefundAllocation`) comes after. The worker never claims a dead row,
-the card-refund webhook is lockless and absorbed by the allocation's
-compare-and-set, and the Xero note is an outbox row kicked after the commit, so
-no provider call runs under the key. A double click queues on the key and the
-second reads the row closed (`card-refund-paid-another-way.realdb.test.ts`).
-Registered as `closeCardRefundPaidAnotherWay#1`.
+promised back. Under the key it re-reads the row, refuses a row that is not
+dead (a status the worker would claim, with `attempts >= MAX`), and then takes
+the **Payment row** (`lockPaymentForRefundedTotal`) BEFORE it reads the
+payment (#3924 round 4, C1). Two writers move that payment's refunds without
+`lock(1)`: the `charge.refunded` sync and a hand-back's completion. Both take
+the Payment row first, so the owed figure the close checks the amount against
+cannot change between that read and the allocation. A refund recorded while the
+close waits for the row is read by the close, which then refuses an amount the
+refund already covered. The order is `lock(1)`, then the Payment row, then the
+allocation, which takes the row it already holds. The claim is a status-guarded
+`updateMany` before any money moves; a lost claim writes nothing. The close's
+hand-back task and ledger line are written in the same transaction. The worker
+never claims a dead row, and the Xero note is an outbox row kicked after the
+commit, so no provider call runs under the key. A double click queues on the
+key and the second reads the row closed; a refund recorded mid-close gives a
+409 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
+`closeCardRefundPaidAnotherWay#1`.
 
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 

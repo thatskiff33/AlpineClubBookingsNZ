@@ -3231,27 +3231,36 @@ A card refund the club decided to make and Stripe has not yet paid is a
 it closes it counts in "Refunds owed" and comes off Net Collected (owner, 7 Oct
 2026), at its unsent slices: a recorded refund counts toward a slice only if it
 is on that slice's transaction, is exactly the slice's amount, and was recorded
-after the row was raised (`openCardRefundOwedByOperation`).
+inside the row's window - after the row was raised and, once the row is closed,
+not after its `succeededAt` (`openCardRefundOwedByOperation`).
 
 ```text
 PENDING -> PROCESSING (worker claim, attempts < MAX) -> SUCCEEDED (Stripe refunded every slice)
 PROCESSING -> FAILED  (attempts left: retried at nextRetryAt)
 PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
-DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), status-guarded
-                       claim on PENDING|FAILED with attempts >= MAX; lastError is
-                       the paid-another-way marker, nextRetryAt null; the amount,
-                       at most what is still owed, is recorded on the payment
-                       with applyLocalRefundAllocation; audited under `payment`)
+DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
+                       Payment row, then a status-guarded claim on
+                       PENDING|FAILED with attempts >= MAX; lastError is the
+                       paid-another-way marker, nextRetryAt null, succeededAt
+                       now; the amount, at most what is still owed, is recorded
+                       on the payment with applyLocalRefundAllocation; a
+                       COMPLETED hand-back task and its BANK_REFUND line record
+                       it; audited under `payment`)
 ```
 
-The close makes no Stripe call. In Xero it mirrors a cancellation's
-bank-transfer hand-back, and only that: a cancellation's card refund on an
-invoiced payment queues that hand-back's refund credit note, and nothing else
-queues anything. It refuses an organiser child's refund (#3653) and a group
-organiser-cancel settlement's refund (`isOwedCardRefundOperation`). The rule is
-`INV-PAY-119`; the lock is registered as `closeCardRefundPaidAnotherWay#1`. To
-verify: `card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`
-and `card-refund-paid-another-way.realdb.test.ts` (a double click closes once).
+A close for less than is still owed ENDS the refund: the rest stops being owed
+and nothing tracks it. The close makes no Stripe call. In Xero only a
+cancellation's card refund queues a note: a bank-transfer refund credit note
+for exactly the amount paid back, keyed on the close's task. It refuses an
+organiser child's refund (#3653) and a group organiser-cancel settlement's
+refund (`isOwedCardRefundOperation`); a superseded intent's refund closes whole,
+and only while its charge still holds exactly what it owes. The rules are
+`INV-PAY-119` and `INV-PAY-120`; the lock is registered as
+`closeCardRefundPaidAnotherWay#1`. To verify:
+`card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts` and
+`card-refund-paid-another-way.realdb.test.ts` (a double click closes once; a
+refund recorded while the close waits for the payment row is refused with a
+409).
 
 ### Confirm-pending saved-card charge (#3268)
 

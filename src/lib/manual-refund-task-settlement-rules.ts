@@ -77,7 +77,7 @@ export function refundRequestHandBackOccurrenceKey(refundRequestId: string): str
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; #3924 round 4, M2,
- * `INV-PAY-119`): THE OCCURRENCE-KEY PREFIX of the record a "Paid another way"
+ * `INV-PAY-120`): THE OCCURRENCE-KEY PREFIX of the record a "Paid another way"
  * close writes - a card refund Stripe gave up on, which the treasurer paid back
  * by bank transfer instead (`closeCardRefundPaidAnotherWay`). One per
  * `PaymentRecoveryOperation`, so the key is the duplicate fence and, with the

@@ -13,6 +13,12 @@
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
  * (#1881), which imports this file so CI reaches it; it owns and cleans its own
  * `race-3372-paw-` fixtures.
+ *
+ * #3924 round 4 (C1): the close takes the Payment row BEFORE it reads the
+ * payment. The `charge.refunded` sync records a refund under that row lock and
+ * no advisory key; a refund it records while the close waits for the row must
+ * be read by the close, which then refuses an amount the refund already
+ * covered - never pays the member a second time.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -63,13 +69,27 @@ let closeCardRefundPaidAnotherWay: (typeof import("@/lib/card-refund-paid-anothe
 let CardRefundPaidAnotherWayError: (typeof import("@/lib/card-refund-paid-another-way"))["CardRefundPaidAnotherWayError"];
 let openCardRefundOwedCents: (typeof import("@/lib/open-card-refund-owed"))["openCardRefundOwedCents"];
 let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))["netCollectedCardRefundSelect"];
+let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transactions"))["recordStripeRefundsAgainstTransaction"];
+let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
+let lockHolderClient: import("@prisma/client").PrismaClient;
+let observerClient: import("@prisma/client").PrismaClient;
+
+const LOCK_POLL_TIMEOUT_MS = 5_000;
 
 (RUN ? describe : describe.skip)(
   "a dead card refund closes as paid another way exactly once — real PostgreSQL (#3372)",
   { timeout: 20_000 },
   () => {
-    async function deleteFixtures() {
+    async function deleteCloseRecords() {
       await prisma.auditLog.deleteMany({ where: { entityId: OPERATION_ID } });
+      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
+    }
+
+    async function deleteFixtures() {
+      await deleteCloseRecords();
       await prisma.paymentRecoveryOperation.deleteMany({ where: { id: OPERATION_ID } });
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -97,6 +117,21 @@ let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))
       ));
       ({ openCardRefundOwedCents } = await import("@/lib/open-card-refund-owed"));
       ({ netCollectedCardRefundSelect } = await import("@/lib/additional-ledger-gap"));
+      ({ recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions"));
+      ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
+      const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
+        import("@prisma/client"),
+        import("@/lib/prisma-adapter"),
+      ]);
+      const separate = (applicationName: string) => {
+        const url = new URL(RACE_DB_URL);
+        url.searchParams.set("connection_limit", "1");
+        url.searchParams.set("application_name", applicationName);
+        return new SeparatePrismaClient({ adapter: createPrismaPgAdapter(url.toString()) });
+      };
+      lockHolderClient = separate("race-3372-paw-webhook");
+      observerClient = separate("race-3372-paw-observer");
+      await Promise.all([lockHolderClient.$connect(), observerClient.$connect()]);
 
       await deleteFixtures();
       for (const id of [MEMBER_ID, OFFICER_ID]) {
@@ -127,11 +162,12 @@ let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))
     });
 
     beforeEach(async () => {
-      await prisma.auditLog.deleteMany({ where: { entityId: OPERATION_ID } });
+      await deleteCloseRecords();
       await prisma.paymentRecoveryOperation.deleteMany({ where: { id: OPERATION_ID } });
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
-      // No Xero invoice: the close queues no note, so no outbox is involved.
+      // No Xero invoice. A cancellation's close still queues its own note (an
+      // outbox row, cleaned up above); Xero is not connected, so nothing runs it.
       await prisma.payment.create({
         data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: PAID_CENTS, source: "STRIPE", status: "SUCCEEDED" },
       });
@@ -166,9 +202,25 @@ let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))
     });
 
     afterAll(async () => {
+      await Promise.all(
+        [lockHolderClient, observerClient].map((client) => (client ? client.$disconnect().catch(() => {}) : Promise.resolve())),
+      );
       if (!prisma) return;
       await deleteFixtures();
     });
+
+    async function waitForBlockedBy(blockerPid: number) {
+      const startedAt = process.hrtime.bigint();
+      while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
+        const rows = await observerClient.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+          WHERE datname = current_database() AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
+        `;
+        if ((rows[0]?.count ?? 0) >= 1) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for the close to queue behind the payment row held by pid ${blockerPid}.`);
+    }
 
     const close = () =>
       closeCardRefundPaidAnotherWay({
@@ -195,6 +247,84 @@ let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))
       expect(operation.nextRetryAt).toBeNull();
       expect(await prisma.auditLog.count({ where: { entityId: OPERATION_ID } })).toBe(1);
       // It has left "Refunds owed": nothing is owed by card any more.
+      expect(await owedNow()).toBe(0);
+      // M2: one record, born COMPLETED, and one bank-refund line on it.
+      const records = await prisma.manualRefundTask.findMany({ where: { bookingId: BOOKING_ID } });
+      expect(records).toEqual([
+        expect.objectContaining({
+          status: "COMPLETED",
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: `card-refund-paid-another-way:${OPERATION_ID}`,
+          amountCents: REFUND_CENTS,
+          paymentId: PAYMENT_ID,
+        }),
+      ]);
+      const lines = await prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } });
+      expect(lines).toEqual([
+        expect.objectContaining({ anchorKind: "REVIEW_TASK", anchorId: records[0]!.id, amountCents: -REFUND_CENTS }),
+      ]);
+      // M3: the cancellation's note, keyed on the record, for exactly the amount.
+      const notes = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      expect(notes).toHaveLength(1);
+      expect(notes[0]!.correlationKey).toContain(records[0]!.id);
+      expect(notes[0]!.requestPayload).toMatchObject({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking" });
+    });
+
+    it("C1: a card refund recorded while the close waits for the payment row is read by the close, which refuses - the member is not paid twice", async () => {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let holderPid = 0;
+      let recorded!: () => void;
+      const recordedInHolder = new Promise<void>((resolve) => {
+        recorded = resolve;
+      });
+      // The charge.refunded sync: no advisory key, the Payment row first. Stripe
+      // did send the refund after all, for exactly the slice.
+      const webhook = lockHolderClient.$transaction(
+        async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+          holderPid = pid;
+          await recordStripeRefundsAgainstTransaction({
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            refunds: [
+              {
+                id: "re_race_3372_paw",
+                amount: REFUND_CENTS,
+                currency: "nzd",
+                status: "succeeded",
+                reason: null,
+                created: Math.floor(Date.UTC(2030, 0, 1) / 1000),
+                charge: "ch_race_3372_paw",
+                payment_intent: "pi_race_3372_paw",
+              },
+            ] as never,
+            fallbackPaymentIntentId: "pi_race_3372_paw",
+            store: tx as never,
+          });
+          recorded();
+          await released;
+        },
+        { timeout: 15_000 },
+      );
+      await recordedInHolder;
+
+      const closing = close();
+      await waitForBlockedBy(holderPid);
+      release();
+      await webhook;
+
+      await expect(closing).rejects.toMatchObject({ status: 409 });
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+      // Only Stripe's refund: no second, by-hand allocation on top.
+      expect(payment.refundedAmountCents).toBe(REFUND_CENTS);
+      const operation = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: OPERATION_ID } });
+      expect(operation.status).toBe("FAILED");
+      expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { entityId: OPERATION_ID } })).toBe(0);
+      // And it owes nothing more: the refund Stripe made filled its slice.
       expect(await owedNow()).toBe(0);
     });
 

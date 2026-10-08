@@ -1098,7 +1098,7 @@ The page also lists the card refunds Stripe gave up on (#3372), each with its
 page loads it only for `{ area: "finance", level: "view" }`, and the close
 (`DeadCardRefundsPanel` -> `POST /api/admin/payments/card-refunds/[id]/paid-another-way`
 -> `closeCardRefundPaidAnotherWay`) is gated `finance:edit` in the panel and the
-route, with the section's own finance banner (`INV-PAY-119`).
+route, with the section's own finance banner (`INV-PAY-120`).
 `src/lib/booking-provider-mismatches.ts` answers the same provider-divergence
 questions for a single booking (paid while the club's records hold no Xero invoice,
 Stripe refund with no Xero credit note, waitlist offer whose email needs

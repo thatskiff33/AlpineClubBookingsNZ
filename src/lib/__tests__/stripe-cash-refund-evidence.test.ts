@@ -271,7 +271,7 @@ describe("resolveStripeCashRefundEvidence — transaction client", () => {
 });
 
 /**
- * #3924 round 4 (money review, M1; `INV-PAY-119`): a card refund closed as
+ * #3924 round 4 (money review, M1; `INV-PAY-120`): a card refund closed as
  * "Paid another way" raised the mirror with no refund row. Read from its
  * persisted record (a COMPLETED task under its own key), never `lastError`.
  */

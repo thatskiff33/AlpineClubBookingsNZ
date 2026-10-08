@@ -1941,21 +1941,39 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   in "Refunds owed" and comes off Net Collected at its unsent plan slices, dead
   ones included (`openCardRefundOwedCents`).
   - **A recorded refund fills a slice only if it is that slice's own**: on the
-    slice's transaction, exactly its amount, recorded after the row was raised,
-    and not taken by a later card refund row, open or closed. Every row's
-    slices are unsent when raised: an appeal's partial send enqueues only the
-    remainder. A superseded intent's row takes any later refund on its
-    transaction. A group settlement row (pre-#3653) is never owed on its
+    slice's transaction, exactly its amount, inside the row's window - recorded
+    after it was raised and, for a closed row, not after its `succeededAt` -
+    and not taken by a later row. A refund recorded before a row was raised is
+    never its own: a writer raising one after a partial send carries only the
+    remainder (an appeal's plan, a recording failure included, via
+    `PartialRefundError`). A superseded intent's row takes any later refund on
+    its transaction. A group settlement row (pre-#3653) is never owed on its
     anchor payment.
   - **"Refunds owed" is Net Collected's own per-payment figure**
-    (`refundsOwedOfCashParts`), so the two agree for every payment.
-  - **"Paid another way"** (`closeCardRefundPaidAnotherWay`, finance:edit)
-    closes a dead row under `lock(1)` with a status-guarded claim to
-    `SUCCEEDED` and the paid-another-way marker, then records at most what
-    is still owed with `applyLocalRefundAllocation`, as a by-hand
-    hand-back does, and audits it under `payment`. No Stripe call; Xero gets
-    only a cancellation hand-back's refund note, for a cancellation's refund
-    on an invoiced payment. An organiser child's row is refused.
+    (`refundsOwedOfCashParts`), so the two agree for every payment. Two parts
+    have no booking figure to agree with: a hand-back on a payment that shows
+    no capture counts at its amount, and the unsent remainder of the pre-#3653
+    group settlement refunds counts as one club-wide amount (owner, 8 Oct 2026:
+    "Separate club-wide line"; `legacyGroupSettlementRefundOwedCents`).
+
+## INV-PAY-120
+
+- **"Paid another way" records the close as a completed hand-back and ends the
+  refund** (#3372, owner 7 Oct 2026; 8 Oct: "Keep it together").
+  `closeCardRefundPaidAnotherWay` (finance:edit) takes `lock(1)`, then the
+  payment row, then claims a dead row to `SUCCEEDED` with a status guard. It
+  records at most what is still owed with `applyLocalRefundAllocation`, on the
+  unsent slices' charges. In the same transaction it writes a COMPLETED
+  hand-back task under `card-refund-paid-another-way:<row>` and its
+  `BANK_REFUND` line (`INV-MONEY-035`). It audits under `payment`. No Stripe
+  call.
+  - **A partial close ends the refund**: the rest stops being owed anywhere.
+  - **Xero**: only a cancellation's card refund queues a note: a bank-transfer
+    refund note for exactly the amount, keyed on the task. Cash evidence counts
+    that close and never another (`readPaidAnotherWayCash`), so the self-heal
+    raises no card note for it.
+  - A superseded intent's row closes whole, only while its charge holds
+    exactly what it owes. An organiser child's row is refused.
 
 ## INV-PAY-070
 

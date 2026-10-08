@@ -7,7 +7,7 @@ import {
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 /**
- * #3924 round 4 (money review, M1 and M3; `INV-PAY-119`): THE BANK CASH A
+ * #3924 round 4 (money review, M1 and M3; `INV-PAY-120`): THE BANK CASH A
  * "PAID ANOTHER WAY" CLOSE SENT BACK, AS THE XERO REFUND-NOTE PIPELINE READS IT.
  *
  * The close raises the payment's `refundedAmountCents` by the amount paid back

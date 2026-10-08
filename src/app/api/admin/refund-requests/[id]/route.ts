@@ -315,13 +315,10 @@ export async function PUT(
         { err, refundRequestId: id },
         "Stripe refund failed for approved appeal - enqueueing durable recovery"
       );
-      // Persist, verbatim, the frozen slices the inline attempt did NOT refund and
-      // record (#1510; #3924 F1: the plan's leading `PartialRefundError.refunds` are
-      // done): the cron replays their identical keys, Refunds owed reads only them.
-      // Every failure after the first Stripe call is a `PartialRefundError` - a
-      // slice Stripe refunded but the ledger could not record included (#3924
-      // round 4, C2), so it is replayed and recorded, never counted as sent. Any
-      // other failure came before any slice was sent, so the whole plan is unsent.
+      // Persist the frozen slices the inline attempt did NOT refund and record
+      // (#1510; #3924 F1): the cron replays their keys, Refunds owed reads only them.
+      // Any failure after a Stripe call is a `PartialRefundError`, an unrecorded
+      // slice included (#3924 C2); any other came before one, so all are unsent.
       const unsentPlan =
         err instanceof PartialRefundError ? refundPlan.slice(err.refunds.length) : refundPlan;
       const unsentCents = unsentPlan.reduce((sum, slice) => sum + slice.amountCents, 0);

@@ -117,7 +117,9 @@ Beside it, **Refunds owed** and **Credits owed** say what the club still owes
 back, **as at today and across the club**: neither the dates, the lodge nor
 the **Deleted** view narrows them. **Refunds owed** is every refund owed and
 not yet paid (each open hand-back task, each card refund Stripe has not yet
-paid, and each late card charge waiting for the treasurer); **Credits owed** is
+paid, each late card charge waiting for the treasurer, and one club-wide amount
+for group cancellation card refunds from before #3653 that belongs to no
+booking); **Credits owed** is
 every member's account credit not yet used (the total of their credit
 balances). Each stays until it is paid, kept or the credit is spent. Each
 amount owed comes off Net Collected only for its own booking, so one outside

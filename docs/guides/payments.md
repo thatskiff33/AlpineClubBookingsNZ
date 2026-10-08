@@ -778,6 +778,9 @@ narrow them:
   the refund, or when the treasurer keeps or refunds the late charge. A card
   refund Stripe gave up on stays in it until you close it as **Paid another
   way** on [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on).
+  It also holds one club-wide amount that belongs to no booking: what the
+  card refunds of group cancellations from before #3653 still have to send
+  (owner decision on #3372, 8 Oct 2026).
 - **Credits owed** is every member's account credit that has not yet been
   used: the total of their credit balances. It drops as credit is applied to
   a booking.
@@ -785,7 +788,9 @@ narrow them:
 Each amount owed comes off Net Collected only for its own booking. A refund
 owed on a booking your filters leave out, or on a deleted booking, is in
 **Refunds owed** but not in the Net Collected beside it, so the two are not a
-subtraction of one another either.
+subtraction of one another either. Nor is the club-wide group cancellation
+amount, or a refund owed by hand on a payment that never showed money taken:
+both are in Refunds owed and in no booking's Net Collected.
 
 ## Troubleshooting
 
