@@ -29,6 +29,10 @@ type Settings = {
   entries are genuine instructions ("Optional — defaults to …"), not examples, so
   their wording and position are untouched here; the repo-wide placeholder sweep
   is #2264.
+
+  #3976 later gave the hut-leader entry a hint too — an instruction, not an
+  example: enter the singular, because screens build the plural themselves
+  (`pluralHutLeaderLabel`). Its placeholder is unchanged.
 */
 const fields: Array<
   [keyof Settings, string, placeholder: string | null, hint: string | null]
