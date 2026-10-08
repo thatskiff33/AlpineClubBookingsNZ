@@ -48,7 +48,7 @@ reason: one person is one space (owner decision on #3820) has to reach the
   the same client.
 
 file: src/lib/booking-request.ts
-lines: 3070
+lines: 3078
 reason: the review round found that approving a held request swapped its guest
   rows with no capacity re-check, and a guest's member link now decides whether
   a ticked custodian's space is waived. The re-check has to run inside the
