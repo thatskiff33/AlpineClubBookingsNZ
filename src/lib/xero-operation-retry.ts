@@ -1360,7 +1360,7 @@ export async function retryXeroSyncOperation(
       subscriptionInvoicePayload,
       ["FAILED"],
       "membership subscription invoice",
-      "If the member still needs invoicing, use Retry on the charge in Subscription billing.",
+      "If the member was invoiced by hand in Xero, mark this operation resolved too; if they still need invoicing, use Retry on the charge in Subscription billing.",
     );
     return { message: "Queued the membership subscription invoice for retry." };
   }
