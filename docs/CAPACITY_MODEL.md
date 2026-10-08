@@ -544,6 +544,19 @@ notices, neither of them a validation error (#1653, #2724):
   officer who lowers the figure to clear it silently zeroes every
   partner-shared slot the card above is displaying.
 
+**Lowering a saved capacity (#3440).** A separate warning, compared with the
+saved figure rather than a pure function of what is typed, appears when an
+officer types a lower capacity that removes partner-shared spots: it names the
+old and new figures and how many spots go. The count is
+`resolvePartnerSpotsLostByCapacityChange` in
+`src/lib/lodge-effective-capacity.ts`, the difference between the headroom the
+saved and the typed figures give through `resolvePartnerSharedHeadroom`. A blank
+saved figure bounds nothing, so it counts as unbounded headroom: typing any
+figure that leaves fewer spots than the lodge's doubles warns, in the wording
+"Setting a capacity of N removes M partner spots this lodge has now." It says
+nothing when raising, when unchanged, or when the lodge has no shareable
+doubles, and it never blocks the save.
+
 A figure outside the save bounds (a whole number from 1 to 100,000) is refused
 by `/api/admin/lodge-settings`; both editors of the field carry the same bounds
 as `min`/`max`, and the notice names the range rather than predicting a save
