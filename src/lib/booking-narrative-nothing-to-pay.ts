@@ -8,7 +8,7 @@
  * Its own module only because `booking-narrative.ts` is at its size budget;
  * `buildPayableNarrative` there is the one caller, and it decides when this
  * applies (the caller supplied what the booking owes, and it is at or below
- * zero).
+ * zero), and whether any credit is applied.
  */
 import type { BookingNarrative } from "@/lib/booking-narrative";
 

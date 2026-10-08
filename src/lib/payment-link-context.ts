@@ -164,8 +164,7 @@ export async function getPaymentLinkContext(
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
-      amountDueCents: owedCents,
-      appliedCreditCents,
+      amountOwed: { dueCents: owedCents, appliedCreditCents },
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       firstName: bookingOwner(booking).member.firstName,
