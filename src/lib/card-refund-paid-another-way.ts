@@ -187,8 +187,22 @@ export interface DeadCardRefundRow {
   wholeAmountOnly: boolean;
   /** Whether a close queues a Xero refund note (a cancellation's card refund). */
   takesXeroRefundNote: boolean;
-  /** The worker's last error, for the "Stripe may have refunded" warning. */
-  lastError: string | null;
+  /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
+  stripeMayHaveRefunded: boolean;
+}
+
+/**
+ * #3924 round 4 (M7): whether a refund's last failure looks like a timeout or a
+ * network error - the failures where the request may have reached Stripe and
+ * the refund gone through with its answer lost. The panel then tells the
+ * treasurer to check the Stripe dashboard before paying the member again. A
+ * hint only: it reads the worker's wording, and decides nothing.
+ */
+export function lastErrorSuggestsStripeMayHaveRefunded(lastError: string | null): boolean {
+  if (!lastError) return false;
+  return /time[- ]?out|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|network|connection (?:error|reset|closed|refused)|StripeConnectionError|StripeAPIError|\b5\d\d\b/i.test(
+    lastError,
+  );
 }
 
 /**
@@ -212,7 +226,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       owedCents: stillOwed(operation.payment, operation.id).owedCents,
       wholeAmountOnly: operation.type === "REFUND_SUPERSEDED_PAYMENT",
       takesXeroRefundNote: takesPaidAnotherWayRefundNote(operation),
-      lastError: operation.lastError,
+      stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
     }));
 }
 

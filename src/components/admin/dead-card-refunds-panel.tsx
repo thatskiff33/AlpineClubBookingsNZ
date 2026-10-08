@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,7 +36,15 @@ export interface DeadCardRefundPanelRow {
   raisedAt: string;
   owedCents: number;
   wholeAmountOnly: boolean;
+  /** Whether closing it queues a Xero refund credit note (a cancellation's card refund). */
+  takesXeroRefundNote: boolean;
+  /** Its last failure looked like a timeout or network error: Stripe may have refunded. */
+  stripeMayHaveRefunded: boolean;
 }
+
+/** The warning a refund whose last failure may have reached Stripe carries, on its row and in its dialog. */
+export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
+  "Stripe may have refunded: check the Stripe dashboard first.";
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"): the card refunds
@@ -46,7 +55,11 @@ export interface DeadCardRefundPanelRow {
  * completes a refund paid back by hand - and the section's banner states the
  * view-only reason once, so the row buttons do not (`describeReason={false}`).
  * The dialog is the confirm step: the amount defaults to what is still owed,
- * and a note saying how the member was paid back is required.
+ * and a note saying how the member was paid back is required. It says up front
+ * whether a Xero refund note is raised, that a refund made in the Stripe
+ * dashboard is not closed here, and that a partial close ends the refund (#3924
+ * round 4). A refusal shows in the dialog through `FocusedActionError`; a 409
+ * also refreshes the list, since the refund or its payment moved.
  */
 export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] }) {
   const canEdit = useAdminAreaEditAccess("finance");
@@ -55,11 +68,14 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
   const router = useRouter();
   const amountId = useId();
   const noteId = useId();
+  const errorId = useId();
+  const submitHintId = useId();
   const [target, setTarget] = useState<DeadCardRefundPanelRow | null>(null);
   const [amountInput, setAmountInput] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [errorAttention, setErrorAttention] = useState(0);
 
   const amountCents = target ? parseDecimalDollarsToCents(amountInput) : null;
   const amountProblem =
@@ -72,7 +88,19 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
           : amountCents === 0 && target.owedCents > 0
             ? "Enter the amount the member was paid back."
             : null;
-  const canSubmit = target !== null && amountProblem === null && note.trim() !== "" && !busy;
+  const noteMissing = note.trim() === "";
+  const canSubmit = target !== null && amountProblem === null && !noteMissing && !busy;
+  // Why the button is disabled, said beside it (#3924 round 4, U2).
+  const submitHint =
+    target === null || busy
+      ? null
+      : (amountProblem ?? (noteMissing ? "Say how the member was paid back to close it." : null));
+  const partial = target !== null && amountCents !== null && amountProblem === null && amountCents < target.owedCents;
+
+  function fail(message: string) {
+    setError(message);
+    setErrorAttention((count) => count + 1);
+  }
 
   function open(row: DeadCardRefundPanelRow) {
     setTarget(row);
@@ -96,7 +124,9 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Could not close the card refund.");
+        fail(typeof data.error === "string" ? data.error : "Could not close the card refund.");
+        // The refund or its payment moved since this page was read.
+        if (res.status === 409) router.refresh();
         return;
       }
       toast.success(
@@ -107,7 +137,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
       setTarget(null);
       router.refresh();
     } catch {
-      setError("Could not close the card refund.");
+      fail("Could not close the card refund.");
     } finally {
       setBusy(false);
     }
@@ -118,7 +148,9 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
       <AdminViewOnlySectionBanner canEdit={canEdit} />
       <p className="text-sm text-muted-foreground">
         Stripe stopped retrying these card refunds. Each still counts in Refunds owed and comes off Net
-        Collected. If the member was paid back another way, for example by bank transfer, close it here.
+        Collected. If the member was paid back another way, for example by bank transfer, close it here. If
+        you refunded it in the Stripe dashboard instead, do not close it here: wait for that refund to show on
+        the payment.
       </p>
       <ul className="space-y-2" aria-label="Card refunds Stripe gave up on">
         {rows.map((row) => (
@@ -137,6 +169,9 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
               <div className="text-xs text-muted-foreground">
                 Refund started {clubTime.instantDate(new Date(row.raisedAt))}
               </div>
+              {row.stripeMayHaveRefunded ? (
+                <div className="text-xs font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</div>
+              ) : null}
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}
@@ -152,7 +187,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
       </ul>
 
       <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && setTarget(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Close this card refund as paid another way?</DialogTitle>
             <DialogDescription>
@@ -160,6 +195,23 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
               leaves Refunds owed. Only do this once the member has the money.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2 text-sm">
+            {target?.stripeMayHaveRefunded ? (
+              <p className="font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</p>
+            ) : null}
+            <p className="text-muted-foreground">
+              Refunded it in the Stripe dashboard instead? Do not close it here: wait for that refund to show on
+              the payment.
+            </p>
+            <p className="text-muted-foreground">
+              {target?.takesXeroRefundNote
+                ? "A Xero refund credit note for the amount, as a bank transfer, is queued when you close it."
+                : "No Xero refund credit note is raised. A refund from a booking change was already credited on the invoice by the change's own credit note; check Xero for any other."}
+            </p>
+            <p className="text-muted-foreground">
+              Paying back less than is owed ends the refund: the rest stops being owed and is no longer tracked.
+            </p>
+          </div>
           <div className="space-y-3">
             <div className="space-y-1">
               <Label htmlFor={amountId}>Amount paid back</Label>
@@ -176,28 +228,40 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
                   This refund replaces a superseded payment, so it closes for the whole amount.
                 </p>
               ) : null}
+              {partial && target ? (
+                <p className="text-xs font-medium text-warning-11">
+                  {formatCents(target.owedCents - (amountCents ?? 0), format)} will no longer be owed or tracked.
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1">
-              <Label htmlFor={noteId}>How was it paid back?</Label>
+              <Label htmlFor={noteId}>How was it paid back? (required)</Label>
               <Textarea
                 id={noteId}
                 value={note}
+                required
+                aria-required="true"
                 maxLength={MANUAL_PAYMENT_NOTE_MAX}
                 placeholder="For example: bank transfer on 7 Oct, reference REF123"
                 onChange={(event) => setNote(event.target.value)}
               />
             </div>
           </div>
-          {error ? (
-            <div role="alert" className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
-              {error}
-            </div>
-          ) : null}
-          <DialogFooter className="gap-2 sm:gap-2">
+          <FocusedActionError id={errorId} error={error} attentionKey={errorAttention} />
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+            {submitHint ? (
+              <p id={submitHintId} className="text-xs text-muted-foreground sm:mr-auto">
+                {submitHint}
+              </p>
+            ) : null}
             <Button variant="outline" disabled={busy} onClick={() => setTarget(null)}>
               Cancel
             </Button>
-            <Button disabled={!canSubmit} onClick={() => void submit()}>
+            <Button
+              disabled={!canSubmit}
+              aria-describedby={submitHint ? submitHintId : undefined}
+              onClick={() => void submit()}
+            >
               {busy ? "Closing..." : "Close as paid another way"}
             </Button>
           </DialogFooter>

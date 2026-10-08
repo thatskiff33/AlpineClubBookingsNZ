@@ -101,6 +101,7 @@ import {
   CardRefundPaidAnotherWayError,
   closeCardRefundPaidAnotherWay,
   deadCardRefundOperationWhere,
+  lastErrorSuggestsStripeMayHaveRefunded,
   listDeadCardRefunds,
   PAID_ANOTHER_WAY_MARKER,
 } from "@/lib/card-refund-paid-another-way";
@@ -494,7 +495,7 @@ describe("the list on the stuck-states page", () => {
         owedCents: 15_000,
         wholeAmountOnly: false,
         takesXeroRefundNote: true,
-        lastError: "Stripe: card_declined",
+        stripeMayHaveRefunded: false,
       }),
     ]);
     expect(mocks.listOperations).toHaveBeenCalledWith(expect.objectContaining({ where: deadCardRefundOperationWhere }));
@@ -524,4 +525,24 @@ describe("a closed refund leaves both figures (owner, 7 Oct 2026)", () => {
     expect(owedBefore.heldCashCents).toBe(5_000);
     expect(owedAfter.heldCashCents).toBe(5_000);
   });
+});
+
+describe("#3924 round 4 (M7): a failure that may have reached Stripe is flagged", () => {
+  it.each([
+    "Request timed out",
+    "connect ETIMEDOUT 3.18.12.1:443",
+    "read ECONNRESET",
+    "An error occurred with our connection to Stripe (StripeConnectionError)",
+    "Network error: socket hang up",
+    "Stripe returned 502",
+  ])("%s", (lastError) => {
+    expect(lastErrorSuggestsStripeMayHaveRefunded(lastError)).toBe(true);
+  });
+
+  it.each([null, "", "Stripe: card_declined", "charge_already_refunded", "Your card has insufficient funds."])(
+    "not %s",
+    (lastError) => {
+      expect(lastErrorSuggestsStripeMayHaveRefunded(lastError)).toBe(false);
+    },
+  );
 });
