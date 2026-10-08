@@ -8407,8 +8407,8 @@ model BookingLedgerLine {
   guestNames           String[]
 
   /// What posted the line — the booking's own confirmation, a modification, a
-  /// review task, a payment transaction, a refund, a member-credit row or a
-  /// cancellation — and that row's id. Not a foreign key: the anchor's model
+  /// review task, a payment transaction, a refund, a member-credit row, a
+  /// cancellation or a group settlement — and that row's id. Not a foreign key: the anchor's model
   /// varies, and a line outlives rows that are deleted with their booking.
   anchorKind LedgerAnchorKind
   anchorId   String
@@ -8512,6 +8512,10 @@ enum LedgerAnchorKind {
   PAYMENT_REFUND
   MEMBER_CREDIT
   CANCELLATION
+  /// A group organiser's `GroupBookingSettlement`, which settles every joiner's
+  /// child booking in one payment (#3854): each child's share, and the refund
+  /// the organiser's cancellation plan hands back on it.
+  GROUP_SETTLEMENT
 }
 
 /// How money moved on a settlement line. Stripe and Internet Banking stay

@@ -145,10 +145,11 @@ Inert means *measurably* inert, not "small".
 
 **Merge authority.** A child merging into the integration branch needs review
 and green CI, and the orchestrator may merge it: nothing has reached `main`, a
-fork or production. The **`epic/… ` → `main`** pull request is the single gated
-merge, and it needs an explicit owner approval comment whatever the children
-touched — the risk gate in `AGENTS.md` → "Completion and Merge" — the one statement of
-this rule — applies to the union of the epic, not to each child separately.
+fork or production. The **`epic/… ` → `main`** pull request is the single
+integration merge. It follows the merge gate in
+`AGENTS.md` → "Completion and Merge" (the one statement of that rule; since #3959 an agent merges it once it is
+complete, green, reviewed and carries a clean Ready-to-Merge comment), applied to
+the union of the epic, not to each child separately.
 
 **That last pull request is an INTEGRATION review, not a re-review.** Each child
 was already reviewed into the branch by the normal adversarial lenses at its own
@@ -373,10 +374,9 @@ checks gate **pushes**, not only merges, so nothing lands on an integration bran
 without the required checks — which is why the sync opens a pull request from
 `main` rather than pushing a merge commit it has just created. And
 `required_pull_request_reviews` is deliberately absent (`main` has it with a count
-of `0`, plus the code-owner rule applied on 2 Oct 2026 — `AGENTS.md` →
-"Pre-authorisation and attributability"); on an
-integration branch the pull request arrives from the workflow model rather than
-from enforcement, and the owner's gate is the `epic → main` merge.
+of `0`; the code-owner rule applied on 2 Oct 2026 was retired on 7 Oct 2026,
+#3959); on an integration branch the pull request arrives from the workflow model
+rather than from enforcement, and the integration gate is the `epic → main` merge.
 
 ## Running a wave
 
