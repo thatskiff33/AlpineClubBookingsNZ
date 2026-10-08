@@ -98,10 +98,12 @@ import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { CHANGE_FEE_LINE_DESCRIPTION, changeFeeLineItem } from "@/lib/xero-modification-line-items";
 import {
+  cardAppliedCreditCents,
+  persistPrimaryInvoiceLink,
   primaryInvoiceBilledFee,
+  primaryInvoiceStripeCashCents,
   queuePrimaryInvoiceChangeFeeGap,
   recheckPrimaryInvoiceChangeFeeGap,
-  recordPrimaryInvoiceBilledFee,
 } from "@/lib/xero-primary-invoice-fee-gap";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -301,22 +303,15 @@ async function settleCardAppliedCreditAllocation(
   createdByMemberId?: string
 ): Promise<void> {
   // Proceed ONLY for a card cash capture that recorded a credit-reduced mirror
-  // (`creditAppliedCents > 0`). The positive test also skips on 0 / a missing
-  // mirror (legacy full-price captures, no-credit bookings), which is required:
-  // allocating against a full-price-paid invoice would over-allocate.
+  // (`cardAppliedCreditCents`, the one gate — the primary payment's cap reads
+  // it too). It skips a missing mirror (legacy full-price captures, no-credit
+  // bookings): allocating against a full-price-paid invoice would over-allocate.
   // #1765 — capture evidence is "captured status + positive net cash", not
   // `status === "SUCCEEDED"`: a repay-after-refund payment aggregates to
   // PARTIALLY_REFUNDED at invoice time even though its repay capture settles
   // the invoice, and skipping here would strand the applied slice outstanding.
   // A fully-refunded-out payment (net 0) still must not allocate.
-  if (
-    payment.source === PaymentSource.INTERNET_BANKING ||
-    !isCapturedPaymentStatus(payment.status) ||
-    payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0 ||
-    !(payment.creditAppliedCents > 0)
-  ) {
-    return;
-  }
+  if (cardAppliedCreditCents(payment) === 0) return;
   const { allocateAppliedCreditForBooking } = await import(
     "@/lib/xero-applied-credit-allocation"
   );
@@ -808,35 +803,33 @@ export async function createXeroInvoiceForBooking(
       0,
       booking.payment.amountCents - (booking.payment.refundedAmountCents ?? 0)
     );
+    // THE ONE BEHAVIOUR DELTA of #2685's conversion, stated for the record:
+    // `providerAmountToCents` also requires the amount due to be FINITE. Only
+    // `NaN` and `±Infinity` differ, which Xero's JSON cannot produce; for those
+    // the cap falls to `netCapturedCents`, as an absent `amountDue` always has.
+    // #3955 round 4 (finding 3): capped so the applied credit the settle below
+    // allocates still fits; cash it leaves over is a change-fee gap's.
+    const invoicePaymentCents = primaryInvoiceStripeCashCents({
+      netCapturedCents,
+      amountDueCents: providerAmountToCents(createdInvoice.amountDue),
+      appliedCreditCents: cardAppliedCreditCents(booking.payment),
+    });
     const shouldRecordStripeInvoicePayment =
       paymentSource === PaymentSource.STRIPE &&
       paymentCaptured &&
-      netCapturedCents > 0;
+      invoicePaymentCents > 0;
     const paymentSkipped = paymentCaptured && !shouldRecordStripeInvoicePayment;
     const paymentSkipReason = !paymentSkipped
       ? null
       : paymentSource === PaymentSource.INTERNET_BANKING
         ? "Internet Banking invoice payments are reconciled from Xero instead of recorded as Stripe bank payments."
-        : (booking.payment.refundedAmountCents ?? 0) > 0
-          ? "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice."
-          : "Zero-total invoice does not require Xero payment recording.";
+        : netCapturedCents > 0
+          ? "Nothing is left due on the invoice once its applied account credit is allowed for; no cash is recorded against it."
+          : (booking.payment.refundedAmountCents ?? 0) > 0
+            ? "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice."
+            : "Zero-total invoice does not require Xero payment recording.";
 
     if (shouldRecordStripeInvoicePayment) {
-      // THE ONE BEHAVIOUR DELTA IN THIS CONVERSION, stated for the record
-      // (#2685 review). The test this replaced was `typeof … === "number"`;
-      // `providerAmountToCents` also requires the number to be FINITE. The only
-      // inputs that differ are `NaN` and `±Infinity`, which Xero's JSON cannot
-      // produce — and for those the old code took the `Math.min` branch and sent
-      // `amount: NaN` to Xero, while this one falls to `netCapturedCents`, the
-      // same figure an absent `amountDue` has always produced. No finite
-      // provider amount converts to a different cent value.
-      const invoiceAmountDueCents = providerAmountToCents(
-        createdInvoice.amountDue,
-      );
-      const invoicePaymentCents =
-        invoiceAmountDueCents === null
-          ? netCapturedCents
-          : Math.min(netCapturedCents, invoiceAmountDueCents);
       const payment: XeroPayment = {
         invoice: { invoiceID: createdInvoice.invoiceID },
         account: { code: bankCode },
@@ -1112,25 +1105,15 @@ export async function createXeroInvoiceForBooking(
       }
     }
 
-    // #3955 review X4: what this invoice billed, recorded on the operation
-    // BEFORE the link below is persisted, so a run that dies after persisting
-    // it still has the figure its retry re-checks the change-fee gap from.
-    const billedFee = primaryInvoiceBilledFee(
-      createdInvoice.invoiceID,
-      createdInvoice.lineItems ?? lineItems,
-    );
-    await recordPrimaryInvoiceBilledFee(operationId!, billedFee);
-
-    // Store the Xero invoice ID and number on the payment record. A
-    // finished-stay correction claims its fee write against the invoice link
-    // it read, so once this commits every fee it routed here is recorded and
-    // any later one is refused (#3955 review X4).
-    await prisma.payment.update({
-      where: { id: booking.payment.id },
-      data: {
-        xeroInvoiceId: createdInvoice.invoiceID,
-        xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
-      },
+    // Store the Xero invoice ID and number on the payment record, and — in the
+    // same transaction — what the invoice billed and the change fee the
+    // payment held at that instant (#3955 review X4, round 4 finding 1). The
+    // gap check and its retry read only those figures.
+    const feeAtLink = await persistPrimaryInvoiceLink({
+      operationId: operationId!,
+      paymentId: booking.payment.id,
+      xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
+      billed: primaryInvoiceBilledFee(createdInvoice.invoiceID, createdInvoice.lineItems ?? lineItems),
     });
     await prisma.paymentTransaction.updateMany({
       where: {
@@ -1151,7 +1134,7 @@ export async function createXeroInvoiceForBooking(
     // invoice rather than being lost.
     await queuePrimaryInvoiceChangeFeeGap({
       bookingId,
-      billed: billedFee,
+      atLink: feeAtLink,
       createdByMemberId: options?.createdByMemberId,
     });
 

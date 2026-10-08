@@ -846,8 +846,8 @@ function deferred() {
     const invoiceId = "race-3750-gap-invoice";
     try {
       // The create whose invoice was built before the fee was recorded (it
-      // bills the remaining guest and no fee): it records what it billed,
-      // persists its link, and dies before its gap check.
+      // bills the remaining guest and no fee): it saves its link with what it
+      // billed and the fee recorded then, and dies before its gap check.
       const key = buildXeroBookingInvoiceCorrelationKey(BOOKING_ID);
       const operation = await startXeroSyncOperation({
         direction: "OUTBOUND",
@@ -859,13 +859,14 @@ function deferred() {
         correlationKey: key,
         requestPayload: { invoices: [] },
       });
-      await gap.recordPrimaryInvoiceBilledFee(
-        operation.id,
-        gap.primaryInvoiceBilledFee(invoiceId, [
+      await gap.persistPrimaryInvoiceLink({
+        operationId: operation.id,
+        paymentId: PAYMENT_ID,
+        xeroInvoiceNumber: null,
+        billed: gap.primaryInvoiceBilledFee(invoiceId, [
           { description: "Original Guest", quantity: 1, unitAmount: (2 * STORED_NIGHT_CENTS) / 100 },
         ]),
-      );
-      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { xeroInvoiceId: invoiceId } });
+      });
 
       // The retry takes the create's "invoice already exists" exit — twice.
       await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operation.id })).resolves.toBe(
@@ -887,6 +888,63 @@ function deferred() {
         changeFeeCents: fee,
         recordPayment: false,
       });
+    } finally {
+      await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+    }
+  }, 60_000);
+
+  it("#3955 round 4: a fee recorded AFTER the link is never billed by the retry's re-check", async () => {
+    await seed({
+      secondGuest: true,
+      unpaid: { invoiced: false },
+      requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+    });
+    const fee = STORED_NIGHT_CENTS;
+    expect(await approve(OFFICER_ID)).toMatchObject({ outcome: "executed", changeFeeCents: fee });
+    const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+
+    const gap = await import("@/lib/xero-primary-invoice-fee-gap");
+    const { startXeroSyncOperation } = await import("@/lib/xero-sync");
+    const { buildXeroBookingInvoiceCorrelationKey } = await import("@/lib/xero-booking-invoice-key");
+    const { CHANGE_FEE_LINE_DESCRIPTION } = await import("@/lib/xero-modification-line-items");
+    const invoices = await import("@/lib/xero-booking-invoices");
+    const invoiceId = "race-3750-after-link-invoice";
+    try {
+      // The create bills the correction's fee in full and saves its link; the
+      // fee the save reads back is that fee.
+      const key = buildXeroBookingInvoiceCorrelationKey(BOOKING_ID);
+      const operation = await startXeroSyncOperation({
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: PAYMENT_ID,
+        idempotencyKey: key,
+        correlationKey: key,
+        requestPayload: { invoices: [] },
+      });
+      const atLink = await gap.persistPrimaryInvoiceLink({
+        operationId: operation.id,
+        paymentId: PAYMENT_ID,
+        xeroInvoiceNumber: null,
+        billed: gap.primaryInvoiceBilledFee(invoiceId, [
+          { description: "Original Guest", quantity: 1, unitAmount: (2 * STORED_NIGHT_CENTS) / 100 },
+          { description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: fee / 100 },
+        ]),
+      });
+      expect(atLink).toMatchObject({ billedChangeFeeCents: fee, recordedChangeFeeCentsAtLink: fee });
+
+      // A later edit records its own fee, billed on its own document.
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { changeFeeCents: { increment: 3_000 } } });
+
+      // The retry's "invoice already exists" exit re-checks from the stored
+      // figures: no gap, nothing queued on the correction.
+      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operation.id })).resolves.toBe(
+        invoiceId,
+      );
+      expect(
+        await prisma.xeroSyncOperation.count({ where: { localModel: "BookingModification", localId: modification.id } }),
+      ).toBe(0);
     } finally {
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
     }

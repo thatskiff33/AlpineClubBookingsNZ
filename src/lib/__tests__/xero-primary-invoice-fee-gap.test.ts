@@ -1,37 +1,55 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  payment: { findUnique: vi.fn() },
+  payment: { findUnique: vi.fn(), update: vi.fn() },
   bookingModification: { findMany: vi.fn() },
   xeroSyncOperation: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
   xeroObjectLink: { findFirst: vi.fn() },
   enqueue: vi.fn(),
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const client = {
     payment: mocks.payment,
     bookingModification: mocks.bookingModification,
     xeroSyncOperation: mocks.xeroSyncOperation,
     xeroObjectLink: mocks.xeroObjectLink,
-  },
-}));
+  };
+  // One interactive transaction: the same delegates, so a test sees what it wrote.
+  return { prisma: { ...client, $transaction: vi.fn(async (run: (tx: typeof client) => unknown) => run(client)) } };
+});
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroSupplementaryInvoiceOperation: mocks.enqueue }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
 import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items";
 import {
   billedChangeFeeCents,
+  cardAppliedCreditCents,
+  persistPrimaryInvoiceLink,
   primaryInvoiceBilledFee,
+  primaryInvoiceStripeCashCents,
   queuePrimaryInvoiceChangeFeeGap,
   recheckPrimaryInvoiceChangeFeeGap,
-  recordPrimaryInvoiceBilledFee,
+  type PrimaryInvoiceBilledFee,
 } from "@/lib/xero-primary-invoice-fee-gap";
 
 const guestLine = { description: "Jordan - (ADULT, Member) - 2 nights", quantity: 1, unitAmount: 200 };
 const feeLine = (dollars: number) => ({ description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: dollars });
 
-const unpaid = { changeFeeCents: 6_500, source: "STRIPE", status: "PENDING", amountCents: 0, refundedAmountCents: 0 };
+const unpaid = {
+  changeFeeCents: 6_500,
+  source: "STRIPE",
+  status: "PENDING",
+  amountCents: 0,
+  refundedAmountCents: 0,
+  creditAppliedCents: 0,
+};
+
+/** The figures the link's save stores: what was billed, and the fee recorded then. */
+const atLink = (billed: PrimaryInvoiceBilledFee, recordedChangeFeeCentsAtLink = 6_500) => ({
+  ...billed,
+  recordedChangeFeeCentsAtLink,
+});
 
 /**
  * #3955 review X4: a primary invoice built before a fee was recorded (an edit
@@ -61,12 +79,11 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     });
   });
 
-  it("does nothing when the invoice bills the recorded fee", async () => {
-    mocks.payment.findUnique.mockResolvedValue({ ...unpaid, changeFeeCents: 2_500 });
+  it("does nothing when the invoice bills the fee recorded at its link", async () => {
     await expect(
       queuePrimaryInvoiceChangeFeeGap({
         bookingId: "booking_1",
-        billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
+        atLink: atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]), 2_500),
       }),
     ).resolves.toMatchObject({ gapCents: 0, queueOperationId: null });
     expect(mocks.enqueue).not.toHaveBeenCalled();
@@ -77,7 +94,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       queuePrimaryInvoiceChangeFeeGap({
         bookingId: "booking_1",
         // The invoice Xero returned was built before the 40.00 fee was recorded.
-        billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
+        atLink: atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)])),
         createdByMemberId: "officer_1",
       }),
     ).resolves.toEqual({ gapCents: 4_000, queueOperationId: "op_gap", alreadyQueued: false });
@@ -100,15 +117,15 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
   });
 
   it("records a payment only when a captured Stripe payment nets the fee beyond the primary invoice", async () => {
-    const billed = primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]); // total 22,500
+    const fees = atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)])); // total 22,500
     // Captured exactly the primary's total: nothing left over for the gap.
     mocks.payment.findUnique.mockResolvedValue({ ...unpaid, status: "SUCCEEDED", amountCents: 22_500 });
-    await queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", billed });
+    await queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", atLink: fees });
     expect(mocks.enqueue).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ recordPayment: false }));
 
     // Captured the primary's total plus the 40.00 gap.
     mocks.payment.findUnique.mockResolvedValue({ ...unpaid, status: "SUCCEEDED", amountCents: 26_500 });
-    await queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", billed });
+    await queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", atLink: fees });
     expect(mocks.enqueue).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ recordPayment: true }));
 
     // The same cash by internet banking is never recorded as a Stripe payment.
@@ -118,8 +135,45 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       status: "SUCCEEDED",
       amountCents: 26_500,
     });
-    await queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", billed });
+    await queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", atLink: fees });
     expect(mocks.enqueue).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ recordPayment: false }));
+  });
+
+  it("MUTATION round 4, finding 3: applied credit settles the primary first, so the card's cash pays the gap", async () => {
+    // Price 100.00, a 5.00 fee recorded after the invoice was built, 20.00 of
+    // credit applied, 85.00 on the card. The primary bills 100.00: it takes
+    // 80.00 of cash and the 20.00 credit; the 5.00 left is the gap's.
+    const card = { ...unpaid, status: "SUCCEEDED", amountCents: 8_500, creditAppliedCents: 2_000 };
+    expect(cardAppliedCreditCents(card)).toBe(2_000);
+    expect(primaryInvoiceStripeCashCents({ netCapturedCents: 8_500, amountDueCents: 10_000, appliedCreditCents: 2_000 })).toBe(
+      8_000,
+    );
+    mocks.payment.findUnique.mockResolvedValue(card);
+    await queuePrimaryInvoiceChangeFeeGap({
+      bookingId: "booking_1",
+      atLink: atLink(primaryInvoiceBilledFee("inv_1", [{ description: "Guest", quantity: 1, unitAmount: 100 }]), 500),
+    });
+    expect(mocks.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ changeFeeCents: 500 }),
+      expect.objectContaining({ recordPayment: true }),
+    );
+  });
+
+  it("the primary's cash cap: the credit always fits, never below zero, and Xero's missing amount caps at the capture", () => {
+    expect(primaryInvoiceStripeCashCents({ netCapturedCents: 8_000, amountDueCents: 10_000, appliedCreditCents: 2_000 })).toBe(
+      8_000,
+    );
+    // Credit covers the whole invoice: no cash is recorded on it.
+    expect(primaryInvoiceStripeCashCents({ netCapturedCents: 500, amountDueCents: 10_000, appliedCreditCents: 10_000 })).toBe(0);
+    expect(primaryInvoiceStripeCashCents({ netCapturedCents: 8_500, amountDueCents: null, appliedCreditCents: 2_000 })).toBe(
+      8_500,
+    );
+    // Only a card capture with a credit-reduced mirror allocates credit there.
+    const card = { ...unpaid, status: "SUCCEEDED", amountCents: 8_000, creditAppliedCents: 2_000 };
+    expect(cardAppliedCreditCents({ ...card, source: "INTERNET_BANKING" as never })).toBe(0);
+    expect(cardAppliedCreditCents({ ...card, status: "PENDING" })).toBe(0);
+    expect(cardAppliedCreditCents({ ...card, refundedAmountCents: 8_000 })).toBe(0);
+    expect(cardAppliedCreditCents({ ...card, creditAppliedCents: 0 })).toBe(0);
   });
 
   it("never queues the gap twice, and never raises an anchor's queued invoice", async () => {
@@ -127,7 +181,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     await expect(
       queuePrimaryInvoiceChangeFeeGap({
         bookingId: "booking_1",
-        billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
+        atLink: atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)])),
       }),
     ).resolves.toEqual({ gapCents: 4_000, queueOperationId: "op_earlier", alreadyQueued: true });
     expect(mocks.xeroSyncOperation.findFirst).toHaveBeenCalledWith(
@@ -143,7 +197,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     mocks.xeroObjectLink.findFirst.mockResolvedValue({ id: "link_sent" });
     await queuePrimaryInvoiceChangeFeeGap({
       bookingId: "booking_1",
-      billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
+      atLink: atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)])),
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
@@ -152,7 +206,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     mocks.bookingModification.findMany.mockResolvedValueOnce([]);
     await queuePrimaryInvoiceChangeFeeGap({
       bookingId: "booking_1",
-      billed: primaryInvoiceBilledFee("inv_1", [guestLine]),
+      atLink: atLink(primaryInvoiceBilledFee("inv_1", [guestLine])),
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.logger.error).toHaveBeenCalledTimes(1);
@@ -162,45 +216,94 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       mocks.enqueue.mockResolvedValueOnce({ queueOperationId: null, outcome });
       await queuePrimaryInvoiceChangeFeeGap({
         bookingId: "booking_1",
-        billed: primaryInvoiceBilledFee("inv_1", [guestLine]),
+        atLink: atLink(primaryInvoiceBilledFee("inv_1", [guestLine])),
       });
       expect(mocks.logger.error, outcome).toHaveBeenCalledTimes(1);
     }
   });
 
-  it("is loud, and raises nothing, when the invoice bills more fee than is recorded", async () => {
-    mocks.payment.findUnique.mockResolvedValue({ ...unpaid, changeFeeCents: 2_500 });
+  it("is loud, and raises nothing, when the invoice bills more fee than was recorded at its link", async () => {
     await queuePrimaryInvoiceChangeFeeGap({
       bookingId: "booking_1",
-      billed: primaryInvoiceBilledFee("inv_1", [feeLine(30)]),
+      atLink: atLink(primaryInvoiceBilledFee("inv_1", [feeLine(30)]), 2_500),
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.logger.error).toHaveBeenCalled();
   });
 
-  it("round 3, finding 2: a check that throws after the link is persisted is billed by the retry", async () => {
-    // The operation's payload, as the database would hold it.
-    let storedPayload: unknown = { invoices: [] };
-    mocks.xeroSyncOperation.findUnique.mockImplementation(async () => ({ requestPayload: storedPayload }));
+  /** The create operation's payload, as the database would hold it. */
+  const storedOperation = () => {
+    const store: { payload: unknown } = { payload: { invoices: [] } };
+    mocks.xeroSyncOperation.findUnique.mockImplementation(async () => ({ requestPayload: store.payload }));
     mocks.xeroSyncOperation.update.mockImplementation(async ({ data }: { data: { requestPayload: unknown } }) => {
-      storedPayload = data.requestPayload;
+      store.payload = data.requestPayload;
       return {};
     });
+    mocks.xeroSyncOperation.findFirst.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType ? null : { requestPayload: store.payload },
+    );
+    return store;
+  };
 
-    // The create: records what the invoice billed, persists its link, then the
-    // gap check dies.
+  it("round 4, finding 1: the link's save reads the fee back from its own row update and stores it in the same transaction", async () => {
+    const store = storedOperation();
+    mocks.payment.update.mockResolvedValue({ changeFeeCents: 6_500 });
     const billed = primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]);
-    await recordPrimaryInvoiceBilledFee("op_create", billed);
+
+    await expect(
+      persistPrimaryInvoiceLink({ operationId: "op_create", paymentId: "pay_1", xeroInvoiceNumber: "INV-1", billed }),
+    ).resolves.toEqual({ ...billed, recordedChangeFeeCentsAtLink: 6_500 });
+
+    const { prisma } = await import("@/lib/prisma");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.payment.update).toHaveBeenCalledWith({
+      where: { id: "pay_1" },
+      data: { xeroInvoiceId: "inv_1", xeroInvoiceNumber: "INV-1" },
+      select: { changeFeeCents: true },
+    });
+    expect(store.payload).toMatchObject({
+      invoices: [],
+      primaryInvoiceBilledFee: { ...billed, recordedChangeFeeCentsAtLink: 6_500 },
+    });
+  });
+
+  it("MUTATION round 4, finding 1: a fee recorded after the link is never billed by the re-check", async () => {
+    storedOperation();
+    // The invoice billed the 25.00 recorded when its link was saved.
+    mocks.payment.update.mockResolvedValue({ changeFeeCents: 2_500 });
+    await persistPrimaryInvoiceLink({
+      operationId: "op_create",
+      paymentId: "pay_1",
+      xeroInvoiceNumber: null,
+      billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
+    });
+    // A later edit records 30.00 more, billed on its own document.
+    mocks.payment.findUnique.mockResolvedValue({ ...unpaid, changeFeeCents: 5_500 });
+
+    await expect(
+      recheckPrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", xeroInvoiceId: "inv_1" }),
+    ).resolves.toEqual({ gapCents: 0, queueOperationId: null, alreadyQueued: false });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("round 3, finding 2: a check that throws after the link is saved is billed by the retry", async () => {
+    storedOperation();
+    // The create saves its link with what it billed and the fee recorded
+    // then, and the gap check dies.
+    mocks.payment.update.mockResolvedValue({ changeFeeCents: 6_500 });
+    const fees = await persistPrimaryInvoiceLink({
+      operationId: "op_create",
+      paymentId: "pay_1",
+      xeroInvoiceNumber: null,
+      billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
+    });
     mocks.enqueue.mockRejectedValueOnce(new Error("connection reset"));
-    await expect(queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", billed })).rejects.toThrow(
+    await expect(queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", atLink: fees })).rejects.toThrow(
       "connection reset",
     );
 
     // The retry takes the create's "invoice already exists" exit, which
-    // re-runs the check from the record.
-    mocks.xeroSyncOperation.findFirst.mockImplementation(async (args: { where: { queueType?: string } }) =>
-      args.where.queueType ? null : { requestPayload: storedPayload },
-    );
+    // re-runs the check from the stored figures.
     await expect(
       recheckPrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", xeroInvoiceId: "inv_1" }),
     ).resolves.toEqual({ gapCents: 4_000, queueOperationId: "op_gap", alreadyQueued: false });
@@ -208,10 +311,10 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       { bookingId: "booking_1", priceDiffCents: 0, changeFeeCents: 4_000, bookingModificationId: "mod_late" },
       { createdByMemberId: undefined, recordPayment: false },
     );
-    expect(storedPayload).toMatchObject({ invoices: [], primaryInvoiceBilledFee: billed });
   });
 
-  it("a retry of an invoice with no record bills nothing", async () => {
+  it("round 4, finding 2: a retry of an invoice with no stored figures bills nothing, loudly when a fee is recorded", async () => {
+    mocks.payment.findUnique.mockResolvedValue({ changeFeeCents: 0 });
     await expect(
       recheckPrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", xeroInvoiceId: "inv_legacy" }),
     ).resolves.toEqual({ gapCents: 0, queueOperationId: null, alreadyQueued: false });
@@ -221,6 +324,15 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
           requestPayload: { path: ["primaryInvoiceBilledFee", "xeroInvoiceId"], equals: "inv_legacy" },
         }),
       }),
+    );
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+
+    mocks.payment.findUnique.mockResolvedValue({ changeFeeCents: 2_500 });
+    await recheckPrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", xeroInvoiceId: "inv_legacy" });
+    expect(mocks.logger.warn).toHaveBeenCalledTimes(1);
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ xeroInvoiceId: "inv_legacy", recordedChangeFeeCents: 2_500 }),
+      expect.stringContaining("not checked"),
     );
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
