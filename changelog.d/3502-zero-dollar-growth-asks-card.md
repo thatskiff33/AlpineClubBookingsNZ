@@ -33,3 +33,9 @@
   automatically; reminders stop for a cancelled request and quote the new
   amount for a smaller one. Nothing is sent to Xero for a request that was never
   paid, and the booking-vs-Xero repair tool no longer offers to bill one.
+
+  The same holds when the card request for the increase could not be created at
+  the time and was waiting for its automatic retry: the reduction comes off it
+  first, and the retry asks only for what the booking still owes, or for nothing.
+  A change saved in the few seconds while that retry is running is refused with
+  "try again", and goes through on the next save.

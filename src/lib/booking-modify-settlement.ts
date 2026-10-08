@@ -107,11 +107,7 @@ export type PaymentAdjustmentResult = {
    */
   unpaidAskOffsetCents: number;
   retiredAdditionalAsks: RetiredAdditionalAsk[];
-  /**
-   * #3954 "retry nets it off": the increases whose failed mint's recovery this
-   * reduction closed before it ran. Recorded on the edit's history row
-   * (`unpaidAskOffsetHistory`) for the Xero repair pass.
-   */
+  /** #3954: increases whose waiting mint recovery this reduction closed, for the history row. */
   retiredPendingAskModificationIds: string[];
 };
 

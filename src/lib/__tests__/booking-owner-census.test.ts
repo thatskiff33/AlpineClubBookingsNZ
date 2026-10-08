@@ -519,9 +519,9 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // records that store the owner's member id (null for a school), and one
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
-  "src/lib/member-guest-consent-service.ts:1322",
-  "src/lib/payment-recovery.ts:2623",
-  "src/lib/payment-recovery.ts:2675",
+  "src/lib/member-guest-consent-service.ts:1327",
+  "src/lib/payment-recovery.ts:2632",
+  "src/lib/payment-recovery.ts:2684",
   "src/lib/xero-admin-health.ts:372",
 ];
 

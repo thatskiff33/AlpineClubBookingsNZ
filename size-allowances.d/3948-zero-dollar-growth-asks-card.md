@@ -44,19 +44,24 @@ reason: the removal door writes its own BookingModification history row and
   result type; the offset and the retired asks join them there.
 
 file: src/lib/payment-recovery.ts
-lines: 3331
+lines: 3340
 reason: the intent-mint replay must recognise a reduction's re-issued ask where
   it sizes every replayed ask, or it would replay it as an increase and raise a
-  supplementary invoice for a reduction.
+  supplementary invoice for a reduction. The "retry nets it off" round moved
+  that sizing into `additional-ask-recovery-replay.ts`, shared with the
+  reduction; what grew is the replay's docblock saying a netted row never
+  reaches it.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2341
+lines: 2348
 reason: the repair pass sizes a reduction's note and decides an increase's
   missing invoice inside its per-modification arms; the predicate and wording
-  live in `unpaid-ask-offset-marker.ts`, and what is left is the arm itself.
+  live in `unpaid-ask-offset-marker.ts`, and what is left is the arm itself,
+  which also reads an increase whose unminted ask a reduction netted off.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1374
+lines: 1379
 reason: a consent decline or expiry is a guest removal with its own
   after-commit finaliser; the asks its reduction retired are cancelled, and what
-  is left re-issued, there, through the shared minter, as the DELETE door does.
+  is left re-issued, there, through the shared minter, as the DELETE door does -
+  also when it netted off an unminted ask and retired no row.

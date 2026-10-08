@@ -720,12 +720,21 @@ left is refunded, credited or given back, by the policy tier.
 ```text
 reduction edit, under the door's locks
   no unpaid ask, or the chain holds a review-raised request -> settles as before
+  unpaid ask = the rows' live ask
+             + each ask whose mint FAILED and whose CREATE_ADDITIONAL_PAYMENT_INTENT
+               recovery will still run and was not overtaken by a later ask,
+               sized as its replay would size it ("retry nets it off", 9 Oct 2026)
+       a review charge's recovery, or one that cannot be sized -> settles as before
   -> offset = min(reduction, unpaid ask)
   -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt
        a row captured since it was read -> 409, the whole edit rolls back
+  -> each waiting recovery -> SUCCEEDED (closed unminted), fenced on the exact
+       status and attempts read
+       its retry minting now, or claimed since the read -> 409, edit rolls back
+       its retry later -> nothing to claim
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
-  -> WAITING_PAYMENT supplementary invoice on it -> CANCELLED
-       (ADDITIONAL_ASK_RETIRED_BY_REDUCTION)
+  -> WAITING_PAYMENT supplementary invoice on it, or on a closed recovery's
+       increase -> CANCELLED (ADDITIONAL_ASK_RETIRED_BY_REDUCTION)
   -> reconcile: the Payment mirror reads past the stamped rows -> nothing owed
   -> what is left of the reduction -> policy-tiered refund / credit / give-back
 after commit, the minter

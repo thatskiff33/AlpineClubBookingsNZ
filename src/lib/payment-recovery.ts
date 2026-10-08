@@ -40,7 +40,7 @@ import {
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
-import { isRecoveryOvertakenByLaterAsk, sizeRecoveryReplayAsk } from "@/lib/additional-payment-ask";
+import { isRecoveryOvertakenByLaterAsk, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";

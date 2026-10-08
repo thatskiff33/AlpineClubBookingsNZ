@@ -1967,9 +1967,10 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 - **Xero.** An unpaid ask has no Xero document, so nothing is credited for
   it. The edit records `unpaidAskOffsetCents`; the repair pass sizes the note
   net of it and reports the retired invoice for a person, never auto-billing it.
-- **Stated limit.** An ask whose mint failed and awaits its recovery is not in
-  the mirror yet, so a reduction then is not set against it; the census
-  reports it.
+- **An ask awaiting its failed mint's retry** counts too (owner decision 9 Oct
+  2026), sized as the replay would (`sizeRecoveryReplayAsk`). The retire closes
+  that recovery from the state it read; a retry that claimed it first refuses
+  the edit (409). The history row names the increase for the repair pass.
 
 ## INV-PAY-070
 

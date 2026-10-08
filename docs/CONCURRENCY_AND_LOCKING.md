@@ -2971,6 +2971,14 @@ retire is a status-guarded `updateMany` re-asserting "still unpaid": a capture
 committed after the read matches nothing and the edit rolls back (409); one
 landing after the retire waits on the row, and the committed cancellation hands
 it to `REFUND_SUPERSEDED_PAYMENT`. No key, order or provider call changes.
+Its second counterpart (owner decision 9 Oct 2026) is the lockless recovery
+runner replaying a failed mint (`CREATE_ADDITIONAL_PAYMENT_INTENT`): a waiting
+recovery the reduction nets off is closed by a status-guarded `updateMany` on
+the exact status and attempts it read, and the runner's claim is itself a
+status-guarded `updateMany` that moves both. A claim first fails the close and
+the edit rolls back (409); a close first leaves the claim matching nothing,
+whether it was already waiting on the row or comes later. A recovery read as
+PROCESSING refuses the edit before any write. Both proven on real Postgres.
 
 **#2700 adds one more, and it is the smallest participant in this cohort.**
 `raiseDeletedBookingModificationRefundTask`

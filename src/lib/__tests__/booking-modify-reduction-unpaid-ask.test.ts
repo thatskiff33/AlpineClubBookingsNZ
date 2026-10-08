@@ -69,13 +69,13 @@ const { applyPaymentAdjustments, calculateModificationSettlementOptions } = awai
 );
 const {
   bookingLedgerResidualCents,
-  isRecoveryOvertakenByLaterAsk,
-  recoveryAskBeyondPaymentAskCents,
   reissueUnpaidAdditionalAsk,
   setReductionAgainstUnpaidAsk,
-  sizeRecoveryReplayAsk,
   NO_ADDITIONAL_ASK,
 } = await import("@/lib/additional-payment-ask");
+const { isRecoveryOvertakenByLaterAsk, recoveryAskBeyondPaymentAskCents, sizeRecoveryReplayAsk } = await import(
+  "@/lib/additional-ask-recovery-replay"
+);
 const {
   buildAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
