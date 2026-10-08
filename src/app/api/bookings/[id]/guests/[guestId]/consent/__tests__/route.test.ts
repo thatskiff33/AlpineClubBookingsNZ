@@ -216,6 +216,8 @@ beforeEach(() => {
     hasSucceededPayment: false,
     xeroAdditionalAmountCents: 0,
     zeroDollarAutoPaid: false,
+    // #3954: no unpaid ask on this booking, so the removal retired none.
+    retiredAdditionalAsks: [],
   });
   h.canRespondForTarget.mockResolvedValue(false);
   h.resolveNotificationRecipients.mockResolvedValue([]);
