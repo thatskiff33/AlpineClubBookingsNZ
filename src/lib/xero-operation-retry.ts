@@ -1,6 +1,8 @@
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import {
   readQueuedOutboxPayload,
+  readQueueType,
+  subscriptionInvoiceChargeId,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
@@ -9,6 +11,7 @@ import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
@@ -62,6 +65,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import type { ClubFormat } from "@/lib/club-format";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
+import { findResolvedSiblingSince } from "@/lib/xero-resolved-in-xero-fences";
 
 /**
  * The `@/lib/xero` module namespace, named because an `import()` type written
@@ -176,6 +180,44 @@ function keptLateCaptureInvoiceRequeuePayload(
 }
 
 /**
+ * #3971 (`INV-INT-026`): a FAILED membership subscription invoice goes back to
+ * the outbox as its bare queue type - the charge is `localId`, and a pre-fix
+ * row holds a blanked `chargeId`. It keeps its correlation key, so the
+ * active-key index refuses it while another attempt for the charge is live.
+ */
+function subscriptionInvoiceRequeuePayload(operation: RetryableOperation) {
+  const queueType = operation.queueType ?? readQueueType(operation.requestPayload);
+  return operation.direction === "OUTBOUND" && operation.entityType === "INVOICE" &&
+    operation.operationType === "CREATE" && subscriptionInvoiceChargeId(operation) &&
+    queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
+    ? { queueType }
+    : null;
+}
+
+/** #3971: never from here a second invoice or email, nor a charge needing none. */
+async function refuseSubscriptionInvoiceRetryWithNothingToDo(chargeId: string): Promise<void> {
+  const charge = await prisma.membershipSubscriptionCharge.findUnique({
+    where: { id: chargeId },
+    select: { status: true, billingBasis: true, xeroInvoiceId: true, xeroInvoiceNumber: true },
+  });
+  if (!charge) {
+    throw new XeroOperationRetryError("The membership subscription charge this operation invoices no longer exists.", 404);
+  }
+  if (charge.xeroInvoiceId) {
+    throw new XeroOperationRetryError(
+      `This charge already has Xero invoice ${charge.xeroInvoiceNumber ?? charge.xeroInvoiceId}, so it is not sent again from here. If the invoice still needs emailing, use Retry on the charge in Subscription billing; otherwise mark this operation resolved.`,
+      409,
+    );
+  }
+  if (charge.billingBasis === "NO_INVOICE" || charge.status === "NOT_REQUIRED" || charge.status === "VOIDED") {
+    throw new XeroOperationRetryError(
+      "This charge no longer needs a Xero invoice, so there is nothing to retry. Mark this operation non-replayable.",
+      409,
+    );
+  }
+}
+
+/**
  * Return an outbox row to PENDING with its queued payload, status-guarded, so
  * the outbox claim stays the one execution authority. A lost guard, or the
  * active-correlation-key index refusing a second live row (the caller's own
@@ -183,13 +225,27 @@ function keptLateCaptureInvoiceRequeuePayload(
  * resolve landing after the read (#3635, INV-INT-025), and says so through
  * `throwLostRetryClaim`. Applied-credit rows are retry-only and stay outside
  * this helper, with no resolved guard on their claim.
+ *
+ * #3994 review F1: a sibling for the same document (same correlation key) an
+ * officer resolved after this row was queued makes the outbox cancel it unsent
+ * (`findResolvedSiblingSince`), so the retry refuses up front rather than report
+ * a queued retry that will never run. `advice` says what to do instead.
  */
 async function requeueOutboxRowForRetry(
-  operationId: string,
+  operation: Pick<XeroSyncOperation, "id" | "correlationKey" | "entityType" | "operationType" | "createdAt">,
   requestPayload: Record<string, unknown>,
   fromStatuses: Array<"FAILED" | "PARTIAL">,
   label: string,
+  advice = "That document stands for this one: mark this operation resolved too.",
 ): Promise<void> {
+  const operationId = operation.id;
+  const resolvedSibling = await findResolvedSiblingSince(operation);
+  if (resolvedSibling) {
+    throw new XeroOperationRetryError(
+      `An officer resolved another ${label} operation for the same document in Xero (${resolvedSibling.id}) after this one was queued, so a retry would be cancelled unsent. ${advice}`,
+      409,
+    );
+  }
   const queued = await prisma.xeroSyncOperation
     .updateMany({
       where: {
@@ -1066,6 +1122,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       return { supported: true, reason: null };
     }
 
+    if (subscriptionInvoiceRequeuePayload(operation)) return { supported: true, reason: null }; // #3971
+
     /**
      * #3193 fix round: A SECOND ASK, anchored on the review task whose settled
      * share it bills.
@@ -1274,7 +1332,7 @@ export async function retryXeroSyncOperation(
   const keptLateCapturePayload = keptLateCaptureInvoiceRequeuePayload(operation);
   if (keptLateCapturePayload) {
     await requeueOutboxRowForRetry(
-      operation.id,
+      operation,
       keptLateCapturePayload,
       ["FAILED", "PARTIAL"],
       "kept-payment invoice",
@@ -1285,12 +1343,26 @@ export async function retryXeroSyncOperation(
   const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);
   if (groupSettlementPayload) {
     await requeueOutboxRowForRetry(
-      operation.id,
+      operation,
       groupSettlementPayload,
       ["FAILED"],
       "group settlement invoice",
     );
     return { message: "Queued the group settlement invoice operation for retry." };
+  }
+
+  const subscriptionInvoicePayload = subscriptionInvoiceRequeuePayload(operation);
+  const subscriptionChargeId = subscriptionInvoiceChargeId(operation);
+  if (subscriptionInvoicePayload && subscriptionChargeId && operation.status === "FAILED") {
+    await refuseSubscriptionInvoiceRetryWithNothingToDo(subscriptionChargeId);
+    await requeueOutboxRowForRetry(
+      operation,
+      subscriptionInvoicePayload,
+      ["FAILED"],
+      "membership subscription invoice",
+      "If the member was invoiced by hand in Xero, mark this operation resolved too; if they still need invoicing, use Retry on the charge in Subscription billing.",
+    );
+    return { message: "Queued the membership subscription invoice for retry." };
   }
 
   const xero = await import("@/lib/xero");
@@ -1671,6 +1743,8 @@ export async function retryXeroSyncOperation(
             ? { watermarkCents: deltaWatermarkCents }
             : {}),
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
+          // #3935: the officer's cash answer, so the retried note says the same.
+          ...(retryInput.noteWording ? { noteWording: retryInput.noteWording } : {}),
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
           ...(retryInput.refundRequestId ? { refundRequestId: retryInput.refundRequestId } : {}),

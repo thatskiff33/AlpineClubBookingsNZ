@@ -39,8 +39,8 @@ import {
   addCalendarDays,
   calendarDateOfDateOnlyInstant,
   dateOnlyInstantOf,
-  formatClubDate,
   formatClubDayMonth,
+  formatStayDate,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -861,15 +861,9 @@ export default async function DashboardPage() {
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm">
-                        {formatClubDate(
-                          calendarDateOfDateOnlyInstant(booking.checkIn),
-                          club.format,
-                        )}
+                        {formatStayDate(booking.checkIn, club.format)}
                         {" — "}
-                        {formatClubDate(
-                          calendarDateOfDateOnlyInstant(booking.checkOut),
-                          club.format,
-                        )}
+                        {formatStayDate(booking.checkOut, club.format)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
@@ -957,15 +951,9 @@ export default async function DashboardPage() {
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm">
-                        {formatClubDate(
-                          calendarDateOfDateOnlyInstant(booking.checkIn),
-                          club.format,
-                        )}
+                        {formatStayDate(booking.checkIn, club.format)}
                         {" — "}
-                        {formatClubDate(
-                          calendarDateOfDateOnlyInstant(booking.checkOut),
-                          club.format,
-                        )}
+                        {formatStayDate(booking.checkOut, club.format)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest

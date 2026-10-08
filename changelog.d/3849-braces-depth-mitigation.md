@@ -13,8 +13,8 @@
   dependency files it was reviewed against.
 
   The advisory stays visible in the audit output. Any further advisory, any
-  dependency change, or the record's expiry on 10 October 2026 turns the check
+  dependency change, or the record's expiry (19 October 2026, extended once in #3927) turns the check
   red again; a record can never run for more than 14 days ahead. Mitigation
-  records, patches and the audit scripts now need the owner's code-owner
-  approval. The record covers only the copy the audit can see, and lists the
+  records, patches and the audit scripts now need the owner's approval
+  comment. The record covers only the copy the audit can see, and lists the
   others; retiring it is tracked on #3851. Operators need do nothing.

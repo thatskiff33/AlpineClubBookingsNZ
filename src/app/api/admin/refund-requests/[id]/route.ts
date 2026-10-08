@@ -33,7 +33,7 @@ import {
 import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
 import { buildRefundRequestRefundMetadata } from "@/lib/payment-recovery-keys";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
-import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { clubFormat } from "@/lib/club-format-server";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
@@ -483,8 +483,8 @@ export async function PUT(
           // (CT-4, #2870). The zoned instant formatter this replaced projected UTC
           // midnight through the club zone: the identity in New Zealand, and the
           // PREVIOUS DAY for any club behind UTC.
-          checkIn: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkIn), money.format),
-          checkOut: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkOut), money.format),
+          checkIn: formatStayDate(booking.checkIn, money.format),
+          checkOut: formatStayDate(booking.checkOut, money.format),
         },
       }).catch((err) =>
         logger.error({ err }, "Failed to send refund appeal approved email")
@@ -573,8 +573,8 @@ export async function PUT(
           // #2268: pre-composed optional line (see the approved branch).
           adminNotesLine: composeOptionalEmailLine("Notes", adminNotes),
           // Calendar days, no zone — see the approved branch above.
-          checkIn: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkIn), money.format),
-          checkOut: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkOut), money.format),
+          checkIn: formatStayDate(booking.checkIn, money.format),
+          checkOut: formatStayDate(booking.checkOut, money.format),
         },
       }).catch((err) =>
         logger.error({ err }, "Failed to send refund appeal declined email")

@@ -30,8 +30,8 @@ import {
   parseInstant,
   type BoundClubTime,
   type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
 import type {
   MembershipTypeSummary,
   MemberDetail,
@@ -131,7 +131,7 @@ const EMPTY_SEASONAL_ASSIGNMENTS: SeasonalMembershipAssignmentSummary[] = [];
  * was wrong for one of them.
  */
 function formatCalendarDay(date: string | null, format: ClubDateFormat) {
-  return formatPayloadCalendarDay(date, format, "-");
+  return formatStayDateOrNull(date, format) ?? "-";
 }
 
 /** A real INSTANT, in the club's persisted zone (INV-CONFIG-002). */

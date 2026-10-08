@@ -48,9 +48,8 @@
  */
 
 import {
-  formatClubDate,
-  parseCalendarDate,
   type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 
 export type BookingMemberNightConflictCopyInput = {
@@ -85,19 +84,12 @@ export type BookingMemberNightConflictCopyOptions = {
   canChooseDifferentDates?: boolean;
 };
 
-// A night key names a calendar day, so it renders as that day in every zone and
-// on every host. `formatClubDate` is the house medium shape ("11 Jun 2026") and
-// follows the club's locale (#3566) rather than a hardcoded English month table.
-//
-// A key naming no real day is shown VERBATIM rather than guessed at.
-// `parseCalendarDate` never rolls — `2026-02-30` is null, not 2 March — so a
-// malformed key from a future producer reads as what arrived instead of as a
-// plausible wrong night. That is the same fail-open the previous NaN check gave
-// this function, deliberately preserved: this is display copy on a 409, and
-// throwing here would replace a refusal the member can act on with a 500.
+// A night key names a calendar day (#3511: the kernel's stay-date helper; it
+// follows the club's locale, #3566). A key naming no real day is shown VERBATIM:
+// this is display copy on a 409, and throwing would replace a refusal the member
+// can act on with a 500.
 function formatNight(night: string, format: ClubDateFormat): string {
-  const day = parseCalendarDate(night);
-  return day === null ? night : formatClubDate(day, format);
+  return formatStayDateOrNull(night, format) ?? night;
 }
 
 function joinWithAnd(items: string[]): string {
