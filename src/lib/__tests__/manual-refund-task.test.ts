@@ -4752,6 +4752,59 @@ describe("#3880 - a review's refund on a cancelled booking reaches Xero as the c
     invoiceLeftAsTheCancellationLeftIt();
   });
 
+  it("MUTATION: #3935 - the officer's 'In cash' answer words the cancelled booking's refund note as cash, and moves nothing else", async () => {
+    // `INV-PAY-116`: words only. The same payment, amount, method, task key and
+    // in-transaction store as the bank-transfer note above; only `noteWording`.
+    cancelledTask(PaymentSource.INTERNET_BANKING);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Handed back in cash at the lodge.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 5_000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+      handedBackInCash: true,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2_500, {
+      createdByMemberId: "admin-1",
+      refundMethod: "internet-banking",
+      noteWording: "cash",
+      reviewTaskId: "task-1",
+      store: tx,
+    });
+    invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: #3935 - a card refund on a cancelled booking is never worded as cash, whatever the request sends", async () => {
+    cancelledTask(PaymentSource.STRIPE);
+    cancelledAt(8_000, "card");
+    fiftyLessTwenty();
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Settled.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 5_000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+      handedBackInCash: true,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment-1",
+      2_500,
+      expect.objectContaining({ refundMethod: "card", reviewTaskId: "task-1" }),
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.calls[0]![2]).not.toHaveProperty("noteWording");
+  });
+
   it("MUTATION: the bank-transfer hand-back's note is queued INSIDE the completion, after its allocation - and the kick waits for the commit", async () => {
     cancelledTask(PaymentSource.INTERNET_BANKING);
     cancelledAt(8_000, "credit");
