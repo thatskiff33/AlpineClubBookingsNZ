@@ -54,3 +54,9 @@ lines: 2341
 reason: the repair pass sizes a reduction's note and decides an increase's
   missing invoice inside its per-modification arms; the predicate and wording
   live in `unpaid-ask-offset-marker.ts`, and what is left is the arm itself.
+
+file: src/lib/member-guest-consent-service.ts
+lines: 1374
+reason: a consent decline or expiry is a guest removal with its own
+  after-commit finaliser; the asks its reduction retired are cancelled, and what
+  is left re-issued, there, through the shared minter, as the DELETE door does.

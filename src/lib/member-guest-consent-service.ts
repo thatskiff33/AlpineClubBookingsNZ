@@ -14,7 +14,9 @@ import {
 import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
+  type RemoveBookingGuestResult,
 } from "@/lib/booking-guest-removal-service";
+import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import {
   familyAdultDelegateResolver,
   resolveDelegateAnswerRecipients,
@@ -118,8 +120,8 @@ export type MemberGuestConsentOutcome =
    * email quotes it to the booking owner, so a second calculation here would be a
    * second chance to tell them the wrong number.
    */
-  | { outcome: "DECLINED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
-  | { outcome: "EXPIRED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
+  | { outcome: "DECLINED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement; askRetirement?: RemoveBookingGuestResult }
+  | { outcome: "EXPIRED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement; askRetirement?: RemoveBookingGuestResult }
   /** Claimed, but the guest is still on the booking and an admin must act. */
   | {
       outcome: "BLOCKED";
@@ -347,7 +349,12 @@ async function removeClaimedConsentGuest(
     /** The club's format (#3565), resolved with `today` and for the same reason. */
     format: ClubFormat;
   },
-): Promise<{ removed: true; creditCents: number; xeroSettlement: GuestRemovalXeroSettlement }> {
+): Promise<{
+  removed: true;
+  creditCents: number;
+  xeroSettlement: GuestRemovalXeroSettlement;
+  askRetirement: RemoveBookingGuestResult | undefined;
+}> {
   try {
     const result = await removeBookingGuestInTransaction({
       tx,
@@ -371,6 +378,8 @@ async function removeClaimedConsentGuest(
       removed: true,
       creditCents: (result.accountCreditAmountCents ?? 0) + result.appliedCreditGivenBackCents,
       xeroSettlement: guestRemovalXeroSettlement(result),
+      // #3954: the unpaid ask this removal's reduction retired, for after commit.
+      askRetirement: result.retiredAdditionalAsks.length > 0 ? result : undefined,
     };
   } catch (err) {
     const refusal = consentRemovalRefusalMessage(err);
@@ -643,6 +652,7 @@ export async function respondToMemberGuestConsent(params: {
         removed: true,
         creditCents: removal.creditCents,
         xeroSettlement: removal.xeroSettlement,
+        askRetirement: removal.askRetirement,
       } as const;
     });
   } catch (err) {
@@ -779,6 +789,7 @@ export async function expireMemberGuestConsent(params: {
         removed: true,
         creditCents: removal.creditCents,
         xeroSettlement: removal.xeroSettlement,
+        askRetirement: removal.askRetirement,
       } as const;
     });
   } catch (err) {
@@ -928,6 +939,20 @@ export async function finaliseMemberGuestConsentTransition(params: {
   // Xero hears of it exactly as of any other guest removal, through the same
   // leg, or its invoice keeps the old price and the give-back's deallocation
   // leaves an amount due the app does not have. Best-effort, after the commit.
+  // #3954: a removal whose reduction retired an unpaid ask cancels it at Stripe
+  // now and re-issues what is left, as the DELETE door does. Best-effort: the
+  // cancellations are queued durably and a failed mint keeps its recovery row.
+  if ((outcome.outcome === "DECLINED" || outcome.outcome === "EXPIRED") && outcome.askRetirement) {
+    await createModificationAdditionalPaymentIntent({
+      format,
+      bookingId,
+      result: outcome.askRetirement,
+      reason: "guest_consent_removal_reissued_ask",
+      idempotencyKey: `mod_guest_consent_${bookingId}_${outcome.askRetirement.bookingModificationId}`,
+      failureMessage: "Failed to re-issue an unpaid additional PaymentIntent after a member-guest consent removal",
+    }).catch((err) => logger.error({ err, bookingId, guestId }, "Failed to settle the asks a member-guest consent removal retired"));
+  }
+
   if ((outcome.outcome === "DECLINED" || outcome.outcome === "EXPIRED") && outcome.xeroSettlement) {
     try {
       await queueGuestRemovalXeroSettlement(outcome.xeroSettlement, {
