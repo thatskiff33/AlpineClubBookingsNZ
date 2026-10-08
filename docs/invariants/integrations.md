@@ -508,3 +508,26 @@ Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 `xero-operation-routes.test.ts`, `xero-operation-outbox.test.ts`,
 `xero-booking-repair.test.ts`, `refunds-missing-credit-notes.test.ts`,
 `booking-provider-mismatches.test.ts`.
+
+## Stored outbox payloads (#3971)
+
+### INV-INT-026
+
+An outbox worker never reads its target from a payload key the persisting
+redactor blanks. `startXeroSyncOperation` stores `requestPayload` through
+`sanitizeForJson`, the same key denylist as the logs (`INV-PRIV-011`), and the
+worker reads the stored row. A redacted key reaches it as `"[REDACTED]"`.
+
+- **Take the id from the row.** A target that is the row's anchor is read from
+  `localId`. The membership subscription invoice's charge is read through
+  `subscriptionInvoiceChargeId`, and its payload carries no id: its `chargeId`
+  matched the Stripe `charge` rule, and every subscription invoice failed.
+- **Never weaken the redactor to fit a payload.** Rename the key or anchor the
+  row instead.
+- **Rows stored before a fix still parse.** A blanked key is ignored, and the
+  row's Retry on Xero Operations re-runs it.
+
+Pinned by `xero-operation-outbox.test.ts`: every queue type's stored payload
+must reach its handler with the same arguments as the payload it was queued
+with. The retry is pinned by `xero-operation-retry.test.ts` and, against a real
+database, `xero-subscription-invoice-retry.realdb.test.ts`.

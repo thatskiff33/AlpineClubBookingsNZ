@@ -24,7 +24,7 @@ import {
   completeXeroSyncOperation,
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
-import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payload";
 import {
   resolveXeroInvoiceEmailPolicy,
   sendXeroInvoiceEmail,
@@ -180,15 +180,10 @@ export async function enqueueMembershipSubscriptionChargeOperation(
   });
   if (active) return { queueOperationId: active.id, message: "Subscription invoice is already queued." };
   const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel: "MembershipSubscriptionCharge",
-    localId: chargeId,
+    ...subscriptionInvoiceOutboxRow(chargeId), // #3971: no id in the payload
     status: "PENDING",
     idempotencyKey: correlationKey,
     correlationKey,
-    requestPayload: { queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE, chargeId },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
   await prisma.membershipSubscriptionCharge.update({
@@ -253,6 +248,18 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   if (charge.status === "VOIDED") {
     await completeXeroSyncOperation(input.syncOperationId, { responsePayload: { skipped: true, reason: "VOIDED" } });
     return null;
+  }
+  // #3971: the enqueue's `emailSentAt` fence, again at the claim. A FAILED row
+  // an officer retries from Xero Operations can reach here after another
+  // attempt for the same charge already invoiced and emailed it; without this
+  // the resume path below would ask Xero to email the invoice a second time.
+  if (charge.xeroInvoiceId && charge.emailSentAt) {
+    await completeXeroSyncOperation(input.syncOperationId, {
+      responsePayload: { skipped: true, reason: "ALREADY_EMAILED" },
+      xeroObjectType: "INVOICE", xeroObjectId: charge.xeroInvoiceId, xeroObjectNumber: charge.xeroInvoiceNumber,
+      xeroObjectUrl: buildXeroInvoiceUrl(charge.xeroInvoiceId),
+    });
+    return charge.xeroInvoiceId;
   }
 
   // #1944 non-clobber guard: a charge can sit QUEUED (or retry for days) while
