@@ -2297,8 +2297,9 @@ Stripe API-keys page (use test mode while you set up), captures the keys
 write-only, verifies the connection by reading your Stripe account and showing
 its display name (the right-account confirmation), and walks you through the
 webhook endpoint (URL to paste, signing secret back, verified by any signed
-Stripe event, live or test — Resend a recent delivery in Stripe Workbench, or
-wait for the next real payment). The webhook step is **optional/skippable**
+Stripe event, live or test — Resend a recent delivery from Workbench → Webhooks
+(Developers → Webhooks), or, if the endpoint has none yet, make a payment (a
+test payment in test mode)). The webhook step is **optional/skippable**
 and freshness-scoped — replacing any Stripe credential drops the verified
 webhook badge.
 

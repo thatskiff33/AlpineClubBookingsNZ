@@ -1421,10 +1421,11 @@ Subscribe the Stripe endpoint to these event types:
 - `setup_intent.canceled`
 - `charge.refunded`
 
-If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or
-`STRIPE_WEBHOOK_SECRET` was wrong, fix the endpoint first, then use Stripe
-Dashboard > Developers > Webhooks > the configured endpoint > Event deliveries
-to resend failed events. Verify the event appears in webhook logs and the
+If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
+signing secret stored under **Admin > Integrations > Stripe** was wrong (it is
+entered in-app since #2082, not from an env var), fix that first, then in Stripe
+open Workbench → Webhooks (Developers → Webhooks), select the endpoint and
+resend the failed deliveries. Verify the event appears in webhook logs and the
 affected booking/payment state before retrying operator actions. Do not repair
 Stripe state by editing payment rows directly; unresolved payment-intent cleanup
 is replayed by the payment recovery cron.
@@ -1471,27 +1472,29 @@ config (`AUTH_SECRET`, `DATABASE_URL`, `NEXTAUTH_URL`, SMTP/SES) is unchanged.
 
 **Stripe (#2082):** the same cutover applies to payments. At the upgrade
 `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and
-`STRIPE_WEBHOOK_SECRET` stop being read (setup readiness flags any still present).
-Card payments pause until the keys are re-entered because the publishable key is
-now delivered at runtime from the store, and the webhook route is fail-closed
-until its signing secret is stored. Re-enter under **Admin > Integrations >
-Stripe**: (1) with a strong auth secret, open the wizard and paste the secret and
-publishable keys (test mode first if validating); (2) run **Verify connection** and
-confirm the Stripe account name shown is the right one; (3) **reuse the webhook
-endpoint your Stripe account already has** at this site's
-`/api/webhooks/stripe` URL — open it under Developers > Webhooks, reveal its
-current signing secret, and paste that back into the wizard. Only add a new
-endpoint if none exists yet (fresh installs); creating a second endpoint on an
-upgrade issues a *different* signing secret and orphans deliveries queued
-against the old one. To turn the webhook badge green, Resend a recent delivery
-to this endpoint in Stripe Workbench, or wait for the next real event, then
-click **Re-check verification** (this step is skippable — payments still
-process, but bookings only auto-reconcile once the webhook is verified). **Events that arrive during the
-re-entry gap are rejected fail-closed, and Stripe retries deliveries for about
-72 hours** — restore the *same* signing secret within that window and the
+`STRIPE_WEBHOOK_SECRET` stop being read (setup readiness flags any still
+present). Card payments pause until the keys are re-entered because the
+publishable key is now delivered at runtime from the store, and the webhook
+route is fail-closed until its signing secret is stored. Re-enter under
+**Admin > Integrations > Stripe**: (1) with a strong auth secret, open the
+wizard and paste the secret and publishable keys (test mode first if
+validating); (2) run **Verify connection** and confirm the Stripe account name
+shown is the right one; (3) **reuse the webhook endpoint your Stripe account
+already has** at this site's `/api/webhooks/stripe` URL — open it under
+Workbench → Webhooks (Developers → Webhooks), reveal its current signing secret,
+and paste that back into the wizard. Only add a new endpoint if none exists yet
+(fresh installs); creating a second endpoint on an upgrade issues a *different*
+signing secret and orphans deliveries queued against the old one. To turn the
+webhook badge green, Resend a recent delivery to this endpoint from the same
+Workbench → Webhooks screen — or, if it has none yet, make a payment (a test
+payment in test mode) — then click **Re-check verification**. This step is
+skippable — payments still process, but bookings only auto-reconcile once the
+webhook endpoint and signing secret are configured. **Events that arrive during
+the re-entry gap are rejected fail-closed, and Stripe retries deliveries for
+about 72 hours** — restore the *same* signing secret within that window and the
 queued events verify and replay on retry; duplicate deliveries are deduplicated
-automatically. Replacing any Stripe key clears the verified webhook badge.
-Then remove the legacy `STRIPE_*` env vars.
+automatically. Replacing any Stripe key clears the verified webhook badge. Then
+remove the legacy `STRIPE_*` env vars.
 
 **Google Analytics (#2573):** the same in-app cutover, with one difference — the
 GA4 measurement id is ordinary configuration rather than an encrypted credential,

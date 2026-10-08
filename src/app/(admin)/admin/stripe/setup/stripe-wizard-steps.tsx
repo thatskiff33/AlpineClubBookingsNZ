@@ -373,13 +373,18 @@ export function VerifyConnectionStep({
 }
 
 /**
- * How to get one signed event to this endpoint, in Stripe's current Workbench
- * (#3975: the old "Send test webhook" button is gone). A brand-new endpoint has
- * no deliveries to resend, so the next real payment is the fallback. Every
- * webhook hint uses this one wording.
+ * The Stripe screen that lists webhook endpoints, in its current name with the
+ * older one Stripe still shows some accounts. One name everywhere (#3975).
  */
-const WEBHOOK_RESEND_HINT =
-  "In Stripe Workbench, open this endpoint, select a recent delivery and click Resend — or, if it has none yet, wait for the next real payment. Then click “Re-check verification”.";
+const STRIPE_WEBHOOKS_SCREEN = "Workbench → Webhooks (Developers → Webhooks)";
+
+/**
+ * How to get one signed event to this endpoint (#3975: the old "Send test
+ * webhook" button is gone). A brand-new endpoint has no deliveries to resend,
+ * so a payment is the fallback — a test payment when the keys are test-mode.
+ * Shown only in the not-yet-verified box, never duplicated beside it.
+ */
+const WEBHOOK_RESEND_HINT = `In Stripe, open ${STRIPE_WEBHOOKS_SCREEN}, select this endpoint and a recent delivery, and click Resend — or, if it has none yet, make a payment (a test payment in test mode). Then click “Re-check verification”.`;
 
 /** Step 4 — "Webhook" (optional/skippable): endpoint URL + signing secret + one verified event. */
 export function WebhookStep({
@@ -407,9 +412,8 @@ export function WebhookStep({
       if (webhookSecret.trim())
         await writeCredential("webhook_secret", webhookSecret.trim());
       setWebhookSecret("");
-      setSuccess(
-        `Signing secret saved. ${WEBHOOK_RESEND_HINT}`,
-      );
+      // The how-to-verify hint lives in the not-yet-verified box below, once.
+      setSuccess("Signing secret saved.");
       helpers.refresh();
     } catch (saveError) {
       setError(
@@ -435,7 +439,7 @@ export function WebhookStep({
             rel="noreferrer noopener"
             className="inline-flex items-center gap-1 font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
-            Developers → Webhooks
+            {STRIPE_WEBHOOKS_SCREEN}
             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </a>
           , add an endpoint with the URL below — or, if this site already has
