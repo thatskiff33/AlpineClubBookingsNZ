@@ -32,7 +32,7 @@ import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-el
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
-import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 
 export class SubscriptionBillingError extends Error {
@@ -1467,15 +1467,10 @@ export async function confirmSubscriptionBillingPreview(input: {
       if (entry.billingBasis !== "NO_INVOICE") {
         const correlationKey = buildXeroIdempotencyKey("membership-charge", charge.id, "invoice-and-email", "v1");
         await startXeroSyncOperation({
-          direction: "OUTBOUND",
-          entityType: "INVOICE",
-          operationType: "CREATE",
-          localModel: "MembershipSubscriptionCharge",
-          localId: charge.id,
+          ...subscriptionInvoiceOutboxRow(charge.id),
           status: "PENDING",
           idempotencyKey: correlationKey,
           correlationKey,
-          requestPayload: { queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE },
           createdByMemberId: input.confirmedByMemberId ?? null,
           store: tx,
         });

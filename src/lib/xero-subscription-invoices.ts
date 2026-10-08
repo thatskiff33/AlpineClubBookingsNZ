@@ -24,7 +24,7 @@ import {
   completeXeroSyncOperation,
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
-import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payload";
 import {
   resolveXeroInvoiceEmailPolicy,
   sendXeroInvoiceEmail,
@@ -180,16 +180,10 @@ export async function enqueueMembershipSubscriptionChargeOperation(
   });
   if (active) return { queueOperationId: active.id, message: "Subscription invoice is already queued." };
   const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel: "MembershipSubscriptionCharge",
-    localId: chargeId,
+    ...subscriptionInvoiceOutboxRow(chargeId), // #3971: no id in the payload
     status: "PENDING",
     idempotencyKey: correlationKey,
     correlationKey,
-    // #3971: the charge is `localId`; the payload carries no id.
-    requestPayload: { queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
   await prisma.membershipSubscriptionCharge.update({

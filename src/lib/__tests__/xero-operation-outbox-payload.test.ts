@@ -4,6 +4,7 @@ import {
   readQueuedOutboxPayload,
   readQueueType,
   subscriptionInvoiceChargeId,
+  subscriptionInvoiceOutboxRow,
   XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
 
@@ -284,6 +285,19 @@ describe("xero operation outbox payload parsing", () => {
       subscriptionInvoiceChargeId({ localModel: "MembershipSubscriptionCharge", localId: null })
     ).toBeNull();
     expect(subscriptionInvoiceChargeId({ localModel: "Member", localId: "member_1" })).toBeNull();
+  });
+
+  // #3994 (SSOT): both enqueues build the row here, so it always passes the
+  // claim guard and reads its charge back from its own anchor.
+  it("#3994: builds a subscription invoice row the claim guard accepts and whose charge reads back", () => {
+    const row = subscriptionInvoiceOutboxRow("charge_1");
+    expect(row.requestPayload).toEqual({ queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE" });
+    expect(readQueuedOutboxPayload(row.requestPayload)).toEqual(row.requestPayload);
+    const expected = getQueuedOutboxExpectedOperation(row.queueType);
+    expect(row.entityType).toBe(expected.entityType);
+    expect(row.operationType).toBe(expected.operationType);
+    expect(expected.localModels).toEqual([row.localModel]);
+    expect(subscriptionInvoiceChargeId(row)).toBe("charge_1");
   });
 
   it("#3635: reads a kept late-capture invoice's frozen gross cents and capture day, anchored on the approval task", () => {

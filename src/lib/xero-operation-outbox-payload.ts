@@ -208,9 +208,19 @@ interface QueuedGroupSettlementInvoiceVoidOutboxPayload {
 interface QueuedSubscriptionInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE;
 }
+const SUBSCRIPTION_INVOICE_LOCAL_MODEL = "MembershipSubscriptionCharge";
 /** `INV-INT-026`: the charge is the row's anchor, never its stored payload. */
 export function subscriptionInvoiceChargeId(op: { localModel: string | null; localId: string | null }) {
-  return op.localModel === "MembershipSubscriptionCharge" ? op.localId : null;
+  return op.localModel === SUBSCRIPTION_INVOICE_LOCAL_MODEL ? op.localId : null;
+}
+/** #3994: the one shape of a queued subscription invoice row, for both enqueues. */
+export function subscriptionInvoiceOutboxRow(chargeId: string) {
+  return {
+    direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE",
+    localModel: SUBSCRIPTION_INVOICE_LOCAL_MODEL, localId: chargeId,
+    queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
+    requestPayload: { queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE },
+  } as const;
 }
 
 /**
@@ -308,14 +318,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
-    if (!bookingId) {
-      return null;
-    }
-
-    return {
-      queueType,
-      bookingId,
-    };
+    return bookingId ? { queueType, bookingId } : null;
   }
 
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE) {
@@ -446,14 +449,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
     const bookingId = readString(payload.bookingId);
-    if (!bookingId) {
-      return null;
-    }
-
-    return {
-      queueType,
-      bookingId,
-    };
+    return bookingId ? { queueType, bookingId } : null;
   }
   if (queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE) {
     const bookingId = readString(payload.bookingId);
@@ -691,7 +687,7 @@ export function getQueuedOutboxExpectedOperation(
           : queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE
             ? ["GroupBookingSettlement"]
             : queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
-              ? ["MembershipSubscriptionCharge"]
+              ? [SUBSCRIPTION_INVOICE_LOCAL_MODEL]
             : queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
               ? // #3635: the approval task that owns the kept capture.
                 ["ManualRefundTask"]
