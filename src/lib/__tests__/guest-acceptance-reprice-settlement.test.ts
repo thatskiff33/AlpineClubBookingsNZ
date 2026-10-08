@@ -544,6 +544,7 @@ describe("cash an earlier edit already promised back is not refunded again (#382
         OR: [
           { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
           { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+          { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
         ],
       }),
       _sum: { amountCents: true },

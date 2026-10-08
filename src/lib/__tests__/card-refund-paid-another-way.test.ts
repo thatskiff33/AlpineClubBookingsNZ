@@ -546,3 +546,26 @@ describe("#3924 round 4 (M7): a failure that may have reached Stripe is flagged"
     },
   );
 });
+
+describe("#3924 round 4 (M2): the close's record is told apart by kind and key, never by wording", () => {
+  it("is a paid-another-way record, and a non-cancellation hand-back the cancellation readers leave out", async () => {
+    const {
+      cardRefundPaidAnotherWayOccurrenceKey,
+      isCardRefundPaidAnotherWayTask,
+      isNonCancellationHandBackTask,
+      NOT_NON_CANCELLATION_HAND_BACK_WHERE,
+      paymentRecoveryOperationIdOfPaidAnotherWay,
+    } = await import("@/lib/manual-refund-task-settlement-rules");
+    const record = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-1") };
+
+    expect(record.occurrenceKey).toBe("card-refund-paid-another-way:op-1");
+    expect(isCardRefundPaidAnotherWayTask(record)).toBe(true);
+    expect(isNonCancellationHandBackTask(record)).toBe(true);
+    expect(paymentRecoveryOperationIdOfPaidAnotherWay(record)).toBe("op-1");
+    expect(JSON.stringify(NOT_NON_CANCELLATION_HAND_BACK_WHERE)).toContain("card-refund-paid-another-way:");
+    // A cancellation's own hand-back (no key) and another kind with the key are not.
+    expect(isCardRefundPaidAnotherWayTask({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null })).toBe(false);
+    expect(isCardRefundPaidAnotherWayTask({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: record.occurrenceKey })).toBe(false);
+    expect(paymentRecoveryOperationIdOfPaidAnotherWay({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "edit-refund-hand-back:m" })).toBeNull();
+  });
+});

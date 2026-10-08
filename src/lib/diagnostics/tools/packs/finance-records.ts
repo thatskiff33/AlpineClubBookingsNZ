@@ -91,7 +91,6 @@ import "server-only";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
-import { CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX } from "@/lib/manual-refund-task-settlement-rules";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
@@ -284,17 +283,6 @@ const paymentSummary = defineDiagnosticsTool<PaymentIdArgs>({
  * back" will look in the wrong place, and the operation type is the only field
  * that would have told them — wrongly.
  */
-/**
- * #3924 round 4: a card refund closed as paid another way is recorded as a
- * completed hand-back task (`isCardRefundPaidAnotherWayTask`). Named apart, so
- * it does not read as a second refund beside its SUCCEEDED recovery operation.
- * The prefix is a code constant, never input.
- */
-const MANUAL_REFUND_TASK_SCENARIO_SQL = `CASE
-    WHEN pg_catalog.starts_with(m."occurrenceKey", '${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}') THEN 'card_refund_paid_another_way'
-    ELSE 'hand_back_required'
-  END`;
-
 const RECOVERY_SCENARIO_SQL = `CASE
     WHEN pg_catalog.starts_with(o."idempotencyKey", 'booking_cancel_refund_recovery_') THEN 'booking_cancellation_refund'
     WHEN pg_catalog.starts_with(o."idempotencyKey", 'capacity_claim_failed_refund_recovery_') THEN 'capacity_claim_failed_refund'
@@ -485,7 +473,7 @@ SELECT
   NULL::text AS provider_ref,
   NULL::text AS secondary_provider_ref,
   false AS has_xero_credit_note,
-  ${MANUAL_REFUND_TASK_SCENARIO_SQL} AS scenario_code,
+  'hand_back_required' AS scenario_code,
   0 AS attempt_count,
   ${utcInstant('m."completedAt"')} AS settled_at_utc,
   ${utcInstant('m."createdAt"')} AS occurred_at_utc

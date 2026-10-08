@@ -99,6 +99,7 @@ describe("telling an edit refund hand-back from a cancellation's (INV-PAY-117)",
           AND: [
             { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },
             { NOT: { occurrenceKey: { startsWith: "refund-request-hand-back:" } } },
+            { NOT: { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } } },
           ],
         },
       ],
