@@ -13,7 +13,7 @@ import {
 } from "@/lib/family-booking";
 import { describeMemberGuestConsentBadge } from "@/lib/member-guest-consent-card";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import {
   describeMemberGuestWizardHelper,
   memberGuestConsentPreviewColumns,
@@ -303,8 +303,8 @@ export function GuestsStep({
                   the kernel's formatter pins `UTC` over the encoding, so the
                   projection is the identity for every club rather than only for
                   one east of Greenwich. */}
-              {formatClubDate(requireCalendarDate(checkIn), format)} -{" "}
-              {formatClubDate(requireCalendarDate(checkOut), format)} ({nights} night{nights !== 1 ? "s" : ""})
+              {formatStayDate(checkIn, format)} -{" "}
+              {formatStayDate(checkOut, format)} ({nights} night{nights !== 1 ? "s" : ""})
             </span>
           )}
         </CardTitle>

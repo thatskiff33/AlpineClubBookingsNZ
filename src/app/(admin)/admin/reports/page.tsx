@@ -29,9 +29,9 @@ import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
   type ClubDateFormat,
-  formatClubDate,
   formatClubDayMonth,
   parseCalendarDate,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
@@ -155,30 +155,10 @@ function getAdditionalLedgerGapWarning(
   return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents, clubFormat)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
-/**
- * A range bound (`yyyy-MM-dd`) in the house medium shape — "16 Apr 2026".
- *
- * WHICH FORMATTER, and the rule that decides it (CT-4 review, #2870). The
- * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through the
- * club's persisted locale (#3566), while a date-fns pattern string hard-codes English month names
- * whatever the deployment is configured for. So a value in a house shape belongs
- * on the kernel — which is also what `payments/page.tsx` and
- * `subscriptions/page.tsx` did with this same "d MMM yyyy" shape, and leaving
- * this one behind would have put two contradictory rules in one change. For
- * `en-NZ` the two are byte-identical, so nothing visible changes here.
- *
- * The chart axes' patterns — `"MMM d"`, `"EEE, MMM d yyyy"`, `"MMM d, yyyy"` in
- * `report-charts.tsx` — are NOT house shapes and stay on date-fns: English
- * whatever the club's locale, the one limitation `docs/guides/club-format.md`
- * records. Everything on this page itself, the "Joined between" subtitle
- * included, is on the kernel (#3566).
- *
- * The bounds come from the URL, so an unusable one renders as itself rather
- * than throwing a `RangeError` that blanks the report.
- */
+// The bounds come from the URL, so an unusable one renders as itself rather
+// than throwing a `RangeError` that blanks the report (#3511: kernel stay-date helper).
 function formatRangeDay(value: string, format: ClubDateFormat): string {
-  const day = parseCalendarDate(value);
-  return day === null ? value : formatClubDate(day, format);
+  return formatStayDateOrNull(value, format) ?? value;
 }
 
 /**

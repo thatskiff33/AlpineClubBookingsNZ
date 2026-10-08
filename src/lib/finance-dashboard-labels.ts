@@ -1,10 +1,9 @@
 import {
   type ClubDateFormat,
-  formatClubDate,
   formatClubMonthYear,
   formatClubShortMonthYear,
-  parseCalendarDate,
   requireCalendarDate,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 
 // The finance dashboard's display labels: formatters that take a month key or a
@@ -81,27 +80,15 @@ export function financeDashboardTrendMonthLabel(
 }
 
 /**
- * A window bound ("14 Jun 2026") from a `yyyy-MM-dd` key. NO ZONE — a window
- * bound is a calendar day, and #3123 takes it off `APP_TIME_ZONE` rather than
- * onto the club's, for the same reason {@link financeDashboardMonthLabel} above
- * does.
- *
- * IT MUST DEGRADE RATHER THAN THROW, and #2264 is why: `financeDashboardWindowDetail`
- * is exported and takes plain strings, so a malformed window has to produce a
- * readable label instead of taking the whole finance page down. `parseDateOnly`
- * answered `new Date(NaN)` for a non-`YYYY-MM-DD` string and `Intl.format`
- * throws on that, so the guard was a NaN check; `parseCalendarDate` returns
- * `null` for the same inputs and hands the decision back here. It is slightly
- * STRICTER — the old parser accepted a well-formed day that does not exist, such
- * as `2026-02-30`, and this one refuses it — which lands on the same side of the
- * contract: the raw string, not a rolled-forward date and not a throw.
+ * A finance window edge as a house-shape day. The function is exported and takes
+ * plain strings, so a malformed window renders as the raw string rather than
+ * taking the whole finance page down (#3511: the kernel's stay-date helper).
  */
 export function financeDashboardDayLabel(
   dateOnly: string,
   format: ClubDateFormat,
 ) {
-  const day = parseCalendarDate(dateOnly);
-  return day === null ? dateOnly : formatClubDate(day, format);
+  return formatStayDateOrNull(dateOnly, format) ?? dateOnly;
 }
 
 export function financeDashboardWindowDetail(
