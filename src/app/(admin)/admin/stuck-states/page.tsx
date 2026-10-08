@@ -42,8 +42,8 @@ import {
   type StuckStateSeverity,
 } from "@/lib/stuck-state-dashboard";
 import { cn } from "@/lib/utils";
-import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
-import { DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
+import { listCardRefundsPaidTwice, listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { CardRefundsPaidTwiceList, DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
 
 const domainIcons: Record<StuckStateDomain, typeof CreditCard> = {
   payment: CreditCard,
@@ -195,9 +195,12 @@ export default async function AdminStuckStatesPage() {
   const viewerCanViewFinance = session?.user
     ? hasAdminAreaAccess(session.user, { area: "finance", level: "view" })
     : false;
-  const [dashboard, deadCardRefunds] = await Promise.all([
+  // #3924 round 5 (concurrency F2): and the closes Stripe paid as well - the
+  // member was paid back twice - under the same finance:view gate.
+  const [dashboard, deadCardRefunds, cardRefundsPaidTwice] = await Promise.all([
     getStuckStateDashboard({ viewerCanViewMembership }),
     viewerCanViewFinance ? listDeadCardRefunds() : Promise.resolve([]),
+    viewerCanViewFinance ? listCardRefundsPaidTwice() : Promise.resolve([]),
   ]);
   const clubTime = await resolveClubTime();
 
@@ -277,6 +280,20 @@ export default async function AdminStuckStatesPage() {
           </CardHeader>
           <CardContent>
             <DeadCardRefundsPanel rows={deadCardRefunds} />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {cardRefundsPaidTwice.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <CreditCard className="h-5 w-5 text-muted-foreground" />
+              Card refunds paid back twice
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <CardRefundsPaidTwiceList rows={cardRefundsPaidTwice} />
           </CardContent>
         </Card>
       ) : null}

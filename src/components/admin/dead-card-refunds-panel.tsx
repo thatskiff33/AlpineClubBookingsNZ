@@ -36,15 +36,27 @@ export interface DeadCardRefundPanelRow {
   raisedAt: string;
   owedCents: number;
   wholeAmountOnly: boolean;
-  /** Whether closing it queues a Xero refund credit note (a cancellation's card refund). */
+  /** Whether closing it queues a Xero refund credit note: there is an invoice to credit. */
   takesXeroRefundNote: boolean;
   /** Its last failure looked like a timeout or network error: Stripe may have refunded. */
   stripeMayHaveRefunded: boolean;
 }
 
+/** One card refund closed as paid another way that Stripe also refunded, as `listCardRefundsPaidTwice` returns it. */
+export interface CardRefundPaidTwicePanelRow {
+  operationId: string;
+  bookingId: string;
+  bookingReference: string;
+  closedAt: string;
+  paidAnotherWayCents: number;
+  refundedByCardCents: number;
+}
+
 /** The warning a refund whose last failure may have reached Stripe carries, on its row and in its dialog. */
 export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
   "Stripe may have refunded: check the Stripe dashboard first.";
+
+type PaidBack = "full" | "partial";
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"): the card refunds
@@ -54,12 +66,16 @@ export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
  * closed here. The close is gated `finance:edit` - the permission that
  * completes a refund paid back by hand - and the section's banner states the
  * view-only reason once, so the row buttons do not (`describeReason={false}`).
- * The dialog is the confirm step: the amount defaults to what is still owed,
- * and a note saying how the member was paid back is required. It says up front
- * whether a Xero refund note is raised, that a refund made in the Stripe
- * dashboard is not closed here, and that a partial close ends the refund (#3924
- * round 4). A refusal shows in the dialog through `FocusedActionError`; a 409
- * also refreshes the list, since the refund or its payment moved.
+ * The dialog is the confirm step. The treasurer chooses, explicitly, "Paid back
+ * in full" (the amount is what is owed) or "Paid back part of it" (an amount
+ * below that, with a warning naming what stops being owed) - never inferred
+ * from the amount (owner, 8 Oct 2026). A note saying how the member was paid
+ * back is required. It says up front whether a Xero refund note is raised and
+ * that a refund made in the Stripe dashboard is not closed here. A refusal
+ * shows in the dialog through `FocusedActionError`; a 409 also refreshes the
+ * list. The dialog holds only the refund's id and reads the row from the list
+ * (#3924 round 5, UX F1): if the refresh drops the row the dialog closes and
+ * says why, and if what is owed moved the amount resets and says so.
  */
 export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] }) {
   const canEdit = useAdminAreaEditAccess("finance");
@@ -70,32 +86,58 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
   const noteId = useId();
   const errorId = useId();
   const submitHintId = useId();
-  const [target, setTarget] = useState<DeadCardRefundPanelRow | null>(null);
+  const warningId = useId();
+  const choiceName = useId();
+  const [targetId, setTargetId] = useState<string | null>(null);
+  const [seenOwedCents, setSeenOwedCents] = useState<number | null>(null);
+  const [paidBack, setPaidBack] = useState<PaidBack | null>(null);
   const [amountInput, setAmountInput] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [errorAttention, setErrorAttention] = useState(0);
+  const [owedChanged, setOwedChanged] = useState("");
+  const [listNotice, setListNotice] = useState("");
 
-  const amountCents = target ? parseDecimalDollarsToCents(amountInput) : null;
+  const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
+  // The list moved under the open dialog (a 409's refresh, another treasurer):
+  // adjusted while rendering, from the rows, as React's derived-state pattern does.
+  if (targetId !== null && target === null && !busy) {
+    setTargetId(null);
+    setListNotice("That card refund is no longer waiting to be closed, so its dialog was closed. The list is up to date.");
+  }
+  if (target !== null && seenOwedCents !== null && target.owedCents !== seenOwedCents) {
+    setSeenOwedCents(target.owedCents);
+    setAmountInput("");
+    setOwedChanged(
+      `What is still owed changed to ${formatCents(target.owedCents, format)} since you opened this. Check the amount before closing it.`,
+    );
+  }
+
+  const partialCents = target && paidBack === "partial" ? parseDecimalDollarsToCents(amountInput) : null;
+  const amountCents = target === null || paidBack === null ? null : paidBack === "full" ? target.owedCents : partialCents;
   const amountProblem =
-    target === null
+    target === null || paidBack !== "partial"
       ? null
-      : amountCents === null
+      : partialCents === null || partialCents === 0
         ? "Enter the amount paid back, in dollars and cents."
-        : amountCents > target.owedCents
-          ? `That is more than the ${formatCents(target.owedCents, format)} still owed.`
-          : amountCents === 0 && target.owedCents > 0
-            ? "Enter the amount the member was paid back."
-            : null;
+        : partialCents >= target.owedCents
+          ? `Part of it must be less than the ${formatCents(target.owedCents, format)} still owed. If all of it was paid back, choose Paid back in full.`
+          : null;
   const noteMissing = note.trim() === "";
-  const canSubmit = target !== null && amountProblem === null && !noteMissing && !busy;
+  const canSubmit =
+    target !== null && paidBack !== null && amountCents !== null && amountProblem === null && !noteMissing && !busy;
   // Why the button is disabled, said beside it (#3924 round 4, U2).
   const submitHint =
     target === null || busy
       ? null
-      : (amountProblem ?? (noteMissing ? "Say how the member was paid back to close it." : null));
-  const partial = target !== null && amountCents !== null && amountProblem === null && amountCents < target.owedCents;
+      : paidBack === null
+        ? "Choose whether it was paid back in full or in part."
+        : (amountProblem ?? (noteMissing ? "Say how the member was paid back to close it." : null));
+  const noLongerOwedCents =
+    target !== null && paidBack === "partial" && partialCents !== null && amountProblem === null
+      ? target.owedCents - partialCents
+      : null;
 
   function fail(message: string) {
     setError(message);
@@ -103,14 +145,24 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
   }
 
   function open(row: DeadCardRefundPanelRow) {
-    setTarget(row);
-    setAmountInput(formatCentsPlain(row.owedCents));
+    setTargetId(row.operationId);
+    setSeenOwedCents(row.owedCents);
+    // A superseded payment's refund closes in full only.
+    setPaidBack(row.wholeAmountOnly ? "full" : null);
+    setAmountInput("");
     setNote("");
     setError("");
+    setOwedChanged("");
+    setListNotice("");
+  }
+
+  function close() {
+    setTargetId(null);
+    setSeenOwedCents(null);
   }
 
   async function submit() {
-    if (!target || amountCents === null) return;
+    if (!target || amountCents === null || paidBack === null) return;
     setBusy(true);
     setError("");
     try {
@@ -119,7 +171,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amountCents, note, confirmed: true }),
+          body: JSON.stringify({ amountCents, paidBack, note, confirmed: true }),
         },
       );
       const data = await res.json().catch(() => ({}));
@@ -129,12 +181,19 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
         if (res.status === 409) router.refresh();
         return;
       }
+      const recorded =
+        paidBack === "full"
+          ? `Closed. ${formatCents(amountCents, format)} recorded as paid back in full.`
+          : `Closed. ${formatCents(amountCents, format)} recorded as paid back; the other ${formatCents(
+              target.owedCents - amountCents,
+              format,
+            )} is no longer owed.`;
       toast.success(
         data.xeroRefundNoteQueued === true
-          ? `Closed. ${formatCents(amountCents, format)} recorded as paid back, and its Xero refund credit note is queued.`
-          : `Closed. ${formatCents(amountCents, format)} recorded as paid back. Check the refund is recorded in Xero.`,
+          ? `${recorded} Its Xero refund credit note, as a bank transfer, is queued.`
+          : `${recorded} No Xero refund credit note was queued: check the refund is recorded in Xero.`,
       );
-      setTarget(null);
+      close();
       router.refresh();
     } catch {
       fail("Could not close the card refund.");
@@ -151,6 +210,9 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
         Collected. If the member was paid back another way, for example by bank transfer, close it here. If
         you refunded it in the Stripe dashboard instead, do not close it here: wait for that refund to show on
         the payment.
+      </p>
+      <p role="status" className="text-sm text-muted-foreground empty:hidden">
+        {listNotice}
       </p>
       <ul className="space-y-2" aria-label="Card refunds Stripe gave up on">
         {rows.map((row) => (
@@ -186,7 +248,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
         ))}
       </ul>
 
-      <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && setTarget(null)}>
+      <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && close()}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Close this card refund as paid another way?</DialogTitle>
@@ -206,34 +268,68 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
             <p className="text-muted-foreground">
               {target?.takesXeroRefundNote
                 ? "A Xero refund credit note for the amount, as a bank transfer, is queued when you close it."
-                : "No Xero refund credit note is raised. A refund from a booking change was already credited on the invoice by the change's own credit note; check Xero for any other."}
+                : "No Xero refund credit note is raised: there is no Xero invoice for this money to credit. Record the refund in Xero by hand if it needs one."}
             </p>
-            <p className="text-muted-foreground">
-              Paying back less than is owed ends the refund: the rest stops being owed and is no longer tracked.
+            <p className="font-medium text-foreground">
+              {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
             </p>
+            {owedChanged ? (
+              <p role="status" className="font-medium text-warning-11">
+                {owedChanged}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-3">
-            <div className="space-y-1">
-              <Label htmlFor={amountId}>Amount paid back</Label>
-              <MoneyInput
-                id={amountId}
-                value={amountInput}
-                className="w-32"
-                disabled={target?.wholeAmountOnly === true}
-                onValueChange={setAmountInput}
-                error={amountProblem}
-              />
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">How much was paid back?</legend>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={choiceName}
+                  className="size-4"
+                  checked={paidBack === "full"}
+                  onChange={() => setPaidBack("full")}
+                />
+                <span>Paid back in full</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={choiceName}
+                  className="size-4"
+                  checked={paidBack === "partial"}
+                  disabled={target?.wholeAmountOnly === true}
+                  onChange={() => setPaidBack("partial")}
+                />
+                <span>Paid back part of it - the rest will no longer be owed</span>
+              </label>
               {target?.wholeAmountOnly ? (
                 <p className="text-xs text-muted-foreground">
                   This refund replaces a superseded payment, so it closes for the whole amount.
                 </p>
               ) : null}
-              {partial && target ? (
-                <p className="text-xs font-medium text-warning-11">
-                  {formatCents(target.owedCents - (amountCents ?? 0), format)} will no longer be owed or tracked.
+            </fieldset>
+            {paidBack !== null && target ? (
+              <div className="space-y-1">
+                <Label htmlFor={amountId}>Amount paid back</Label>
+                <MoneyInput
+                  id={amountId}
+                  value={paidBack === "full" ? formatCentsPlain(target.owedCents) : amountInput}
+                  className="w-32"
+                  disabled={paidBack === "full"}
+                  required={paidBack === "partial"}
+                  aria-required={paidBack === "partial" ? "true" : undefined}
+                  aria-describedby={noLongerOwedCents !== null ? warningId : undefined}
+                  onValueChange={setAmountInput}
+                  error={amountProblem}
+                />
+                <p id={warningId} role="status" className="text-xs font-medium text-warning-11 empty:hidden">
+                  {noLongerOwedCents !== null
+                    ? `${formatCents(noLongerOwedCents, format)} will no longer be owed to the member, and will not be tracked anywhere.`
+                    : ""}
                 </p>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
             <div className="space-y-1">
               <Label htmlFor={noteId}>How was it paid back? (required)</Label>
               <Textarea
@@ -254,7 +350,7 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
                 {submitHint}
               </p>
             ) : null}
-            <Button variant="outline" disabled={busy} onClick={() => setTarget(null)}>
+            <Button variant="outline" disabled={busy} onClick={close}>
               Cancel
             </Button>
             <Button
@@ -267,6 +363,43 @@ export function DeadCardRefundsPanel({ rows }: { rows: DeadCardRefundPanelRow[] 
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * #3924 round 5 (concurrency F2): card refunds the treasurer closed as paid
+ * another way that Stripe refunded to the card as well - its refund was made
+ * before the close and reached the app after it. The member has that money
+ * twice. Read-only: recovering it is the treasurer's, outside the app.
+ */
+export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePanelRow[] }) {
+  const format = useClubFormat();
+  const clubTime = useClubTime();
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Each of these card refunds was closed as paid another way, and then Stripe refunded the card as well,
+        so the member was paid back twice. Contact the member to recover the extra money, and record what you
+        agree in Xero.
+      </p>
+      <ul className="space-y-2" aria-label="Card refunds paid back twice">
+        {rows.map((row) => (
+          <li key={row.operationId} className="rounded-md border bg-muted p-2">
+            <div className="text-sm font-medium">
+              <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                Booking {row.bookingReference}
+              </Link>
+              {" - "}
+              {formatCents(row.refundedByCardCents, format)} refunded to the card after{" "}
+              {formatCents(row.paidAnotherWayCents, format)} was paid back another way
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Closed as paid another way {clubTime.instantDate(new Date(row.closedAt))}
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -112,7 +112,14 @@ export interface RecordedCardRefundRow {
   paymentTransactionId: string | null;
   amountCents: number;
   status: string;
+  /** When the app recorded it. */
   createdAt: Date;
+  /**
+   * When Stripe made it (whole seconds); null or absent on a row that never
+   * carried it. A refund Stripe made before a close and the app recorded after
+   * it is still the closed operation's (#3924 round 5, concurrency F2).
+   */
+  stripeCreatedAt?: Date | null;
 }
 
 /** A payment as `openCardRefundOwedCents` reads it. */
@@ -200,19 +207,33 @@ function sliceTakes(slice: CardRefundSlice, refund: RecordedCardRefundRow, leftC
     : true;
 }
 
+/** When Stripe made a refund: its own time where recorded, else when the app recorded it. */
+function stripeMadeAt(refund: RecordedCardRefundRow): Date {
+  return refund.stripeCreatedAt ?? refund.createdAt;
+}
+
 /**
- * Whether an operation can take a refund recorded at `recordedAt`: one raised
- * at or before it and, once closed, closed at or after it (#3924 round-4 money
- * review, M4). A closed operation's slices stop at its close - Stripe's own
- * success records each slice before the close, and a "Paid another way" close
- * counts as filled when it is made - so a refund recorded later is never a
- * closed operation's. A row closed before `succeededAt` was written has no
- * bound, as before.
+ * Whether an operation can take a refund: one RECORDED at or after it was
+ * raised and, once it closed, MADE BY STRIPE at or before its close.
+ *
+ * - The close bound (#3924 round-4 money review, M4): a closed operation's
+ *   slices stop at its close, so a refund Stripe made later - another
+ *   operation's retry - is never a closed operation's.
+ * - Read against Stripe's own time, not the app's (#3924 round 5, concurrency
+ *   F2): a refund an operation asked for, whose answer was lost (a timeout), is
+ *   made by Stripe BEFORE the treasurer closes the operation as paid another
+ *   way and recorded by the `charge.refunded` sync AFTER it. It is still that
+ *   operation's, and so not an older open operation's same-amount slice; it is
+ *   money the member was paid twice (`cardRefundSentAfterPaidAnotherWay`).
+ *
+ * A row closed before `succeededAt` was written has no close bound, as before.
+ * STATED LIMIT: Stripe dates a refund in whole seconds, so a refund Stripe made
+ * in the same second as a close, just after it, reads as made before it.
  */
-function operationWindowTakes(operation: CardRefundOperationRow, recordedAt: Date): boolean {
-  if (operation.createdAt.getTime() > recordedAt.getTime()) return false;
+function operationWindowTakes(operation: CardRefundOperationRow, refund: RecordedCardRefundRow): boolean {
+  if (operation.createdAt.getTime() > refund.createdAt.getTime()) return false;
   if (operation.status !== SUCCEEDED || operation.succeededAt === null) return true;
-  return recordedAt.getTime() <= operation.succeededAt.getTime();
+  return stripeMadeAt(refund).getTime() <= operation.succeededAt.getTime();
 }
 
 /**
@@ -225,9 +246,9 @@ function operationWindowTakes(operation: CardRefundOperationRow, recordedAt: Dat
  * `completePaymentRecoveryOperation`), and a partial failure leaves an operation
  * open with some slices sent. A row carries no link to the operation that sent
  * it, so each is matched by what a slice's own refund must look like: on that
- * slice's transaction, of exactly its amount, recorded inside the operation's
- * window (`operationWindowTakes`: after it was raised and, once it closed, not
- * after its close). A refund recorded BEFORE an operation was raised is never
+ * slice's transaction, of exactly its amount, inside the operation's window
+ * (`operationWindowTakes`: recorded after it was raised and, once it closed,
+ * made by Stripe no later than its close). A refund recorded BEFORE an operation was raised is never
  * its: every writer that raises one after a partial inline refund carries only
  * the remainder - the refund request's route enqueues the plan's unsent slices
  * (a recording failure included, since round 4: `refundPaymentTransactions`
@@ -248,12 +269,29 @@ function operationWindowTakes(operation: CardRefundOperationRow, recordedAt: Dat
 export function cardRefundSlicesByOperation(
   payment: CardRefundOwedPaymentRow,
 ): ReadonlyArray<{ operation: CardRefundOperationRow; slices: ReadonlyArray<CardRefundSlice> }> {
+  if (!payment.recoveryOperations.some((operation) => isOwedCardRefundOperation(operation) && operation.status !== SUCCEEDED)) {
+    return payment.recoveryOperations
+      .filter(isOwedCardRefundOperation)
+      .map((operation) => ({ operation, slices: operationSlices(operation) }))
+      .sort((left, right) => left.operation.createdAt.getTime() - right.operation.createdAt.getTime());
+  }
+  return attributeRecordedRefunds(payment).operations;
+}
+
+/**
+ * The attribution `cardRefundSlicesByOperation` describes, run whether or not
+ * any operation is open, with the cents each closed operation took from refunds
+ * the app recorded AFTER its close (`lateCentsByOperation`).
+ */
+function attributeRecordedRefunds(payment: CardRefundOwedPaymentRow): {
+  operations: Array<{ operation: CardRefundOperationRow; slices: CardRefundSlice[] }>;
+  lateCentsByOperation: Map<string, number>;
+} {
   const operations = payment.recoveryOperations
     .filter(isOwedCardRefundOperation)
     .map((operation) => ({ operation, slices: operationSlices(operation) }))
     .sort((left, right) => left.operation.createdAt.getTime() - right.operation.createdAt.getTime());
-  if (!operations.some(({ operation }) => operation.status !== SUCCEEDED)) return operations;
-
+  const lateCentsByOperation = new Map<string, number>();
   const refunds = payment.refunds
     .filter((refund) => refund.paymentTransactionId !== null && isRecordedRefundStatus(refund.status))
     .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
@@ -261,15 +299,38 @@ export function cardRefundSlicesByOperation(
     let leftCents = Math.max(0, refund.amountCents);
     for (let index = operations.length - 1; index >= 0 && leftCents > 0; index -= 1) {
       const candidate = operations[index];
-      if (!candidate || !operationWindowTakes(candidate.operation, refund.createdAt)) continue;
+      if (!candidate || !operationWindowTakes(candidate.operation, refund)) continue;
       const slice = candidate.slices.find((each) => sliceTakes(each, refund, leftCents));
       if (!slice) continue;
       const takenCents = Math.min(leftCents, slice.amountCents - slice.filledCents);
       slice.filledCents += takenCents;
       leftCents -= takenCents;
+      const { succeededAt } = candidate.operation;
+      if (succeededAt !== null && refund.createdAt.getTime() > succeededAt.getTime()) {
+        lateCentsByOperation.set(candidate.operation.id, (lateCentsByOperation.get(candidate.operation.id) ?? 0) + takenCents);
+      }
     }
   }
-  return operations;
+  return { operations, lateCentsByOperation };
+}
+
+/**
+ * #3924 round 5 (concurrency F2): what Stripe refunded to the card for each of
+ * these closed operations AFTER the treasurer closed it as paid another way -
+ * a refund Stripe made before the close and the app recorded after it
+ * (`operationWindowTakes`). The member then has that money twice: by card, and
+ * by the bank transfer the close recorded. Keyed by operation id; only the ids
+ * asked for, and only where something came back.
+ */
+export function cardRefundSentAfterPaidAnotherWay(
+  payment: CardRefundOwedPaymentRow,
+  paidAnotherWayOperationIds: ReadonlySet<string>,
+): Map<string, number> {
+  const late = new Map<string, number>();
+  for (const [operationId, cents] of attributeRecordedRefunds(payment).lateCentsByOperation) {
+    if (paidAnotherWayOperationIds.has(operationId) && cents > 0) late.set(operationId, cents);
+  }
+  return late;
 }
 
 /** What a slice has still to send, in cents. */

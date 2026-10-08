@@ -123,10 +123,17 @@ export function buildLateCaptureRefundMetadata(
 }
 // #3639: the recovery row of a treasurer-approved late-capture refund. One per
 // capture: the approval task is one per payment intent (its `occurrenceKey`).
+const LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX = "late_capture_approval_refund_recovery_";
 export function buildLateCaptureApprovalRefundRecoveryIdempotencyKey(
   paymentIntentId: string,
 ) {
-  return `late_capture_approval_refund_recovery_${paymentIntentId}`;
+  return `${LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX}${paymentIntentId}`;
+}
+/** The late capture a treasurer-approved late-capture refund's recovery row refunds; null for any other row. */
+export function lateCaptureIntentOfApprovalRefundRecoveryKey(key: string): string | null {
+  if (!key.startsWith(LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX)) return null;
+  const intent = key.slice(LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX.length);
+  return intent.length > 0 ? intent : null;
 }
 // The inverse of `buildLateCaptureRefundStripeKeyPrefix`, for the recovery
 // replay: the operation's own `paymentIntentId` is the payment's representative

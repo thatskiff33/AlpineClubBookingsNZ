@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cardRefundSentAfterPaidAnotherWay,
   isOwedCardRefundOperation,
   openCardRefundOwedByOperation,
   openCardRefundOwedCents,
@@ -273,6 +274,39 @@ describe("openCardRefundOwedCents attributes each recorded refund to the operati
         ),
       );
       expect(Object.fromEntries(owed)).toEqual({ op1: 8_000 });
+    });
+    it("MUTATION: round 5, concurrency F2: a refund Stripe made BEFORE the close and the app recorded after it is the closed operation's, not op1's", () => {
+      // op2's own request timed out at minute 25 - Stripe made the refund, the
+      // answer was lost - the treasurer closed op2 as paid another way at 30,
+      // and the charge.refunded sync recorded the refund at 40.
+      const late = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(25), createdAt: at(40) });
+      const owing = payment([op1, op2Closed], [late], { amountCents: 50_000, refundedAmountCents: 10_000 });
+
+      expect(Object.fromEntries(openCardRefundOwedByOperation(owing))).toEqual({ op1: 8_000 });
+      // The member has op2's money twice: by card, and by the close's bank transfer.
+      expect(Object.fromEntries(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op2"])))).toEqual({ op2: 5_000 });
+    });
+
+    it("round 5: op1's own refund, made by Stripe after the close, is still op1's and pays no one twice", () => {
+      const own = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(40), createdAt: at(40) });
+      const owing = payment([op1, op2Closed], [own], { amountCents: 50_000, refundedAmountCents: 10_000 });
+
+      expect(Object.fromEntries(openCardRefundOwedByOperation(owing))).toEqual({ op1: 3_000 });
+      expect(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op2"])).size).toBe(0);
+    });
+
+    it("round 5: a refund inside the closed operation's window, recorded before its close, is not a double payment", () => {
+      const inside = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(25), createdAt: at(26) });
+      const owing = payment([op1, op2Closed], [inside], { amountCents: 50_000, refundedAmountCents: 5_000 });
+      expect(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op2"])).size).toBe(0);
+    });
+
+    it("round 5: asked only of the closes named, and only once every operation is closed too", () => {
+      const op1Closed = { ...op1, status: "SUCCEEDED", succeededAt: at(35) };
+      const late = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(25), createdAt: at(40) });
+      const owing = payment([op1Closed, op2Closed], [late], { amountCents: 50_000, refundedAmountCents: 10_000 });
+      expect(Object.fromEntries(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op2"])))).toEqual({ op2: 5_000 });
+      expect(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op1"])).size).toBe(0);
     });
   });
 });

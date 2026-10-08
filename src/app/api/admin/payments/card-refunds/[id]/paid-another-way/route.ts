@@ -12,12 +12,15 @@ import {
 
 /**
  * Explicit confirmation, as the hand-back completion asks, so closing a money
- * obligation is never a single-click accident; and a note saying how the member
- * was paid back.
+ * obligation is never a single-click accident; a note saying how the member
+ * was paid back; and the treasurer's own answer to "in full, or part of it?"
+ * (owner, 8 Oct 2026), never inferred from the amount. The close checks the
+ * answer against what is still owed and refuses an inconsistent one with a 400.
  */
 const bodySchema = z
   .object({
     amountCents: nonNegativeCentsSchema,
+    paidBack: z.enum(["full", "partial"]),
     note: z.string().max(MANUAL_PAYMENT_NOTE_MAX),
     confirmed: z.literal(true),
   })
@@ -63,6 +66,7 @@ export async function POST(
     const result = await closeCardRefundPaidAnotherWay({
       operationId: id,
       amountCents: parsed.data.amountCents,
+      paidBack: parsed.data.paidBack,
       note: parsed.data.note,
       actingMemberId: guard.session.user.id,
     });

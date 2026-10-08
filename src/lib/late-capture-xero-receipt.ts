@@ -148,13 +148,14 @@ export async function findLateCapturePaymentIntents(
  */
 export async function findKeptLateCaptureInvoiceIdForPayment(
   paymentId: string,
+  store: Pick<Prisma.TransactionClient, "manualRefundTask" | "xeroObjectLink"> = prisma,
 ): Promise<string | null> {
-  const tasks = await prisma.manualRefundTask.findMany({
+  const tasks = await store.manualRefundTask.findMany({
     where: { paymentId, lateCaptureApprovalIntentId: { not: null } },
     select: { id: true },
   });
   if (tasks.length === 0) return null;
-  const link = await prisma.xeroObjectLink.findFirst({
+  const link = await store.xeroObjectLink.findFirst({
     where: {
       localModel: "ManualRefundTask",
       localId: { in: tasks.map((task) => task.id) },

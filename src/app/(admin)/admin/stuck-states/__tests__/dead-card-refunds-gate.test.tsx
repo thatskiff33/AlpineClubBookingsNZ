@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   areas: [] as string[],
   listDeadCardRefunds: vi.fn(),
+  listCardRefundsPaidTwice: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: async () => ({ user: { id: "officer-1" } }) }));
@@ -21,7 +22,10 @@ vi.mock("@/lib/stuck-state-dashboard", () => ({
     items: [],
   }),
 }));
-vi.mock("@/lib/card-refund-paid-another-way", () => ({ listDeadCardRefunds: mocks.listDeadCardRefunds }));
+vi.mock("@/lib/card-refund-paid-another-way", () => ({
+  listDeadCardRefunds: mocks.listDeadCardRefunds,
+  listCardRefundsPaidTwice: mocks.listCardRefundsPaidTwice,
+}));
 vi.mock("@/lib/club-time/server", async () => {
   const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
   const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
@@ -54,8 +58,18 @@ const DEAD = {
   stripeMayHaveRefunded: false,
 };
 
+const PAID_TWICE = {
+  operationId: "op-2",
+  bookingId: "b-2",
+  bookingReference: "BK-0002",
+  closedAt: "2026-06-25T00:00:00.000Z",
+  paidAnotherWayCents: 9_000,
+  refundedByCardCents: 9_000,
+};
+
 beforeEach(() => {
   mocks.listDeadCardRefunds.mockResolvedValue([DEAD]);
+  mocks.listCardRefundsPaidTwice.mockResolvedValue([PAID_TWICE]);
 });
 
 afterEach(() => {
@@ -69,8 +83,10 @@ describe("who sees the card refunds Stripe gave up on", () => {
     render(await AdminStuckStatesPage());
 
     expect(mocks.listDeadCardRefunds).not.toHaveBeenCalled();
+    expect(mocks.listCardRefundsPaidTwice).not.toHaveBeenCalled();
     expect(screen.queryByText("Card refunds Stripe gave up on")).not.toBeInTheDocument();
     expect(screen.queryByText(/still owed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Card refunds paid back twice")).not.toBeInTheDocument();
   });
 
   it("a Finance viewer gets the list", async () => {
@@ -80,5 +96,14 @@ describe("who sees the card refunds Stripe gave up on", () => {
     expect(mocks.listDeadCardRefunds).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Card refunds Stripe gave up on")).toBeInTheDocument();
     expect(screen.getByText(/\$150\.00 still owed/)).toBeInTheDocument();
+  });
+
+  it("#3924 round 5 (concurrency F2): a Finance viewer also sees a close Stripe paid as well", async () => {
+    mocks.areas = ["support", "finance"];
+    render(await AdminStuckStatesPage());
+
+    expect(mocks.listCardRefundsPaidTwice).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Card refunds paid back twice")).toBeInTheDocument();
+    expect(screen.getByText(/\$90\.00 refunded to the card after \$90\.00 was paid back another way/)).toBeInTheDocument();
   });
 });

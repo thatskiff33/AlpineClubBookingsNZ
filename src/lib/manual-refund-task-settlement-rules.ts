@@ -80,16 +80,30 @@ export function refundRequestHandBackOccurrenceKey(refundRequestId: string): str
  * `INV-PAY-120`): THE OCCURRENCE-KEY PREFIX of the record a "Paid another way"
  * close writes - a card refund Stripe gave up on, which the treasurer paid back
  * by bank transfer instead (`closeCardRefundPaidAnotherWay`). One per
- * `PaymentRecoveryOperation`, so the key is the duplicate fence and, with the
- * kind, the marker. The row is born COMPLETED and never OPEN: it records money
- * already sent, so the booking ledger's hand-back line has a completed task to
- * stand on and the Xero cash evidence can tell it from a card refund.
+ * `PaymentRecoveryOperation`: with the kind, the key is the marker, and the
+ * close's status-guarded claim is its single flight. The row is born COMPLETED
+ * and never OPEN: it records money already sent, so the booking ledger's
+ * hand-back line has a completed task to stand on and the Xero cash evidence
+ * can tell it from a card refund.
+ *
+ * #3924 round 5 (owner, 8 Oct 2026: "Raise a refund note for all"): the key
+ * also records whether the close queued its Xero refund note. Every kind does
+ * where the payment has an invoice to credit; one with none ends in
+ * `CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX`. The cash evidence reads that,
+ * not the invoice as it stands later, so an invoice linked after the close
+ * never makes the nightly self-heal raise a card note for bank money.
  */
 export const CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX = "card-refund-paid-another-way:";
+const CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX = ":no-xero-note";
 
 /** The one occurrence key of one card refund operation's paid-another-way close. */
-export function cardRefundPaidAnotherWayOccurrenceKey(paymentRecoveryOperationId: string): string {
-  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}`;
+export function cardRefundPaidAnotherWayOccurrenceKey(
+  paymentRecoveryOperationId: string,
+  { xeroRefundNote }: { xeroRefundNote: boolean },
+): string {
+  return `${CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX}${paymentRecoveryOperationId}${
+    xeroRefundNote ? "" : CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX
+  }`;
 }
 
 /**
@@ -100,8 +114,8 @@ export function cardRefundPaidAnotherWayOccurrenceKey(paymentRecoveryOperationId
  *
  * #3924 round 4 (M2): also a card refund's paid-another-way close. It is not a
  * cancellation's hand-back in the sense these readers ask - no cancellation
- * raised it, it is never OPEN, and its Xero note (a cancellation's card refund
- * only) is queued by the close itself, not by a hand-back's completion - so
+ * raised it, it is never OPEN, and its Xero note is queued by the close
+ * itself, not by a hand-back's completion - so
  * the readers that select a cancellation's hand-backs by kind leave it out
  * (the booking repair tool's late-cash evidence, the organisation hand-back's
  * duplicate check), and the readers census polices any new one.
@@ -137,8 +151,22 @@ export function paymentRecoveryOperationIdOfPaidAnotherWay(task: {
   occurrenceKey: string | null;
 }): string | null {
   if (!isCardRefundPaidAnotherWayTask(task) || task.occurrenceKey === null) return null;
-  const id = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
+  const rest = task.occurrenceKey.slice(CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX.length);
+  const id = rest.endsWith(CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX)
+    ? rest.slice(0, -CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX.length)
+    : rest;
   return id.length > 0 ? id : null;
+}
+
+/** Whether a paid-another-way close queued its Xero refund note, read off its key; false for any other task. */
+export function paidAnotherWayCloseTookXeroRefundNote(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): boolean {
+  return (
+    paymentRecoveryOperationIdOfPaidAnotherWay(task) !== null &&
+    !(task.occurrenceKey ?? "").endsWith(CARD_REFUND_PAID_ANOTHER_WAY_NO_NOTE_SUFFIX)
+  );
 }
 
 /** The same question as a `ManualRefundTask` where fragment: every paid-another-way record. */

@@ -37,11 +37,12 @@
  *
  * - #3924 round 4 (money review, M1; `INV-PAY-120`): a card refund the
  *   treasurer closed as "Paid another way" raised `refundedAmountCents` with no
- *   refund row. On both paths a close that took its own refund note (a
- *   cancellation's card refund) counts, and one that did not never does
- *   (`readPaidAnotherWayCash`): the provider path adds the noted closes to its
- *   rows, the legacy path takes the un-noted ones off the mirror. Read from the
- *   close's persisted record, never the operation's wording.
+ *   refund row. On both paths a close that took its own refund note (every
+ *   kind, where the payment had an invoice to credit: #3924 round 5) counts,
+ *   and one that did not never does (`readPaidAnotherWayCash`): the provider
+ *   path adds the noted closes to its rows, the legacy path takes the un-noted
+ *   ones off the mirror. Read from the close's persisted record, never the
+ *   operation's wording.
  *
  * Stated limits. The first two are fail-safe: they can only UNDER-state cash,
  * so the pipeline under-flags a genuine refund note and can never mint one.

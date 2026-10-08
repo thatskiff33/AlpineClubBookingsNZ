@@ -98,15 +98,14 @@ const store = {
   // #3809's marker (`bookingReducedThroughCreditGiveBack`).
   bookingModification: { findFirst: vi.fn(async () => (rows.capped ? { id: "mod-give-back" } : null)) },
   bookingEvent: { findFirst: vi.fn(async () => rows.cancelled) },
-  // The sibling reviews; and, asked by occurrence key, a paid-another-way record (#3924 round 4).
+  // The sibling reviews; a reader asking for a paid-another-way record by its
+  // key would get `closedShort` - the netting must never ask (owner, 8 Oct 2026).
   manualRefundTask: {
     findMany: vi.fn(async (args: { where?: { occurrenceKey?: unknown } }) =>
       args?.where?.occurrenceKey ? rows.closedShort : rows.siblings,
     ),
   },
-  paymentRecoveryOperation: {
-    findMany: vi.fn(async () => (rows.refundedBySiblingsCents ? [{ id: "op-sibling", amountCents: rows.refundedBySiblingsCents }] : [])),
-  },
+  paymentRecoveryOperation: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.refundedBySiblingsCents || null } })) },
   memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.mintedBySiblingsCents || null } })) },
   bookingLedgerLine: { aggregate: vi.fn(async () => ({ _sum: { unitCents: rows.handedBackBySiblingsCents || null } })) },
 };
@@ -209,33 +208,44 @@ describe("sibling reviews of one cancelled booking", () => {
 
     expect(second).toBe(1_000);
     expect(returnedCents + first + second).toBe(10_000);
-    expect(store.paymentRecoveryOperation.findMany).toHaveBeenCalledWith({
+    expect(store.paymentRecoveryOperation.aggregate).toHaveBeenCalledWith({
       where: { idempotencyKey: { in: [buildEditFinancialReviewRefundRecoveryIdempotencyKey("task-1")] } },
-      select: { id: true, amountCents: true },
+      _sum: { amountCents: true },
     });
   });
 
-  it("#3924 round 4 (M7): a sibling's card refund closed as paid another way for less returned only what was paid back", async () => {
+  it("MUTATION: a sibling's card refund closed as paid another way for less still counts in full - the difference is gone (owner, 8 Oct 2026)", async () => {
     const returnedCents = cancelledAt(20_000, 0, TIERS[1]!.rule);
     const first = await owed(2_000, "task-1");
     expect(first).toBe(1_000);
 
-    // The first review's $10 card refund died; the treasurer paid back $4 of it by bank.
+    // The first review's $10 card refund died; the treasurer paid back $4 of it
+    // by bank, part of it, the rest no longer owed.
     rows.siblings = [{ id: "task-1", amountCents: 2_000 }];
     rows.refundedBySiblingsCents = first;
     rows.closedShort = [{ amountCents: 400, raisedAmountCents: 1_000 }];
     const second = await owed(2_000, "task-2");
 
-    // $6 of the first's debt was given up, so the capture holds $6 more for the second.
-    expect(second).toBe(1_600);
-    expect(returnedCents + 400 + second).toBe(10_000);
-    expect(store.manualRefundTask.findMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        status: "COMPLETED",
-        occurrenceKey: { in: ["card-refund-paid-another-way:op-sibling"] },
-      }),
-      select: { amountCents: true, raisedAmountCents: true },
-    });
+    // The second pays exactly its own share; the first's $6 is owed nowhere.
+    expect(second).toBe(1_000);
+    expect(returnedCents + 400 + second).toBe(9_400);
+    expect(store.manualRefundTask.findMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ occurrenceKey: expect.anything() }) }),
+    );
+  });
+
+  it("the cancellation's own card refund closed as paid another way for less counts at its frozen figure - the difference is gone", async () => {
+    // At 50% with a $20 fee the cancel refunded $80 to the card; that refund
+    // died and the treasurer paid back $50 of it by bank, the rest no longer owed.
+    const returnedCents = cancelledAt(20_000, 0, TIERS[1]!.rule);
+    expect(returnedCents).toBe(8_000);
+    rows.closedShort = [{ amountCents: 5_000, raisedAmountCents: 8_000 }];
+
+    // The share owes what it owes after an $80 refund, not $30 more.
+    expect(await owed()).toBe(2_500);
+    expect(store.manualRefundTask.findMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ occurrenceKey: expect.anything() }) }),
+    );
   });
 
   it("MUTATION: a sibling's bank-transfer hand-back counts as returned", async () => {

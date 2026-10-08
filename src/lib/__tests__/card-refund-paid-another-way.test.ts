@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kick: vi.fn(),
   createAuditLog: vi.fn(),
+  hasXeroReceiptForLateCapture: vi.fn(),
+  findKeptLateCaptureInvoiceIdForPayment: vi.fn(),
+  listRecords: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -51,6 +54,10 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     return mocks.enqueueXeroRefundCreditNoteOperation(...args);
   },
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
+}));
+vi.mock("@/lib/late-capture-xero-receipt", () => ({
+  hasXeroReceiptForLateCapture: mocks.hasXeroReceiptForLateCapture,
+  findKeptLateCaptureInvoiceIdForPayment: mocks.findKeptLateCaptureInvoiceIdForPayment,
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => {
@@ -93,6 +100,7 @@ vi.mock("@/lib/prisma", () => {
     prisma: {
       $transaction: (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
       paymentRecoveryOperation: { findMany: mocks.listOperations },
+      manualRefundTask: { findMany: mocks.listRecords },
     },
   };
 });
@@ -102,8 +110,10 @@ import {
   closeCardRefundPaidAnotherWay,
   deadCardRefundOperationWhere,
   lastErrorSuggestsStripeMayHaveRefunded,
+  listCardRefundsPaidTwice,
   listDeadCardRefunds,
   PAID_ANOTHER_WAY_MARKER,
+  type PaidBackChoice,
 } from "@/lib/card-refund-paid-another-way";
 import { getNetCollectedPaymentParts } from "@/lib/payment-net-collected";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
@@ -156,8 +166,12 @@ function payment(operation = deadOperation(), overrides: Record<string, unknown>
   };
 }
 
-const close = (amountCents = 15_000, note: string | null = "Bank transfer, ref 123") =>
-  closeCardRefundPaidAnotherWay({ operationId: "op-1", amountCents, note, actingMemberId: "treasurer-1" });
+/** Full when the amount is the whole $150.00 owed, part otherwise - unless a case says which. */
+const close = (
+  amountCents = 15_000,
+  note: string | null = "Bank transfer, ref 123",
+  paidBack: PaidBackChoice = amountCents === 15_000 ? "full" : "partial",
+) => closeCardRefundPaidAnotherWay({ operationId: "op-1", amountCents, paidBack, note, actingMemberId: "treasurer-1" });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -173,6 +187,9 @@ beforeEach(() => {
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: "xop-1" });
   mocks.kick.mockResolvedValue(undefined);
   mocks.createAuditLog.mockResolvedValue(undefined);
+  mocks.hasXeroReceiptForLateCapture.mockResolvedValue(false);
+  mocks.findKeptLateCaptureInvoiceIdForPayment.mockResolvedValue(null);
+  mocks.listRecords.mockResolvedValue([]);
 });
 
 describe("closing a dead card refund as paid another way", () => {
@@ -239,7 +256,7 @@ describe("closing a dead card refund as paid another way", () => {
       }),
     );
 
-    const result = await close(10_000);
+    const result = await close(10_000, "Bank transfer", "full");
 
     expect(result.owedCents).toBe(10_000);
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
@@ -247,7 +264,7 @@ describe("closing a dead card refund as paid another way", () => {
     );
   });
 
-  it("M2: writes the persisted record, born COMPLETED under its own key, for the amount paid back", async () => {
+  it("M2: writes the persisted record, born COMPLETED under its own key, for the amount paid back - and says it was part", async () => {
     await close(10_000);
 
     expect(mocks.createRecord).toHaveBeenCalledWith({
@@ -261,9 +278,19 @@ describe("closing a dead card refund as paid another way", () => {
         status: "COMPLETED",
         completedByMemberId: "treasurer-1",
         note: "Bank transfer, ref 123",
+        reason: expect.stringContaining("paid back in part another way by the treasurer; the rest is no longer owed"),
       }),
       select: { id: true },
     });
+  });
+
+  it("a full close's record says it was paid back in full", async () => {
+    await close(15_000);
+    expect(mocks.createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 15_000, raisedAmountCents: 15_000, reason: expect.stringContaining("paid back in full another way") }),
+      }),
+    );
   });
 
   it("M2: posts the ledger's bank-refund line on that record, keyed on it", async () => {
@@ -296,7 +323,24 @@ describe("closing a dead card refund as paid another way", () => {
         entityType: "PaymentRecoveryOperation",
         entityId: "op-1",
         details: "Bank transfer, ref 123",
-        metadata: expect.objectContaining({ amountCents: 15_000, owedCents: 15_000, manualRefundTaskId: "task-1" }),
+        metadata: expect.objectContaining({
+          paidBack: "full",
+          amountCents: 15_000,
+          owedCents: 15_000,
+          noLongerOwedCents: 0,
+          manualRefundTaskId: "task-1",
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("C: audits a part close as part, with what stopped being owed", async () => {
+    await close(10_000);
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: expect.stringContaining("paid back in part"),
+        metadata: expect.objectContaining({ paidBack: "partial", amountCents: 10_000, owedCents: 15_000, noLongerOwedCents: 5_000 }),
       }),
       expect.anything(),
     );
@@ -323,17 +367,80 @@ describe("closing a dead card refund as paid another way", () => {
     expect(mocks.kick).not.toHaveBeenCalled();
   });
 
-  it("an edit's refund queues no note: its edit's credit note already corrected the invoice", async () => {
-    const editRefund = deadOperation({ idempotencyKey: "booking_modification_refund_recovery_mod-1" });
-    mocks.findOperation.mockResolvedValue(editRefund);
-    mocks.findPayment.mockResolvedValue(payment(editRefund));
-    const result = await close();
-    expect(result.xeroRefundNoteQueued).toBe(false);
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
-    expect(mocks.kick).not.toHaveBeenCalled();
-    // The record and its line are still written: the money moved.
-    expect(mocks.createRecord).toHaveBeenCalledTimes(1);
-    expect(mocks.writeLedgerRows).toHaveBeenCalledTimes(1);
+  // Owner, 8 Oct 2026: "Raise a refund note for all".
+  it.each([
+    ["an approved refund request's", "refund_request_refund_rr-1"],
+    ["an edit's", "booking_modification_refund_recovery_mod-1"],
+    ["an edit review's on a cancelled booking", "edit_financial_review_refund_task-9"],
+  ])("MUTATION: %s refund queues its own bank-transfer note too, keyed on the record", async (_kind, idempotencyKey) => {
+    const other = deadOperation({ idempotencyKey });
+    mocks.findOperation.mockResolvedValue(other);
+    mocks.findPayment.mockResolvedValue(payment(other));
+    const result = await close(10_000);
+    expect(result.xeroRefundNoteQueued).toBe(true);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "p-1",
+      10_000,
+      expect.objectContaining({ refundMethod: "internet-banking", paidAnotherWayTaskId: "task-1" }),
+    );
+    expect(mocks.createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ occurrenceKey: "card-refund-paid-another-way:op-1" }) }),
+    );
+  });
+
+  it("a superseded payment's refund queues its note too", async () => {
+    const superseded = deadOperation({
+      type: "REFUND_SUPERSEDED_PAYMENT",
+      idempotencyKey: "superseded_refund_pi_1",
+      allocationPlan: null,
+      paymentTransactionId: "txn-1",
+    });
+    mocks.findOperation.mockResolvedValue(superseded);
+    mocks.findPayment.mockResolvedValue(payment(superseded));
+    const result = await close(15_000);
+    expect(result.xeroRefundNoteQueued).toBe(true);
+  });
+
+  describe("F4: a note only where there is an invoice to credit", () => {
+    it("MUTATION: no invoice: no note, the record's key says so, and the money and line are still recorded", async () => {
+      mocks.findPayment.mockResolvedValue(payment(deadOperation(), { xeroInvoiceId: null }));
+      const result = await close();
+      expect(result.xeroRefundNoteQueued).toBe(false);
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.kick).not.toHaveBeenCalled();
+      expect(mocks.createRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ occurrenceKey: "card-refund-paid-another-way:op-1:no-xero-note" }),
+        }),
+      );
+      expect(mocks.writeLedgerRows).toHaveBeenCalledTimes(1);
+    });
+
+    it("no invoice of its own, but a kept late capture's: the note credits that", async () => {
+      mocks.findPayment.mockResolvedValue(payment(deadOperation(), { xeroInvoiceId: null }));
+      mocks.findKeptLateCaptureInvoiceIdForPayment.mockResolvedValue("kept-inv-1");
+      const result = await close();
+      expect(result.xeroRefundNoteQueued).toBe(true);
+    });
+
+    it("MUTATION: a late capture's refund needs its own receipt in Xero, never the booking's invoice", async () => {
+      const late = deadOperation({ idempotencyKey: "late_capture_approval_refund_recovery_pi_late" });
+      mocks.findOperation.mockResolvedValue(late);
+      mocks.findPayment.mockResolvedValue(payment(late));
+      const result = await close();
+      expect(mocks.hasXeroReceiptForLateCapture).toHaveBeenCalledWith("pi_late", expect.anything());
+      expect(result.xeroRefundNoteQueued).toBe(false);
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("a late capture whose receipt the app recorded takes its note", async () => {
+      const late = deadOperation({ idempotencyKey: "late_capture_approval_refund_recovery_pi_late" });
+      mocks.findOperation.mockResolvedValue(late);
+      mocks.findPayment.mockResolvedValue(payment(late));
+      mocks.hasXeroReceiptForLateCapture.mockResolvedValue(true);
+      const result = await close();
+      expect(result.xeroRefundNoteQueued).toBe(true);
+    });
   });
 
   it("a refund that owes nothing closes with no money, record, line or note", async () => {
@@ -348,12 +455,12 @@ describe("closing a dead card refund as paid another way", () => {
         ],
       }),
     );
-    const result = await close(0);
+    const result = await close(0, "Bank transfer, ref 123", "full");
     expect(result).toMatchObject({ amountCents: 0, owedCents: 0, xeroRefundNoteQueued: false });
     expect(calls).toEqual(["lock(1)", "read-operation", "lock-payment-row", "read-payment", "claim", "audit"]);
   });
 
-  it("a whole superseded payment's refund closes when its charge still holds exactly that", async () => {
+  it("MUTATION: F3: a whole superseded payment's refund closes, through the fence, when its charge still holds exactly that", async () => {
     const superseded = deadOperation({
       type: "REFUND_SUPERSEDED_PAYMENT",
       idempotencyKey: "superseded_refund_pi_1",
@@ -363,6 +470,7 @@ describe("closing a dead card refund as paid another way", () => {
     mocks.findOperation.mockResolvedValue(superseded);
     mocks.findPayment.mockResolvedValue(payment(superseded));
     await close(15_000);
+    expect(mocks.findTransaction).toHaveBeenCalledTimes(1);
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 15_000, preferTransactionIds: ["txn-1"] }),
     );
@@ -405,6 +513,27 @@ describe("a close that must not happen writes nothing", () => {
     await expectRefusal(close(0), 400);
   });
 
+  describe("C: the treasurer's full-or-part answer must agree with what is owed (owner, 8 Oct 2026)", () => {
+    it("MUTATION: 'full' for less than is owed", async () => {
+      await expectRefusal(close(10_000, "Bank transfer", "full"), 400);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: 'partial' for all of it", async () => {
+      await expectRefusal(close(15_000, "Bank transfer", "partial"), 400);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: 'partial' for nothing", async () => {
+      await expectRefusal(close(0, "Bank transfer", "partial"), 400);
+    });
+
+    it("an answer that is neither", async () => {
+      await expectRefusal(close(15_000, "Bank transfer", "most" as PaidBackChoice), 400);
+      expect(calls).toEqual([]);
+    });
+  });
+
   it("no note", async () => {
     await expectRefusal(close(15_000, "   "), 400);
     expect(calls).toEqual([]);
@@ -420,6 +549,42 @@ describe("a close that must not happen writes nothing", () => {
     mocks.findOperation.mockResolvedValue(superseded);
     mocks.findPayment.mockResolvedValue(payment(superseded));
     await expectRefusal(close(10_000), 400);
+  });
+
+  describe("F3: a superseded payment's refund that cannot close whole", () => {
+    const superseded = () =>
+      deadOperation({
+        type: "REFUND_SUPERSEDED_PAYMENT",
+        idempotencyKey: "superseded_refund_pi_1",
+        allocationPlan: null,
+        paymentTransactionId: "txn-1",
+      });
+
+    it("MUTATION: capped below its own amount - the payment holds less than it owes", async () => {
+      // $100 of the $200 payment already went back another way, so the cap is
+      // $100 while the refund's own charge still owes $150.
+      mocks.findOperation.mockResolvedValue(superseded());
+      mocks.findPayment.mockResolvedValue(payment(superseded(), { refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" }));
+      await expectRefusal(close(10_000, "Bank transfer", "full"), 409);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: for nothing - its charge was refunded in full already - is refused, not closed with no record", async () => {
+      mocks.findOperation.mockResolvedValue(superseded());
+      mocks.findPayment.mockResolvedValue(
+        payment(superseded(), {
+          refundedAmountCents: 15_000,
+          status: "PARTIALLY_REFUNDED",
+          refunds: [
+            { paymentTransactionId: "txn-1", amountCents: 15_000, status: "succeeded", createdAt: new Date("2026-06-20T01:00:00.000Z") },
+          ],
+        }),
+      );
+      // Its charge reads fully refunded, so the fence alone would let it through.
+      mocks.findTransaction.mockResolvedValue({ paymentId: "p-1", amountCents: 15_000, refundedAmountCents: 15_000 });
+      await expectRefusal(close(0, "Bank transfer", "full"), 409);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
   });
 
   it("an organiser child's refund, which has no ledger of its own to record against", async () => {
@@ -478,6 +643,13 @@ describe("a close that must not happen writes nothing", () => {
 });
 
 describe("the list on the stuck-states page", () => {
+  it("says which rows take no Xero note: no invoice to credit", async () => {
+    const own = deadOperation();
+    mocks.listOperations.mockResolvedValue([{ ...own, payment: payment(own, { xeroInvoiceId: null }) }]);
+    const rows = await listDeadCardRefunds();
+    expect(rows).toEqual([expect.objectContaining({ operationId: "op-1", takesXeroRefundNote: false })]);
+  });
+
   it("lists only what the close accepts, with what each still owes", async () => {
     const own = deadOperation();
     mocks.listOperations.mockResolvedValue([
@@ -534,12 +706,23 @@ describe("#3924 round 4 (M7): a failure that may have reached Stripe is flagged"
     "read ECONNRESET",
     "An error occurred with our connection to Stripe (StripeConnectionError)",
     "Network error: socket hang up",
-    "Stripe returned 502",
+    "Stripe API error (status 502)",
+    "statusCode: 503 Service Unavailable",
+    "Charge ch_123 has already been refunded.",
+    "Refund amount ($150.00) is greater than unrefunded amount on charge ($0.00)",
   ])("%s", (lastError) => {
     expect(lastErrorSuggestsStripeMayHaveRefunded(lastError)).toBe(true);
   });
 
-  it.each([null, "", "Stripe: card_declined", "charge_already_refunded", "Your card has insufficient funds."])(
+  it.each([
+    null,
+    "",
+    "Stripe: card_declined",
+    "Your card has insufficient funds.",
+    // F5: an amount is not a server error.
+    "Refund of $500.00 failed: card_declined",
+    "Refund of 512 cents declined",
+  ])(
     "not %s",
     (lastError) => {
       expect(lastErrorSuggestsStripeMayHaveRefunded(lastError)).toBe(false);
@@ -554,11 +737,26 @@ describe("#3924 round 4 (M2): the close's record is told apart by kind and key, 
       isCardRefundPaidAnotherWayTask,
       isNonCancellationHandBackTask,
       NOT_NON_CANCELLATION_HAND_BACK_WHERE,
+      paidAnotherWayCloseTookXeroRefundNote,
       paymentRecoveryOperationIdOfPaidAnotherWay,
     } = await import("@/lib/manual-refund-task-settlement-rules");
-    const record = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-1") };
+    const record = {
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-1", { xeroRefundNote: true }),
+    };
+    const unnoted = {
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op-1", { xeroRefundNote: false }),
+    };
 
     expect(record.occurrenceKey).toBe("card-refund-paid-another-way:op-1");
+    expect(unnoted.occurrenceKey).toBe("card-refund-paid-another-way:op-1:no-xero-note");
+    // Round 5: the key records whether the close queued its note; both name the operation.
+    expect(paidAnotherWayCloseTookXeroRefundNote(record)).toBe(true);
+    expect(paidAnotherWayCloseTookXeroRefundNote(unnoted)).toBe(false);
+    expect(paymentRecoveryOperationIdOfPaidAnotherWay(unnoted)).toBe("op-1");
+    expect(isCardRefundPaidAnotherWayTask(unnoted)).toBe(true);
+    expect(paidAnotherWayCloseTookXeroRefundNote({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null })).toBe(false);
     expect(isCardRefundPaidAnotherWayTask(record)).toBe(true);
     expect(isNonCancellationHandBackTask(record)).toBe(true);
     expect(paymentRecoveryOperationIdOfPaidAnotherWay(record)).toBe("op-1");
@@ -567,5 +765,59 @@ describe("#3924 round 4 (M2): the close's record is told apart by kind and key, 
     expect(isCardRefundPaidAnotherWayTask({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null })).toBe(false);
     expect(isCardRefundPaidAnotherWayTask({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: record.occurrenceKey })).toBe(false);
     expect(paymentRecoveryOperationIdOfPaidAnotherWay({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "edit-refund-hand-back:m" })).toBeNull();
+  });
+});
+
+describe("#3924 round 5 (concurrency F2): a close Stripe paid as well is listed", () => {
+  const closedAt = new Date("2026-06-25T00:00:00.000Z");
+  function closedRecord(refunds: unknown[]) {
+    const closed = { ...deadOperation(), status: "SUCCEEDED", succeededAt: closedAt, lastError: PAID_ANOTHER_WAY_MARKER };
+    return {
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: "card-refund-paid-another-way:op-1",
+      bookingId: "b-1",
+      amountCents: 15_000,
+      completedAt: closedAt,
+      payment: payment(closed, { refundedAmountCents: 30_000, refunds }),
+    };
+  }
+
+  it("MUTATION: a refund Stripe made before the close and the app recorded after it", async () => {
+    mocks.listRecords.mockResolvedValue([
+      closedRecord([
+        {
+          paymentTransactionId: "txn-1",
+          amountCents: 15_000,
+          status: "succeeded",
+          stripeCreatedAt: new Date("2026-06-24T23:59:00.000Z"),
+          createdAt: new Date("2026-06-26T00:00:00.000Z"),
+        },
+      ]),
+    ]);
+    expect(await listCardRefundsPaidTwice()).toEqual([
+      {
+        operationId: "op-1",
+        bookingId: "b-1",
+        bookingReference: expect.any(String),
+        closedAt: closedAt.toISOString(),
+        paidAnotherWayCents: 15_000,
+        refundedByCardCents: 15_000,
+      },
+    ]);
+  });
+
+  it("not a refund Stripe made after the close: that is another operation's", async () => {
+    mocks.listRecords.mockResolvedValue([
+      closedRecord([
+        {
+          paymentTransactionId: "txn-1",
+          amountCents: 15_000,
+          status: "succeeded",
+          stripeCreatedAt: new Date("2026-06-26T00:00:00.000Z"),
+          createdAt: new Date("2026-06-26T00:00:01.000Z"),
+        },
+      ]),
+    ]);
+    expect(await listCardRefundsPaidTwice()).toEqual([]);
   });
 });

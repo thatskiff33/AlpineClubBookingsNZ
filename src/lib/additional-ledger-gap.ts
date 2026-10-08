@@ -163,7 +163,7 @@ export const netCollectedCardRefundSelect = Prisma.validator<Prisma.PaymentSelec
     },
   },
   refunds: {
-    select: { paymentTransactionId: true, amountCents: true, status: true, createdAt: true },
+    select: { paymentTransactionId: true, amountCents: true, status: true, createdAt: true, stripeCreatedAt: true },
   },
 });
 

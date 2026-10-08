@@ -44,7 +44,7 @@ function request(body: unknown) {
 }
 
 const params = Promise.resolve({ id: "op-1" });
-const valid = { amountCents: 5_000, note: "Bank transfer, ref 123", confirmed: true };
+const valid = { amountCents: 5_000, paidBack: "full", note: "Bank transfer, ref 123", confirmed: true };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -55,6 +55,7 @@ beforeEach(() => {
     paymentId: "p-1",
     amountCents: 5_000,
     owedCents: 5_000,
+    paidBack: "full",
     xeroRefundNoteQueued: false,
   });
 });
@@ -82,9 +83,12 @@ describe("who may close a card refund as paid another way", () => {
 
 describe("what the close needs", () => {
   it.each([
-    ["no confirmation", { amountCents: 5_000, note: "Bank transfer" }],
+    ["no confirmation", { amountCents: 5_000, paidBack: "full", note: "Bank transfer" }],
+    // Owner, 8 Oct 2026: the treasurer says full or part; it is never inferred.
+    ["no full-or-part answer", { amountCents: 5_000, note: "Bank transfer", confirmed: true }],
+    ["an answer that is neither full nor part", { ...valid, paidBack: "most" }],
     ["a confirmation that is not literally true", { ...valid, confirmed: "yes" }],
-    ["no note", { amountCents: 5_000, confirmed: true }],
+    ["no note", { amountCents: 5_000, paidBack: "full", confirmed: true }],
     ["a negative amount", { ...valid, amountCents: -1 }],
     ["fractional cents", { ...valid, amountCents: 10.5 }],
     ["a field it does not know", { ...valid, refundToCard: true }],
@@ -95,13 +99,14 @@ describe("what the close needs", () => {
     expect(mocks.closeCardRefundPaidAnotherWay).not.toHaveBeenCalled();
   });
 
-  it("hands the operation, amount, note and acting treasurer to the close", async () => {
-    const response = await POST(request(valid), { params });
+  it("hands the operation, amount, full-or-part answer, note and acting treasurer to the close", async () => {
+    const response = await POST(request({ ...valid, paidBack: "partial", amountCents: 4_000 }), { params });
 
     expect(response.status).toBe(200);
     expect(mocks.closeCardRefundPaidAnotherWay).toHaveBeenCalledWith({
       operationId: "op-1",
-      amountCents: 5_000,
+      amountCents: 4_000,
+      paidBack: "partial",
       note: "Bank transfer, ref 123",
       actingMemberId: "treasurer-1",
     });
@@ -119,6 +124,19 @@ describe("what the close needs", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({ error: "This card refund has already been closed." });
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("answers the close's full-or-part refusal with a 400 and its sentence", async () => {
+    mocks.closeCardRefundPaidAnotherWay.mockRejectedValue(
+      new CardRefundPaidAnotherWayError("Paid back in full must be exactly what is still owed. Refresh and check the amount.", 400),
+    );
+
+    const response = await POST(request(valid), { params });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Paid back in full must be exactly what is still owed. Refresh and check the amount.",
+    });
   });
 
   it("answers anything else with a 500 that names no internals", async () => {

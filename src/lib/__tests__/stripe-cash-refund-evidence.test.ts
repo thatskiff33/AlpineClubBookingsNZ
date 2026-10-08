@@ -274,22 +274,23 @@ describe("resolveStripeCashRefundEvidence — transaction client", () => {
  * #3924 round 4 (money review, M1; `INV-PAY-120`): a card refund closed as
  * "Paid another way" raised the mirror with no refund row. Read from its
  * persisted record (a COMPLETED task under its own key), never `lastError`.
+ * Round 5 (owner, 8 Oct 2026: "Raise a refund note for all"): every kind's
+ * close takes a note where there is an invoice to credit, and the key records
+ * whether it did.
  */
 describe("resolveStripeCashRefundEvidence - a card refund closed as paid another way", () => {
-  const editClose = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-edit", amountCents: 4000 };
-  const cancelClose = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-cancel", amountCents: 3000 };
-  const operations = [
-    { id: "op-edit", idempotencyKey: "booking_modification_refund_recovery_mod-1", bookingId: "book_1" },
-    { id: "op-cancel", idempotencyKey: "booking_cancel_refund_recovery_book_1", bookingId: "book_1" },
-  ];
+  const noted = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-edit", amountCents: 3000 };
+  const unnoted = {
+    kind: "CANCELLED_BOOKING_HAND_BACK",
+    occurrenceKey: "card-refund-paid-another-way:op-no-invoice:no-xero-note",
+    amountCents: 4000,
+  };
 
-  it("legacy mirror: an edit's close (no note of its own) is not cash the self-heal may note", async () => {
-    // $100 refunded on the mirror, no refund rows: $40 of it is an edit's card
-    // refund the treasurer paid back by bank. Without this the nightly self-heal
-    // raised a card note settled from the Stripe account for money the edit's
-    // own note already credited.
-    mocks.findTasks.mockResolvedValue([editClose]);
-    mocks.findOperations.mockResolvedValue(operations);
+  it("legacy mirror: a close with no invoice to credit (no note) is not cash the self-heal may note", async () => {
+    // $100 refunded on the mirror, no refund rows: $40 of it went back by bank
+    // with no invoice to credit, so no note was queued. Counted as cash, the
+    // nightly self-heal would raise a card note settled from the Stripe account.
+    mocks.findTasks.mockResolvedValue([unnoted]);
 
     const evidence = await resolveStripeCashRefundEvidence(payment);
 
@@ -306,29 +307,28 @@ describe("resolveStripeCashRefundEvidence - a card refund closed as paid another
     );
   });
 
-  it("legacy mirror: a cancellation's close keeps its cash - its own note answers it", async () => {
-    mocks.findTasks.mockResolvedValue([editClose, cancelClose]);
-    mocks.findOperations.mockResolvedValue(operations);
+  it("MUTATION: legacy mirror: a noted close of any kind keeps its cash - its own note answers it", async () => {
+    mocks.findTasks.mockResolvedValue([noted, unnoted]);
 
     const evidence = await resolveStripeCashRefundEvidence(payment);
 
     expect(evidence.cashRefundCents).toBe(6000);
   });
 
-  it("provider ledger: a cancellation's close is added to the card rows, so its note is sized against it", async () => {
+  it("MUTATION: provider ledger: a noted close is added to the card rows, so its note is sized against it", async () => {
     mocks.groupBy.mockResolvedValue([{ status: "succeeded", _sum: { amountCents: 2000 }, _count: { _all: 1 } }]);
-    mocks.findTasks.mockResolvedValue([editClose, cancelClose]);
-    mocks.findOperations.mockResolvedValue(operations);
+    mocks.findTasks.mockResolvedValue([noted, unnoted]);
 
     const evidence = await resolveStripeCashRefundEvidence(payment);
 
     expect(evidence.source).toBe("provider-ledger");
     expect(evidence.countedRefundCents).toBe(2000);
-    // $20 by card + the cancellation's $30 by bank; the edit's $40 never.
+    // $20 by card + the noted close's $30 by bank; the un-noted $40 never.
     expect(evidence.cashRefundCents).toBe(5000);
   });
 
-  it("no close on the payment reads no operations", async () => {
+  it("reads the record only: never the operation", async () => {
+    mocks.findTasks.mockResolvedValue([noted]);
     await resolveStripeCashRefundEvidence(payment);
     expect(mocks.findOperations).not.toHaveBeenCalled();
   });
