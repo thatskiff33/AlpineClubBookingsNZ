@@ -3,6 +3,8 @@ import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
+  subscriptionInvoiceChargeId,
+  subscriptionInvoiceOutboxRow,
   XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
 
@@ -153,6 +155,26 @@ describe("xero operation outbox payload parsing", () => {
     });
   });
 
+  it("MUTATION (#3935): carries a refund note's cash wording only beside the internet-banking method", () => {
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "REFUND_CREDIT_NOTE",
+        refundAmountCents: 2500,
+        refundMethod: "internet-banking",
+        noteWording: "cash",
+      })
+    ).toMatchObject({ refundMethod: "internet-banking", noteWording: "cash" });
+    for (const raw of [
+      { refundMethod: "card", noteWording: "cash" },
+      { refundMethod: "internet-banking", noteWording: "invoice-correction" },
+      { noteWording: "cash" },
+    ]) {
+      expect(
+        readQueuedOutboxPayload({ queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2500, ...raw })
+      ).toHaveProperty("noteWording", undefined);
+    }
+  });
+
   it("tells the abandon VOID from the cancellation VOID by the invoice it names (#3642)", () => {
     expect(
       readQueuedOutboxPayload({
@@ -260,6 +282,42 @@ describe("xero operation outbox payload parsing", () => {
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
     );
+  });
+
+  // #3971: the payload carries no charge id; a pre-fix row's blanked one is ignored.
+  it("#3971: reads a subscription invoice as its queue type alone, whatever chargeId a stored row holds", () => {
+    for (const stored of [
+      { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE" },
+      { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE", chargeId: "[REDACTED]" },
+      { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE", chargeId: "charge_1" },
+    ]) {
+      expect(readQueuedOutboxPayload(stored)).toEqual({
+        queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE",
+      });
+    }
+  });
+
+  it("#3971: takes a subscription invoice's charge from the row's localId, only on a charge anchor", () => {
+    expect(
+      subscriptionInvoiceChargeId({ localModel: "MembershipSubscriptionCharge", localId: "charge_1" })
+    ).toBe("charge_1");
+    expect(
+      subscriptionInvoiceChargeId({ localModel: "MembershipSubscriptionCharge", localId: null })
+    ).toBeNull();
+    expect(subscriptionInvoiceChargeId({ localModel: "Member", localId: "member_1" })).toBeNull();
+  });
+
+  // #3994 (SSOT): both enqueues build the row here, so it always passes the
+  // claim guard and reads its charge back from its own anchor.
+  it("#3994: builds a subscription invoice row the claim guard accepts and whose charge reads back", () => {
+    const row = subscriptionInvoiceOutboxRow("charge_1");
+    expect(row.requestPayload).toEqual({ queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE" });
+    expect(readQueuedOutboxPayload(row.requestPayload)).toEqual(row.requestPayload);
+    const expected = getQueuedOutboxExpectedOperation(row.queueType);
+    expect(row.entityType).toBe(expected.entityType);
+    expect(row.operationType).toBe(expected.operationType);
+    expect(expected.localModels).toEqual([row.localModel]);
+    expect(subscriptionInvoiceChargeId(row)).toBe("charge_1");
   });
 
   it("#3635: reads a kept late-capture invoice's frozen gross cents and capture day, anchored on the approval task", () => {

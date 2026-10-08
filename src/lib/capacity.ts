@@ -444,8 +444,8 @@ export async function findOverlappingOverriddenNonHoldingBookings(
  * rather than duplicating it; getLodgeCapacityStatus takes no date range, so a
  * companion is the additive, backward-compatible way to report held nights.
  *
- * Admin-only reporting: members never see held nights (decision 6 — to them a
- * held night is an ordinary full lodge).
+ * Admin reporting, plus the member roster (#3474), which states these nights
+ * naming nobody; every other member surface still sees a full lodge.
  */
 export async function getLodgeHeldNights(
   lodgeId: string,

@@ -62,6 +62,17 @@ concept (not display-only); the display reads it.
    nothing is special-cased). The exclusive nature is visible **only** on
    admin surfaces (decision 1 / conflict surfacing).
 
+   **Amended 6 Oct 2026 (#3474) for clubs running the member lodge roster.**
+   The roster lists who is staying, so beside the calendar a held night read
+   as "no beds free, six people listed" and the hold was deducible by
+   subtraction. The owner decided to show it rather than leave it to be
+   inferred: the roster states the held nights as "reserved for a private
+   booking", without naming or counting the party: the holding booking gets
+   no row of its own on the roster (`INV-PRIV-017`).
+   The calendar, the waitlist and every other member surface are unchanged,
+   and a club without the roster module keeps this decision exactly as
+   written.
+
 ### Model
 
 - `Booking.wholeLodgeHold: Boolean @default(false)` — the authoritative flag.
@@ -177,7 +188,9 @@ Both directions, and nothing member/public-facing (decision 6):
 - **Capacity-status reporting.** `getLodgeHeldNights(lodgeId, checkIn, checkOut)`
   (`src/lib/capacity.ts`) is the admin companion to `getLodgeCapacityStatus`
   (which takes no date range): it reports which nights in a range are
-  whole-lodge-held, reusing the engine's hold-night span logic.
+  whole-lodge-held, reusing the engine's hold-night span logic. The member lodge
+  roster (#3474) is also a consumer, for clubs running it (see the amendment
+  above).
 
 ### Bed-allocation short-circuit — as built (#120, admin-only)
 
