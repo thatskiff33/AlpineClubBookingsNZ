@@ -475,8 +475,9 @@ cutover. Then let the warm-up gate (step 16) pass and step 17 perform the cutove
 ### 2.4 Windowed migration deploy sequence
 
 Use this instead of the normal blue/green flow whenever any pending migration is
-declared `old_code_compatible=windowed` in the safety ledger. Four migrations are
-in that class:
+declared `old_code_compatible=windowed` in the safety ledger. The ledger is the
+authority, and `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+lists every one; these are in that class:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) —
   covered immediately below;
@@ -485,6 +486,31 @@ in that class:
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) — additive DDL,
   but an old hosting worker ignores the new tokens and can process a new worker's
   live claim, so mixed old/new workers are forbidden.
+- `20260810010000_backfill_booking_request_guest_nights` (#2739, ledgered by
+  #3933) — data only, no DDL. The previous colour's held-booking reassignment
+  rewrites a guest's price without rewriting the night rows this backfill
+  inserts, so a quote accepted in a mixed window leaves the nights at the hold's
+  per-night prices, and both releases invoice from them. Its `rollback.sql`
+  changes no data by design: going back keeps the rows. Requester acceptance of
+  a quote cannot be paused in the app — the public token route
+  `/api/booking-requests/respond/[token]` has no switch, and blocking it at the
+  reverse proxy is the only way — so after any period the old colour served
+  with these rows (after this reverse, or a deploy that skipped the window),
+  run the read-only query in that `rollback.sql` once a release with #3214 is
+  back, and for each guest it lists **first** repair the nights with **Record
+  what these nights sold for** on the booking's Admin tools card, **then**
+  refresh the booking's invoice. Refreshing first re-sends the stale prices.
+- `20260928020000_booking_owner_optional_member` and
+  `20260928030000_backfill_school_bookings_to_organisations` (#3369) — one
+  window, never applied apart. The first only changes the shape — it makes the
+  booking's member link optional, adds two partial unique indexes, guards one
+  trigger and creates an empty table — and is compatible on its own; it is
+  windowed because without the second the database would accept a booking with
+  no owner. The second empties `Booking.memberId` on
+  every school booking, which the previous client reads as required, so the
+  draining colour errors on the first school booking it touches. Both ship a
+  `rollback.sql` and reverse in the opposite order; see
+  [§2.4.2](#242-3369-a-school-booking-has-an-organisation-not-an-invented-person).
 - `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
   DDL with a deliberately incompatible write protocol. The previous runtime can
   attempt an overlap that the new triggers reject and cannot decode the new safe
@@ -543,8 +569,11 @@ occupancy calculation that cannot see held unnamed adults.
 **Reverse every pending windowed migration in application order.** Stop all new
 app/worker processes first. If #3271 is present, run its `rollback.sql` before any
 older reverse and verify the pair table, functions, and triggers are gone while
-both source relationship tables are unchanged. A window containing #2596 next
-uses its no-op `rollback.sql` boundary and retains its nullable columns and applied
+both source relationship tables are unchanged. A window containing #2739 next
+uses `20260810010000`'s `rollback.sql`, which changes no data: keep its night
+rows, and once a release with #3214 is back, repair the nights its query lists
+and only then refresh those invoices, as the #2739 entry above says. A window
+containing #2596 next uses its no-op `rollback.sql` boundary and retains its nullable columns and applied
 history. Then the two schema-removal `rollback.sql` scripts run in reverse
 order — `20260803030000` first, then `20260803010000`. Running only one leaves the other's column missing, so the
 previous release is still broken; if the one you skip is `20260803010000`, what
@@ -1552,6 +1581,16 @@ statement runs again.
   value. On a deployment that already runs the mandatory-category runtime the
   window writes no uncategorised record, so the re-run finds nothing.
 
+This step is for **every** deploy that applied either migration. The step 9(a)
+list in [§2.4.1](#241-2520-drop-familygroupmemberrole) is the set that one
+release window carried, not a list to copy: validate every migration pending on
+your own database. If neither was pending in this deploy, skip this step. If the deploy ran under the
+windowed sequence in [§2.4](#24-windowed-migration-deploy-sequence), no old colour
+was serving between migrate and cutover, so the re-run finds nothing; it is
+still safe to run. A release that still has
+`20260810010000_backfill_booking_request_guest_nights` pending is windowed for
+that reason alone (#3933).
+
 Run both files again, verbatim, against the production database once cutover is
 complete:
 
@@ -1625,48 +1664,17 @@ already broken, so the boundary moves back to **step 13 (migrate)** and the
 recovery paths are forward to cutover, the migration's own `rollback.sql`, or the
 verified backup.
 
-**The ledger now holds six real `windowed` rows** — the three long-standing ones,
-#3271's, and #3369's pair — and they are not the only migrations in that class.
-Check for all of them:
+**Which migrations are `windowed` is the ledger's answer, not this section's.**
+List them with
+`awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
+[§2.4](#24-windowed-migration-deploy-sequence) is the one per-migration list:
+what each breaks, its `rollback.sql`, and the order the reverse scripts run in.
 
-- `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) is
-  declared `old_code_compatible=windowed`. It drops `MembershipLockoutSettings.enabled`,
-  so the previous release's Prisma client raises on every read of that model the
-  moment migrate commits — which means every booking write path on the old colour,
-  not just the admin panel. It ships a tested `rollback.sql` and requires the
-  maintenance-window sequence in [§2.4](#24-windowed-migration-deploy-sequence).
-- `20260928020000_booking_owner_optional_member` and
-  `20260928030000_backfill_school_bookings_to_organisations` (#3369) are both
-  declared `old_code_compatible=windowed` and are **one window**. The first is
-  compatible on its own and says so; it is declared windowed because applying it
-  without the second leaves a database that would accept a booking nobody owns.
-  The second empties `Booking.memberId` on every school booking, which the
-  previous client reads as required. Both ship a `rollback.sql` and they reverse
-  in the OPPOSITE order to the one they were applied in — see
-  [§2.4.2](#242-3369-a-school-booking-has-an-organisation-not-an-invented-person).
-- `20260803030000_contract_drop_family_group_member_role` (#2520) is declared
-  `old_code_compatible=windowed` too. It drops `FamilyGroupMember.role`, which the
-  previous release's client names in ordinary projections, in insert column lists
-  **and** in a `WHERE` clause (`role: "ADMIN"`), so the moment migrate commits the
-  old version fails across the whole family surface — including the member profile
-  page. It ships a tested `rollback.sql` and its own ordered sequence at
-  [§2.4.1](#241-2520-drop-familygroupmemberrole).
-- `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) is declared
-  `windowed` because of runtime protocol, not DDL: the old worker can ignore a new
-  token-fenced claim. It ships a no-op `rollback.sql`; old/new worker overlap is
-  forbidden in both deploy and rollback directions. Pending windowed migrations
-  share **one** window.
-- `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
-  `windowed` because the previous runtime can attempt writes rejected by the new
-  trigger and cannot decode that safe refusal. Use [§2.4.3](#243-3271-parentpartner-exclusivity-backstop):
-  stop every old process before the private repair, preserve the quiet-point
-  backup, and do not restart old code until this migration's `rollback.sql` has
-  removed the trigger protocol or the backup has been restored.
-- **`v0.10.0` has one migration in that class too**, declared before the value
-  existed. `20260707000100_backfill_org_age_tier_not_applicable` is
-  `old_code_compatible=no`, and its `lock_impact_plan` states plainly that
-  "old-color reads of the flipped rows … can error between migrate and cutover"
-  (quoted in full at [§2.2](#22-agetier-not_applicable--deploy-in-a-quiet-window)).
+**`v0.10.0` has one migration in that class too**, declared before the value
+existed. `20260707000100_backfill_org_age_tier_not_applicable` is
+`old_code_compatible=no`, and its `lock_impact_plan` states plainly that
+"old-color reads of the flipped rows … can error between migrate and cutover"
+(quoted in full at [§2.2](#22-agetier-not_applicable--deploy-in-a-quiet-window)).
 
 So do **not** check the ledger for a `windowed` row alone: check for a `windowed`
 row **or** any `yes`/`no` row whose `lock_impact_plan` carries an old-code caveat
