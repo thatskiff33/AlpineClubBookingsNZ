@@ -74,7 +74,7 @@ export class ServerNzApiError extends Error {
 
 /**
  * The central server is on a different API version from the one this site was
- * built for, so nothing is transferred (#49, `INV-INT-026`). Thrown by
+ * built for, so nothing is transferred (#49, `INV-INT-027`). Thrown by
  * `resolveConnection` BEFORE any request is built, so no caller can reach the
  * server past it. Carries only the two numbers - never the key or the URL.
  */
@@ -93,7 +93,7 @@ export class ServerNzVersionMismatchError extends Error {
 
 /**
  * The connection every request is built from, and THE ONE PLACE the version
- * gate lives (#49, `INV-INT-026`). Every server-bound function in this module
+ * gate lives (#49, `INV-INT-027`). Every server-bound function in this module
  * calls it, so a caller cannot reach the server past the gate; the only opt-out
  * is `skipVersionGate`, used by `fetchServerVersion` alone, because the version
  * call is how a paused site finds out it may resume.

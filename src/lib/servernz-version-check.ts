@@ -15,7 +15,7 @@ import { getServerNzSetupState } from "@/lib/servernz-config";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 
 /**
- * The version check as a service (#49, `INV-INT-026`): ask the central server,
+ * The version check as a service (#49, `INV-INT-027`): ask the central server,
  * record the answer, and report the computed status. Used by the nightly sync
  * (before its claim), the mirror sync (before its claim), the setup page's
  * version route and - read-only, through `readStoredServerVersion` - the Daily

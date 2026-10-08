@@ -54,7 +54,7 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
     return { status: "skipped", reason: "central-server-not-configured" };
   }
 
-  // THE VERSION CHECK RUNS FIRST (#49, `INV-INT-026`) - before the per-item
+  // THE VERSION CHECK RUNS FIRST (#49, `INV-INT-027`) - before the per-item
   // enable gate, so a club that has the module on and a key stored gets a
   // fresh answer every night whether or not the Other Clubs item is enabled
   // (the message board rides the same version), and BEFORE the single-flight

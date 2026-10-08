@@ -511,7 +511,7 @@ Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 
 ## Alpine Central Server API version (#49)
 
-### INV-INT-026
+### INV-INT-027
 
 Syncing with the Alpine Central Server runs only while the server's API
 version is IDENTICAL to the one this site was built for; otherwise every

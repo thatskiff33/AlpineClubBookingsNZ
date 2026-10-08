@@ -3220,7 +3220,7 @@ club-post-share-retry -> isServerSyncPaused (stored answer, no call)
      -> paused -> shares and withdrawals left pending, no attempt counted
 ```
 
-The pause is computed, never stored (`INV-INT-026`): the row holds only the
+The pause is computed, never stored (`INV-INT-027`): the row holds only the
 server's last answer, so the first run after either side is upgraded records a
 matching answer and resumes with no manual step. A SKIPPED run with reason
 `server-version-mismatch` is therefore the expected state while the two sides
