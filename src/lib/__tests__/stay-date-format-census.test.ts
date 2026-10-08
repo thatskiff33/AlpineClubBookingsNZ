@@ -29,14 +29,31 @@ import { stripComments } from "./support/strip-comments";
  * declaration under the helper's own name, which is how the #3498 reopen card
  * grew its local copy.
  *
- * ## What it does NOT cover
+ * ## Both decoders, and every local spelling of the name (#3511)
  *
- * Only the SERIALISED decoder is matched. The `Date`-form spelling,
- * `formatClubDate(calendarDateOfDateOnlyInstant(x))`, is still written out in
- * about a dozen server-side files, and `formatPayloadCalendarDay` in
- * `admin/_lib/calendar-day.ts` is a sibling helper with its own pinned
- * rejection semantics. Converging those is #3511; widening
- * `DECODER_CALL` before it lands would simply red this suite on main.
+ * #3507 matched only the SERIALISED decoder. The same rule was also written as
+ * `formatClubDate(calendarDateOfDateOnlyInstant(x))` in about a dozen
+ * server-side files, behind seven client-side `formatStayDay` wrappers and a
+ * `formatDateOnly`, and in two shared "payload" helpers
+ * (`formatPayloadCalendarDay`, `formatMemberCalendarDay`) with a stricter
+ * rejection of a time-bearing string. #3511 converged all of them onto
+ * `formatStayDate` / `formatStayDateOrNull` ("converge, keep fallbacks": each
+ * surface keeps its own `?? fallback`; only a malformed offset-less timestamp
+ * changed, and it now reads by its date prefix). `DECODER_CALL` therefore
+ * matches BOTH kernel decoders, and `LOCAL_HELPER_DECLARATION` refuses every
+ * name those copies went by. A `Date` that must be proved a stored day first
+ * (`requireStoredCalendarDay`) goes INTO `formatStayDate`, whose `Instant` arm
+ * takes it.
+ *
+ * The structural rule (#3511 review): `parseCalendarDate` and `requireCalendarDate`
+ * count as decoders too, so a new helper cannot dodge the census by choosing a
+ * new name. There is NO allowlist today; a justified exception would be a named
+ * entry beside `HOME`.
+ *
+ * The one file that legitimately holds a decoder and no formatter is any file
+ * that decodes for a comparison or a value; the one that holds `formatClubDate`
+ * and no decoder is any file formatting a `CalendarDate` reached another way.
+ * Only holding BOTH is refused.
  *
  * ## This suite is unreachable by `vitest related`
  *
@@ -50,10 +67,25 @@ const ROOT = path.resolve(__dirname, "../../..");
 /** The one home. A second file matching either pattern below is the defect. */
 const HOME = "src/lib/club-time/format.ts";
 
-const DECODER_CALL = /\bcalendarDateOfSerialisedDbDate(?:OrNull)?\s*\(/;
+const DECODER_CALL =
+  /\b(?:calendarDateOfSerialisedDbDate(?:OrNull)?|calendarDateOfDateOnlyInstant|parseCalendarDate|requireCalendarDate)\s*\(/;
 const FORMATTER_CALL = /\bformatClubDate\s*\(/;
-const HELPER_DECLARATION =
-  /\b(?:function\s+formatStayDate(?:OrNull)?\s*\(|(?:const|let|var)\s+formatStayDate(?:OrNull)?\s*[=:])/;
+/**
+ * Every name a local copy of the stay-date helper has gone by: the kernel's own
+ * name, the seven client `formatStayDay` wrappers, `formatDateOnly`, and the two
+ * shared payload helpers #3511 retired.
+ */
+const LOCAL_HELPER_NAMES =
+  "formatStayDate(?:OrNull)?|formatStayDay|formatDateOnly|formatPayloadCalendarDay|formatMemberCalendarDay|calendarDayFromPayload";
+const LOCAL_HELPER_DECLARATION = new RegExp(
+  `\\b(?:function\\s+(?:${LOCAL_HELPER_NAMES})\\s*\\(|(?:const|let|var)\\s+(?:${LOCAL_HELPER_NAMES})\\s*[=:])`,
+);
+/**
+ * `src/lib/date-only.ts` exports its own, unrelated `formatDateOnly` — the legacy
+ * compatibility adapter `date-only-encoding-guard.test.ts` tracks until CT-6
+ * retires it. The name is refused everywhere else.
+ */
+const LEGACY_ADAPTER = "src/lib/date-only.ts";
 const HELPER_IMPORT = /\bformatStayDate(?:OrNull)?\b/;
 
 /** True when `source` (comments already stripped) composes the pair itself. */
@@ -63,7 +95,7 @@ export function composesStayDateInline(source: string): boolean {
 
 /** True when `source` declares its own `formatStayDate`-named helper. */
 export function declaresLocalStayDateHelper(source: string): boolean {
-  return HELPER_DECLARATION.test(source);
+  return LOCAL_HELPER_DECLARATION.test(source);
 }
 
 function isProductionSource(rel: string): boolean {
@@ -131,6 +163,43 @@ describe("the scanner recognises what it refuses", () => {
     expect(composesStayDateInline(source)).toBe(false);
   });
 
+  it("counts the Date-form composition too (#3511)", () => {
+    expect(
+      composesStayDateInline("return formatClubDate(calendarDateOfDateOnlyInstant(value), format);"),
+    ).toBe(true);
+    const guarded = [
+      "const day = calendarDateOfDateOnlyInstant(requireStoredCalendarDay(v, opts));",
+      "return formatClubDate(day, format);",
+    ].join("\n");
+    expect(composesStayDateInline(guarded)).toBe(true);
+    expect(composesStayDateInline("countClubNights(a, calendarDateOfDateOnlyInstant(b))")).toBe(false);
+  });
+
+  it("counts the bare-key spellings, whatever the helper is called (#3511 review)", () => {
+    const requireForm = "function anyName(v: string) { return formatClubDate(requireCalendarDate(v), f); }";
+    const parseForm = [
+      "const day = parseCalendarDate(value);",
+      "return day === null ? value : formatClubDate(day, format);",
+    ].join("\n");
+    expect(composesStayDateInline(requireForm)).toBe(true);
+    expect(composesStayDateInline(parseForm)).toBe(true);
+    expect(composesStayDateInline("const d = parseCalendarDate(x); return formatClubDayMonth(d, f);")).toBe(false);
+  });
+
+  it("counts a local helper under any name a copy went by (#3511)", () => {
+    for (const source of [
+      "function formatStayDay(value: string, format: ClubDateFormat) {",
+      "export function formatStayDay(value: string) {",
+      "function formatDateOnly(value: string, format: ClubDateFormat): string {",
+      "export function formatPayloadCalendarDay(value, format, fallback) {",
+      "export const formatMemberCalendarDay = (value: string) => value;",
+      "function calendarDayFromPayload(value: string) {",
+    ]) {
+      expect(declaresLocalStayDateHelper(source), source).toBe(true);
+    }
+    expect(declaresLocalStayDateHelper("{formatStayDay(booking.checkIn)}")).toBe(false);
+  });
+
   it("counts a local helper declared under the kernel's name", () => {
     expect(declaresLocalStayDateHelper("function formatStayDate(value: string) {")).toBe(true);
     expect(declaresLocalStayDateHelper("const formatStayDateOrNull = (v) => v;")).toBe(true);
@@ -170,21 +239,23 @@ describe("INV-SSOT-001: no production file outside the home composes a stay date
     const offenders = files.filter((rel) => rel !== HOME && composesStayDateInline(read(rel)));
     expect(
       offenders,
-      "These files compose `calendarDateOfSerialisedDbDate` with `formatClubDate` " +
-        "themselves. Import `formatStayDate` (or `formatStayDateOrNull` in a client " +
+      "These files compose a stay-date decoder (`calendarDateOfSerialisedDbDate` or " +
+        "`calendarDateOfDateOnlyInstant`) with `formatClubDate` themselves. Import `formatStayDate` (or `formatStayDateOrNull` in a client " +
         "render) from `@/lib/club-time` instead — the one home for the rule, whose " +
-        "docblock carries why (INV-DATE-010; INV-SSOT-001; #3507).",
+        "docblock carries why (INV-DATE-010; INV-SSOT-001; #3507; #3511).",
     ).toEqual([]);
   });
 
   it("refuses a second helper declared under the kernel's name", () => {
     const offenders = files.filter(
-      (rel) => rel !== HOME && declaresLocalStayDateHelper(read(rel)),
+      (rel) => rel !== HOME && rel !== LEGACY_ADAPTER && declaresLocalStayDateHelper(read(rel)),
     );
     expect(
       offenders,
-      "These files declare their own `formatStayDate`. The kernel exports one from " +
-        "`@/lib/club-time`; import it rather than shadowing it (INV-SSOT-001; #3507).",
+      "These files declare their own stay-date helper (`formatStayDate`, `formatStayDay`, " +
+        "`formatDateOnly`, `formatPayloadCalendarDay`, ...). The kernel exports " +
+        "`formatStayDate` / `formatStayDateOrNull` from `@/lib/club-time`; import them and " +
+        "keep the surface's fallback as `?? fallback` (INV-SSOT-001; #3507; #3511).",
     ).toEqual([]);
   });
 });

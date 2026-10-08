@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
-import { cancelAppliedCreditBaseCents } from "@/lib/booking-payment-state";
+import { cancelAppliedCreditBaseCents, cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { calculateAppliedCreditRestore, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { CalendarDate } from "@/lib/club-time";
 
@@ -57,10 +58,13 @@ export async function refundedPaymentCreditRestore(
     todayAtClub: CalendarDate;
   },
 ): Promise<RefundedPaymentCreditRestore | null> {
-  if (booking.payment.creditAppliedCents <= 0) return null;
+  // #3836: a mirror the old inbound sync clipped to the card amount reads the ledger.
+  const creditAppliedCents = cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(bookingId, tx));
+  if (creditAppliedCents <= 0) return null;
   if (!(await bookingReducedThroughCreditGiveBack(bookingId, tx))) return null;
   const appliedCreditBaseCents = cancelAppliedCreditBaseCents({
     ...booking.payment,
+    creditAppliedCents,
     openNonCancellationHandBackCents,
     finalPriceCents: booking.finalPriceCents,
     capAtWorth: true,

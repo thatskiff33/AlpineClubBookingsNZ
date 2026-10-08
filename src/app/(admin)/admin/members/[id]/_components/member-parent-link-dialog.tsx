@@ -1,6 +1,7 @@
 "use client"
 
 import { useId } from "react"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -20,7 +21,6 @@ import {
   MEMBER_SEARCH_TRUNCATED_HINT,
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers"
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { useClubFormat } from "@/components/club-format-provider"
 import { useDependentEmailSource } from "@/hooks/use-dependent-email-source"
 import { DependentNotificationRoutingNotice } from "./dependent-notices"
@@ -252,7 +252,7 @@ export function MemberParentLinkDialog({
                   <p className="mt-1 text-xs text-muted-foreground">{selected.email}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {selected.canLogin ? "Can login" : "Non-login"}
-                    {selected.dateOfBirth ? ` · DOB ${formatPayloadCalendarDay(selected.dateOfBirth, format)}` : ""}
+                    {selected.dateOfBirth ? ` · DOB ${formatStayDateOrNull(selected.dateOfBirth, format) ?? "—"}` : ""}
                   </p>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={onClearSelection} disabled={saving}>
