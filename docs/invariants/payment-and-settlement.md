@@ -1965,18 +1965,23 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   refund** (#3372, owner 7 Oct 2026; 8 Oct: "Keep it together").
   `closeCardRefundPaidAnotherWay` (finance:edit) takes `lock(1)`, then the
   payment row, then claims a dead row to `SUCCEEDED` with a status guard. It
-  records at most what is still owed with `applyLocalRefundAllocation`, on the
-  unsent slices' charges. In the same transaction it writes a COMPLETED
-  hand-back task under `card-refund-paid-another-way:<row>` and its
-  `BANK_REFUND` line (`INV-MONEY-035`). It audits under `payment`. No Stripe
-  call.
-  - **A partial close ends the refund**: the rest stops being owed anywhere.
-  - **Xero**: only a cancellation's card refund queues a note: a bank-transfer
-    refund note for exactly the amount, keyed on the task. Cash evidence counts
-    that close and never another (`readPaidAnotherWayCash`), so the self-heal
-    raises no card note for it.
-  - A superseded intent's row closes whole, only while its charge holds
-    exactly what it owes. An organiser child's row is refused.
+  records the amount with `applyLocalRefundAllocation`, on the unsent slices'
+  charges. In the same transaction it writes a COMPLETED hand-back task under
+  `card-refund-paid-another-way:<row>` and its `BANK_REFUND` line
+  (`INV-MONEY-035`). It audits under `payment`. No Stripe call.
+  - **Full or part, chosen** (8 Oct: "Difference is gone"): `paidBack` "full"
+    is exactly what is owed, "partial" strictly between nil and it; else 400.
+    Never inferred from the amount. The rest is owed nowhere, and a review's
+    netting counts the refund at its full raised amount.
+  - **Xero** (8 Oct: "Raise a refund note for all"): every kind queues a
+    bank-transfer refund note for exactly the amount, keyed on the task, where
+    there is an invoice to credit; a late capture's needs its recorded receipt.
+    The key records a close without one (`:no-xero-note`), and cash evidence
+    counts only noted closes (`readPaidAnotherWayCash`).
+  - A superseded intent's row closes whole, uncapped, never at nil, only while
+    its charge holds exactly what it owes. An organiser child's is refused.
+  - A refund Stripe made before the close but recorded after it stays the
+    closed row's, and is listed as paid twice (`cardRefundSentAfterPaidAnotherWay`).
 
 ## INV-PAY-070
 

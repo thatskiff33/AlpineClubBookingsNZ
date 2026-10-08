@@ -4577,8 +4577,8 @@ and refund appeal reads those two separately to size a refund net of what is
 promised back. Under the key it re-reads the row, refuses a row that is not
 dead (a status the worker would claim, with `attempts >= MAX`), and then takes
 the **Payment row** (`lockPaymentForRefundedTotal`) BEFORE it reads the
-payment (#3924 round 4, C1). Two writers move that payment's refunds without
-`lock(1)`: the `charge.refunded` sync and a hand-back's completion. Both take
+payment (#3924 round 4, C1). Every refunded-total writer without `lock(1)` -
+every Stripe refund recorder, and a cancellation hand-back's completion - takes
 the Payment row first, so the owed figure the close checks the amount against
 cannot change between that read and the allocation. A refund recorded while the
 close waits for the row is read by the close, which then refuses an amount the
@@ -4591,6 +4591,13 @@ commit, so no provider call runs under the key. A double click queues on the
 key and the second reads the row closed; a refund recorded mid-close gives a
 409 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
 `closeCardRefundPaidAnotherWay#1`.
+
+A refund Stripe made before the close - the request whose answer was lost - can
+still be recorded after it, by the `charge.refunded` sync. No lock can stop
+that: the money already left Stripe. It is attributed by when Stripe made it, so
+it stays the closed row's own, never an older open row's same-amount slice, and
+the stuck-states page lists the close as paid twice (#3924 round 5,
+`cardRefundSentAfterPaidAnotherWay`).
 
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 
