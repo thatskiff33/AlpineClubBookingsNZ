@@ -656,6 +656,70 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it.each([
+    {
+      shape: "queued",
+      queueType: "REFUND_CREDIT_NOTE",
+      requestPayload: {
+        queueType: "REFUND_CREDIT_NOTE",
+        refundAmountCents: 3000,
+        watermarkCents: 8000,
+        refundMethod: "internet-banking",
+        noteWording: "cash",
+        reviewTaskId: "task_review",
+      },
+    },
+    {
+      shape: "executed",
+      queueType: null,
+      requestPayload: {
+        creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+        allocation: { invoiceId: "inv_1", amount: 30 },
+        refundMethod: "internet-banking",
+        noteWording: "cash",
+        reviewTaskId: "task_review",
+        watermarkCents: 8000,
+        perDelta: true,
+      },
+    },
+  ])("MUTATION (#3935): a $shape review hand-back row keeps the officer's cash wording on retry, keyed as before", async ({ queueType, requestPayload }) => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({ entityType: "CREDIT_NOTE", localId: "pay_9", queueType, requestPayload })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 8000,
+      refundMethod: "internet-banking",
+      noteWording: "cash",
+      reviewTaskId: "task_review",
+    });
+  });
+
+  it("MUTATION (#3935): a stored cash wording beside a card method is not replayed", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
+          refundMethod: "card",
+          noteWording: "cash",
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote.mock.calls[0]![2]).not.toHaveProperty("noteWording");
+  });
+
   it("re-enters delta mode via the queueType column when the payload was overwritten (#1354)", async () => {
     // Overwritten (Xero-request-shaped) payload with no watermark: the
     // denormalized enqueue-time queueType still marks it as a per-delta op.
