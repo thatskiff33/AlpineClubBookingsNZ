@@ -1,3 +1,4 @@
+import { PaymentSource } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -38,7 +39,7 @@ const feeLine = (dollars: number) => ({ description: CHANGE_FEE_LINE_DESCRIPTION
 
 const unpaid = {
   changeFeeCents: 6_500,
-  source: "STRIPE",
+  source: PaymentSource.STRIPE as PaymentSource,
   status: "PENDING",
   amountCents: 0,
   refundedAmountCents: 0,
@@ -170,7 +171,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     );
     // Only a card capture with a credit-reduced mirror allocates credit there.
     const card = { ...unpaid, status: "SUCCEEDED", amountCents: 8_000, creditAppliedCents: 2_000 };
-    expect(cardAppliedCreditCents({ ...card, source: "INTERNET_BANKING" as never })).toBe(0);
+    expect(cardAppliedCreditCents({ ...card, source: PaymentSource.INTERNET_BANKING })).toBe(0);
     expect(cardAppliedCreditCents({ ...card, status: "PENDING" })).toBe(0);
     expect(cardAppliedCreditCents({ ...card, refundedAmountCents: 8_000 })).toBe(0);
     expect(cardAppliedCreditCents({ ...card, creditAppliedCents: 0 })).toBe(0);
