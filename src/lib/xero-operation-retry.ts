@@ -65,6 +65,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import type { ClubFormat } from "@/lib/club-format";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
+import { findResolvedSiblingSince } from "@/lib/xero-resolved-in-xero-fences";
 
 /**
  * The `@/lib/xero` module namespace, named because an `import()` type written
@@ -224,13 +225,27 @@ async function refuseSubscriptionInvoiceRetryWithNothingToDo(chargeId: string): 
  * resolve landing after the read (#3635, INV-INT-025), and says so through
  * `throwLostRetryClaim`. Applied-credit rows are retry-only and stay outside
  * this helper, with no resolved guard on their claim.
+ *
+ * #3994 review F1: a sibling for the same document (same correlation key) an
+ * officer resolved after this row was queued makes the outbox cancel it unsent
+ * (`findResolvedSiblingSince`), so the retry refuses up front rather than report
+ * a queued retry that will never run. `advice` says what to do instead.
  */
 async function requeueOutboxRowForRetry(
-  operationId: string,
+  operation: Pick<XeroSyncOperation, "id" | "correlationKey" | "entityType" | "operationType" | "createdAt">,
   requestPayload: Record<string, unknown>,
   fromStatuses: Array<"FAILED" | "PARTIAL">,
   label: string,
+  advice = "That document stands for this one: mark this operation resolved too.",
 ): Promise<void> {
+  const operationId = operation.id;
+  const resolvedSibling = await findResolvedSiblingSince(operation);
+  if (resolvedSibling) {
+    throw new XeroOperationRetryError(
+      `An officer resolved another ${label} operation for the same document in Xero (${resolvedSibling.id}) after this one was queued, so a retry would be cancelled unsent. ${advice}`,
+      409,
+    );
+  }
   const queued = await prisma.xeroSyncOperation
     .updateMany({
       where: {
@@ -1317,7 +1332,7 @@ export async function retryXeroSyncOperation(
   const keptLateCapturePayload = keptLateCaptureInvoiceRequeuePayload(operation);
   if (keptLateCapturePayload) {
     await requeueOutboxRowForRetry(
-      operation.id,
+      operation,
       keptLateCapturePayload,
       ["FAILED", "PARTIAL"],
       "kept-payment invoice",
@@ -1328,7 +1343,7 @@ export async function retryXeroSyncOperation(
   const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);
   if (groupSettlementPayload) {
     await requeueOutboxRowForRetry(
-      operation.id,
+      operation,
       groupSettlementPayload,
       ["FAILED"],
       "group settlement invoice",
@@ -1340,7 +1355,13 @@ export async function retryXeroSyncOperation(
   const subscriptionChargeId = subscriptionInvoiceChargeId(operation);
   if (subscriptionInvoicePayload && subscriptionChargeId && operation.status === "FAILED") {
     await refuseSubscriptionInvoiceRetryWithNothingToDo(subscriptionChargeId);
-    await requeueOutboxRowForRetry(operation.id, subscriptionInvoicePayload, ["FAILED"], "membership subscription invoice");
+    await requeueOutboxRowForRetry(
+      operation,
+      subscriptionInvoicePayload,
+      ["FAILED"],
+      "membership subscription invoice",
+      "If the member still needs invoicing, use Retry on the charge in Subscription billing.",
+    );
     return { message: "Queued the membership subscription invoice for retry." };
   }
 

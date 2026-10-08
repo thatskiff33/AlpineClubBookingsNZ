@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   findUniqueOperation: vi.fn(),
   updateManyOperation: vi.fn(),
   findUniqueSubscriptionCharge: vi.fn(),
+  // #3994 F1: the requeue looks for a sibling resolved after the row was queued.
+  findFirstOperation: vi.fn(),
   findUniquePayment: vi.fn(),
   findUniqueMember: vi.fn(),
   updatePayment: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: {
       findUnique: mocks.findUniqueOperation,
       updateMany: mocks.updateManyOperation,
+      findFirst: mocks.findFirstOperation,
     },
     payment: {
       findUnique: mocks.findUniquePayment,
@@ -167,6 +170,7 @@ const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
 describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.findFirstOperation.mockResolvedValue(null);
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
@@ -509,6 +513,7 @@ describe("booking-anchored clearing note retries (#3535)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.findFirstOperation.mockResolvedValue(null);
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
@@ -570,6 +575,7 @@ describe("booking-anchored clearing note retries (#3535)", () => {
 describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.findFirstOperation.mockResolvedValue(null);
     mocks.getAccountMapping.mockResolvedValue("606");
     // Unset by default: a bank-transfer refund note is left unsettled.
     mocks.getResolvedAccountMapping.mockResolvedValue({
@@ -2521,6 +2527,29 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #3994 review F1: the shared requeue refuses every outbox-run kind the same way.
+  it("refuses to requeue a group settlement invoice whose sibling was resolved in Xero after it was queued", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+        correlationKey: "group-settlement:settle_1:invoice:v1",
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      })
+    );
+    mocks.findFirstOperation.mockResolvedValue({
+      id: "op_resolved_sibling",
+      manuallyResolvedAt: new Date("2026-06-10T00:00:00.000Z"),
+    });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("mark this operation resolved too"),
+    });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+  });
+
   it("rebuilds a failed group settlement CREATE's queued payload, which its worker overwrote", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -2680,6 +2709,36 @@ describe("retryXeroSyncOperation", () => {
       await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
         status: 404,
       });
+      expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    });
+
+    // #3994 review F1: the outbox cancels a copy whose sibling an officer
+    // resolved after it was queued, so the retry refuses up front instead of
+    // reporting a queued retry that never runs.
+    it("refuses, before any write, when a sibling for the same charge was resolved in Xero after this row was queued", async () => {
+      const queuedAt = new Date("2026-06-01T00:00:00.000Z");
+      mocks.findUniqueOperation.mockResolvedValue(
+        failedSubscriptionInvoice({ correlationKey: "membership-charge:charge_1:invoice-and-email:v1", createdAt: queuedAt }),
+      );
+      mocks.findUniqueSubscriptionCharge.mockResolvedValue(unInvoicedCharge);
+      mocks.findFirstOperation.mockResolvedValue({
+        id: "op_resolved_sibling",
+        manuallyResolvedAt: new Date("2026-06-10T00:00:00.000Z"),
+      });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringMatching(/op_resolved_sibling[\s\S]*Retry on the charge in Subscription billing/),
+      });
+      expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { not: "op_123" },
+            correlationKey: "membership-charge:charge_1:invoice-and-email:v1",
+            manuallyResolvedAt: { gt: queuedAt },
+          }),
+        }),
+      );
       expect(mocks.updateManyOperation).not.toHaveBeenCalled();
     });
 
