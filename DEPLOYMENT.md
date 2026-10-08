@@ -819,64 +819,15 @@ Check for these before every deploy:
 awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv
 ```
 
-**Current windowed migrations — there are six, and pending rows share ONE
-window.** `prisma migrate deploy` applies them in the same command, so the
-sequence below is run once, not once per migration.
-
-- `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561). It
-  drops `MembershipLockoutSettings.enabled`. The previous release's Prisma client
-  names that column on every read of the model, and the booking gates resolve the
-  club's subscription-lockout policy through that read — so between migrate and
-  cutover the old colour cannot take a booking at all.
-- `20260803030000_contract_drop_family_group_member_role` (#2520). It drops
-  `FamilyGroupMember.role`. The previous release's client names that column in
-  ordinary projections, in the column list of every insert (a static
-  `@default("MEMBER")` is materialised client-side), and in a `WHERE` clause —
-  `role: "ADMIN"`, the one-step partner declaration read that the member profile
-  page renders. So the old colour fails across the whole family surface: member
-  profile, admin family groups, onboarding, family join/invite/removal, member
-  merge, Xero member import and nomination. The owner authorised this one as a
-  windowed drop on 3 Aug 2026, superseding an earlier plan that would have carried
-  the obsolete column through another release.
-- `20260806010000_fence_hosting_coverage_delivery_claims` (#2596). Its nullable
-  columns are harmless to the previous Prisma client, but its worker protocol is
-  not: an old hosting worker ignores the token/expiry fields and can take, email and
-  complete work that a new worker already owns. The old web colour and **every** old
-  worker must therefore be stopped before migrate, and only new workers may start.
-- `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
-  additive pair-state table and triggers reject a direct-parent/partner overlap
-  that the previous runtime can still attempt, and that runtime does not decode
-  the new database error. Stop every old runtime and database-capable worker before
-  the authorized private deployment lane's repair and keep them stopped through
-  the repeat zero-conflict census, migration, verification, and
-  replacement-runtime start. Follow the
-  issue-specific sequence in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.3; no member
-  identifiers or repair SQL belong in this public repository.
-
-- `20260928020000_booking_owner_optional_member` and
-  `20260928030000_backfill_school_bookings_to_organisations` (#3369, stage 4 of
-  programme #2912). **These two are ONE window and are never applied apart.**
-  The first only changes the shape — it makes the booking's member link
-  optional, adds two partial unique indexes and creates the empty table the
-  classification is recorded in — and on its own the previous release survives
-  it. The second is what the previous release cannot survive: it moves every
-  school's booking onto the school's `Organisation` and leaves `memberId` NULL
-  on it, and the previous client reads that column as required, so the old
-  colour errors on the first school booking it touches. Between the two the
-  database would also accept a booking nobody owns, because the CHECK constraint
-  that makes "exactly one owner" true is added by the second.
-
-  **The backfill REFUSES unless the classification is complete**, and that is a
-  precondition of the window rather than a step inside it. Run
-  `pnpm run db:school-classification-census` against the club's database before
-  the window opens; every row it lists as CANNOT TELL must be decided by a person
-  and recorded, or the migration raises
-  `school_member_classification_incomplete` and writes nothing at all. The
-  operator guide is
-  [`guides/school-organisation-cutover.md`](docs/guides/school-organisation-cutover.md).
-
-There is no ordering that keeps both runtime protocols working, which is why the
-window exists.
+**The ledger is the list; this guide does not keep a copy.** The `awk` line
+above names every windowed migration, and
+[`docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4](docs/PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence)
+is the one per-migration list: what each one breaks in the previous release,
+its preconditions, its `rollback.sql` and the order the reverse scripts run in.
+**Pending windowed migrations share ONE window**: `prisma migrate deploy`
+applies them in the same command, so the sequence below is run once, not once
+per migration. For each of them there is no ordering that keeps the previous
+release working, which is why the window exists.
 
 **The sequence, in order. Each step is there because the next one cannot be
 undone without it.** This is the combined order — the one the owner directed for
