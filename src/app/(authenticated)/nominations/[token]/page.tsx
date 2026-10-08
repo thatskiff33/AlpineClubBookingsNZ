@@ -7,40 +7,17 @@ import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
 import { prisma } from "@/lib/prisma";
-import { formatClubDate, parseCalendarDate, type ClubDateFormat } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDateOrNull } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { NominationConfirmCard } from "@/components/nomination-confirm-card";
 import { CLUB_NAME } from "@/config/club-identity";
 
-/**
- * A dependent's date of birth, rendered as the CALENDAR DAY it is (CT-4, #2870).
- *
- * A date of birth takes no zone: 21 March 1974 is 21 March 1974 in every zone on
- * earth. The pre-CT-4 spelling pushed it through `APP_TIME_ZONE`, which cancels
- * only because New Zealand sits east of Greenwich.
- *
- * `parseCalendarDate` WITH A RAW-VALUE FALLBACK, NOT `requireCalendarDate`, and
- * the reason is a measured defect rather than a preference. The first version of
- * this migration justified the throwing form by saying the value "has already
- * passed `isoDateSchema`" — but that schema is
- * `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)` (`src/lib/nomination.ts`), a SHAPE
- * check and nothing more, and the UNAUTHENTICATED `/api/applications` POST
- * validates the same field with the same bare regex. So `1990-02-31`,
- * `1990-13-01` and `1990-00-00` are all accepted on the way in and stored.
- * `requireCalendarDate` refuses them — correctly, since they name no real day —
- * and throws out of an async server component. There is no `error.tsx` under
- * `(authenticated)`, so `src/app/error.tsx` replaces the whole page: the
- * nominating member can no longer confirm OR decline, and no admin action clears
- * it. Echoing the stored text shows them something and loses nothing.
- *
- * Tightening the two write paths is the other half of this and is deliberately
- * NOT done here: it is a different surface with its own question about rows
- * already stored. Reading a value must not be able to take a page down whatever
- * was written.
- */
+// A dependent's date of birth is a calendar day, formatted by the kernel's one
+// stay-date helper (#3511). A stored value naming no real day is echoed rather
+// than thrown on: a throw out of this server component replaces the whole page
+// and the nominating member could no longer confirm or decline.
 function formatDependentDateOfBirth(value: string, format: ClubDateFormat): string {
-  const day = parseCalendarDate(value);
-  return day === null ? value : formatClubDate(day, format);
+  return formatStayDateOrNull(value, format) ?? value;
 }
 
 function statusLabel(status: string) {

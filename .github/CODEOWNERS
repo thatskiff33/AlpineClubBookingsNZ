@@ -13,7 +13,7 @@
 # pattern must match a tracked file — `codeowners-census.test.ts` fails on one
 # that matches nothing.
 
-# Money movement — AGENTS.md requires explicit owner approval before merge.
+# Money movement — review routing only; merging follows the AGENTS.md merge gate (#3959).
 /src/lib/payment-*.ts                          @thatskiff33
 /src/lib/*settlement*.ts                       @thatskiff33
 /src/lib/booking-modification-*.ts             @thatskiff33
@@ -96,7 +96,8 @@
 # The dependency-audit security gate (#3843, third owner decision). A mitigation
 # record is a few lines of JSON that turn the required `Dependency audit` check
 # green as MITIGATED, so adding or re-sealing one, changing a patch, or changing
-# the code that judges them needs the owner's Approve. `pnpm-workspace.yaml` is
+# the code that judges them needs the owner's approval comment (the Approve this
+# file once added was retired 7 Oct 2026, #3959). `pnpm-workspace.yaml` is
 # deliberately NOT owned, so ordinary dependency bumps are unaffected.
 /dependency-mitigations.d/**                   @thatskiff33
 /patches/**                                    @thatskiff33
