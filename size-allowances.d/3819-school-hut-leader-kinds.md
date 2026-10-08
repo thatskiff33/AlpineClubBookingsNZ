@@ -1,7 +1,7 @@
 # File-size allowances for #3819
 
 file: src/app/(admin)/admin/lodges/[id]/page.tsx
-lines: 646
+lines: 651
 reason: the hub renders the new "Who can be hut leader for school bookings"
   card and vouches for it with the page's one view-only banner (#2168), whose
   wording now names the setting. The card, its state and its fetches live in
