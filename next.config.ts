@@ -79,6 +79,10 @@ const nextConfig: NextConfig = {
    * `flushToDisk`. Turning the disk half off makes the real behaviour the
    * configured one. Mounting a tmpfs over `server/app` was the alternative and is
    * not available: it would hide the compiled route modules that ship there.
+   * next@16.3.8 keys a runtime store to its owning route and moves it to
+   * `<distDir>/server/route-cache/…` — still on the read-only root, still not
+   * under `.next/cache`, so the reasoning is unchanged
+   * (`src/lib/__tests__/isr-page-cache-behaviour.test.ts` re-checks it).
    *
    * The memory store is better suited to this design in two ways beyond that:
    *  • it is bounded by an LRU rather than by free space, so the enumeration risk

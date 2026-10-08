@@ -150,6 +150,30 @@ describe("subscription invoice delivery behavior", () => {
     expect(mocks.complete).toHaveBeenLastCalledWith("op-2", expect.objectContaining({ xeroObjectId: "invoice-1" }));
   });
 
+  // #3971: a FAILED row retried from Xero Operations can be claimed after
+  // another attempt for the same charge already invoiced and emailed it.
+  it("does nothing for a charge already invoiced and emailed, and records the invoice on the row", async () => {
+    mocks.chargeFind.mockResolvedValue(charge({
+      status: "EMAILED",
+      xeroInvoiceId: "invoice-1",
+      xeroInvoiceNumber: "INV-1",
+      emailSentAt: new Date("2026-06-20T00:00:00.000Z"),
+    }));
+
+    await expect(
+      createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-3" }),
+    ).resolves.toBe("invoice-1");
+
+    expect(mocks.getInvoices).not.toHaveBeenCalled();
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(mocks.complete).toHaveBeenCalledWith("op-3", expect.objectContaining({
+      responsePayload: { skipped: true, reason: "ALREADY_EMAILED" },
+      xeroObjectId: "invoice-1",
+    }));
+  });
+
   it("adopts and emails an exact AUTHORISED invoice", async () => {
     mocks.chargeFind.mockResolvedValue(charge());
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });

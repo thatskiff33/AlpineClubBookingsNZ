@@ -190,6 +190,8 @@ from multi-period profit-and-loss and balance-sheet report pulls; see
 
 Booking-derived finance metrics come from AlpineClubBookingsNZ `Booking`, `BookingGuest`, and `Payment`.
 
+No Finance figure counts a soft-deleted booking (`deletedAt` set), whatever its status (#3745), and the legacy dashboard export (`/api/finance/legacy-dashboard/bookings`) does not list one. The booking reads ask `buildBookingDeletedWhere("hide")`, Reports' default view. Net collected cash applies its own scope inside `summarizeCollectedCash` (`isInNetCollectedBookingScope`), which asks the same rule through `isBookingShownIn("hide", ...)` beside that helper.
+
 ### Realized Stay Metrics
 
 Use for historical guest nights, average nightly revenue, and realized occupancy.
@@ -240,7 +242,8 @@ Do not infer guest counts from external system summaries if AlpineClubBookingsNZ
 - Booking revenue uses AlpineClubBookingsNZ stored amounts for operational booking-facing totals.
 - When booking revenue is exposed at nightly granularity, allocate `Booking.finalPriceCents` evenly across stay nights from `checkIn` inclusive to `checkOut` exclusive.
 - Financial statement revenue uses snapshots synced from the operational Xero connection.
-- Payment-derived cash summaries come from AlpineClubBookingsNZ `Payment` rows and must remain distinct from booking-derived revenue metrics.
+- Payment-derived cash summaries come from AlpineClubBookingsNZ `Payment` rows and must remain distinct from booking-derived revenue metrics. Net Collected is the one exception to "`Payment` rows only": on a cancelled booking it also reads the booking's account-credit rows (`MemberCredit`, for the applied credit the cancellation kept) and its open hand-back tasks (`ManualRefundTask`, for a refund still owed by hand).
+- Net collected cash does not use the realized or forward status lists above. It counts the payments of every booking whose stay falls in the window, whatever its status, and leaves soft-deleted bookings out, through `summarizeCollectedCash` — the same rule as the admin dashboard, the Payments page and Reports (#3637, epic #3372 decision A). A cancelled booking counts only what the club kept of what was paid on it: money not refunded, credited or owed back on an open hand-back task, plus applied account credit it kept. One cancelled before anything was paid adds nothing, and so does a never-paid Internet Banking payment the Xero reconcile marked partly refunded (a refunded status needs capture evidence, `paymentShowsCaptureEvidence`). Each payment is netted on its own (`getNetCollectedPaymentParts`), so no refund comes off another booking's money.
 - Any page combining booking-derived and Xero-derived metrics must state which source owns each number.
 
 ## Costs Reporting Contract

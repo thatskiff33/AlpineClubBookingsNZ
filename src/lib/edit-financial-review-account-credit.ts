@@ -30,6 +30,7 @@ import {
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { dispatchEditReviewAccountCreditXero } from "@/lib/edit-financial-review-xero-leg";
 import { createBookingModificationCredit, giveBackAppliedCredit } from "@/lib/member-credit";
+import { cancellationCreditRestoreWhere } from "@/lib/member-credit-booking-rows";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 
 /**
@@ -377,10 +378,21 @@ async function creditSliceStillOwedAfterCancellation({
   clubZone: ClubTimeZone;
   store: Prisma.TransactionClient;
 }): Promise<{ sliceCents: number; owedCents: number }> {
-  const restore = await store.memberCredit.findUnique({
-    where: { restoredFromBookingId: bookingId },
+  // The one restore test (`isCancellationCreditRestoreRow`), as a query: a
+  // restore written before 8 Jul 2026 (#1636) carries no marker and must still
+  // be netted, or its slice would be handed back a second time. Before the
+  // marker's unique key a cancellation could restore twice; which of two rows
+  // the tier wrote cannot be told, so two refuse with the task left OPEN.
+  const restores = await store.memberCredit.findMany({
+    where: cancellationCreditRestoreWhere(bookingId),
     select: { amountCents: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+    take: 2,
   });
+  if (restores.length > 1) {
+    throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
+  }
+  const restore = restores[0] ?? null;
   const restoredCents = restore?.amountCents ?? 0;
   if (restore === null || restoredCents <= 0) {
     const sliceCents = Math.max(0, Math.min(shareCents, appliedNowCents));
