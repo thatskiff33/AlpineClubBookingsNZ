@@ -20,6 +20,7 @@ import {
   deleteIntegrationCredential,
   getIntegrationCredentialValue,
   providerNeedsReentry,
+  readIntegrationCredentialRow,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
 import type {
@@ -43,10 +44,11 @@ export const STRIPE_WRITABLE_CREDENTIAL_KEYS = [
 ] as const;
 
 /**
- * Non-secret marker key recording that a Stripe TEST-MODE webhook event was
- * received AND signature-verified through the exact production resolver/HMAC
- * path. Stored in the same encrypted store (its value is an ISO timestamp — not
- * secret) so verify-reset and the needs-reentry aggregate treat it uniformly.
+ * Non-secret marker key recording that a Stripe webhook event, live or test
+ * (#3975), was received AND signature-verified through the exact production
+ * resolver/HMAC path, under the signing secret still stored. Stored in the
+ * same encrypted store (its value is an ISO timestamp — not secret) so
+ * verify-reset and the needs-reentry aggregate treat it uniformly.
  * It is NEVER in the credential write allowlist — only the webhook route writes
  * it, and it is dropped by verify-reset whenever any Stripe credential changes.
  */
@@ -137,12 +139,12 @@ async function readWebhookMarkerFreshness(): Promise<{
 }
 
 /**
- * Record that a Stripe TEST-MODE webhook event verified. Best-effort: a weak
- * auth secret (WeakAuthSecretError) or any store error must NEVER break webhook
- * processing, so this swallows failures.
+ * Record that a signature-verified Stripe webhook event (live or test, #3975)
+ * arrived. Best-effort: a weak auth secret (WeakAuthSecretError) or any store
+ * error must NEVER break webhook processing, so this swallows failures.
  *
  * IT WRITES ONLY WHEN THE ANSWER WOULD CHANGE (#2723). The webhook route calls
- * this on EVERY signature-verified test-mode event, before idempotency handling,
+ * this on EVERY signature-verified event, before idempotency handling,
  * so a replay or a retry storm arrives here many times over. Since #2723 every
  * credential mutation mints a `security`/`important` audit row, which is kept
  * for seven years — and a row per delivery of a freshness timestamp buries the
@@ -155,13 +157,43 @@ async function readWebhookMarkerFreshness(): Promise<{
  * "re-stamped on every event since". Verify-reset deletes the marker on any
  * credential write, so the next event after a swap re-stamps it — exactly one
  * audit row per genuine verification, instead of one per delivery.
+ *
+ * IT ATTESTS ONLY TO THE SECRET THE EVENT WAS VERIFIED WITH (#3975 review).
+ * `verifiedWith` is the signing secret the route checked the HMAC against. An
+ * event verified under the old secret can reach the write after an
+ * administrator has saved a new one and verify-reset has cleared the marker;
+ * stamping it then would make the marker newer than the new secret and turn
+ * the badge green for a secret no event has proved. So on the write path —
+ * about once per secret, never on the fresh path — the stored secret is
+ * re-read straight from the database (the per-process cache can hold the old
+ * value for its whole TTL in a container that did not make the save) both
+ * before and after the write:
+ *
+ *  - before: the write is skipped unless the stored secret still equals
+ *    `verifiedWith`;
+ *  - after: if it no longer does, the marker just written is cleared again.
+ *
+ * Together they close the window whenever both reads complete. The admin save
+ * commits the new secret and
+ * THEN clears the marker. If our marker write commits after that clear, the
+ * new secret was already committed, so the after-read sees it and we clear our
+ * own marker; if it commits before the clear, verify-reset removes it. If the
+ * request fails after the stamp but before the after-read settles, the catch
+ * makes one best-effort clear, so a stamp that cannot be re-checked is taken
+ * back rather than left vouching (an event under the right secret re-stamps
+ * it). Only a process killed in that gap can leave it, until the next Stripe
+ * credential write. The secret is compared in memory only: never logged,
+ * persisted or returned.
  */
 export async function recordStripeWebhookVerified(
+  verifiedWith: string,
   when: Date = new Date(),
 ): Promise<void> {
+  let stamped = false;
   try {
     const { markerAt, secretAt } = await readWebhookMarkerFreshness();
     if (markerIsFresh(markerAt, secretAt)) return;
+    if (!(await storedWebhookSecretIs(verifiedWith))) return;
     await setIntegrationCredential({
       provider: STRIPE_PROVIDER,
       key: STRIPE_WEBHOOK_VERIFIED_KEY,
@@ -170,17 +202,45 @@ export async function recordStripeWebhookVerified(
       // Latest-wins by design, and this is the marker's only writer (#2723).
       expect: { expect: "any" },
     });
+    stamped = true;
+    if (!(await storedWebhookSecretIs(verifiedWith))) {
+      await clearStripeWebhookVerified({
+        kind: "system",
+        actor: "stripe-webhook-verify",
+      });
+    }
   } catch {
-    // Never let marker persistence affect the webhook response.
+    // Never let marker persistence affect the webhook response. A stamp that
+    // could not be re-checked is taken back, best-effort.
+    if (stamped) {
+      await clearStripeWebhookVerified({
+        kind: "system",
+        actor: "stripe-webhook-verify",
+      }).catch(() => undefined);
+    }
   }
+}
+
+/**
+ * Whether the signing secret stored right now, read past the per-process
+ * cache, is `secret`. A missing or undecryptable secret is not.
+ */
+async function storedWebhookSecretIs(secret: string): Promise<boolean> {
+  const current = await readIntegrationCredentialRow(
+    prisma,
+    STRIPE_PROVIDER,
+    STRIPE_CREDENTIAL_KEYS.webhookSecret,
+  );
+  return current.status === "configured" && current.value === secret;
 }
 
 /**
  * Drop the webhook-verified marker (verify-reset on any Stripe credential write).
  *
  * THE ACTOR IS THE CALLER'S, and required — see `clearGoogleVerified` for the
- * reasoning. The one caller is the admin credential-write route, and this clear
- * is part of that administrator's action, not a background job's.
+ * reasoning. The admin credential-write route's clear is that administrator's
+ * action, not a background job's; `recordStripeWebhookVerified` also calls it,
+ * as its own writer, to take back a marker that raced a secret swap (#3975).
  */
 export async function clearStripeWebhookVerified(
   actor: CredentialActor,
@@ -207,10 +267,10 @@ export interface StripeSetupState {
   /** Any stored Stripe credential fails to decrypt (the auth secret changed). */
   needsReentry: boolean;
   /**
-   * A webhook test event verified AND the marker is fresh — i.e. it was recorded
-   * at or after the current webhook secret was last written. A signing-secret
-   * swap makes the secret newer than the marker, so the badge drops to amber
-   * even before verify-reset physically removes the marker.
+   * A signature-verified webhook event arrived AND the marker is fresh — i.e.
+   * it was recorded at or after the current webhook secret was last written.
+   * A signing-secret swap makes the secret newer than the marker, so the badge
+   * drops to amber even before verify-reset physically removes the marker.
    */
   webhookVerified: boolean;
 }

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskFindUnique: vi.fn(),
   manualRefundTaskUpdateMany: vi.fn(),
   memberCreditFindUnique: vi.fn(),
+  memberCreditFindMany: vi.fn(),
   // #3191: the guest strand the per-night repair reads and writes, on the same
   // transaction as the claim.
   bookingGuestFindUnique: vi.fn(),
@@ -278,6 +279,8 @@ const tx = {
   // the same transaction, before the claim.
   memberCredit: {
     findUnique: (...a: unknown[]) => mocks.memberCreditFindUnique(...a),
+    // #3372: the cancellation-restore query (`cancellationCreditRestoreWhere`).
+    findMany: (...a: unknown[]) => mocks.memberCreditFindMany(...a),
     aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
   },
   // #3191: the strand whose blank nights a settle may fill in.
@@ -485,6 +488,7 @@ beforeEach(() => {
   mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
   // The anchor is free unless a test says otherwise.
   mocks.memberCreditFindUnique.mockResolvedValue(null);
+  mocks.memberCreditFindMany.mockResolvedValue([]);
   // #3032 card-route defaults: plenty of captured headroom, one slice, and a
   // refund that issues. Every case that cares overrides one of these.
   mocks.planStripeRefundAllocation.mockResolvedValue({
@@ -1096,8 +1100,8 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         status: "CANCELLED", finalPriceCents: 20_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
       });
       mocks.bookingEventFindFirst.mockResolvedValue({ snapshot: { ledger: { appliedCreditCents: 20_000 } } });
-      mocks.memberCreditFindUnique.mockImplementation(async (args: { where: Record<string, unknown> }) =>
-        args.where.restoredFromBookingId ? { amountCents: 8_000, createdAt: new Date("2026-07-01T00:00:00.000Z") } : null,
+      mocks.memberCreditFindMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        args.where.OR ? [{ amountCents: 8_000, createdAt: new Date("2026-07-01T00:00:00.000Z") }] : [],
       );
       vi.mocked(loadCancellationPolicy).mockResolvedValueOnce([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }]);
 
@@ -1179,8 +1183,8 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         status: "CANCELLED", finalPriceCents: 24_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
       });
       // The cancellation's restore row, in full.
-      mocks.memberCreditFindUnique.mockImplementation(async (args: { where: Record<string, unknown> }) =>
-        args.where.restoredFromBookingId ? { amountCents: 24_000, createdAt: new Date("2026-07-01T00:00:00.000Z") } : null,
+      mocks.memberCreditFindMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        args.where.OR ? [{ amountCents: 24_000, createdAt: new Date("2026-07-01T00:00:00.000Z") }] : [],
       );
       mocks.bookingEventFindFirst.mockResolvedValue({ snapshot: { ledger: { appliedCreditCents: 24_000 } } });
 
@@ -1200,8 +1204,8 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       mocks.bookingFindUniqueOrThrow.mockResolvedValue({
         status: "CANCELLED", finalPriceCents: 20_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
       });
-      mocks.memberCreditFindUnique.mockImplementation(async (args: { where: Record<string, unknown> }) =>
-        args.where.restoredFromBookingId ? { amountCents: 8_000, createdAt: new Date("2026-07-01T00:00:00.000Z") } : null,
+      mocks.memberCreditFindMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        args.where.OR ? [{ amountCents: 8_000, createdAt: new Date("2026-07-01T00:00:00.000Z") }] : [],
       );
       mocks.bookingEventFindFirst.mockResolvedValue({ snapshot: { ledger: { appliedCreditCents: 20_000 } } });
       vi.mocked(loadCancellationPolicy).mockResolvedValueOnce([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }]);
@@ -4746,6 +4750,59 @@ describe("#3880 - a review's refund on a cancelled booking reaches Xero as the c
     });
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: #3935 - the officer's 'In cash' answer words the cancelled booking's refund note as cash, and moves nothing else", async () => {
+    // `INV-PAY-116`: words only. The same payment, amount, method, task key and
+    // in-transaction store as the bank-transfer note above; only `noteWording`.
+    cancelledTask(PaymentSource.INTERNET_BANKING);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Handed back in cash at the lodge.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 5_000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+      handedBackInCash: true,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2_500, {
+      createdByMemberId: "admin-1",
+      refundMethod: "internet-banking",
+      noteWording: "cash",
+      reviewTaskId: "task-1",
+      store: tx,
+    });
+    invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: #3935 - a card refund on a cancelled booking is never worded as cash, whatever the request sends", async () => {
+    cancelledTask(PaymentSource.STRIPE);
+    cancelledAt(8_000, "card");
+    fiftyLessTwenty();
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Settled.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 5_000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+      handedBackInCash: true,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment-1",
+      2_500,
+      expect.objectContaining({ refundMethod: "card", reviewTaskId: "task-1" }),
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.calls[0]![2]).not.toHaveProperty("noteWording");
   });
 
   it("MUTATION: the bank-transfer hand-back's note is queued INSIDE the completion, after its allocation - and the kick waits for the commit", async () => {

@@ -2877,6 +2877,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // who closed the panel without reading the banner still has this.
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
+    refundReturnedToOrganiser: result.organiserChildRefund !== null,
     refundByBankTransfer: editRefundGoesBackByHand(result),
     lodgeId: result.booking.lodgeId,
   }, format).catch((err) =>

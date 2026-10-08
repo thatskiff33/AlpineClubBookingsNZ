@@ -18,7 +18,7 @@ import { formatCents } from "@/lib/utils"
 // timezone. The formatter they used to go through projected them into the
 // environment's zone, which for a club behind UTC names the night before the
 // member actually arrived. `INV-DATE-019`.
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import type { MemberDetail } from "../_types"
 import { useClubFormat } from "@/components/club-format-provider"
 
@@ -45,8 +45,8 @@ function BookingHistoryTable({
       <TableBody>
         {bookings.map((booking) => (
           <TableRow key={booking.id}>
-            <TableCell>{formatPayloadCalendarDay(booking.checkIn, format)}</TableCell>
-            <TableCell>{formatPayloadCalendarDay(booking.checkOut, format)}</TableCell>
+            <TableCell>{formatStayDateOrNull(booking.checkIn, format) ?? "—"}</TableCell>
+            <TableCell>{formatStayDateOrNull(booking.checkOut, format) ?? "—"}</TableCell>
             <TableCell>
               <Badge
                 variant="secondary"

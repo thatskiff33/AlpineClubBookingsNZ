@@ -21,6 +21,7 @@
  */
 import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
+import { appliedCreditSettledByCancel, unallocatedAppliedCreditCentsByBooking } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
 import { lockMemberCreditLedger } from "./member-credit";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
@@ -47,7 +48,6 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
-import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import {
   assertNoAppliedCreditDeallocationFence,
@@ -59,111 +59,14 @@ const APPLIED_CREDIT_REMAINDER_NOTE_ROLE = "APPLIED_CREDIT_REMAINDER_NOTE";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
 
-// ---------------------------------------------------------------------------
-// Pure allocation planner (unit-tested)
-// ---------------------------------------------------------------------------
-
-export interface AppliedCreditLot {
-  memberCreditId: string;
-  /** The lot's floating Xero note, or null for a noteless lot (admin adjustment
-   * or #1547-restored credit) that must be covered by a freshly minted note. */
-  xeroCreditNoteId: string | null;
-  /**
-   * The ledger row's own credit type. REQUIRED (#2717): it is what decides
-   * which Xero mapping a MINTED slice of this lot posts to, and "noteless"
-   * does not answer that — an admin adjustment and #1547-restored cancellation
-   * credit are both noteless and are opposite accounting events. Making it a
-   * required field rather than an optional hint is deliberate: a caller that
-   * forgets it cannot compile, so a new lot loader cannot silently book a
-   * member's own refunded money as a discretionary club expense.
-   */
-  creditType: CreditType;
-  /** lot.amountCents − Σ already-allocated slices (>= 0). */
-  remainingCents: number;
-}
-
-export interface PlannedNoteAllocation {
-  memberCreditId: string;
-  xeroCreditNoteId: string;
-  amountCents: number;
-}
-
-export interface PlannedMintSlice {
-  memberCreditId: string;
-  /** Carried from the lot — see `AppliedCreditLot.creditType` (#2717). */
-  creditType: CreditType;
-  amountCents: number;
-}
-
-export interface AppliedCreditPlan {
-  /** Existing floating notes to allocate against the invoice. */
-  noteAllocations: PlannedNoteAllocation[];
-  /** Noteless lots to cover with a single freshly minted note. */
-  mintSlices: PlannedMintSlice[];
-  /** Σ mintSlices — the amount of the fresh note to mint (0 when none). */
-  mintTotalCents: number;
-  /** Total planned; always equals appliedCents for a well-formed ledger. */
-  coveredCents: number;
-}
-
-/**
- * Decide which credit lots fund `appliedCents`, oldest-first. Conservation is
- * independent of lot order (owner/advisor: lot order is neutral); oldest-first is
- * a deterministic default. Throws if the lots cannot cover the applied amount —
- * that can only happen on a corrupted ledger, since applied credit never exceeds
- * the balance at apply-time and allocations never exceed prior applications.
- */
-export function planAppliedCreditAllocation(
-  lots: AppliedCreditLot[],
-  appliedCents: number,
-  format: ClubFormat,
-): AppliedCreditPlan {
-  const noteAllocations: PlannedNoteAllocation[] = [];
-  const mintSlices: PlannedMintSlice[] = [];
-  let outstanding = appliedCents;
-
-  for (const lot of lots) {
-    if (outstanding <= 0) {
-      break;
-    }
-    const slice = Math.min(lot.remainingCents, outstanding);
-    if (slice <= 0) {
-      continue;
-    }
-    if (lot.xeroCreditNoteId) {
-      noteAllocations.push({
-        memberCreditId: lot.memberCreditId,
-        xeroCreditNoteId: lot.xeroCreditNoteId,
-        amountCents: slice,
-      });
-    } else {
-      mintSlices.push({
-        memberCreditId: lot.memberCreditId,
-        creditType: lot.creditType,
-        amountCents: slice,
-      });
-    }
-    outstanding -= slice;
-  }
-
-  if (outstanding > 0) {
-    throw new Error(
-      `Applied credit ${formatCents(appliedCents, format)} exceeds available credit-lot remaining by ${formatCents(outstanding, format)} — member-credit ledger inconsistency`,
-    );
-  }
-
-  const mintTotalCents = mintSlices.reduce((sum, m) => sum + m.amountCents, 0);
-  return {
-    noteAllocations,
-    mintSlices,
-    mintTotalCents,
-    coveredCents: appliedCents - outstanding,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Ledger reads
-// ---------------------------------------------------------------------------
+export {
+  planAppliedCreditAllocation,
+  type AppliedCreditLot,
+  type AppliedCreditPlan,
+  type PlannedMintSlice,
+  type PlannedNoteAllocation,
+} from "./xero-applied-credit-plan";
+import { planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
 
 /**
  * Gather the member's positive credit lots (oldest-first) with each lot's
@@ -230,15 +133,16 @@ async function unallocatedAppliedCents(
   bookingId: string,
   db: Prisma.TransactionClient | typeof prisma,
 ): Promise<number> {
-  const agg = await db.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-      xeroCreditNoteId: null,
-    },
-    _sum: { amountCents: true },
+  return (await unallocatedAppliedCreditCentsByBooking([bookingId], db)).get(bookingId) ?? 0;
+}
+
+/** The remainder note this payment already minted, if any. */
+async function existingRemainderNoteId(paymentId: string): Promise<string | null> {
+  const link = await prisma.xeroObjectLink.findFirst({
+    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", role: APPLIED_CREDIT_REMAINDER_NOTE_ROLE, active: true },
+    select: { xeroObjectId: true },
   });
-  return Math.max(0, -(agg._sum.amountCents ?? 0));
+  return link?.xeroObjectId ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +376,15 @@ export async function allocateAppliedCreditForBooking(
     await completeSkip(syncOperationId, "No unallocated applied credit.");
     return;
   }
+  const settledSkipReason =
+    "The booking was cancelled with nothing captured: its invoice is cleared by a note sized net of the allocations already committed, so nothing new is allocated (#3836).";
+  if (
+    (await appliedCreditSettledByCancel(bookingId, prisma)) &&
+    (await prisma.memberCreditNoteAllocation.count({ where: { appliedToBookingId: bookingId } })) === 0
+  ) {
+    await completeSkip(syncOperationId, settledSkipReason);
+    return;
+  }
 
   if (!payment.xeroInvoiceId) {
     // Invoice not raised yet — retry (the booking-invoice op is enqueued first
@@ -503,6 +416,27 @@ export async function allocateAppliedCreditForBooking(
     if (lockedApplied === 0) {
       return null; // a concurrent run already stamped it
     }
+    if (await appliedCreditSettledByCancel(bookingId, tx)) {
+      // #3836 (H1): finish only the slices already committed - the ones the
+      // cancel's clearing sizing subtracted - and never plan or mint new ones.
+      const committed = await tx.memberCreditNoteAllocation.findMany({
+        where: { appliedToBookingId: bookingId },
+        select: { memberCreditId: true, xeroCreditNoteId: true, amountCents: true },
+      });
+      const remainderNoteId = await existingRemainderNoteId(payment.id);
+      const remainderCents = committed
+        .filter((row) => row.xeroCreditNoteId === remainderNoteId)
+        .reduce((sum, row) => sum + row.amountCents, 0);
+      return {
+        settled: true as const,
+        remainderNoteId: remainderCents > 0 ? remainderNoteId : null,
+        remainderCents,
+        noteAllocations: committed.filter((row) => row.xeroCreditNoteId !== remainderNoteId),
+        mintSlices: [],
+        mintTotalCents: 0,
+        coveredCents: 0,
+      };
+    }
     const lots = await gatherAppliedCreditLots(creditOwnerMemberId, bookingId, tx);
     const planned = planAppliedCreditAllocation(lots, lockedApplied, format);
     for (const na of planned.noteAllocations) {
@@ -522,11 +456,15 @@ export async function allocateAppliedCreditForBooking(
         update: {},
       });
     }
-    return planned;
+    return { ...planned, settled: false as const, remainderNoteId: null, remainderCents: 0 };
   });
 
   if (!plan) {
     await completeSkip(syncOperationId, "Applied credit already allocated.");
+    return;
+  }
+  if (plan.settled && plan.noteAllocations.length === 0 && !plan.remainderNoteId) {
+    await completeSkip(syncOperationId, settledSkipReason);
     return;
   }
 
@@ -572,8 +510,44 @@ export async function allocateAppliedCreditForBooking(
   }
 
   // 3) Mint + allocate the noteless (admin / restored) remainder, if any.
-  let remainderNoteId: string | null = null;
-  if (plan.mintTotalCents > 0) {
+  // The remainder note's one allocation, idempotent on its completion link.
+  const allocateRemainderOnce = async (noteId: string, cents: number) => {
+    const remainderAllocated = await prisma.xeroObjectLink.findFirst({
+      where: {
+        localModel: "Payment",
+        localId: payment.id,
+        xeroObjectType: "ALLOCATION",
+        role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
+        active: true,
+      },
+      select: { id: true },
+    });
+    if (remainderAllocated) return;
+    await allocateCreditNoteToInvoice(noteId, invoiceId, cents, {
+      localModel: "Payment",
+      localId: payment.id,
+      role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
+      createdByMemberId,
+      appliedCreditContext: {
+        parentOperationId: syncOperationId ?? null,
+        bookingId,
+        paymentId: payment.id,
+      },
+    });
+  };
+  let remainderNoteId: string | null = plan.remainderNoteId;
+  // #3836 (H1): re-asked just before the mint - a cancel that landed after the
+  // plan settled the credit, and a mint now would credit the invoice twice.
+  const mintStillDue =
+    plan.mintTotalCents > 0 &&
+    !(await prisma.$transaction(async (tx) => {
+      await lockMemberCreditLedger(creditOwnerMemberId, tx);
+      return appliedCreditSettledByCancel(bookingId, tx);
+    }));
+  if (plan.settled && plan.remainderNoteId) {
+    await allocateRemainderOnce(plan.remainderNoteId, plan.remainderCents);
+  }
+  if (mintStillDue) {
     remainderNoteId = await mintAppliedCreditRemainderNote({
       bookingId,
       memberId: creditOwnerMemberId,
@@ -615,29 +589,7 @@ export async function allocateAppliedCreditForBooking(
       }
     });
 
-    const remainderAllocated = await prisma.xeroObjectLink.findFirst({
-      where: {
-        localModel: "Payment",
-        localId: payment.id,
-        xeroObjectType: "ALLOCATION",
-        role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
-        active: true,
-      },
-      select: { id: true },
-    });
-    if (!remainderAllocated) {
-      await allocateCreditNoteToInvoice(mintedNoteId, invoiceId, plan.mintTotalCents, {
-        localModel: "Payment",
-        localId: payment.id,
-        role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
-        createdByMemberId,
-        appliedCreditContext: {
-          parentOperationId: syncOperationId ?? null,
-          bookingId,
-          paymentId: payment.id,
-        },
-      });
-    }
+    await allocateRemainderOnce(mintedNoteId, plan.mintTotalCents);
   }
 
   // 4) STAMP LAST — only now that the FULL applied amount is covered by allocated
@@ -651,9 +603,11 @@ export async function allocateAppliedCreditForBooking(
   // which Xero rejects LOUDLY (the #1597 loud-over-allocation class); this op's
   // retry finishes the remaining allocations and then stamps. The @@unique join
   // key + per-row completion links make that retry idempotent.
+  // A cancel-settled booking is never stamped (#3836): the cancel restored its
+  // credit, and only the slices it had already counted were finished.
   const representativeNoteId =
     plan.noteAllocations[0]?.xeroCreditNoteId ?? remainderNoteId;
-  if (representativeNoteId) {
+  if (representativeNoteId && !plan.settled && (plan.mintTotalCents === 0 || mintStillDue)) {
     await prisma.$transaction(async (tx) => {
       const creditLedgerMemberId = creditOwnerMemberId;
       // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
@@ -680,9 +634,10 @@ export async function allocateAppliedCreditForBooking(
       invoiceId,
       appliedCents,
       noteAllocations: plan.noteAllocations.length,
-      mintedRemainderCents: plan.mintTotalCents,
+      mintedRemainderCents: mintStillDue ? plan.mintTotalCents : 0,
+      settledByCancel: plan.settled,
     },
-    "Allocated existing applied credit against Internet-Banking invoice (#1620)",
+    "Allocated applied credit against the booking invoice (#1620, #1641, #3836)",
   );
 
   if (syncOperationId) {
@@ -692,7 +647,9 @@ export async function allocateAppliedCreditForBooking(
         invoiceId,
         appliedCents,
         allocatedNotes: plan.noteAllocations.length,
-        mintedRemainderCents: plan.mintTotalCents,
+        mintedRemainderCents: mintStillDue ? plan.mintTotalCents : 0,
+        // #3836: a cancel settled the credit; only committed slices were finished.
+        settledByCancel: plan.settled || (plan.mintTotalCents > 0 && !mintStillDue),
       },
     });
   }

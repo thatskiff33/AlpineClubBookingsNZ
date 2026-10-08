@@ -1,6 +1,7 @@
 "use client"
 
 import { useSession } from "next-auth/react"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Badge } from "@/components/ui/badge"
@@ -12,7 +13,6 @@ import { MoneyInput } from "@/components/ui/money-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatAdminName } from "@/lib/admin-member-detail-helpers"
 import { useClubTime } from "@/components/club-time-provider"
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import { formatCents, formatSignedCents } from "@/lib/utils"
 import { useClubFormat } from "@/components/club-format-provider"
@@ -269,13 +269,13 @@ export function MemberCreditCard({
                       <TableCell className="text-sm">
                         {item.sourceBooking ? (
                           <span className="text-info-11">
-                            {formatPayloadCalendarDay(item.sourceBooking.checkIn, format)} -{" "}
-                            {formatPayloadCalendarDay(item.sourceBooking.checkOut, format)}
+                            {formatStayDateOrNull(item.sourceBooking.checkIn, format) ?? "—"} -{" "}
+                            {formatStayDateOrNull(item.sourceBooking.checkOut, format) ?? "—"}
                           </span>
                         ) : item.appliedToBooking ? (
                           <span className="text-cat1-11">
-                            {formatPayloadCalendarDay(item.appliedToBooking.checkIn, format)} -{" "}
-                            {formatPayloadCalendarDay(item.appliedToBooking.checkOut, format)}
+                            {formatStayDateOrNull(item.appliedToBooking.checkIn, format) ?? "—"} -{" "}
+                            {formatStayDateOrNull(item.appliedToBooking.checkOut, format) ?? "—"}
                           </span>
                         ) : (
                           "-"

@@ -40,7 +40,7 @@ export interface StripeWizardContext {
   accountName: string | null;
   /** A stored Stripe credential no longer decrypts (auth secret changed). */
   needsReentry: boolean;
-  /** A fresh TEST-MODE webhook event verified under the current signing secret. */
+  /** A Stripe event, live or test (#3975), verified under the current signing secret. */
   webhookVerified: boolean;
 }
 

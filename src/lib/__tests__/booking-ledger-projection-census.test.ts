@@ -181,6 +181,8 @@ function row(overrides: Partial<BookingLedgerCensusRow> & { lines: CensusLedgerL
     modifications: [],
     recoveryOperations: [],
     cancellation: null,
+    groupSettlement: null,
+    groupChild: null,
     ...overrides,
   };
 }
@@ -285,7 +287,7 @@ function cashCancelled(task: "OPEN" | "COMPLETED" | "DISMISSED"): BookingLedgerC
     lines: ledger.lines,
     booking: { ...base.booking, status: "CANCELLED" },
     payment: payment({ source: "INTERNET_BANKING", refundedAmountCents: task === "COMPLETED" ? 9_500 : 0 }),
-    tasks: [{ id: "task-hb", kind: "CANCELLED_BOOKING_HAND_BACK", status: task, amountCents: 9_500, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-hb", kind: "CANCELLED_BOOKING_HAND_BACK", status: task, amountCents: 9_500, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     cancellation: { refundMethod: "manual", settledAmountCents: 9_500, keptCents: 9_500 },
   };
 }
@@ -306,7 +308,16 @@ function cardCancelled(plannedCents: number, refunded: boolean): BookingLedgerCe
     transactions: [txn("t1", 19_000, { refundedAmountCents: refunded ? plannedCents : 0 })],
     payment: payment({ refundedAmountCents: refunded ? plannedCents : 0 }),
     recoveryOperations: [
-      { type: "REFUND_BOOKING_MODIFICATION", status: refunded ? "SUCCEEDED" : "PENDING", amountCents: plannedCents, idempotencyKey: buildBookingCancellationRefundIdempotencyKey(B) },
+      {
+        type: "REFUND_BOOKING_MODIFICATION",
+        status: refunded ? "SUCCEEDED" : "PENDING",
+        attempts: refunded ? 1 : 0,
+        nextRetryAt: refunded ? null : LATER,
+        amountCents: plannedCents,
+        idempotencyKey: buildBookingCancellationRefundIdempotencyKey(B),
+        paymentId: "pay-3583",
+        paymentIntentId: "pi-3583",
+      },
     ],
     cancellation: { refundMethod: "card", settledAmountCents: 9_500, keptCents: 9_500 },
     lines: [],
@@ -419,7 +430,7 @@ describe("the parts of an identity a plain booking does not exercise", () => {
       lines: ledger.lines,
       booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 16_000 },
       transactions: [txn("t1", 19_000)],
-      tasks: [{ id: "task-standin", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 3_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+      tasks: [{ id: "task-standin", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 3_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     });
     expect(identity(subject, "PRICE")).toMatchObject({ status: "AGREE", columnCents: 16_000, ledgerCents: 16_000 });
     expect(evaluateBookingLedgerIdentities(subject).integrity).toEqual([]);
@@ -533,7 +544,7 @@ describe("the review's two gate escapes are closed (fix round of #3583)", () => 
     const ledger = new Ledger();
     ledger.lines = [...(subject.lines as Line[])];
     ledger.post([planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: "task-x", amountCents: 1_000, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })]);
-    const rogue = { ...subject, lines: ledger.lines, tasks: [{ id: "task-x", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 1_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }] };
+    const rogue = { ...subject, lines: ledger.lines, tasks: [{ id: "task-x", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 1_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }] };
     expect(identity(rogue, "REFUNDED").status).toBe("AGREE");
     expect(identity(rogue, "OWED")).toMatchObject({ status: "DISAGREE", deltaCents: -1_000 });
   });
@@ -555,6 +566,23 @@ function retriedRefundUnposted(): BookingLedgerCensusRow {
 
 const groupChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">>) =>
   row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 }, ...overrides });
+
+/**
+ * A $190 child its organiser settled by card before #3854, with no line and no
+ * money of its own, and the snapshot's group evidence: the lines the back-post
+ * would post agree, so it is `GROUP_SETTLEMENT_OFF_LEDGER` (#3854 F1).
+ */
+const offLedgerChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">> = {}) =>
+  groupChild({
+    groupSettlement: { id: "gs-3583", source: "STRIPE", status: "SUCCEEDED", amountCents: 19_000, stripePaymentIntentId: "pi-group", refundPlan: null, refundRecoveryInFlight: false },
+    groupChild: {
+      pricing: { id: B, lodgeId: LODGE, totalPriceCents: 20_000, promoAdjustmentCents: -1_000, guests: GUESTS },
+      siblings: [{ id: B, lodgeId: LODGE, payment: { amountCents: 19_000, status: "SUCCEEDED", source: "STRIPE" } }],
+      cancelledWithoutSnapshot: false,
+      snapshotKept: null,
+    },
+    ...overrides,
+  });
 
 describe("the second review's gate escapes are closed (fix round 2 of #3583)", () => {
   it("H1: a failed refund with no line of its own explains nothing, and the retry's missing line is UNPOSTED_SETTLEMENT", () => {
@@ -670,7 +698,7 @@ describe("the second review's gate escapes are closed (fix round 2 of #3583)", (
 
 describe("#3791's review closures: a line is judged by what the member was credited (#3583)", () => {
   const TASK = "task-3791";
-  const task = { id: TASK, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null };
+  const task = { id: TASK, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: null };
   const giveBack = (cents: number, id = "c-give") => credit(id, "BOOKING_APPLIED", cents, { sourceBookingId: B });
   const share = (cents: number, key?: string) => ({
     ...planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: TASK, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" }),
@@ -728,7 +756,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 
   it("#3835 (#3907): on a captured payment the task's own refund - its card debt or its hand-back - makes the stand-in with any give-back, and only that bears out a smaller hand-back", () => {
-    const debt = (cents: number, taskId = TASK) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const debt = (cents: number, taskId = TASK) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const handBack = (cents: number, taskId = TASK) =>
       planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, amountCents: cents, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" });
     const captured = (lineCents: number, { debts = [] as ReturnType<typeof debt>[], handBacks = [] as number[], rows = [] as BookingLedgerCensusRow["credits"] }) =>
@@ -827,7 +855,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 
   it("#3913 G1: a task that refunded the capture never mints, so an edit's unrelated share credit does not stand in for its missing give-back", () => {
-    const debt = (cents: number) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(TASK) });
+    const debt = (cents: number) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(TASK), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const editCredit = (cents: number) => credit("c-edit", "BOOKING_MODIFICATION_REFUND", cents);
     const cancelledBooking = { id: B, status: "CANCELLED" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 };
     // Card: a $25 stand-in, $15 to the card, the $10 give-back missing, a $10 edit credit beside it.
@@ -860,7 +888,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   it("#3913 G2: where siblings are each made alone but not together, the one line without which the rest are made is named alone; where more could be wrong, every line drawing on a row is", () => {
     const standIn = (taskId: string, cents: number) =>
       planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" });
-    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const cancelledBooking = { id: B, status: "CANCELLED" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 };
     // A: $50, $20 handed back and $30 given back. B and C: $10 each, and only
     // one $10 give-back left for them. Removing B or C makes the rest, so more
@@ -907,7 +935,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 
   it("#3913 F2: stand-ins the rows could make another way at the same total fail closed as AMBIGUOUS_REVIEW_GIVE_BACK, swapped or not; one task's, or one way's, stays exact", () => {
-    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const sibling = { ...task, id: "task-sibling", amountCents: 2_500 };
     const siblingLine = (cents: number) =>
       planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: sibling.id, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" });
@@ -1053,7 +1081,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
 describe("AMBIGUOUS_REVIEW_GIVE_BACK: a live booking whose give-back rows no task can be told from fails closed (#3583 delta review)", () => {
   const K = "task-k";
   const completed = (id: string, amountCents: number) =>
-    ({ id, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null });
+    ({ id, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: null });
   const dismissed = (id: string) => ({ ...completed(id, 0), status: "DISMISSED" as const, amountCents: null, settlementDirection: null });
   const giveBack = (id: string, cents: number) => credit(id, "BOOKING_APPLIED", cents, { sourceBookingId: B });
   const giveBackLine = (taskId: string, cents: number) => ({
@@ -1269,7 +1297,7 @@ function v3(): BookingLedgerCensusRow {
     ...base,
     lines: ledger.lines,
     payment: payment({ refundedAmountCents: 19_000 }),
-    tasks: [{ id: "task-v3", kind: "DELETED_BOOKING_LATE_CAPTURE", status: "COMPLETED", amountCents: 19_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-v3", kind: "DELETED_BOOKING_LATE_CAPTURE", status: "COMPLETED", amountCents: 19_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
   };
 }
 
@@ -1295,7 +1323,7 @@ function retainedShare(collected: boolean): BookingLedgerCensusRow {
     ...subject,
     lines: ledger.lines,
     transactions,
-    tasks: [{ id: "task-share", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 2_500, settlementDirection: "CHARGE_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-share", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 2_500, settlementDirection: "CHARGE_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     payment: payment({ amountCents: collected ? 21_500 : 19_000, additionalAmountCents: 2_500, additionalPaymentStatus: collected ? "SUCCEEDED" : "PENDING" }),
   };
 }
@@ -1319,7 +1347,7 @@ function defect3791(restoredCents = 20_000): BookingLedgerCensusRow {
     booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 20_000 },
     payment: payment({ amountCents: 0, creditAppliedCents: 20_000 }),
     credits: all,
-    tasks: [{ id: "task-3791", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: null, lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-3791", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     cancellation: { refundMethod: "credit", settledAmountCents: restoredCents, keptCents },
   });
 }
@@ -1385,7 +1413,8 @@ describe("every named class lands in its class; a cent either way, or its eviden
       "PRICE",
       () => cardCancelled(9_500, false),
       (s, by) => bumpLine(s, "CANCELLATION_FEE", by),
-      (s) => ({ ...s, recoveryOperations: s.recoveryOperations.map((op) => ({ ...op, status: "FAILED" as const })) }),
+      // Exhausted: FAILED with no retry scheduled (K1), so nothing is in flight.
+      (s) => ({ ...s, recoveryOperations: s.recoveryOperations.map((op) => ({ ...op, status: "FAILED" as const, attempts: 5, nextRetryAt: null })) }),
     ],
     [
       "V5_PLANNED_REFUND_SHORT",
@@ -1460,9 +1489,11 @@ describe("every named class lands in its class; a cent either way, or its eviden
   });
 
   it("GROUP_SETTLEMENT_OFF_LEDGER is a booking-level class, and a child with a transaction of its own is a coverage gap instead", () => {
-    const child = row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } });
+    const child = offLedgerChild();
     expect(evaluateBookingLedgerIdentities(child)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
     expect(evaluateBookingLedgerIdentities({ ...child, transactions: [txn("t1", 19_000)] })).toMatchObject({ bookingClass: null, coverage: ["NO_LINES"] });
+    // #3854 F1: without the evidence to plan its lines, the shape alone exempts nothing.
+    expect(evaluateBookingLedgerIdentities({ ...child, groupChild: null })).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"] });
   });
 });
 
@@ -1743,11 +1774,15 @@ describe("the verdict", () => {
 
   it("the owner's two decisions on #3583 (both A) are the policy: KNOWN_DEFECT_HISTORY holds, GROUP_SETTLEMENT_OFF_LEDGER is listed only", () => {
     expect(BOOKING_LEDGER_CENSUS_GATE_POLICY).toEqual({ knownDefectHistoryHoldsGate: true, groupSettlementOffLedgerHoldsGate: false });
-    const child = row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } });
-    const summary = report([child]);
+    const summary = report([offLedgerChild()]);
     expect(summary.classes.GROUP_SETTLEMENT_OFF_LEDGER).toMatchObject({ gateRule: "OPEN", holdsGate: false, bookings: 1, unacknowledged: 0 });
     expect(summary.unacknowledgedClassInstances).toBe(0);
     expect(summary.verdict).toBe("GATE_OPEN");
+    // A child its planned lines would not explain is a gap, which holds whatever is acknowledged (#3854 F1).
+    const unpostable = report([offLedgerChild({ payment: payment({ amountCents: 18_999 }) })]);
+    expect(unpostable.classes.GROUP_SETTLEMENT_OFF_LEDGER.bookings).toBe(0);
+    expect(unpostable.verdict).toBe("GATE_CLOSED");
+    expect(unpostable.gateClosedBecause).toEqual(["1 booking(s) with coverage gap GROUP_SETTLEMENT_UNPOSTABLE"]);
   });
 
   it("reports per identity applicable, agree, disagree, classified and coverage counts, and the #1620 line with each booking", () => {
@@ -1888,7 +1923,7 @@ describe("an open edit refund hand-back on a cancelled internet-banking booking 
     const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents: 7_000, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
     if (cancel.kind !== "lines") throw new Error("cancel plan refused");
     ledger.post(cancel.postings, LATER);
-    const handBack = { kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "OPEN" as const, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null };
+    const handBack = { kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "OPEN" as const, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null };
     return {
       ...base,
       lines: ledger.lines,

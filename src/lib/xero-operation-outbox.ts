@@ -36,8 +36,10 @@ import {
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import {
   readModificationNoteWording,
+  readRefundNoteWording,
   type CashRefundMethod,
   type ModificationNoteWording,
+  type RefundNoteWording,
 } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
@@ -48,6 +50,7 @@ import {
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
+import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
@@ -73,6 +76,7 @@ import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
+  subscriptionInvoiceChargeId,
   supplementaryInvoiceBilledCents,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -628,17 +632,8 @@ export async function enqueueXeroAppliedCreditAllocationOperation(
     };
   }
 
-  // Unallocated applied credit = BOOKING_APPLIED rows not yet stamped with an
-  // allocated Xero note (the ledger-truth predicate the handler also uses).
-  const appliedAgg = await prisma.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: "BOOKING_APPLIED",
-      xeroCreditNoteId: null,
-    },
-    _sum: { amountCents: true },
-  });
-  const appliedCents = Math.max(0, -(appliedAgg._sum.amountCents ?? 0));
+  // Unallocated applied credit: the engine's own predicate (#3836, one form).
+  const appliedCents = (await unallocatedAppliedCreditCentsByBooking([bookingId])).get(bookingId) ?? 0;
   if (appliedCents === 0) {
     return {
       queueOperationId: null,
@@ -785,18 +780,26 @@ export async function enqueueXeroBookingInvoiceUpdateOperation(
   };
 }
 
+/**
+ * How the money went back (`INV-PAY-101`, #3529), from the caller that made
+ * the settlement decision. Omitted, the executor reads the payment's source:
+ * Stripe money can only have left through Stripe.
+ *
+ * #3935 (`INV-PAY-116`): the officer's "In cash" answer on a review's
+ * hand-back words the note too - words only, never in the key or the
+ * settlement - and is representable only beside the internet-banking method,
+ * so a card note can never be asked to say it.
+ */
+type RefundMethodAndNoteWording =
+  | { refundMethod: "internet-banking"; noteWording?: RefundNoteWording }
+  | { refundMethod?: CashRefundMethod; noteWording?: undefined };
+
 export async function enqueueXeroRefundCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: {
+  options?: RefundMethodAndNoteWording & {
     createdByMemberId?: string;
     store?: Prisma.TransactionClient;
-    /**
-     * How the money went back (`INV-PAY-101`, #3529), from the caller that
-     * made the settlement decision. Omitted, the executor reads the payment's
-     * source: Stripe money can only have left through Stripe.
-     */
-    refundMethod?: CashRefundMethod;
     /**
      * #3635 round-3 R4: the late capture this note answers, recorded on the
      * note so its refunds are noted once per capture
@@ -1006,6 +1009,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
       refundAmountCents: noteAmountCents,
       watermarkCents,
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
+      // Normalised at write time too (a cast or untyped caller): cash wording
+      // is stored only with the internet-banking method (`readRefundNoteWording`).
+      ...(readRefundNoteWording(options) ? { noteWording: "cash" as const } : {}),
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
       ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
@@ -2928,6 +2934,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     const entranceFeeContext = payload
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
+    const subscriptionChargeId = subscriptionInvoiceChargeId(queuedOperation);
 
     try {
       if (
@@ -2973,11 +2980,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
             { syncOperationId: queuedOperation.id }
           );
         }
-      } else if (
-        payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
-      ) {
-        await createXeroMembershipSubscriptionInvoice({
-          chargeId: payload.chargeId,
+      } else if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
+        await createXeroMembershipSubscriptionInvoice({ // INV-INT-026
+          chargeId: subscriptionChargeId,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
@@ -2995,6 +3000,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(payload.refundMethod && payload.refundMethod !== "account-credit"
               ? { refundMethod: payload.refundMethod }
               : {}),
+            ...(payload.noteWording ? { noteWording: payload.noteWording } : {}),
             ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
             // #3827 (D-3813-8): a refund request's own note (`refund-request-credit-note.ts`).
@@ -3221,23 +3227,23 @@ export async function processQueuedXeroOutboxOperations(options?: {
           "Xero cooldown refused an outbox operation but the row was not in a returnable state; failing it"
         );
       }
-      if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
+      if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
-          where: { id: payload.chargeId },
+          where: { id: subscriptionChargeId },
           select: { xeroInvoiceId: true, status: true },
         }).catch(() => null);
         // #2147: never resurrect a VOIDED charge (its invoice was voided and its
         // coverage released) back to a retryable QUEUED/EMAIL_FAILED state.
         if (currentCharge && currentCharge.status !== "VOIDED") {
           await prisma.membershipSubscriptionCharge.update({
-            where: { id: payload.chargeId },
+            where: { id: subscriptionChargeId },
             data: {
               status: currentCharge.xeroInvoiceId ? "EMAIL_FAILED" : "QUEUED",
               lastErrorCode: currentCharge.xeroInvoiceId ? "EMAIL_FAILED" : "XERO_FAILED",
               lastErrorMessage: error instanceof Error ? error.message : String(error),
             },
           }).catch((chargeError) => {
-            logger.error({ err: chargeError, chargeId: payload.chargeId }, "Failed to expose subscription charge outbox error");
+            logger.error({ err: chargeError, chargeId: subscriptionChargeId }, "Failed to expose subscription charge outbox error");
           });
         }
       }

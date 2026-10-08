@@ -39,6 +39,9 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // #3548: a completed refund-note row whose note has neither its settling
   // payment nor a skip on record, or is part-settled. Never auto-applied.
   "REFUND_CREDIT_NOTE_UNSETTLED",
+  // #3836: a credit-only card booking's invoice with its applied credit never
+  // allocated (raised before #3836). Queues the one allocation engine.
+  "UNALLOCATED_APPLIED_CREDIT",
 ] as const;
 
 export type XeroBookingRepairFindingCode =
@@ -63,6 +66,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
   // #3548: operator-applied only (`--apply-action`), through the one settle.
   "SETTLE_REFUND_CREDIT_NOTE",
+  // #3836: the applied-credit allocation operation, as booking creation queues it.
+  "QUEUE_APPLIED_CREDIT_ALLOCATION",
   "MARK_MANUAL_REVIEW",
 ] as const;
 
@@ -515,6 +520,12 @@ export interface BookingClassificationContext {
    * cancelled-open-invoice arm sizes its note by INV-PAY-017.
    */
   xeroAllocatedAppliedCreditCents: number;
+  /**
+   * #3836: the booking's applied credit not yet allocated against its invoice
+   * - its `BOOKING_APPLIED` rows with no Xero note stamped, the engine's own
+   * predicate (`unallocatedAppliedCents`).
+   */
+  unallocatedAppliedCreditCents: number;
   /**
    * #3187 fix round: the edits whose additional PaymentIntent mint FAILED and
    * is still owed by the recovery replay (PENDING or PROCESSING).

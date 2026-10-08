@@ -755,6 +755,43 @@ describe("createXeroInvoiceForBooking", () => {
       expect(mocks.xeroClientInstance.accountingApi.createInvoices).not.toHaveBeenCalled();
       expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledTimes(2);
     });
+
+    describe("#3836 a booking paid entirely by credit", () => {
+      const creditOnly = { amountCents: 0, creditAppliedCents: 10000, stripePaymentIntentId: null };
+
+      it("allocates the applied credit against the full-price invoice, recording no cash", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking(creditOnly));
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+        expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+        expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith("booking_1", expect.anything());
+      });
+
+      it.each([
+        { shape: "replayed after the invoice exists", overrides: { xeroInvoiceId: "inv_1", xeroInvoiceNumber: "INV-1" } },
+        { shape: "flipped to FAILED by the never-captured cancel", overrides: { status: "FAILED" } },
+      ])("allocates when $shape", async ({ overrides }) => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking({ ...creditOnly, ...overrides }));
+
+        await createXeroInvoiceForBooking("booking_1");
+
+        expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        { shape: "a card refunded whole (net 0)", overrides: { status: "REFUNDED", amountCents: 7000, refundedAmountCents: 7000 } },
+        { shape: "a card capture not yet captured", overrides: { status: "PENDING" } },
+        { shape: "a $0 booking with no credit applied", overrides: { amountCents: 0, creditAppliedCents: 0 } },
+        { shape: "an Internet-Banking $0 row", overrides: { ...creditOnly, source: "INTERNET_BANKING" } },
+      ])("still does NOT allocate for $shape", async ({ overrides }) => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking(overrides));
+
+        await createXeroInvoiceForBooking("booking_1");
+
+        expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
+      });
+    });
   });
 
   it("skips Xero payment creation when the booking invoice total is zero", async () => {
@@ -2961,6 +2998,63 @@ describe("createXeroInvoiceForBooking", () => {
       expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith(
         "booking_1",
         expect.anything()
+      );
+    });
+
+    // #3637: the capture decision now asks `isCapturedPaymentStatus` instead
+    // of this module's own copy of the list. Every Payment status, with net
+    // cash and applied credit on the row, pins both decisions the list makes
+    // here - record the invoice payment, allocate the applied credit - and the
+    // payment's amount, reference and idempotency key, so the swap is
+    // behaviour-identical.
+    it.each([
+      ["SUCCEEDED", true],
+      ["PARTIALLY_REFUNDED", true],
+      ["REFUNDED", true],
+      ["PENDING", false],
+      ["PROCESSING", false],
+      ["FAILED", false],
+    ])("%s: records the payment and allocates credit = %s", async (status, captured) => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        repayBooking({
+          status,
+          amountCents: 7000,
+          refundedAmountCents: 0,
+          creditAppliedCents: 2000,
+        })
+      );
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_repay"
+      );
+
+      const createPayment = mocks.xeroClientInstance.accountingApi.createPayment;
+      if (captured) {
+        expect(createPayment).toHaveBeenCalledTimes(1);
+        const [, xeroPayment, idempotencyKey] = createPayment.mock.calls[0];
+        expect(xeroPayment).toMatchObject({
+          invoice: { invoiceID: "inv_repay" },
+          amount: 70,
+          reference: "Stripe pi_repay",
+        });
+        expect(idempotencyKey).toBe("payment:pay_1:invoice-payment:v1");
+        expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith(
+          "booking_1",
+          expect.anything()
+        );
+      } else {
+        expect(createPayment).not.toHaveBeenCalled();
+        expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
+      }
+      // A status that never captured is not a "skipped" payment either.
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_1",
+        expect.objectContaining({
+          responsePayload: expect.objectContaining({
+            paymentSkipped: false,
+            paymentSkipReason: null,
+          }),
+        })
       );
     });
   });

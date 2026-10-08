@@ -68,6 +68,12 @@ import "./edit-financial-review-races.realdb.test";
 // removal takes the member's credit-ledger key before any Payment row lock.
 // Its describe stays skipped unless the shared race flag is set.
 import "./credit-paid-reduction.realdb.test";
+// #3836 reuses it to prove a card booking paid entirely by credit has its credit
+// allocated against its invoice by the one engine, through the invoice
+// operation's replay and the repair pass, then deallocated by #3809's reduction
+// and left consistent by the cancel, on a fake Xero switched on only inside its
+// own describe. Its describe stays skipped unless the shared race flag is set.
+import "./credit-only-card-allocation.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real
@@ -250,6 +256,19 @@ import "./organiser-child-refund.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-3750-` fixtures.
 import "./booking-change-request-execution.realdb.test";
+// #3854 reuses it to prove a group organiser's settlement posts its children's
+// money to the booking ledger through the real card settle, the Internet Banking
+// invoice's inbound reconcile, the organiser cancel's refund plan and #3653's
+// per-child refunds, with each child's owed(b) zero and a replay posting nothing.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-3854-` fixtures.
+import "./booking-ledger-group-settlement.realdb.test";
+// #3971 reuses it to prove the membership subscription invoice retry: a row
+// stored before the fix comes back PENDING as its bare queue type, two retries
+// requeue it once, and the real active-correlation-key index refuses it while
+// another attempt for the charge is live. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3971-` fixtures.
+import "./xero-subscription-invoice-retry.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

@@ -8,7 +8,7 @@ fee rule, its call guard and the officer's decision handling live in new modules
 decision points they change are added to the two files below.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2888
+lines: 2889
 reason: the finished-stay mode changes four decisions inside the one
   transaction - the edit-policy window, the capacity confirm, the change fee and
   refund tier day (including a swap's same-day fee on the removed portion,
@@ -62,7 +62,7 @@ reason: its capture-amount check reads the booking's worth from the one home,
   email quotes the worth (#3955 review F5, F7, F8).
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1582
+lines: 1584
 reason: the primary invoice bills the recorded change fee beside the promo
   lines it already builds, saves its link with what it billed and the fee
   recorded then and hands any gap to xero-primary-invoice-fee-gap.ts, re-runs
@@ -76,7 +76,7 @@ steps and the edit lifecycle. Each file below gains only the one-home call at
 the decision it already makes, and the line that loads the fee it reads.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2351
+lines: 2353
 reason: the date edit's credit clamp and zero-dollar decision read the
   booking's worth and amount owed, not the bare price (#3955 review F1).
 
@@ -91,12 +91,12 @@ reason: the saved-card charge, its payment row, its attempt and its alerts
   are sized at the booking's worth through one local helper (#3955 review F2).
 
 file: src/lib/finance-booking-metrics.ts
-lines: 1322
+lines: 1321
 reason: a change fee counts as income only once its payment is captured
   (#3955 review F9).
 
 file: src/lib/group-settlement.ts
-lines: 1663
+lines: 1666
 reason: the organiser's total and each child's settled payment read the
   child's worth; the children are loaded with the fee their worth needs
   (#3955 review F3).

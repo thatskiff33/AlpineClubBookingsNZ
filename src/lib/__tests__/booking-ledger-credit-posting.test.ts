@@ -9,6 +9,7 @@ import { planCreditLines, planHandBackLine, type BookingCreditRow } from "@/lib/
 
 const base = { bookingId: "b1", lodgeId: "l1" };
 const row = (over: Partial<BookingCreditRow> & Pick<BookingCreditRow, "id" | "type" | "amountCents">): BookingCreditRow => ({
+  description: null,
   restoredFromBookingId: null,
   ...over,
 });
@@ -82,6 +83,26 @@ describe("planCreditLines", () => {
     expect(restore).toMatchObject({ kind: "CREDIT_ISSUED", sign: -1, unitCents: 2_000, anchorKind: "CANCELLATION", anchorId: "b1" });
     expect(restore?.reversesLineId).toBeUndefined();
     expect(postings.every((p) => p.reversesLineId == null)).toBe(true);
+  });
+
+  it("posts a restore written before the marker existed (8 Jul 2026) as a restore, told apart by the one test", () => {
+    // #1636 added `restoredFromBookingId` with no backfill; an older restore is
+    // recognised by its type and its writer's description. Other credit minted
+    // on the cancellation, and the restore text on another type, are not.
+    const { postings } = planCreditLines({
+      ...base,
+      credits: [
+        row({ id: "r0", type: "CANCELLATION_REFUND", amountCents: 1_500, description: "Credit restored from cancelled booking b1" }),
+        row({ id: "c1", type: "CANCELLATION_REFUND", amountCents: 900, description: "Cancellation refund for booking b1" }),
+        row({ id: "c2", type: "BOOKING_MODIFICATION_REFUND", amountCents: 400, description: "Credit restored from cancelled booking b1" }),
+      ],
+      postedLines: [],
+    });
+    expect(postings.map((p) => [p.postingKey, p.anchorKind, p.anchorId, p.narration])).toEqual([
+      ["credit:r0", "CANCELLATION", "b1", "Applied account credit restored on cancellation"],
+      ["credit:c1", "MEMBER_CREDIT", "c1", "Credited to account on cancellation"],
+      ["credit:c2", "MEMBER_CREDIT", "c2", "Credited to account after a booking change"],
+    ]);
   });
 
   it("posts nothing for a row whose key is already on the ledger, and names drift rather than correcting it", () => {

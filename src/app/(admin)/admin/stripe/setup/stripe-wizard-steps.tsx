@@ -372,7 +372,21 @@ export function VerifyConnectionStep({
   );
 }
 
-/** Step 4 — "Webhook" (optional/skippable): endpoint URL + signing secret + test event. */
+/**
+ * The Stripe screen that lists webhook endpoints, in its current name with the
+ * older one Stripe still shows some accounts. One name everywhere (#3975).
+ */
+const STRIPE_WEBHOOKS_SCREEN = "Workbench → Webhooks (Developers → Webhooks)";
+
+/**
+ * How to get one signed event to this endpoint (#3975: the old "Send test
+ * webhook" button is gone). A brand-new endpoint has no deliveries to resend,
+ * so a payment is the fallback — a test payment when the keys are test-mode.
+ * Shown only in the not-yet-verified box, never duplicated beside it.
+ */
+const WEBHOOK_RESEND_HINT = `In Stripe, open ${STRIPE_WEBHOOKS_SCREEN}, select this endpoint and a recent delivery, and click Resend — or, if it has none yet, make a payment (a test payment in test mode). Then click “Re-check verification”.`;
+
+/** Step 4 — "Webhook" (optional/skippable): endpoint URL + signing secret + one verified event. */
 export function WebhookStep({
   context,
   helpers,
@@ -398,9 +412,8 @@ export function WebhookStep({
       if (webhookSecret.trim())
         await writeCredential("webhook_secret", webhookSecret.trim());
       setWebhookSecret("");
-      setSuccess(
-        "Signing secret saved. Send a test event from Stripe, then re-check below.",
-      );
+      // The how-to-verify hint lives in the not-yet-verified box below, once.
+      setSuccess("Signing secret saved.");
       helpers.refresh();
     } catch (saveError) {
       setError(
@@ -426,7 +439,7 @@ export function WebhookStep({
             rel="noreferrer noopener"
             className="inline-flex items-center gap-1 font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
-            Developers → Webhooks
+            {STRIPE_WEBHOOKS_SCREEN}
             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </a>
           , add an endpoint with the URL below — or, if this site already has
@@ -523,7 +536,7 @@ export function WebhookStep({
         <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
-            Verified — a Stripe test event reached this app and its signature
+            Verified — a Stripe event reached this app and its signature
             checked out.
           </span>
         </div>
@@ -532,8 +545,8 @@ export function WebhookStep({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {context.credentials.webhook_secret.set
-              ? "Signing secret saved but no test event has verified yet. In Stripe, use “Send test webhook” on your endpoint, then re-check."
-              : "Not verified yet. Add the signing secret above, send a Stripe test event, then re-check. You can skip this step for now."}
+              ? `Signing secret saved but no event has verified yet. ${WEBHOOK_RESEND_HINT}`
+              : `Not verified yet. Add the signing secret above. ${WEBHOOK_RESEND_HINT} You can skip this step for now.`}
           </span>
         </div>
       )}
