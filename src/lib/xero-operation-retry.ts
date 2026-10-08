@@ -1671,6 +1671,8 @@ export async function retryXeroSyncOperation(
             ? { watermarkCents: deltaWatermarkCents }
             : {}),
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
+          // #3935: the officer's cash answer, so the retried note says the same.
+          ...(retryInput.noteWording ? { noteWording: retryInput.noteWording } : {}),
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
           ...(retryInput.refundRequestId ? { refundRequestId: retryInput.refundRequestId } : {}),

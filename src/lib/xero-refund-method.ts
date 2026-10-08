@@ -184,6 +184,30 @@ export function modificationNoteWording(choice: ModificationNoteWording): Credit
   return settled.clearsUnpaidBalance ? "unpaid-balance-clearing" : "unpaid-invoice-clearing";
 }
 
+/**
+ * #3935 (`INV-PAY-116`): the one owner-added wording a payment's REFUND note
+ * can carry. An edit review settled by hand on a booking since cancelled takes
+ * the cancellation's refund note (#3880), and the officer's "In cash" answer
+ * words it as the modification note would. An invoice correction refunds
+ * nothing, so it never reaches a refund note.
+ */
+export type RefundNoteWording = Extract<ModificationNoteSpecialWording, "cash">;
+
+/**
+ * The ONE reading of a refund note's wording, from a typed caller, a stored
+ * payload or a retry alike: "cash" only when it is asked for AND the method is
+ * the internet-banking hand-back, the only route the cash question is put on.
+ * A card refund left through Stripe and is never worded as cash.
+ */
+export function readRefundNoteWording(
+  raw: { noteWording?: unknown; refundMethod?: unknown } | null | undefined,
+): RefundNoteWording | undefined {
+  return parseModificationNoteSpecialWording(raw?.noteWording) === "cash" &&
+    parseRefundMethod(raw?.refundMethod) === "internet-banking"
+    ? "cash"
+    : undefined;
+}
+
 function describeCreditDocumentWording(wording: CreditDocumentWording): string {
   if (wording === "unpaid-invoice-clearing") return UNPAID_INVOICE_CLEARING_WORDING;
   if (wording === "unpaid-balance-clearing") return UNPAID_BALANCE_CLEARING_WORDING;
