@@ -8,7 +8,7 @@ import {
 } from "@prisma/client";
 
 import { recordBookingEvent } from "@/lib/booking-events";
-import { bookingAmountOwedCents, recordedChangeFeeCents } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { ClubFormat } from "@/lib/club-format";
@@ -216,11 +216,17 @@ export async function writeEditReviewAccountCredit({
           return netted.owedCents;
         }
         const previousFinalPriceCents = rebase?.previousFinalPriceCents ?? booking.finalPriceCents;
-        // UNPAID: the credit falls short of the price for a reason other than a
-        // review's give-back - an agreed share on a covered booking lowers the
-        // applied figure without leaving anything owed (#3791, second round).
+        // UNPAID: the credit falls short of what the booking is worth - its
+        // price plus the change fee recorded on its payment (`INV-PAY-119`) - for
+        // a reason other than a review's give-back - an agreed share on a covered
+        // booking lowers the applied figure without leaving anything owed (#3791,
+        // second round). Against the bare price, a recorded fee the credit does
+        // not cover would read as covered, and the share would be given back as
+        // credit on top of the debt (#3955 round 5, finding 1).
         const reviewGiveBacksCents = await reviewGiveBacksMadeCents(bookingId, store);
-        const unpaid = appliedCreditCents + reviewGiveBacksCents < previousFinalPriceCents;
+        const unpaid =
+          appliedCreditCents + reviewGiveBacksCents <
+          bookingWorthCents({ finalPriceCents: previousFinalPriceCents, changeFeeCents: booking.payment?.changeFeeCents ?? null });
         invoice = {
           unpaid,
           previousFinalPriceCents,

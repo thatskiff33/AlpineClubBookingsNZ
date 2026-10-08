@@ -388,6 +388,31 @@ describe("what of the share is applied credit coming back", () => {
     );
   });
 
+  it("MUTATION: #3955 round 5 - credit that covers the price but not the recorded fee leaves the booking unpaid: nothing given back, the debt stays $50", async () => {
+    // $300 price, a $50 fee on its payment, $300 applied, a $100 share, no
+    // re-price. Against the bare price it read as covered: $100 given back and
+    // the member owing $150 where Xero says $50.
+    store.booking.findUniqueOrThrow.mockResolvedValue({
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 30_000,
+      checkIn: CHECK_IN,
+      lodgeId: "lodge-1",
+      payment: { changeFeeCents: 5_000 },
+    });
+    h.applied.cents = 30_000;
+    h.applied.mirrorCents = 30_000;
+
+    expect(await write(10_000, null)).toEqual({
+      givenBackCents: 0,
+      mintedCents: 10_000,
+      cancelled: false,
+      invoiceReductionCents: 0,
+      agreedGiveBackCents: null,
+    });
+    expect(store.payment.update).not.toHaveBeenCalled();
+    expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 10_000, "booking-1", "mod-1", undefined, store, undefined);
+  });
+
   it("MUTATION: a fully credit-paid booking is not held to the re-price", async () => {
     expect((await write(5_000, null)).givenBackCents).toBe(5_000);
     expect(store.bookingModification.findMany).not.toHaveBeenCalled();

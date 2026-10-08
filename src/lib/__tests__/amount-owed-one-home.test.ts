@@ -20,7 +20,11 @@ import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment
  *    (`newFinalPriceCents - clamp.appliedCreditCents`,
  *    `booking.finalPriceCents -\n (await deriveBookingAppliedCreditCents(…))`);
  *  - over the pay steps: an `amountCents` set to a bare final price — an
- *    intent, a charge or a payment row sized without the recorded fee.
+ *    intent, a charge or a payment row sized without the recorded fee;
+ *  - over every non-test file under `src/`: applied credit compared (`<`, `>`,
+ *    `<=`, `>=`, either way round) with a bare final price — "does the credit
+ *    cover the booking?" asked without the fee (#3955 round 5, finding 1:
+ *    `appliedCreditCents + reviewGiveBacksCents < previousFinalPriceCents`).
  *
  * WHAT THIS CANNOT SEE: an amount spelled another way (a sum in a different
  * order, a helper of its own, a variable that holds the bare price).
@@ -51,6 +55,11 @@ const PAY_STEPS = [
 // `verifiedFinalPriceCents - alreadyAppliedCents`). `[^;,{}]` keeps it inside
 // one expression across lines.
 const BARE_PRICE_LESS_CREDIT = /[\w.?!]*[Ff]inalPriceCents\s*-\s*[^;,{}]{0,120}?(?:[Cc]redit|[Aa]pplied)\w*/g;
+// Credit (or what is applied) compared with a bare final price, either way
+// round, within one expression. `(?<![=-])` keeps arrows (`=>`, `->`) out, and
+// a price followed by `+` is a sum, not a bare price.
+const CREDIT_VS_BARE_PRICE =
+  /(?:[Cc]redit|[Aa]pplied)\w*[^;,{}()]{0,80}?(?<![=-])[<>]=?(?!=)\s*[\w.?!]*[Ff]inalPriceCents\b(?!\s*\+)|[\w.?!]*[Ff]inalPriceCents\s*[<>]=?(?!=)[^;,{}]{0,80}?(?:[Cc]redit|[Aa]pplied)\w*/g;
 // An intent, charge or payment amount that is a bare final price, in a pay step.
 const BARE_PRICE_AMOUNT = /\bamountCents:\s*[\w.?!]*[Ff]inalPriceCents\b(?!\s*[-+])/;
 
@@ -73,8 +82,22 @@ const ALLOWED_EXPRESSIONS: Readonly<Record<string, readonly string[]>> = {
   "src/components/edit-booking-panel.tsx": ["quoteFinalPriceCents - ledgerAppliedCreditCents"],
 };
 
+/**
+ * The comparisons allowed to stay, pinned the same way.
+ *
+ * The shared credit-application policy at booking creation and election: its
+ * `finalPriceCents` parameter is the ceiling the caller hands it. A new booking
+ * has no Payment row, so no fee can be recorded on it, and the election hands
+ * it what is owed through `bookingAmountOwedCents` (fee included).
+ */
+const ALLOWED_COMPARISONS: Readonly<Record<string, readonly string[]>> = {
+  "src/lib/policies/booking-route-decisions.ts": ["CreditCents > finalPriceCents"],
+};
+
 const matchesIn = (text: string) =>
   [...text.matchAll(BARE_PRICE_LESS_CREDIT)].map((match) => match[0].replace(/\s+/g, " "));
+const comparisonsIn = (text: string) =>
+  [...text.matchAll(CREDIT_VS_BARE_PRICE)].map((match) => match[0].replace(/\s+/g, " "));
 
 function sourceFiles(dir: string, found: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -124,6 +147,42 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
   it("every allowed expression is still there, exactly once", () => {
     for (const [file, allowed] of Object.entries(ALLOWED_EXPRESSIONS)) {
       expect(matchesIn(read(file)).sort(), file).toEqual([...allowed].sort());
+    }
+  });
+
+  it("no source file asks whether credit covers the booking against the bare price", () => {
+    const offenders = sourceFiles(path.join(REPO, "src")).flatMap((file) => {
+      const allowed = ALLOWED_COMPARISONS[file] ?? [];
+      return comparisonsIn(read(file))
+        .filter((match) => !allowed.includes(match))
+        .map((match) => `${file}: ${match}`);
+    });
+    expect(offenders, "INV-PAY-119: compare credit with bookingWorthCents, not the bare price").toEqual([]);
+  });
+
+  it("every allowed comparison is still there, exactly once", () => {
+    for (const [file, allowed] of Object.entries(ALLOWED_COMPARISONS)) {
+      expect(comparisonsIn(read(file)).sort(), file).toEqual([...allowed].sort());
+    }
+  });
+
+  it("catches a credit-against-bare-price comparison in either order and any strictness", () => {
+    for (const expression of [
+      "appliedCreditCents + reviewGiveBacksCents < previousFinalPriceCents",
+      "appliedCreditCents + reviewGiveBacksCents <\n previousFinalPriceCents",
+      "creditAppliedCents >= booking.finalPriceCents",
+      "alreadyAppliedCents <= finalPriceCents",
+      "booking.finalPriceCents > payment.creditAppliedCents",
+    ]) {
+      expect(comparisonsIn(expression), expression).toHaveLength(1);
+    }
+    for (const expression of [
+      "appliedCreditCents < bookingWorthCents({ finalPriceCents, changeFeeCents })",
+      "(appliedCreditCents) => finalPriceCents",
+      "appliedCreditCents < finalPriceCents + changeFeeCents",
+      "newFinalPriceCents < previousFinalPriceCents",
+    ]) {
+      expect(comparisonsIn(expression), expression).toEqual([]);
     }
   });
 
