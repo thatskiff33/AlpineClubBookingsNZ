@@ -29,7 +29,9 @@ import { stayWindow } from "./helpers/stay-dates";
       `multiPromoCodes`; both module switches are restored afterwards.
     - NO BOOKING IS CREATED. The walk stops at the review step, so the spec
       claims no capacity and leaves no member-night behind for a retry to trip
-      over; window 15 is used by no other spec.
+      over. Window 15 is shared (member-policy-exception-requests' first
+      attempt, member-guest-consent's first retry), which is safe only because
+      those specs book other members and this one books nothing.
 */
 
 test.describe.configure({ mode: "serial" });
