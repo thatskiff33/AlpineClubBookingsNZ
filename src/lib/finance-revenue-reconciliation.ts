@@ -24,6 +24,7 @@
 import { FinanceSnapshotType, SubscriptionStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { FINANCE_REALIZED_BOOKING_STATUSES } from "@/lib/finance-booking-metrics";
+import { buildBookingDeletedWhere } from "@/lib/booking-delete-visibility";
 import { getAccountMapping } from "@/lib/xero-mappings";
 import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
@@ -342,7 +343,11 @@ async function loadBookingHutFees(
   start: Date,
   end: Date
 ): Promise<{ total: number; member: number }> {
-  const realizedStatuses = [...FINANCE_REALIZED_BOOKING_STATUSES];
+  // #3745: a soft-deleted booking is not revenue, as on every Finance figure.
+  const realizedBooking = {
+    status: { in: [...FINANCE_REALIZED_BOOKING_STATUSES] },
+    ...buildBookingDeletedWhere("hide"),
+  };
   const dateWindow = { gte: start, lte: end };
 
   const [total, member] = await Promise.all([
@@ -350,7 +355,7 @@ async function loadBookingHutFees(
       _sum: { priceCents: true },
       where: {
         stayDate: dateWindow,
-        bookingGuest: { booking: { status: { in: realizedStatuses } } },
+        bookingGuest: { booking: realizedBooking },
       },
     }),
     prisma.bookingGuestNight.aggregate({
@@ -359,7 +364,7 @@ async function loadBookingHutFees(
         stayDate: dateWindow,
         bookingGuest: {
           isMember: true,
-          booking: { status: { in: realizedStatuses } },
+          booking: realizedBooking,
         },
       },
     }),

@@ -27,6 +27,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
+import { formatFinanceNumber } from "@/lib/finance-format";
 import {
   type ClubDateFormat,
   formatClubDayMonth,
@@ -35,11 +36,11 @@ import {
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,
 } from "@/lib/admin-dataset-reset-state";
-import type { ClubFormat } from "@/lib/club-format";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the trees live in
 // _components/report-charts and mount after the page shell. The placeholders
@@ -140,19 +141,6 @@ function getRevenueDescription(granularity: RevenueGranularity): string {
     return "Booked revenue allocated across selected stay nights and grouped by week for ranges from 15 to 90 days.";
   }
   return "Booked revenue allocated across selected stay nights and grouped by month for ranges longer than 90 days.";
-}
-
-function getAdditionalLedgerGapWarning(
-  summary: {
-    additionalLedgerGapCents: number;
-    additionalLedgerGapBookings: number;
-  },
-  clubFormat: ClubFormat,
-): string | null {
-  if (summary.additionalLedgerGapBookings === 0) return null;
-
-  const singular = summary.additionalLedgerGapBookings === 1;
-  return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents, clubFormat)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
 // The bounds come from the URL, so an unusable one renders as itself rather
@@ -315,7 +303,12 @@ export default function ReportsPage() {
 
   const occupancyData = data?.occupancy ?? [];
   const additionalLedgerGapWarning = data
-    ? getAdditionalLedgerGapWarning(data.summary, clubFormat)
+    ? formatNetCollectedLedgerGapWarning(
+        data.summary,
+        { one: "overlapping booking", many: "overlapping bookings" },
+        (cents) => formatCents(cents, clubFormat),
+        (count) => formatFinanceNumber(count, clubFormat),
+      )
     : null;
   const unreconciledBookingCount =
     data?.summary.moneyReconciliation.byState.UNRECONCILED ?? 0;
@@ -345,9 +338,9 @@ export default function ReportsPage() {
       if (count > 0) rows.push([`Booking Money Reason: ${reason}`, String(count)]);
     }
     rows.push(["Booked Revenue", formatCentsPlain(data.summary.totalRevenueCents)]);
-    rows.push(["Net Collected Cash", formatCentsPlain(data.summary.netCollectedCents)]);
+    rows.push(["Net Collected", formatCentsPlain(data.summary.netCollectedCents)]);
     if (additionalLedgerGapWarning) {
-      rows.push(["Net Collected Cash Warning", additionalLedgerGapWarning]);
+      rows.push(["Net Collected Warning", additionalLedgerGapWarning]);
       rows.push([
         "Possible Additional Ledger Gap",
         formatCentsPlain(data.summary.additionalLedgerGapCents),
@@ -560,7 +553,7 @@ export default function ReportsPage() {
               role="alert"
               className="reports-print-card rounded-lg border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11 print:border-warning-6"
             >
-              <p className="font-semibold">Net Collected Cash needs reconciliation</p>
+              <p className="font-semibold">Net Collected needs reconciliation</p>
               <p className="mt-1">{additionalLedgerGapWarning}</p>
             </div>
           ) : null}
@@ -598,9 +591,9 @@ export default function ReportsPage() {
                 icon={DollarSign}
               />
               <StatCard
-                title="Net Collected Cash"
+                title="Net Collected"
                 value={formatCents(data.summary.netCollectedCents, clubFormat)}
-                subtitle="Captured payment cash less refunds for overlapping bookings; not allocated by night"
+                subtitle={`Money kept on overlapping bookings of any status: cash less refunds, plus account credit kept and less refunds still owed back on cancelled ones; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
                 icon={DollarSign}
               />
               <StatCard

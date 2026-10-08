@@ -1,4 +1,4 @@
-import type { ManualRefundTaskKind } from "@prisma/client";
+import type { ManualRefundTaskKind, ManualRefundTaskStatus } from "@prisma/client";
 
 import {
   getRemainingRefundableCentsNetOf,
@@ -379,4 +379,55 @@ export function manualRefundTaskSettlementRefusal(
     return "This item records a payment the club settles in Xero, so it cannot be closed as an amount settled here - nothing about it moves money. Settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then close this item with a note saying what you did.";
   }
   return "This item records money the club may not have asked for, so it cannot be closed as an amount settled here - nothing about it moves money. Check the booking's Xero invoices, bill any shortfall by hand, then close it with a note saying what you found and what you billed.";
+}
+
+/** The `ManualRefundTask` fields `openCancellationHandBackOwedCents` reads. */
+export type CancellationHandBackTaskRow = {
+  status: ManualRefundTaskStatus | string;
+  kind: ManualRefundTaskKind | string | null;
+  amountCents: number | null;
+  partPaymentReviewPaymentId: string | null;
+};
+
+const OPEN_TASK_STATUS = "OPEN" satisfies ManualRefundTaskStatus;
+const HAND_BACK_KIND = "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind;
+
+/**
+ * Owner decision on #3372 (3 Oct 2026, refining the review on PR #3811): THE
+ * REFUND A CANCELLED BOOKING STILL OWES BY HAND. It reads a cancelled
+ * booking's OPEN hand-back tasks; the caller (`getNetCollectedPaymentParts`)
+ * hands it only a cancelled booking's tasks, and only a booking that is not
+ * soft-deleted reaches it (the Net Collected scope).
+ *
+ * A cancellation of a payment settled by hand raises a
+ * `CANCELLED_BOOKING_HAND_BACK` task for the refund its policy gives back
+ * (`booking-cancel.ts`), and only COMPLETING the task writes
+ * `refundedAmountCents` (`manual-refund-task-resolution.ts`). The owner's rule
+ * is that the refund owed is treated as gone straight away, so a "Net
+ * Collected" figure counts only what the policy keeps: this is the amount to
+ * take off before the task is completed.
+ *
+ * - OPEN tasks only: a COMPLETED one is already on `refundedAmountCents`, and a
+ *   DISMISSED one moved nothing.
+ * - A part-payment review shares the kind but carries no amount and records
+ *   money settled in Xero (`isPartPaymentReviewTask`), so it owes nothing here.
+ * - A task with no kind (`kind` null) is read as a hand-back: the column was
+ *   added on 19 Aug 2026 with no backfill, and on a cancelled booking the only
+ *   task raised before then was the cancellation's hand-back (the late-capture
+ *   kinds are raised on DELETED bookings, which the scope leaves out).
+ * - Every OPEN task of the hand-back kind counts, whatever raised it. A booking
+ *   edit's or an appeal's hand-back on a CANCELLED booking is counted on
+ *   purpose: it is money the club owes back, so it is not money kept.
+ */
+export function openCancellationHandBackOwedCents(
+  tasks: ReadonlyArray<CancellationHandBackTaskRow>,
+): number {
+  return tasks
+    .filter(
+      (task) =>
+        task.status === OPEN_TASK_STATUS &&
+        (task.kind === HAND_BACK_KIND || task.kind === null) &&
+        !isPartPaymentReviewTask(task),
+    )
+    .reduce((sum, task) => sum + Math.max(0, task.amountCents ?? 0), 0);
 }
