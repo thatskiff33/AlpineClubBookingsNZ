@@ -2296,9 +2296,11 @@ wizard at Admin > Integrations > Stripe** (Full Admin only) — it links you to 
 Stripe API-keys page (use test mode while you set up), captures the keys
 write-only, verifies the connection by reading your Stripe account and showing
 its display name (the right-account confirmation), and walks you through the
-webhook endpoint (URL to paste, signing secret back, verified via a Stripe
-test event). The webhook step is **optional/skippable** and freshness-scoped —
-replacing any Stripe credential drops the verified webhook badge.
+webhook endpoint (URL to paste, signing secret back, verified by any signed
+Stripe event, live or test — Resend a recent delivery in Stripe Workbench, or
+wait for the next real payment). The webhook step is **optional/skippable**
+and freshness-scoped — replacing any Stripe credential drops the verified
+webhook badge.
 
 There are **no** `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, or
 `STRIPE_WEBHOOK_SECRET` environment variables any more — if any are still present

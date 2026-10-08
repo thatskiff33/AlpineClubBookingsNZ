@@ -1483,9 +1483,10 @@ endpoint your Stripe account already has** at this site's
 current signing secret, and paste that back into the wizard. Only add a new
 endpoint if none exists yet (fresh installs); creating a second endpoint on an
 upgrade issues a *different* signing secret and orphans deliveries queued
-against the old one. Send a Stripe test event to turn the webhook badge green
-(this step is skippable — payments still process, but bookings only
-auto-reconcile once the webhook is verified). **Events that arrive during the
+against the old one. To turn the webhook badge green, Resend a recent delivery
+to this endpoint in Stripe Workbench, or wait for the next real event, then
+click **Re-check verification** (this step is skippable — payments still
+process, but bookings only auto-reconcile once the webhook is verified). **Events that arrive during the
 re-entry gap are rejected fail-closed, and Stripe retries deliveries for about
 72 hours** — restore the *same* signing secret within that window and the
 queued events verify and replay on retry; duplicate deliveries are deduplicated

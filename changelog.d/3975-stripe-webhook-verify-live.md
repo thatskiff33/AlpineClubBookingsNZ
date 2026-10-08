@@ -4,5 +4,7 @@
   even while live webhooks were arriving and passing their signature check. Any
   signature-verified event, live or test, now verifies it. The hint now
   describes Stripe's current flow: in Workbench, open the endpoint, select a
-  recent delivery, click **Resend**, then click **Re-check verification**.
-  Changing the signing secret still clears the tick until the next event arrives.
+  recent delivery, click **Resend** (or, for a brand-new endpoint with no
+  deliveries, wait for the next real payment), then click **Re-check
+  verification**. Changing the signing secret still clears the tick until an
+  event verified under the new secret arrives.

@@ -372,6 +372,15 @@ export function VerifyConnectionStep({
   );
 }
 
+/**
+ * How to get one signed event to this endpoint, in Stripe's current Workbench
+ * (#3975: the old "Send test webhook" button is gone). A brand-new endpoint has
+ * no deliveries to resend, so the next real payment is the fallback. Every
+ * webhook hint uses this one wording.
+ */
+const WEBHOOK_RESEND_HINT =
+  "In Stripe Workbench, open this endpoint, select a recent delivery and click Resend — or, if it has none yet, wait for the next real payment. Then click “Re-check verification”.";
+
 /** Step 4 — "Webhook" (optional/skippable): endpoint URL + signing secret + one verified event. */
 export function WebhookStep({
   context,
@@ -399,7 +408,7 @@ export function WebhookStep({
         await writeCredential("webhook_secret", webhookSecret.trim());
       setWebhookSecret("");
       setSuccess(
-        "Signing secret saved. In Stripe, Resend a recent delivery to this endpoint, then re-check below.",
+        `Signing secret saved. ${WEBHOOK_RESEND_HINT}`,
       );
       helpers.refresh();
     } catch (saveError) {
@@ -532,8 +541,8 @@ export function WebhookStep({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {context.credentials.webhook_secret.set
-              ? "Signing secret saved but no event has verified yet. In Stripe Workbench, open this endpoint, select a recent delivery and click Resend (or wait for the next payment), then re-check."
-              : "Not verified yet. Add the signing secret above, Resend a recent delivery from Stripe, then re-check. You can skip this step for now."}
+              ? `Signing secret saved but no event has verified yet. ${WEBHOOK_RESEND_HINT}`
+              : `Not verified yet. Add the signing secret above. ${WEBHOOK_RESEND_HINT} You can skip this step for now.`}
           </span>
         </div>
       )}
