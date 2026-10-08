@@ -11,8 +11,7 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import { useClubTime } from "@/components/club-time-provider"
-import { requireInstant } from "@/lib/club-time"
-import { formatPayloadCalendarDay } from "../../_lib/calendar-day"
+import { requireInstant, formatStayDateOrNull } from "@/lib/club-time"
 import {
   AdminMemberXeroActionError,
   unlinkMemberXeroContact,
@@ -499,7 +498,7 @@ function MissingInvoicesList({
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                {formatPayloadCalendarDay(booking.checkIn, clubTime.format)} to {formatPayloadCalendarDay(booking.checkOut, clubTime.format)} - Payment {shortId(booking.paymentId)}
+                {formatStayDateOrNull(booking.checkIn, clubTime.format) ?? "—"} to {formatStayDateOrNull(booking.checkOut, clubTime.format) ?? "—"} - Payment {shortId(booking.paymentId)}
               </p>
             </div>
             <p className="text-xs text-muted-foreground">Created {clubTime.instantDateTime(requireInstant(booking.createdAt))}</p>

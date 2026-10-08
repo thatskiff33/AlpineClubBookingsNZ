@@ -366,16 +366,16 @@ describe("formatFamilyGroupCalendarDay — a date of birth, with no zone", () =>
     // take the whole request-review card down; the guard degrades instead.
     expect(formatFamilyGroupCalendarDay("not-a-date", CLUB_FORMAT_TEST)).toBe("Not provided");
     // A day that does not exist. Neither branch rolls it forward to 1 March:
-    // the bare decoder refuses it, and the instant decoder refuses an ISO
-    // string whose date part is not a real day.
+    // the decoder refuses a date part that is not a real day.
     expect(formatFamilyGroupCalendarDay("2026-02-30", CLUB_FORMAT_TEST)).toBe("Not provided");
     expect(formatFamilyGroupCalendarDay("2026-02-30T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "Not provided",
     );
-    // A timestamp with NO offset names a wall-clock reading in whichever zone
-    // happens to be reading it, which is the one thing neither decoder accepts.
+    // A timestamp with NO offset: read by its date prefix, like every other
+    // stay-date surface (#3511 converged the decoder; this used to answer
+    // "Not provided", and the owner chose the kernel's prefix read).
     expect(formatFamilyGroupCalendarDay("2018-01-01T13:45:00", CLUB_FORMAT_TEST)).toBe(
-      "Not provided",
+      "1 Jan 2018",
     );
   });
 });

@@ -8,8 +8,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatPaidRefundedBreakdown, getPaymentNetOfRefundsCents } from "@/lib/booking-payment-state";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
-import { requireInstant } from "@/lib/club-time";
-import { formatPayloadCalendarDay } from "../_lib/calendar-day";
+import { requireInstant, formatStayDateOrNull } from "@/lib/club-time";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
 import {
   getPaymentsDatasetDefaults,
@@ -1192,7 +1191,7 @@ export default function PaymentsPage() {
                       `@db.Date` column, which takes no zone at all. Both render
                       the same "16 Apr 2026" shape as before. */}
                   <TableCell className="text-sm">{clubTime.instantDate(requireInstant(p.lastUpdatedAt))}</TableCell>
-                  <TableCell className="text-sm">{formatPayloadCalendarDay(p.booking.checkIn, format)}</TableCell>
+                  <TableCell className="text-sm">{formatStayDateOrNull(p.booking.checkIn, format) ?? "—"}</TableCell>
                   <TableCell className="font-medium">
                     {owner.id ? (
                       <Link

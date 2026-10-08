@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
-import { type ClubDateFormat, formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -90,17 +90,10 @@ export function WholeLodgeRequestBadges({
   );
 }
 
-/**
- * A lodge night as the calendar day it IS (CT-4, #2870; INV-DATE-010).
- *
- * WHAT THIS REPLACES WAS WRONG TWICE OVER. `new Date(`${d}T00:00:00`)` has no
- * `Z`, so it parsed as midnight in the ADMIN's browser zone; that instant was
- * then projected through `APP_TIME_ZONE` to be printed. For an admin west of the
- * club the two errors did not cancel and the night came out a day early. A
- * calendar day needs no zone at all, so both steps are gone.
- */
+// A stored calendar day, formatted by the kernel's one stay-date helper (#3511,
+// INV-SSOT-001; INV-DATE-010). No zone is consulted.
 function formatNight(value: string, format: ClubDateFormat): string {
-  return formatClubDate(requireCalendarDate(value), format);
+  return formatStayDate(value, format);
 }
 
 /**
