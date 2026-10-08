@@ -2202,6 +2202,10 @@ new-member approval -> incomplete plan -> OPEN billing exception (approval stays
 QUEUED -> outbox claim -> invoice create OR exact existing-invoice adoption
 invoice identity persisted locally -> INVOICE_CREATED -> Xero email -> EMAILED
 INVOICE_CREATED -> email fails -> EMAIL_FAILED -> retry -> same invoice -> EMAILED
+outbox claim -> charge already invoiced AND emailed -> operation SUCCEEDED (skipped ALREADY_EMAILED; no provider call) (#3971)
+FAILED operation -> Xero Operations Retry -> same row PENDING, same correlation key (charge from localId, INV-INT-026)
+  refused (409, no write) when the charge already has a Xero invoice, needs none (VOIDED/NOT_REQUIRED/NO_INVOICE),
+  another attempt for it is live, or a sibling was resolved in Xero after the row was queued
 provider reference exists but snapshot differs -> CONFLICT (no provider rewrite)
 provider reference exists but is not AUTHORISED -> CONFLICT (never emailed)
 late member joins already-billed family -> FAMILY_ALREADY_BILLED exception (old coverage unchanged; no second invoice)
@@ -3186,9 +3190,11 @@ stale RUNNING (> 15 min) -> FAILED by an officer's Mark failed (one row) or
   Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable
 retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   membership subscription invoice) -> the SAME row back to PENDING, same
-  correlation key, status-guarded; the outbox claim runs it. A subscription
-  invoice is refused when its charge already has a Xero invoice or needs none
-  (#3971)
+  correlation key, status-guarded; the outbox claim runs it. Refused (409, no
+  write) when a sibling for the same document was resolved in Xero after the
+  row was queued, which the outbox would cancel unsent (#3994). A subscription
+  invoice is also refused when its charge already has a Xero invoice or needs
+  none (#3971)
 ```
 
 To verify: status strings, stale processing reset, tenant selection, link

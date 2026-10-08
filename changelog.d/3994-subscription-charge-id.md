@@ -12,5 +12,5 @@
   supported by the current replay helper". The row goes back to the queue and
   the next Xero run invoices and emails the member. Retry is refused for a
   charge that already has a Xero invoice, so it cannot bill anyone twice. If
-  one charge has several failed rows, retry one and mark the rest resolved
-  once it has gone through.
+  one charge has several failed rows, only the newest offers the button; the
+  older ones need nothing and show as repaired once it has gone through.
