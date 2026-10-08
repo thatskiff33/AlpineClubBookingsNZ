@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import FileSystemCache from "next/dist/server/lib/incremental-cache/file-system-cache";
 import { IncrementalCache } from "next/dist/server/lib/incremental-cache";
 import * as responseCache from "next/dist/server/response-cache";
+import {
+  getResponseCacheOwner,
+  getRouteCacheKey,
+} from "next/dist/server/lib/route-cache-key";
 
 /**
  * `CachedRouteKind` and `IncrementalCacheKind` are declared as ambient CONST
@@ -20,7 +24,8 @@ const { CachedRouteKind, IncrementalCacheKind } = responseCache as unknown as {
 
 /**
  * The three properties #2352 slice 1 depends on inside Next's own cache, EXECUTED
- * against the vendored next@16.2.12 rather than assumed.
+ * against the vendored Next rather than assumed (first read on next@16.2.12,
+ * re-verified on 16.3.8, which scoped response-cache keys to the owning route).
  *
  * Why this file exists at all: the #2352 planning pass asked for an *observed*
  * cache-full degradation rather than an assumed one, and reading the vendored
@@ -44,6 +49,21 @@ const { CachedRouteKind, IncrementalCacheKind } = responseCache as unknown as {
  */
 
 const MEMORY_CACHE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The route that owns `/about`, built the way Next builds it. Since next@16.3.8
+ * every page or route store carries the owning route module (`ctx.route`, set by
+ * `ResponseCache.getCacheContext()` from `RouteModule.cacheOwner`), and
+ * `IncrementalCache` scopes the storage key to it. A store WITHOUT one is
+ * refused by an invariant before the handler runs — a caller bug Next's own
+ * request path cannot commit, so the cases below pass an owner exactly as a real
+ * request does rather than exercising a call shape production never makes.
+ */
+const ABOUT_OWNER = getResponseCacheOwner({
+  kind: "APP_PAGE",
+  page: "/about/page",
+  pathname: "/about",
+} as never);
 
 function appPageEntry(html: string) {
   return {
@@ -124,11 +144,14 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
     // performance event and not an outage.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
+    const handlerKeys: string[] = [];
+
     class RefusingHandler {
       async get() {
         return null;
       }
-      async set() {
+      async set(key: string) {
+        handlerKeys.push(key);
         throw Object.assign(new Error("ENOSPC: no space left on device"), {
           code: "ENOSPC",
         });
@@ -160,9 +183,15 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
     await expect(
       cache.set("/about", appPageEntry("<html>about</html>") as never, {
         kind: IncrementalCacheKind.APP_PAGE,
+        route: ABOUT_OWNER,
         cacheControl: { revalidate: 300, expire: undefined },
       } as never),
     ).resolves.toBeUndefined();
+
+    // The refusal really came from the store, under the route-scoped key Next
+    // now uses, so the warning below is the swallowed handler error and not
+    // some earlier short-circuit.
+    expect(handlerKeys).toEqual([getRouteCacheKey("/about", ABOUT_OWNER)]);
 
     expect(warn).toHaveBeenCalledWith(
       "Failed to update prerender cache for",
@@ -173,10 +202,14 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
     warn.mockRestore();
   });
 
-  it("stores a runtime page under server/app, which is why the disk half is off", async () => {
+  it("stores a runtime page under server/, outside .next/cache, which is why the disk half is off", async () => {
     // The measured fact that drove the configuration: this path is NOT under
     // `.next/cache`, so the container's tmpfs never covered it and its read-only
-    // root would have refused every write.
+    // root would have refused every write. On next@16.2.12 it was
+    // `server/app/about.html`; since 16.3.8 a runtime store is keyed to its owning
+    // route and lands in `server/route-cache/APP_PAGE/<sha256>/$/about.html` —
+    // a different directory under the same read-only `server/`, so the decision
+    // stands and this case pins the property, not the exact layout.
     const cache = new FileSystemCache({
       fs: refusingFs() as never,
       flushToDisk: false,
@@ -188,13 +221,17 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
       _requestHeaders: {},
     } as never);
 
+    // The key a real request stores under, not a hand-written one.
+    const key = getRouteCacheKey("/about", ABOUT_OWNER);
     const filePath: string = (
       cache as unknown as {
         getFilePath: (p: string, kind: string) => string;
       }
-    ).getFilePath("/about.html", IncrementalCacheKind.APP_PAGE);
+    ).getFilePath(`${key}.html`, IncrementalCacheKind.APP_PAGE);
 
-    expect(filePath.replace(/\\/g, "/")).toBe("/app/.next/server/app/about.html");
-    expect(filePath.replace(/\\/g, "/")).not.toContain("/.next/cache/");
+    const normalised = filePath.replace(/\\/g, "/");
+    expect(normalised.startsWith("/app/.next/server/")).toBe(true);
+    expect(normalised.endsWith("/about.html")).toBe(true);
+    expect(normalised).not.toContain("/.next/cache/");
   });
 });
