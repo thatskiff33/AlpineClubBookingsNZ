@@ -7,7 +7,7 @@ surface that shows them. The reading and the markup live in their own modules
 (`refunds-and-credits-owed.ts`, `components/admin/refunds-and-credits-owed.tsx`).
 
 file: src/app/(admin)/admin/reports/page.tsx
-lines: 788
+lines: 768
 reason: the two figures' fields on the page's report type, their two CSV rows
   and the shared component under the Net Collected cards; the page's
   report type, CSV builder and cards are one client page, and splitting it is
