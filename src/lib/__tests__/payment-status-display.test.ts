@@ -10,16 +10,49 @@ describe("getCancellationSettlementBreakdown", () => {
       {
         amountCents: 5000,
         description: "Cancellation refund for booking abc123",
+        type: "CANCELLATION_REFUND",
+        restoredFromBookingId: null,
       },
       {
         amountCents: 1200,
         description: "Credit restored from cancelled booking abc123",
+        type: "CANCELLATION_REFUND",
+        restoredFromBookingId: "abc123",
       },
     ]);
 
     expect(result.accountCreditCents).toBe(5000);
     expect(result.restoredAppliedCreditCents).toBe(1200);
     expect(result.refundToOriginalMethodCents).toBe(2000);
+  });
+
+  it("tells a restore apart by the one test: the marker, or a pre-8-Jul row's type and description", () => {
+    const result = getCancellationSettlementBreakdown(0, [
+      // Written before `restoredFromBookingId` existed (8 Jul 2026, #1636).
+      {
+        amountCents: 1200,
+        description: "Credit restored from cancelled booking abc123",
+        type: "CANCELLATION_REFUND",
+        restoredFromBookingId: null,
+      },
+      // The marker decides, whatever the text says.
+      {
+        amountCents: 300,
+        description: "Restored",
+        type: "CANCELLATION_REFUND",
+        restoredFromBookingId: "abc123",
+      },
+      // The restore text on another type is not a restore.
+      {
+        amountCents: 50,
+        description: "Credit restored from cancelled booking abc123",
+        type: "BOOKING_MODIFICATION_REFUND",
+        restoredFromBookingId: null,
+      },
+    ]);
+
+    expect(result.restoredAppliedCreditCents).toBe(1500);
+    expect(result.accountCreditCents).toBe(0);
   });
 });
 
@@ -33,6 +66,8 @@ describe("getPaymentDisplayStatus", () => {
         {
           amountCents: 5000,
           description: "Cancellation refund for booking abc123",
+          type: "CANCELLATION_REFUND",
+          restoredFromBookingId: null,
         },
       ],
     });
@@ -61,6 +96,8 @@ describe("getPaymentDisplayStatus", () => {
         {
           amountCents: 5000,
           description: "Cancellation refund for booking abc123",
+          type: "CANCELLATION_REFUND",
+          restoredFromBookingId: null,
         },
       ],
     });

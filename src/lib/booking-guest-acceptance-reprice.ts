@@ -654,6 +654,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       financialReviewPending: false,
       // D-3813-6: an internet-banking refund is the club's to send.
       refundByBankTransfer: editRefundGoesBackByHand(reprice),
+      refundReturnedToOrganiser: reprice.organiserChildRefund !== null,
       lodgeId: reprice.lodgeId,
       additionalAmountCents: 0,
     },

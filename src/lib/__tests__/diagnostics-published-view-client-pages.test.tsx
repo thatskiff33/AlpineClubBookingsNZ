@@ -230,7 +230,7 @@ beforeEach(() => {
     totalPages: 0,
     page: 1,
     pageSize: 25,
-    summary: { totalRevenueCents: 0, refundedCents: 0, count: 0 },
+    summary: { netCollectedCents: 0, refundedCents: 0, count: 0 },
   });
 });
 
@@ -480,6 +480,182 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     // the page applied. Without this the assertion above would still pass on a
     // host whose own zone happened to agree with the chosen one.
     expect(published().filters.lastUpdatedTo).not.toBe(environmentToday);
+  });
+});
+
+/*
+  #3372 — the rendered half of #3340, on the payments board's summary tiles. It
+  is asserted here because this is the one harness that mounts the real page
+  over a stubbed API. The tile used to be titled "Total Revenue" over a gross
+  sum; the API now returns `netCollectedCents`, the tile says "Net
+  Collected" (Reports' name for the same derivation), and the two money tiles each
+  state what they cover, because they are not a subtraction of one another.
+*/
+describe("/admin/payments titles its revenue tile as net (#3372)", () => {
+  it("shows Net Collected with the hints that name each tile's population", async () => {
+    // The #3340 booking as the whole filtered set: $130.00 captured, $65.00
+    // refunded → $65.00 net.
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: { netCollectedCents: 6_500, refundedCents: 6_500, count: 1 },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    // `SummaryCard` is Card > CardHeader > CardTitle, so the card is the
+    // title's grandparent; the figure and the hint sit in its CardContent.
+    const netTitle = await screen.findByText("Net Collected");
+    const netCard = netTitle.parentElement?.parentElement;
+    expect(netCard).toHaveTextContent("$65.00");
+    expect(netCard).toHaveTextContent(
+      "Payments received, less refunds and credits. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
+    );
+    const refundCard = screen.getByText("Refunded / Credited").parentElement
+      ?.parentElement;
+    expect(refundCard).toHaveTextContent("$65.00");
+    expect(refundCard).toHaveTextContent(
+      "All payments matching the filters, deleted bookings included.",
+    );
+    expect(screen.queryByText("Total Revenue")).toBeNull();
+    expect(screen.queryByText("Net Revenue")).toBeNull();
+
+    // Display only (#3372 acceptance): the page rendered from reads alone.
+    expect(fetchMock).toHaveBeenCalled();
+    for (const [, init] of fetchMock.mock.calls) {
+      const method = (init as RequestInit | undefined)?.method ?? "GET";
+      expect(method).toBe("GET");
+    }
+  });
+
+  it("shows $0.00, never $NaN, when the API answers with the previous build's summary shape", async () => {
+    // The previous build's key. The page reads `netCollectedCents`, so without
+    // the default the tile would format `undefined` as "$NaN".
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: { totalRevenueCents: 13_000, refundedCents: 6_500, count: 1 },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    const netCard = (await screen.findByText("Net Collected")).parentElement
+      ?.parentElement;
+    const refundCard = screen.getByText("Refunded / Credited").parentElement
+      ?.parentElement;
+    // Wait for the RESPONSE to land - the fields the old shape did carry render
+    // - before judging the tile, since the initial state is already $0.00.
+    await waitFor(() => expect(refundCard).toHaveTextContent("$65.00"));
+    expect(netCard).toHaveTextContent("$0.00");
+    expect(netCard).not.toHaveTextContent("NaN");
+  });
+
+  it("prints the warning's payment count in the club number format (#3637)", async () => {
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        netCollectedCents: 6_500,
+        refundedCents: 0,
+        count: 1_234,
+        additionalLedgerGapCents: 2_100,
+        additionalLedgerGapBookings: 1_234,
+      },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    expect(
+      await screen.findByText(/: 1,234 payments counted in it record an additional payment/),
+    ).toBeInTheDocument();
+  });
+
+  it("warns that Net Collected may understate, as Reports does, when the ledger check finds a gap", async () => {
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        netCollectedCents: 6_500,
+        refundedCents: 0,
+        count: 1,
+        additionalLedgerGapCents: 2_100,
+        additionalLedgerGapBookings: 1,
+      },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        "Net Collected may understate by $21.00: 1 payment counted in it records an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile that payment's ledger before trusting this figure.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no ledger-gap warning when the check finds none", async () => {
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        netCollectedCents: 6_500,
+        refundedCents: 6_500,
+        count: 1,
+        additionalLedgerGapCents: 0,
+        additionalLedgerGapBookings: 0,
+      },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    const refundCard = (await screen.findByText("Refunded / Credited"))
+      .parentElement?.parentElement;
+    await waitFor(() => expect(refundCard).toHaveTextContent("$65.00"));
+    expect(screen.queryByText(/may understate/)).toBeNull();
   });
 });
 

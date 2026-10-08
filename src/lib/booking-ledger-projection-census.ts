@@ -74,6 +74,12 @@ import {
   type ResidualComponent,
 } from "@/lib/booking-ledger-projection-census-classes";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
+import {
+  GROUP_SETTLEMENT_KEY_EXAMPLES,
+  groupSettlementBankRefundCents,
+  groupSettlementSourceDrift,
+  plannedGroupChildLines,
+} from "@/lib/booking-ledger-projection-census-group";
 import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 
 /**
@@ -150,8 +156,22 @@ export type BookingLedgerEvaluation = {
      * Xero note allocates, with whether its invoice is proven paid (#3632).
      */
     ibUnallocatedAppliedCredit: { evidence: InternetBankingSettlementEvidence; cents: number } | null;
+    /** Why a `GROUP_SETTLEMENT_UNPOSTABLE` child holds; null on every other booking. */
+    groupSettlementUnpostable: GroupSettlementUnpostableReason | null;
   };
 };
+
+/**
+ * Why a group-settled child's planned lines would not agree outright, which
+ * says what the operator does (#3854): `REFUSED`, the back-post refuses it or
+ * would post lines the census does not plan — correct the history;
+ * `POSTS_WITH_CLASS`, it posts and the census then names an acknowledgeable
+ * class (an in-flight refund, say) — run the back-post, then acknowledge;
+ * `POSTS_NOT_AGREEING`, it posts and the census then still finds a
+ * disagreement, gap or integrity finding — correct the history.
+ */
+export const GROUP_SETTLEMENT_UNPOSTABLE_REASONS = ["REFUSED", "POSTS_WITH_CLASS", "POSTS_NOT_AGREEING"] as const;
+export type GroupSettlementUnpostableReason = (typeof GROUP_SETTLEMENT_UNPOSTABLE_REASONS)[number];
 
 const CHARGE_PRICE_KINDS = ["GUEST_NIGHT", "PROMOTION", "GROUP_DISCOUNT"] as const;
 
@@ -177,6 +197,7 @@ const KEY_NAMESPACE_ANCHORS: ReadonlyMap<string, ReadonlySet<LedgerAnchorKind>> 
     [refundKey("r"), ["PAYMENT_REFUND"]],
     [creditKey("c"), ["MEMBER_CREDIT", "CANCELLATION"]],
     [handBackKey("t"), ["REVIEW_TASK"]],
+    ...GROUP_SETTLEMENT_KEY_EXAMPLES.map((key): [string, LedgerAnchorKind[]] => [key, ["GROUP_SETTLEMENT"]]),
   ];
   const map = new Map<string, Set<LedgerAnchorKind>>();
   for (const [key, anchors] of pairs) {
@@ -304,13 +325,25 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     bookingId: booking.id,
     lineCount: lines.length,
     integrity,
-    info: { unkeyedLines: lines.filter((line) => line.postingKey === null).length, retainedCollectedCents: 0, ibUnallocatedAppliedCredit },
+    info: {
+      unkeyedLines: lines.filter((line) => line.postingKey === null).length,
+      retainedCollectedCents: 0,
+      ibUnallocatedAppliedCredit,
+      groupSettlementUnpostable: null as GroupSettlementUnpostableReason | null,
+    },
   };
 
   if (lines.length === 0) {
     const money = hasMoneyColumns(row);
-    const offLedger = money && isGroupSettlementOffLedger(row);
-    if (money && !offLedger) coverage.add("NO_LINES");
+    const shape = money && isGroupSettlementOffLedger(row);
+    // Owner decision 2A exempts the class because #3854's poster posts the
+    // child; so it names only a child whose planned lines the census would
+    // agree on outright. Any other — refused by the back-post, or posted with
+    // a class to acknowledge — is a gap that holds, with the reason (F1).
+    const unpostable = shape ? groupSettledChildUnpostableReason(row) : null;
+    const offLedger = shape && unpostable === null;
+    if (unpostable !== null) coverage.add("GROUP_SETTLEMENT_UNPOSTABLE");
+    if (money && !shape) coverage.add("NO_LINES");
     if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
     return {
       ...base,
@@ -318,6 +351,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       coverage: [...coverage],
       bookingClass: offLedger ? "GROUP_SETTLEMENT_OFF_LEDGER" : null,
       bookingInstances: [],
+      info: { ...base.info, groupSettlementUnpostable: unpostable },
     };
   }
 
@@ -333,7 +367,9 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
   // re-based from the strands — never carries (#3791). Cancelled: owed(b) == 0
   // once its refunds have posted (design §6, #3611).
   if (cancelled) {
-    if (!confirmed && row.cancellation !== null) {
+    // A group child the organiser settled before #3854 has no snapshot and
+    // can hold a #3653 refund line alone: coverage for the back-post too.
+    if (!confirmed && (row.cancellation !== null || booking.organiserSettled)) {
       coverage.add("NOT_CONFIRMED_ON_LEDGER");
       identities.push(coverageOnly("PRICE", "NOT_CONFIRMED_ON_LEDGER"));
     } else {
@@ -377,8 +413,10 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       : notApplicable("CREDIT_APPLIED"),
   );
 
-  // 4. REFUNDED: refundedAmountCents == −Σ CARD_REFUND, its residual classified.
-  const cardRefunded = -sumKinds(lines, ["CARD_REFUND"]);
+  // 4. REFUNDED: refundedAmountCents == −Σ CARD_REFUND, its residual classified
+  // — plus an Internet Banking group plan's BANK_REFUND, which the same
+  // transaction counted in the column (#3854).
+  const cardRefunded = -sumKinds(lines, ["CARD_REFUND"]) + groupSettlementBankRefundCents(lines);
   identities.push(
     applies(cardRefunded)
       ? result("REFUNDED", column("refundedAmountCents"), cardRefunded, refundedComponents(row))
@@ -455,6 +493,27 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     bookingClass: null,
     bookingInstances: ambiguousReviewGiveBack(reviewAdjustments),
   };
+}
+
+/**
+ * #3854 F1: would the lines the back-post posts on this group-settled child —
+ * planned in memory by its own planners (`plannedGroupChildLines`) — leave the
+ * census agreeing outright: every identity agreeing, no coverage, no integrity
+ * finding, no class? Null if so; else why not (`GroupSettlementUnpostableReason`).
+ * Anything less — a class included, which wants the owner's acknowledgement
+ * once posted — is not exempt, so the child holds as a gap.
+ */
+function groupSettledChildUnpostableReason(row: BookingLedgerCensusRow): GroupSettlementUnpostableReason | null {
+  const planned = plannedGroupChildLines(row);
+  if (planned === null) return "REFUSED";
+  const evaluation = evaluateBookingLedgerIdentities({ ...row, lines: planned });
+  const notAgreeing =
+    evaluation.coverage.length > 0 ||
+    evaluation.integrity.length > 0 ||
+    evaluation.identities.some((identity) => identity.status === "DISAGREE" || identity.status === "COVERAGE");
+  if (notAgreeing) return "POSTS_NOT_AGREEING";
+  const classed = evaluation.bookingInstances.length > 0 || evaluation.identities.some((identity) => identity.status === "CLASSIFIED");
+  return classed ? "POSTS_WITH_CLASS" : null;
 }
 
 /** One instance per figure, so the acknowledgement goes stale if any of them moves. */
@@ -546,7 +605,9 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine, review
       if (row.booking.status !== "CANCELLED") return "a cancellation line on a booking that is not cancelled";
       if (line.kind === "CANCELLATION_FEE") {
         // The fee is the kept figure the CANCELLED event froze, less the
-        // change fees that stayed charged (design §5.1).
+        // change fees that stayed charged (design §5.1). A group child's
+        // organiser cancel freezes none (#3854: its kept figure is its share
+        // less the plan's refunds, re-derivable from the rows), so it is skipped.
         const keptCents = row.cancellation?.keptCents ?? null;
         if (keptCents === null) return null;
         const stayingFees = liveLines(row.lines).filter((candidate) => candidate.kind === "CHANGE_FEE").reduce((sum, fee) => sum + fee.amountCents, 0);
@@ -574,6 +635,8 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine, review
       if (!credit) return `no credit row ${line.anchorId} on this booking`;
       return line.amountCents === -credit.amountCents ? null : `credit row holds ${credit.amountCents}, line ${line.amountCents}`;
     }
+    case "GROUP_SETTLEMENT":
+      return groupSettlementSourceDrift(row, line);
     case "REVIEW_TASK": {
       const task = row.tasks.find((candidate) => candidate.id === line.anchorId);
       if (!task) return `no task ${line.anchorId} on this booking`;

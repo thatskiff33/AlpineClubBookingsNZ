@@ -85,7 +85,7 @@ the booking detail, while public bearer actions remain separate.
 |---|---|
 | [![Admin dashboard showing the Needs Attention queue cards and club activity](docs/images/admin/admin-dashboard.png)](docs/guides/dashboard.md) *Admin dashboard* | [![Member booking wizard showing the availability calendar with per-night colour-coded bed counts](docs/images/public/member-book.png)](docs/user-guide/booking-a-stay.md) *Member booking wizard* |
 | [![Bed allocation screen showing rooms and beds with drag-and-drop guest placement](docs/images/admin/admin-bed-allocation.png)](docs/guides/bed-allocation.md) *Drag-and-drop bed allocation* | [![Lobby TV board design concept showing a whole-lodge night board with arrivals and rooms](docs/lobby-display/mockups/screenshots/whole-lodge.png)](docs/lobby-display/README.md) *Lobby TV board (design concept)* |
-| [![Reports page showing stay-night Booked Revenue, Net Collected Cash, Outstanding Additions, occupancy, booking trends, and status charts](docs/images/admin/admin-reports.png)](docs/guides/reports.md) *Reports* | [![Public club website home page showing the admin-editable hero and menu](docs/images/public/public-home.png)](docs/guides/page-content.md) *Public club website* |
+| [![Reports page showing stay-night Booked Revenue, Net Collected, Outstanding Additions, occupancy, booking trends, and status charts](docs/images/admin/admin-reports.png)](docs/guides/reports.md) *Reports* | [![Public club website home page showing the admin-editable hero and menu](docs/images/public/public-home.png)](docs/guides/page-content.md) *Public club website* |
 
 <details>
 <summary>Every admin, member, and public surface is captured, and none of it is hand-cropped.</summary>

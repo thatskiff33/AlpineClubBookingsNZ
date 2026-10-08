@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { bookingOwner } from "@/lib/booking-owner";
+import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -399,12 +400,7 @@ export function BookingChangeRequestsPanel({
                       <span className="text-muted-foreground">Booking total:</span>{" "}
                       {formatCents(request.booking.finalPriceCents, format)}
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Payment:</span>{" "}
-                      {request.booking.payment
-                        ? `${request.booking.payment.status} (${formatCents(request.booking.payment.amountCents, format)})`
-                        : "No payment"}
-                    </div>
+                    <ChangeRequestPaymentLine payment={request.booking.payment} />
                   </div>
 
                   <div className="rounded-md border bg-muted p-3 text-sm">

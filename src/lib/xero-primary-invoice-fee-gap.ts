@@ -38,7 +38,8 @@ import {
   CHANGE_FEE_LINE_DESCRIPTION,
   invoiceLineItemsTotalCents,
 } from "@/lib/xero-modification-line-items";
-import { unallocatedAppliedCents } from "@/lib/xero-applied-credit-unallocated";
+import { unallocatedAppliedCents } from "@/lib/xero-applied-credit-ledger-state";
+import { isCreditOnlyCardPayment } from "@/lib/credit-only-card-payment";
 import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-outbox";
 import {
   readQueuedOutboxPayload,
@@ -97,13 +98,15 @@ type CardSettlePayment = {
 /**
  * #1641: whether a CARD invoice's settle allocates applied account credit
  * against the primary invoice at all — a card capture with net cash left whose
- * mirror records credit applied. False for internet banking (its own outbox op
- * allocates), an uncaptured or refunded-out payment, and a full-price capture
- * (`creditAppliedCents = 0`), which must not allocate. The mirror is the GATE
- * only; how much is allocated is the engine's figure
- * ({@link cardSettleAppliedCreditCents}).
+ * mirror records credit applied, or a $0 credit-only card settle
+ * (`isCreditOnlyCardPayment`, #3836), whose credit is all that pays it. False
+ * for internet banking (its own outbox op allocates), an uncaptured or
+ * refunded-out payment, and a full-price capture (`creditAppliedCents = 0`),
+ * which must not allocate. The mirror is the GATE only; how much is allocated
+ * is the engine's figure ({@link cardSettleAppliedCreditCents}).
  */
 export function cardSettleAllocatesAppliedCredit(payment: CardSettlePayment): boolean {
+  if (isCreditOnlyCardPayment(payment)) return true;
   const netCapturedCents = payment.amountCents - (payment.refundedAmountCents ?? 0);
   return (
     payment.source !== PaymentSource.INTERNET_BANKING &&

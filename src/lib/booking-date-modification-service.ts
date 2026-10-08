@@ -1742,6 +1742,7 @@ async function dispatchDatePostTransactionSideEffects({
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
+      refundReturnedToOrganiser: result.organiserChildRefund !== null,
       refundByBankTransfer: editRefundGoesBackByHand(result),
       lodgeId: result.booking.lodgeId,
     }, format).catch((err) =>
@@ -2306,6 +2307,7 @@ export async function adminShiftBookingDates({
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
+      refundReturnedToOrganiser: false,
       // A shift keeps the price, so nothing is refunded.
       refundByBankTransfer: false,
       lodgeId: result.lodgeId,

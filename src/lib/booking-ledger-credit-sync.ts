@@ -57,7 +57,7 @@ export async function syncBookingLedgerCredits({
   const postedLines = await findPostedCreditLines(store, bookingId);
   const credits = await store.memberCredit.findMany({
     where: { OR: [bookingAppliedCreditWhere(bookingId), bookingIssuedCreditWhere(bookingId)] },
-    select: { id: true, type: true, amountCents: true, restoredFromBookingId: true },
+    select: { id: true, type: true, amountCents: true, description: true, restoredFromBookingId: true },
     // One order for every writer, so two transactions posting the same
     // not-yet-posted rows insert them in the same order (review of #3609).
     orderBy: { id: "asc" },

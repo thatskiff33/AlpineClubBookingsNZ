@@ -1,4 +1,7 @@
-import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display";
+import {
+  getCancellationSettlementBreakdown,
+  type CancellationCreditEntry,
+} from "@/lib/payment-status-display";
 
 export const paymentSourceFilters = ["all", "STRIPE", "INTERNET_BANKING", "NONE"] as const;
 export type PaymentSourceFilter = (typeof paymentSourceFilters)[number];
@@ -183,7 +186,7 @@ export function matchesXeroStateFilter(
 
 export function deriveSettlementKind(input: {
   refundedAmountCents: number;
-  credits: Array<{ amountCents: number; description?: string | null }>;
+  credits: CancellationCreditEntry[];
 }): SettlementKind {
   const settlement = getCancellationSettlementBreakdown(
     input.refundedAmountCents,

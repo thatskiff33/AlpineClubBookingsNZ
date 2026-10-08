@@ -282,7 +282,7 @@ export function buildInvoiceLineItems(
  *
  * Card-gated for three reasons: (1) Internet-Banking invoices allocate via their own
  * fire-after outbox op (#1620) — running it here would double-drive them; (2) a card
- * invoice is only raised after capture (payment SUCCEEDED); (3) a full-price capture
+ * invoice follows capture, or a $0 credit-only settle (#3836); (3) a full-price capture
  * carries `creditAppliedCents = 0` and must NOT allocate — its invoice is settled in
  * full by real cash, and the settle gave its applied credit back locally (#3864; a
  * pre-#3864 double-pay by an operator's LOCAL restore), not by a Xero note (which
@@ -308,13 +308,15 @@ async function settleCardAppliedCreditAllocation(
 ): Promise<void> {
   // Proceed ONLY for a card cash capture that recorded a credit-reduced mirror
   // (`cardSettleAllocatesAppliedCredit`, the one gate — the primary payment's
-  // cap reads it too, through `cardSettleAppliedCreditCents`). It skips a missing mirror (legacy full-price captures, no-credit
-  // bookings): allocating against a full-price-paid invoice would over-allocate.
+  // cap reads it too, through `cardSettleAppliedCreditCents`), or a $0
+  // credit-only card settle (#3836), which that gate also admits. It skips a
+  // missing mirror (legacy full-price captures, no-credit bookings):
+  // allocating against a full-price-paid invoice would over-allocate.
   // #1765 — capture evidence is "captured status + positive net cash", not
   // `status === "SUCCEEDED"`: a repay-after-refund payment aggregates to
   // PARTIALLY_REFUNDED at invoice time even though its repay capture settles
   // the invoice, and skipping here would strand the applied slice outstanding.
-  // A fully-refunded-out payment (net 0) still must not allocate.
+  // A fully-refunded-out payment (net 0) still must not allocate; a credit-only one does (#3836).
   if (!cardSettleAllocatesAppliedCredit(payment)) return;
   const { allocateAppliedCreditForBooking } = await import(
     "@/lib/xero-applied-credit-allocation"

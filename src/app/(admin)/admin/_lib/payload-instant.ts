@@ -11,9 +11,9 @@
  * duplication next door as deliberate and temporary. The seven admin call sites
  * that name this path keep naming it.
  *
- * ## The sibling of `calendar-day.ts`, and the distinction is the whole point
+ * ## Its calendar-day sibling is the kernel's `formatStayDate`, and the distinction is the whole point
  *
- * `calendar-day.ts` next door decodes a `@db.Date` column — a lodge night, a
+ * `formatStayDate` / `calendarDateOfSerialisedDbDateOrNull` (`@/lib/club-time`, #3511) decode a `@db.Date` column — a lodge night, a
  * date of birth, a season edge — and takes NO ZONE, because a calendar day has
  * none. This decodes the other kind: a `createdAt`, a `paidAt`, an audit stamp,
  * a consent response. Those are moments, and a moment has no civil date until a

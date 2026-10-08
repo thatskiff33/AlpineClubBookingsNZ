@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   payment: { findUnique: vi.fn(), update: vi.fn() },
-  memberCredit: { aggregate: vi.fn() },
+  memberCredit: { groupBy: vi.fn() },
   bookingModification: { findMany: vi.fn() },
   xeroSyncOperation: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
   xeroObjectLink: { findFirst: vi.fn() },
@@ -207,22 +207,26 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     expect(cardSettleAllocatesAppliedCredit({ ...card, status: "PENDING" })).toBe(false);
     expect(cardSettleAllocatesAppliedCredit({ ...card, refundedAmountCents: 8_000 })).toBe(false);
     expect(cardSettleAllocatesAppliedCredit({ ...card, creditAppliedCents: 0 })).toBe(false);
+    // A $0 credit-only card settle allocates too: its credit is all that pays it (#3836).
+    expect(cardSettleAllocatesAppliedCredit({ ...card, amountCents: 0 })).toBe(true);
+    expect(cardSettleAllocatesAppliedCredit({ ...card, amountCents: 0, source: PaymentSource.INTERNET_BANKING })).toBe(false);
   });
 
   it("MUTATION round 5, finding 2: the credit the cap allows for is the allocation engine's ledger figure, behind the settle's gate", async () => {
     const card = { ...unpaid, status: "SUCCEEDED", amountCents: 8_500, creditAppliedCents: 2_000 };
     // The mirror says 20.00; the ledger still has 30.00 to allocate.
-    mocks.memberCredit.aggregate.mockResolvedValue({ _sum: { amountCents: -3_000 } });
+    mocks.memberCredit.groupBy.mockResolvedValue([{ appliedToBookingId: "booking_1", _sum: { amountCents: -3_000 } }]);
     await expect(cardSettleAppliedCreditCents("booking_1", card)).resolves.toBe(3_000);
-    expect(mocks.memberCredit.aggregate).toHaveBeenCalledWith({
-      where: { appliedToBookingId: "booking_1", type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+    expect(mocks.memberCredit.groupBy).toHaveBeenCalledWith({
+      by: ["appliedToBookingId"],
+      where: { appliedToBookingId: { in: ["booking_1"] }, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
       _sum: { amountCents: true },
     });
 
     // Where the settle does not allocate, there is nothing to allow for.
-    mocks.memberCredit.aggregate.mockClear();
+    mocks.memberCredit.groupBy.mockClear();
     await expect(cardSettleAppliedCreditCents("booking_1", { ...card, source: PaymentSource.INTERNET_BANKING })).resolves.toBe(0);
-    expect(mocks.memberCredit.aggregate).not.toHaveBeenCalled();
+    expect(mocks.memberCredit.groupBy).not.toHaveBeenCalled();
   });
 
   it("round 5, finding 3: only a partial cap whose remainder no gap invoice takes is reported", () => {

@@ -11,7 +11,7 @@ import { CLUB_FORMAT_GUARD_ARMS, MANDATORY_SRC_RESTRICTIONS } from "../../../esl
  *
  * The `@ts-expect-error` locks in `house-shapes.test.ts` and
  * `club-format-kernel.test.ts` prove the kernel's own renderings require a
- * format, but a WRAPPER — `seasonMonthsLabel`, `formatPayloadCalendarDay`, any
+ * format, but a WRAPPER — `seasonMonthsLabel`, `formatFamilyGroupCalendarDay`, any
  * of the ninety that thread one — could quietly regain a default and let its
  * callers forget the club's format again. The eslint arm refuses a default or
  * an optional marker on any `ClubDateFormat` / `ClubFormat` parameter in

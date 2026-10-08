@@ -73,7 +73,9 @@ let deletedBookingModificationRefundReason: typeof import("@/lib/deleted-booking
 async function lines() {
   return prisma.bookingLedgerLine.findMany({
     where: { bookingId: BOOKING_ID },
-    orderBy: { postedAt: "asc" },
+    // Lines posted in one instant tie on postedAt; the cuid id breaks the tie in
+    // creation order, so a snapshot cannot read them either way round (#3970).
+    orderBy: [{ postedAt: "asc" }, { id: "asc" }],
     select: {
       kind: true,
       sign: true,

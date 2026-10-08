@@ -226,7 +226,7 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
   "src/lib/servernz-config.ts::setServerNzApiKey#0":
     "the actor is this helper's own required parameter, supplied by its caller",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
-    "the actor is this helper's own required parameter, for the same reason as the Google verify-reset above",
+    "the actor is this helper's own required parameter: the admin credential route supplies the officer, and recordStripeWebhookVerified supplies its system actor when taking back a marker that raced a signing-secret swap",
   "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.storeRemoved#0":
     "the actor is this helper's own required parameter: the administrator disconnecting, or the one whose credential write caused the verify-reset",
   "src/lib/xero-token-store.ts::saveXeroTokens#0":

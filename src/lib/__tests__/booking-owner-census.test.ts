@@ -466,7 +466,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
-  "src/app/api/bookings/[id]/cancel-preview/route.ts:76",
+  "src/app/api/bookings/[id]/cancel-preview/route.ts:75",
   "src/app/api/bookings/[id]/change-requests/route.ts:214",
   "src/app/api/bookings/[id]/change-requests/route.ts:542",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:175",
@@ -486,7 +486,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1068",
-  "src/lib/booking-cancel.ts:527",
+  "src/lib/booking-cancel.ts:528",
   "src/lib/booking-date-modification-service.ts:397",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
@@ -520,14 +520,14 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1297",
-  "src/lib/payment-recovery.ts:2628",
-  "src/lib/payment-recovery.ts:2680",
+  "src/lib/payment-recovery.ts:2623",
+  "src/lib/payment-recovery.ts:2675",
   "src/lib/xero-admin-health.ts:372",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
-  "src/lib/diagnostics/tools/packs/finance-evidence.ts:558",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts:555",
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -798,10 +798,10 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload<{ select: typeof … }>`, so the model IS
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
-  "src/lib/member-lodge-roster.ts:111",
+  "src/lib/member-lodge-roster.ts:115",
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:98",
   "src/lib/stuck-state-dashboard.ts:616",
-  "src/lib/xero-booking-repair-types.ts:190",
+  "src/lib/xero-booking-repair-types.ts:195",
   "src/lib/xero-inbound/settlement-conflicts.ts:153",
 ];

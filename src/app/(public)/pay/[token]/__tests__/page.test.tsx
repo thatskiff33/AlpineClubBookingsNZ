@@ -429,14 +429,15 @@ describe("the public payment page survives a payload that omits its dates", () =
     the reason it never throws: "a public token landing page with no runtime
     schema check on the payload". That premise is the world where a field can be
     absent — and the first version of the helper called `parseInstant(value)`,
-    which does `value.trim()` BEFORE any nullish check. So `formatStayDay(null)`
+    which does `value.trim()` BEFORE any nullish check. So the old local `formatStayDay(null)`
     threw a `TypeError` out of the very guard written to prevent a throw, and an
     unhandled throw in a client render replaces the whole page with an error
     boundary. A payer with a link in their hand gets a blank screen instead of
     the amount, the reference and the card form.
 
-    MUTATION-VERIFIED: remove the `typeof value !== "string"` arm from
-    `formatStayDay` (or from `formatLinkExpiry`) and this case goes red with
+    Stay dates now go through the kernel's `formatStayDateOrNull`, which answers
+    `null` for an absent value (#3511). MUTATION-VERIFIED: remove the
+    `typeof value !== "string"` arm from `formatLinkExpiry` and this case goes red with
     "Cannot read properties of null (reading 'trim')".
   */
   const contextWithNoDates = {
