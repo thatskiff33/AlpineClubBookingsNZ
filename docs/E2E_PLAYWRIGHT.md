@@ -192,9 +192,12 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   fixtures and the stay-window horizon. Likewise **every seeded booking date is
   relative** (`DEMO_BOOKING_WINDOWS` / the window fixtures in
   `prisma/e2e-fixtures.ts`), so nothing rots red as wall-clock advances and the
-  seasons never need manual extension. The production first-run seed
-  (`prisma/seed.ts`) keeps its fixed real-world season dates — only the demo/E2E
-  database is relativized.
+  seasons never need manual extension. Seeded windows slide a weekday per run
+  date while a stay window's Monday holds for a week, so `stayWindow` skips
+  every Monday whose nights a seeded booking holds (`SEEDED_BOOKING_WINDOWS`,
+  #4002); a new seeded booking window must be added to that list. The
+  production first-run seed (`prisma/seed.ts`) keeps its fixed real-world season
+  dates — only the demo/E2E database is relativized.
 
 ## Seeded fixtures and personas
 
@@ -557,8 +560,8 @@ Four rules follow, and a new spec must satisfy all four:
 
   Those retry bands cost calendar navigation: a spec reaches its dates by
   clicking the wizard calendar's "Next ›" one month at a time, bounded by
-  `MAX_MONTH_HOPS` in `e2e/helpers/booking.ts`. Base 0–15 × attempt 0–2 needs at
-  most 14 hops on any run date and the bound is 24, so nothing in range can run
+  `MAX_MONTH_HOPS` in `e2e/helpers/booking.ts`. Base 0–15 × attempt 0–2 needs
+  about 15 hops at most and the bound is 24, so nothing in range can run
   out — and if a future base or stride does, `selectCalendarDay` now fails on the
   month it could not reach rather than timing out on a day button.
 
