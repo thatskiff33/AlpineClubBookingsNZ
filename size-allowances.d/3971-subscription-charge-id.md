@@ -1,7 +1,7 @@
 # File-size allowances for #3971 (subscription invoice charge id)
 
 file: src/lib/xero-operation-retry.ts
-lines: 1949
+lines: 1951
 reason: the Xero Operations retry for a failed membership subscription
   invoice is one more "send the row back to the outbox" branch, beside the
   group settlement and kept late-capture branches that already live here and
