@@ -27,11 +27,8 @@
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
   parseInstant,
   type BoundClubTime,
-  type ClubDateFormat,
 } from "@/lib/club-time";
 
 export interface Narrative {
@@ -93,41 +90,6 @@ const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
 };
 
 /**
- * One end of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870; epic
- * #2988).
- *
- * `payable.checkIn`/`checkOut` are the booking's `@db.Date` lodge nights,
- * serialised by `src/lib/payment-link-context.ts` with `.toISOString()`. A calendar day
- * has no timezone, so this consults no zone and could not be wrong about one:
- * the kernel decodes the UTC-midnight encoding and formats it pinned to `UTC`,
- * provably the identity for every club. The legacy helper projected it through
- * `APP_TIME_ZONE`, which cancels only east of Greenwich — a club west of it
- * named the night before the stay, on the page a guest pays from.
- *
- * `parseInstant` and the raw value rather than a throw: this is a public token
- * landing page with no runtime schema check on the payload, and an unhandled throw in a client render
- * replaces the whole screen with an error boundary. THE PREVIOUS CODE THREW
- * TOO — `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`,
- * not the string "Invalid Date", which only `toLocaleDateString` produces — so
- * this fallback is a FIX rather than a preserved behaviour.
- */
-export function formatStayDay(value: string, format: ClubDateFormat): string {
-  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
-  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
-  // `TypeError` out of the guard that exists to stop a throw. The premise above
-  // is that nothing validates this payload on the way in, and a missing field is
-  // exactly what an unvalidated payload produces — so the guard has to cover it.
-  if (typeof value !== "string") return "";
-  const instant = parseInstant(value);
-  if (instant === null) return value;
-  try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
-  } catch {
-    return value;
-  }
-}
-
-/**
  * The moment the link stops working, spelled in the CLUB's zone (CT-4, #2870;
  * INV-CONFIG-002).
  *
@@ -174,7 +136,7 @@ export function formatStayDay(value: string, format: ClubDateFormat): string {
  * lapses or is re-issued. This line reports the row faithfully either way, which
  * is the whole point of stating the moment as a moment.
  *
- * FAIL-SOFT FOR THE SAME REASON `formatStayDay` IS, which is the half that was
+ * FAIL-SOFT FOR THE SAME REASON THE STAY DATES ARE (`formatStayDateOrNull`), which is the half that was
  * missing: this line sits nine below one whose docblock justifies its own
  * try/catch by "nothing validates this payload on the way in", and then handed
  * `new Date(...)` straight to a formatter. `Intl.DateTimeFormat.format` on an

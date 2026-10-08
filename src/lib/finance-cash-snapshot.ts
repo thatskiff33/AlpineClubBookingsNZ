@@ -1,10 +1,9 @@
 import {
   type BoundClubTime,
-  calendarDateOfDateOnlyInstant,
   type ClubDateFormat,
-  formatClubDate,
   parseInstant,
   requireStoredCalendarDay,
+  formatStayDate,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { parseProviderReportAmountToCents } from "@/lib/money-provider-amount";
@@ -318,15 +317,13 @@ function formatSnapshotWindow(
  * for a club east of Greenwich and wrong for one west of it.
  */
 function storedSnapshotDay(value: Date, format: ClubDateFormat): string {
-  return formatClubDate(
-    calendarDateOfDateOnlyInstant(
-      requireStoredCalendarDay(value, {
-        subject: "A cash snapshot's as-of or period date",
-        instead:
-          "A real timestamp rendered as a bare day is a projection, and " +
-          "FinanceSnapshot.asOfDate, .periodStart and .periodEnd are all @db.Date columns.",
-      }),
-    ),
+  return formatStayDate(
+    requireStoredCalendarDay(value, {
+      subject: "A cash snapshot's as-of or period date",
+      instead:
+        "A real timestamp rendered as a bare day is a projection, and " +
+        "FinanceSnapshot.asOfDate, .periodStart and .periodEnd are all @db.Date columns.",
+    }),
     format,
   );
 }

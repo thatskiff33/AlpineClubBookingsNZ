@@ -46,7 +46,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { type ClubDateFormat, formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
 type ApiBanner = {
@@ -102,25 +102,6 @@ const GROUPS = [
     emptyLabel: "No past banners.",
   },
 ] as const;
-
-/**
- * A banner's display window is a CALENDAR DAY, e.g. "5 Jul 2026", and takes no
- * timezone at all (CT-4, #2870; INV-DATE-010).
- *
- * THE COMMENT THIS REPLACES SAID THE QUIET PART: "the value is pinned to UTC
- * midnight, and NZ is UTC+12/+13, so reading it back in club time lands on the
- * same calendar day". That reasoning holds only while the club is east of
- * Greenwich. The kernel's calendar-date formatter pins UTC over the same
- * encoding, which is the identity for EVERY club, so the rendered string is
- * unchanged here and correct for a club the old argument did not cover.
- */
-function formatDateOnly(value: string, format: ClubDateFormat): string {
-  const day = parseCalendarDate(value);
-  if (day === null) {
-    return value;
-  }
-  return formatClubDate(day, format);
-}
 
 function excerpt(message: string, maxLength = 160): string {
   const singleLine = message.replace(/\s+/g, " ").trim();
@@ -418,8 +399,8 @@ export function SiteBannersPanel() {
                             </Badge>
                           )}
                           <span className="text-xs text-muted-foreground">
-                            {formatDateOnly(banner.startDate, format)} -{" "}
-                            {formatDateOnly(banner.endDate, format)}
+                            {formatStayDateOrNull(banner.startDate, format) ?? banner.startDate} -{" "}
+                            {formatStayDateOrNull(banner.endDate, format) ?? banner.endDate}
                           </span>
                         </div>
                         <p className="text-sm text-foreground">

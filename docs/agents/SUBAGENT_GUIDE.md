@@ -62,7 +62,7 @@ do not clash.
 - Adversarial-review subagents are read-only unless the orchestrator dispatches
   a separate bounded fix task after triaging their findings.
 - The orchestrator owns final synthesis, issue claims, worktrees, branch scope,
-  GitHub writes, full validation through PR CI, PR evidence, risk gates, and
+  GitHub writes, full validation through PR CI, PR evidence, the merge gate, and
   merges.
 - Do not pass secrets, production data, or unpublished sensitive security
   details to broad subagent prompts.

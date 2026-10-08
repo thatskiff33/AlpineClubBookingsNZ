@@ -350,7 +350,7 @@ Keep unrelated refactors out of feature and bugfix PRs.
 
 ## Merging
 
-Automated agents follow the `AGENTS.md` "Completion and Merge" risk gate, the
+Automated agents follow the `AGENTS.md` "Completion and Merge" merge gate, the
 one statement of who may merge what. Always merge with a merge commit; never
 squash or force-push.
 

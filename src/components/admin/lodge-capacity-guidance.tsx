@@ -5,6 +5,7 @@ import {
   parseConfiguredLodgeCapacity,
   resolveEffectiveLodgeCapacity,
   resolvePartnerSharedHeadroom,
+  resolvePartnerSpotsLostByCapacityChange,
 } from "@/lib/lodge-effective-capacity";
 
 /**
@@ -44,7 +45,37 @@ import {
  * focus, including for an officer who tabs back to a field they are not
  * editing and for a view-only officer who never types at all.
  */
-export function LodgeCapacityGuidance({
+export function LodgeCapacityGuidance(props: LodgeCapacityGuidanceProps) {
+  return (
+    <>
+      <LodgeCapacityExplanation {...props} />
+      <LodgeCapacityLoweringWarning
+        {...props}
+        id={lodgeCapacityLoweringWarningId(props.id)}
+      />
+    </>
+  );
+}
+
+/**
+ * The id of the lowering warning rendered beside the guidance `id` (#3440).
+ * The field's `aria-describedby` reads it from here, so the reference cannot
+ * drift from the element (`INV-SSOT-001`).
+ */
+export function lodgeCapacityLoweringWarningId(guidanceId: string): string {
+  return `${guidanceId}-lowering`;
+}
+
+type LodgeCapacityGuidanceProps = {
+  id: string;
+  capacityInput: string;
+  /** The capacity field's saved contents; blank when none is saved (#3440). */
+  savedCapacityInput: string;
+  activeBedCount: number | null;
+  activeDoubleBedCount: number;
+};
+
+function LodgeCapacityExplanation({
   id,
   capacityInput,
   activeBedCount,
@@ -136,6 +167,69 @@ export function LodgeCapacityGuidance({
           {activeBedCount} would leave none.
         </>
       ) : null}
+    </p>
+  );
+}
+
+/**
+ * Warns, before the save, how many partner-shared spots lowering the capacity
+ * would remove (#3440). Compared with the SAVED figure, so it appears on the
+ * transition only: nothing when raising, unchanged, cleared, or on a lodge
+ * with no shareable doubles. A blank saved figure bounds nothing, so it counts
+ * as unbounded headroom and any typed figure can remove spots. The count
+ * comes from `resolvePartnerSpotsLostByCapacityChange`, which reads the same
+ * headroom rule the server resolves with (`INV-CAP-031`, `INV-SSOT-001`).
+ *
+ * Like the guidance above it is not a live region (the text would be announced
+ * for every digit typed) and is tied to the field through `aria-describedby`.
+ */
+function LodgeCapacityLoweringWarning({
+  id,
+  capacityInput,
+  savedCapacityInput,
+  activeBedCount,
+  activeDoubleBedCount,
+}: {
+  id: string;
+  capacityInput: string;
+  /** The capacity field's saved contents; blank when none is saved. */
+  savedCapacityInput: string;
+  activeBedCount: number | null;
+  activeDoubleBedCount: number;
+}) {
+  if (activeBedCount === null || activeDoubleBedCount <= 0) return null;
+  const typed = parseConfiguredLodgeCapacity(capacityInput);
+  const saved = parseConfiguredLodgeCapacity(savedCapacityInput);
+  if (typed.kind !== "valid" || saved.kind === "invalid") return null;
+
+  // A blank saved figure is not "nothing to compare with": it bounds nothing,
+  // so every shareable double already has a partner spot, and typing a figure
+  // can remove them (`resolvePartnerSharedHeadroom`).
+  const savedCapacity = saved.kind === "valid" ? saved.capacity : null;
+  const lost = resolvePartnerSpotsLostByCapacityChange({
+    savedCapacity,
+    proposedCapacity: typed.capacity,
+    activeBedCount,
+    activeDoubleBedCount,
+  });
+  if (lost <= 0) return null;
+
+  return (
+    <p id={id} className="rounded-md bg-warning-3 p-2 text-xs text-warning-11">
+      {savedCapacity === null ? (
+        <>
+          Setting a capacity of {typed.capacity} removes {lost} partner spot
+          {lost === 1 ? "" : "s"} this lodge has now. Raise it before saving if
+          you want to keep {lost === 1 ? "it" : "them"}.
+        </>
+      ) : (
+        <>
+          Lowering the capacity from {savedCapacity} to {typed.capacity}{" "}
+          removes {lost} partner spot{lost === 1 ? "" : "s"} on this
+          lodge&apos;s shareable double beds. Raise it again before saving if
+          you want to keep {lost === 1 ? "it" : "them"}.
+        </>
+      )}
     </p>
   );
 }
