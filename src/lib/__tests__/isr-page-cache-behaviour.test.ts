@@ -97,6 +97,8 @@ function refusingFs() {
     stat: vi.fn(async () => {
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     }),
+    // 16.3.8 looks for a build-time seed on a memory miss; there is none here.
+    existsSync: vi.fn(() => false),
   };
 }
 
@@ -125,16 +127,31 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
       _requestHeaders: {},
     } as never);
 
-    await cache.set("/about", appPageEntry("<html>about</html>") as never, {
+    // The route-scoped key a real request stores under since 16.3.8.
+    const key = getRouteCacheKey("/about", ABOUT_OWNER);
+    await cache.set(key, appPageEntry("<html>about</html>") as never, {
       kind: IncrementalCacheKind.APP_PAGE,
     } as never);
 
-    const stored = await cache.get("/about", {
+    const stored = await cache.get(key, {
       kind: IncrementalCacheKind.APP_PAGE,
     } as never);
 
     expect((stored?.value as { html?: string })?.html).toBe("<html>about</html>");
+
+    // A miss on another scoped key finds no seed and promotes nothing: with the
+    // disk half off, a miss never writes either.
+    const missed = await cache.get(getRouteCacheKey("/contact", getResponseCacheOwner({
+      kind: "APP_PAGE",
+      page: "/contact/page",
+      pathname: "/contact",
+    } as never)), {
+      kind: IncrementalCacheKind.APP_PAGE,
+    } as never);
+
+    expect(missed).toBeNull();
     expect(fs.writeFile).not.toHaveBeenCalled();
+    expect(fs.mkdir).not.toHaveBeenCalled();
   });
 
   it("DEGRADES to a warning when a store cannot be written, rather than throwing", async () => {
@@ -230,7 +247,7 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
     ).getFilePath(`${key}.html`, IncrementalCacheKind.APP_PAGE);
 
     const normalised = filePath.replace(/\\/g, "/");
-    expect(normalised.startsWith("/app/.next/server/")).toBe(true);
+    expect(normalised.startsWith("/app/.next/server/route-cache/")).toBe(true);
     expect(normalised.endsWith("/about.html")).toBe(true);
     expect(normalised).not.toContain("/.next/cache/");
   });
