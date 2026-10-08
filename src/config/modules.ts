@@ -525,6 +525,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     dependencies: [
       "Choose how much of a name is shown for each lodge under Admin → Lodges → the lodge → Member roster. The default shows full names.",
       "A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting.",
+      "Nights under a whole-lodge hold are shown as \"Reserved for a private booking\", without naming or counting the party. The booking calendar still shows them as full.",
       "When off, the roster page returns Not Found and no roster data is read.",
     ],
   },
