@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import {
   Select,
   SelectContent,
@@ -418,7 +419,7 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">
-                Teachers &amp; parent helpers ({club.hutLeaderLabel.toLowerCase()}s)
+                Teachers &amp; parent helpers ({pluralHutLeaderLabel(club.hutLeaderLabel).toLowerCase()})
               </h3>
               <Button type="button" variant="outline" size="sm" onClick={addTeacher}>
                 + Add adult

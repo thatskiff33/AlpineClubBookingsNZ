@@ -74,7 +74,7 @@ change these pages.
 | --- | --- | --- | --- |
 | Club name | The full club name shown across the site and in emails | Configured default | Blank falls back to the file config |
 | Short name | The abbreviated club name (e.g. "EMC") | Configured default | Blank falls back to the file config |
-| Hut-leader label | What the role is called throughout the app (e.g. "Hut Leader") | Configured default | Renames the sidebar entry and member-facing wording |
+| Hut-leader label | What the role is called throughout the app, in the singular (e.g. "Hut Leader") | Configured default | Renames the sidebar entry and member-facing wording. The app adds the plural itself ("Hut Leaders"), and leaves a label that already ends in "s" as typed |
 | Facebook URL | The club's Facebook link used in the footer/contact | Configured default | Full URL |
 
 **Lodge details**

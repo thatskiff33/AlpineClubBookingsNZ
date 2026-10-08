@@ -39,7 +39,9 @@ const fields: Array<
     "hutLeaderLabel",
     "Hut-leader label",
     'Optional — defaults to "Hut Leader"',
-    null,
+    // #3976: screens build the plural themselves ("Hut Leaders" in the admin
+    // sidebar), so the label must be the singular.
+    'Enter the singular, for example "Hut Leader" — the plural is added where needed.',
   ],
   [
     "facebookUrl",

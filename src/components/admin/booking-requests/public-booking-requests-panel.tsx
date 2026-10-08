@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
@@ -1653,7 +1654,7 @@ export function PublicBookingRequestsPanel({
                     <div className="text-sm">
                       <span className="text-muted-foreground">
                         Teachers &amp; parent helpers (
-                        {hutLeaderLabel.toLowerCase()}s):
+                        {pluralHutLeaderLabel(hutLeaderLabel).toLowerCase()}):
                       </span>{" "}
                       {request.teachers
                         .map((teacher) => `${teacher.firstName} ${teacher.lastName}`)
