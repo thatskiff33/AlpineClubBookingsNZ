@@ -369,6 +369,24 @@ describe("getPaymentLinkContext", () => {
     expect(context.payable).toBeNull();
     expect(context.canRequestFreshLink).toBe(false);
     expect(context.narrative.headline).toBe("Nothing to pay");
+    expect(context.narrative.message).toContain("the account credit applied to it covers what it owes");
+  });
+
+  // #3955 round 4 (finding 5): the credit is named only where some is applied.
+  it("says there is nothing to pay without naming credit when none is applied", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+        booking: baseBooking({ status: BookingStatus.PAYMENT_PENDING, finalPriceCents: 0 }),
+      }) as never
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: null } } as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("nothing_to_pay");
+    expect(context.narrative.message).toMatch(/has nothing left to pay\.$/);
+    expect(context.narrative.message).not.toContain("credit");
   });
 
   // #3638 delta D4: a switched booking's link page offers no card and keeps

@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 import { recordBookingEvent } from "@/lib/booking-events";
+import { bookingAmountOwedCents, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { ClubFormat } from "@/lib/club-format";
@@ -62,17 +63,22 @@ export function reviewShareGiveBackDescription(bookingId: string): string {
 /**
  * WHAT THE INVOICE MUST COME DOWN BY, so that Xero owes what the app does
  * (#3791, the clamp counterpart's invoice-allocated note). The app owes
- * `price - applied` on an unpaid booking and nothing on one its credit covered,
- * where a give-back is an agreed reduction of the price. Before the review Xero
- * owed what the app did; the give-back's deallocation adds `G` to what Xero
- * says is due; the note takes off the rest of the difference:
- * `owedBefore + G - owedAfter`. On an unpaid booking that is the re-price's
- * drop - the whole reduction, not the share - and on a covered one the share.
+ * what `bookingAmountOwedCents` says on an unpaid booking — its price plus the
+ * change fee recorded on its payment, less applied credit (`INV-PAY-119`) —
+ * and nothing on one its credit covered, where a give-back is an agreed
+ * reduction of the price. Before the review Xero owed what the app did; the
+ * give-back's deallocation adds `G` to what Xero says is due; the note takes
+ * off the rest of the difference: `owedBefore + G - owedAfter`. On an unpaid
+ * booking that is the re-price's drop - the whole reduction, not the share -
+ * and on a covered one the share. The fee is part of both owed figures: where
+ * either is held at zero, a bare price would mis-state the difference
+ * (#3955 round 4, finding 4).
  */
 export function reviewInvoiceReductionCents({
   unpaid,
   previousFinalPriceCents,
   finalPriceCents,
+  recordedChangeFeeCents,
   appliedBeforeCents,
   givenBackCents,
 }: {
@@ -80,11 +86,20 @@ export function reviewInvoiceReductionCents({
   unpaid: boolean;
   previousFinalPriceCents: number;
   finalPriceCents: number;
+  /** The change fee the booking's payment records (`recordedChangeFeeCents`). */
+  recordedChangeFeeCents: number;
   appliedBeforeCents: number;
   givenBackCents: number;
 }): number {
-  const owedBeforeCents = unpaid ? Math.max(0, previousFinalPriceCents - appliedBeforeCents) : 0;
-  const owedAfterCents = unpaid ? Math.max(0, finalPriceCents - (appliedBeforeCents - givenBackCents)) : 0;
+  const owed = (priceCents: number, appliedCreditCents: number) =>
+    unpaid
+      ? Math.max(
+          0,
+          bookingAmountOwedCents({ finalPriceCents: priceCents, changeFeeCents: recordedChangeFeeCents, appliedCreditCents }),
+        )
+      : 0;
+  const owedBeforeCents = owed(previousFinalPriceCents, appliedBeforeCents);
+  const owedAfterCents = owed(finalPriceCents, appliedBeforeCents - givenBackCents);
   return Math.max(0, owedBeforeCents + givenBackCents - owedAfterCents);
 }
 
@@ -157,7 +172,13 @@ export async function writeEditReviewAccountCredit({
 
   let creditSliceCents = 0;
   let cancelled = false;
-  let invoice = { unpaid: false, previousFinalPriceCents: 0, finalPriceCents: 0, appliedBeforeCents: 0 };
+  let invoice = {
+    unpaid: false,
+    previousFinalPriceCents: 0,
+    finalPriceCents: 0,
+    recordedChangeFeeCents: 0,
+    appliedBeforeCents: 0,
+  };
   const { givenBackCents, payment } = await giveBackAppliedCredit(
     {
       memberId,
@@ -172,7 +193,13 @@ export async function writeEditReviewAccountCredit({
       giveBackCentsOf: async (appliedCreditCents) => {
         const booking = await store.booking.findUniqueOrThrow({
           where: { id: bookingId },
-          select: { status: true, finalPriceCents: true, checkIn: true, lodgeId: true },
+          select: {
+            status: true,
+            finalPriceCents: true,
+            checkIn: true,
+            lodgeId: true,
+            payment: { select: { changeFeeCents: true } },
+          },
         });
         cancelled = booking.status === BookingStatus.CANCELLED;
         if (cancelled) {
@@ -194,7 +221,13 @@ export async function writeEditReviewAccountCredit({
         // applied figure without leaving anything owed (#3791, second round).
         const reviewGiveBacksCents = await reviewGiveBacksMadeCents(bookingId, store);
         const unpaid = appliedCreditCents + reviewGiveBacksCents < previousFinalPriceCents;
-        invoice = { unpaid, previousFinalPriceCents, finalPriceCents: booking.finalPriceCents, appliedBeforeCents: appliedCreditCents };
+        invoice = {
+          unpaid,
+          previousFinalPriceCents,
+          finalPriceCents: booking.finalPriceCents,
+          recordedChangeFeeCents: recordedChangeFeeCents(booking.payment),
+          appliedBeforeCents: appliedCreditCents,
+        };
         creditSliceCents = creditSliceOfReviewShare({
           shareCents: amountCents,
           appliedCreditCents,

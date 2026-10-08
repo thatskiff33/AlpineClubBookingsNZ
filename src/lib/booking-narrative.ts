@@ -107,6 +107,8 @@ export interface NarrativeBooking {
   finalPriceCents: number;
   /** #3955 (`INV-PAY-119`): what its pay step charges, where the caller read it (`bookingAmountOwedCents`). */
   amountDueCents?: number;
+  /** The account credit applied to it, read beside `amountDueCents`. */
+  appliedCreditCents?: number;
   checkIn: Date;
   checkOut: Date;
   firstName: string;
@@ -394,7 +396,9 @@ function buildPayableNarrative(
 ): BookingNarrative {
   const range = dateRange(booking, format);
   const due = booking.amountDueCents ?? booking.finalPriceCents;
-  if (booking.amountDueCents !== undefined && due <= 0) return nothingToPayNarrative(range);
+  if (booking.amountDueCents !== undefined && due <= 0) {
+    return nothingToPayNarrative(range, (booking.appliedCreditCents ?? 0) > 0);
+  }
   const amountDue = formatCents(due, format);
 
   const linkUnusable =

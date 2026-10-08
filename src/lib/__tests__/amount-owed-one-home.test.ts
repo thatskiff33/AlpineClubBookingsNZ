@@ -65,20 +65,12 @@ const BARE_PRICE_AMOUNT = /\bamountCents:\s*[\w.?!]*[Ff]inalPriceCents\b(?!\s*[-
  * the pay step reads the one home — and a fee recorded on an unpaid booking's
  * payment comes from an officer's finished-stay correction, on a stay no
  * member can edit.
- *
- * And a DIFFERENCE of two owed figures: a review's invoice reduction is
- * `owedBefore + givenBack - owedAfter`, both owed under the same recorded fee,
- * so the fee cancels and the bare price is the honest operand.
  */
 const ALLOWED_EXPRESSIONS: Readonly<Record<string, readonly string[]>> = {
   "src/components/edit-booking/price-summary-card.tsx": [
     "quote.newFinalPriceCents - displayedAppliedCreditCents",
   ],
   "src/components/edit-booking-panel.tsx": ["quoteFinalPriceCents - ledgerAppliedCreditCents"],
-  "src/lib/edit-financial-review-account-credit.ts": [
-    "previousFinalPriceCents - appliedBeforeCents",
-    "finalPriceCents - (appliedBeforeCents",
-  ],
 };
 
 const matchesIn = (text: string) =>

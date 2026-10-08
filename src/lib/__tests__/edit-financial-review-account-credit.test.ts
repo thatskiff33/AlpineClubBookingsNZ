@@ -370,6 +370,24 @@ describe("what of the share is applied credit coming back", () => {
     expect((await write(5_000, { previousFinalPriceCents: 20_000, newFinalPriceCents: 17_000 })).agreedGiveBackCents).toBeNull();
   });
 
+  it("MUTATION: #3955 round 4 - an unpaid booking's invoice reduction counts the fee its payment records", async () => {
+    // $100 re-priced to $80, $98 applied, a $5 fee: $10 back (the share), a $17 note.
+    store.booking.findUniqueOrThrow.mockResolvedValue({
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 8_000,
+      checkIn: CHECK_IN,
+      lodgeId: "lodge-1",
+      payment: { changeFeeCents: 500 },
+    });
+    h.applied.cents = 9_800;
+    h.applied.mirrorCents = 9_800;
+    const outcome = await write(1_000, { previousFinalPriceCents: 10_000, newFinalPriceCents: 8_000 });
+    expect(outcome).toMatchObject({ givenBackCents: 1_000, invoiceReductionCents: 1_700 });
+    expect(store.booking.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ payment: { select: { changeFeeCents: true } } }) }),
+    );
+  });
+
   it("MUTATION: a fully credit-paid booking is not held to the re-price", async () => {
     expect((await write(5_000, null)).givenBackCents).toBe(5_000);
     expect(store.bookingModification.findMany).not.toHaveBeenCalled();
@@ -460,15 +478,17 @@ describe("what of the share is applied credit coming back", () => {
 describe("what the issued invoice must come down by, so Xero owes what the app does", () => {
   /** Xero's due and the app's, once the give-back's deallocation and the note have landed. */
   /** `earlierGiveBacksCents`: an earlier review's agreed share, whose note the invoice already carries. */
-  const dues = (shape: { previousFinalPriceCents: number; finalPriceCents: number; appliedBeforeCents: number; givenBackCents: number; earlierGiveBacksCents?: number }) => {
-    const invoiceNetBeforeCents = shape.previousFinalPriceCents - (shape.earlierGiveBacksCents ?? 0);
+  /** `feeCents`: a change fee recorded on the payment, which the invoice bills (`INV-PAY-119`). */
+  const dues = (shape: { previousFinalPriceCents: number; finalPriceCents: number; appliedBeforeCents: number; givenBackCents: number; earlierGiveBacksCents?: number; feeCents?: number }) => {
+    const feeCents = shape.feeCents ?? 0;
+    const invoiceNetBeforeCents = shape.previousFinalPriceCents + feeCents - (shape.earlierGiveBacksCents ?? 0);
     const unpaid = shape.appliedBeforeCents + (shape.earlierGiveBacksCents ?? 0) < shape.previousFinalPriceCents;
-    const note = reviewInvoiceReductionCents({ ...shape, unpaid });
+    const note = reviewInvoiceReductionCents({ ...shape, recordedChangeFeeCents: feeCents, unpaid });
     const appliedAfter = shape.appliedBeforeCents - shape.givenBackCents;
     return {
       note,
       xeroDueCents: Math.max(0, invoiceNetBeforeCents - appliedAfter - note),
-      appDueCents: unpaid ? Math.max(0, shape.finalPriceCents - appliedAfter) : 0,
+      appDueCents: unpaid ? Math.max(0, shape.finalPriceCents + feeCents - appliedAfter) : 0,
     };
   };
 
@@ -480,7 +500,16 @@ describe("what the issued invoice must come down by, so Xero owes what the app d
     });
   });
 
+  it("MUTATION: #3955 round 4 - the recorded fee is in both owed figures, so a clamp at zero cannot drop it: a $17 note, and both owe nothing", () => {
+    // Unpaid: $100 re-priced to $80, $98 applied, $10 given back, a $5 fee.
+    // Without the fee the note is $12, and Xero would still say $5 is due.
+    expect(
+      dues({ previousFinalPriceCents: 10_000, finalPriceCents: 8_000, appliedBeforeCents: 9_800, givenBackCents: 1_000, feeCents: 500 }),
+    ).toEqual({ note: 1_700, xeroDueCents: 0, appDueCents: 0 });
+  });
+
   it.each([
+    ["unpaid with a $5 fee, re-priced $50 down, $30 share", { previousFinalPriceCents: 20_000, finalPriceCents: 15_000, appliedBeforeCents: 8_000, givenBackCents: 3_000, feeCents: 500 }, 5_000],
     ["covered, no re-price, $50 given back", { previousFinalPriceCents: 20_000, finalPriceCents: 20_000, appliedBeforeCents: 20_000, givenBackCents: 5_000 }, 5_000],
     ["covered, a $20 re-price and a larger $50 agreed share", { previousFinalPriceCents: 20_000, finalPriceCents: 18_000, appliedBeforeCents: 20_000, givenBackCents: 5_000 }, 5_000],
     ["unpaid, a second review of the edit after the first re-priced", { previousFinalPriceCents: 14_000, finalPriceCents: 14_000, appliedBeforeCents: 7_000, givenBackCents: 3_000 }, 0],

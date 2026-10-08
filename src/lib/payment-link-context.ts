@@ -152,10 +152,11 @@ export async function getPaymentLinkContext(
   // recorded on its payment, less applied credit — read from the one home.
   // At or below zero the narrative says there is nothing to pay, and the page
   // offers neither a payment nor a fresh link.
+  const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id);
   const owedCents = bookingAmountOwedCents({
     finalPriceCents: booking.finalPriceCents,
     changeFeeCents: booking.payment?.changeFeeCents ?? null,
-    appliedCreditCents: await deriveBookingAppliedCreditCents(booking.id),
+    appliedCreditCents,
   });
 
   const narrativeInput = {
@@ -164,6 +165,7 @@ export async function getPaymentLinkContext(
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
       amountDueCents: owedCents,
+      appliedCreditCents,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       firstName: bookingOwner(booking).member.firstName,
