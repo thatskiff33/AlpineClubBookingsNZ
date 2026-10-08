@@ -36,6 +36,7 @@ import {
   primaryInvoiceStripePaymentReference,
   queuePrimaryInvoiceChangeFeeGap,
   recheckPrimaryInvoiceChangeFeeGap,
+  unrecordedPrimaryInvoiceCash,
   type PrimaryInvoiceBilledFee,
 } from "@/lib/xero-primary-invoice-fee-gap";
 
@@ -222,6 +223,19 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     mocks.memberCredit.aggregate.mockClear();
     await expect(cardSettleAppliedCreditCents("booking_1", { ...card, source: PaymentSource.INTERNET_BANKING })).resolves.toBe(0);
     expect(mocks.memberCredit.aggregate).not.toHaveBeenCalled();
+  });
+
+  it("round 5, finding 3: only a partial cap whose remainder no gap invoice takes is reported", () => {
+    expect(unrecordedPrimaryInvoiceCash({ netCapturedCents: 8_500, primaryInvoiceCashCents: 8_000, gapInvoiceCashCents: 0 })).toEqual({
+      netCapturedCents: 8_500,
+      invoicePaymentCents: 8_000,
+      gapInvoiceCashCents: 0,
+      unrecordedCashCents: 500,
+    });
+    expect(unrecordedPrimaryInvoiceCash({ netCapturedCents: 8_500, primaryInvoiceCashCents: 8_000, gapInvoiceCashCents: 500 })).toBeNull();
+    expect(unrecordedPrimaryInvoiceCash({ netCapturedCents: 8_500, primaryInvoiceCashCents: 8_500, gapInvoiceCashCents: 0 })).toBeNull();
+    // A cap at zero is the create's own loud skip, not this report.
+    expect(unrecordedPrimaryInvoiceCash({ netCapturedCents: 500, primaryInvoiceCashCents: 0, gapInvoiceCashCents: 0 })).toBeNull();
   });
 
   it("round 5, finding 4: finds the earlier run's Stripe payment on the invoice by its reference", () => {

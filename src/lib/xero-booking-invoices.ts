@@ -107,6 +107,7 @@ import {
   primaryInvoiceStripePaymentReference,
   queuePrimaryInvoiceChangeFeeGap,
   recheckPrimaryInvoiceChangeFeeGap,
+  unrecordedPrimaryInvoiceCash,
 } from "@/lib/xero-primary-invoice-fee-gap";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -1170,22 +1171,12 @@ export async function createXeroInvoiceForBooking(
       createdByMemberId: options?.createdByMemberId,
     });
 
-    // #3955 round 5 (finding 3): a cap that left captured cash off the primary
-    // invoice, with no gap invoice taking it, is never silent. The cash stays
-    // on the bank side with no Xero document; a treasurer reconciles it.
-    const unrecordedStripeCashCents =
-      netCapturedCents - primaryInvoiceCashCents - feeGap.cashTakenCents;
-    const primaryInvoiceCashShortfall =
-      primaryInvoiceCashCents > 0 &&
-      primaryInvoiceCashCents < netCapturedCents &&
-      unrecordedStripeCashCents > 0
-        ? {
-            netCapturedCents,
-            invoicePaymentCents: primaryInvoiceCashCents,
-            gapInvoiceCashCents: feeGap.cashTakenCents,
-            unrecordedCashCents: unrecordedStripeCashCents,
-          }
-        : null;
+    // #3955 round 5 (finding 3): captured cash the cap left off, untaken, is never silent.
+    const primaryInvoiceCashShortfall = unrecordedPrimaryInvoiceCash({
+      netCapturedCents,
+      primaryInvoiceCashCents,
+      gapInvoiceCashCents: feeGap.cashTakenCents,
+    });
     if (primaryInvoiceCashShortfall) {
       logger.warn(
         { bookingId, invoiceId: createdInvoice.invoiceID, ...primaryInvoiceCashShortfall },

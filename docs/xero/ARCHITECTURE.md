@@ -1601,8 +1601,9 @@ idempotency key, which returns the original invoice
 
 - **Measured at the link.** The create saves the payment's link and, in the
   same transaction, writes onto its operation's payload what the returned
-  invoice billed (its fee lines and its total) and the fee the payment held at
-  that instant, read back from the link's own row update. The shortfall is
+  invoice billed (its fee lines and its total), the fee the payment held at
+  that instant, read back from the link's own row update, and the Stripe cash
+  recorded against the invoice (`primaryInvoiceCashCents`), computed once. The shortfall is
   those two figures' difference — never the fee the payment records later,
   which a later edit bills on its own document. A finished-stay correction
   claims its fee write against the invoice link it read, so the row lock
@@ -1612,15 +1613,25 @@ idempotency key, which returns the original invoice
   correction that routed its fee to the primary invoice (`feeOnPrimaryInvoice`
   on its modification); none of those raised a document of its own. It is
   raised unpaid, like any edit's supplementary invoice, unless a captured
-  Stripe payment holds it: the primary's Stripe payment is capped so the
-  card's applied credit (`cardAppliedCreditCents`) still fits on it
-  (`primaryInvoiceStripeCashCents`), and the cash that leaves over must cover
-  the shortfall. Any enqueue outcome other than a fresh operation is logged as
-  an error.
+  Stripe payment holds it: the primary's Stripe payment is capped
+  (`primaryInvoiceStripeCashCents`) so the applied credit the card settle then
+  allocates still fits on it — the allocation engine's own ledger figure
+  (`cardSettleAppliedCreditCents`, `unallocatedAppliedCents`), never the
+  payment's `creditAppliedCents` mirror, which is only the settle's gate. The
+  cash left over after the stored `primaryInvoiceCashCents` must cover the
+  shortfall. Captured cash that neither invoice takes is logged with both
+  figures and recorded on the create's operation
+  (`primaryInvoiceCashShortfall`). Any enqueue outcome other than a fresh
+  operation is logged as an error.
 - **Retry-safe.** A run that dies after saving the link is re-driven through
   the create's "invoice already exists" exit, which re-runs the check from the
   stored figures alone. A shortfall already queued on one of the anchors is not
-  queued again, and no other edit's queued figure is raised.
+  queued again, and no other edit's queued figure is raised. A run that dies
+  after recording its Stripe payment but before saving the link re-creates
+  under the same keys; where the invoice Xero returns already carries that
+  payment (found by its `Stripe <intent>` reference) and the cap reaches
+  zero, its `INVOICE_PAYMENT` link is recorded and its amount stored as the
+  primary's cash, rather than the cash being skipped.
 - **Limits.** The ordinary settled edit's fee increment (#3980) is not claimed
   against the link, so its fee racing a create has no anchor: it is logged,
   not billed. An invoice linked without stored figures (before this check, or

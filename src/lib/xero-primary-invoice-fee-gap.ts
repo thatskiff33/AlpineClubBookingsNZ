@@ -172,6 +172,31 @@ export function existingPrimaryInvoiceStripePayment(
   );
 }
 
+/**
+ * #3955 round 5, finding 3: captured Stripe cash the primary invoice's cap left
+ * off it that no gap invoice takes either - or null where every cent is on a
+ * document. It stays on the bank side with no Xero document, so the create
+ * logs it with both figures and records it on its operation for a treasurer
+ * to reconcile. Only a partial cap counts: a cap at zero is its own loud skip.
+ */
+export function unrecordedPrimaryInvoiceCash(input: {
+  netCapturedCents: number;
+  primaryInvoiceCashCents: number;
+  gapInvoiceCashCents: number;
+}): {
+  netCapturedCents: number;
+  invoicePaymentCents: number;
+  gapInvoiceCashCents: number;
+  unrecordedCashCents: number;
+} | null {
+  const { netCapturedCents, primaryInvoiceCashCents, gapInvoiceCashCents } = input;
+  const unrecordedCashCents = netCapturedCents - primaryInvoiceCashCents - gapInvoiceCashCents;
+  if (primaryInvoiceCashCents <= 0 || primaryInvoiceCashCents >= netCapturedCents || unrecordedCashCents <= 0) {
+    return null;
+  }
+  return { netCapturedCents, invoicePaymentCents: primaryInvoiceCashCents, gapInvoiceCashCents, unrecordedCashCents };
+}
+
 /** The create operation's payload key the figures are kept under. */
 const FEE_AT_LINK_KEY = "primaryInvoiceBilledFee";
 
