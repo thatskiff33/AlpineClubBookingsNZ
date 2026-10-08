@@ -37,7 +37,38 @@ const ALLOWED_SHAPES: RegExp[] = [
   /^echo "[^$`]*"( >&2)?$/,
 ];
 
+/**
+ * Bounded source-contract scan of ordinary source/dot command positions, including
+ * shell control words. This is Bash text, never JavaScript comment normalization.
+ * It does not claim to resolve aliases, eval, or dynamically assembled commands.
+ */
+function loadsDotenv(line: string): boolean {
+  if (line.trimStart().startsWith("#")) return false;
+  return /^set\s+-[a-z]*a/.test(line) ||
+    /(?:^|[;&|]\s*)(?:(?:if|elif|then|else|do|while|until|!)\s+)*(?:source|\.)\s+\S*\.env\b/.test(line);
+}
+
 describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
+  it.each([
+    'source "${SOURCE_REPO}/.env"',
+    '. "${SOURCE_REPO}/.env"',
+    'if source "${SOURCE_REPO}/.env"; then :; fi',
+    'elif . "${SOURCE_REPO}/.env"; then :; fi',
+    'while source "${SOURCE_REPO}/.env"; do :; done',
+    'until . "${SOURCE_REPO}/.env"; do :; done',
+    'if true; then source "${SOURCE_REPO}/.env"; fi',
+  ])("detects an ordinary dotenv loader: %s", (line) => {
+    expect(loadsDotenv(line)).toBe(true);
+  });
+
+  it.each([
+    '# if source "${SOURCE_REPO}/.env"; then :; fi',
+    'echo "if source .env"',
+    'source "${SOURCE_REPO}/helpers.sh"',
+  ])("ignores comments, messages and other source files: %s", (line) => {
+    expect(loadsDotenv(line)).toBe(false);
+  });
+
   for (const script of SCRIPTS) {
     const lines = readRepoFile(script)
       .split(/\r?\n/)
@@ -61,12 +92,7 @@ describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
 
     it(`${script} never loads .env into its shell`, () => {
       const loads = lines
-        .filter(
-          ({ line }) =>
-            !line.startsWith("#") &&
-            (/^set\s+-[a-z]*a/.test(line) ||
-              /(^|[;&|]\s*)(source|\.)\s+\S*\.env\b/.test(line)),
-        )
+        .filter(({ line }) => loadsDotenv(line))
         .map(({ line, number }) => `${script}:${number}: ${line}`);
       expect(
         loads,

@@ -2,16 +2,19 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { ciEnvHeredocs } from "./helpers/ci-env-heredocs";
 import {
+  appEnvironmentAnchor,
   BASE_COMPOSE,
   composeFiles,
   composeServices,
   NON_APP_COMPOSE_SERVICES,
   readRepoFile,
 } from "@/lib/__tests__/helpers/compose";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * A SETTING AN OPERATOR CAN SEE IN THEIR `.env` MUST ACTUALLY REACH THE APP
@@ -150,17 +153,56 @@ function deliveredKeys(relativePath: string): Set<string> {
  * Keys in the base file's `x-app-environment` anchor ONLY — what every service
  * merging `<<: *app-environment` receives. A key that only some other service's
  * own `environment:` names (`migrate`, `postgres`) is not delivered to the app
- * slots, so the anchor-scoped cases below must not count it. The block runs
- * from the anchor line to the next top-level key, sliced the same way as
- * `email-delivery-boundary-census.test.ts`.
+ * slots, so the anchor-scoped cases below must not count it. Both delivery
+ * censuses use the one anchor parser in helpers/compose.ts (INV-SSOT-001).
  */
 function appEnvironmentAnchorKeys(): Set<string> {
-  const text = readRepoFile(BASE_COMPOSE);
-  const start = text.indexOf("x-app-environment:");
-  if (start === -1) return new Set();
-  const rest = text.slice(start);
-  const end = rest.search(/\n[^\s#]/);
-  return environmentKeys(end === -1 ? rest : rest.slice(0, end));
+  return environmentKeys(appEnvironmentAnchor(readRepoFile(BASE_COMPOSE)) ?? "");
+}
+
+const GATE_FILE = "src/lib/pending-school-adults-gate.ts";
+
+/** Literal reads only; unsupported map access fails closed, prose is not code. */
+function gateEnvironmentReads(text: string): string[] {
+  const source = ts.createSourceFile(GATE_FILE, stripComments(text), ts.ScriptTarget.Latest, true);
+  const names = new Set<string>();
+  const isEnv = (node: ts.Node): boolean =>
+    (ts.isIdentifier(node) && node.text === "env") ||
+    ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      ts.isIdentifier(node.expression) && node.expression.text === "process" &&
+      (ts.isPropertyAccessExpression(node)
+        ? node.name.text === "env"
+        : ts.isStringLiteral(node.argumentExpression) && node.argumentExpression.text === "env"));
+  const unsupported = (node: ts.Node): never => {
+    throw new Error(`${GATE_FILE}: unsupported environment read ${node.getText(source)}; ` +
+      "teach the census this shape (INV-SSOT-004, #3964)");
+  };
+  const visit = (node: ts.Node) => {
+    if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isEnv(node.expression)) {
+      const key = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
+      const name = ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : unsupported(node);
+      // Identifiers inside brackets are computed, not literal property names.
+      if (ts.isElementAccessExpression(node) && !ts.isStringLiteral(key)) unsupported(node);
+      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) unsupported(node);
+      names.add(name);
+    }
+    if (isEnv(node) && !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) {
+      const parent = node.parent;
+      const memberBase = (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === node;
+      const parameter = ts.isParameter(parent) && (parent.name === node || parent.initializer === node);
+      const forwarded = ts.isCallExpression(parent) && parent.arguments.some((argument) => argument === node);
+      if (!memberBase && !parameter && !forwarded) unsupported(parent);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return [...names].sort();
+}
+
+function gateReads(): string[] {
+  const reads = gateEnvironmentReads(readRepoFile(GATE_FILE));
+  expect(reads.length, `${GATE_FILE} parsed to fewer than two environment reads (#3964)`).toBeGreaterThanOrEqual(2);
+  return reads;
 }
 
 function environmentKeys(text: string): Set<string> {
@@ -421,37 +463,47 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
     }
   });
 
-  it("delivers every variable the #3413 pending-school-adult gate reads (#3964)", () => {
-    /*
-      DERIVED FROM THE GATE, not copied from it. Both variables were documented
-      in CONFIGURATION.md and set by the runbook, and neither was in any env
-      file, so the declared-and-read case above never judged them: the runbook
-      step that switches #3413 on silently changed nothing inside the
-      container. Reading the names straight out of the gate means a third
-      acknowledgement added there is judged here without anyone listing it.
-      The gate reads an injected `env` map (defaulting to `process.env`), so
-      both spellings are matched.
-    */
-    const gateFile = "src/lib/pending-school-adults-gate.ts";
-    const gateReads = [
-      ...new Set(
-        [...readRepoFile(gateFile).matchAll(/\b(?:process\.)?env\.([A-Z][A-Z0-9_]*)\b/g)].map(
-          (match) => match[1],
-        ),
-      ),
-    ].sort();
-    expect(
-      gateReads.length,
-      `${gateFile} parsed to fewer than two environment reads — if the gate ` +
-        "changed how it reads its acknowledgements, teach this case the new shape " +
-        "rather than letting it pass on nothing",
-    ).toBeGreaterThanOrEqual(2);
+  it("extracts literal gate reads without counting comments or quoted code", () => {
+    expect(gateEnvironmentReads(`
+      env.FIRST_ACK; process . env["SECOND_ACK"]; env['THIRD_ACK'];
+      process["env"].FIFTH_ACK;
+      // env.RETIRED_ACK
+      /* process.env["RETIRED_BRACKET_ACK"] */
+      const example = "env.QUOTED_ACK";
+      const template = \`env.TEMPLATE_PROSE \${env.FOURTH_ACK}\`;
+    `)).toEqual(["FIFTH_ACK", "FIRST_ACK", "FOURTH_ACK", "SECOND_ACK", "THIRD_ACK"]);
+  });
 
+  it.each([
+    "env[key]", "process.env[key]", "const alias = env", "const { THIRD_ACK } = env",
+  ])("rejects unsupported gate map reads: %s", (source) => {
+    expect(() => gateEnvironmentReads(source)).toThrow(/unsupported environment read/);
+  });
+
+  it("bounds the shared Compose anchor and ignores commented markers", () => {
+    expect(appEnvironmentAnchor(`# x-app-environment: &wrong
+x-app-environment: &app-environment # shared
+  FIRST_ACK: \${FIRST_ACK:-}
+# note
+services:
+  app:
+    environment:
+      OTHER_ACK: value
+`)).toBe(`x-app-environment: &app-environment # shared
+  FIRST_ACK: \${FIRST_ACK:-}
+# note`);
+    expect(appEnvironmentAnchor("# x-app-environment: &wrong\nservices:\n")).toBeUndefined();
+  });
+
+  it("delivers every variable the #3413 pending-school-adult gate reads (#3964)", () => {
+    // Literal dot/bracket reads are derived from the normalized gate AST,
+    // including a future third acknowledgement. Comments and strings are prose.
+    const reads = gateReads();
     const anchorKeys = appEnvironmentAnchorKeys();
-    const missing = gateReads.filter((name) => !anchorKeys.has(name));
+    const missing = reads.filter((name) => !anchorKeys.has(name));
     expect(
       missing,
-      `${gateFile} reads these, but docker-compose.yml's x-app-environment ` +
+      `${GATE_FILE} reads these, but docker-compose.yml's x-app-environment ` +
         "anchor does not pass them through, so setting them in .env changes " +
         "nothing inside the container and the gate can never open (#3964, " +
         "#3413). Add each one to the anchor with an empty default.",
@@ -606,7 +658,14 @@ function renderCompose(files: string[], envFile: string): ComposeRender {
       "--format",
       "json",
     ],
-    { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    {
+      cwd: ROOT,
+      // Compose shell interpolation outranks --env-file. Keep host settings out
+      // so developer/CI acknowledgements cannot mask broken defaults or wiring.
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: "test" },
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    },
   );
   /*
     A MISSING OR FAILING `docker compose` FAILS THIS TEST. It does not skip, and
@@ -733,6 +792,36 @@ describe("GUARD B: the rendered compose environment (INV-CONFIG-004)", () => {
       ).toEqual([]);
     }, COMPOSE_RENDER_TIMEOUT_MS);
   }
+
+  it("passes each gate setting unchanged to every base app service, with empty defaults (#3964)", () => {
+    const reads = gateReads();
+    // Distinct values catch crossed wires as well as the wrong interpolation.
+    const supplied = Object.fromEntries(reads.map((name, index) => [name, `gate-probe-${index}`]));
+    const cleanFixture = readRepoFile(".env.staging.example")
+      .split(/\r?\n/)
+      .filter((line) => !reads.includes(line.match(ENV_ASSIGNMENT)?.[1] ?? ""))
+      .join("\n");
+    const missingFile = path.join(fixtureDir, "gate-missing.env");
+    const suppliedFile = path.join(fixtureDir, "gate-supplied.env");
+    writeFileSync(missingFile, cleanFixture, "utf8");
+    writeFileSync(suppliedFile, cleanFixture + "\n" +
+      Object.entries(supplied).map(([name, value]) => `${name}=${value}`).join("\n"), "utf8");
+    for (const [file, expected] of [
+      [missingFile, Object.fromEntries(reads.map((name) => [name, ""]))],
+      [suppliedFile, supplied],
+    ] as const) {
+      const render = renderCompose([BASE_COMPOSE], file);
+      const services = appServicesInRender(render);
+      expect(services.length, "base Compose rendered no app services (#3964)").toBeGreaterThan(0);
+      for (const service of services) {
+        for (const name of reads) {
+          expect(render.services[service].environment?.[name],
+            `${service}: ${name} must pass the operator's value through, empty by default (#3964)`)
+            .toBe(expected[name]);
+        }
+      }
+    }
+  }, COMPOSE_RENDER_TIMEOUT_MS);
 
   it("cleans up its fixture", () => {
     rmSync(fixtureDir, { recursive: true, force: true });
