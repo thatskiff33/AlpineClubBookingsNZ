@@ -143,10 +143,31 @@ function declaredVariables(): Map<string, Set<string>> {
  * counting it would make this census claim a delivery that does not happen.
  */
 function deliveredKeys(relativePath: string): Set<string> {
+  return environmentKeys(readRepoFile(relativePath));
+}
+
+/**
+ * Keys in the base file's `x-app-environment` anchor ONLY — what every service
+ * merging `<<: *app-environment` receives. A key that only some other service's
+ * own `environment:` names (`migrate`, `postgres`) is not delivered to the app
+ * slots, so the anchor-scoped cases below must not count it. The block runs
+ * from the anchor line to the next top-level key, sliced the same way as
+ * `email-delivery-boundary-census.test.ts`.
+ */
+function appEnvironmentAnchorKeys(): Set<string> {
+  const text = readRepoFile(BASE_COMPOSE);
+  const start = text.indexOf("x-app-environment:");
+  if (start === -1) return new Set();
+  const rest = text.slice(start);
+  const end = rest.search(/\n[^\s#]/);
+  return environmentKeys(end === -1 ? rest : rest.slice(0, end));
+}
+
+function environmentKeys(text: string): Set<string> {
   const keys = new Set<string>();
   let inEnvironment = false;
   let indent: string | null = null;
-  for (const line of readRepoFile(relativePath).split(/\r?\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     // A top-level `x-*-environment:` anchor, or any `environment:` mapping.
     if (/^x-[\w-]*environment:\s*(&[\w.-]+)?\s*(#.*)?$/.test(line)) {
       inEnvironment = true;
@@ -381,7 +402,7 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
       All three flags plus the four relay settings and the sender identity, in
       the base anchor, so every service that merges it receives every one.
     */
-    const anchorKeys = deliveredKeys(BASE_COMPOSE);
+    const anchorKeys = appEnvironmentAnchorKeys();
     for (const name of [
       "APP_ENVIRONMENT_ROLE",
       "USE_AWS_SES",
@@ -426,14 +447,14 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
         "rather than letting it pass on nothing",
     ).toBeGreaterThanOrEqual(2);
 
-    const anchorKeys = deliveredKeys(BASE_COMPOSE);
+    const anchorKeys = appEnvironmentAnchorKeys();
     const missing = gateReads.filter((name) => !anchorKeys.has(name));
     expect(
       missing,
       `${gateFile} reads these, but docker-compose.yml's x-app-environment ` +
         "anchor does not pass them through, so setting them in .env changes " +
         "nothing inside the container and the gate can never open (#3964, " +
-        "INV-CONFIG-004). Add each one to the anchor with an empty default.",
+        "#3413). Add each one to the anchor with an empty default.",
     ).toEqual([]);
   });
 });
