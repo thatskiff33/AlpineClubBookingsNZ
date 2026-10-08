@@ -32,14 +32,14 @@
 --
 -- RECOVERY IF THE PREVIOUS COLOUR RAN AFTER THIS MIGRATION. Find the affected
 -- guests with this read-only query - live bookings with a booking-request link
--- whose night prices no longer add up to the guest's stored total:
+-- with no night rows or whose night prices no longer add up to the stored total:
 --
 --   SELECT b."id" AS "bookingId", g."id" AS "bookingGuestId",
 --          g."priceCents" AS "guestPriceCents",
 --          sum(n."priceCents") AS "nightPriceCents"
 --   FROM "BookingGuest" g
 --   JOIN "Booking" b ON b."id" = g."bookingId"
---   JOIN "BookingGuestNight" n ON n."bookingGuestId" = g."id"
+--   LEFT JOIN "BookingGuestNight" n ON n."bookingGuestId" = g."id"
 --   WHERE b."deletedAt" IS NULL
 --     AND b."status" NOT IN ('CANCELLED', 'BUMPED')
 --     AND EXISTS (
@@ -47,16 +47,19 @@
 --       WHERE r."convertedBookingId" = b."id" OR r."heldBookingId" = b."id"
 --     )
 --   GROUP BY b."id", g."id", g."priceCents"
---   HAVING sum(n."priceCents") IS DISTINCT FROM g."priceCents"
+--   HAVING count(n."id") = 0
+--      OR sum(n."priceCents") IS DISTINCT FROM g."priceCents"
 --   ORDER BY b."id", g."id";
 --
 -- For each row, FIRST repair the nights, THEN refresh the booking's invoice -
 -- refreshing first re-sends the stale night prices. The repair is the officer
 -- tool "Record what these nights sold for" in the booking's Admin tools card
 -- (#3214, src/lib/stored-night-price-strand-reconcile.ts); run it on a release
--- that includes #3214, never on the previous colour. Normal invoice-state
--- checks still apply: if refresh refuses a paid or credited document, stop
--- and reconcile that document rather than bypassing the refusal.
+-- that includes #3214, never on the previous colour. It also creates the
+-- missing rows when the previous colour created a guest without nights.
+-- If the tool does not offer a repair, stop and resolve its refusal.
+-- Normal invoice-state checks still apply: if refresh refuses a paid or
+-- credited document, stop and reconcile it rather than bypassing the refusal.
 -- To discard the rows
 -- themselves, restore the pre-migration backup: this file does not try to tell
 -- a backfilled row from one written later for the same guest, and a wrong
