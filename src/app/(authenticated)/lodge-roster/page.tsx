@@ -3,9 +3,7 @@ import { Users } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
-import { requireCalendarDate } from "@/lib/club-time/calendar-date";
-import { formatClubDate } from "@/lib/club-time/format";
-import type { ClubDateFormat } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDate } from "@/lib/club-time";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { collapseNightRuns } from "@/lib/bed-allocation-board-window";
 import {
@@ -243,6 +241,8 @@ function Nights({
   );
 }
 
+// A stored calendar day, formatted by the kernel's one stay-date helper (#3511,
+// INV-SSOT-001; INV-DATE-010). No zone is consulted.
 function formatNight(night: string, format: ClubDateFormat): string {
-  return formatClubDate(requireCalendarDate(night), format);
+  return formatStayDate(night, format);
 }

@@ -134,8 +134,6 @@
 
 import {
   bindClubTime,
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
   formatClubLongWeekdayDate,
   requireClubTimeZone,
   requireStoredCalendarDay,
@@ -144,6 +142,7 @@ import {
   type ClubDateFormat,
   type ClubTimeZone,
   type Instant,
+  formatStayDate,
 } from "@/lib/club-time";
 import { normaliseClubLocale } from "@/lib/club-format";
 import { resolveStoredClubFormat } from "@/lib/club-format-env";
@@ -316,15 +315,13 @@ export function emailClubDate(value: Instant): string {
  * projection and the club's zone really is the right authority for it.
  */
 export function emailCalendarDay(value: Date): string {
-  return formatClubDate(
-    calendarDateOfDateOnlyInstant(
-      requireStoredCalendarDay(value, {
-        subject: "An email's calendar-day token",
-        instead:
-          "A real timestamp rendered as a bare day is a projection: use " +
-          "emailClubDate, which reads it in the club's persisted zone.",
-      }),
-    ),
+  return formatStayDate(
+    requireStoredCalendarDay(value, {
+      subject: "An email's calendar-day token",
+      instead:
+        "A real timestamp rendered as a bare day is a projection: use " +
+        "emailClubDate, which reads it in the club's persisted zone.",
+    }),
     emailClubTime().format,
   );
 }

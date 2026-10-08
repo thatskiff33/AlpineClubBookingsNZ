@@ -141,7 +141,7 @@ export function buildPrompt(issue) {
     "3. Stop and report if the issue contradicts the code or repo policy; if it is only ambiguous, implement the best-supported reading and state the assumption.",
     "4. Keep the diff inside allowed scope.",
     "5. Run required safe validation.",
-    '6. Open a PR, monitor CI to green, and follow AGENTS.md "Completion and Merge": merge eligible Low/Medium-risk work with a merge commit; hold Critical/High-risk work for an explicit owner approval comment on the PR. Close a linked issue only when its PR is eligible and merged.',
+    '6. Open a PR, monitor CI to green, and follow AGENTS.md "Completion and Merge": merge with a merge commit once the PR is complete, green on its exact head, reviewed with the lenses its risk requires, and carries the full Ready-to-Merge comment; an open owner decision still waits for the owner. Close a linked issue only when its PR is merged.',
     "7. Report validation evidence, commands not run, manual checks, and residual risks.",
   ].join("\n");
 }

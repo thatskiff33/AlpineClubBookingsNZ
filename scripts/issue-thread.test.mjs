@@ -5,6 +5,7 @@ import {
   assessThread,
   decisionOptions,
   detectDecisionMarkers,
+  fetchIssue,
   hasDecidedHeader,
   parseIssueArgument,
   referencedIssueNumbers,
@@ -357,5 +358,44 @@ describe("issue-to-prompt — the worker prompt is built from the thread", () =>
     const prompt = buildPrompt({ ...ISSUE, comments: undefined });
     expect(prompt).toContain("The thread has 0 comment(s)");
     expect(prompt).not.toContain("Decision comment");
+  });
+});
+
+describe("fetchIssue — an older gh without stateReason (#3912)", () => {
+  beforeEach(() => {
+    vi.mocked(ghJson).mockReset();
+  });
+
+  const jsonFields = (call) => call[0][call[0].indexOf("--json") + 1].split(",");
+
+  it("retries without stateReason when gh rejects the field", () => {
+    const issue = { number: 3907, state: "OPEN" };
+    vi.mocked(ghJson)
+      .mockImplementationOnce(() => {
+        throw new Error(
+          '`gh issue view 3907 --json ...` failed:\nUnknown JSON field: "stateReason"',
+        );
+      })
+      .mockReturnValueOnce(issue);
+    expect(fetchIssue(3907)).toBe(issue);
+    const calls = vi.mocked(ghJson).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(jsonFields(calls[0])).toContain("stateReason");
+    expect(jsonFields(calls[1])).not.toContain("stateReason");
+    expect(jsonFields(calls[1])).toContain("comments");
+  });
+
+  it("asks once when gh supports stateReason", () => {
+    vi.mocked(ghJson).mockReturnValue({ number: 1, stateReason: "COMPLETED" });
+    expect(fetchIssue(1).stateReason).toBe("COMPLETED");
+    expect(vi.mocked(ghJson)).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not swallow unrelated failures", () => {
+    vi.mocked(ghJson).mockImplementation(() => {
+      throw new Error("GitHub CLI is not authenticated");
+    });
+    expect(() => fetchIssue(1)).toThrow(/not authenticated/);
+    expect(vi.mocked(ghJson)).toHaveBeenCalledTimes(1);
   });
 });

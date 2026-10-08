@@ -39,10 +39,9 @@
 import { BookingEventType } from "@prisma/client";
 import { formatCents } from "@/lib/utils";
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
   requireStoredCalendarDay,
   type BoundClubTime,
+  formatStayDate,
 } from "@/lib/club-time";
 import type {
   CancellationEventSnapshot,
@@ -175,15 +174,13 @@ function sortedByOccurredAt(events: NarrativeEvent[]): NarrativeEvent[] {
  * notice. Same composition as `emailCalendarDay`, deliberately.
  */
 function storedNight(value: Date, format: ClubFormat): string {
-  return formatClubDate(
-    calendarDateOfDateOnlyInstant(
-      requireStoredCalendarDay(value, {
-        subject: "A booking narrative's lodge night",
-        instead:
-          "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
-          "which reads it in the club's persisted zone.",
-      }),
-    ),
+  return formatStayDate(
+    requireStoredCalendarDay(value, {
+      subject: "A booking narrative's lodge night",
+      instead:
+        "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
+        "which reads it in the club's persisted zone.",
+    }),
     format,
   );
 }
