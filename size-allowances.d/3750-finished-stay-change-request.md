@@ -62,7 +62,7 @@ reason: its capture-amount check reads the booking's worth from the one home,
   email quotes the worth (#3955 review F5, F7, F8).
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1632
+lines: 1651
 reason: the primary invoice bills the recorded change fee beside the promo
   lines it already builds, saves its link with what it billed and the fee
   recorded then and hands any gap to xero-primary-invoice-fee-gap.ts, re-runs
@@ -70,7 +70,10 @@ reason: the primary invoice bills the recorded change fee beside the promo
   fee, caps its Stripe cash so the applied credit the engine allocates fits,
   stores that cash with the link, records an earlier run's payment found on a
   retried invoice rather than skipping it, reports cash neither invoice takes,
-  and the narration merge skips the fee line (#3955 review X2-X4, rounds 3-5).
+  floors the stored primary cash at the cash the returned invoice already
+  holds and says so when that is an earlier payment its reference lookup
+  missed, and the narration merge skips the fee line (#3955 review X2-X4,
+  rounds 3-6).
   The gap logic, the link's save, the cash cap and the shortfall rule are
   their own module.
 
