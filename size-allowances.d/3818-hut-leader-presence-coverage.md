@@ -1,7 +1,7 @@
 # File-size allowance for #3818 (presence-aware hut-leader coverage)
 
 file: src/app/(admin)/admin/dashboard/page.tsx
-lines: 938
+lines: 976
 reason: the hut-leader read stays in the page's one batched `Promise.all`
   but now waits on the shared permission-matrix promise, so it can skip the
   "Handovers this week" read (and the names it needs) for an actor who cannot
