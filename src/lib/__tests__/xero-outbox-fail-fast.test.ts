@@ -212,7 +212,6 @@ function queueOneSubscriptionOperation() {
     localId: "charge_1",
     requestPayload: {
       queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE",
-      chargeId: "charge_1",
     },
   });
 }

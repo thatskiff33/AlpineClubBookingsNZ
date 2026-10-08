@@ -102,6 +102,18 @@ export interface StripeCashRefundEvidence {
  * cash landing on an already-cancelled booking). Read by the legacy cash
  * fallback below and by the refunded-total shortfall audit (#3640), which each
  * say what that difference costs them.
+ *
+ * STATED LIMIT: restores are told apart by the `restoredFromBookingId` marker
+ * ALONE, not by the one restore test (`isCancellationCreditRestoreRow`). A
+ * restore written before the marker existed (8 Jul 2026, #1636) carries none,
+ * so it is counted here as a disposition. That over-states account credit,
+ * which is the fail-safe direction for all three readers: the legacy cash
+ * fallback under-states cash (a refund note under-flagged, never minted), the
+ * refund-reversal floor (`payment-transactions.ts`) stays higher (less
+ * refundable headroom), and the shortfall audit reports more, not less. Moving
+ * it to the one test would raise legacy cash and lower that floor - Xero refund
+ * notes and refundable headroom on historical bookings - so it is left for a
+ * decision of its own rather than changed by a display fix (#3372).
  */
 export const ACCOUNT_CREDIT_DISPOSITION_WHERE = {
   type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },

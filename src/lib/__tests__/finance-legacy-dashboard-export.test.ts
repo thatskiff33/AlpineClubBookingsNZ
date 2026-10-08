@@ -71,8 +71,11 @@ function fixtureRows<T extends LegacyFixture>(rows: T[]) {
   });
 }
 
-function mockRows<T extends LegacyFixture>(rows: T[]) {
-  mockFindMany.mockResolvedValue(fixtureRows(rows));
+/** Answers the read's `deletedAt` filter as the database would (#3745). */
+function mockRows<T extends LegacyFixture & { deletedAt?: Date | null }>(rows: T[]) {
+  mockFindMany.mockImplementation(async ({ where }: { where: { deletedAt?: null } }) =>
+    fixtureRows(rows).filter((row) => where.deletedAt !== null || !row.deletedAt),
+  );
 }
 
 describe("finance legacy dashboard export", () => {
@@ -165,6 +168,32 @@ describe("finance legacy dashboard export", () => {
         month_of_stay: "2026-05",
       },
     ]);
+  });
+
+  it("leaves a soft-deleted PAID booking out of both sections (#3745)", async () => {
+    // Deliberate defence-in-depth: a deleted booking is always CANCELLED
+    // (INV-ADDPAY-030), so only a direct database edit makes this row.
+    mockRows([
+      {
+        id: "booking-deleted",
+        checkIn: new Date("2026-04-08T00:00:00.000Z"),
+        checkOut: new Date("2026-04-12T00:00:00.000Z"),
+        status: BookingStatus.PAID,
+        finalPriceCents: 40000,
+        createdAt: new Date("2026-03-20T00:00:00.000Z"),
+        deletedAt: new Date("2026-04-20T00:00:00.000Z"),
+        guests: [{ id: "guest-1" }],
+      },
+    ]);
+
+    const result = await getLegacyDashboardBookingExport({
+      historyStartDate: "2026-04-01",
+      asOfDate: "2026-04-10",
+      clubTimeZone: CLUB_ZONE,
+    });
+
+    expect(result.bookings).toEqual([]);
+    expect(result.forward_bookings).toEqual([]);
   });
 
   it("reports created_date on the club calendar, not the UTC day (#2697)", async () => {

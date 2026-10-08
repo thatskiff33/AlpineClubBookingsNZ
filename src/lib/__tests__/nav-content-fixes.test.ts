@@ -52,7 +52,7 @@ describe("Issue 9: Nav Bar Branding Link", () => {
 
 // ─── Admin dashboard key-card hrefs (#2091) ──────────────────────────────────
 // The dashboard KPI row was re-targeted to the four bookings-officer surfaces
-// (primary row) plus a slim Members + Revenue secondary row. These fixtures
+// (primary row) plus a slim Members + Net Collected secondary row. These fixtures
 // document the intended card→href contract.
 
 describe("Admin dashboard key-card hrefs (#2091)", () => {
@@ -64,7 +64,7 @@ describe("Admin dashboard key-card hrefs (#2091)", () => {
   ];
   const secondaryCards = [
     { label: "Members", href: "/admin/members" },
-    { label: "Revenue This Month", href: "/admin/payments" },
+    { label: "Net Collected This Month", href: "/admin/payments" },
   ];
 
   it("defines the four officer cards linking their target surfaces", () => {
@@ -83,12 +83,12 @@ describe("Admin dashboard key-card hrefs (#2091)", () => {
     );
   });
 
-  it("keeps Members and Revenue in the slim secondary row", () => {
+  it("keeps Members and Net Collected in the slim secondary row", () => {
     expect(secondaryCards.find((c) => c.label === "Members")?.href).toBe(
       "/admin/members",
     );
     expect(
-      secondaryCards.find((c) => c.label === "Revenue This Month")?.href,
+      secondaryCards.find((c) => c.label === "Net Collected This Month")?.href,
     ).toBe("/admin/payments");
   });
 });

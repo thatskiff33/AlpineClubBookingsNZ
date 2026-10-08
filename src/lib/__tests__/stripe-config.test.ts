@@ -6,9 +6,11 @@ const {
   mockNeedsReentry,
   mockSetCredential,
   mockDeleteCredential,
+  mockReadRow,
 } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockGetValue: vi.fn(),
+  mockReadRow: vi.fn(),
   mockNeedsReentry: vi.fn(),
   mockSetCredential: vi.fn(),
   mockDeleteCredential: vi.fn(),
@@ -25,7 +27,16 @@ vi.mock("@/lib/integration-credentials", () => ({
   providerNeedsReentry: (...a: unknown[]) => mockNeedsReentry(...a),
   setIntegrationCredential: (...a: unknown[]) => mockSetCredential(...a),
   deleteIntegrationCredential: (...a: unknown[]) => mockDeleteCredential(...a),
+  readIntegrationCredentialRow: (...a: unknown[]) => mockReadRow(...a),
 }));
+
+/** The secret the route verified each event with, in these tests. */
+const VERIFIED_WITH = "whsec_verified";
+
+/** `readIntegrationCredentialRow`'s answer for a stored signing secret. */
+function storedSecret(value: string) {
+  return { status: "configured", value };
+}
 
 import {
   STRIPE_PROVIDER,
@@ -79,14 +90,17 @@ describe("stripe-config resolvers", () => {
 
   it("recordStripeWebhookVerified never throws even when the store errors", async () => {
     mockFindMany.mockResolvedValue(rows([["webhook_secret", new Date()]]));
+    mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
     mockSetCredential.mockRejectedValue(new Error("weak auth secret"));
-    await expect(recordStripeWebhookVerified()).resolves.toBeUndefined();
+    await expect(
+      recordStripeWebhookVerified(VERIFIED_WITH),
+    ).resolves.toBeUndefined();
     expect(mockSetCredential).toHaveBeenCalledTimes(1);
   });
 });
 
 /**
- * The webhook route calls this on EVERY signature-verified test-mode event,
+ * The webhook route calls this on EVERY signature-verified event (live or test, #3975),
  * before idempotency handling, and since #2723 every credential mutation mints a
  * seven-year `security`/`important` audit row. A row per delivery of a freshness
  * timestamp buries the secret changes an operator came to the log for, so the
@@ -97,6 +111,7 @@ describe("recordStripeWebhookVerified writes only when it would change the answe
     vi.clearAllMocks();
     mockNeedsReentry.mockResolvedValue(false);
     mockSetCredential.mockResolvedValue(undefined);
+    mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
   });
 
   it("does NOT write when the marker is already fresh", async () => {
@@ -106,15 +121,20 @@ describe("recordStripeWebhookVerified writes only when it would change the answe
         ["webhook_verified", new Date("2026-06-02T00:00:00.000Z")],
       ]),
     );
-    await recordStripeWebhookVerified();
+    await recordStripeWebhookVerified(VERIFIED_WITH);
     expect(mockSetCredential).not.toHaveBeenCalled();
+    // The fresh path is the per-delivery path: it never re-reads the secret.
+    expect(mockReadRow).not.toHaveBeenCalled();
   });
 
   it("writes when no marker is stored yet", async () => {
     mockFindMany.mockResolvedValue(
       rows([["webhook_secret", new Date("2026-06-01T00:00:00.000Z")]]),
     );
-    await recordStripeWebhookVerified(new Date("2026-06-03T00:00:00.000Z"));
+    await recordStripeWebhookVerified(
+      VERIFIED_WITH,
+      new Date("2026-06-03T00:00:00.000Z"),
+    );
     expect(mockSetCredential).toHaveBeenCalledTimes(1);
     expect(mockSetCredential.mock.calls[0]?.[0]).toMatchObject({
       provider: STRIPE_PROVIDER,
@@ -131,7 +151,7 @@ describe("recordStripeWebhookVerified writes only when it would change the answe
         ["webhook_verified", new Date("2026-06-02T00:00:00.000Z")],
       ]),
     );
-    await recordStripeWebhookVerified();
+    await recordStripeWebhookVerified(VERIFIED_WITH);
     expect(mockSetCredential).toHaveBeenCalledTimes(1);
   });
 
@@ -139,8 +159,116 @@ describe("recordStripeWebhookVerified writes only when it would change the answe
     mockFindMany.mockResolvedValue(
       rows([["webhook_verified", new Date("2026-06-02T00:00:00.000Z")]]),
     );
-    await recordStripeWebhookVerified();
+    await recordStripeWebhookVerified(VERIFIED_WITH);
     expect(mockSetCredential).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #3975 review: an event verified under the OLD signing secret can reach the
+ * write after an administrator saved a new one and verify-reset cleared the
+ * marker. Stamping it then would date the marker after the new secret and turn
+ * the badge green for a secret no event has proved.
+ */
+describe("recordStripeWebhookVerified attests only to the secret it was verified with (#3975)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSetCredential.mockResolvedValue(undefined);
+    // Verify-reset has cleared the marker: the write path is reached.
+    mockFindMany.mockResolvedValue(
+      rows([["webhook_secret", new Date("2026-06-05T00:00:00.000Z")]]),
+    );
+  });
+
+  it("does NOT write when the stored secret changed after the event was verified", async () => {
+    mockReadRow.mockResolvedValue(storedSecret("whsec_saved_meanwhile"));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).not.toHaveBeenCalled();
+  });
+
+  it("writes when the stored secret is still the one the event was verified with", async () => {
+    mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads the secret from the database, not the per-process cache", async () => {
+    mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockReadRow).toHaveBeenCalledWith(
+      expect.anything(),
+      STRIPE_PROVIDER,
+      "webhook_secret",
+    );
+    expect(mockGetValue).not.toHaveBeenCalled();
+  });
+
+  it("does NOT write when the stored secret is gone or no longer decrypts", async () => {
+    mockReadRow.mockResolvedValue({ status: "not_configured" });
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    mockReadRow.mockResolvedValue({ status: "needs_reentry", reason: "x" });
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).not.toHaveBeenCalled();
+  });
+
+  it("clears the marker it just wrote when the secret was swapped between the write and the re-read", async () => {
+    mockDeleteCredential.mockResolvedValue(undefined);
+    mockReadRow
+      .mockResolvedValueOnce(storedSecret(VERIFIED_WITH))
+      .mockResolvedValueOnce(storedSecret("whsec_saved_meanwhile"));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential.mock.calls[0]?.[0]).toMatchObject({
+      provider: STRIPE_PROVIDER,
+      key: STRIPE_WEBHOOK_VERIFIED_KEY,
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+    });
+    // The marker write ran before the clear, never after it.
+    expect(mockSetCredential.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteCredential.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("keeps the marker when the secret is unchanged after the write", async () => {
+    mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockReadRow).toHaveBeenCalledTimes(2);
+    expect(mockDeleteCredential).not.toHaveBeenCalled();
+  });
+
+  it("swallows a failed clear (best-effort, never breaks the webhook)", async () => {
+    mockReadRow
+      .mockResolvedValueOnce(storedSecret(VERIFIED_WITH))
+      .mockResolvedValueOnce(storedSecret("whsec_saved_meanwhile"));
+    mockDeleteCredential.mockRejectedValue(new Error("db down"));
+    await expect(
+      recordStripeWebhookVerified(VERIFIED_WITH),
+    ).resolves.toBeUndefined();
+  });
+
+  it("swallows a failed re-read (best-effort, never breaks the webhook)", async () => {
+    mockReadRow.mockRejectedValue(new Error("db down"));
+    await expect(
+      recordStripeWebhookVerified(VERIFIED_WITH),
+    ).resolves.toBeUndefined();
+    expect(mockSetCredential).not.toHaveBeenCalled();
+  });
+
+  it("takes back a stamp whose after-write re-read failed, so it cannot vouch unchecked", async () => {
+    mockDeleteCredential.mockResolvedValue(undefined);
+    mockReadRow
+      .mockResolvedValueOnce(storedSecret(VERIFIED_WITH))
+      .mockRejectedValueOnce(new Error("db blip"));
+    await expect(
+      recordStripeWebhookVerified(VERIFIED_WITH),
+    ).resolves.toBeUndefined();
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential.mock.calls[0]?.[0]).toMatchObject({
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+    });
   });
 });
 
