@@ -19,7 +19,7 @@ reason: `applyLocalRefundAllocation` takes the charges to place a by-hand
   functions that raise them.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3285
+lines: 3299
 reason: round 4 (M3): `enqueueXeroRefundCreditNoteOperation` takes the record
   of a paid-another-way close as a key part (`paidAnotherWayTaskId`), so the
   close's bank-transfer note is a row of its own beside any card delta and is

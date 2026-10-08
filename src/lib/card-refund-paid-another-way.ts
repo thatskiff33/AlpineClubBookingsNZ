@@ -8,13 +8,14 @@ import { planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
+import {
+  paidAnotherWayXeroPlan,
+  queuePaidAnotherWayXero,
+  type PaidAnotherWayXeroPlan,
+  type PaidAnotherWayXeroQueued,
+} from "@/lib/card-refund-paid-another-way-xero";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { decideLateCapture } from "@/lib/late-capture-kept-xero-rules";
-import {
-  findKeptLateCaptureInvoiceIdForPayment,
-  readLateCaptureXeroReceipt,
-} from "@/lib/late-capture-xero-receipt";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import {
@@ -34,25 +35,14 @@ import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { prisma } from "@/lib/prisma";
 import { CLAIMABLE_PAYMENT_RECOVERY_STATUSES } from "@/lib/payment-recovery";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
-import {
-  isOrganiserChildRefundKey,
-  lateCaptureIntentOfApprovalRefundRecoveryKey,
-} from "@/lib/payment-recovery-keys";
+import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import {
   applyLocalRefundAllocation,
   lockPaymentForRefundedTotal,
   RefundAllocationExceedsCapturedError,
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
-import {
-  enqueueXeroKeptLateCaptureInvoiceOperation,
-  keptLateCaptureDocumentDate,
-  lockKeptLateCaptureTask,
-} from "@/lib/xero-kept-late-capture-invoice";
-import {
-  enqueueXeroRefundCreditNoteOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; 8 Oct 2026: "Keep it
@@ -225,88 +215,6 @@ function stillOwed(payment: ClosablePayment, operationId: string): StillOwed {
   };
 }
 
-type XeroPlanStore = Pick<
-  Prisma.TransactionClient,
-  "$executeRaw" | "manualRefundTask" | "paymentRecoveryOperation" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
->;
-
-/** What a close of this card refund records in Xero (`paidAnotherWayXeroPlan`). */
-type PaidAnotherWayXeroPlan =
-  | { xeroRefundNote: "now" | "none" }
-  | {
-      xeroRefundNote: "after-receipt";
-      /** The late capture's receipt the close queues first, on its approval task. */
-      receipt: { manualRefundTaskId: string; paymentIntentId: string; capturedCents: number; raisedAt: Date };
-    };
-
-/**
- * #3924 round 5 (F4; owner, 8 Oct 2026: "Raise a refund note for all") and
- * round 6 (owner, 8 Oct 2026: "Record receipt, then credit"): HOW A CLOSE OF
- * THIS CARD REFUND IS RECORDED IN XERO. Its bank-transfer refund note credits
- * the invoice the note executor names (`createXeroCreditNote`), so the dialog
- * never promises a note that will fail:
- *
- * - a treasurer-approved late capture's refund: the capture's own receipt.
- *   Recorded by the app (`readLateCaptureXeroReceipt`, `INV-PAY-110`): the note
- *   is queued `now`. Not in Xero at all: the charge is still in the Stripe
- *   account, so the close queues its receipt and the note follows it
- *   (`after-receipt`) - as long as the capture was taken and has its approval
- *   task (`decideLateCapture`). Recorded and resolved by hand in Xero: `none`,
- *   the officer records its refunds by hand too (`INV-INT-025`). Never the
- *   booking's cleared pre-cancel invoice;
- * - any other: the payment's kept late-capture invoice, else its own invoice
- *   (`findKeptLateCaptureInvoiceIdForPayment` ?? `payment.xeroInvoiceId`):
- *   `now`, or `none` without one.
- *
- * `lockApprovalTask` (the close only): the approval task's row is taken BEFORE
- * the receipt is read; see the module's LOCKS.
- *
- * STATED LIMIT: a payment whose invoice is still on its way to Xero reads as
- * having none, and its close queues no note; the toast says to check Xero.
- */
-async function paidAnotherWayXeroPlan(
-  db: XeroPlanStore,
-  operation: { idempotencyKey: string },
-  payment: { id: string; xeroInvoiceId: string | null },
-  { lockApprovalTask }: { lockApprovalTask: boolean },
-): Promise<PaidAnotherWayXeroPlan> {
-  const lateCaptureIntent = lateCaptureIntentOfApprovalRefundRecoveryKey(operation.idempotencyKey);
-  if (lateCaptureIntent === null) {
-    const hasInvoice =
-      payment.xeroInvoiceId !== null || (await findKeptLateCaptureInvoiceIdForPayment(payment.id, db)) !== null;
-    return { xeroRefundNote: hasInvoice ? "now" : "none" };
-  }
-  const task = await db.manualRefundTask.findUnique({
-    where: { lateCaptureApprovalIntentId: lateCaptureIntent },
-    select: { id: true, status: true, createdAt: true },
-  });
-  if (task && lockApprovalTask) await lockKeptLateCaptureTask(db, task.id);
-  const receipt = await readLateCaptureXeroReceipt(lateCaptureIntent, db);
-  if (receipt.kind === "recorded") return { xeroRefundNote: "now" };
-  if (receipt.kind === "resolved-by-hand" || !task) return { xeroRefundNote: "none" };
-  const capture = await db.paymentTransaction.findFirst({
-    where: { source: "STRIPE", stripePaymentIntentId: lateCaptureIntent },
-    select: { status: true, amountCents: true },
-  });
-  const { recordCents } = decideLateCapture({
-    taskStatus: task.status,
-    bookingStatus: "CANCELLED",
-    superseded: false,
-    capture,
-    refundClosedPaidAnotherWay: true,
-  });
-  if (recordCents === 0) return { xeroRefundNote: "none" };
-  return {
-    xeroRefundNote: "after-receipt",
-    receipt: {
-      manualRefundTaskId: task.id,
-      paymentIntentId: lateCaptureIntent,
-      capturedCents: recordCents,
-      raisedAt: task.createdAt,
-    },
-  };
-}
-
 export interface DeadCardRefundRow {
   operationId: string;
   bookingId: string;
@@ -445,9 +353,6 @@ export interface CardRefundPaidAnotherWayInput {
   note: string | null | undefined;
   actingMemberId: string;
 }
-
-/** What the close queued in Xero: its refund note, the late charge's receipt with the note to follow it, or nothing. */
-export type PaidAnotherWayXeroQueued = "refund-note" | "receipt-then-refund-note" | "nothing";
 
 export interface CardRefundPaidAnotherWayResult {
   operationId: string;
@@ -715,38 +620,16 @@ export async function closeCardRefundPaidAnotherWay(
         officerMemberId: input.actingMemberId,
       });
 
-      // M3 / round 5: every kind with an invoice to credit, sized on its own
-      // (the record is already in this transaction, so the cash evidence counts it).
-      if (xeroPlan.xeroRefundNote === "now") {
-        const queued = await enqueueXeroRefundCreditNoteOperation(payment.id, input.amountCents, {
-          createdByMemberId: input.actingMemberId,
-          refundMethod: "internet-banking",
-          paidAnotherWayTaskId: record.id,
-          store: tx,
-        });
-        if (queued.queueOperationId !== null) xeroQueued = "refund-note";
-      } else if (xeroPlan.xeroRefundNote === "after-receipt") {
-        // Round 6: the receipt first, on the approval task; its worker queues
-        // the note once it is in Xero. The record is already in this
-        // transaction, so the enqueue reads the refund as closed.
-        const queued = await enqueueXeroKeptLateCaptureInvoiceOperation({
-          manualRefundTaskId: xeroPlan.receipt.manualRefundTaskId,
-          bookingId: booking.id,
-          paymentIntentId: xeroPlan.receipt.paymentIntentId,
-          capturedCents: xeroPlan.receipt.capturedCents,
-          capturedOn: keptLateCaptureDocumentDate(xeroPlan.receipt.raisedAt, clubZone),
-          createdByMemberId: input.actingMemberId,
-          store: tx,
-        });
-        if (queued.queueOperationId === null) {
-          // The plan and the enqueue ask the same facts under the same row
-          // lock, so this is a fault: nothing commits.
-          throw new Error(
-            `Paid-another-way close ${operation.id}: the late charge's Xero receipt could not be queued (${queued.message})`,
-          );
-        }
-        xeroQueued = "receipt-then-refund-note";
-      }
+      // M3 / round 5 / round 6: the note now, or the late charge's receipt first.
+      xeroQueued = await queuePaidAnotherWayXero(tx, xeroPlan, {
+        operationId: operation.id,
+        bookingId: booking.id,
+        paymentId: payment.id,
+        recordId: record.id,
+        amountCents: input.amountCents,
+        actingMemberId: input.actingMemberId,
+        clubZone,
+      });
     }
 
     await createAuditLog(

@@ -24,7 +24,7 @@ import {
 import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import type { PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way";
+import type { PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way-xero";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
