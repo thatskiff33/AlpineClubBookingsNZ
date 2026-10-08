@@ -255,6 +255,21 @@ describe("recordStripeWebhookVerified attests only to the secret it was verified
     ).resolves.toBeUndefined();
     expect(mockSetCredential).not.toHaveBeenCalled();
   });
+
+  it("takes back a stamp whose after-write re-read failed, so it cannot vouch unchecked", async () => {
+    mockDeleteCredential.mockResolvedValue(undefined);
+    mockReadRow
+      .mockResolvedValueOnce(storedSecret(VERIFIED_WITH))
+      .mockRejectedValueOnce(new Error("db blip"));
+    await expect(
+      recordStripeWebhookVerified(VERIFIED_WITH),
+    ).resolves.toBeUndefined();
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential.mock.calls[0]?.[0]).toMatchObject({
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+    });
+  });
 });
 
 describe("getStripeSetupState webhook-verified freshness", () => {

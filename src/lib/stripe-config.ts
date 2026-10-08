@@ -173,16 +173,23 @@ async function readWebhookMarkerFreshness(): Promise<{
  *    `verifiedWith`;
  *  - after: if it no longer does, the marker just written is cleared again.
  *
- * Together they close the window. The admin save commits the new secret and
+ * Together they close the window whenever both reads complete. The admin save
+ * commits the new secret and
  * THEN clears the marker. If our marker write commits after that clear, the
  * new secret was already committed, so the after-read sees it and we clear our
- * own marker; if it commits before the clear, verify-reset removes it. The
- * secret is compared in memory only: never logged, persisted or returned.
+ * own marker; if it commits before the clear, verify-reset removes it. If the
+ * request fails after the stamp but before the after-read settles, the catch
+ * makes one best-effort clear, so a stamp that cannot be re-checked is taken
+ * back rather than left vouching (an event under the right secret re-stamps
+ * it). Only a process killed in that gap can leave it, until the next Stripe
+ * credential write. The secret is compared in memory only: never logged,
+ * persisted or returned.
  */
 export async function recordStripeWebhookVerified(
   verifiedWith: string,
   when: Date = new Date(),
 ): Promise<void> {
+  let stamped = false;
   try {
     const { markerAt, secretAt } = await readWebhookMarkerFreshness();
     if (markerIsFresh(markerAt, secretAt)) return;
@@ -195,6 +202,7 @@ export async function recordStripeWebhookVerified(
       // Latest-wins by design, and this is the marker's only writer (#2723).
       expect: { expect: "any" },
     });
+    stamped = true;
     if (!(await storedWebhookSecretIs(verifiedWith))) {
       await clearStripeWebhookVerified({
         kind: "system",
@@ -202,7 +210,14 @@ export async function recordStripeWebhookVerified(
       });
     }
   } catch {
-    // Never let marker persistence affect the webhook response.
+    // Never let marker persistence affect the webhook response. A stamp that
+    // could not be re-checked is taken back, best-effort.
+    if (stamped) {
+      await clearStripeWebhookVerified({
+        kind: "system",
+        actor: "stripe-webhook-verify",
+      }).catch(() => undefined);
+    }
   }
 }
 
