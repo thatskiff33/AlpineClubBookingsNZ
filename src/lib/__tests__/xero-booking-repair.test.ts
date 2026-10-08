@@ -7206,3 +7206,94 @@ describe("a refund request's own note never answers for the payment's refund not
     );
   });
 });
+
+/**
+ * #3954: a price reduction first cancels or shrinks an earlier increase's
+ * unpaid card ask. The ask never reached Xero (its supplementary invoice waits
+ * on the card payment), so the reduction's own note covers only what it
+ * returned of money paid, and the increase's retired invoice must not be
+ * offered back as a one-click bill for money nobody owes.
+ */
+describe("#3954: a reduction set against an unpaid ask", () => {
+  function reducedAfterUnpaidAsk(priceDiffCents: number, unpaidAskOffsetCents: number) {
+    return makeBooking({
+      modifications: [
+        {
+          id: "mod_increase",
+          bookingId: "booking_1",
+          modificationType: "GUEST_ADD",
+          priceDiffCents: 5000,
+          changeFeeCents: 0,
+          newData: {},
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+        {
+          id: "mod_reduction",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents,
+          changeFeeCents: 0,
+          newData: { unpaidAskOffsetCents },
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    });
+  }
+  const retiredSupplementary = () =>
+    makeOperation({
+      id: "operation_retired_supplementary",
+      localModel: "BookingModification",
+      localId: "mod_increase",
+      status: "CANCELLED",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      lastErrorCode: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION",
+      xeroObjectType: null,
+      xeroObjectId: null,
+      requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: "pi_ask" },
+    });
+
+  it("MUTATION: expects no note for a reduction the unpaid ask absorbed whole", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-5000, 5000)],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+  });
+
+  it("sizes a partly absorbed reduction's note on what the ask left", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-8000, 5000)],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const finding = report.passes[0].bookings[0].findings.find(
+      (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE",
+    );
+    expect(finding?.details).toMatchObject({ modificationId: "mod_reduction", refundDueCents: 3000 });
+  });
+
+  it("MUTATION: reports the increase's retired invoice for a person, never as a one-click bill", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-5000, 5000)],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    const finding = bookingReport.findings.find((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+    expect(finding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: { modificationId: "mod_increase", retiredBy: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION" },
+    });
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+});
