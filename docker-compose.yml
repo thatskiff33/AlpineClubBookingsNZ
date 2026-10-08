@@ -278,7 +278,7 @@ x-app-service: &app-service
     # threaten the 1g limit.
     #
     # NOT the full-route (ISR) page cache, despite the path suggesting otherwise:
-    # Next stores those under `.next/server/app`, which is read-only here, so
+    # Next stores those under `.next/server/` (`route-cache/` since 16.3.8), read-only here, so
     # `next.config.ts` keeps them in a bounded in-memory LRU instead. That file
     # explains the whole decision — read it before changing either side.
     - /app/.next/cache:uid=1001,gid=1001,mode=0755,size=64m

@@ -1,0 +1,1 @@
+- **Next.js is updated to its 16.3.8 security release (#3995).** Upgrade next and eslint-config-next from 16.3.6 to 16.3.8 for one high, four moderate and one low advisory, and re-seal the braces mitigation inputs on the new lockfile without changing its coverage, patch or expiry.
