@@ -278,6 +278,12 @@ includes a booking the member paid for entirely with account credit: the extra
 is asked for by card, whether or not the club uses Xero. It is
 easy for that to be quietly forgotten by everybody.
 
+If a later change brings the price back down before the member has paid that
+extra, the reduction comes off the unpaid extra first: the card request is
+cancelled, or replaced by a smaller one, and only what is left of the reduction
+is refunded or credited under the club's policy (#3954). If the member pays the
+old request at the same moment, that payment is refunded in full automatically.
+
 Only confirmed, paid and completed bookings are counted and chased. A cancelled
 booking keeps the record of what it once owed, but the club never asks for it and
 no screen calls it outstanding.

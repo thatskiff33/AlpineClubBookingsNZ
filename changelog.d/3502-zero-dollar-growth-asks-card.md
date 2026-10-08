@@ -13,9 +13,23 @@
   waits for that card payment and records it, so the member is not billed
   twice. If the booking's first Xero invoice is only raised after the card
   payment, that invoice now includes any change fee the card already paid, so
-  the card payment and the account credit settle it exactly. No further account credit is taken for the extra, and price
-  reductions on these bookings work exactly as before.
+  the card payment and the account credit settle it exactly. No further account credit is taken for the extra.
 
   Bookings that grew before this fix are not charged retrospectively. The
   read-only booking ledger census (`pnpm run payments:audit-booking-ledger`)
   lists them as owing; see the Maintenance guide before acting on one.
+
+- **A price reduction now cancels or shrinks an unpaid extra payment first
+  (#3954).** When a paid booking's price went up, the member was asked for the
+  extra by card. If the price then came back down before they paid it, the
+  reduction was refunded or credited (or kept, under the club's policy) and the
+  card request stayed live, so a member who then paid it left the club holding
+  more than the booking cost. Now the reduction comes off the unpaid request
+  first: it is cancelled, or replaced by a smaller one, and only what is left is
+  refunded, credited or given back under the club's policy. This applies to
+  card-paid bookings and to bookings paid with account credit, at every way of
+  changing a booking, and the edit screen shows how much comes off the unpaid
+  request. A member who pays the old request at the same moment is refunded it
+  automatically; reminders stop for a cancelled request and quote the new
+  amount for a smaller one. Nothing is sent to Xero for a request that was never
+  paid, and the booking-vs-Xero repair tool no longer offers to bill one.

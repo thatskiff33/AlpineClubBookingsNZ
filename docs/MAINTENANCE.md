@@ -2050,6 +2050,16 @@ WHERE "amountCents" = 0 AND "status" = 'SUCCEEDED' AND "source" <> 'STRIPE';
 A non-zero count is for the owner to weigh; it does not mean anything is wrong
 by itself.
 
+**A `retained` ROW CAN BE AN UP-THEN-DOWN EDIT FROM BEFORE #3954.** Until #3954 a
+reduction made while an earlier increase's card request was still unpaid left
+that request live, so a member who later paid it left the club holding more
+than the price; the census reads that as `retained`, like a policy retention.
+A reduction now cancels or shrinks the unpaid request first (`INV-PAY-119`), so
+new rows of this kind should not appear. To tell an old one from a policy
+retention, look at the booking's changes: an increase, then a reduction, with an
+ADDITIONAL card payment captured after the reduction. Report them to the owner;
+the census never repairs.
+
 That gap is not closed in the arithmetic on purpose. A term reading the Xero
 outbox would make the identity depend on an external system's queue state, and a
 queued-but-unsent invoice, a failed one and a sent one are three different

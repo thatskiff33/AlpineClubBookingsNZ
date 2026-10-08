@@ -22,6 +22,29 @@ const HISTORY_KEY = "unpaidAskOffsetCents" as const;
 export const ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE =
   "ADDITIONAL_ASK_RETIRED_BY_REDUCTION";
 
+/**
+ * The booking-vs-Xero repair pass's reading of an increase whose supplementary
+ * invoice a later reduction retired: the money it was for is no longer owed -
+ * wholly, or all but a smaller re-issued ask - so it is reported for a person,
+ * never queued as a one-click invoice for the edit's whole figure.
+ */
+export function isAskRetiredByReductionOperation(operation: {
+  entityType: string;
+  operationType: string;
+  status: string;
+  lastErrorCode: string | null;
+}): boolean {
+  return (
+    operation.entityType === "INVOICE" &&
+    operation.operationType === "CREATE" &&
+    operation.status === "CANCELLED" &&
+    operation.lastErrorCode === ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE
+  );
+}
+
+export const ASK_RETIRED_BY_REDUCTION_SUMMARY =
+  "A later change lowered this booking's price before the member paid the extra this edit asked for, so that card request was cancelled or made smaller and its supplementary Xero invoice was retired. Check the booking's later changes and payments before raising any invoice for this edit.";
+
 /** The `newData` field an edit writes for the part of its reduction an unpaid ask took, or none. */
 export function unpaidAskOffsetHistory(offsetCents: number): { [HISTORY_KEY]?: number } {
   return offsetCents > 0 ? { [HISTORY_KEY]: offsetCents } : {};

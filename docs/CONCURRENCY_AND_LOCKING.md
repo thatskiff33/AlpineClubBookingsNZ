@@ -2958,6 +2958,20 @@ pending-refund sweep converge the child's refund lines after `lock(1)` and the
 (global, lodge, row), keyed so a replay inserts nothing; no key, order,
 participant or provider call changes.
 
+**#3954 adds the retirement of an unpaid ask to every reduction door, and no
+key** (`INV-PAY-119`). `applyPaymentAdjustments` already runs after the door's
+`lock(1)`, its lodge key and, on a credit give-back, the member's credit-ledger
+key; the retire (`retireUnpaidAskChain`) runs after the give-back, so the
+member key still precedes every `Payment` row write. It writes the ask's
+ADDITIONAL rows, queues their cancellations and retires a parked Xero operation
+in the same transaction, then reconciles the mirror; the Stripe cancel runs
+after commit. The counterpart writer is the lockless webhook capture
+(`markPaymentIntentTransactionSucceeded`, autocommitting statements), so the
+retire is a status-guarded `updateMany` re-asserting "still unpaid": a capture
+committed after the read matches nothing and the edit rolls back (409); one
+landing after the retire waits on the row, and the committed cancellation hands
+it to `REFUND_SUPERSEDED_PAYMENT`. No key, order or provider call changes.
+
 **#2700 adds one more, and it is the smallest participant in this cohort.**
 `raiseDeletedBookingModificationRefundTask`
 (`src/lib/deleted-booking-modification-payment.ts`) creates the OPEN

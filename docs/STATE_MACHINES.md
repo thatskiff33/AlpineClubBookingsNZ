@@ -660,7 +660,8 @@ positive delta -> additional payment or supplementary Xero invoice
 uncollected additional payment -> reminder at +3 days, reminder 2 days before
   check-in, admin re-send on demand; stops at check-out (never auto-cancelled)
 uncollected review-raised request -> WITHDRAWN by a finance officer (#3528)
-negative delta -> Stripe refund or source-linked member credit
+negative delta -> first cancels or shrinks an unpaid price ask (#3954), then
+  Stripe refund or source-linked member credit for what is left
 admin review path -> REQUESTED -> APPROVED or REJECTED
 ```
 
@@ -709,6 +710,30 @@ REFUND_SUPERSEDED_PAYMENT completes
      settlement) + ONE member email (superseded-payment-refunded, naming the
      corrected amount owing) + ONE admin alert
      (admin-superseded-payment-refund)
+```
+
+**A reduction retires the unpaid ask before it refunds (#3954, [INV-PAY-119]).**
+A price reduction on a booking still owing an unpaid price ask is set against
+that ask first, on a card-paid or a credit-paid ($0) booking alike. Only what is
+left is refunded, credited or given back, by the policy tier.
+
+```text
+reduction edit, under the door's locks
+  no unpaid ask, or the chain holds a review-raised request -> settles as before
+  -> offset = min(reduction, unpaid ask)
+  -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt
+       a row captured since it was read -> 409, the whole edit rolls back
+  -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
+  -> WAITING_PAYMENT supplementary invoice on it -> CANCELLED
+       (ADDITIONAL_ASK_RETIRED_BY_REDUCTION)
+  -> reconcile: the Payment mirror reads past the stamped rows -> nothing owed
+  -> what is left of the reduction -> policy-tiered refund / credit / give-back
+after commit, the minter
+  -> runs each retired intent's cancellation now
+       Stripe already captured it -> REFUND_SUPERSEDED_PAYMENT, in full
+  -> ask left over (reduction < ask) -> mint it as a new ask, all of it carried
+       (mint fails -> CREATE_ADDITIONAL_PAYMENT_INTENT replays the frozen figure)
+chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
 Before #3340 the cancellation was only enqueued, so the retired intent stayed

@@ -70,6 +70,8 @@ import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled
 import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import {
   ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
+  ASK_RETIRED_BY_REDUCTION_SUMMARY,
+  isAskRetiredByReductionOperation,
   recordedUnpaidAskOffsetCents,
 } from "@/lib/unpaid-ask-offset-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
@@ -630,34 +632,14 @@ export function classifyBookingContext(
             },
             actionKeys: [manualAction.key],
           });
-        } else if (
-          !blockingOperation &&
-          modificationOperations.some(
-            (operation) =>
-              operation.entityType === "INVOICE" &&
-              operation.operationType === "CREATE" &&
-              operation.status === "CANCELLED" &&
-              operation.lastErrorCode === ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
-          )
-        ) {
-          /**
-           * #3954: A LATER REDUCTION RETIRED THIS EDIT'S UNPAID CARD ASK, and its
-           * supplementary invoice with it, before the member paid. The money
-           * the ask was for is no longer owed - wholly, or all but a smaller
-           * ask the reduction re-issued - so the one-click invoice for this
-           * edit's whole figure would bill money nobody owes. Reported for a
-           * person, never queued.
-           */
-          const summary =
-            "A later change lowered this booking's price before the member paid the extra this edit asked for, so that card request was cancelled or made smaller and its supplementary Xero invoice was retired. Check the booking's later changes and payments before raising any invoice for this edit.";
-          const manualAction = addAction(
-            actionMap,
-            buildManualReviewAction(booking.id, summary)
-          );
+        } else if (!blockingOperation && modificationOperations.some(isAskRetiredByReductionOperation)) {
+          // #3954 (`INV-PAY-119`): a later reduction retired this edit's unpaid
+          // ask and its invoice; a one-click bill would charge money nobody owes.
+          const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, ASK_RETIRED_BY_REDUCTION_SUMMARY));
           addFinding(findings, {
             code: "MISSING_SUPPLEMENTARY_INVOICE",
             severity: "manual_review",
-            summary,
+            summary: ASK_RETIRED_BY_REDUCTION_SUMMARY,
             safeToAutoApply: false,
             details: {
               modificationId: modification.id,
@@ -884,8 +866,7 @@ export function classifyBookingContext(
       }
     }
 
-    // #3954: the part of a reduction that cancelled or shrank an unpaid card
-    // ask returned no money and has no note; the edit's history row records it.
+    // #3954: what an unpaid ask took of a reduction returned no money, so no note.
     const reductionNoteDueCents =
       Math.abs(modificationNetAmountCents) - recordedUnpaidAskOffsetCents(modification.newData);
     if (modificationNetAmountCents < 0 && reductionNoteDueCents > 0 && primaryInvoice) {

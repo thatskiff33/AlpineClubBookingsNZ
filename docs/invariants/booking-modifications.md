@@ -518,7 +518,7 @@ single-guest removal (`DELETE …/guests/[guestId]`), and date change
 tier for the days until check-in, folding any change fee into the net delta, and
 requires the member to elect a card refund or account credit whenever a captured
 payment makes a settlement returnable. No reduction path refunds the full price
-delta outside the policy. Not an edit, a guest's acceptance re-pricing promo
+delta outside the policy (after [INV-PAY-119]). Not an edit, a guest's acceptance re-pricing promo
 codes returns its whole reduction as paid, credit included, untiered and
 unasked (`INV-MONEY-038`, D-3813-5; by hand via `INV-PAY-117`). A request against a booking with a captured payment
 that omits the settlement election is rejected rather than defaulted, so a

@@ -1938,6 +1938,35 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The member is told the club WILL refund by bank transfer**
     (`refundRequestApprovedRefundSentence`); card wording is unchanged.
 
+## INV-PAY-119
+
+- **A price reduction is first set against the booking's unpaid card ask**
+  (#3954, owner decision 8 Oct 2026), on card-paid and credit-paid ($0)
+  bookings alike, at every reduction door. The ask is cancelled when the
+  reduction covers it and re-issued smaller when it does not; only what is left
+  is refunded, credited or given back, by `INV-MOD-011`'s tier. The offset is
+  untiered: nobody paid it. The arithmetic is `setReductionAgainstUnpaidAsk`;
+  the settlement options, the save and the quote all read
+  `readUnpaidPriceAsk`, so they agree.
+- **Retired in the edit's transaction, under its locks**
+  (`retireUnpaidAskChain`): every unpaid ADDITIONAL row since the last paid one
+  is FAILED and stamped `withdrawnAt`, behind a fence re-asserting it is still
+  unpaid; each intent's cancellation is queued durably; a supplementary invoice
+  parked on it is CANCELLED (`ADDITIONAL_ASK_RETIRED_BY_REDUCTION`); the mirror
+  is reconciled. The minter cancels at Stripe after commit, then mints what is
+  left (`reissueUnpaidAdditionalAsk`, all carried, `INV-PAY-098`).
+- **The race.** A capture between the read and the fence rolls the edit back
+  (409). A capture after commit meets the queued cancellation and is refunded
+  in full by the superseded-capture path.
+- **Never an officer's money.** A chain holding a review-raised request
+  (`INV-ADDPAY-040`) is left alone; the reduction settles as before.
+- **Xero.** An unpaid ask has no Xero document, so nothing is credited for
+  it. The edit records `unpaidAskOffsetCents`; the repair pass sizes the note
+  net of it and reports the retired invoice for a person, never auto-billing it.
+- **Stated limit.** An ask whose mint failed and awaits its recovery is not in
+  the mirror yet, so a reduction then is not set against it; the census
+  reports it.
+
 ## INV-PAY-070
 
 - **The Xero leg bills the TOTAL, on ONE invoice per edit, enforced rather than
