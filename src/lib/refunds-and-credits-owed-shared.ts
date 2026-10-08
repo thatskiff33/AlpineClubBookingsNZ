@@ -20,6 +20,10 @@ export interface RefundsAndCreditsOwed {
    * (`openTaskOwedCents`), card refunds Stripe has not yet paid
    * (`openCardRefundOwedCents`), and late card charges awaiting the
    * treasurer's refund-or-keep decision (`isLateCaptureAwaitingDecisionTask`).
+   * Plus, as one club-wide amount against no booking (owner, 8 Oct 2026:
+   * "Separate club-wide line"), what the unclosed group settlement card
+   * refunds from before #3653 still have to send
+   * (`legacyGroupSettlementRefundOwedCents`).
    * Each leaves this figure when it is paid, dismissed or kept.
    */
   refundsOwedCents: number;

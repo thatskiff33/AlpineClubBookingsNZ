@@ -467,6 +467,14 @@ export function buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId: s
 export function isGroupSettlementRefundRecoveryKey(key: string) {
   return key.startsWith(GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX);
 }
+/**
+ * #3372 (owner, 8 Oct 2026: "Separate club-wide line"): every group settlement
+ * refund row, as a `PaymentRecoveryOperation` where fragment, for the
+ * club-wide part of "Refunds owed" (`readRefundsAndCreditsOwed`).
+ */
+export const GROUP_SETTLEMENT_REFUND_RECOVERY_WHERE = {
+  idempotencyKey: { startsWith: GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX },
+} as const;
 /** The settlement a group settlement refund row replays. */
 export function groupSettlementIdForRefundRecoveryKey(key: string) {
   return key.slice(GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length);

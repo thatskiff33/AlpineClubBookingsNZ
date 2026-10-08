@@ -2,7 +2,7 @@ import "server-only";
 
 import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import { RefundAllocationExceedsCapturedError, RefundAllocationRacedError } from "@/lib/payment-transactions";
+import { RefundAllocationRacedError } from "@/lib/payment-transactions";
 import {
   needsOperatorXeroRetry,
   XeroAppliedCreditOperationBusyError,
@@ -24,10 +24,9 @@ export function settlementWriteRefusal(error: unknown): unknown {
   // check, so the operator was told "Could not close the refund task" and
   // monitoring recorded a 500 for working code. This says what is wrong and
   // what to do about it.
-  if (
-    error instanceof RefundAllocationExceedsCapturedError ||
-    (error instanceof Error && error.message === "Refund amount exceeds captured payments")
-  ) {
+  // The message `RefundAllocationExceedsCapturedError` carries (#3924 round 4),
+  // matched by its words so a caller's mocked module needs no new export.
+  if (error instanceof Error && error.message === "Refund amount exceeds captured payments") {
     return new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
   }
   // #3032: a lock-free writer on the same payment (the charge.refunded sync; a

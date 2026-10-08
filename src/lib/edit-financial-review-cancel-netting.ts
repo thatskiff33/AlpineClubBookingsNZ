@@ -23,6 +23,10 @@ import {
   reviewRefundOverPromisedMessage,
 } from "@/lib/edit-financial-review-refund-refusals";
 import { editReviewHandBackLinesWhere } from "@/lib/edit-financial-review-charge-shape";
+import {
+  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
+  cardRefundPaidAnotherWayOccurrenceKey,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import type { ClubFormat } from "@/lib/club-format";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -388,10 +392,25 @@ async function settledSinceCancellation({
   });
   if (siblings.length === 0) return { sharesCents: 0, captureReturnedCents: 0 };
   const ids = siblings.map((task) => task.id);
-  const refunded = await store.paymentRecoveryOperation.aggregate({
+  const refundOperations = await store.paymentRecoveryOperation.findMany({
     where: { idempotencyKey: { in: ids.map((id) => buildEditFinancialReviewRefundRecoveryIdempotencyKey(id)) } },
-    _sum: { amountCents: true },
+    select: { id: true, amountCents: true },
   });
+  // #3924 round 4 (M7): a card refund the treasurer closed as paid another way
+  // for LESS than it still owed returned only what was paid back - the rest of
+  // its debt was given up at the close, and its record keeps both figures.
+  const closedShort = refundOperations.length === 0 ? [] : await store.manualRefundTask.findMany({
+    where: {
+      ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
+      occurrenceKey: { in: refundOperations.map((operation) => cardRefundPaidAnotherWayOccurrenceKey(operation.id)) },
+    },
+    select: { amountCents: true, raisedAmountCents: true },
+  });
+  const givenUpCents = closedShort.reduce(
+    (sum, record) => sum + Math.max(0, (record.raisedAmountCents ?? 0) - (record.amountCents ?? 0)),
+    0,
+  );
+  const refundedCents = refundOperations.reduce((sum, operation) => sum + operation.amountCents, 0) - givenUpCents;
   const handedBack = await store.bookingLedgerLine.aggregate({
     where: { bookingId, ...editReviewHandBackLinesWhere(ids) },
     _sum: { unitCents: true },
@@ -405,7 +424,7 @@ async function settledSinceCancellation({
   });
   return {
     sharesCents: siblings.reduce((sum, task) => sum + (task.amountCents ?? 0), 0),
-    captureReturnedCents: (refunded._sum.amountCents ?? 0) + (handedBack._sum.unitCents ?? 0) + (minted?._sum.amountCents ?? 0),
+    captureReturnedCents: refundedCents + (handedBack._sum.unitCents ?? 0) + (minted?._sum.amountCents ?? 0),
   };
 }
 

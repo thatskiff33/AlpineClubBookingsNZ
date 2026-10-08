@@ -86,6 +86,7 @@ const rows = {
   cancelled: null as unknown,
   siblings: [] as Array<{ id: string; amountCents: number; reviewContext?: unknown }>,
   refundedBySiblingsCents: 0,
+  closedShort: [] as Array<{ amountCents: number; raisedAmountCents: number }>,
   mintedBySiblingsCents: 0,
   handedBackBySiblingsCents: 0,
   owner: { organiserSettled: false, parentBookingId: null as string | null, payment: { source: "STRIPE" } },
@@ -97,8 +98,15 @@ const store = {
   // #3809's marker (`bookingReducedThroughCreditGiveBack`).
   bookingModification: { findFirst: vi.fn(async () => (rows.capped ? { id: "mod-give-back" } : null)) },
   bookingEvent: { findFirst: vi.fn(async () => rows.cancelled) },
-  manualRefundTask: { findMany: vi.fn(async () => rows.siblings) },
-  paymentRecoveryOperation: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.refundedBySiblingsCents || null } })) },
+  // The sibling reviews; and, asked by occurrence key, a paid-another-way record (#3924 round 4).
+  manualRefundTask: {
+    findMany: vi.fn(async (args: { where?: { occurrenceKey?: unknown } }) =>
+      args?.where?.occurrenceKey ? rows.closedShort : rows.siblings,
+    ),
+  },
+  paymentRecoveryOperation: {
+    findMany: vi.fn(async () => (rows.refundedBySiblingsCents ? [{ id: "op-sibling", amountCents: rows.refundedBySiblingsCents }] : [])),
+  },
   memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.mintedBySiblingsCents || null } })) },
   bookingLedgerLine: { aggregate: vi.fn(async () => ({ _sum: { unitCents: rows.handedBackBySiblingsCents || null } })) },
 };
@@ -154,7 +162,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.appliedNowCents = null;
   Object.assign(rows, {
-    cancelled: null, siblings: [], refundedBySiblingsCents: 0, mintedBySiblingsCents: 0, handedBackBySiblingsCents: 0,
+    cancelled: null, siblings: [], refundedBySiblingsCents: 0, closedShort: [], mintedBySiblingsCents: 0, handedBackBySiblingsCents: 0,
     owner: { organiserSettled: false, parentBookingId: null, payment: { source: "STRIPE" } },
     capped: false,
   });
@@ -201,9 +209,32 @@ describe("sibling reviews of one cancelled booking", () => {
 
     expect(second).toBe(1_000);
     expect(returnedCents + first + second).toBe(10_000);
-    expect(store.paymentRecoveryOperation.aggregate).toHaveBeenCalledWith({
+    expect(store.paymentRecoveryOperation.findMany).toHaveBeenCalledWith({
       where: { idempotencyKey: { in: [buildEditFinancialReviewRefundRecoveryIdempotencyKey("task-1")] } },
-      _sum: { amountCents: true },
+      select: { id: true, amountCents: true },
+    });
+  });
+
+  it("#3924 round 4 (M7): a sibling's card refund closed as paid another way for less returned only what was paid back", async () => {
+    const returnedCents = cancelledAt(20_000, 0, TIERS[1]!.rule);
+    const first = await owed(2_000, "task-1");
+    expect(first).toBe(1_000);
+
+    // The first review's $10 card refund died; the treasurer paid back $4 of it by bank.
+    rows.siblings = [{ id: "task-1", amountCents: 2_000 }];
+    rows.refundedBySiblingsCents = first;
+    rows.closedShort = [{ amountCents: 400, raisedAmountCents: 1_000 }];
+    const second = await owed(2_000, "task-2");
+
+    // $6 of the first's debt was given up, so the capture holds $6 more for the second.
+    expect(second).toBe(1_600);
+    expect(returnedCents + 400 + second).toBe(10_000);
+    expect(store.manualRefundTask.findMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        status: "COMPLETED",
+        occurrenceKey: { in: ["card-refund-paid-another-way:op-sibling"] },
+      }),
+      select: { amountCents: true, raisedAmountCents: true },
     });
   });
 
