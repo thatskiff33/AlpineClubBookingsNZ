@@ -112,7 +112,7 @@ const CAPTURES: Capture[] = [
     name: "admin-reports",
     route: "/admin/reports",
     area: "admin",
-    waitForText: "Net Collected Cash",
+    waitForText: "Net Collected",
   },
   { name: "finance-dashboard", route: "/finance", area: "admin" },
   { name: "admin-setup", route: "/admin/setup", area: "admin" },

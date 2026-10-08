@@ -1,11 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import {
+  NET_COLLECTED_SCOPE_FIXTURE,
+  NET_COLLECTED_SCOPE_PAYMENTS,
+  netCollectedFixtureBooking,
+  netCollectedFixtureEvidence,
+} from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn(), findMany: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
-    payment: { findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn() },
+    payment: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      aggregate: vi.fn(),
+      // #3372: present only so the summary test can pin that a read of the
+      // ledger never reaches a write delegate; absent, a call would throw.
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      create: vi.fn(),
+      upsert: vi.fn(),
+      delete: vi.fn(),
+    },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findMany: vi.fn() },
     auditLog: { findMany: vi.fn(), count: vi.fn() },
@@ -263,12 +280,17 @@ describe("Admin Payments API", () => {
       xeroInvoiceNumber: null,
       updatedAt: new Date("2026-04-01T09:00:00.000Z"),
       transactions: [],
+      // #3372: Net Collected's capture evidence (one captured ledger row).
+      _count: { transactions: 1 },
       refunds: [],
       booking: {
         id: "b1",
         status: "PAID",
         checkIn: new Date("2026-04-10"),
+        deletedAt: null,
         creditsFromCancellation: [],
+        creditsApplied: [],
+        manualRefundTasks: [],
         member: {
           id: "m1",
           firstName: "Bob",
@@ -368,11 +390,185 @@ describe("Admin Payments API", () => {
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(10);
-    expect(body.summary.totalRevenueCents).toBe(5000);
+    expect(body.summary.netCollectedCents).toBe(5000);
     expect(body.summary.refundedCents).toBe(0);
     expect(body.summary.count).toBe(1);
     expect(body.data[0].reference).toBeNull();
     expect(body.data[0].lastUpdatedAt).toBe("2026-04-03T11:00:00.000Z");
+  });
+
+  /*
+    #3372 — the "Net Collected" tile (once "Total Revenue"). It used to add gross `amountCents` for every
+    row the filter matched: a refund never subtracted, and under the default
+    "all" status filter a PENDING or FAILED payment's amount counted as revenue.
+    The tile is now net over CAPTURED payments through `summarizeCollectedCash`,
+    and - owner decision A - a cancelled booking counts what it paid less what was
+    refunded (#773's exclusion is retired for this figure). This fixture is built so
+    each exclusion moves the number.
+  */
+  it("sums Net Collected over captured payments only, net of refunds, cancelled bookings at what they paid and kept", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    const cancelledBooking = {
+      ...makePaymentCandidate().booking,
+      id: "b-cancelled",
+      status: "CANCELLED",
+    };
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce([
+        // The #3340 booking: $130.00 captured, $65.00 refunded → $65.00 net.
+        makePaymentCandidate({
+          id: "partly-refunded",
+          status: "PARTIALLY_REFUNDED",
+          amountCents: 13_000,
+          refundedAmountCents: 6_500,
+        }),
+        // Uncaptured money: neither counts, whatever its amount.
+        makePaymentCandidate({ id: "pending", status: "PENDING", amountCents: 9_000 }),
+        makePaymentCandidate({ id: "failed", status: "FAILED", amountCents: 4_000 }),
+        // Captured, then the booking was cancelled with $50.00 of it refunded:
+        // the club kept $150.00, which is money collected.
+        makePaymentCandidate({
+          id: "cancelled",
+          bookingId: "b-cancelled",
+          status: "PARTIALLY_REFUNDED",
+          amountCents: 20_000,
+          refundedAmountCents: 5_000,
+          booking: cancelledBooking,
+        }),
+      ] as any)
+      .mockResolvedValueOnce([] as any);
+
+    const req = new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10");
+    const res = await getPayments(req);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.summary).toEqual({
+      // (13_000 - 6_500) + (20_000 - 5_000). Were the cancelled row left out
+      // (#773) it would read 6_500; were PENDING/FAILED gross added it would
+      // read 34_500.
+      netCollectedCents: 21_500,
+      // 6_500 + 5_000.
+      refundedCents: 11_500,
+      count: 4,
+      // No payment here records an uncollected-ledger additional payment.
+      additionalLedgerGapCents: 0,
+      additionalLedgerGapBookings: 0,
+    });
+    expect(body.summary).not.toHaveProperty("totalRevenueCents");
+    expect(body.summary).not.toHaveProperty("netRevenueCents");
+
+    // Display only (#3372 acceptance): a read of the ledger writes nothing.
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.payment.upsert).not.toHaveBeenCalled();
+    expect(prisma.payment.delete).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3372, owner decision A: the one Net Collected booking scope. The shared
+    fixture - a cancelled booking that kept a $50.00 fee, and a soft-deleted
+    booking's $70.00 capture - reads $50.00 here, on the dashboard and on
+    Reports. The tile used to leave the cancelled booking out ($0.00).
+  */
+  it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce(
+        NET_COLLECTED_SCOPE_PAYMENTS.map((payment) =>
+          makePaymentCandidate({
+            id: payment.bookingId,
+            bookingId: payment.bookingId,
+            status: payment.status,
+            amountCents: payment.amountCents,
+            refundedAmountCents: payment.refundedAmountCents,
+            ...netCollectedFixtureEvidence(payment),
+            booking: {
+              ...makePaymentCandidate().booking,
+              ...netCollectedFixtureBooking(payment),
+              id: payment.bookingId,
+              creditsFromCancellation: payment.creditsFromCancellation.map(
+                (credit) => ({ ...credit, description: null }),
+              ),
+            },
+          })
+        ) as any
+      )
+      .mockResolvedValueOnce([] as any);
+
+    const res = await getPayments(
+      new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10")
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.summary.netCollectedCents).toBe(
+      NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents
+    );
+    // The refund tile is every matched row, as its hint says - the never-paid
+    // cancelled booking's $30.00 mirror refund and the never-paid live
+    // booking's $50.00 folded credit note included, though the Net Collected
+    // tile (owner review on #3811) gives both bookings nil.
+    expect(body.summary.refundedCents).toBe(23_000);
+    expect(body.summary.count).toBe(6);
+  });
+
+  /*
+    #3372 review: Reports warns that Net Collected "may understate" when a
+    payment records a collected additional payment with no captured ADDITIONAL
+    ledger row behind it (#2408). The tile carries the same figure, so the
+    summary carries the same check, over the payments the tile counts.
+  */
+  it("returns Reports' ledger-gap check over the payments Net Collected counts", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce([
+        // A $21.00 addition recorded as collected, with no ledger row: a gap.
+        makePaymentCandidate({
+          id: "gap",
+          bookingId: "b-gap",
+          additionalAmountCents: 2_100,
+          additionalPaymentStatus: "SUCCEEDED",
+          transactions: [],
+        }),
+        // The same addition WITH its captured ADDITIONAL ledger row: no gap.
+        makePaymentCandidate({
+          id: "evidenced",
+          bookingId: "b-evidenced",
+          additionalAmountCents: 3_000,
+          additionalPaymentStatus: "SUCCEEDED",
+          transactions: [
+            {
+              updatedAt: new Date("2026-04-01T09:00:00.000Z"),
+              kind: "ADDITIONAL",
+              status: "SUCCEEDED",
+              amountCents: 3_000,
+            },
+          ],
+        }),
+      ] as any)
+      .mockResolvedValueOnce([] as any);
+
+    const res = await getPayments(
+      new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10")
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.summary.additionalLedgerGapCents).toBe(2_100);
+    expect(body.summary.additionalLedgerGapBookings).toBe(1);
+
+    // The inputs ride the one candidate query; no second query is made for it.
+    const [candidateArgs] = vi.mocked(prisma.payment.findMany).mock.calls[0] as any[];
+    expect(candidateArgs.select).toMatchObject({
+      additionalAmountCents: true,
+      additionalPaymentStatus: true,
+      transactions: {
+        select: { updatedAt: true, kind: true, status: true, amountCents: true },
+      },
+    });
   });
 
   it("filters by status", async () => {
