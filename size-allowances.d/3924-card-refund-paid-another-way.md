@@ -1,4 +1,4 @@
-# File-size allowance for #3924 (rounds 3 and 4)
+# File-size allowance for #3924 (rounds 3 to 5)
 
 PR #3924 (issue #3372) adds the "Paid another way" close of a dead card refund
 (owner, 7 Oct 2026: "Count + add close action"). The close itself lives in its
@@ -19,7 +19,7 @@ reason: `applyLocalRefundAllocation` takes the charges to place a by-hand
   functions that raise them.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3293
+lines: 3285
 reason: round 4 (M3): `enqueueXeroRefundCreditNoteOperation` takes the record
   of a paid-another-way close as a key part (`paidAnotherWayTaskId`), so the
   close's bank-transfer note is a row of its own beside any card delta and is
