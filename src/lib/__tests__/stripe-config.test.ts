@@ -211,6 +211,43 @@ describe("recordStripeWebhookVerified attests only to the secret it was verified
     expect(mockSetCredential).not.toHaveBeenCalled();
   });
 
+  it("clears the marker it just wrote when the secret was swapped between the write and the re-read", async () => {
+    mockDeleteCredential.mockResolvedValue(undefined);
+    mockReadRow
+      .mockResolvedValueOnce(storedSecret(VERIFIED_WITH))
+      .mockResolvedValueOnce(storedSecret("whsec_saved_meanwhile"));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential).toHaveBeenCalledTimes(1);
+    expect(mockDeleteCredential.mock.calls[0]?.[0]).toMatchObject({
+      provider: STRIPE_PROVIDER,
+      key: STRIPE_WEBHOOK_VERIFIED_KEY,
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+    });
+    // The marker write ran before the clear, never after it.
+    expect(mockSetCredential.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteCredential.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("keeps the marker when the secret is unchanged after the write", async () => {
+    mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
+    await recordStripeWebhookVerified(VERIFIED_WITH);
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockReadRow).toHaveBeenCalledTimes(2);
+    expect(mockDeleteCredential).not.toHaveBeenCalled();
+  });
+
+  it("swallows a failed clear (best-effort, never breaks the webhook)", async () => {
+    mockReadRow
+      .mockResolvedValueOnce(storedSecret(VERIFIED_WITH))
+      .mockResolvedValueOnce(storedSecret("whsec_saved_meanwhile"));
+    mockDeleteCredential.mockRejectedValue(new Error("db down"));
+    await expect(
+      recordStripeWebhookVerified(VERIFIED_WITH),
+    ).resolves.toBeUndefined();
+  });
+
   it("swallows a failed re-read (best-effort, never breaks the webhook)", async () => {
     mockReadRow.mockRejectedValue(new Error("db down"));
     await expect(

@@ -431,8 +431,9 @@ this page already learnt about once, from the rotation runbook two sections up.
   before, which a live-only club could never satisfy). This is the one statement
   of when that marker is written. It is stamped only when missing or stale, and
   only if the signing secret still stored is the one the event was verified
-  with, so an event checked under a secret replaced meanwhile cannot vouch for
-  the new one. Verify-reset drops it whenever any Stripe credential is rewritten.
+  with; the secret is read again after the stamp, and a mismatch clears the
+  marker under the same actor. So an event checked under a secret replaced
+  meanwhile cannot vouch for the new one. Verify-reset drops it whenever any Stripe credential is rewritten.
 - `servernz-push-registration` — the shared-post sync registered this install
   for pushes and stored the secret the central server issued.
 - `xero-token-key-generation` — first use of Xero token encryption generated

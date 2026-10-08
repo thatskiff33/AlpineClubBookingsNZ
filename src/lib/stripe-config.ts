@@ -164,11 +164,20 @@ async function readWebhookMarkerFreshness(): Promise<{
  * administrator has saved a new one and verify-reset has cleared the marker;
  * stamping it then would make the marker newer than the new secret and turn
  * the badge green for a secret no event has proved. So on the write path —
- * about once per secret, never on the fresh path — the current secret is
+ * about once per secret, never on the fresh path — the stored secret is
  * re-read straight from the database (the per-process cache can hold the old
- * value for its whole TTL in a container that did not make the save), and the
- * write is skipped unless it still equals `verifiedWith`. The secret is
- * compared in memory only: it is never logged, persisted or returned.
+ * value for its whole TTL in a container that did not make the save) both
+ * before and after the write:
+ *
+ *  - before: the write is skipped unless the stored secret still equals
+ *    `verifiedWith`;
+ *  - after: if it no longer does, the marker just written is cleared again.
+ *
+ * Together they close the window. The admin save commits the new secret and
+ * THEN clears the marker. If our marker write commits after that clear, the
+ * new secret was already committed, so the after-read sees it and we clear our
+ * own marker; if it commits before the clear, verify-reset removes it. The
+ * secret is compared in memory only: never logged, persisted or returned.
  */
 export async function recordStripeWebhookVerified(
   verifiedWith: string,
@@ -177,14 +186,7 @@ export async function recordStripeWebhookVerified(
   try {
     const { markerAt, secretAt } = await readWebhookMarkerFreshness();
     if (markerIsFresh(markerAt, secretAt)) return;
-    const current = await readIntegrationCredentialRow(
-      prisma,
-      STRIPE_PROVIDER,
-      STRIPE_CREDENTIAL_KEYS.webhookSecret,
-    );
-    if (current.status !== "configured" || current.value !== verifiedWith) {
-      return;
-    }
+    if (!(await storedWebhookSecretIs(verifiedWith))) return;
     await setIntegrationCredential({
       provider: STRIPE_PROVIDER,
       key: STRIPE_WEBHOOK_VERIFIED_KEY,
@@ -193,17 +195,37 @@ export async function recordStripeWebhookVerified(
       // Latest-wins by design, and this is the marker's only writer (#2723).
       expect: { expect: "any" },
     });
+    if (!(await storedWebhookSecretIs(verifiedWith))) {
+      await clearStripeWebhookVerified({
+        kind: "system",
+        actor: "stripe-webhook-verify",
+      });
+    }
   } catch {
     // Never let marker persistence affect the webhook response.
   }
 }
 
 /**
+ * Whether the signing secret stored right now, read past the per-process
+ * cache, is `secret`. A missing or undecryptable secret is not.
+ */
+async function storedWebhookSecretIs(secret: string): Promise<boolean> {
+  const current = await readIntegrationCredentialRow(
+    prisma,
+    STRIPE_PROVIDER,
+    STRIPE_CREDENTIAL_KEYS.webhookSecret,
+  );
+  return current.status === "configured" && current.value === secret;
+}
+
+/**
  * Drop the webhook-verified marker (verify-reset on any Stripe credential write).
  *
  * THE ACTOR IS THE CALLER'S, and required — see `clearGoogleVerified` for the
- * reasoning. The one caller is the admin credential-write route, and this clear
- * is part of that administrator's action, not a background job's.
+ * reasoning. The admin credential-write route's clear is that administrator's
+ * action, not a background job's; `recordStripeWebhookVerified` also calls it,
+ * as its own writer, to take back a marker that raced a secret swap (#3975).
  */
 export async function clearStripeWebhookVerified(
   actor: CredentialActor,
