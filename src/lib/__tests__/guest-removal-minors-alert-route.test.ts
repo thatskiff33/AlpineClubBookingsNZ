@@ -429,6 +429,9 @@ beforeEach(() => {
     // #3371: the minter's own parameter, zero here - this removal asks for
     // nothing, and a zero ask never mints, so it can retire nothing.
     additionalAsk: NO_ADDITIONAL_ASK,
+    // #3954: no unpaid ask on this booking, so the removal retired none.
+    unpaidAskOffsetCents: 0,
+    retiredAdditionalAsks: [],
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,

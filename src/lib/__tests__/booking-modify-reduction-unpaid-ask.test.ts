@@ -20,18 +20,19 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
   are `additional-ask-reduction.realdb.test.ts`.
 */
 
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// The module client is read only by the minter's supersede query, after this
+// suite's reduction has already FAILED the one ask row - so, honestly, nothing
+// is left pending for it to find.
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentTransaction: { findMany: async () => [] } } }));
 
 const mocks = vi.hoisted(() => ({
   policy: [] as CancellationRule[],
   enqueueCancel: vi.fn(),
   runNow: vi.fn(),
-  reconcile: vi.fn(),
   giveBack: vi.fn(),
   derive: vi.fn(),
   createIntent: vi.fn(),
   upsert: vi.fn(),
-  supersede: vi.fn(),
 }));
 
 vi.mock("@/lib/stripe", async (importOriginal) => ({
@@ -40,10 +41,6 @@ vi.mock("@/lib/stripe", async (importOriginal) => ({
   findOrCreateCustomer: vi.fn(async () => ({ id: "cus_1" })),
 }));
 
-vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
-  ...((await importOriginal()) as object),
-  queueSupersededAdditionalIntentCancellations: mocks.supersede,
-}));
 
 vi.mock("@/lib/cancellation", async (importOriginal) => ({
   ...((await importOriginal()) as object),
@@ -64,7 +61,6 @@ vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
 
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as object),
-  reconcilePaymentAggregates: mocks.reconcile,
   upsertPaymentIntentTransaction: mocks.upsert,
 }));
 
@@ -103,10 +99,15 @@ const state = vi.hoisted(() => ({
 }));
 
 const paymentUpdate = vi.fn();
+// The REAL `reconcilePaymentAggregates` runs on this client (INV-OPS-015). It
+// finds no payment here, so it writes nothing: the mirror it derives from the
+// retired rows is proved on real PostgreSQL (`additional-ask-reduction.realdb.test.ts`);
+// this suite proves only that the retire asks it, on the edit's own client.
+const paymentFindUnique = vi.fn(async () => null);
 const transactionUpdateMany = vi.fn();
 const xeroUpdateMany = vi.fn();
 const tx = {
-  payment: { update: paymentUpdate },
+  payment: { update: paymentUpdate, findUnique: paymentFindUnique },
   manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   paymentTransaction: {
     findMany: vi.fn(async () => state.rows),
@@ -223,7 +224,6 @@ beforeEach(() => {
   mocks.runNow.mockImplementation(async () => "succeeded");
   mocks.derive.mockImplementation(async () => 10_000);
   mocks.createIntent.mockImplementation(async ({ amountCents }) => ({ id: `pi_reissued_${amountCents}`, client_secret: "secret" }));
-  mocks.supersede.mockImplementation(async () => []);
   mocks.giveBack.mockImplementation(async ({ giveBackCentsOf }) => {
     const payment = { id: "payment_1", source: PaymentSource.STRIPE, xeroInvoiceId: null, creditAppliedCents: 10_000 };
     const asked = await giveBackCentsOf(10_000, payment);
@@ -281,7 +281,7 @@ describe("#3954: a card-paid booking's reduction is set against its unpaid ask f
         data: expect.objectContaining({ status: "CANCELLED", lastErrorCode: ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE }),
       }),
     );
-    expect(mocks.reconcile).toHaveBeenCalledWith({ paymentId: "payment_1", store: tx });
+    expect(paymentFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "payment_1" } }));
     // INV-PAY-047: $100 price, $100 captured, nothing asked.
     expect(bookingLedgerResidualCents(ledgerAfter(booking, -5_000, result))).toBe(0);
   });
@@ -421,7 +421,7 @@ describe("#3954: the race with the member paying the ask", () => {
       (err: unknown) => err instanceof ApiError && err.status === 409,
     );
     expect(mocks.enqueueCancel).not.toHaveBeenCalled();
-    expect(mocks.reconcile).not.toHaveBeenCalled();
+    expect(paymentFindUnique).not.toHaveBeenCalled();
   });
 });
 

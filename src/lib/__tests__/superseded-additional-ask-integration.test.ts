@@ -283,6 +283,7 @@ async function editUp(modificationId: string, priceDiffCents: number, changeFeeC
     organiserChildRefund: null,
     paymentId: PAYMENT_ID,
     additionalAsk,
+    retiredAdditionalAsks: [], // #3954: an increase retires nothing by reduction.
     hasSucceededPayment: true,
     hasIssuedXeroInvoice: false,
     paymentCustomerId: "cus_3341",

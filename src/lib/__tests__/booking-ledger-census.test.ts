@@ -520,6 +520,17 @@ const ASK_MINTING_DOORS: readonly {
   },
   {
     /**
+     * #3954: a guest's acceptance re-price only ever LOWERS a settled price, so
+     * the one ask it can mint is the smaller re-issue of an unpaid ask its
+     * reduction retired - sized in the shared settlement, like the edit doors'.
+     */
+    door: "src/lib/booking-guest-acceptance-reprice.ts",
+    sizedIn: "src/lib/booking-modify-settlement.ts",
+    reachedBy: "applyPaymentAdjustments",
+    builtWith: "reissueUnpaidAdditionalAsk",
+  },
+  {
+    /**
      * WAS THE ONE EXEMPTION (#3371). Its ask is the SUM of one edit's settled
      * shares rather than a price delta, so it has its own constructor - but it
      * is the same rule, and it now folds in the unpaid balance of the ask its
@@ -537,6 +548,8 @@ const ASK_CONSTRUCTORS: readonly string[] = [
   "sizeAdditionalAsk",
   "sizeReviewChargeAsk",
   "raiseReviewChargeAsk",
+  // #3954: what a reduction leaves of an unpaid ask, re-issued, all of it carried.
+  "reissueUnpaidAdditionalAsk",
 ];
 const ASK_HOME = "src/lib/additional-payment-ask.ts";
 const MINTER = "createModificationAdditionalPaymentIntent";
@@ -687,6 +700,24 @@ function sourceFiles(dir: string, found: string[] = []): string[] {
   }
   return found;
 }
+
+describe("a reduction that retires an unpaid ask re-issues what is left through the one home (#3954, INV-PAY-047)", () => {
+  it("retires and re-issues in the one settlement every reduction door shares", () => {
+    const settlement = read("src/lib/booking-modify-settlement.ts");
+    expect(
+      settlement.includes("retireUnpaidAskChain(tx, {"),
+      "INV-PAY-047 (#3954): `applyPaymentAdjustments` no longer retires the unpaid " +
+        "ask a reduction is set against, so a member released from it in the " +
+        "settlement can still pay it, and the club holds more than the price.",
+    ).toBe(true);
+    expect(
+      settlement.includes("reissueUnpaidAdditionalAsk({ askLeftCents: setAgainstAsk.askLeftCents })"),
+      "INV-PAY-098 (#3954): what a reduction leaves of a retired ask must be " +
+        "re-issued through the one home, carrying it - otherwise the retirement " +
+        "deletes money the member still owes.",
+    ).toBe(true);
+  });
+});
 
 describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
   it("keeps the ask unconstructible outside the one home", () => {

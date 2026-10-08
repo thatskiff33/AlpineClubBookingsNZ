@@ -165,16 +165,21 @@ class AdditionalAskValue {
    * so the minter may mint it on a credit-paid ($0) booking whose reduction
    * captured nothing - the one place the minter reads this.
    */
-  readonly reissuesUnpaidAsk: boolean;
+  readonly #reissuesUnpaidAsk: boolean;
 
   constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean }) {
     this.amountCents = params.ownCents + params.carriedCents;
     this.#carriedCents = params.carriedCents;
-    this.reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
+    this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
   }
 
   get carriedCents(): number {
     return this.#carriedCents;
+  }
+
+  /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
+  get reissuesUnpaidAsk(): boolean {
+    return this.#reissuesUnpaidAsk;
   }
 }
 

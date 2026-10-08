@@ -82,6 +82,8 @@ const CONTEXT = {
     changeFeeCents: 0,
     payment: { additionalAmountCents: 7000, additionalPaymentStatus: "PENDING" },
   }),
+  // #3954: an increase retires nothing by reduction.
+  retiredAdditionalAsks: [],
   hasSucceededPayment: true,
   hasIssuedXeroInvoice: false,
   paymentCustomerId: "cus_1",
