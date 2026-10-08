@@ -166,10 +166,18 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.paymentRecoveryOperation.deleteMany({ where: { id: OPERATION_ID } });
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
-      // No Xero invoice. A cancellation's close still queues its own note (an
-      // outbox row, cleaned up above); Xero is not connected, so nothing runs it.
+      // An invoiced payment (#3924 round 5, F4: a note needs an invoice to
+      // credit). The close queues its own note (an outbox row, cleaned up
+      // above); Xero is not connected, so nothing runs it.
       await prisma.payment.create({
-        data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: PAID_CENTS, source: "STRIPE", status: "SUCCEEDED" },
+        data: {
+          id: PAYMENT_ID,
+          bookingId: BOOKING_ID,
+          amountCents: PAID_CENTS,
+          source: "STRIPE",
+          status: "SUCCEEDED",
+          xeroInvoiceId: "inv_race_3372_paw",
+        },
       });
       await prisma.paymentTransaction.create({
         data: {
@@ -226,6 +234,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       closeCardRefundPaidAnotherWay({
         operationId: OPERATION_ID,
         amountCents: REFUND_CENTS,
+        paidBack: "full",
         note: "Bank transfer, ref RACE",
         actingMemberId: OFFICER_ID,
       });
