@@ -1634,9 +1634,19 @@ mispricing a booking.
   the same row. So a re-keep either finds the live row or, once the worker has
   withdrawn it, queues a new one, and two enqueues can never both insert (the
   active-correlation index therefore never raises inside an interactive
-  transaction). It adds no lock ordering: inside the dismissal it is a lock
-  that transaction already holds, and the worker and the repair tool take no
-  other lock while holding it. No provider call is made while it is held.
+  transaction). Since #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then
+  credit") two more take it. A "Paid another way" close of the capture's
+  approved card refund takes it third - after `lock(1)` and the Payment row -
+  BEFORE it reads whether Xero has the capture's receipt, and queues the
+  receipt under it when there is none. The worker, once its invoice is in Xero,
+  takes it again in a short transaction that writes the receipt's link and
+  queues a waiting close's bank-transfer note. So a close either reads the
+  receipt recorded and queues its own note, or commits first and is found by
+  the worker; neither can miss the other. It adds no cycle: inside the
+  dismissal it is a lock that transaction already holds, the worker and the
+  repair tool take no other lock while holding it, and the close is the only
+  holder that takes it after other locks. No provider call is made while it is
+  held.
 
 - **Trusted legacy induction baseline** —
   `src/lib/induction-baseline.ts` (`runInductionBaseline`, #2361): apply takes
@@ -4587,7 +4597,12 @@ allocation, which takes the row it already holds. The claim is a status-guarded
 `updateMany` before any money moves; a lost claim writes nothing. The close's
 hand-back task and ledger line are written in the same transaction. The worker
 never claims a dead row, and the Xero note is an outbox row kicked after the
-commit, so no provider call runs under the key. A double click queues on the
+commit, so no provider call runs under the key. A late capture's refund also
+takes the approval task's row (`lockKeptLateCaptureTask`, #3924 round 6) after
+the Payment row and before it reads the capture's Xero receipt, because the
+receipt's worker writes that receipt and queues a waiting close's note under
+the same row (the kept late-capture task row, above). Order: `lock(1)`, the
+Payment row, the approval task's row. A double click queues on the
 key and the second reads the row closed; a refund recorded mid-close gives a
 409 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
 `closeCardRefundPaidAnotherWay#1`.

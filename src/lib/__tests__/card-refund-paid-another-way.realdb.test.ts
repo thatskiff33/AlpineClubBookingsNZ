@@ -19,6 +19,14 @@
  * no advisory key; a refund it records while the close waits for the row must
  * be read by the close, which then refuses an amount the refund already
  * covered - never pays the member a second time.
+ *
+ * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit"): a late
+ * capture's refund takes its approval task's row BEFORE it reads whether Xero
+ * has the capture's receipt. The receipt's worker writes that receipt's link
+ * under the same row; a close that waited behind it must read the receipt
+ * recorded and queue its own note - never a second receipt and no note. And
+ * with no receipt, the close queues the receipt and no note, and nothing may
+ * size a note until the receipt's link and the note are written together.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -32,6 +40,8 @@ const BOOKING_ID = "race-3372-paw-booking";
 const PAYMENT_ID = "race-3372-paw-payment";
 const TRANSACTION_ID = "race-3372-paw-txn";
 const OPERATION_ID = "race-3372-paw-op";
+const APPROVAL_TASK_ID = "race-3372-paw-approval";
+const LATE_INTENT = "pi_race_3372_paw";
 const NIGHT = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-02T00:00:00.000Z");
 
@@ -71,6 +81,8 @@ let openCardRefundOwedCents: (typeof import("@/lib/open-card-refund-owed"))["ope
 let netCollectedCardRefundSelect: (typeof import("@/lib/additional-ledger-gap"))["netCollectedCardRefundSelect"];
 let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transactions"))["recordStripeRefundsAgainstTransaction"];
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
+let resolveRefundNoteEligibleCash: (typeof import("@/lib/refund-note-eligible-cash"))["resolveRefundNoteEligibleCash"];
+let notePaidAnotherWayCloseOnReceipt: (typeof import("@/lib/late-capture-refund-credit-note"))["notePaidAnotherWayCloseOnReceipt"];
 let lockHolderClient: import("@prisma/client").PrismaClient;
 let observerClient: import("@prisma/client").PrismaClient;
 
@@ -83,6 +95,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
     async function deleteCloseRecords() {
       await prisma.auditLog.deleteMany({ where: { entityId: OPERATION_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
+      await prisma.xeroObjectLink.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -119,6 +133,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       ({ netCollectedCardRefundSelect } = await import("@/lib/additional-ledger-gap"));
       ({ recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions"));
       ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
+      ({ resolveRefundNoteEligibleCash } = await import("@/lib/refund-note-eligible-cash"));
+      ({ notePaidAnotherWayCloseOnReceipt } = await import("@/lib/late-capture-refund-credit-note"));
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
         import("@prisma/client"),
         import("@/lib/prisma-adapter"),
@@ -347,6 +363,139 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       const operation = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: OPERATION_ID } });
       expect(operation.status).toBe("FAILED");
       expect(await prisma.auditLog.count({ where: { entityId: OPERATION_ID } })).toBe(0);
+    });
+
+    describe("round 6: a late card charge's refund - record the receipt, then credit it", () => {
+      const KEPT_ROW = {
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "ManualRefundTask",
+        localId: APPROVAL_TASK_ID,
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      } as const;
+      const RECEIPT_LINK = {
+        localModel: "ManualRefundTask",
+        localId: APPROVAL_TASK_ID,
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_race_3372_paw_receipt",
+        role: "KEPT_LATE_CAPTURE_INVOICE",
+        active: true,
+      };
+
+      beforeEach(async () => {
+        // The cancelled booking's charge was a late capture the treasurer
+        // approved refunding; its card refund row is the approval's.
+        await prisma.paymentRecoveryOperation.update({
+          where: { id: OPERATION_ID },
+          data: { idempotencyKey: `late_capture_approval_refund_recovery_${LATE_INTENT}` },
+        });
+        await prisma.manualRefundTask.create({
+          data: {
+            id: APPROVAL_TASK_ID,
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            kind: "DELETED_BOOKING_LATE_CAPTURE",
+            status: "COMPLETED",
+            lateCaptureApprovalIntentId: LATE_INTENT,
+            amountCents: PAID_CENTS,
+            completedAt: NIGHT,
+            completedByMemberId: OFFICER_ID,
+            reason: "Late capture approved for refund (race proof)",
+          },
+        });
+      });
+
+      const noteRows = () =>
+        prisma.xeroSyncOperation.findMany({
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "REFUND_CREDIT_NOTE" },
+        });
+
+      it("a close that waits on the approval task's row behind the receipt's worker reads the receipt recorded and queues its own note", async () => {
+        // The worker claimed the receipt and sent it to Xero; its short
+        // transaction now holds the task row and writes the receipt's link.
+        await prisma.xeroSyncOperation.create({
+          data: { ...KEPT_ROW, status: "RUNNING", idempotencyKey: "race-3372-paw-kept", correlationKey: "race-3372-paw-kept" },
+        });
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let holderPid = 0;
+        let linked!: () => void;
+        const linkedInHolder = new Promise<void>((resolve) => {
+          linked = resolve;
+        });
+        const worker = lockHolderClient.$transaction(
+          async (tx) => {
+            const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+            holderPid = pid;
+            await tx.$executeRaw`SELECT 1 FROM "ManualRefundTask" WHERE "id" = ${APPROVAL_TASK_ID} FOR UPDATE`;
+            await tx.xeroObjectLink.create({ data: RECEIPT_LINK });
+            linked();
+            await released;
+          },
+          { timeout: 15_000 },
+        );
+        await linkedInHolder;
+
+        const closing = close();
+        await waitForBlockedBy(holderPid);
+        release();
+        await worker;
+        const result = await closing;
+
+        expect(result.xeroQueued).toBe("refund-note");
+        const record = await prisma.manualRefundTask.findFirstOrThrow({
+          where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+        });
+        expect(record.occurrenceKey).toBe(`card-refund-paid-another-way:${OPERATION_ID}`);
+        const notes = await noteRows();
+        expect(notes).toHaveLength(1);
+        expect(notes[0]?.requestPayload).toMatchObject({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking" });
+        // One receipt: the worker's.
+        expect(await prisma.xeroSyncOperation.count({ where: KEPT_ROW })).toBe(1);
+      });
+
+      it("with no receipt in Xero the close queues the receipt and no note; the receipt's link and the note are then written together", async () => {
+        const result = await close();
+
+        expect(result.xeroQueued).toBe("receipt-then-refund-note");
+        const record = await prisma.manualRefundTask.findFirstOrThrow({
+          where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+        });
+        expect(record.occurrenceKey).toBe(`card-refund-paid-another-way:${OPERATION_ID}:note-after-receipt`);
+        const kept = await prisma.xeroSyncOperation.findMany({ where: KEPT_ROW });
+        expect(kept).toEqual([
+          expect.objectContaining({
+            status: "PENDING",
+            requestPayload: expect.objectContaining({ paymentIntentId: LATE_INTENT, capturedCents: PAID_CENTS }),
+          }),
+        ]);
+        expect(await noteRows()).toHaveLength(0);
+        // Until the receipt is in Xero, no note may be sized for the bank money.
+        const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+        expect((await resolveRefundNoteEligibleCash(payment)).eligibleCashCents).toBe(0);
+
+        // The receipt's worker, once the invoice is in Xero: the link and the
+        // note in one transaction under the task row
+        // (`recordReceiptThenQueueItsPaidAnotherWayNote`).
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT 1 FROM "ManualRefundTask" WHERE "id" = ${APPROVAL_TASK_ID} FOR UPDATE`;
+          await tx.xeroObjectLink.create({ data: RECEIPT_LINK });
+          await notePaidAnotherWayCloseOnReceipt({
+            paymentIntentId: LATE_INTENT,
+            clubZone: "Pacific/Auckland" as never,
+            store: tx,
+          });
+        });
+
+        const notes = await noteRows();
+        expect(notes).toHaveLength(1);
+        expect(notes[0]?.correlationKey).toContain(`paid-another-way:${record.id}`);
+        expect(notes[0]?.requestPayload).toMatchObject({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking" });
+        expect((await resolveRefundNoteEligibleCash(payment)).eligibleCashCents).toBe(REFUND_CENTS);
+      });
     });
   },
 );

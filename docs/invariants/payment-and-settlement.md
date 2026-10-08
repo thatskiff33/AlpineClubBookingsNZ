@@ -818,7 +818,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   booking's invoice nor its clearing note.
 - **Refunds** are the ordinary refund note, owed only once the APP recorded
   the capture's receipt (`readLateCaptureXeroReceipt`), never because
-  `payment.xeroInvoiceId` exists. Noted per capture (`noteLateCaptureRefunds`),
+  `payment.xeroInvoiceId` exists. An approved refund closed as paid another
+  way also owes the receipt (`INV-PAY-121`). Noted per capture (`noteLateCaptureRefunds`),
   naming its receipt, dated the refund's day. Refunds of a capture without one
   are outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
   self-heal never raises them.
@@ -1979,9 +1980,14 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     netting counts the refund at its full raised amount.
   - **Xero** (8 Oct: "Raise a refund note for all"): every kind queues a
     bank-transfer refund note for exactly the amount, keyed on the task, where
-    there is an invoice to credit; a late capture's needs its recorded receipt.
-    The key records a close without one (`:no-xero-note`), and cash evidence
-    counts only noted closes (`readPaidAnotherWayCash`).
+    there is an invoice to credit; else none (`:no-xero-note`).
+  - **A late capture: receipt, then credit** (8 Oct: "Record receipt, then
+    credit"). Its note credits the capture's recorded receipt. With none, the
+    close queues that receipt (`INV-PAY-110`) and its worker queues the note
+    with the receipt's link, under the approval task's row, which the close
+    takes before reading the receipt (`:note-after-receipt`). Never the
+    booking's invoice. Cash evidence counts a close only once noted
+    (`readPaidAnotherWayCash`).
   - A superseded intent's row closes whole, uncapped, never at nil, only while
     its charge holds exactly what it owes. An organiser child's is refused.
   - A refund Stripe made before the close but recorded after it stays the

@@ -3270,16 +3270,33 @@ refund at its full raised amount (owner, 8 Oct 2026: "Difference is gone"). The
 close makes no Stripe call. In Xero every kind queues a bank-transfer refund
 credit note for exactly the amount paid back, keyed on the close's task, where
 there is an invoice to credit (owner, 8 Oct 2026: "Raise a refund note for
-all"). It refuses an organiser child's refund (#3653) and a group
+all"). A late card charge's refund is credited against the charge's own
+receipt; when Xero has none, the close queues that receipt (the kept-charge
+invoice, on the approval task) and the receipt's worker queues the note in the
+transaction that records the receipt's link (owner, 8 Oct 2026: "Record
+receipt, then credit"):
+
+```text
+close (no receipt in Xero) -> KEPT_LATE_CAPTURE_INVOICE PENDING, no note
+receipt worker: invoice + Stripe payment sent -> ONE transaction under the
+  approval task's row: receipt link written + bank-transfer REFUND_CREDIT_NOTE
+  PENDING (keyed on the close) -> receipt row SUCCEEDED (or PARTIAL)
+receipt FAILED -> no note; retry the receipt and the note follows
+```
+
+It refuses an organiser child's refund (#3653) and a group
 organiser-cancel settlement's refund (`isOwedCardRefundOperation`); a
 superseded intent's refund closes whole, never at nil, and only while its
 charge still holds exactly what it owes. The rules are
 `INV-PAY-120` and `INV-PAY-121`; the lock is registered as
 `closeCardRefundPaidAnotherWay#1`. To verify:
-`card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts` and
+`card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`,
+`xero-kept-late-capture-ledger.test.ts` (round 6: the Xero books of a late
+charge's close, whatever order the outbox runs in) and
 `card-refund-paid-another-way.realdb.test.ts` (a double click closes once; a
 refund recorded while the close waits for the payment row is refused with a
-409).
+409; a close that waits on the approval task's row behind the receipt's worker
+reads the receipt recorded and queues its own note).
 
 ### Confirm-pending saved-card charge (#3268)
 
