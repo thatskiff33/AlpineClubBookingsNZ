@@ -14,6 +14,7 @@ import {
   type BookingMessageClubTokens,
 } from "@/lib/booking-message-definitions";
 import { useClubTime } from "@/components/club-time-provider";
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -32,7 +33,6 @@ import {
   CardPaymentUnavailableNotice,
   FinancialReviewNotice,
   formatLinkExpiry,
-  formatStayDay,
   internetBankingHeading,
   NarrativeCard,
   toneForState,
@@ -392,8 +392,8 @@ export default function PayByLinkPage() {
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
-            Dates: {formatStayDay(payable.checkIn, format)} to{" "}
-            {formatStayDay(payable.checkOut, format)}
+            Dates: {formatStayDateOrNull(payable.checkIn, format) ?? payable.checkIn} to{" "}
+            {formatStayDateOrNull(payable.checkOut, format) ?? payable.checkOut}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">

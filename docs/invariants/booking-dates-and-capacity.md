@@ -313,7 +313,7 @@ derivation).
   Do not cite this rule as permission to read one in a zone, and do not cite it
   as a prohibition on decoding one in UTC; several docblocks have paraphrased it
   as its own inverse and propagated that.
-- **Show one via `formatStayDate` (#3507).**
+- **Show one via `formatStayDate` (#3507, #3511).**
 
 ## Date handling rules
 
@@ -1280,8 +1280,11 @@ capacity or double-booking violation.
   nights a refusal names, and in the payload shape those reach the member
   through (#2930) — while a member may join the waitlist over held nights and
   is never promoted while the hold applies; only admin surfaces are told a hold
-  is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
-  "Exclusive whole-lodge hold — a non-bypassable block".
+  is in effect — with ONE exception: where the member lodge roster runs, it
+  states the held nights without naming or counting the party (`INV-PRIV-017`,
+  owner decision 6 Oct 2026, #3474). Full scenario table in
+  `docs/CAPACITY_MODEL.md`, "Exclusive whole-lodge hold — a non-bypassable
+  block".
 
 ### INV-CAP-022
 

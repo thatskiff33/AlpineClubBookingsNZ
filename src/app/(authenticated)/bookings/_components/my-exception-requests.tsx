@@ -17,7 +17,7 @@ import {
   type MemberExceptionRequestStatus,
 } from "@/lib/member-exception-requests";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, parseCalendarDate, type ClubDateFormat } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDateOrNull } from "@/lib/club-time";
 
 /**
  * "My booking-rule requests" — the member's request-management area (#2562).
@@ -54,22 +54,11 @@ const STATUS_BADGE_CLASS: Record<MemberExceptionRequestStatus, string> = {
   expired: "border-border bg-muted text-muted-foreground",
 };
 
-/**
- * One proposed lodge night, which is a CALENDAR DAY and takes no timezone at all
- * (CT-4, #2870). Every night on this DTO is a `YYYY-MM-DD` key
- * (`src/lib/member-exception-requests.ts`), so it is already the day it means;
- * the kernel's calendar-date formatter pins `UTC` over the UTC-midnight
- * encoding, which is provably the identity for every club. `formatNZDate` used
- * to project it through `APP_TIME_ZONE`, and that cancelled only because New
- * Zealand is east of Greenwich.
- *
- * `parseCalendarDate` rather than `requireCalendarDate`: a malformed key here
- * would throw inside a member's booking list and blank the whole page, where
- * echoing the raw value shows the member something and loses nothing.
- */
+// A stored calendar day, formatted by the kernel's one stay-date helper (#3511,
+// INV-SSOT-001; INV-DATE-010). No zone is consulted. A malformed value
+// renders as itself rather than throwing, so a bad row cannot blank the page.
 function formatNight(value: string, format: ClubDateFormat) {
-  const night = parseCalendarDate(value);
-  return night === null ? value : formatClubDate(night, format);
+  return formatStayDateOrNull(value, format) ?? value;
 }
 
 /**

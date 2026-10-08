@@ -45,7 +45,7 @@ repository scripts over a browser or MCP round trip.
 ## Subagents
 
 Follow `AGENTS.md` → "Orchestration Model". The main session owns claims,
-worktrees, GitHub writes, PRs, CI, risk gates, merges and cross-lane conflict
+worktrees, GitHub writes, PRs, CI, the merge gate, merges and cross-lane conflict
 checks. Delegate bulk implementation to implementor subagents inside the issue's
 dedicated worktree; they commit locally but never push or touch GitHub. Parallel
 lanes are allowed only when their code surfaces do not clash.

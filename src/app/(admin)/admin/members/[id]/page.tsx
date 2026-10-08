@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, use } from "react";
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,6 @@ import { FocusedActionError } from "@/components/focused-action-error";
 import { BackLink } from "@/components/admin/back-link";
 import { AdminViewOnlySectionBanner } from "@/components/admin/view-only-action";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
-import { formatPayloadCalendarDay } from "../../_lib/calendar-day";
 import {
   formatMemberAccountPreview,
   formatMemberAuditLogSummary as formatMemberAuditLogSummaryHelper,
@@ -1010,7 +1010,7 @@ export default function MemberDetailPage({
                 <span className="font-medium">
                   {/* `lifeMemberDate` is a `@db.Date` CALENDAR DAY — no
                       timezone, so no projection. `INV-DATE-019`. */}
-                  {formatPayloadCalendarDay(member.lifeMemberDate, format)}
+                  {formatStayDateOrNull(member.lifeMemberDate, format) ?? "—"}
                 </span>
               </div>
             )}

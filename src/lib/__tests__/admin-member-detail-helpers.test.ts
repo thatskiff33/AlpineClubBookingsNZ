@@ -7,7 +7,6 @@ import {
   formatMemberAuditLogSummary,
   formatMemberCommitteePreview,
   formatMemberContactPreview,
-  formatMemberCalendarDay,
   formatMemberFamilyPreview,
   formatMemberFinancePreview,
   formatMemberHistoryPreview,
@@ -443,50 +442,4 @@ describe("admin-member-detail-helpers", () => {
     })
   })
 
-  /*
-    `formatMemberCalendarDay` is the CALENDAR-DAY half of a pair, and the
-    difference between the two halves is the whole point (CT-4, #2870;
-    `INV-DATE-019`). Its INSTANT sibling is `formatPayloadInstantDate` in
-    `@/lib/payload-instant`, which projects a moment through the club's persisted
-    zone — right for a `createdAt`, and wrong for a stored lodge night or a date
-    of birth: a calendar day has no timezone, and reading the UTC-midnight
-    encoding of one through a zone behind Greenwich names the day before. (The
-    sibling used to be this file's own `formatMemberDateNz`, which read
-    `APP_TIME_ZONE`; #3123 deleted it once its last caller had moved.)
-
-    THESE CASES CHECK THE SHAPE AND THE CONTRACT, not the zone authority, and
-    saying so matters: `APP_TIME_ZONE` resolves to `Pacific/Auckland` under test,
-    which is ahead of Greenwich, so a projection of a UTC-midnight day lands on
-    club midday — the same day — and nothing here could tell the two apart.
-    `admin-calendar-day-helpers-west-of-utc.test.ts` mocks the config module to a
-    zone behind Greenwich and is the file that can.
-  */
-  describe("formatMemberCalendarDay", () => {
-    it("renders both spellings of a stored day as the same civil day", () => {
-      // Prisma's serialised `Date` and a bare day from a route that encoded it
-      // itself. A caller should not have to know which one it is holding.
-      expect(formatMemberCalendarDay("2026-07-04T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
-        "4 Jul 2026"
-      )
-      expect(formatMemberCalendarDay("2026-07-04", CLUB_FORMAT_TEST)).toBe("4 Jul 2026")
-    })
-
-    it("degrades to the fallback rather than throwing on a value it cannot read", () => {
-      // These arrive from an API payload with no runtime schema check and render
-      // straight into a table row, so a throw here would blank the member page.
-      expect(formatMemberCalendarDay("not-a-date", CLUB_FORMAT_TEST)).toBe("—")
-      expect(formatMemberCalendarDay("", CLUB_FORMAT_TEST)).toBe("—")
-      // A day that does not exist is refused rather than rolled forward.
-      expect(formatMemberCalendarDay("2026-02-30", CLUB_FORMAT_TEST)).toBe("—")
-      // A timestamp with no offset names a wall-clock reading in whichever zone
-      // reads it, which is the one thing a stored day must never become.
-      expect(formatMemberCalendarDay("2026-07-04T13:45:00", CLUB_FORMAT_TEST)).toBe("—")
-    })
-
-    it("lets the caller choose what an unreadable value shows", () => {
-      expect(formatMemberCalendarDay("not-a-date", CLUB_FORMAT_TEST, "Not recorded")).toBe(
-        "Not recorded"
-      )
-    })
-  })
 })
