@@ -149,6 +149,7 @@ import {
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
+import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -1917,6 +1918,8 @@ export async function modifyBookingBatch({
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
           ...creditGiveBackHistory(payments.appliedCreditGiveBack),
+          // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
+          ...unpaidAskOffsetHistory(payments.unpaidAskOffsetCents),
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.
@@ -2132,6 +2135,8 @@ export async function modifyBookingBatch({
       // plain figure above is the emails' and the Xero leg's; they are not
       // interchangeable.
       additionalAsk: payments.additionalAsk,
+      // #3954: the unpaid asks this reduction retired, for the minter to cancel.
+      retiredAdditionalAsks: payments.retiredAdditionalAsks,
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,

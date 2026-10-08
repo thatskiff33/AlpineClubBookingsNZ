@@ -155,6 +155,7 @@ import {
 } from "@/lib/booking-modification-lines";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -896,6 +897,8 @@ export async function modifyBookingDates({
       // #3371: the minter's own parameter. The plain figure above is the
       // emails' and the Xero leg's; they are not interchangeable.
       additionalAsk,
+      // #3954: the unpaid asks this reduction retired, for the minter to cancel.
+      retiredAdditionalAsks,
       pendingRefundAmountCents,
       hasSucceededPayment,
       hasIssuedXeroInvoice,
@@ -1298,6 +1301,8 @@ export async function modifyBookingDates({
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
           ...creditGiveBackHistory(payments.appliedCreditGiveBack),
+          // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
+          ...unpaidAskOffsetHistory(payments.unpaidAskOffsetCents),
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
@@ -1435,6 +1440,7 @@ export async function modifyBookingDates({
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       additionalAmountCents,
       additionalAsk,
+      retiredAdditionalAsks,
       pendingRefundAmountCents,
       promoRemoved,
       promoCoverage,

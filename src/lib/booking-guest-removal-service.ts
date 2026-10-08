@@ -33,6 +33,8 @@ import {
 } from "@/lib/booking-review";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
+import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
+import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
   hostingCoverageActorOptions,
@@ -126,6 +128,8 @@ export type RemoveBookingGuestResult = {
    * `createModificationAdditionalPaymentIntent`.
    */
   additionalAsk: AdditionalAsk;
+  /** #3954: the unpaid asks this removal's reduction retired, for the minter to cancel. */
+  retiredAdditionalAsks: readonly RetiredAdditionalAsk[];
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
@@ -1181,6 +1185,8 @@ export async function removeBookingGuestInTransaction({
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
         ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
+        // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
+        ...unpaidAskOffsetHistory(paymentImpact.unpaidAskOffsetCents),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.
@@ -1331,6 +1337,7 @@ export async function removeBookingGuestInTransaction({
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
     additionalAsk: paymentImpact.additionalAsk,
+    retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,

@@ -140,6 +140,7 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
+import { reductionLeftAfterUnpaidAsk } from "@/lib/booking-modify-settlement-options";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions, organiserChildChargeRefusal,
@@ -2480,12 +2481,16 @@ export async function POST(
     db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
+  // #3954: what of a reduction releases the member from an unpaid ask before
+  // anything is refunded, credited or given back - the save sets the same ask
+  // against the same reduction under its locks.
+  const netChargeLeftCents = await reductionLeftAfterUnpaidAsk(prisma, booking, netChargeCents);
   // #3809: what saving would give back of the booking's applied credit - all of
   // a credit-paid booking's tiered reduction, or what the card basis leaves.
   const appliedCreditGiveBackCents = await previewPaidReductionCreditGiveBackCents({
     booking,
     ownerMemberId: bookingOwner(booking).memberId,
-    reductionCents: Math.max(0, -netChargeCents),
+    reductionCents: Math.max(0, -netChargeLeftCents),
     cardBasisCents: settlementOptions?.basisAmountCents ?? 0,
     todayAtClub,
     db: prisma,
@@ -2500,6 +2505,8 @@ export async function POST(
     changeFeeCents,
     netChargeCents,
     settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), // #3653: an increase the save refuses
+    // #3954: the part of a reduction that cancels or shrinks the unpaid card ask.
+    unpaidAskOffsetCents: netChargeLeftCents - netChargeCents,
     appliedCreditGiveBackCents,
     // #2266: create-flow parity (api/bookings/quote/route.ts) — the member's
     // live balance so the edit panel can offer credit against the new price.

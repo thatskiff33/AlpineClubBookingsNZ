@@ -12,9 +12,17 @@ import {
 
 import {
   NO_ADDITIONAL_ASK,
+  reissueUnpaidAdditionalAsk,
+  setReductionAgainstUnpaidAsk,
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import {
+  NO_UNPAID_PRICE_ASK,
+  readUnpaidPriceAsk,
+  retireUnpaidAskChain,
+  type RetiredAdditionalAsk,
+} from "@/lib/additional-ask-reduction";
 import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
@@ -45,6 +53,7 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { ApiError } from "@/lib/api-error";
+import { formatCents } from "@/lib/utils";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
@@ -90,6 +99,14 @@ export type PaymentAdjustmentResult = {
    * `BookingModification` row exists; null for every other booking.
    */
   organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
+  /**
+   * #3954: how much of the reduction released the member from an unpaid ask
+   * rather than being refunded or credited, and the asks it retired inside this
+   * transaction (cancelled at Stripe after commit by the minter). A shrunk ask is
+   * `additionalAsk` above, re-issued.
+   */
+  unpaidAskOffsetCents: number;
+  retiredAdditionalAsks: RetiredAdditionalAsk[];
 };
 
 /**
@@ -224,7 +241,19 @@ export async function applyPaymentAdjustments(
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
-  const netAmountCents = priceDiffCents + changeFeeCents;
+  // #3954 (owner decision, 8 Oct 2026): a reduction is first set against the
+  // booking's unpaid ask - read here, after the caller's locks, as the caller's
+  // settlement options read it - and every branch below settles only what is
+  // left. An increase reads no ask and is unchanged.
+  const unpaidAsk =
+    priceDiffCents + changeFeeCents < 0
+      ? await readUnpaidPriceAsk(tx, booking)
+      : NO_UNPAID_PRICE_ASK;
+  const setAgainstAsk = setReductionAgainstUnpaidAsk({
+    netChargeCents: priceDiffCents + changeFeeCents,
+    unpaidAskCents: unpaidAsk.askCents,
+  });
+  const netAmountCents = setAgainstAsk.netChargeLeftCents;
   // #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit or a
   // 100% promotion carries `{ amountCents: 0, status: SUCCEEDED }`, which
   // `hasCapturedPayment` rightly reads as "nothing captured" - so every
@@ -241,6 +270,15 @@ export async function applyPaymentAdjustments(
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
+
+  // #3954: the options must have been sized on what is left of the reduction
+  // (`calculateModificationSettlementOptions` reads the same ask), or a
+  // reduction would both release the ask and refund the same money.
+  if (settlementOptions && settlementOptions.basisAmountCents > Math.max(0, -netAmountCents)) {
+    throw new Error(
+      `INV-PAY-047 (#3954): booking ${booking.id}'s settlement options return ${formatCents(settlementOptions.basisAmountCents, format)} of a reduction whose unpaid-ask offset leaves ${formatCents(Math.max(0, -netAmountCents), format)}; they were sized before the reduction was set against the unpaid ask.`,
+    );
+  }
 
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
@@ -286,6 +324,28 @@ export async function applyPaymentAdjustments(
   // every non-card ending is safe by construction rather than by remembering.
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
+  let retiredAdditionalAsks: RetiredAdditionalAsk[] = [];
+
+  if (setAgainstAsk.offsetCents > 0 && booking.payment) {
+    retiredAdditionalAsks = await retireUnpaidAskChain(tx, {
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      ask: unpaidAsk,
+    });
+    // What the reduction did not cover is still owed, on a fresh ask that
+    // carries it (`INV-PAY-098`); the minter mints it after commit.
+    additionalAsk = reissueUnpaidAdditionalAsk({ askLeftCents: setAgainstAsk.askLeftCents });
+    additionalAmountCents = additionalAsk.amountCents;
+    // The fee this edit charges was collected by shrinking the ask, so it is
+    // recorded beside the ask like any fee an ask collects (`INV-PAY-047`) -
+    // also on a credit-paid booking, which the settled arm below never reaches.
+    if (changeFeeCents > 0 && !hasSettledPayment) {
+      await tx.payment.update({
+        where: { id: booking.payment.id },
+        data: { changeFeeCents: { increment: changeFeeCents } },
+      });
+    }
+  }
 
   // #3502: the zero-dollar increase joins the settled arm. It is an increase by
   // construction, so it can reach only the `netAmountCents > 0` branch: the
@@ -394,6 +454,8 @@ export async function applyPaymentAdjustments(
     appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
     appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
+    unpaidAskOffsetCents: setAgainstAsk.offsetCents,
+    retiredAdditionalAsks,
   };
 }
 

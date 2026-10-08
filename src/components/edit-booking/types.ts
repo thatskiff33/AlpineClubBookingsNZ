@@ -273,6 +273,9 @@ export interface QuoteResult {
   // #3809: applied credit saving would give back on a paid booking - all of a
   // credit-paid one's tiered reduction, or what a card refund leaves.
   appliedCreditGiveBackCents?: number;
+  // #3954: the part of a reduction that comes off an unpaid additional payment
+  // (cancelling or shrinking it) before anything is refunded or credited.
+  unpaidAskOffsetCents?: number;
   /**
    * #3653: set when the save would refuse this increase because the group
    * organiser paid for the booking by card. The server's sentence, shown

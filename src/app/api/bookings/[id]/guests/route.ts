@@ -1272,6 +1272,8 @@ export async function POST(
         priceDiffCents,
         additionalAmountCents,
         additionalAsk,
+        // An add never lowers the price (#3954 retires asks only on a reduction).
+        retiredAdditionalAsks: [],
         promoRemoved,
         promoCoverage,
         oldGuestCount: booking.guests.length,

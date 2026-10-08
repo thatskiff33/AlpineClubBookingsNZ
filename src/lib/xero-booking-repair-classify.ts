@@ -68,6 +68,10 @@ import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
 import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import {
+  ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
+  recordedUnpaidAskOffsetCents,
+} from "@/lib/unpaid-ask-offset-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
 import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
 import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
@@ -626,6 +630,44 @@ export function classifyBookingContext(
             },
             actionKeys: [manualAction.key],
           });
+        } else if (
+          !blockingOperation &&
+          modificationOperations.some(
+            (operation) =>
+              operation.entityType === "INVOICE" &&
+              operation.operationType === "CREATE" &&
+              operation.status === "CANCELLED" &&
+              operation.lastErrorCode === ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
+          )
+        ) {
+          /**
+           * #3954: A LATER REDUCTION RETIRED THIS EDIT'S UNPAID CARD ASK, and its
+           * supplementary invoice with it, before the member paid. The money
+           * the ask was for is no longer owed - wholly, or all but a smaller
+           * ask the reduction re-issued - so the one-click invoice for this
+           * edit's whole figure would bill money nobody owes. Reported for a
+           * person, never queued.
+           */
+          const summary =
+            "A later change lowered this booking's price before the member paid the extra this edit asked for, so that card request was cancelled or made smaller and its supplementary Xero invoice was retired. Check the booking's later changes and payments before raising any invoice for this edit.";
+          const manualAction = addAction(
+            actionMap,
+            buildManualReviewAction(booking.id, summary)
+          );
+          addFinding(findings, {
+            code: "MISSING_SUPPLEMENTARY_INVOICE",
+            severity: "manual_review",
+            summary,
+            safeToAutoApply: false,
+            details: {
+              modificationId: modification.id,
+              netAmountCents,
+              priceDiffCents: expectedAsk.priceDiffCents,
+              changeFeeCents: expectedAsk.changeFeeCents,
+              retiredBy: ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
+            },
+            actionKeys: [manualAction.key],
+          });
         } else if (!blockingOperation) {
           // #3187: a review-priced ask must not be queued as if the member had
           // already paid it. `planEditReviewChargeInvoicePayment` states why in
@@ -842,8 +884,12 @@ export function classifyBookingContext(
       }
     }
 
-    if (modificationNetAmountCents < 0 && primaryInvoice) {
-      const refundDueCents = Math.abs(modificationNetAmountCents);
+    // #3954: the part of a reduction that cancelled or shrank an unpaid card
+    // ask returned no money and has no note; the edit's history row records it.
+    const reductionNoteDueCents =
+      Math.abs(modificationNetAmountCents) - recordedUnpaidAskOffsetCents(modification.newData);
+    if (modificationNetAmountCents < 0 && reductionNoteDueCents > 0 && primaryInvoice) {
+      const refundDueCents = reductionNoteDueCents;
       // Captured money via the payment status OR the transaction ledger —
       // ledger-first states (a SUCCEEDED capture row under a still-PENDING
       // aggregate status) must count as captured for the policy split below.

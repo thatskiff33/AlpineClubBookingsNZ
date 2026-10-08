@@ -3,6 +3,10 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
+  cancelRetiredAdditionalAsksNow,
+  type RetiredAdditionalAsk,
+} from "@/lib/additional-ask-reduction";
+import {
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import logger from "@/lib/logger";
@@ -58,6 +62,12 @@ export type BookingModificationPaymentContext = {
    * Xero one must NOT carry a superseded Stripe balance.
    */
   additionalAsk: AdditionalAsk;
+  /**
+   * #3954: the unpaid asks this edit's price reduction retired inside its
+   * transaction (`retireUnpaidAskChain`). The minter cancels them at Stripe
+   * after commit, before it mints any smaller ask. Empty for every other edit.
+   */
+  retiredAdditionalAsks: readonly RetiredAdditionalAsk[];
   hasSucceededPayment: boolean;
   /**
    * #3181: whether this booking's PRIMARY Xero invoice had already been issued
@@ -274,9 +284,20 @@ export async function createModificationAdditionalPaymentIntent({
   additionalPaymentClientSecret: string | undefined;
   additionalPaymentIntentId: string | undefined;
 }> {
+  // #3954: the asks this edit's reduction retired are cancelled at Stripe
+  // first, whether or not it owes a smaller one: their rows were retired, and
+  // their cancellations queued, inside the edit's transaction.
+  await cancelRetiredAdditionalAsksNow({
+    format,
+    bookingId,
+    retired: result.retiredAdditionalAsks,
+  });
+
   if (
     result.additionalAsk.amountCents <= 0 ||
-    !result.hasSucceededPayment ||
+    // #3954: a re-issued ask was already asked of this card, so a credit-paid
+    // ($0) booking whose reduction captured nothing still mints it.
+    !(result.hasSucceededPayment || result.additionalAsk.reissuesUnpaidAsk) ||
     !result.paymentId
   ) {
     return {

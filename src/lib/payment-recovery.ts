@@ -40,7 +40,7 @@ import {
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
-import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
+import { reissueUnpaidAdditionalAsk, sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
@@ -2833,7 +2833,12 @@ async function processCreateAdditionalPaymentIntentOperation(
   const editNetCents = modificationToBill
     ? modificationToBill.priceDiffCents + modificationToBill.changeFeeCents
     : 0;
-  if (modificationToBill && editNetCents <= 0) {
+  // #3954: a REDUCTION's ask is the unpaid ask it shrank, re-issued smaller
+  // (`reissueUnpaidAdditionalAsk`): all of it carried, none of it this edit's
+  // own, and frozen at the edit - the ask it replaced was retired in that edit's
+  // transaction, so there is nothing on the Payment to re-derive it from.
+  const reissuesReducedAsk = modificationToBill !== null && editNetCents < 0;
+  if (modificationToBill && editNetCents === 0) {
     // Belt and braces, and deliberately NOT a completion. An ordinary edit only
     // reaches this processor because its own net was positive, so a
     // non-positive net here means the modification row and the frozen figure
@@ -2850,8 +2855,9 @@ async function processCreateAdditionalPaymentIntentOperation(
       "Additional intent recovery could not re-derive the ask (the modification's net is not positive); replaying the frozen amount",
     );
   }
-  const ask =
-    modificationToBill && editNetCents > 0
+  const ask = reissuesReducedAsk
+    ? reissueUnpaidAdditionalAsk({ askLeftCents: operation.amountCents })
+    : modificationToBill && editNetCents > 0
       ? sizeAdditionalAsk({
           priceDiffCents: modificationToBill.priceDiffCents,
           changeFeeCents: modificationToBill.changeFeeCents,
@@ -2956,7 +2962,9 @@ async function processCreateAdditionalPaymentIntentOperation(
    * late-change fee) separates - the pair is what `INV-MONEY`/#1356 requires and
    * what the booking-vs-Xero repair pass reads for the same invoice.
    */
-  if (bookingModificationId) {
+  // #3954: a re-issued ask deferred nothing - its edit lowered the price and
+  // ran its Xero leg inline - so there is no supplementary invoice to raise.
+  if (bookingModificationId && !reissuesReducedAsk) {
     // Read above the mint, deliberately: see the hoist's own comment.
     if (modificationToBill) {
       await raiseDeferredSupplementaryInvoiceForRecoveredIntent({

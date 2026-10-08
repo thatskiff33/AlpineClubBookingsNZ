@@ -4,6 +4,8 @@
 
 import type { Prisma } from "@prisma/client";
 
+import { readUnpaidPriceAsk } from "@/lib/additional-ask-reduction";
+import { setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
 import type { LoadedBookingForModify } from "@/lib/booking-modify";
 import {
   calculateFullReductionSettlementOptions,
@@ -54,7 +56,14 @@ export async function fullReductionReturnRoute(
   priceDiffCents: number,
   todayAtClub: CalendarDate,
 ): Promise<FullReductionReturnRoute | null> {
-  const reductionCents = Math.max(0, -priceDiffCents);
+  // #3954: the reduction is first set against the booking's unpaid ask, which
+  // `applyPaymentAdjustments` retires; only what is left goes back here.
+  const unpaidAsk = priceDiffCents < 0 ? await readUnpaidPriceAsk(tx, loaded) : null;
+  const netLeftCents = setReductionAgainstUnpaidAsk({
+    netChargeCents: priceDiffCents,
+    unpaidAskCents: unpaidAsk?.askCents ?? 0,
+  }).netChargeLeftCents;
+  const reductionCents = Math.max(0, -netLeftCents);
   if (reductionCents === 0) return { kind: "none" };
   const capturedCash = isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
   if (!capturedCash && !isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
@@ -66,7 +75,7 @@ export async function fullReductionReturnRoute(
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({
         booking: loaded,
-        netChargeCents: priceDiffCents,
+        netChargeCents: netLeftCents,
         refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
         todayAtClub,
       })
@@ -90,7 +99,8 @@ export async function fullReductionReturnRoute(
   if (creditHolder === null) return null;
   await lockMemberCreditLedger(creditHolder, tx);
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
-  if (appliedCreditCents + cashCents !== booking.finalPriceCents) return null;
+  // The unpaid ask is the part of the price nobody paid (#3954).
+  if (appliedCreditCents + cashCents + (unpaidAsk?.askCents ?? 0) !== booking.finalPriceCents) return null;
   const creditReturn = { amountCents: reductionCents - cashCents, memberId: creditHolder };
   return settlementOptions
     ? { kind: "money-back", settlementOptions, creditRemainder: creditReturn }
