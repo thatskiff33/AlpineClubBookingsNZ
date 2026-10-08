@@ -9,8 +9,8 @@ import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
-import { parseRefundMethod } from "@/lib/xero-refund-method";
-import type { CashRefundMethod } from "@/lib/xero-refund-method";
+import { parseRefundMethod, readRefundNoteWording } from "@/lib/xero-refund-method";
+import type { CashRefundMethod, RefundNoteWording } from "@/lib/xero-refund-method";
 
 /**
  * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
@@ -48,6 +48,8 @@ export function parsePaymentCreditNoteRetryInput(
   documentDate?: string;
   /** #3827 (D-3813-8): a refund request's own note, keyed by the request. */
   refundRequestId?: string;
+  /** #3935 (`INV-PAY-116`): the officer's cash answer, carried on both shapes. */
+  noteWording?: RefundNoteWording;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -63,6 +65,7 @@ export function parsePaymentCreditNoteRetryInput(
     ...(readString(payload.paymentIntentId) ? { paymentIntentId: readString(payload.paymentIntentId)! } : {}),
     ...(readString(payload.documentDate) ? { documentDate: readString(payload.documentDate)! } : {}),
     ...(readString(payload.refundRequestId) ? { refundRequestId: readString(payload.refundRequestId)! } : {}),
+    ...(readRefundNoteWording(payload) ? { noteWording: readRefundNoteWording(payload)! } : {}),
   };
   const queuedRefundAmount = readNumber(payload.refundAmountCents);
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {

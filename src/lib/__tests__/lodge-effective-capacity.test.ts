@@ -20,6 +20,7 @@ import {
   parseConfiguredLodgeCapacity,
   resolveEffectiveLodgeCapacity,
   resolvePartnerSharedHeadroom,
+  resolvePartnerSpotsLostByCapacityChange,
   type EffectiveLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 
@@ -408,5 +409,25 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
       "utf8",
     );
     expect(source).not.toMatch(/^\s*import\s/m);
+  });
+});
+
+describe("resolvePartnerSpotsLostByCapacityChange (#3440)", () => {
+  const beds = { activeBedCount: 24, activeDoubleBedCount: 5 };
+  const lost = (savedCapacity: number | null, proposedCapacity: number, b = beds) =>
+    resolvePartnerSpotsLostByCapacityChange({ savedCapacity, proposedCapacity, ...b });
+
+  it("counts the headroom removed by lowering", () => {
+    expect(lost(30, 24)).toBe(5);
+    expect(lost(30, 26)).toBe(3);
+    expect(lost(26, 20)).toBe(2);
+  });
+  it("is zero when raising, unchanged, or with no doubles", () => {
+    expect(lost(24, 30)).toBe(0);
+    expect(lost(30, 30)).toBe(0);
+    expect(lost(30, 24, { ...beds, activeDoubleBedCount: 0 })).toBe(0);
+  });
+  it("treats an absent saved capacity as unbounded, like the headroom rule", () => {
+    expect(lost(null, 24)).toBe(5);
   });
 });
