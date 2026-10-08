@@ -69,10 +69,17 @@ const { applyPaymentAdjustments, calculateModificationSettlementOptions } = awai
 );
 const {
   bookingLedgerResidualCents,
+  isRecoveryOvertakenByLaterAsk,
+  recoveryAskBeyondPaymentAskCents,
   reissueUnpaidAdditionalAsk,
   setReductionAgainstUnpaidAsk,
+  sizeRecoveryReplayAsk,
   NO_ADDITIONAL_ASK,
 } = await import("@/lib/additional-payment-ask");
+const {
+  buildAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+} = await import("@/lib/payment-recovery-keys");
 const { ApiError } = await import("@/lib/api-error");
 const { createModificationAdditionalPaymentIntent } = await import("@/lib/booking-modification-settlement");
 const { ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE } = await import("@/lib/unpaid-ask-offset-marker");
@@ -94,8 +101,10 @@ type Row = {
 
 const state = vi.hoisted(() => ({
   rows: [] as unknown[],
-  modifications: [] as { id: string }[],
+  modifications: [] as { id: string; priceDiffCents?: number; changeFeeCents?: number }[],
   stampCount: 1,
+  recoveries: [] as unknown[],
+  recoveryCloseCount: 1,
 }));
 
 const paymentUpdate = vi.fn();
@@ -106,6 +115,7 @@ const paymentUpdate = vi.fn();
 const paymentFindUnique = vi.fn(async () => null);
 const transactionUpdateMany = vi.fn();
 const xeroUpdateMany = vi.fn();
+const recoveryUpdateMany = vi.fn();
 const tx = {
   payment: { update: paymentUpdate, findUnique: paymentFindUnique },
   manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
@@ -114,6 +124,10 @@ const tx = {
     updateMany: transactionUpdateMany,
   },
   bookingModification: { findMany: vi.fn(async () => state.modifications) },
+  paymentRecoveryOperation: {
+    findMany: vi.fn(async () => state.recoveries),
+    updateMany: recoveryUpdateMany,
+  },
   xeroSyncOperation: { updateMany: xeroUpdateMany },
 } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
@@ -215,7 +229,10 @@ beforeEach(() => {
   state.rows = [askRow()];
   state.modifications = [{ id: "mod_increase" }];
   state.stampCount = 1;
+  state.recoveries = [];
+  state.recoveryCloseCount = 1;
   transactionUpdateMany.mockImplementation(async () => ({ count: state.stampCount }));
+  recoveryUpdateMany.mockImplementation(async () => ({ count: state.recoveryCloseCount }));
   xeroUpdateMany.mockImplementation(async () => ({ count: 1 }));
   mocks.enqueueCancel.mockImplementation(async ({ paymentTransactionId }) => ({
     id: `op_cancel_${paymentTransactionId}`,
@@ -509,5 +526,203 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     const result = await adjust(booking, -2_000);
     const { order } = await mintAfter(result);
     expect(order).toEqual([]);
+  });
+});
+
+/*
+  #3954 "retry nets it off" (owner decision, 9 Oct 2026): the increase's mint
+  FAILED, so its ask is a CREATE_ADDITIONAL_PAYMENT_INTENT recovery row waiting
+  on the cron - no ledger row, no mirror. A reduction saved in that window nets
+  the waiting ask off as it would a minted one, closing the recovery so its
+  retry cannot mint the old $50, and asks afresh for only what is left.
+*/
+describe("#3954 retry nets it off: an ask whose mint failed and waits on its recovery", () => {
+  const RECOVERY_ID = "op_mint_increase";
+  const RECOVERED_AT = new Date("2026-06-21T00:00:00.000Z");
+
+  function recoveryRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: RECOVERY_ID,
+      status: "FAILED",
+      attempts: 1,
+      nextRetryAt: RECOVERED_AT,
+      idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_increase"),
+      amountCents: 5_000,
+      createdAt: RECOVERED_AT,
+      ...overrides,
+    };
+  }
+
+  /** $150, $100 paid, the $50 ask still a recovery row: nothing on the mirror. */
+  function awaitingRetryBooking({ creditPaid = false } = {}) {
+    const booking = grownBooking({ creditPaid });
+    Object.assign(booking.payment!, { additionalAmountCents: 0, additionalPaymentStatus: null, additionalPaymentIntentId: null });
+    return booking;
+  }
+
+  beforeEach(() => {
+    state.rows = [];
+    state.modifications = [{ id: "mod_increase", priceDiffCents: 5_000, changeFeeCents: 0 }];
+    state.recoveries = [recoveryRow()];
+  });
+
+  it.each([false, true])(
+    "MUTATION: removing $20 (credit-paid: %s) nets against the waiting $50 - nothing refunded, the recovery closed from the state it was read in, $30 re-issued",
+    async (creditPaid) => {
+      const result = await adjust(awaitingRetryBooking({ creditPaid }), -2_000);
+
+      expect(result.unpaidAskOffsetCents).toBe(2_000);
+      expect(result.refundAmountCents).toBe(0);
+      expect(result.accountCreditAmountCents).toBe(0);
+      expect(result.appliedCreditGivenBackCents).toBe(0);
+      expect(result.additionalAsk.amountCents).toBe(3_000);
+      expect(result.additionalAsk.carriedCents).toBe(3_000);
+      expect(result.additionalAsk.reissuesUnpaidAsk).toBe(true);
+      expect(result.retiredAdditionalAsks).toEqual([]);
+      expect(result.retiredPendingAskModificationIds).toEqual(["mod_increase"]);
+      expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
+      expect(recoveryUpdateMany).toHaveBeenCalledWith({
+        where: { id: RECOVERY_ID, status: "FAILED", attempts: 1 },
+        data: expect.objectContaining({ status: "SUCCEEDED", nextRetryAt: null }),
+      });
+      // A parked invoice waits on the edit, not on an intent that never existed.
+      expect(xeroUpdateMany.mock.calls[0]?.[0].where.OR).toEqual([
+        expect.objectContaining({ requestPayload: { path: ["bookingModificationId"], equals: "mod_increase" } }),
+      ]);
+    },
+  );
+
+  it("an $80 reduction nets the whole waiting $50 off and refunds only the $30 left, by the tier", async () => {
+    mocks.policy = [{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }];
+    const result = await adjust(awaitingRetryBooking(), -8_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(5_000);
+    expect(result.refundAmountCents).toBe(1_500);
+    expect(result.additionalAsk.amountCents).toBe(0);
+    expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("the waiting ask joins a minted one it would supersede: the ask is both, counted once, and both retire", async () => {
+    // A minted $50 ask is live; the next increase (+$50) failed to mint, and its
+    // retry would ask $100 (its own $50 plus the $50 it supersedes).
+    const booking = grownBooking();
+    state.rows = [askRow()];
+    state.recoveries = [recoveryRow({ amountCents: 10_000, createdAt: new Date("2026-06-22T00:00:00.000Z") })];
+    const result = await adjust(booking, -8_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(8_000);
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.additionalAsk.amountCents).toBe(2_000);
+    expect(transactionUpdateMany.mock.calls.map(([call]) => call.where.id)).toEqual([ASK_ROW_ID]);
+    expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("the settlement options are sized on what the waiting ask leaves, as the save is", async () => {
+    const options = await calculateModificationSettlementOptions({
+      booking: awaitingRetryBooking(),
+      netChargeCents: -8_000,
+      db: tx as never,
+      todayAtClub: TODAY,
+    });
+    expect(options?.basisAmountCents).toBe(3_000);
+  });
+
+  it.each([
+    ["dead - no retry left", { nextRetryAt: null }],
+    ["dead - attempts spent", { attempts: 5 }],
+    ["overtaken by a later ask", { createdAt: new Date("2026-06-19T00:00:00.000Z") }],
+  ])("MUTATION: a recovery %s mints nothing, so nothing is netted against it", async (_label, overrides) => {
+    if ("createdAt" in overrides) {
+      state.rows = [askRow({ status: PaymentStatus.FAILED, withdrawnAt: new Date("2026-06-20T00:00:00.000Z") } as Partial<Row>)];
+    }
+    state.recoveries = [recoveryRow(overrides)];
+    const result = await adjust(awaitingRetryBooking(), -2_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(0);
+    expect(result.refundAmountCents).toBe(2_000);
+    expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a review charge's recovery - an officer's money", { idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod_increase") }],
+    ["a recovery whose edit cannot be read", { idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_elsewhere") }],
+  ])("%s is not guessed at - the reduction settles as before", async (_label, overrides) => {
+    state.recoveries = [recoveryRow(overrides)];
+    const result = await adjust(awaitingRetryBooking(), -2_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(0);
+    expect(result.refundAmountCents).toBe(2_000);
+    expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a retry that claimed the row since it was read fails the fence and rolls the whole edit back (409)", async () => {
+    state.recoveryCloseCount = 0;
+    await expect(adjust(awaitingRetryBooking(), -2_000)).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.status === 409,
+    );
+    expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a retry minting right now is counted, and refuses the save rather than be closed under it with its old figure live", async () => {
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2 })];
+    await expect(adjust(awaitingRetryBooking(), -2_000)).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.status === 409,
+    );
+    expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("after commit the minter re-issues the $30 on a credit-paid booking with nothing to cancel first", async () => {
+    const result = await adjust(awaitingRetryBooking({ creditPaid: true }), -2_000);
+    mocks.createIntent.mockImplementation(async ({ amountCents }) => ({ id: `pi_reissued_${amountCents}`, client_secret: "secret" }));
+    const minted = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking_3954",
+      result: {
+        ...result,
+        paymentId: "payment_1",
+        paymentCustomerId: "cus_1",
+        memberEmail: "member@example.invalid",
+        memberName: "Member One",
+        memberFirstName: "Member",
+        memberId: "member_1",
+        bookingModificationId: "mod_reduction",
+        priceLines: null,
+      },
+      reason: "guest_removal_price_increase",
+      idempotencyKey: "mod_guest_remove_booking_3954_mod_reduction",
+      failureMessage: "test",
+    });
+    expect(mocks.runNow).not.toHaveBeenCalled();
+    expect(minted.additionalPaymentIntentId).toBe("pi_reissued_3000");
+  });
+});
+
+describe("#3954: one sizing for a failed mint's replay and the reduction that may net it off", () => {
+  const unpaid = { additionalAmountCents: 7_000, additionalPaymentStatus: "PENDING" };
+
+  it("an increase re-derives its own net plus the ask it supersedes, and adds only its own net beyond that ask", () => {
+    const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 14_000, modification: { priceDiffCents: 6_000, changeFeeCents: 1_000 }, payment: unpaid });
+    expect(replay.kind).toBe("increase");
+    expect(replay.kind !== "frozen" && replay.ask.amountCents).toBe(14_000);
+    expect(recoveryAskBeyondPaymentAskCents(replay)).toBe(7_000);
+  });
+
+  it("a reduction's re-issue is its frozen figure, all of it beyond the ask it retired", () => {
+    const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0 }, payment: unpaid });
+    expect(replay.kind).toBe("reissue");
+    expect(recoveryAskBeyondPaymentAskCents(replay)).toBe(3_000);
+  });
+
+  it.each([null, { priceDiffCents: 0, changeFeeCents: 0 }])("no readable net (%o) replays the frozen figure, which nothing nets against", (modification) => {
+    const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 5_000, modification, payment: unpaid });
+    expect(replay).toEqual({ kind: "frozen", amountCents: 5_000 });
+    expect(recoveryAskBeyondPaymentAskCents(replay)).toBeNull();
+  });
+
+  it("a later ADDITIONAL row, of any status, overtakes a recovery; an earlier one does not", () => {
+    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z") };
+    expect(isRecoveryOvertakenByLaterAsk(operation, [{ kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") }])).toBe(true);
+    expect(isRecoveryOvertakenByLaterAsk(operation, [{ kind: "ADDITIONAL", createdAt: new Date("2026-06-20T00:00:00.000Z") }])).toBe(false);
+    expect(isRecoveryOvertakenByLaterAsk(operation, [{ kind: "PRIMARY", createdAt: new Date("2026-06-22T00:00:00.000Z") }])).toBe(false);
   });
 });

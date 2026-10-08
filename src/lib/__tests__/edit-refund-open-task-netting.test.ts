@@ -33,6 +33,8 @@ const FULL_REFUND = [{ daysBeforeStay: 0, refundPercentage: 100, creditRefundPer
 function store(openCents: number | null) {
   return {
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: openCents } })) },
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     payment: { update: vi.fn() },
     // #3809 (composed by #3829): no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },

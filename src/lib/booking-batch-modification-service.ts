@@ -1919,7 +1919,7 @@ export async function modifyBookingBatch({
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
           ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
-          ...unpaidAskOffsetHistory(payments.unpaidAskOffsetCents),
+          ...unpaidAskOffsetHistory(payments),
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.

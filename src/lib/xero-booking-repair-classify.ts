@@ -72,6 +72,7 @@ import {
   ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
   ASK_RETIRED_BY_REDUCTION_SUMMARY,
   isAskRetiredByReductionOperation,
+  isPendingAskRetiredByReduction,
   recordedUnpaidAskOffsetCents,
 } from "@/lib/unpaid-ask-offset-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
@@ -632,9 +633,15 @@ export function classifyBookingContext(
             },
             actionKeys: [manualAction.key],
           });
-        } else if (!blockingOperation && modificationOperations.some(isAskRetiredByReductionOperation)) {
+        } else if (
+          !blockingOperation &&
+          (modificationOperations.some(isAskRetiredByReductionOperation) ||
+            isPendingAskRetiredByReduction(modification.id, booking.modifications))
+        ) {
           // #3954 (`INV-PAY-119`): a later reduction retired this edit's unpaid
-          // ask and its invoice; a one-click bill would charge money nobody owes.
+          // ask and its invoice - or netted off the ask before its failed mint's
+          // retry ran, when no invoice was parked to carry the code; a one-click
+          // bill would charge money nobody owes.
           const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, ASK_RETIRED_BY_REDUCTION_SUMMARY));
           addFinding(findings, {
             code: "MISSING_SUPPLEMENTARY_INVOICE",

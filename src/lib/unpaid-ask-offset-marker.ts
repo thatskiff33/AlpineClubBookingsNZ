@@ -45,16 +45,50 @@ export function isAskRetiredByReductionOperation(operation: {
 export const ASK_RETIRED_BY_REDUCTION_SUMMARY =
   "A later change lowered this booking's price before the member paid the extra this edit asked for, so that card request was cancelled or made smaller and its supplementary Xero invoice was retired. Check the booking's later changes and payments before raising any invoice for this edit.";
 
-/** The `newData` field an edit writes for the part of its reduction an unpaid ask took, or none. */
-export function unpaidAskOffsetHistory(offsetCents: number): { [HISTORY_KEY]?: number } {
-  return offsetCents > 0 ? { [HISTORY_KEY]: offsetCents } : {};
+/**
+ * #3954 "retry nets it off": the increases whose card ask had not been minted
+ * yet - its mint failed and waited on a recovery - when this reduction netted
+ * it off. Those increases have no parked invoice to carry the retired code, so
+ * the reduction names them.
+ */
+const RETIRED_PENDING_ASKS_KEY = "unpaidAskRetiredModificationIds" as const;
+
+/** The `newData` fields an edit writes for what of its reduction an unpaid ask took, or none. */
+export function unpaidAskOffsetHistory(settled: {
+  unpaidAskOffsetCents: number;
+  retiredPendingAskModificationIds: readonly string[];
+}): { [HISTORY_KEY]?: number; [RETIRED_PENDING_ASKS_KEY]?: string[] } {
+  if (settled.unpaidAskOffsetCents <= 0) return {};
+  return {
+    [HISTORY_KEY]: settled.unpaidAskOffsetCents,
+    ...(settled.retiredPendingAskModificationIds.length > 0
+      ? { [RETIRED_PENDING_ASKS_KEY]: [...settled.retiredPendingAskModificationIds] }
+      : {}),
+  };
+}
+
+function historyRecord(newData: unknown): Record<string, unknown> | null {
+  return newData && typeof newData === "object" && !Array.isArray(newData)
+    ? (newData as Record<string, unknown>)
+    : null;
 }
 
 /** The offset an edit's history row records, or 0. */
 export function recordedUnpaidAskOffsetCents(newData: unknown): number {
-  const value =
-    newData && typeof newData === "object" && !Array.isArray(newData)
-      ? (newData as Record<string, unknown>)[HISTORY_KEY]
-      : null;
+  const value = historyRecord(newData)?.[HISTORY_KEY];
   return Number.isInteger(value) && (value as number) > 0 ? (value as number) : 0;
+}
+
+/**
+ * Whether a later reduction netted off this increase's unminted ask - the
+ * repair pass's reading for an increase with no parked invoice to look at.
+ */
+export function isPendingAskRetiredByReduction(
+  modificationId: string,
+  modifications: readonly { newData: unknown }[],
+): boolean {
+  return modifications.some((modification) => {
+    const ids = historyRecord(modification.newData)?.[RETIRED_PENDING_ASKS_KEY];
+    return Array.isArray(ids) && ids.includes(modificationId);
+  });
 }

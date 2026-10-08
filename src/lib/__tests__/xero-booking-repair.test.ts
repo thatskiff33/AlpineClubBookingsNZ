@@ -7215,7 +7215,11 @@ describe("a refund request's own note never answers for the payment's refund not
  * offered back as a one-click bill for money nobody owes.
  */
 describe("#3954: a reduction set against an unpaid ask", () => {
-  function reducedAfterUnpaidAsk(priceDiffCents: number, unpaidAskOffsetCents: number) {
+  function reducedAfterUnpaidAsk(
+    priceDiffCents: number,
+    unpaidAskOffsetCents: number,
+    reductionHistory: Record<string, unknown> = {},
+  ) {
     return makeBooking({
       modifications: [
         {
@@ -7233,7 +7237,7 @@ describe("#3954: a reduction set against an unpaid ask", () => {
           modificationType: "GUEST_REMOVE",
           priceDiffCents,
           changeFeeCents: 0,
-          newData: { unpaidAskOffsetCents },
+          newData: { unpaidAskOffsetCents, ...reductionHistory },
           createdAt: new Date("2026-05-03T00:00:00Z"),
         },
       ],
@@ -7283,6 +7287,24 @@ describe("#3954: a reduction set against an unpaid ask", () => {
     const deps = createDependencies({
       bookings: [reducedAfterUnpaidAsk(-5000, 5000)],
       operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    const finding = bookingReport.findings.find((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+    expect(finding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: { modificationId: "mod_increase", retiredBy: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION" },
+    });
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+
+  it("MUTATION: an increase whose mint failed and was netted off before its retry, with no parked invoice to carry the code, is reported for a person too", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"] })],
+      operations: [makePrimaryInvoiceCreateOperation()],
     });
 
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });

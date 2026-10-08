@@ -20,6 +20,12 @@
  *    cancellation and hands the capture to the existing superseded-capture
  *    refund, in full; with that refund recorded the ledger balances again.
  *
+ * And "retry nets it off" (owner decision 9 Oct 2026): an increase whose mint
+ * FAILED waits on its recovery, not yet a ledger row. A reduction saved in that
+ * window nets the waiting ask off exactly as a minted one - closing the recovery
+ * so its retry cannot mint the old figure - and a retry that claimed the row
+ * first rolls the reduction back (409).
+ *
  * No provider is called: the Stripe cancellation and refund are the recovery
  * rows this change writes and the DB-only halves of their processors.
  *
@@ -33,6 +39,8 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -50,6 +58,7 @@ const ASK_TXN_ID = "race-3954-ask";
 const ASK_INTENT = "pi_race_3954_ask";
 const INCREASE_MOD_ID = "race-3954-increase";
 const WAITING_OP_ID = "race-3954-waiting-supplementary";
+const RECOVERY_ID = "race-3954-ask-recovery";
 
 const TODAY = new Date("2026-07-01T00:00:00.000Z");
 const NIGHTS = [new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-02T00:00:00.000Z")];
@@ -103,7 +112,12 @@ let webhookClient: PrismaClient;
      * reduction removes: 2500 a night is the whole $50, less shrinks the ask,
      * more cancels it and leaves a remainder.
      */
-    async function grownBooking(shape: "card" | "credit", leavingNightCents: number, refundPercentage = 100) {
+    async function grownBooking(
+      shape: "card" | "credit",
+      leavingNightCents: number,
+      refundPercentage = 100,
+      ask: "minted" | "awaiting-retry" = "minted",
+    ) {
       const stayingNightCents = 7_500 - leavingNightCents;
       await deleteFixtures();
       await prisma.member.create({
@@ -162,6 +176,23 @@ let webhookClient: PrismaClient;
       await prisma.bookingModification.create({
         data: { id: INCREASE_MOD_ID, bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "GUEST_ADD", previousData: {}, newData: {}, priceDiffCents: 5_000 },
       });
+      if (ask === "awaiting-retry") {
+        // #3954 "retry nets it off": the mint failed at the provider, so the ask
+        // is a recovery row the cron will retry, not yet a ledger row or mirror.
+        const { buildAdditionalIntentRecoveryIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+        await prisma.paymentRecoveryOperation.create({
+          data: {
+            id: RECOVERY_ID, type: "CREATE_ADDITIONAL_PAYMENT_INTENT", status: "FAILED", bookingId: BOOKING_ID, paymentId: PAYMENT_ID,
+            paymentIntentId: `mod_guest_add_${BOOKING_ID}_${INCREASE_MOD_ID}`, amountCents: 5_000, hadIssuedXeroInvoice: false,
+            idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(INCREASE_MOD_ID), attempts: 1, nextRetryAt: TODAY,
+            lastError: "Stripe was unavailable",
+          },
+        });
+        expect((await payment()).additionalAmountCents).toBe(0);
+        // Owed by the price and asked of nobody until the retry runs.
+        expect(await residual()).toBe(5_000);
+        return;
+      }
       await prisma.paymentTransaction.create({
         data: {
           id: ASK_TXN_ID, paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "PENDING",
@@ -429,6 +460,138 @@ let webhookClient: PrismaClient;
       });
       expect(await payment()).toMatchObject({ amountCents: 15_000, refundedAmountCents: 5_000, additionalAmountCents: 0 });
       expect(await residual()).toBe(0);
+    });
+
+    const recovery = () =>
+      prisma.paymentRecoveryOperation.findUniqueOrThrow({
+        where: { id: RECOVERY_ID },
+        select: { status: true, attempts: true, nextRetryAt: true, succeededAt: true, lastError: true },
+      });
+
+    it.each(["card", "credit"] as const)(
+      "%s-paid, the increase's mint awaiting its retry: removing a 2000-cent guest nets the waiting ask off - nothing refunded, the recovery closed, a 3000-cent re-issue, and the retry has nothing left to claim",
+      async (shape) => {
+        await grownBooking(shape, 1_000, 100, "awaiting-retry");
+
+        const result = await removeLeavingGuest();
+
+        expect(result.priceDiffCents).toBe(-2_000);
+        expect(result.refundAmountCents).toBe(0);
+        expect(result.pendingRefundAmountCents).toBe(0);
+        expect(result.accountCreditAmountCents).toBe(0);
+        expect(result.appliedCreditGivenBackCents).toBe(0);
+        expect(result.retiredAdditionalAsks).toEqual([]);
+        expect(result.additionalAsk.amountCents).toBe(3_000);
+        expect(result.additionalAsk.carriedCents).toBe(3_000);
+        expect(result.additionalAsk.reissuesUnpaidAsk).toBe(true);
+        const { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } = await import("@/lib/additional-ask-reduction");
+        expect(await recovery()).toEqual({
+          status: "SUCCEEDED", attempts: 1, nextRetryAt: null, succeededAt: expect.any(Date), lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
+        });
+        const modification = await prisma.bookingModification.findUniqueOrThrow({ where: { id: result.bookingModificationId }, select: { newData: true } });
+        expect(modification.newData).toMatchObject({ unpaidAskOffsetCents: 2_000, unpaidAskRetiredModificationIds: [INCREASE_MOD_ID] });
+
+        // The retry, when the cron reaches it: nothing to claim, no provider call.
+        const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+        expect(await runPaymentRecoveryOperationNow(RECOVERY_ID, CLUB_FORMAT_TEST)).toBe("not-claimed");
+        expect((await recovery()).status).toBe("SUCCEEDED");
+
+        // The re-issue's mint after commit - the minter's own writer.
+        const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
+        await upsertPaymentIntentTransaction({
+          paymentId: PAYMENT_ID,
+          kind: "ADDITIONAL",
+          paymentIntentId: "pi_race_3954_reissued",
+          amountCents: result.additionalAsk.amountCents,
+          carriedAskCents: result.additionalAsk.carriedCents,
+          status: "PENDING",
+          store: prisma,
+        });
+        // $130 price, $100 paid, $30 asked - not the $50 the retry would have minted.
+        expect((await payment()).additionalAmountCents).toBe(3_000);
+        expect(await residual()).toBe(0);
+      },
+    );
+
+    it("card-paid at a 50% tier, the mint awaiting its retry: an $80 reduction nets the whole $50 off and refunds half of the $30 left - the recovery closed with nothing to mint", async () => {
+      await grownBooking("card", 4_000, 50, "awaiting-retry");
+
+      const result = await removeLeavingGuest();
+
+      expect(result.priceDiffCents).toBe(-8_000);
+      expect(result.refundAmountCents).toBe(1_500);
+      expect(result.additionalAsk.amountCents).toBe(0);
+      expect((await recovery()).status).toBe("SUCCEEDED");
+      expect((await payment()).additionalAmountCents).toBe(0);
+      // Before the Stripe refund lands the club holds $100 for a $70 booking -
+      // the policy's $15 plus the $15 refund in flight; nothing is asked.
+      expect(await residual()).toBe(-3_000);
+    });
+
+    it("RACE: the retry claiming the waiting ask between the reduction's read and its retire fails the fence and rolls the whole edit back", async () => {
+      await grownBooking("card", 1_000, 100, "awaiting-retry");
+      const { readUnpaidPriceAsk, retireUnpaidAskChain } = await import("@/lib/additional-ask-reduction");
+
+      const outcome = await prisma
+        .$transaction(async (tx) => {
+          const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+          const ask = await readUnpaidPriceAsk(tx, booking);
+          expect(ask).toMatchObject({ askCents: 5_000, rows: [], recoveries: [{ id: RECOVERY_ID, attempts: 1, askCents: 5_000 }] });
+          // The recovery runner's claim, on another connection that takes none
+          // of the edit's locks (`claimPaymentRecoveryOperation`'s write).
+          await webhookClient.paymentRecoveryOperation.update({
+            where: { id: RECOVERY_ID },
+            data: { status: "PROCESSING", attempts: { increment: 1 }, processingStartedAt: TODAY, lastError: null },
+          });
+          await retireUnpaidAskChain(tx, { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, ask });
+          return "committed";
+        })
+        .catch((err: unknown) => err);
+
+      const { ApiError } = await import("@/lib/api-error");
+      expect(outcome).toBeInstanceOf(ApiError);
+      expect((outcome as InstanceType<typeof ApiError>).status).toBe(409);
+      // The retry keeps its claim and mints what it re-derives; the edit wrote
+      // nothing, so the member's next save nets against the ask that retry mints.
+      expect(await recovery()).toMatchObject({ status: "PROCESSING", attempts: 2, succeededAt: null });
+      expect((await payment()).additionalAmountCents).toBe(0);
+    });
+
+    it("RACE: a retry claiming while the reduction holds the waiting ask waits for its commit, then matches nothing", async () => {
+      await grownBooking("card", 1_000, 100, "awaiting-retry");
+      const { readUnpaidPriceAsk, retireUnpaidAskChain } = await import("@/lib/additional-ask-reduction");
+      let claim: Promise<{ count: number }> | null = null;
+
+      await prisma.$transaction(
+        async (tx) => {
+          const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+          const ask = await readUnpaidPriceAsk(tx, booking);
+          await retireUnpaidAskChain(tx, { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, ask });
+          // The runner's claim, exactly as `claimPaymentRecoveryOperation` filters
+          // it, issued while the edit's close is uncommitted: it queues on the row.
+          // `.then` sends it now: a Prisma query is lazy until something awaits it.
+          claim = webhookClient.paymentRecoveryOperation
+            .updateMany({
+              where: { id: RECOVERY_ID, status: { in: ["PENDING", "FAILED"] }, attempts: { lt: 5 }, nextRetryAt: { lte: TODAY } },
+              data: { status: "PROCESSING", attempts: { increment: 1 }, processingStartedAt: TODAY },
+            })
+            .then((claimed) => claimed);
+          const startedAt = process.hrtime.bigint();
+          for (;;) {
+            const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+              SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+              WHERE application_name = 'race-3954-webhook' AND wait_event_type = 'Lock'
+            `;
+            if ((rows[0]?.count ?? 0) > 0) break;
+            if (realElapsedMs(startedAt) > 5_000) throw new Error("The retry's claim never queued behind the reduction's close");
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        },
+        { maxWait: 10_000, timeout: 20_000 },
+      );
+
+      expect(await claim).toEqual({ count: 0 });
+      expect(await recovery()).toMatchObject({ status: "SUCCEEDED", attempts: 1 });
     });
   },
 );

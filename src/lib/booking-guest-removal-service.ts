@@ -1186,7 +1186,7 @@ export async function removeBookingGuestInTransaction({
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
         ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
         // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
-        ...unpaidAskOffsetHistory(paymentImpact.unpaidAskOffsetCents),
+        ...unpaidAskOffsetHistory(paymentImpact),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.

@@ -107,6 +107,8 @@ vi.mock("@/lib/prisma", () => ({
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     paymentRecoveryOperation: {
       findUnique: (...args: unknown[]) => mockRecoveryOperationFindUnique(...args),
+      // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+      findMany: vi.fn(async () => []),
     },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
@@ -524,6 +526,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),

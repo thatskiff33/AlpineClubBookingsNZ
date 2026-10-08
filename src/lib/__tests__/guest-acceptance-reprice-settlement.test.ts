@@ -138,6 +138,8 @@ function tx(loaded: ReturnType<typeof booking>) {
     },
     bookingModification: { create: vi.fn(async () => ({ id: "mod-1" })) },
     payment: { update: vi.fn() },
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), createMany: vi.fn(async () => ({ count: 1 })) },
   };
 }

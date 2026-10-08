@@ -78,6 +78,8 @@ function txWithSettlement(settlement: Record<string, unknown> | null) {
     // #3809: no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     // #3827 (composed by #3829): no open by-hand refund task on file.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 }
@@ -153,6 +155,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   /** A policy db for `calculateModificationSettlementOptions`: one 100% card, 100% credit tier. */
   const POLICY_DB = {
     // #3827 (composed by #3829): no open by-hand refund task on file.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge_1" }) },
     bookingPeriod: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },

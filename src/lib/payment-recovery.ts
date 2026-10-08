@@ -40,7 +40,7 @@ import {
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
-import { reissueUnpaidAdditionalAsk, sizeAdditionalAsk } from "@/lib/additional-payment-ask";
+import { isRecoveryOvertakenByLaterAsk, sizeRecoveryReplayAsk } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
@@ -2426,6 +2426,15 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * retry with the same intent, the ADDITIONAL transaction row is an upsert,
  * and an additional intent minted by a *later* edit supersedes this one — in
  * that case the operation completes without creating anything.
+ *
+ * #3954 ("retry nets it off", owner decision 9 Oct 2026; `INV-PAY-119`): a price
+ * reduction saved while this waits re-checks what the booking owes before the
+ * retry can mint the old figure. It sizes this row exactly as the replay below
+ * would (`sizeRecoveryReplayAsk`), sets the reduction against it, closes the row
+ * under the edit's locks from the state it read - unclaimed, no attempt since -
+ * and mints only what is left, or nothing (`retireUnpaidAskChain`). A netted
+ * row is therefore never claimed here, and a row claimed first refuses that
+ * edit (409) rather than be minted beside a smaller ask.
  */
 async function processCreateAdditionalPaymentIntentOperation(
   operation: PaymentRecoveryOperation,
@@ -2740,12 +2749,12 @@ async function processCreateAdditionalPaymentIntentOperation(
   // this modification's collectable, so resurrecting ours would offer the
   // member two instruments for overlapping money. The later edit repriced
   // from current state, so its intent is the whole truth.
-  const newerAdditionalTransaction = payment.transactions.find(
-    (transaction) =>
-      transaction.kind === PaymentTransactionKind.ADDITIONAL &&
-      transaction.createdAt > operation.createdAt,
-  );
-  if (newerAdditionalTransaction || operation.amountCents <= 0) {
+  // The rule a price reduction reads too, before it nets this recovery off
+  // (`isRecoveryOvertakenByLaterAsk`, #3954).
+  if (
+    isRecoveryOvertakenByLaterAsk(operation, payment.transactions) ||
+    operation.amountCents <= 0
+  ) {
     await completePaymentRecoveryOperation(operation.id);
     return;
   }
@@ -2830,45 +2839,45 @@ async function processCreateAdditionalPaymentIntentOperation(
    * read here are always the ordinary edit's own. A review charge's debt is the
    * sum of its settled shares and is re-derived by its own sync function.
    */
-  const editNetCents = modificationToBill
-    ? modificationToBill.priceDiffCents + modificationToBill.changeFeeCents
-    : 0;
-  // #3954: a REDUCTION's ask is the unpaid ask it shrank, re-issued smaller
-  // (`reissueUnpaidAdditionalAsk`): all of it carried, none of it this edit's
-  // own, and frozen at the edit - the ask it replaced was retired in that edit's
-  // transaction, so there is nothing on the Payment to re-derive it from.
-  const reissuesReducedAsk = modificationToBill !== null && editNetCents < 0;
-  if (modificationToBill && editNetCents === 0) {
+  // #3954: one sizing for this replay and for a reduction that nets this
+  // recovery off before it runs (`sizeRecoveryReplayAsk`). A REDUCTION's ask is
+  // the unpaid ask it shrank, re-issued smaller: all of it carried, none of it
+  // this edit's own, and frozen at the edit - the ask it replaced was retired in
+  // that edit's transaction, so there is nothing on the Payment to re-derive it
+  // from.
+  const replay = sizeRecoveryReplayAsk({
+    frozenAmountCents: operation.amountCents,
+    modification: modificationToBill,
+    payment,
+  });
+  const reissuesReducedAsk = replay.kind === "reissue";
+  if (modificationToBill && replay.kind === "frozen") {
     // Belt and braces, and deliberately NOT a completion. An ordinary edit only
-    // reaches this processor because its own net was positive, so a
-    // non-positive net here means the modification row and the frozen figure
-    // disagree - and completing on that reading would retire a real debt for an
-    // arithmetic reason nobody has checked. Fall back to exactly the pre-fix
-    // behaviour, which never loses money, and say so.
+    // reaches this processor because its own net was positive, so a zero net
+    // here means the modification row and the frozen figure disagree - and
+    // completing on that reading would retire a real debt for an arithmetic
+    // reason nobody has checked. Fall back to exactly the pre-fix behaviour,
+    // which never loses money, and say so.
     logger.warn(
       {
         operationId: operation.id,
         bookingId: operation.bookingId,
-        editNetCents,
+        editNetCents:
+          modificationToBill.priceDiffCents + modificationToBill.changeFeeCents,
         frozenAmountCents: operation.amountCents,
       },
       "Additional intent recovery could not re-derive the ask (the modification's net is not positive); replaying the frozen amount",
     );
   }
-  const ask = reissuesReducedAsk
-    ? reissueUnpaidAdditionalAsk({ askLeftCents: operation.amountCents })
-    : modificationToBill && editNetCents > 0
-      ? sizeAdditionalAsk({
-          priceDiffCents: modificationToBill.priceDiffCents,
-          changeFeeCents: modificationToBill.changeFeeCents,
-          payment,
-        })
-      : // #3371: the frozen fallback carried nothing that this replay can name.
+  const ask =
+    replay.kind === "frozen"
+      ? // #3371: the frozen fallback carried nothing that this replay can name.
         // The row records an amount and no provenance, and inventing one here
         // would be worse than recording none - a 0 says "nothing known to have
         // been absorbed", which is the truth about a figure frozen before this
         // column existed.
-        { amountCents: operation.amountCents, carriedCents: 0 };
+        { amountCents: replay.amountCents, carriedCents: 0 }
+      : replay.ask;
   const askCents = ask.amountCents;
 
   /**

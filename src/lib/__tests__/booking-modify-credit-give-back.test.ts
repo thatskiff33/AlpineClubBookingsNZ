@@ -58,7 +58,11 @@ const TIERS = {
 const paymentUpdate = vi.fn();
 // #3827 (composed by #3829): no open by-hand refund task on file, so the
 // refundable cash is the payment's own.
-const NO_HAND_BACKS = { manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) } };
+const NO_HAND_BACKS = {
+  manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+  // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+  paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
+};
 const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */

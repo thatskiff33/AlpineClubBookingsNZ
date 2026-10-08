@@ -56,7 +56,11 @@ const { OrganiserChildRefundRefusedError } = await import("@/lib/organiser-child
 const TODAY = "2026-07-01" as CalendarDate;
 
 const paymentUpdate = vi.fn();
-const NO_HAND_BACKS = { manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) } };
+const NO_HAND_BACKS = {
+  manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+  // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+  paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
+};
 const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: a $0 SUCCEEDED card-source payment, PAID. */

@@ -107,6 +107,12 @@ export type PaymentAdjustmentResult = {
    */
   unpaidAskOffsetCents: number;
   retiredAdditionalAsks: RetiredAdditionalAsk[];
+  /**
+   * #3954 "retry nets it off": the increases whose failed mint's recovery this
+   * reduction closed before it ran. Recorded on the edit's history row
+   * (`unpaidAskOffsetHistory`) for the Xero repair pass.
+   */
+  retiredPendingAskModificationIds: string[];
 };
 
 /**
@@ -456,6 +462,10 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     unpaidAskOffsetCents: setAgainstAsk.offsetCents,
     retiredAdditionalAsks,
+    retiredPendingAskModificationIds:
+      setAgainstAsk.offsetCents > 0
+        ? unpaidAsk.recoveries.map((recovery) => recovery.bookingModificationId)
+        : [],
   };
 }
 

@@ -12,12 +12,15 @@
  *
  * This module holds the two database halves:
  *
- * - `readUnpaidPriceAsk` - which ask a reduction may be set against. Read by the
- *   settlement options, the save (under its locks) and the quote, so the three
- *   cannot disagree.
+ * - `readUnpaidPriceAsk` - which ask a reduction may be set against: the ledger
+ *   rows' ask, plus any ask whose mint failed and still waits on its recovery
+ *   (owner decision 9 Oct 2026, "retry nets it off"). Read by the settlement
+ *   options, the save (under its locks) and the quote, so the three cannot
+ *   disagree.
  * - `retireUnpaidAskChain` - inside the edit's transaction: the ask's rows are
  *   FAILED and stamped `withdrawnAt` (the projection reads past them,
- *   `INV-ADDPAY-040`), each intent's Stripe cancellation is queued durably, any
+ *   `INV-ADDPAY-040`), each intent's Stripe cancellation is queued durably, a
+ *   pending recovery is closed before its retry can mint the old figure, any
  *   Xero supplementary invoice parked on them is retired, and the `Payment`
  *   mirror is reconciled. A smaller ask, when one is left, is minted after
  *   commit through the ordinary minter (`reissueUnpaidAdditionalAsk`).
@@ -34,12 +37,21 @@
  * superseded-capture path refunds it in full
  * (`queueSupersededPaymentIntentRefundRecovery`, `processCancelPaymentIntentOperation`).
  *
+ * THE RACE WITH A RETRY. The recovery runner does not take the edit's locks
+ * either. A pending ask is closed only from the state it was read in - not
+ * claimed, no attempt since - so a retry that claimed it first rolls the edit
+ * back (409) and one that comes after has nothing left to claim. A reduction
+ * saved while that retry is minting is the one edit refused; the retry takes
+ * seconds, and the member's next save nets against the ask it minted.
+ *
  * ONLY A PRICE ASK. A review-raised request is money an officer decided, not the
  * price (`INV-ADDPAY-040`, D-3528-2), so a chain holding one is left alone and
  * the reduction settles exactly as before.
  */
 import {
+  BookingStatus,
   PaymentRecoveryOperationStatus,
+  PaymentRecoveryOperationType,
   PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
@@ -47,6 +59,11 @@ import {
 } from "@prisma/client";
 
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
+import {
+  isRecoveryOvertakenByLaterAsk,
+  recoveryAskBeyondPaymentAskCents,
+  sizeRecoveryReplayAsk,
+} from "@/lib/additional-payment-ask";
 import { ApiError } from "@/lib/api-error";
 import type { ClubFormat } from "@/lib/club-format";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
@@ -55,12 +72,22 @@ import {
   enqueuePaymentIntentCancellationRecovery,
   runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
+import {
+  bookingModificationIdForAdditionalIntentRecoveryKey,
+  isEditFinancialReviewAdditionalIntentRecoveryKey,
+} from "@/lib/payment-recovery-keys";
 import {
   CAPTURED_TRANSACTION_STATUS_LIST,
   isCapturedTransactionStatus,
 } from "@/lib/payment-transaction-status";
 import { reconcilePaymentAggregates } from "@/lib/payment-transactions";
 import { ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE } from "@/lib/unpaid-ask-offset-marker";
+import { waitingSupplementaryInvoiceOperationsWhere } from "@/lib/xero-supplementary-invoice-statuses";
+
+/** What a recovery a reduction netted off says about itself (#3954). */
+export const PENDING_ASK_NETTED_BY_REDUCTION_NOTE =
+  "Not minted: a price reduction set this unminted card request against the booking's lower price before its retry ran; anything still owed was asked for afresh (#3954).";
 
 export const ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE =
   "A payment on this booking was being made while you saved this change. Nothing was changed - refresh the booking and try again.";
@@ -72,6 +99,20 @@ export type UnpaidPriceAskRow = {
   stripePaymentIntentId: string | null;
 };
 
+/**
+ * An ask whose mint failed and waits on its recovery (#3954, "retry nets it
+ * off"): owed, but not yet a row. `attempts` is the fence - only a claim moves
+ * it, so a retire that still matches it knows no retry ran in between.
+ */
+export type PendingAskRecovery = {
+  id: string;
+  bookingModificationId: string;
+  status: PaymentRecoveryOperationStatus;
+  attempts: number;
+  /** What the recovery adds to the rows' ask (`recoveryAskBeyondPaymentAskCents`). */
+  askCents: number;
+};
+
 export type UnpaidPriceAsk = {
   /** What the member is still asked for; 0 when nothing can be set against. */
   askCents: number;
@@ -81,40 +122,47 @@ export type UnpaidPriceAsk = {
    * unpaid row and read it as owed.
    */
   rows: readonly UnpaidPriceAskRow[];
+  /** Asks still waiting on their mint's recovery; they retire with the rows. */
+  recoveries: readonly PendingAskRecovery[];
 };
 
-export const NO_UNPAID_PRICE_ASK: UnpaidPriceAsk = { askCents: 0, rows: [] };
+export const NO_UNPAID_PRICE_ASK: UnpaidPriceAsk = { askCents: 0, rows: [], recoveries: [] };
 
 export type UnpaidAskDb = Pick<
   Prisma.TransactionClient,
-  "paymentTransaction" | "bookingModification"
+  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation"
 >;
+
+type UnpaidAskBooking = {
+  id: string;
+  status: string;
+  payment: {
+    id: string;
+    additionalAmountCents: number;
+    additionalPaymentStatus: string | null;
+    additionalPaymentIntentId: string | null;
+  } | null;
+};
 
 /**
  * The unpaid price ask a reduction on this booking may be set against, or
- * nothing. The `Payment` mirror says whether an ask is owed
- * (`isAdditionalPaymentOwed`, the chase's own predicate); the ledger rows say
- * which rows it is and whether any of them is review-raised.
+ * nothing: the ask the ledger rows carry, plus any ask whose mint failed and is
+ * waiting on its recovery (#3954, owner decision 9 Oct 2026). The settlement
+ * options, the save and the quote all read this, so they agree; anything it
+ * cannot size safely nets nothing, and the reduction settles as before.
  */
 export async function readUnpaidPriceAsk(
   db: UnpaidAskDb,
-  booking: {
-    id: string;
-    status: string;
-    payment: {
-      id: string;
-      additionalAmountCents: number;
-      additionalPaymentStatus: string | null;
-      additionalPaymentIntentId: string | null;
-    } | null;
-  },
+  booking: UnpaidAskBooking,
 ): Promise<UnpaidPriceAsk> {
   const payment = booking.payment;
-  if (!payment || !isAdditionalPaymentOwed({ bookingStatus: booking.status, payment })) {
+  if (!payment) return NO_UNPAID_PRICE_ASK;
+  const operations = await inFlightAskRecoveries(db, booking, payment);
+  if (operations.length === 0 && !isAdditionalPaymentOwed({ bookingStatus: booking.status, payment })) {
     return NO_UNPAID_PRICE_ASK;
   }
-  const rows = await db.paymentTransaction.findMany({
-    where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL, withdrawnAt: null },
+  const transactions = await db.paymentTransaction.findMany({
+    where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
@@ -124,8 +172,60 @@ export async function readUnpaidPriceAsk(
       reason: true,
       amountCents: true,
       stripePaymentIntentId: true,
+      createdAt: true,
+      withdrawnAt: true,
     },
   });
+  // Read only once something needs it: a chain whose rows match its mirror, or
+  // a waiting recovery to size.
+  let modifications: EditFigures[] | null = null;
+  const loadModifications = async () =>
+    (modifications ??= await db.bookingModification.findMany({
+      where: { bookingId: booking.id },
+      select: { id: true, priceDiffCents: true, changeFeeCents: true },
+    }));
+  const chain = await unpaidChain(booking, payment, transactions, loadModifications);
+  if (!chain) return NO_UNPAID_PRICE_ASK;
+  const recoveries =
+    operations.length > 0
+      ? pendingAskRecoveries(booking, payment, operations, transactions, await loadModifications())
+      : [];
+  if (!recoveries) return NO_UNPAID_PRICE_ASK;
+  const askCents =
+    chain.askCents + recoveries.reduce((sum, recovery) => sum + recovery.askCents, 0);
+  return askCents > 0 ? { askCents, rows: chain.rows, recoveries } : NO_UNPAID_PRICE_ASK;
+}
+
+type EditFigures = { id: string; priceDiffCents: number; changeFeeCents: number };
+
+type AskTransaction = {
+  id: string;
+  kind: PaymentTransactionKind;
+  source: PaymentSource;
+  status: PaymentStatus;
+  reason: string | null;
+  amountCents: number;
+  stripePaymentIntentId: string | null;
+  createdAt: Date;
+  withdrawnAt: Date | null;
+};
+
+/**
+ * The ask the ledger rows carry. The `Payment` mirror says whether one is owed
+ * (`isAdditionalPaymentOwed`, the chase's own predicate); the rows say which
+ * they are. Null - net nothing - when the mirror disagrees with its newest row
+ * or a row is review-raised.
+ */
+async function unpaidChain(
+  booking: UnpaidAskBooking,
+  payment: NonNullable<UnpaidAskBooking["payment"]>,
+  transactions: readonly AskTransaction[],
+  loadModifications: () => Promise<readonly EditFigures[]>,
+): Promise<{ askCents: number; rows: UnpaidPriceAskRow[] } | null> {
+  if (!isAdditionalPaymentOwed({ bookingStatus: booking.status, payment })) {
+    return { askCents: 0, rows: [] };
+  }
+  const rows = transactions.filter((row) => !row.withdrawnAt);
   let lastPaid = -1;
   rows.forEach((row, index) => {
     if (isCapturedTransactionStatus(row.status)) lastPaid = index;
@@ -144,16 +244,13 @@ export async function readUnpaidPriceAsk(
       { bookingId: booking.id, paymentId: payment.id },
       "An unpaid additional ask does not match its ledger row; a reduction settles without setting against it (#3954)",
     );
-    return NO_UNPAID_PRICE_ASK;
+    return null;
   }
-  const modifications = await db.bookingModification.findMany({
-    where: { bookingId: booking.id },
-    select: { id: true },
-  });
+  const modifications = await loadModifications();
   const reviewRaised = chain.some((row) =>
     modifications.some((modification) => isEditReviewChargeRequestRow(row, modification.id)),
   );
-  if (reviewRaised) return NO_UNPAID_PRICE_ASK;
+  if (reviewRaised) return null;
   return {
     askCents: live.amountCents,
     rows: chain.map((row) => ({
@@ -162,6 +259,97 @@ export async function readUnpaidPriceAsk(
       stripePaymentIntentId: row.stripePaymentIntentId,
     })),
   };
+}
+
+/** The additional-ask recoveries the runner will still make (`isPaymentRecoveryOperationInFlight`). */
+async function inFlightAskRecoveries(
+  db: UnpaidAskDb,
+  booking: UnpaidAskBooking,
+  payment: NonNullable<UnpaidAskBooking["payment"]>,
+): Promise<AskRecoveryOperation[]> {
+  // The replay mints nothing for a cancelled booking (#1358).
+  if (booking.status === BookingStatus.CANCELLED) return [];
+  const operations = await db.paymentRecoveryOperation.findMany({
+    where: {
+      paymentId: payment.id,
+      type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+      // Everything not finished, as the replay's own completion fences it;
+      // which of those will still run is `isPaymentRecoveryOperationInFlight`'s.
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      status: true,
+      attempts: true,
+      nextRetryAt: true,
+      idempotencyKey: true,
+      amountCents: true,
+      createdAt: true,
+    },
+  });
+  return operations.filter(
+    (operation) => isPaymentRecoveryOperationInFlight(operation) && operation.amountCents > 0,
+  );
+}
+
+type AskRecoveryOperation = {
+  id: string;
+  status: PaymentRecoveryOperationStatus;
+  attempts: number;
+  nextRetryAt: Date | null;
+  idempotencyKey: string;
+  amountCents: number;
+  createdAt: Date;
+};
+
+/**
+ * Asks whose mint failed and that their recovery will still mint, each sized
+ * exactly as that replay will size it (`sizeRecoveryReplayAsk`), less what it
+ * would carry from the rows' ask, which `unpaidChain` already counts. An
+ * overtaken recovery completes without minting (`isRecoveryOvertakenByLaterAsk`),
+ * so it is not owed. Null - net nothing - for a review charge's recovery (an
+ * officer's money, `INV-ADDPAY-040`) or one this cannot size.
+ */
+function pendingAskRecoveries(
+  booking: UnpaidAskBooking,
+  payment: NonNullable<UnpaidAskBooking["payment"]>,
+  operations: readonly AskRecoveryOperation[],
+  transactions: readonly AskTransaction[],
+  modifications: readonly EditFigures[],
+): PendingAskRecovery[] | null {
+  const pending: PendingAskRecovery[] = [];
+  for (const operation of operations) {
+    if (isRecoveryOvertakenByLaterAsk(operation, transactions)) continue;
+    const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(
+      operation.idempotencyKey,
+    );
+    const askCents =
+      bookingModificationId && !isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)
+        ? recoveryAskBeyondPaymentAskCents(
+            sizeRecoveryReplayAsk({
+              frozenAmountCents: operation.amountCents,
+              modification: modifications.find((row) => row.id === bookingModificationId) ?? null,
+              payment,
+            }),
+          )
+        : null;
+    if (!bookingModificationId || askCents === null) {
+      logger.warn(
+        { bookingId: booking.id, paymentId: payment.id, operationId: operation.id },
+        "An additional ask waiting on its recovery is a review charge or cannot be sized; a reduction settles without setting against it (#3954)",
+      );
+      return null;
+    }
+    pending.push({
+      id: operation.id,
+      bookingModificationId,
+      status: operation.status,
+      attempts: operation.attempts,
+      askCents,
+    });
+  }
+  return pending;
 }
 
 /** A retired ask's intent, and the durable cancellation queued for it. */
@@ -174,7 +362,8 @@ export type RetiredAdditionalAsk = {
 /**
  * Retire the ask a reduction was set against, inside the edit's transaction and
  * under its locks. Throws a 409 when a row was captured since it was read, so
- * the edit rolls back rather than release a member from money they just paid.
+ * the edit rolls back rather than release a member from money they just paid -
+ * or when a pending ask's retry claimed it since, and may be minting it now.
  */
 export async function retireUnpaidAskChain(
   tx: Prisma.TransactionClient,
@@ -223,20 +412,57 @@ export async function retireUnpaidAskChain(
     });
   }
 
+  for (const recovery of ask.recoveries) {
+    // THE RETRY NETS IT OFF (#3954, owner decision 9 Oct 2026): an ask whose
+    // mint failed is closed here, under the edit's locks, and what is left of
+    // it is minted after commit with the rest (`reissueUnpaidAdditionalAsk`).
+    // A retry minting it right now refuses the edit: closing the row under it
+    // would leave its old figure live beside the smaller ask.
+    if (recovery.status === PaymentRecoveryOperationStatus.PROCESSING) {
+      throw new ApiError(ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE, 409);
+    }
+    // THE FENCE: exactly the state read - only a claim moves `attempts`, so a
+    // retry that claimed it since rolls this edit back, and one that comes
+    // after finds nothing to claim.
+    const closed = await tx.paymentRecoveryOperation.updateMany({
+      where: {
+        id: recovery.id,
+        status: recovery.status,
+        attempts: recovery.attempts,
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        processingStartedAt: null,
+        succeededAt: now,
+        lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
+      },
+    });
+    if (closed.count !== 1) {
+      throw new ApiError(ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE, 409);
+    }
+  }
+
   const intentIds = ask.rows.flatMap((row) =>
     row.stripePaymentIntentId ? [row.stripePaymentIntentId] : [],
   );
-  if (intentIds.length > 0) {
+  if (intentIds.length > 0 || ask.recoveries.length > 0) {
     // The increase's supplementary invoice waits on its card payment and is
     // never raised before it, so nothing reached Xero for the ask; the parked
     // operation is retired, as a withdrawal retires one (`INV-ADDPAY-040`).
+    // An unminted ask's invoice, if one was parked, waits on its edit instead.
     await tx.xeroSyncOperation.updateMany({
       where: {
         status: "WAITING_PAYMENT",
         direction: "OUTBOUND",
-        OR: intentIds.map((intentId) => ({
-          requestPayload: { path: ["paymentIntentId"], equals: intentId },
-        })),
+        OR: [
+          ...intentIds.map((intentId) => ({
+            requestPayload: { path: ["paymentIntentId"], equals: intentId },
+          })),
+          ...ask.recoveries.map((recovery) =>
+            waitingSupplementaryInvoiceOperationsWhere(recovery.bookingModificationId),
+          ),
+        ],
       },
       data: {
         status: "CANCELLED",

@@ -21,6 +21,8 @@
 // kept the half-applied write would assert the opposite of the truth.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
+
 const h = vi.hoisted(() => {
   class BookingGuestRemovalError extends Error {
     constructor(
@@ -311,6 +313,7 @@ beforeEach(() => {
       zeroDollarAutoPaid: false,
       // #3954: no unpaid ask on this booking, so the removal retired none.
       retiredAdditionalAsks: [],
+      additionalAsk: NO_ADDITIONAL_ASK,
     };
   });
 });

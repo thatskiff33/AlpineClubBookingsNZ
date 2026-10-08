@@ -474,7 +474,7 @@ export async function repriceBookingAfterGuestAcceptance(
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
         // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
-        ...unpaidAskOffsetHistory(adjusted.unpaidAskOffsetCents),
+        ...unpaidAskOffsetHistory(adjusted),
         ...(promo.promoCoverage ? { promoCoverageNote: promo.promoCoverage.message } : {}),
       },
       priceDiffCents,

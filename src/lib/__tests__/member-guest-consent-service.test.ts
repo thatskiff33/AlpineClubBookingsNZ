@@ -40,6 +40,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NO_ADDITIONAL_ASK, reissueUnpaidAdditionalAsk } from "@/lib/additional-payment-ask";
+
 const h = vi.hoisted(() => {
   /**
    * The shared removal path's own error class, re-declared here because the whole
@@ -440,6 +442,8 @@ function removalResult(overrides: Record<string, unknown> = {}) {
     xeroAdditionalAmountCents: 0,
     zeroDollarAutoPaid: false,
     retiredAdditionalAsks: [],
+    // #3954: and asks for nothing smaller in its place.
+    additionalAsk: NO_ADDITIONAL_ASK,
     ...overrides,
   };
 }
@@ -1545,6 +1549,35 @@ describe("#3954: a decline or expiry whose reduction retired an unpaid ask settl
       idempotencyKey: `mod_guest_consent_${BOOKING}_mod-consent-1`,
     });
     expect(h.mint.mock.calls[0]?.[0].result).toBe(retired);
+  });
+
+  it("MUTATION: re-issues what is left of an ask whose failed mint the removal netted off, though no row was retired (retry nets it off)", async () => {
+    const netted = removalResult({ additionalAsk: reissueUnpaidAdditionalAsk({ askLeftCents: 3_000 }) });
+    h.removeGuest.mockImplementationOnce(async ({ guestId }: { guestId: string }) => {
+      world().guests.delete(guestId);
+      return netted;
+    });
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+
+    expect(h.mint).toHaveBeenCalledTimes(1);
+    expect(h.mint.mock.calls[0]?.[0].result).toBe(netted);
   });
 
   it("reaches no minter for a removal that retired nothing", async () => {

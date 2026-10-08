@@ -378,8 +378,13 @@ async function removeClaimedConsentGuest(
       removed: true,
       creditCents: (result.accountCreditAmountCents ?? 0) + result.appliedCreditGivenBackCents,
       xeroSettlement: guestRemovalXeroSettlement(result),
-      // #3954: the unpaid ask this removal's reduction retired, for after commit.
-      askRetirement: result.retiredAdditionalAsks.length > 0 ? result : undefined,
+      // #3954: the unpaid ask this removal's reduction retired, for after commit
+      // - its intents to cancel, or a smaller ask to mint; an ask whose failed
+      // mint the reduction netted off leaves only the second.
+      askRetirement:
+        result.retiredAdditionalAsks.length > 0 || result.additionalAsk.reissuesUnpaidAsk
+          ? result
+          : undefined,
     };
   } catch (err) {
     const refusal = consentRemovalRefusalMessage(err);
