@@ -527,7 +527,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
-  "src/lib/diagnostics/tools/packs/finance-evidence.ts:558",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts:555",
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -794,7 +794,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload<{ select: typeof … }>`, so the model IS
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
-  "src/lib/member-lodge-roster.ts:111",
+  "src/lib/member-lodge-roster.ts:115",
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:94",
   "src/lib/stuck-state-dashboard.ts:616",

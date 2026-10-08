@@ -221,3 +221,29 @@ export function resolvePartnerSharedHeadroom(
     Math.min(input.activeDoubleBedCount, ceiling - input.activeBedCount),
   );
 }
+
+/**
+ * Partner-shared spots an officer would remove by changing a lodge's saved
+ * configured capacity to `proposedCapacity` (#3440). The difference between
+ * the headroom the saved figure gives and the headroom the proposed one gives,
+ * both through `resolvePartnerSharedHeadroom` so there is one definition of
+ * the arithmetic. Zero when raising, unchanged, or when the lodge has no
+ * shareable doubles; never negative.
+ */
+export function resolvePartnerSpotsLostByCapacityChange(input: {
+  savedCapacity: number | null | undefined;
+  proposedCapacity: number;
+  activeBedCount: number;
+  activeDoubleBedCount: number;
+}): number {
+  const { savedCapacity, proposedCapacity, ...beds } = input;
+  const before = resolvePartnerSharedHeadroom({
+    ...beds,
+    configuredCapacity: savedCapacity,
+  });
+  const after = resolvePartnerSharedHeadroom({
+    ...beds,
+    configuredCapacity: proposedCapacity,
+  });
+  return Math.max(0, before - after);
+}

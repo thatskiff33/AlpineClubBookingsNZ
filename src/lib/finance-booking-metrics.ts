@@ -1,14 +1,18 @@
 import {
   BookingStatus,
   PaymentStatus,
-  PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
-import { summarizeAdditionalLedgerGap } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedPaymentSelect as sharedNetCollectedPaymentSelect,
+  summarizeNetCollectedWithLedgerGap,
+  type AdditionalLedgerGapSummary,
+} from "@/lib/additional-ledger-gap";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import logger from "@/lib/logger";
+import { buildBookingDeletedWhere } from "@/lib/booking-delete-visibility";
 import { prisma } from "@/lib/prisma";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import { type CalendarDate } from "@/lib/club-time";
@@ -30,7 +34,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
-import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { type CollectedCashSummary } from "@/lib/payment-net-collected";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 export { getFinanceBookingMetricsWindowDayCount };
@@ -109,27 +113,6 @@ const bookingMetricsSelect = Prisma.validator<Prisma.BookingSelect>()({
       creditAppliedCents: true,
       additionalAmountCents: true,
       additionalPaymentStatus: true,
-      // #2408: the ledger, not just the summary columns. The guard below has to
-      // tell a genuinely collected price increase (a captured ADDITIONAL row,
-      // which is therefore already inside `amountCents`) from a column that
-      // merely CLAIMS one, and only the transactions can answer that.
-      //
-      // ADDITIONAL rows only. The cash total comes from `Payment.amountCents`,
-      // never from the ledger — a payment can be captured with no PRIMARY row
-      // behind it (an organiser-settled group booking, anything written before
-      // the ledger existed), and rebuilding the total from rows would report
-      // such a booking as having collected nothing. So the primary rows are
-      // not needed, and a range covering a season should not drag them across
-      // the wire. `kind` is still selected and re-checked in code: the filter
-      // is an optimisation, not the correctness boundary.
-      transactions: {
-        where: { kind: PaymentTransactionKind.ADDITIONAL },
-        select: {
-          kind: true,
-          status: true,
-          amountCents: true,
-        },
-      },
     },
   },
 });
@@ -137,6 +120,24 @@ const bookingMetricsSelect = Prisma.validator<Prisma.BookingSelect>()({
 type BookingMetricsRecord = Prisma.BookingGetPayload<{
   select: typeof bookingMetricsSelect;
 }>;
+
+/**
+ * #3637 (#3372 decision A): Net Collected reads its own payments - every
+ * booking staying in the window, ANY status - through the shared Net Collected
+ * select, widened by the stay dates the window test reads.
+ * `summarizeNetCollectedWithLedgerGap` drops soft-deleted bookings and runs the
+ * #2408 ledger-gap guard over the same payments.
+ */
+const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  ...sharedNetCollectedPaymentSelect,
+  booking: {
+    select: {
+      ...sharedNetCollectedPaymentSelect.booking.select,
+      checkIn: true,
+      checkOut: true,
+    },
+  },
+});
 
 /**
  * How many booking ids to name in the ledger-gap alarm. Enough to act on,
@@ -236,20 +237,22 @@ interface FinanceBookingMetricsPaymentSummary {
   >;
   /**
    * Gross captured cash: `Payment.amountCents` summed over the payments whose
-   * status says money was taken.
+   * status says money was taken. It, `refundedCents`, `handBackOwedCents`, `keptCreditCents`, `netCollectedCents` and
+   * the two ledger-gap fields count the Net Collected scope (#3637): every
+   * booking staying in the window, ANY status. Every OTHER field here counts
+   * the status-listed contributing bookings. Neither counts a soft-deleted one.
    *
-   * `reconcilePaymentAggregates` (src/lib/payment-transactions.ts) sets that
-   * column to the sum of EVERY captured ledger row — PRIMARY and ADDITIONAL
-   * alike — so this figure ALREADY contains any collected price increase.
-   * #2408 renamed it from `capturedPrimaryCents`, which read as "the primary
-   * leg only" and invited exactly the double count it caused: the net below
-   * used to add `capturedAdditionalCents` to it and report a $121 booking with
-   * a collected $21 addition as $142 collected.
+   * `reconcilePaymentAggregates` sets the column to the sum of EVERY captured
+   * ledger row, PRIMARY and ADDITIONAL alike, so this figure ALREADY contains a
+   * collected price increase. #2408 renamed it from `capturedPrimaryCents`,
+   * which invited the double count it caused ($121 + $21 reported as $142).
    */
   capturedGrossCents: number;
   /**
-   * How much of `capturedGrossCents` came from a later price increase. A
-   * BREAKDOWN of that total, never an addend beside it (#2408).
+   * How much captured money came from a later price increase — a BREAKDOWN,
+   * never an addend beside the gross (#2408). It counts the STATUS-LISTED
+   * bookings, not the Net Collected scope, so a cancelled booking's collected
+   * increase is in the gross but not here.
    */
   capturedAdditionalCents: number;
   /**
@@ -262,7 +265,8 @@ interface FinanceBookingMetricsPaymentSummary {
   /**
    * #2408 guard. Money on payments that CLAIM a collected price increase
    * (`additionalPaymentStatus = "SUCCEEDED"`, non-zero `additionalAmountCents`)
-   * with no captured ADDITIONAL `PaymentTransaction` behind it.
+   * with no captured ADDITIONAL `PaymentTransaction` behind it. Over the Net
+   * Collected scope (#3637): the same payments `netCollectedCents` counts.
    *
    * That is the one shape in which `capturedGrossCents` does NOT contain the
    * addition, and therefore the one shape in which `netCollectedCents`
@@ -276,9 +280,13 @@ interface FinanceBookingMetricsPaymentSummary {
   additionalLedgerGapCents: number;
   additionalLedgerGapBookings: number;
   refundedCents: number;
+  /** Cancelled bookings' open hand-back refunds, taken off at once (#3372, 3 Oct 2026). */
+  handBackOwedCents: number;
+  /** Applied account credit cancellations kept (#3372 owner decision, 3 Oct 2026). */
+  keptCreditCents: number;
   /**
-   * Cash the club actually holds for these bookings:
-   * `capturedGrossCents - refundedCents`, floored at zero. Never sums the gross
+   * `summarizeCollectedCash`'s figure: `capturedGrossCents - refundedCents -
+   * handBackOwedCents + keptCreditCents`, each payment netted on its own. Never sums the gross
    * and additional columns — see `capturedGrossCents` (#2408).
    */
   netCollectedCents: number;
@@ -403,6 +411,8 @@ function createZeroPaymentSummary(): FinanceBookingMetricsPaymentSummary {
     additionalLedgerGapCents: 0,
     additionalLedgerGapBookings: 0,
     refundedCents: 0,
+    handBackOwedCents: 0,
+    keptCreditCents: 0,
     netCollectedCents: 0,
     creditAppliedCents: 0,
     changeFeeCents: 0,
@@ -456,14 +466,6 @@ function minDate(left: Date, right: Date): Date {
 
 function maxDate(left: Date, right: Date): Date {
   return left.getTime() >= right.getTime() ? left : right;
-}
-
-function minDateFromList(values: Date[]): Date {
-  return values.reduce((currentMin, value) => minDate(currentMin, value));
-}
-
-function maxDateFromList(values: Date[]): Date {
-  return values.reduce((currentMax, value) => maxDate(currentMax, value));
 }
 
 function normalizeRealizedWindow(
@@ -700,12 +702,19 @@ function getAdditionalPaymentStatusKey(
 }
 
 function summarizePayments(
-  bookings: BookingMetricsRecord[]
+  bookings: BookingMetricsRecord[],
+  collectedCash: CollectedCashSummary,
+  ledgerGap: AdditionalLedgerGapSummary,
 ): FinanceBookingMetricsPaymentSummary {
   const summary = createZeroPaymentSummary();
-  const ledgerGap = summarizeAdditionalLedgerGap(bookings);
 
   summary.bookingCount = bookings.length;
+  // #3637: these seven are over the Net Collected scope, not the loop below.
+  summary.capturedGrossCents = collectedCash.capturedGrossCents;
+  summary.refundedCents = collectedCash.refundedCents;
+  summary.handBackOwedCents = collectedCash.handBackOwedCents;
+  summary.keptCreditCents = collectedCash.keptCreditCents;
+  summary.netCollectedCents = collectedCash.netCollectedCents;
   summary.additionalLedgerGapCents = ledgerGap.additionalLedgerGapCents;
   summary.additionalLedgerGapBookings = ledgerGap.additionalLedgerGapBookings;
 
@@ -725,26 +734,8 @@ function summarizePayments(
       getAdditionalPaymentStatusKey(booking)
     ] += 1;
 
-    // #2408. `Payment.amountCents` is the GROSS capture, not the primary leg:
-    // `reconcilePaymentAggregates` (src/lib/payment-transactions.ts) sets it to
-    // the sum of ALL captured ledger rows, PRIMARY and ADDITIONAL alike. So a
-    // $121 booking whose $21 addition captured already carries
-    // `amountCents = 121`, and the old net added the same $21 a second time to
-    // report $142 collected. The addition is counted ONCE, here, by counting
-    // the gross figure and nothing else.
-    //
-    // `capturedAdditionalCents` survives as the BREAKDOWN — how much of that
-    // gross came from a later price increase — and must never be added back.
-    //
-    // Read from the COLUMN, never rebuilt by summing ledger rows. A captured
-    // payment can legitimately have no PRIMARY row — an organiser-settled group
-    // booking, or anything settled before the ledger existed — so a
-    // ledger-derived total would report a booking that collected $121 as having
-    // collected nothing, or (worse, once an addition exists) as having
-    // collected only the $21.
-    const capturedGrossCents = isCapturedPaymentStatus(payment.status)
-      ? payment.amountCents
-      : 0;
+    // #2408: a BREAKDOWN of the gross `amountCents` (which already holds a
+    // captured increase), never added back to it.
     const claimsCollectedAdditional =
       payment.additionalPaymentStatus === "SUCCEEDED" &&
       payment.additionalAmountCents > 0;
@@ -752,7 +743,6 @@ function summarizePayments(
       ? payment.additionalAmountCents
       : 0;
 
-    summary.capturedGrossCents += capturedGrossCents;
     summary.capturedAdditionalCents += capturedAdditionalCents;
     if (
       isAdditionalPaymentOwed({ bookingStatus: booking.status, payment })
@@ -760,15 +750,9 @@ function summarizePayments(
       summary.outstandingAdditionalCents += payment.additionalAmountCents;
       summary.outstandingAdditionalBookings += 1;
     }
-    summary.refundedCents += payment.refundedAmountCents;
     summary.creditAppliedCents += payment.creditAppliedCents;
     summary.changeFeeCents += payment.changeFeeCents;
   }
-
-  summary.netCollectedCents = Math.max(
-    summary.capturedGrossCents - summary.refundedCents,
-    0
-  );
 
   if (ledgerGap.bookingIds.length > 0) {
     logger.error(
@@ -781,7 +765,7 @@ function summarizePayments(
         additionalLedgerGapCents: summary.additionalLedgerGapCents,
         netCollectedCents: summary.netCollectedCents,
       },
-      "Finance metrics: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net collected cash may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure."
+      "Finance metrics: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure."
     );
   }
 
@@ -852,7 +836,9 @@ function accumulateBookingIntoBucket<Status extends string>(input: {
   }
 }
 
-function getBookingDateRange(booking: BookingMetricsRecord) {
+type BookingStayDates = Pick<BookingMetricsRecord, "checkIn" | "checkOut">;
+
+function getBookingDateRange(booking: BookingStayDates) {
   return {
     checkInDate: new Date(formatDateOnly(booking.checkIn) + "T00:00:00.000Z"),
     checkOutDate: new Date(
@@ -862,7 +848,7 @@ function getBookingDateRange(booking: BookingMetricsRecord) {
 }
 
 function getContributingDates(input: {
-  booking: BookingMetricsRecord;
+  booking: BookingStayDates;
   effectiveFromDate: Date | null;
   effectiveToDate: Date | null;
 }) {
@@ -1258,29 +1244,30 @@ export async function getFinanceBookingMetrics(
 
   const { capacity: lodgeCapacity, bookingLodgeWhere } =
     await resolveMetricsCapacityAndScope(query.lodgeId);
-  const bookings =
-    activeWindows.length > 0
-      ? await prisma.booking.findMany({
-          where: {
-            ...bookingLodgeWhere,
-            checkIn: {
-              lte: maxDateFromList(
-                activeWindows.map((window) => window.toDate)
-              ),
-            },
-            checkOut: {
-              gt: minDateFromList(
-                activeWindows.map((window) => window.fromDate)
-              ),
-            },
-            status: {
-              in: getStatusFilter(query),
-            },
-          },
-          orderBy: [{ checkIn: "asc" }, { id: "asc" }],
-          select: bookingMetricsSelect,
-        })
-      : [];
+  // #3637: each window's own overlap, ORed - not one span from the earlier
+  // start to the later end, which reads every stay between two distant
+  // windows. Both reads still drop a stay with no night in a window below.
+  const stayOverlapWhere: Prisma.BookingWhereInput | null =
+    activeWindows.length > 0 ? {
+      ...bookingLodgeWhere,
+      OR: activeWindows.map((w) => ({
+        checkIn: { lte: w.toDate },
+        checkOut: { gt: w.fromDate },
+      })),
+    } : null;
+  const [bookings, netCollectedCandidates] = stayOverlapWhere
+      ? await Promise.all([
+          prisma.booking.findMany({
+            where: { ...stayOverlapWhere, ...buildBookingDeletedWhere("hide"), status: { in: getStatusFilter(query) } },
+            orderBy: [{ checkIn: "asc" }, { id: "asc" }],
+            select: bookingMetricsSelect,
+          }),
+          prisma.payment.findMany({
+            where: { booking: { is: stayOverlapWhere } },
+            select: netCollectedPaymentSelect,
+          }),
+        ])
+      : [[], []];
   const contributingBookingIds = new Set<string>();
   const realized = realizedWindow
     ? buildRealizedMetrics(
@@ -1298,8 +1285,19 @@ export async function getFinanceBookingMetrics(
         lodgeCapacity,
       )
     : undefined;
+  // #3637: the stay figures' window test without their status list; the read
+  // above is only each window's overlap.
+  const staysInAWindow = ({ booking }: { booking: BookingStayDates }) =>
+    [realizedWindow, forwardWindow].some(
+      (window) => window !== null && getContributingDates({ booking, ...window }).dates.length > 0,
+    );
+  const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(
+    netCollectedCandidates.filter(staysInAWindow),
+  );
   const paymentSummary = summarizePayments(
-    bookings.filter((booking) => contributingBookingIds.has(booking.id))
+    bookings.filter((booking) => contributingBookingIds.has(booking.id)),
+    collected,
+    ledgerGap,
   );
   const contributingBookings = bookings.filter((booking) =>
     contributingBookingIds.has(booking.id),

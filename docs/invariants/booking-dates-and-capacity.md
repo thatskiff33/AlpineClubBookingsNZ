@@ -724,16 +724,24 @@ derivation).
   explicit guest-night rows do not override that envelope for this metric.
   Allocate all integer cents of `finalPriceCents` across the
   booking's complete stay before slicing the report range (100/3 = 34/33/33).
-  This is **Booked revenue**, not cash. Net collected cash stays payment-derived
-  (`Payment.amountCents` less refunds, with a captured addition already inside
-  that amount; #2408), and outstanding additions remain separate (#2350). The
+  This is **Booked revenue**, not cash. Net Collected is money kept: captured
+  cash less refunds (a captured addition already inside it; #2408), plus
+  account credit a cancellation kept, less refunds still owed back on cancelled
+  bookings. Outstanding additions remain separate (#2350). The
   #2408 guard is binding here too: a collected-addition claim without captured
   `ADDITIONAL` transaction evidence must not change cash arithmetic or leak
   transaction rows, but must log and expose an aggregate possible-understatement
   warning in the page, CSV, and PDF. All Reports money presentation preserves
   exact integer cents.
   Occupancy is the deliberate exception within the page: it stays limited to
-  PAID/COMPLETED and continues to exclude custodian occupancy (#2286).
+  PAID/COMPLETED and continues to exclude custodian occupancy (#2286). Net
+  Collected is the second: it counts bookings of any status and never a
+  deleted one, through `isInNetCollectedBookingScope` (#3372 decision A). Each
+  payment adds only money it took and still holds, so a cancelled booking never
+  paid adds nil; a cancelled one also loses an open hand-back and adds credit it
+  kept (`getNetCollectedPaymentParts`; owner, PR #3811 and #3372). A refunded
+  status is money taken only with capture evidence
+  (`paymentShowsCaptureEvidence`), never a Xero-folded mirror alone.
 
 ## Capacity and allocation
 
@@ -1270,8 +1278,11 @@ capacity or double-booking violation.
   nights a refusal names, and in the payload shape those reach the member
   through (#2930) — while a member may join the waitlist over held nights and
   is never promoted while the hold applies; only admin surfaces are told a hold
-  is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
-  "Exclusive whole-lodge hold — a non-bypassable block".
+  is in effect — with ONE exception: where the member lodge roster runs, it
+  states the held nights without naming or counting the party (`INV-PRIV-017`,
+  owner decision 6 Oct 2026, #3474). Full scenario table in
+  `docs/CAPACITY_MODEL.md`, "Exclusive whole-lodge hold — a non-bypassable
+  block".
 
 ### INV-CAP-022
 

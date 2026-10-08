@@ -1517,30 +1517,34 @@ total at apply).
 **Related: `INV-PAY-101`** (the settlement decision).
 
 - **Two booking-edit credit notes carry wordings of their own, as words only**
-  (#3536; owner decisions, 2 and 3 October 2026). A booking change that lowers
+  (#3536; owner decisions, 2 and 3 October 2026). A change that lowers
   an UNPAID pay-on-account invoice raises a note that refunds nothing, worded
   *Invoice correction — nothing refunded*. An edit-review refund paid back by
-  hand (the `local-allocation` route) is worded *Refunded in cash* only when the
-  officer resolving it says it went back in cash. The app never infers cash
-  from "marked paid by hand", which covers bank transfers recorded outside Xero
-  too; with no answer the note keeps the bank-transfer wording. The settle
-  screen asks only where that route applies, and the completion re-chooses the
-  route under its lock. The applied-credit remainder note and the membership
-  cancellation credit note keep their own wordings.
+  hand (the `local-allocation` route) is worded *Refunded in cash* only when
+  the officer resolving it says so: its modification note, or on a
+  since-cancelled booking its refund note (#3935). The app never infers cash
+  from "marked paid by hand", which covers bank transfers recorded outside
+  Xero; unanswered, the note keeps the bank-transfer wording. The settle
+  screen asks only where that route applies; the completion re-chooses it under
+  its lock. The applied-credit remainder and membership
+  cancellation notes keep their own wordings.
 - **Neither is a refund method, and neither moves a settlement.** A
-  modification credit note is allocated against the original invoice and never
-  settled by a payment. A cash hand-back keeps the internet-banking method for
-  the ledger line and everything else; only the words differ.
+  modification note is allocated against the original invoice; a refund note's
+  settling payment keeps the bank-transfer account and reference. A cash
+  hand-back keeps the internet-banking method.
 - **The wording travels with the decision.** It rides as `noteWording` beside
-  the method in the outbox payload and on the recorded operation, and is read by
-  the one `readModificationNoteWording`, so a retry, or the repair tool
-  re-queueing a lost note, says what the first attempt did. A row without the field keeps its old wording. A caller's
-  own method, a Stripe refund, or a paid or unstated payment status is never an
+  the method in the outbox payload, read by `readModificationNoteWording` (a
+  refund note: `readRefundNoteWording`, cash only beside internet banking, so a
+  card note never stores it). An operator retry or requeue keeps it; the repair
+  tool's `QUEUE_REFUND_CREDIT_NOTE` for a lost row carries neither method nor
+  wording. A row without the field keeps its old wording. A caller's own
+  method, a Stripe refund, or a paid or unstated payment status is never an
   invoice correction.
 - Home: `src/lib/xero-refund-method.ts`, censused over `src/lib` with the other
   wordings. Pinned by `xero-booking-edit-settlement.test.ts`,
   `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
   `xero-operation-retry.test.ts`, `xero-booking-repair.test.ts`,
+  `xero-operation-outbox.test.ts`, `xero-operation-outbox-payload.test.ts`,
   `booking-payment-state.test.ts`,
   `manual-refund-task-queue-financial-review.test.tsx` and
   `resolve-route.test.ts`.

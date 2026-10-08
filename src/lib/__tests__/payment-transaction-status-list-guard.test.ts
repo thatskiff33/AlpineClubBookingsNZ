@@ -223,13 +223,12 @@ function unexplainedCapturedStatusCopies(files: readonly SourceFile[]): string[]
  */
 const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
   ["src/lib/additional-payment-ask.ts", "census SQL over payment.status"],
-  ["src/lib/admin-reports.ts", "payment.status in summarizeNetCollectedCash"],
   ["src/lib/booking-delete.ts", "payment.status in hasCapturedOrCreditedPayment"],
   ["src/lib/booking-ledger-group-child-plan.ts", "a group child's payment.status: which children a settlement paid (#3854)"],
   ["src/lib/booking-ledger-projection-census-classes.ts", "payment.status in nothingCapturedFaceCents (#3583)"],
   ["src/lib/booking-ledger-projection-census-group.ts", "settlement.status: a share's settlement captured, REFUNDED included (#3854 K2)"],
   ["src/lib/booking-ledger-projection-census.ts", "payment.status in hasMoneyColumns (#3583)"],
-  ["src/lib/finance-booking-metrics.ts", "payment.status for capturedGrossCents"],
+  ["src/lib/payment-net-collected.ts", "payment.status in netCollectedPaymentTookMoney (#3372)"],
   ["src/lib/refunded-total-shortfall-audit.ts", "Prisma payment.findMany status filter"],
   ["src/lib/xero-booking-edit-conditions.ts", "primary-invoice payment.status"],
   ["src/lib/xero-booking-invoices.ts", "booking.payment.status for allocation and invoice payment"],
@@ -445,10 +444,24 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
     expect(source).toMatch(/status:\s*\{\s*in:\s*\[\.\.\.CAPTURED_PAYMENT_STATUS_LIST\]\s*\}/);
   });
 
+  it("finance metrics asks the shared Net Collected fold, not the status list (#3637)", () => {
+    // Folded in from #3372's additions to the retired
+    // `captured-status-inline-list-guard.test.ts`. Finance (like Reports) no
+    // longer reads `Payment.status` itself: its captured question is Net
+    // Collected, asked of `summarizeCollectedCash` through the shared fold, so
+    // it is not in the aggregate reader registry above.
+    const finance = stripComments(
+      readFileSync(join(process.cwd(), "src/lib/finance-booking-metrics.ts"), "utf8"),
+    );
+    expect(finance).toMatch(
+      /import\s*\{[^}]*\bsummarizeNetCollectedWithLedgerGap\b[^}]*\}\s*from\s*"@\/lib\/additional-ledger-gap"/,
+    );
+  });
+
   it("permits an explicitly registered module that reads both authorities", () => {
     expect(unregisteredAggregateCapturedStatusReaders([
       {
-        file: "src/lib/admin-reports.ts",
+        file: "src/lib/xero-booking-invoices.ts",
         source: "import { isCapturedPaymentStatus } from '@/lib/booking-payment-state'; import { isCapturedTransactionStatus } from '@/lib/payment-transaction-status';",
       },
     ])).toEqual([]);

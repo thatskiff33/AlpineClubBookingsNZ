@@ -2857,6 +2857,63 @@ describe("createXeroInvoiceForBooking", () => {
         expect.anything()
       );
     });
+
+    // #3637: the capture decision now asks `isCapturedPaymentStatus` instead
+    // of this module's own copy of the list. Every Payment status, with net
+    // cash and applied credit on the row, pins both decisions the list makes
+    // here - record the invoice payment, allocate the applied credit - and the
+    // payment's amount, reference and idempotency key, so the swap is
+    // behaviour-identical.
+    it.each([
+      ["SUCCEEDED", true],
+      ["PARTIALLY_REFUNDED", true],
+      ["REFUNDED", true],
+      ["PENDING", false],
+      ["PROCESSING", false],
+      ["FAILED", false],
+    ])("%s: records the payment and allocates credit = %s", async (status, captured) => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        repayBooking({
+          status,
+          amountCents: 7000,
+          refundedAmountCents: 0,
+          creditAppliedCents: 2000,
+        })
+      );
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_repay"
+      );
+
+      const createPayment = mocks.xeroClientInstance.accountingApi.createPayment;
+      if (captured) {
+        expect(createPayment).toHaveBeenCalledTimes(1);
+        const [, xeroPayment, idempotencyKey] = createPayment.mock.calls[0];
+        expect(xeroPayment).toMatchObject({
+          invoice: { invoiceID: "inv_repay" },
+          amount: 70,
+          reference: "Stripe pi_repay",
+        });
+        expect(idempotencyKey).toBe("payment:pay_1:invoice-payment:v1");
+        expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith(
+          "booking_1",
+          expect.anything()
+        );
+      } else {
+        expect(createPayment).not.toHaveBeenCalled();
+        expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
+      }
+      // A status that never captured is not a "skipped" payment either.
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_1",
+        expect.objectContaining({
+          responsePayload: expect.objectContaining({
+            paymentSkipped: false,
+            paymentSkipReason: null,
+          }),
+        })
+      );
+    });
   });
 });
 

@@ -231,6 +231,55 @@ export function getRemainingRefundableCentsNetOf(
 }
 
 /**
+ * #3372: ONE payment row's amount net of what has gone back out of it —
+ * `amountCents - refundedAmountCents`, with NO status gate and no floor. It is
+ * the figure the payments list's "Amount (net)" column shows for every row
+ * (`INV-PAY-047`), and the order that column sorts in, so a list whose headline
+ * is net cannot be sorted or described by a different sum.
+ *
+ * NOT `getRemainingRefundableCents` above, which asks a different question —
+ * "how much more could a refund take out?" — and so answers 0 whenever nothing
+ * was captured: a PENDING or FAILED row has nothing to refund, but its row still
+ * shows its amount. Routing the column through that helper would blank every
+ * unpaid row.
+ *
+ * `refundedAmountCents` counts cancellation credit to the member's account as
+ * well as money back to the card (`INV-PAY-050`), so "net of refunds and
+ * credits" is the honest reading, not "cash the club holds".
+ *
+ * Both fields are REQUIRED, not the optional `BookingPaymentState` shape: a row
+ * loaded without `refundedAmountCents` would otherwise read as unrefunded and
+ * print the gross — the #3340 misreading this helper exists to prevent.
+ */
+export function getPaymentNetOfRefundsCents(payment: {
+  amountCents: number;
+  refundedAmountCents: number;
+}): number {
+  return payment.amountCents - payment.refundedAmountCents;
+}
+
+/**
+ * #3372: the "{gross} paid, {refunded} refunded or credited" line printed
+ * beneath a net headline, so the arithmetic is on screen — the one wording for
+ * the payments list, the dashboard card and the change-requests panel.
+ *
+ * Returns `null` when nothing was refunded or credited, and every caller renders
+ * the line only when it is non-null, so the guard lives here once rather than
+ * at three sites. The caller supplies its own cents formatter (exact cents —
+ * never a rounded one, which could disagree with the headline by a dollar), so
+ * this leaf keeps no formatting import. It makes no net-versus-gross choice of
+ * its own: the caller decides which sums it passes.
+ */
+export function formatPaidRefundedBreakdown(
+  grossCents: number,
+  refundedCents: number,
+  formatCents: (cents: number) => string,
+): string | null {
+  if (refundedCents <= 0) return null;
+  return `${formatCents(grossCents)} paid, ${formatCents(refundedCents)} refunded or credited`;
+}
+
+/**
  * The base a paid-path cancellation tiers its refund off (#1031, INV-PAY-018) -
  * the one derivation, shared by the executed cancel (`booking-cancel.ts`) and
  * the preview a member sees before confirming (`booking-route-decisions.ts`),
@@ -325,8 +374,8 @@ export function cancelTieredAppliedCreditCents(
  * inbound reconcile folds invoice-applied modification credit notes into
  * `refundedAmountCents` / `PARTIALLY_REFUNDED` on never-captured Internet
  * Banking payments, which is bookkeeping, not cash. The one home for that rule
- * (`INV-SSOT-001`, #3630): `booking-cancel.ts` asks it after a ledger query,
- * `cancel-flattened-payment-backfill.ts` after an in-memory ledger read.
+ * (`INV-SSOT-001`, #3630); every caller asks it through
+ * `paymentShowsCaptureEvidence` below, after its own ledger read.
  */
 export function stripeRefundMirrorShowsCapture(payment: {
   source: string;
@@ -339,6 +388,19 @@ export function stripeRefundMirrorShowsCapture(payment: {
       payment.status === "PARTIALLY_REFUNDED" ||
       payment.refundedAmountCents > 0)
   );
+}
+
+/**
+ * #1473/#1491: THE capture evidence for a payment whose status cannot be taken
+ * at its word - a captured ledger row (each caller's own read), else the STRIPE
+ * mirror. One home (`INV-SSOT-001`): `booking-cancel.ts`, the flattened-status
+ * backfill and Net Collected (`netCollectedPaymentTookMoney`) all ask it.
+ */
+export function paymentShowsCaptureEvidence(
+  payment: { source: string; status: string; refundedAmountCents: number },
+  hasCapturedLedgerRow: boolean,
+): boolean {
+  return hasCapturedLedgerRow || stripeRefundMirrorShowsCapture(payment);
 }
 
 /**
