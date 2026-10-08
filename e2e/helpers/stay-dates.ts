@@ -16,12 +16,10 @@
 // window a few weeks out is always in-season on any run date — see
 // SEEDED_SEASONS (prisma/e2e-fixtures.ts) and docs/E2E_PLAYWRIGHT.md.
 import {
-  IB_WINDOW,
   relDateOnly,
+  SEEDED_BOOKING_WINDOWS,
   SEEDED_SEASONS,
   shiftDateOnly,
-  WAITLIST_FULL_WINDOW,
-  WAITLIST_OFFER_WINDOW,
 } from "../../prisma/e2e-fixtures";
 import {
   calendarDateParts,
@@ -31,17 +29,21 @@ import { must } from "../../src/lib/indexed-access";
 
 const FIRST_WINDOW_OFFSET_DAYS = 21;
 
-// The September fixture windows are FIXED dates while stayWindow Mondays drift
-// weekly with the run date, so an index periodically lands ON one of them —
-// including the seeded-FULL waitlist window (22 guests), where a spec's
-// booking creation is refused outright (#1703; first observed as #1686's
-// admin-override collision). Every reserved Monday is skipped for every index,
-// so windows stay mutually disjoint AND clear of the fixtures on all run dates.
-const RESERVED_WINDOW_CHECKINS = new Set<string>([
-  IB_WINDOW.checkIn,
-  WAITLIST_FULL_WINDOW.checkIn,
-  WAITLIST_OFFER_WINDOW.checkIn,
-]);
+// Every night a seeded booking already holds. A stayWindow Monday is skipped
+// when EITHER of its nights is one of these, for every index, so windows stay
+// mutually disjoint AND clear of every seeded booking on all run dates.
+//
+// Reserving whole nights, not just check-in Mondays, is the point (#4002). The
+// Monday-aligned fixtures (IB, waitlist) were the only ones reserved before,
+// first because the seeded-FULL waitlist window refuses a booking outright
+// (#1703, #1686). The other seeded windows are offset by days, so they slide a
+// weekday per run date while a stayWindow Monday holds for a week; on two run
+// dates in every seven `rosterEdit` — a PAID booking with Alice on it — sat on
+// stayWindow(15)'s nights and the guest-promo-code-chips spec stalled on
+// Alice's member-night conflict at the guests step.
+const RESERVED_FIXTURE_NIGHTS = new Set<string>(
+  SEEDED_BOOKING_WINDOWS.flatMap((window) => window.nights),
+);
 
 // Seeded booking seasons (relative; defined in prisma/e2e-fixtures.ts, written
 // by prisma/seed.ts): a Winter band and a Summer band with a deliberate ~30-day
@@ -184,15 +186,16 @@ function dayOfWeek(dateOnly: string): number {
 }
 
 // Window n = the (n+1)th usable Monday at least FIRST_WINDOW_OFFSET_DAYS from
-// today, staying Mon+Tue nights (checkout Wednesday). A Monday is usable when it
-// is neither a reserved fixture check-in nor in a seeded-season gap. Each spec
-// uses its own index so bookings never collide on a member-night.
+// today, staying Mon+Tue nights (checkout Wednesday). A Monday is usable when
+// neither night is held by a seeded booking and both nights are in one seeded
+// season. Each spec uses its own index so bookings never collide on a
+// member-night.
 export function stayWindow(index: number): StayWindow {
   const earliest = relDateOnly(FIRST_WINDOW_OFFSET_DAYS);
   const daysUntilMonday = (8 - dayOfWeek(earliest)) % 7; // Monday === 1
   let monday = shiftDateOnly(earliest, daysUntilMonday);
   let remaining = index;
-  // Walk Mondays, skipping reserved fixture check-ins and any window that would
+  // Walk Mondays, skipping seeded-booking nights and any window that would
   // fall outside a seeded season (e.g. the October 2026 gap), until the index-th
   // usable one. Bounded by MAX_MONDAYS so a run date past the last seeded season
   // fails loudly (reseed required) instead of looping forever.
@@ -200,7 +203,8 @@ export function stayWindow(index: number): StayWindow {
   for (let step = 0; step < MAX_MONDAYS; step += 1) {
     const nights = [monday, shiftDateOnly(monday, 1)];
     const usable =
-      !RESERVED_WINDOW_CHECKINS.has(monday) && isWindowInSeededSeason(nights);
+      !nights.some((night) => RESERVED_FIXTURE_NIGHTS.has(night)) &&
+      isWindowInSeededSeason(nights);
     if (usable) {
       if (remaining === 0) {
         return {
@@ -230,15 +234,16 @@ export function stayWindow(index: number): StayWindow {
 //
 // Two ceilings bound this stride, and BOTH must be re-checked before it (or a
 // base index) is raised:
-//  - Seeded seasons. They cover roughly 79 usable Mondays from the first window
-//    (winter runs to +239 days, summer from +270 to +599 — see SEEDED_SEASONS),
-//    so the highest index in use today (base 28 attempt 2 = 60, ≈ +470 days)
-//    stays inside them with ~19 Mondays of headroom; stayWindow still throws
-//    loudly if a run date ever changes that.
+//  - Seeded seasons. They cover 67–73 usable Mondays from the first window,
+//    depending on the weekday of the run date (winter runs to +239 days, summer
+//    from +270 to +599 — see SEEDED_SEASONS — less the Mondays whose nights a
+//    seeded booking holds, #4002). The highest index in use today (base 28
+//    attempt 2 = 60, at most ≈ +550 days) therefore has at least 6 Mondays of
+//    headroom; stayWindow still throws loudly if a run date ever changes that.
 //  - Calendar month hops. A spec reaches these dates by clicking the booking
 //    calendar's "Next ›" one month at a time, bounded by MAX_MONTH_HOPS in
-//    e2e/helpers/booking.ts (24). Stay index 60 is ≈ 16 month hops, so even a
-//    calendar-driven spec clears it — and the specs on the highest bases
+//    e2e/helpers/booking.ts (24). Stay index 60 is at most 19 month hops (measured over a year of run dates), so
+//    even a calendar-driven spec clears it — and the specs on the highest bases
 //    (locked-out-pickup-and-pay) create their bookings over the API and never
 //    open the calendar at all. This ceiling was missed when the stride was first
 //    chosen: the old bound of 12 hops was already the exact worst case of the
