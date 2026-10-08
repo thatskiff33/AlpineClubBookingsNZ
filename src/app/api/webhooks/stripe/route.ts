@@ -99,8 +99,10 @@ export async function POST(request: NextRequest) {
   // rule left a live-only club unable to verify). Best-effort, never affects
   // the webhook response, written at most once per secret, and verify-reset
   // drops it on any credential change so a green badge cannot survive a
-  // signing-secret swap.
-  await recordStripeWebhookVerified();
+  // signing-secret swap. It is handed the secret this event was verified with,
+  // so an event checked under a secret replaced meanwhile cannot vouch for the
+  // new one.
+  await recordStripeWebhookVerified(webhookSecret);
 
   const result = await processStripeWebhookEvent(event);
   return NextResponse.json(result.body, result.init);

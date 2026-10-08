@@ -76,6 +76,9 @@ describe("Stripe webhook route — fail-closed + verified marker (#2082)", () =>
     const res = await POST(signedRequest());
     expect(res.status).toBe(200);
     expect(mockRecordVerified).toHaveBeenCalledTimes(1);
+    // The marker is handed the secret the HMAC was checked against, so it can
+    // refuse to vouch for a secret saved after this event was verified.
+    expect(mockRecordVerified).toHaveBeenCalledWith("whsec_test");
     expect(mockProcessEvent).toHaveBeenCalledTimes(1);
   });
 
@@ -91,6 +94,7 @@ describe("Stripe webhook route — fail-closed + verified marker (#2082)", () =>
     const res = await POST(signedRequest());
     expect(res.status).toBe(200);
     expect(mockRecordVerified).toHaveBeenCalledTimes(1);
+    expect(mockRecordVerified).toHaveBeenCalledWith("whsec_live");
     expect(mockProcessEvent).toHaveBeenCalledTimes(1);
   });
 

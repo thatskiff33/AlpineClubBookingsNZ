@@ -20,6 +20,7 @@ import {
   deleteIntegrationCredential,
   getIntegrationCredentialValue,
   providerNeedsReentry,
+  readIntegrationCredentialRow,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
 import type {
@@ -43,9 +44,9 @@ export const STRIPE_WRITABLE_CREDENTIAL_KEYS = [
 ] as const;
 
 /**
- * Non-secret marker key recording that a Stripe TEST-MODE webhook event was
- * received AND signature-verified through the exact production resolver/HMAC
- * path. Stored in the same encrypted store (its value is an ISO timestamp — not
+ * Non-secret marker key recording that a Stripe webhook event, live or test
+ * (#3975), was received AND signature-verified through the exact production
+ * resolver/HMAC path, under the signing secret still stored. Stored in the same encrypted store (its value is an ISO timestamp — not
  * secret) so verify-reset and the needs-reentry aggregate treat it uniformly.
  * It is NEVER in the credential write allowlist — only the webhook route writes
  * it, and it is dropped by verify-reset whenever any Stripe credential changes.
@@ -137,9 +138,9 @@ async function readWebhookMarkerFreshness(): Promise<{
 }
 
 /**
- * Record that a signature-verified Stripe webhook event (live or test, #3975) arrived. Best-effort: a weak
- * auth secret (WeakAuthSecretError) or any store error must NEVER break webhook
- * processing, so this swallows failures.
+ * Record that a signature-verified Stripe webhook event (live or test, #3975)
+ * arrived. Best-effort: a weak auth secret (WeakAuthSecretError) or any store
+ * error must NEVER break webhook processing, so this swallows failures.
  *
  * IT WRITES ONLY WHEN THE ANSWER WOULD CHANGE (#2723). The webhook route calls
  * this on EVERY signature-verified event, before idempotency handling,
@@ -155,13 +156,34 @@ async function readWebhookMarkerFreshness(): Promise<{
  * "re-stamped on every event since". Verify-reset deletes the marker on any
  * credential write, so the next event after a swap re-stamps it — exactly one
  * audit row per genuine verification, instead of one per delivery.
+ *
+ * IT ATTESTS ONLY TO THE SECRET THE EVENT WAS VERIFIED WITH (#3975 review).
+ * `verifiedWith` is the signing secret the route checked the HMAC against. An
+ * event verified under the old secret can reach the write after an
+ * administrator has saved a new one and verify-reset has cleared the marker;
+ * stamping it then would make the marker newer than the new secret and turn
+ * the badge green for a secret no event has proved. So on the write path —
+ * about once per secret, never on the fresh path — the current secret is
+ * re-read straight from the database (the per-process cache can hold the old
+ * value for its whole TTL in a container that did not make the save), and the
+ * write is skipped unless it still equals `verifiedWith`. The secret is
+ * compared in memory only: it is never logged, persisted or returned.
  */
 export async function recordStripeWebhookVerified(
+  verifiedWith: string,
   when: Date = new Date(),
 ): Promise<void> {
   try {
     const { markerAt, secretAt } = await readWebhookMarkerFreshness();
     if (markerIsFresh(markerAt, secretAt)) return;
+    const current = await readIntegrationCredentialRow(
+      prisma,
+      STRIPE_PROVIDER,
+      STRIPE_CREDENTIAL_KEYS.webhookSecret,
+    );
+    if (current.status !== "configured" || current.value !== verifiedWith) {
+      return;
+    }
     await setIntegrationCredential({
       provider: STRIPE_PROVIDER,
       key: STRIPE_WEBHOOK_VERIFIED_KEY,
@@ -207,8 +229,8 @@ export interface StripeSetupState {
   /** Any stored Stripe credential fails to decrypt (the auth secret changed). */
   needsReentry: boolean;
   /**
-   * A signature-verified webhook event arrived AND the marker is fresh — i.e. it was recorded
-   * at or after the current webhook secret was last written. A signing-secret
+   * A signature-verified webhook event arrived AND the marker is fresh — i.e.
+   * it was recorded at or after the current webhook secret was last written. A signing-secret
    * swap makes the secret newer than the marker, so the badge drops to amber
    * even before verify-reset physically removes the marker.
    */
