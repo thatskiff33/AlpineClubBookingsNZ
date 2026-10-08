@@ -41,12 +41,18 @@ import type { CreditType } from "@prisma/client";
 
 import { creditKey, handBackKey } from "@/lib/booking-ledger-posting-keys";
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
+import { isCancellationCreditRestoreRow } from "@/lib/member-credit-booking-rows";
 
-/** One `MemberCredit` row linked to the booking, as the sync reads it. */
+/**
+ * One `MemberCredit` row linked to the booking, as the sync reads it.
+ * `description` is read only by the restore test, for a restore written before
+ * `restoredFromBookingId` existed (`isCancellationCreditRestoreRow`).
+ */
 export type BookingCreditRow = {
   id: string;
   type: CreditType;
   amountCents: number;
+  description: string | null;
   restoredFromBookingId: string | null;
 };
 
@@ -78,7 +84,7 @@ function creditShape(
           bookingSideCents > 0 ? "Account credit applied" : "Applied account credit returned to the member",
       };
     case "CANCELLATION_REFUND":
-      return row.restoredFromBookingId === null
+      return !isCancellationCreditRestoreRow(row)
         ? {
             kind: "CREDIT_ISSUED",
             anchorKind: "MEMBER_CREDIT",

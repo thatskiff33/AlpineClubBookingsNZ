@@ -16,7 +16,7 @@ import { PaymentSource, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { applyLegacyRefundStatus } from "@/lib/xero-booking-repair-payments";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
-import { stripeRefundMirrorShowsCapture } from "@/lib/booking-payment-state";
+import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
 
 // The full client, not a nested TransactionClient: the apply path opens its own
 // $transaction, so it must not run inside another one.
@@ -50,9 +50,9 @@ export interface FlattenedPaymentRestoration {
  * (#1473/#1491) asks: ledger truth first — any PaymentTransaction row holding a
  * captured status — else the STRIPE-only refund mirror for pre-ledger rows, so
  * a never-captured IB payment whose mirror the inbound reconcile folded stays
- * FAILED after cancel. Both halves are read from their one homes
- * (`isCapturedTransactionStatus`, `stripeRefundMirrorShowsCapture`, #3630);
- * this one reads the ledger rows already loaded rather than querying for them.
+ * FAILED after cancel. The ledger half is `isCapturedTransactionStatus` and the
+ * combination is `paymentShowsCaptureEvidence` (#3630, #3372); this one reads
+ * the ledger rows already loaded rather than querying for them.
  */
 export function paymentHasCaptureEvidence(
   payment: FlattenedCandidatePayment
@@ -60,7 +60,7 @@ export function paymentHasCaptureEvidence(
   const hasCapturedLedgerRow = payment.transactions.some((transaction) =>
     isCapturedTransactionStatus(transaction.status)
   );
-  return hasCapturedLedgerRow || stripeRefundMirrorShowsCapture(payment);
+  return paymentShowsCaptureEvidence(payment, hasCapturedLedgerRow);
 }
 
 /**

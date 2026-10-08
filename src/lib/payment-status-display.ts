@@ -1,6 +1,16 @@
-export interface CancellationCreditEntry {
+import {
+  isCancellationCreditRestoreRow,
+  type CreditRestoreEvidence,
+} from "@/lib/member-credit-booking-rows";
+
+/**
+ * A credit row minted from the booking (`creditsFromCancellation`). `type` and
+ * `restoredFromBookingId` are required because the restore test
+ * (`isCancellationCreditRestoreRow`) reads them: a restore written before the
+ * marker existed is told apart by its type and description.
+ */
+export interface CancellationCreditEntry extends CreditRestoreEvidence {
   amountCents: number;
-  description?: string | null;
 }
 
 export interface PaymentDisplayStatusInput {
@@ -17,7 +27,6 @@ export interface PaymentDisplayStatus {
 }
 
 const CANCELLATION_CREDIT_PREFIX = "Cancellation refund for booking";
-const RESTORED_CREDIT_PREFIX = "Credit restored from cancelled booking";
 
 function humanizeStatus(status: string): string {
   return status
@@ -35,13 +44,12 @@ export function getCancellationSettlementBreakdown(
   let restoredAppliedCreditCents = 0;
 
   for (const credit of credits) {
-    const description = credit.description ?? "";
-    if (description.startsWith(CANCELLATION_CREDIT_PREFIX)) {
-      accountCreditCents += credit.amountCents;
+    if (isCancellationCreditRestoreRow(credit)) {
+      restoredAppliedCreditCents += credit.amountCents;
       continue;
     }
-    if (description.startsWith(RESTORED_CREDIT_PREFIX)) {
-      restoredAppliedCreditCents += credit.amountCents;
+    if ((credit.description ?? "").startsWith(CANCELLATION_CREDIT_PREFIX)) {
+      accountCreditCents += credit.amountCents;
     }
   }
 
