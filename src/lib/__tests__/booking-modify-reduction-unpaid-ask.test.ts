@@ -82,6 +82,9 @@ const {
 } = await import("@/lib/payment-recovery-keys");
 const { ApiError } = await import("@/lib/api-error");
 const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
+const { ADDITIONAL_ASK_BEING_RAISED_MESSAGE, AdditionalAskChangedDuringReductionError } = await import(
+  "@/lib/additional-ask-reduction-error"
+);
 const { createModificationAdditionalPaymentIntent } = await import("@/lib/booking-modification-settlement");
 const { ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE } = await import("@/lib/unpaid-ask-offset-marker");
 
@@ -594,6 +597,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_increase"),
       amountCents: 5_000,
       createdAt: RECOVERED_AT,
+      processingStartedAt: null,
       ...overrides,
     };
   }
@@ -627,7 +631,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       expect(result.retiredPendingAskModificationIds).toEqual(["mod_increase"]);
       expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
       expect(recoveryUpdateMany).toHaveBeenCalledWith({
-        where: { id: RECOVERY_ID, status: "FAILED", attempts: 1 },
+        where: { id: RECOVERY_ID, status: "FAILED", attempts: 1, processingStartedAt: null },
         data: expect.objectContaining({ status: "SUCCEEDED", nextRetryAt: null }),
       });
       // A parked invoice waits on the edit, not on an intent that never existed.
@@ -710,12 +714,53 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
     expect(paymentFindUnique).not.toHaveBeenCalled();
   });
 
-  it("MUTATION: a retry minting right now is counted, and refuses the save rather than be closed under it with its old figure live", async () => {
-    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2 })];
+  // The frozen clock is 2026-07-01T00:00:00Z.
+  const CLAIMED_MOMENTS_AGO = new Date("2026-06-30T23:59:30.000Z");
+  const CLAIMED_LONG_AGO = new Date("2026-06-30T23:55:00.000Z");
+
+  it("MUTATION: a retry claimed moments ago is minting right now - the save is refused for a moment (409), never closed under it with its old figure live", async () => {
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_MOMENTS_AGO })];
     await expect(adjust(awaitingRetryBooking(), -2_000)).rejects.toSatisfy(
-      (err: unknown) => err instanceof ApiError && err.status === 409,
+      (err: unknown) =>
+        err instanceof AdditionalAskChangedDuringReductionError &&
+        err.status === 409 &&
+        err.message === ADDITIONAL_ASK_BEING_RAISED_MESSAGE,
     );
     expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (round 4): a retry claimed more than two minutes ago is a stalled worker - netted off and closed under its attempt AND claim time, so it cannot write afterwards", async () => {
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO })];
+    const result = await adjust(awaitingRetryBooking(), -2_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(2_000);
+    expect(result.additionalAsk.amountCents).toBe(3_000);
+    expect(recoveryUpdateMany).toHaveBeenCalledWith({
+      where: { id: RECOVERY_ID, status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO },
+      data: expect.objectContaining({ status: "SUCCEEDED" }),
+    });
+  });
+
+  it("MUTATION (round 4): a claimed retry that already wrote its own row is not skipped as overtaken - its row is the ask, and the retry is still fenced", async () => {
+    // The retry minted $50 and wrote its row (later than its recovery), then
+    // stalled before completing; the row mirrors as the live ask.
+    state.rows = [askRow({ createdAt: new Date("2026-06-22T00:00:00.000Z") })];
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_MOMENTS_AGO })];
+    // Within the window: refused, not netted beside a retry still finishing.
+    await expect(adjust(grownBooking(), -2_000)).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
+    expect(transactionUpdateMany).toHaveBeenCalledTimes(1);
+
+    // After it: netted against the row, counted once, and the retry closed.
+    vi.clearAllMocks();
+    transactionUpdateMany.mockImplementation(async () => ({ count: 1 }));
+    recoveryUpdateMany.mockImplementation(async () => ({ count: 1 }));
+    xeroUpdateMany.mockImplementation(async () => ({ count: 1 }));
+    mocks.enqueueCancel.mockImplementation(async ({ paymentTransactionId }) => ({ id: `op_cancel_${paymentTransactionId}`, status: "PENDING" }));
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO })];
+    const result = await adjust(grownBooking(), -2_000);
+    expect(result.unpaidAskOffsetCents).toBe(2_000);
+    expect(result.additionalAsk.amountCents).toBe(3_000);
+    expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("after commit the minter re-issues the $30 on a credit-paid booking with nothing to cancel first", async () => {

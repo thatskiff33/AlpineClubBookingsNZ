@@ -127,8 +127,8 @@ vi.mock("@/lib/edit-financial-review-charge", () => ({
     mockSyncEditFinancialReviewChargeRequest(...args),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
     paymentRecoveryOperation: {
       findMany: (...args: unknown[]) => mockPaymentRecoveryFindMany(...args),
       findUnique: (...args: unknown[]) => mockPaymentRecoveryFindUnique(...args),
@@ -157,8 +157,11 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...args: unknown[]) =>
         mockBookingModificationFindUnique(...args),
     },
-  },
-}));
+  };
+  // #3954 review round 4: the additional-intent replay writes its row under a
+  // claim hold, in one transaction, on these same mocks.
+  return { prisma: { ...prisma, $transaction: (fn: (tx: typeof prisma) => unknown) => fn(prisma) } };
+});
 
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellableWithResult: (...args: unknown[]) =>
@@ -2532,6 +2535,26 @@ describe("payment recovery worker", () => {
       expect(
         mockUpsertPaymentIntentTransaction.mock.invocationCallOrder[0],
       ).toBeLessThan(mockPaymentTransactionFindMany.mock.invocationCallOrder[0]);
+    });
+
+    it("MUTATION (#3954 round 4): writes its row only while it still holds its claim - a reduction that closed it mid-mint gets no row, no supersede, no completion", async () => {
+      primeQueue(additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") }));
+      // The claim succeeds; the hold, re-asserting that claim before the row is
+      // written, finds the recovery closed by a price reduction.
+      mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { data?: { status?: string } }) =>
+        args.data?.status === "PROCESSING" ? { count: 1 } : { count: 0 },
+      );
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+      const hold = mockPaymentRecoveryUpdateMany.mock.calls
+        .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+        .find((args) => args.where.status === "PROCESSING" && "processingStartedAt" in args.data);
+      expect(hold?.where).toMatchObject({ id: "recovery-additional", attempts: 1 });
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionFindMany).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
     });
 
     it("completes without creating when a later edit already minted a newer additional intent", async () => {

@@ -65,7 +65,10 @@ import {
   recoveryAskBeyondPaymentAskCents,
   sizeRecoveryReplayAsk,
 } from "@/lib/additional-ask-recovery-replay";
-import { ApiError } from "@/lib/api-error";
+import {
+  ADDITIONAL_ASK_BEING_RAISED_MESSAGE,
+  AdditionalAskChangedDuringReductionError,
+} from "@/lib/additional-ask-reduction-error";
 import type { ClubFormat } from "@/lib/club-format";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
@@ -90,8 +93,17 @@ import { waitingSupplementaryInvoiceOperationsWhere } from "@/lib/xero-supplemen
 export const PENDING_ASK_NETTED_BY_REDUCTION_NOTE =
   "Not minted: a price reduction set this unminted card request against the booking's lower price before its retry ran; anything still owed was asked for afresh (#3954).";
 
-export const ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE =
-  "A payment on this booking was being made while you saved this change. Nothing was changed - refresh the booking and try again.";
+/**
+ * How long after its claim a retry minting an ask is presumed alive (#3954
+ * review round 4). A claim this recent refuses the reduction with a 409 "try
+ * again in a moment" - the mint takes seconds. An older claim is a worker that
+ * stalled or died: the reduction closes it under the attempts and claim-time
+ * fence rather than wait out the 30-minute stale reaper, and a slow worker
+ * that wakes afterwards finds its claim gone and writes nothing
+ * (`holdAdditionalIntentRecoveryClaim`). The owner's "no edit is blocked"
+ * (9 Oct 2026) holds outside this window.
+ */
+export const RECENT_RECOVERY_CLAIM_MS = 2 * 60 * 1000;
 
 /** One unpaid row of the ask a reduction is set against. */
 export type UnpaidPriceAskRow = {
@@ -110,7 +122,17 @@ export type PendingAskRecovery = {
   bookingModificationId: string;
   status: PaymentRecoveryOperationStatus;
   attempts: number;
-  /** What the recovery adds to the rows' ask (`recoveryAskBeyondPaymentAskCents`). */
+  /**
+   * The claim's own timestamp, part of the fence: a runner re-stamps it as it
+   * writes its row (`holdAdditionalIntentRecoveryClaim`), so a close that
+   * still matches it knows that runner wrote nothing since the read.
+   */
+  processingStartedAt: Date | null;
+  /**
+   * What the recovery adds to the rows' ask (`recoveryAskBeyondPaymentAskCents`).
+   * 0 for a claimed retry a later row already overtook: nothing more is owed
+   * for it, but it is still closed (or refuses the edit) so it cannot write.
+   */
   askCents: number;
 };
 
@@ -346,6 +368,7 @@ async function inFlightAskRecoveries(
       status: true,
       attempts: true,
       nextRetryAt: true,
+      processingStartedAt: true,
       idempotencyKey: true,
       amountCents: true,
       createdAt: true,
@@ -361,6 +384,7 @@ type AskRecoveryOperation = {
   status: PaymentRecoveryOperationStatus;
   attempts: number;
   nextRetryAt: Date | null;
+  processingStartedAt: Date | null;
   idempotencyKey: string;
   amountCents: number;
   createdAt: Date;
@@ -383,7 +407,15 @@ function pendingAskRecoveries(
 ): PendingAskRecovery[] | null {
   const pending: PendingAskRecovery[] = [];
   for (const operation of operations) {
-    if (isRecoveryOvertakenByLaterAsk(operation, transactions)) continue;
+    // CLAIMED FIRST, THEN OVERTAKEN (review round 4). A retry already minting
+    // may have written its own row - which is "later" than its recovery - and
+    // still be on its way to its supersede and its invoice; skipping it as
+    // overtaken would leave it free to finish beside this reduction. So a
+    // claimed retry is always carried to the retire, which refuses or fences
+    // it; it adds nothing to the ask when a later row already carries it.
+    const claimed = operation.status === PaymentRecoveryOperationStatus.PROCESSING;
+    const overtaken = isRecoveryOvertakenByLaterAsk(operation, transactions);
+    if (overtaken && !claimed) continue;
     const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(
       operation.idempotencyKey,
     );
@@ -409,7 +441,9 @@ function pendingAskRecoveries(
       bookingModificationId,
       status: operation.status,
       attempts: operation.attempts,
-      askCents,
+      // Never `undefined`: an undefined filter is no filter at all in Prisma.
+      processingStartedAt: operation.processingStartedAt ?? null,
+      askCents: overtaken ? 0 : askCents,
     });
   }
   return pending;
@@ -424,9 +458,10 @@ export type RetiredAdditionalAsk = {
 
 /**
  * Retire the ask a reduction was set against, inside the edit's transaction and
- * under its locks. Throws a 409 when a row was captured since it was read, so
- * the edit rolls back rather than release a member from money they just paid -
- * or when a pending ask's retry claimed it since, and may be minting it now.
+ * under its locks. Throws `AdditionalAskChangedDuringReductionError` (409) when
+ * a row was captured since it was read, so the edit rolls back rather than
+ * release a member from money they just paid - or when a pending ask's retry
+ * claimed it since, or claimed it moments ago and may be minting it now.
  */
 export async function retireUnpaidAskChain(
   tx: Prisma.TransactionClient,
@@ -454,7 +489,7 @@ export async function retireUnpaidAskChain(
       data: { status: PaymentStatus.FAILED, withdrawnAt: now },
     });
     if (stamped.count !== 1) {
-      throw new ApiError(ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE, 409);
+      throw new AdditionalAskChangedDuringReductionError();
     }
     if (!row.stripePaymentIntentId) continue;
     const operation = await enqueuePaymentIntentCancellationRecovery({
@@ -479,19 +514,28 @@ export async function retireUnpaidAskChain(
     // THE RETRY NETS IT OFF (#3954, owner decision 9 Oct 2026): an ask whose
     // mint failed is closed here, under the edit's locks, and what is left of
     // it is minted after commit with the rest (`reissueUnpaidAdditionalAsk`).
-    // A retry minting it right now refuses the edit: closing the row under it
-    // would leave its old figure live beside the smaller ask.
-    if (recovery.status === PaymentRecoveryOperationStatus.PROCESSING) {
-      throw new ApiError(ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE, 409);
+    // A retry claimed moments ago is minting it right now and refuses the edit
+    // for a moment: closing the row under it would leave its old figure live
+    // beside the smaller ask. An older claim is a stalled or dead worker - it
+    // is closed like any other, and the fence below is what stops it writing.
+    if (
+      recovery.status === PaymentRecoveryOperationStatus.PROCESSING &&
+      (recovery.processingStartedAt === null ||
+        now.getTime() - recovery.processingStartedAt.getTime() < RECENT_RECOVERY_CLAIM_MS)
+    ) {
+      throw new AdditionalAskChangedDuringReductionError(ADDITIONAL_ASK_BEING_RAISED_MESSAGE);
     }
-    // THE FENCE: exactly the state read - only a claim moves `attempts`, so a
-    // retry that claimed it since rolls this edit back, and one that comes
-    // after finds nothing to claim.
+    // THE FENCE: exactly the state read. Only a claim moves `attempts`, and a
+    // claimed runner re-stamps `processingStartedAt` in the same statement that
+    // lets it write its row (`holdAdditionalIntentRecoveryClaim`). So a retry
+    // that claimed or wrote since the read rolls this edit back, and one that
+    // comes after finds nothing to claim or to write.
     const closed = await tx.paymentRecoveryOperation.updateMany({
       where: {
         id: recovery.id,
         status: recovery.status,
         attempts: recovery.attempts,
+        processingStartedAt: recovery.processingStartedAt,
       },
       data: {
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
@@ -502,7 +546,7 @@ export async function retireUnpaidAskChain(
       },
     });
     if (closed.count !== 1) {
-      throw new ApiError(ADDITIONAL_ASK_CHANGED_DURING_REDUCTION_MESSAGE, 409);
+      throw new AdditionalAskChangedDuringReductionError();
     }
   }
 

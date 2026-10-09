@@ -2436,6 +2436,44 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * row is therefore never claimed here, and a row claimed first refuses that
  * edit (409) rather than be minted beside a smaller ask.
  */
+/**
+ * #3954 review round 4: WRITE THE REPLAY'S ROW ONLY WHILE THIS WORKER STILL
+ * HOLDS ITS CLAIM, in one transaction with the write.
+ *
+ * A price reduction nets off an ask waiting on this replay (`readUnpaidPriceAsk`)
+ * and closes the recovery under the edit's locks - an unclaimed one, or one
+ * whose claim is older than `RECENT_RECOVERY_CLAIM_MS`, a worker presumed
+ * stalled or dead. A slow worker that is in fact alive must then not write the
+ * old figure beside the reduction's smaller ask.
+ *
+ * THE FENCE IS A WRITE THAT MOVES WHAT THE REDUCTION FENCES ON. The claim is
+ * re-asserted (still PROCESSING, same attempt, same claim time) and
+ * `processingStartedAt` re-stamped, row-locking the recovery for the rest of
+ * this transaction. A reduction's close is fenced on the claim time it read,
+ * so whichever commits first wins: the close first, and this matches nothing
+ * and writes nothing; this first, and the close matches nothing and rolls the
+ * edit back (409), and for the next two minutes the fresh claim time refuses
+ * a reduction outright while the supersede and invoice below finish.
+ */
+async function holdAdditionalIntentRecoveryClaim<T>(
+  operation: PaymentRecoveryOperation,
+  write: (store: Prisma.TransactionClient) => Promise<T>,
+): Promise<T | null> {
+  return prisma.$transaction(async (tx) => {
+    const held = await tx.paymentRecoveryOperation.updateMany({
+      where: {
+        id: operation.id,
+        status: PaymentRecoveryOperationStatus.PROCESSING,
+        attempts: operation.attempts,
+        processingStartedAt: operation.processingStartedAt,
+      },
+      data: { processingStartedAt: new Date() },
+    });
+    if (held.count !== 1) return null;
+    return write(tx);
+  });
+}
+
 async function processCreateAdditionalPaymentIntentOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
@@ -2910,34 +2948,58 @@ async function processCreateAdditionalPaymentIntentOperation(
   // the same reasoning in `createModificationAdditionalPaymentIntent` (#3340
   // fix round). A cancel reconciles the payment, and a reconcile run before this
   // row exists mirrors the intent being retired back over the Payment.
-  await upsertPaymentIntentTransaction({
-    paymentId: operation.paymentId,
-    kind: PaymentTransactionKind.ADDITIONAL,
-    paymentIntentId: pi.id,
-    amountCents: askCents,
-    // #3371: the same value that sized the amount says what it absorbed, so the
-    // replay's row carries the provenance the inline mint would have written.
-    carriedAskCents: ask.carriedCents,
-    status: PaymentStatus.PENDING,
-    reason: "modification_additional_recovery",
-    stripeCustomerId: customerId,
-  });
-
+  //
+  // #3954 review round 4: written only while this worker still holds its claim
+  // (`holdAdditionalIntentRecoveryClaim`). A price reduction may have closed
+  // this recovery while the mint was in flight - it nets off a claim older than
+  // `RECENT_RECOVERY_CLAIM_MS` - and a row written now would be the old figure
+  // live beside the reduction's smaller ask.
+  // The supersede's durable rows ride the same transaction, so a reduction
+  // that closes this recovery first leaves no row AND no cancellation of the
+  // smaller ask it re-issued; the Stripe cancels run after commit.
   // Dynamic import: booking-payment-cleanup imports this module.
-  const { queueSupersededAdditionalIntentCancellations } = await import(
-    "@/lib/booking-payment-cleanup"
-  );
-  await queueSupersededAdditionalIntentCancellations({
+  const { queueSupersededAdditionalIntentCancellationRows, cancelSupersededAdditionalIntentsNow } =
+    await import("@/lib/booking-payment-cleanup");
+  const superseded = await holdAdditionalIntentRecoveryClaim(operation, async (store) => {
+    await upsertPaymentIntentTransaction({
+      paymentId: operation.paymentId,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      paymentIntentId: pi.id,
+      amountCents: askCents,
+      // #3371: the same value that sized the amount says what it absorbed, so the
+      // replay's row carries the provenance the inline mint would have written.
+      carriedAskCents: ask.carriedCents,
+      status: PaymentStatus.PENDING,
+      reason: "modification_additional_recovery",
+      stripeCustomerId: customerId,
+      store,
+    });
+    // #3954: the row names this attempt's intent from the moment it exists, so
+    // a retry after a later failure recognises its own row (`ownRecoveryRow`).
+    await store.paymentRecoveryOperation.update({
+      where: { id: operation.id },
+      data: { paymentIntentId: pi.id },
+    });
+    return queueSupersededAdditionalIntentCancellationRows({
+      bookingId: operation.bookingId,
+      paymentId: operation.paymentId,
+      newPaymentIntentId: pi.id,
+      store,
+    });
+  });
+  if (superseded === null) {
+    logger.warn(
+      { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id },
+      "Additional intent recovery lost its claim before writing its row (a price reduction netted it off, #3954); nothing written - the minted intent was never offered to anyone and is left uncollectable",
+    );
+    return;
+  }
+  await cancelSupersededAdditionalIntentsNow({
     format,
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
-    newPaymentIntentId: pi.id,
-  }).catch((err) =>
-    logger.error(
-      { err, bookingId: operation.bookingId, paymentIntentId: pi.id },
-      "Failed to queue superseded additional intent cancellations during recovery",
-    ),
-  );
+    queued: superseded,
+  });
 
   // A supplementary Xero invoice op enqueued at modification time waited on
   // an intent that never existed; point it at the recovered one so the
@@ -2952,11 +3014,6 @@ async function processCreateAdditionalPaymentIntentOperation(
       recoveryOperationId: operation.id,
     });
   }
-
-  await prisma.paymentRecoveryOperation.update({
-    where: { id: operation.id },
-    data: { paymentIntentId: pi.id },
-  });
 
   /**
    * #3181: and now raise the invoice the edit deferred. The attach above only

@@ -125,7 +125,34 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
   /** The club's format (#3565), resolved once by the caller and handed to each immediate run. */
   format: ClubFormat;
 }): Promise<{ paymentTransactionId: string; paymentIntentId: string }[]> {
-  const pendingAdditional = await prisma.paymentTransaction.findMany({
+  const queued = await queueSupersededAdditionalIntentCancellationRows(options);
+  await cancelSupersededAdditionalIntentsNow({ ...options, queued });
+  return queued.map(({ paymentTransactionId, paymentIntentId }) => ({ paymentTransactionId, paymentIntentId }));
+}
+
+/** One superseded intent's durable cancellation, queued and not yet run. */
+export type QueuedSupersededIntentCancellation = {
+  paymentTransactionId: string;
+  paymentIntentId: string;
+  operationId: string;
+};
+
+/**
+ * The DURABLE half of `queueSupersededAdditionalIntentCancellations`: find the
+ * other outstanding ADDITIONAL intents and queue each one's cancellation - no
+ * provider call. On `store` so a minter that must decide "write my row and
+ * supersede the rest" atomically against a price reduction can do both in one
+ * transaction (#3954 review round 4, `holdAdditionalIntentRecoveryClaim`), then
+ * run the cancellations after commit.
+ */
+export async function queueSupersededAdditionalIntentCancellationRows(options: {
+  bookingId: string;
+  paymentId: string;
+  newPaymentIntentId: string;
+  store?: Prisma.TransactionClient;
+}): Promise<QueuedSupersededIntentCancellation[]> {
+  const store = options.store ?? prisma;
+  const pendingAdditional = await store.paymentTransaction.findMany({
     where: {
       paymentId: options.paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
@@ -141,8 +168,7 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
     },
   });
 
-  const queued: { paymentTransactionId: string; paymentIntentId: string }[] =
-    [];
+  const queued: QueuedSupersededIntentCancellation[] = [];
   for (const transaction of pendingAdditional) {
     if (!transaction.stripePaymentIntentId) {
       continue;
@@ -154,22 +180,39 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
       paymentTransactionId: transaction.id,
       paymentIntentId: transaction.stripePaymentIntentId,
       amountCents: transaction.amountCents,
+      ...(options.store ? { store: options.store } : {}),
     });
     queued.push({
       paymentTransactionId: transaction.id,
       paymentIntentId: transaction.stripePaymentIntentId,
+      operationId: operation.id,
     });
+  }
+  return queued;
+}
 
+/**
+ * The LATENCY half: cancel each queued intent at Stripe now. The durable rows
+ * are the guarantee; this closes the window in which an old client secret is
+ * still confirmable (#3340).
+ */
+export async function cancelSupersededAdditionalIntentsNow(options: {
+  bookingId: string;
+  paymentId: string;
+  queued: readonly QueuedSupersededIntentCancellation[];
+  format: ClubFormat;
+}): Promise<void> {
+  for (const entry of options.queued) {
     // The durable row above is the guarantee; this is latency only (#3340).
     // `runPaymentRecoveryOperationNow` never throws, so a Stripe failure here
     // leaves precisely the pre-#3340 arrangement.
-    const immediate = await runPaymentRecoveryOperationNow(operation.id, options.format).catch(
+    const immediate = await runPaymentRecoveryOperationNow(entry.operationId, options.format).catch(
       (err) => {
         logger.error(
           {
             err,
             bookingId: options.bookingId,
-            paymentIntentId: transaction.stripePaymentIntentId,
+            paymentIntentId: entry.paymentIntentId,
           },
           "Immediate cancellation of a superseded additional PaymentIntent did not run; the queued recovery operation stands",
         );
@@ -194,14 +237,12 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
         {
           bookingId: options.bookingId,
           paymentId: options.paymentId,
-          paymentIntentId: transaction.stripePaymentIntentId,
-          operationId: operation.id,
+          paymentIntentId: entry.paymentIntentId,
+          operationId: entry.operationId,
           outcome: immediate,
         },
         "A superseded additional PaymentIntent was not cancelled immediately; it stays confirmable until the queued recovery operation runs",
       );
     }
   }
-
-  return queued;
 }
