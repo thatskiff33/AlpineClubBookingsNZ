@@ -648,8 +648,12 @@ record the outcome here when decided:
   import that carries a lodge's `capacity` (#3407) writes the lodge's own row,
   or the legacy row only when that row is already linked to this lodge; it
   never claims an unlinked legacy row, because that row serves every lodge
-  without an own row. A new own row carries across the soft cap an unlinked
-  legacy row was serving the lodge.
+  without an own row. A new own row carries across everything an unlinked
+  legacy row was serving the lodge — capacity, soft cap and the school
+  hut-leader ticks (#3819) — and so does every other path that creates or
+  claims a lodge's row: the school hut-leader save, and an admin capacity edit
+  that claims an unlinked legacy row, which first gives each other lodge it
+  served its own row with those values.
   `BedAllocationSettings` reads the same compatibility chain, but its admin
   API always requires one active lodge: a write updates `default` only when no
   lodge-id row exists and that legacy row is already linked to this lodge;
@@ -692,7 +696,16 @@ is the lodge's capacity) is per-lodge on `LodgeSettings.schoolGroupSoftCap`,
 resolving via the default lodge in a single-lodge club (ADR-002) and
 falling back to the code default (`DEFAULT_SCHOOL_GROUP_SOFT_CAP`) when
 unset. It is editable on the lodge-settings card (both `/admin/setup`
-and, per-lodge, the lodge hub). The public school form measures against
+and, per-lodge, the lodge hub).
+
+"Who can be hut leader for school bookings" (#3819) is per-lodge on the same
+row, as four booleans (`LodgeSettings.schoolHutLeader*`), resolved the same way
+(`loadSchoolHutLeaderKinds`: own row, else the legacy row when unlinked or
+linked to this lodge, else the code defaults) and edited only on the lodge hub.
+Its writer (`updateSchoolHutLeaderKinds`) follows the config importer's rule:
+it never claims an unlinked legacy row, and when one was serving the lodge the
+new own row carries its capacity and soft cap. The approval writer and the
+coverage helper read it for the booking's concrete lodge. The public school form measures against
 the selected lodge's cap (the booking-request settings endpoint returns
 each lodge's cap plus a top-level default for the single-lodge case).
 

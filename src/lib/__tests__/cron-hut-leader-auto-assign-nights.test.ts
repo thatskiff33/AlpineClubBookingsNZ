@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * model. Today is frozen at 2026-07-01 (`vitest.clock-setup.ts`).
  */
 
-const { mockPrisma, mockFlags, mockLookahead } = vi.hoisted(() => ({
+const { mockPrisma, mockFlags, mockLookahead, mockKinds, school } = vi.hoisted(() => ({
   mockPrisma: {
     lodge: { findMany: vi.fn() },
     booking: { findMany: vi.fn() },
@@ -26,6 +26,9 @@ const { mockPrisma, mockFlags, mockLookahead } = vi.hoisted(() => ({
   },
   mockFlags: vi.fn(),
   mockLookahead: vi.fn(),
+  mockKinds: vi.fn(),
+  /** School bookings the cover's school read returns (#3819). */
+  school: { bookings: [] as Array<{ id: string; lodgeId: string; checkIn: Date; checkOut: Date }> },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -37,8 +40,14 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   loadEffectiveModuleFlags: mockFlags,
 }));
 vi.mock("./module-settings", () => ({ loadEffectiveModuleFlags: mockFlags }));
-vi.mock("@/lib/lodge-settings", () => ({ loadHutLeaderLookaheadDays: mockLookahead }));
-vi.mock("./lodge-settings", () => ({ loadHutLeaderLookaheadDays: mockLookahead }));
+vi.mock("@/lib/lodge-settings", () => ({
+  loadHutLeaderLookaheadDays: mockLookahead,
+  loadSchoolHutLeaderKinds: mockKinds,
+}));
+vi.mock("./lodge-settings", () => ({
+  loadHutLeaderLookaheadDays: mockLookahead,
+  loadSchoolHutLeaderKinds: mockKinds,
+}));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -85,11 +94,25 @@ function withGuests(guests: Guest[]) {
     })),
   );
   mockPrisma.booking.findMany.mockImplementation(
-    async ({ where }: { where: { checkIn: { lte: Date } } }) => {
+    async ({ where }: { where: { checkIn: { lte: Date }; AND?: unknown } }) => {
+      // The cover's school-booking read carries its filter under AND (#3819).
+      if (where.AND) return school.bookings;
       const asked = where.checkIn.lte;
       const present = guests.filter((g) => g.stayStart <= asked && asked < g.stayEnd);
-      return present.map((g) => ({ checkIn: g.stayStart, checkOut: g.stayEnd, guests: [g] }));
+      return present.map((g) => ({
+        id: `booking-${g.memberId}`,
+        checkIn: g.stayStart,
+        checkOut: g.stayEnd,
+        guests: [g],
+      }));
     },
+  );
+}
+
+/** The job's per-night candidate searches: every booking read but the cover's school read (#3819). */
+function candidateSearches() {
+  return mockPrisma.booking.findMany.mock.calls.filter(
+    ([args]) => !(args as { where: { AND?: unknown } }).where.AND,
   );
 }
 
@@ -110,6 +133,13 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
     rows = [];
     mockFlags.mockResolvedValue({ hutLeaders: true });
     mockLookahead.mockResolvedValue(14);
+    school.bookings = [];
+    mockKinds.mockResolvedValue({
+      teacherOnBooking: false,
+      custodian: true,
+      memberOnBooking: true,
+      memberStayingSeparately: true,
+    });
     mockPrisma.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }]);
     mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
     // The coverage cover's read (it selects `source`) sees the rows written so
@@ -203,7 +233,7 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
     withGuests([guest("m-1", "2026-07-01", "2026-07-03")]);
     mockLookahead.mockResolvedValue(0);
     await autoAssignHutLeaders();
-    const [{ where }] = mockPrisma.booking.findMany.mock.calls[0] as [
+    const [{ where }] = candidateSearches()[0] as [
       { where: Record<string, unknown> },
     ];
     expect(where).toMatchObject(
@@ -232,7 +262,7 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
 
       expect(written()).toEqual([]);
       // The nights the job asked bookings for (one per uncovered night).
-      const asked = mockPrisma.booking.findMany.mock.calls.map(
+      const asked = candidateSearches().map(
         ([args]) => (args as { where: { checkIn: { lte: Date } } }).where.checkIn.lte,
       );
       expect(asked.map(iso)).toEqual(["2026-07-01"]);
@@ -242,5 +272,37 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
       if (previousTz === undefined) delete process.env.TZ;
       else process.env.TZ = previousTz;
     }
+  });
+
+  describe("on a school group's nights it writes only a kind the lodge ticks (#3819)", () => {
+    // A school group at lodge-a 3-6 Jul; m-1 is the only adult member staying,
+    // on a booking of their own, so they would be "a member staying separately".
+    beforeEach(() => {
+      school.bookings = [
+        { id: "school-booking", lodgeId: "lodge-a", checkIn: day("2026-07-03"), checkOut: day("2026-07-06") },
+      ];
+    });
+
+    it("writes nothing on school nights when members staying separately are unticked", async () => {
+      mockKinds.mockResolvedValue({
+        teacherOnBooking: true,
+        custodian: true,
+        memberOnBooking: true,
+        memberStayingSeparately: false,
+      });
+      withGuests([guest("m-1", "2026-07-03", "2026-07-06")]);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([]);
+    });
+
+    it("writes the member when that kind is ticked", async () => {
+      withGuests([guest("m-1", "2026-07-03", "2026-07-06")]);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([["m-1", "2026-07-03", "2026-07-05"]]);
+    });
   });
 });

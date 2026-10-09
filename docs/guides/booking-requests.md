@@ -186,7 +186,9 @@ are listed on the booking for you to relay.
    the held beds and turn it down.
 
    After school approval, the success message confirms the booking and whether
-   teacher hut-leader assignments were created. It does not confirm email
+   teacher hut-leader assignments were created (they are, only when the
+   booking's lodge ticks **A teacher on the booking** under **Who can be hut
+   leader for school bookings**). It does not confirm email
    delivery: check invoice progress separately, and ask a support officer to
    review [Email Deliverability](email-deliverability.md). If the Xero module
    is off, arrange manual invoicing.

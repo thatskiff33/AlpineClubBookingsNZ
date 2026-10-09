@@ -5,12 +5,15 @@ import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
-import { loadHutLeaderNightCover } from "@/lib/hut-leader-night-cover";
+import { loadHutLeaderNightCover, memberMayLeadNight } from "@/lib/hut-leader-night-cover";
 import {
   hutLeaderStayBookingWhere,
   hutLeaderStayNightKeys,
   type HutLeaderMemberStay as MemberStay,
 } from "@/lib/hut-leader-stayed-nights";
+
+/** One guest stay, with the booking it is on (#3819: school or not). */
+type StayOnBooking = MemberStay & { bookingId: string };
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&lodgeId=...
@@ -84,7 +87,7 @@ export async function GET(req: NextRequest) {
         },
       },
       booking: {
-        select: { checkIn: true, checkOut: true },
+        select: { id: true, checkIn: true, checkOut: true },
       },
     },
   });
@@ -104,12 +107,13 @@ export async function GET(req: NextRequest) {
      * `bookings[0]` as its seed without an assertion or a refusal for a state
      * that cannot occur (#2801).
      */
-    bookings: [MemberStay, ...MemberStay[]];
+    bookings: [StayOnBooking, ...StayOnBooking[]];
   }>();
 
   for (const g of guests) {
     if (!g.memberId || !g.member || !g.member.active) continue;
-    const guestStay: MemberStay = {
+    const guestStay: StayOnBooking = {
+      bookingId: g.booking.id,
       checkIn: g.booking.checkIn,
       checkOut: g.booking.checkOut,
       stayStart: g.stayStart,
@@ -185,6 +189,19 @@ export async function GET(req: NextRequest) {
     to: coverageWindowEnd,
   });
   const isNightCovered = (d: Date) => coverage.isCovered(lodgeId, d);
+  // #3819: on a school night only a ticked kind counts, so a member whose kind
+  // (on the school booking, or staying separately) is unticked can lead none
+  // of it. Such a night is never offered to them: a row they could not cover
+  // would also block, by overlap, the ticked leader an officer adds next.
+  const mayLeadNight = (stays: readonly StayOnBooking[], night: Date) => {
+    const key = formatDateOnly(night);
+    const stay = stays.find((candidate) =>
+      getGuestBedNightKeys(candidate, candidate).includes(key),
+    );
+    return stay
+      ? memberMayLeadNight(coverage, { lodgeId, night, stayBookingId: stay.bookingId })
+      : false;
+  };
 
   const members = Array.from(memberBookings.values())
     .map((m) => {
@@ -205,9 +222,13 @@ export async function GET(req: NextRequest) {
       // The first uncovered night, read once, with the rest of the run behind
       // it. Its absence IS "fully covered" — the same one condition the count
       // expressed, now in a form the compiler can follow (#2801).
-      const uncoveredNights = stayNights.filter((d) => !isNightCovered(d));
+      const allUncovered = stayNights.filter((d) => !isNightCovered(d));
+      const uncoveredNights = allUncovered.filter((d) => mayLeadNight(m.bookings, d));
       const [firstUncoveredNight, ...laterUncoveredNights] = uncoveredNights;
       const uncoveredNightCount = uncoveredNights.length;
+      // Uncovered school-group nights this lodge does not accept this member
+      // for (#3819), shown on the suggestion so the officer knows why.
+      const schoolNightsNotAccepted = allUncovered.length - uncoveredNights.length;
       const fullyCovered = firstUncoveredNight === undefined;
 
       // Suggested range = the first contiguous run of uncovered nights. If the
@@ -242,6 +263,7 @@ export async function GET(req: NextRequest) {
         suggestedStartDate: formatDateOnly(suggestedStart),
         suggestedEndDate: formatDateOnly(suggestedEnd),
         uncoveredNightCount,
+        schoolNightsNotAccepted,
         fullyCovered,
       };
     })

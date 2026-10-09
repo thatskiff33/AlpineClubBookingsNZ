@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   memberFindUnique: vi.fn(),
   bookingGuestFindMany: vi.fn(),
   bookingFindMany: vi.fn(),
+  lodgeSettingsFindUnique: vi.fn(),
   getUnassigned: vi.fn(),
   getOccupancy: vi.fn(),
 }))
@@ -25,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
     member: { findUnique: mocks.memberFindUnique },
     bookingGuest: { findMany: mocks.bookingGuestFindMany },
     booking: { findMany: mocks.bookingFindMany },
+    lodgeSettings: { findUnique: mocks.lodgeSettingsFindUnique },
   },
 }))
 vi.mock("@/lib/hut-leader-coverage", () => ({
@@ -67,6 +69,7 @@ describe("hut-leader admin workspace has one strict lodge scope (#2701, #2887)",
     )
     mocks.bookingGuestFindMany.mockResolvedValue([])
     mocks.bookingFindMany.mockResolvedValue([])
+    mocks.lodgeSettingsFindUnique.mockResolvedValue(null)
     mocks.getUnassigned.mockImplementation(async ({ scope }: { scope: { lodgeId: string } }) => [
       { date: scope.lodgeId === "lodge-b" ? "2026-08-20" : "2026-08-10", bookingCount: 1, guestCount: 2 },
     ])
@@ -155,8 +158,12 @@ describe("hut-leader admin workspace has one strict lodge scope (#2701, #2887)",
       where: expect.objectContaining({ booking: expect.objectContaining({ lodgeId: "lodge-b" }) }),
     }))
     // Owning a booking is not a stay (owner decision on #3820, 3 Oct 2026), so
-    // the owner arm that read bookings by owner is gone.
-    expect(mocks.bookingFindMany).not.toHaveBeenCalled()
+    // the owner arm that read bookings by owner is gone. The one booking read
+    // left is the cover's school-group read (#3819), scoped to Lodge B.
+    expect(mocks.bookingFindMany).toHaveBeenCalledTimes(1)
+    expect(mocks.bookingFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ lodgeId: "lodge-b", AND: expect.any(Array) }),
+    }))
     expect(mocks.hutLeaderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ lodgeId: "lodge-b" }),
     }))
@@ -207,5 +214,52 @@ describe("hut-leader admin workspace has one strict lodge scope (#2701, #2887)",
         }),
       }),
     )
+  })
+
+  it("does not offer school-group nights to a member of a kind the lodge does not tick (#3819)", async () => {
+    const night = (iso: string) => new Date(`${iso}T00:00:00.000Z`)
+    mocks.bookingGuestFindMany.mockResolvedValue([{
+      memberId: "member-b",
+      stayStart: night("2026-08-10"),
+      stayEnd: night("2026-08-13"),
+      nights: [],
+      member: {
+        id: "member-b",
+        firstName: "Briar",
+        lastName: "Beech",
+        email: "b@example.test",
+        active: true,
+        hutLeaderEligible: true,
+        hutLeaderEligibleAt: null,
+      },
+      // A booking of their own, so on the school's nights they would be "a
+      // member staying separately".
+      booking: { id: "own-booking", checkIn: night("2026-08-10"), checkOut: night("2026-08-13") },
+    }])
+    mocks.hutLeaderFindMany.mockResolvedValue([])
+    // A school group stays 11-12 Aug; only the 10th is an ordinary night.
+    mocks.bookingFindMany.mockImplementation(async (args: { where: { AND?: unknown } }) =>
+      args.where.AND
+        ? [{ id: "school-booking", lodgeId: "lodge-b", checkIn: night("2026-08-11"), checkOut: night("2026-08-13") }]
+        : [],
+    )
+    mocks.lodgeSettingsFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === "lodge-b"
+        ? { capacity: null, lodgeId: "lodge-b", schoolHutLeaderMemberStayingSeparately: false }
+        : null,
+    )
+
+    const response = await listEligible(request(
+      "/api/admin/hut-leaders/eligible-members?startDate=2026-08-10&endDate=2026-08-12&lodgeId=lodge-b",
+    ))
+    const body = await response.json()
+
+    expect(body.members[0]).toMatchObject({
+      suggestedStartDate: "2026-08-10",
+      suggestedEndDate: "2026-08-10",
+      uncoveredNightCount: 1,
+      schoolNightsNotAccepted: 2,
+      fullyCovered: false,
+    })
   })
 })

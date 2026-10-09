@@ -1167,10 +1167,10 @@ figures rather than trusting a hand count: **98 components render a banner, and
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
 test currently pins, which is the only authority.) Those 316 split by WHICH rule
-covers them: **282** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **34**
+covers them: **280** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **36**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
+verified vouching parent — 31 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
 remaining **55 controls across 30 files deliberately keep the per-button

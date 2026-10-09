@@ -76,10 +76,10 @@ no hut-leader request or assignment write until a real lodge returns.
    nights as a school group if you judge that it needs one. Two consequences worth
    knowing. The eligible-members list still treats a school night as fully
    covered, so it will not suggest a range there even though confirming one is now
-   accepted -- pick the member and set the dates yourself. And the nightly
-   automatic assignment leaves those nights alone entirely: it never places a
-   leader across a school group's nights, so if you want one there it has to be
-   you who puts it there.
+   accepted -- pick the member and set the dates yourself. And while the
+   teachers cover those nights, the nightly automatic assignment leaves them
+   alone, so if you want a club leader there it has to be you who puts one
+   there.
 
 ### What counts as a covered night
 
@@ -96,10 +96,40 @@ both of these are true:
 | --- | --- |
 | An ordinary member (assigned by hand or automatically) | the nights of their own paid stay at **this** lodge. A cancelled, bumped, archived or unpaid stay counts for nothing, and neither does a stay at another lodge, or a stay as another member's guest that they have not yet confirmed |
 | A custodian — ticked **Custodian (lives on site)**, or holding a bed | every night the assignment covers. They live in the lodge, so no booking is needed |
-| A school group's teacher | the assignment's own dates, arrival to the night before departure, as recorded when the school booking was approved. These assignments are not linked back to the booking: if the school booking is later cancelled or moved, its teachers still count on the original nights until you delete or change their assignments here |
+| A school group's teacher | the assignment's own dates (arrival to the night before departure), but only while a school group is staying at this lodge that night. If the school booking is cancelled or moved, its teachers stop counting on nights no school group is there |
 
 An assignment for someone who is neither a custodian nor staying covers nothing,
 and the page refuses to save one.
+
+### School groups
+
+Each lodge decides who may lead a school group's nights, under **Who can be hut
+leader for school bookings** on the lodge's hub ([Lodges](lodges.md#configure-a-lodge)).
+It lists four kinds, and the lodge ticks any combination:
+
+| Kind | Who that is |
+| --- | --- |
+| A teacher on the booking | a teacher assignment made when the school booking was approved. Ticking this is also what makes approval create those assignments and PIN emails |
+| The lodge custodian | an assignment ticked **Custodian (lives on site)**, or holding a bed |
+| A member on the school booking | a club member who is a guest on the school booking that night |
+| A member staying separately | a club member on a booking of their own at this lodge that night |
+
+On a night a school group is staying, the night shows as covered only when its
+leader is in the lodge **and** is a ticked kind. A leader who is two kinds (a
+custodian who has also booked a stay, say) counts if either is ticked. Nights
+with no school group keep the ordinary rule above. Out of the box the
+custodian and both member kinds are ticked and teachers are not; an upgrade
+carried the old club-wide **Assign school teachers as hut leaders** switch into
+every lodge's teacher tick.
+
+A school group counts as staying from the moment its booking holds beds — an
+approved school booking awaiting its invoice included — not only once it is paid.
+
+The nightly automatic assignment follows the same rule: on a school night it
+adds the one adult member staying only if their kind is ticked, and otherwise
+leaves the night for you. The member suggestions on this page leave such nights
+out of a member's suggested dates and say how many school-group nights this
+lodge does not accept them for.
 
 So an assignment that runs past the leader's departure does **not** cover the
 nights after they leave. Older automatic assignments were recorded through the

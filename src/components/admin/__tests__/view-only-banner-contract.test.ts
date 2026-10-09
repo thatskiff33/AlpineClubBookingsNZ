@@ -448,7 +448,7 @@ const FIGURES = {
    * 280 -> 282 (#3416): the school-teacher card's Edit and Save sit in the
    * same file as its section banner.
    */
-  staticOptOuts: 282,
+  staticOptOuts: 280,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -460,9 +460,9 @@ const FIGURES = {
    * covering banner in its own file deletes the explanation outright for anyone
    * who later renders the card somewhere else.
    */
-  vouchedOptOuts: 34,
+  vouchedOptOuts: 36,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 29,
+  renderSiteVouchedOptOuts: 31,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**

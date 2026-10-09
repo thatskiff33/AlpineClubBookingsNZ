@@ -77,7 +77,6 @@ export const DEFAULT_BOOKING_REQUEST_SETTINGS = {
   showPricingToNonMembers: false,
   quoteResponseTtlDays: 14,
   quoteReminderLeadDays: 3,
-  assignSchoolTeachersAsHutLeaders: false,
   attendeeConfirmationLeadDays: 14,
   attendeeConfirmationReminderDays: 3,
 } as const;

@@ -135,7 +135,14 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "hutLeaders",
-    prefixes: ["/admin/hut-leaders", "/api/admin/hut-leaders"],
+    prefixes: [
+      "/admin/hut-leaders",
+      "/api/admin/hut-leaders",
+      // #3819: a lodge's "Who can be hut leader for school bookings" is a
+      // hut-leader setting that lives under the lodge's settings, so it is
+      // switched off with the module like the rest of hut-leader admin.
+      "/api/admin/lodge-settings/school-hut-leaders",
+    ],
   },
   {
     flag: "communications",

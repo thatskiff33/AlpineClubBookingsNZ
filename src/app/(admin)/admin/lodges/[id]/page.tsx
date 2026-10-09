@@ -31,6 +31,7 @@ import {
   LodgeCapacityGuidance,
   lodgeCapacityLoweringWarningId,
 } from "@/components/admin/lodge-capacity-guidance";
+import { SchoolHutLeaderKindsCard } from "@/components/admin/school-hut-leader-kinds-card";
 import { LODGE_CAPACITY_OVERRIDE_FIELD_ID } from "@/components/admin/lodge-capacity-settings-link";
 import {
   MAX_CONFIGURED_LODGE_CAPACITY,
@@ -365,8 +366,9 @@ export default function LodgeConfigurationHubPage() {
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
-      Your admin role can view this lodge&apos;s capacity but cannot
-      change it. Lodge edit access is required.
+      {modules.hutLeaders === true
+        ? "Your admin role can view this lodge's capacity and who can be hut leader for its school bookings, but cannot change them. Lodge edit access is required."
+        : "Your admin role can view this lodge's capacity but cannot change it. Lodge edit access is required."}
     </AdminViewOnlySectionBanner>
   );
 
@@ -544,6 +546,19 @@ export default function LodgeConfigurationHubPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* #3819: who may lead a school group's nights here. Per lodge, and only
+          meaningful while the hut-leaders module is on. This page's banner
+          explains its disabled controls (#2168 vouch); keyed so a lodge switch
+          re-reads. */}
+      {modules.hutLeaders === true && (
+        <SchoolHutLeaderKindsCard
+          key={lodgeId}
+          lodgeId={lodgeId}
+          canEdit={canEdit}
+          ancestorRendersViewOnlyBanner
+        />
+      )}
 
       {/* Lobby display: per-lodge display config (LTV-035, #81). Relocated here
           from the retired /admin/display/settings so the controls edit THIS

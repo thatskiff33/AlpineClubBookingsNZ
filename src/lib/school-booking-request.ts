@@ -46,7 +46,13 @@ import {
 import { reconcileOrganisationTeachers } from "@/lib/organisation-xero-contact-persons";
 import { bookingOwner } from "@/lib/booking-owner";
 import { issueActionToken } from "@/lib/action-tokens";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  clubToday,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
+import { loadSchoolHutLeaderKinds } from "@/lib/lodge-settings";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
@@ -61,7 +67,6 @@ import {
   BOOKING_REQUEST_VERIFICATION_TTL_MS,
   BookingRequestError,
   buildMemberWholeLodgePlaceholderGuests,
-  getBookingRequestSettings,
   HELD_BOOKING_GUEST_ORDER_BY,
   isMemberWholeLodgeRequest,
   linkedGuestMemberMap,
@@ -784,14 +789,6 @@ export async function approveSchoolBookingRequest(input: {
     );
   }
 
-  // A policy edit affects later approvals, never one conversion halfway through.
-  // Read outside the transaction: this transaction holds global -> lodge locks
-  // and must not add a settings read on a second connection while they are held
-  // (INV-LOCK-001, INV-LOCK-002).
-  const assignTeachersAsHutLeaders = (
-    await getBookingRequestSettings()
-  ).assignSchoolTeachersAsHutLeaders;
-
   // A held booking has already materialised the request's null/default lodge
   // semantics into an immutable concrete Booking.lodgeId. Read only that lock
   // key before the transaction; the full request and booking are re-read after
@@ -808,6 +805,23 @@ export async function approveSchoolBookingRequest(input: {
   }
   const expectedHeldLodgeId = heldLodgeLocator?.lodgeId ?? null;
   const approvalLodgeId = expectedHeldLodgeId ?? request.lodgeId ?? null;
+
+  // #3819: the booking's lodge decides whether its teachers become hut leaders
+  // ("Who can be hut leader for school bookings" ticks teachers). It replaces
+  // #3416's club-wide switch. A policy edit affects later approvals, never one
+  // conversion halfway through. Read outside the transaction: this transaction
+  // holds global -> lodge locks and must not add a settings read on a second
+  // connection while they are held (INV-LOCK-001, INV-LOCK-002). The lodge it
+  // was read for is re-checked against the lodge the transaction locks.
+  const hutLeaderPolicyLodgeId = approvalLodgeId ?? (await getDefaultLodgeId(prisma));
+  const assignTeachersAsHutLeaders = (
+    await loadSchoolHutLeaderKinds(prisma, hutLeaderPolicyLodgeId)
+  ).teacherOnBooking;
+  // A teacher leads the school's nights, first to last: the night before
+  // checkout is the last one (INV-DATE-002, #3789). Never the checkout day.
+  const teacherLastNight = dateOnlyInstantOf(
+    addCalendarDays(calendarDateOfDateOnlyInstant(request.checkOut), -1),
+  );
 
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   // One implementation of "what is this school group, given the officer's
@@ -1014,6 +1028,16 @@ export async function approveSchoolBookingRequest(input: {
           memberGuestNotificationRows: [] as MemberGuestAddNotificationRow[],
           displacedMemberGuestIds: [] as string[],
         };
+      }
+
+      // #3819: after the replay check, so an idempotent replay still replays.
+      // Only a default-lodge change between the hut-leader setting read and
+      // this lock can land here. Retrying reads the right lodge's setting.
+      if (bookingLodgeId !== hutLeaderPolicyLodgeId) {
+        throw new BookingRequestError(
+          "The club's default lodge changed while this request was being approved; try again",
+          409,
+        );
       }
 
       // Any edit to the approval snapshot (including attaching/detaching a
@@ -1590,7 +1614,7 @@ export async function approveSchoolBookingRequest(input: {
               data: {
                 memberId: teacherMember.id,
                 startDate: request.checkIn,
-                endDate: request.checkOut,
+                endDate: teacherLastNight,
                 hutLeaderPin: plan.hutLeaderPin!,
                 // A hut leader serves one lodge (ADR-001 Q5): stamp the booking's
                 // lodge so school-created assignments are lodge-scoped like the
@@ -1831,7 +1855,7 @@ export async function approveSchoolBookingRequest(input: {
         email: assignment.email,
         firstName: assignment.firstName,
         startDate: request.checkIn,
-        endDate: request.checkOut,
+        endDate: teacherLastNight,
         pin: assignment.pin,
         assignmentId: assignment.assignmentId,
       }).catch((err) =>

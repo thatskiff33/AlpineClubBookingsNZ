@@ -573,8 +573,13 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     const result = await autoAssignHutLeaders();
     expect(result.assignedCount).toBe(0);
     expect(mockPrisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
-    // Skipped at the probe: no candidate search ran for a covered night.
-    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+    // Skipped at the probe: no candidate search ran for a covered night. The
+    // only booking read is the cover's own school-booking read (#3819), which
+    // carries the school filter under AND.
+    const candidateSearches = mockPrisma.booking.findMany.mock.calls.filter(
+      (call: unknown[]) => !(call[0] as { where?: { AND?: unknown } } | undefined)?.where?.AND,
+    );
+    expect(candidateSearches).toHaveLength(0);
   });
 
   it("does NOT skip a night whose assigned leader is not staying (#3818)", async () => {
@@ -639,7 +644,10 @@ describe("#25: Auto-Assign Hut Leaders", () => {
       await autoAssignHutLeaders();
 
       // One sole-adult read per uncovered night, each on a UTC-midnight day.
-      const nights = mockPrisma.booking.findMany.mock.calls.map((call: unknown[]) =>
+      // The cover's school-group read (#3819, filter under AND) is not one.
+      const nights = mockPrisma.booking.findMany.mock.calls
+        .filter((call: unknown[]) => !(call[0] as { where: { AND?: unknown } }).where.AND)
+        .map((call: unknown[]) =>
         (call[0] as { where: { checkIn: { lte: Date } } }).where.checkIn.lte.toISOString(),
       );
       expect(nights).toEqual([

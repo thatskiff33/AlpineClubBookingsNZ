@@ -619,7 +619,13 @@ export const AUDIT_CENSUS_TOTALS = {
   // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
   // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
   // tree composed by #3829.
-  writeSites: 499,
+  // 499 -> 500 (#3819): `LODGE_SETTINGS_UPDATED` from the new
+  // `/api/admin/lodge-settings/school-hut-leaders` PUT, recording one lodge's
+  // "Who can be hut leader for school bookings" before and after. Categorised
+  // `admin` at the site like its sibling lodge-settings writer, and pinned in
+  // `LODGE_GATED_ADMIN_CATEGORIES_2765` under INV-PRIV-013's uniformity rule.
+  // RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 500,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -800,7 +806,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
-    createAuditLog: { total: 139, uncategorised: 0 },
+    // 139 -> 140 (#3819): the school hut-leader kinds PUT, through
+    // `createAuditLog` like the lodge-settings route beside it.
+    createAuditLog: { total: 140, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1127,7 +1135,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // of the administrator whose currency change cleared it - no member data -
     // and is `admin` for the reason its sibling AI_SPEND_CURRENCY_RATE_UPDATED
     // is: installation configuration.
-    admin: 109,
+    // 109 -> 110 (#3819): the school hut-leader kinds PUT. `admin` is readable
+    // with support:view alone, so the weakest-gate set widens by one lodge
+    // configuration row, the same audience as its sibling lodge-settings write.
+    admin: 110,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2593,6 +2604,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   "src/app/api/admin/lodge-instructions/route.ts::PUT#0": "admin",
   "src/app/api/admin/lodge-instructions/route.ts::PUT#1": "admin",
   "src/app/api/admin/lodge-settings/route.ts::PUT#0": "admin",
+  // "Who can be hut leader for school bookings" (#3819): a second writer in the
+  // lodge-settings subsystem, classified under INV-PRIV-013's uniformity rule.
+  "src/app/api/admin/lodge-settings/school-hut-leaders/route.ts::PUT#0": "admin",
 
   // ─── The `LODGE_*` lodge records themselves (gated `lodge:edit`) ────────────
   // `LODGE_DISPLAY_CONFIG_UPDATED` moved to `lodge` in #2730 and these did not,

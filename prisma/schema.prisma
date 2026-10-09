@@ -2653,8 +2653,11 @@ model BookingRequestSettings {
   showPricingToNonMembers          Boolean  @default(false)
   quoteResponseTtlDays             Int      @default(14)
   quoteReminderLeadDays            Int      @default(3)
-  // Club policy for school-request approval. Existing installations retain
-  // their teacher contacts but do not create hut-leader PIN assignments.
+  // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
+  // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
+  // expand migration 20261104010000 copied its value into every lodge. Kept
+  // only so the draining colour can still read it; a later contract release
+  // drops it.
   assignSchoolTeachersAsHutLeaders Boolean  @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
@@ -5311,6 +5314,19 @@ model LodgeSettings {
   // single-lodge club (ADR-002). Warning-only — the hard limit stays the
   // lodge's capacity.
   schoolGroupSoftCap     Int?
+  // Who can be hut leader for a school booking's nights at this lodge (#3819,
+  // wave #3820): any combination of four kinds. On a night a school booking
+  // stays here, the night counts as covered only when its leader is a ticked
+  // kind (`hut-leader-night-cover.ts`), and approving a school request makes
+  // its teachers hut leaders only when this lodge ticks teachers. Per-lodge
+  // like the soft cap above, resolved the same way. Replaces #3416's club-wide
+  // BookingRequestSettings.assignSchoolTeachersAsHutLeaders, whose value the
+  // expand migration carried into every lodge; that column is dropped by a
+  // later contract release.
+  schoolHutLeaderTeacherOnBooking        Boolean @default(false)
+  schoolHutLeaderCustodian               Boolean @default(true)
+  schoolHutLeaderMemberOnBooking         Boolean @default(true)
+  schoolHutLeaderMemberStayingSeparately Boolean @default(true)
   // Soft link to the lodge this settings row belongs to. Becomes the row key
   // when singleton settings convert to per-lodge rows (phase 7); until then
   // the "default" row keeps serving the sole lodge.

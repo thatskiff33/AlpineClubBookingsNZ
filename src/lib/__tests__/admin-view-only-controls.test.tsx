@@ -2246,6 +2246,34 @@ describe("LodgeConfigurationHubPage view-only gating (#1940, lodge)", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the school hut-leader setting in the banner, and gates its Edit, while Hut Leaders is on (#3819)", async () => {
+    stubFetchRoutes({
+      "/api/admin/lodge-settings/school-hut-leaders": {
+        kinds: { teacherOnBooking: false, custodian: true, memberOnBooking: true, memberStayingSeparately: true },
+      },
+      "/api/admin/lodge-settings": { capacity: null },
+      "/api/admin/lodges": { lodges: [LODGE] },
+      "/api/admin/modules": { settings: { hutLeaders: true } },
+      "/api/admin/bed-allocation/rooms": {
+        rooms: [],
+        capacity: { capacity: 0, source: "unconfigured_lodge", activeBedCount: 0 },
+      },
+      "/api/admin/lockers": { lockers: [] },
+      "/api/admin/seasons": [],
+      "/api/admin/chores": [],
+    });
+    sessionMatrix = matrix("view", { lodge: "view" });
+    render(<LodgeConfigurationHubPage />);
+
+    expect(
+      await screen.findByText(/can view this lodge.s capacity and who can be hut leader for its school bookings, but cannot change them/i),
+    ).toBeInTheDocument();
+    await screen.findByLabelText("The lodge custodian");
+    expect(
+      screen.getByRole("button", { name: "Edit who can be hut leader for school bookings" }),
+    ).toBeDisabled();
+  });
+
   it("enables the capacity editor for a lodge:edit admin", async () => {
     sessionMatrix = matrix("view", { lodge: "edit" });
     render(<LodgeConfigurationHubPage />);

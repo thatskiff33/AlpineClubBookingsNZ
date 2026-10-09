@@ -77,8 +77,10 @@ function buildDb(options: {
       }),
     },
     booking: {
-      findMany: vi.fn().mockResolvedValue(
-        (options.bookings ?? []).map((booking) => {
+      // The cover's own school-booking read (#3819) carries the school filter
+      // under `AND`; none of these bookings is a school group's.
+      findMany: vi.fn().mockImplementation(async (args?: { where?: { AND?: unknown } }) =>
+        args?.where?.AND ? [] : (options.bookings ?? []).map((booking) => {
           const lodgeId = booking.lodgeId ?? "lodge-a";
           return {
             lodge: {

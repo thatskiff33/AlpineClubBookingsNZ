@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { BookingStatus } from "@prisma/client";
+
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
+import { SCHOOL_GROUP_BOOKING_WHERE } from "@/lib/school-group-booking";
 
 import {
   buildHutLeaderNightCover,
@@ -6,9 +10,16 @@ import {
   listHutLeaderHandovers,
   listHutLeaderNightLeaders,
   loadHutLeaderNightCover,
+  type HutLeaderSchoolBooking,
   type HutLeaderShift,
   type HutLeaderStay,
 } from "@/lib/hut-leader-night-cover";
+import {
+  DEFAULT_SCHOOL_HUT_LEADER_KINDS,
+  SCHOOL_HUT_LEADER_KINDS,
+  type SchoolHutLeaderKind,
+  type SchoolHutLeaderKinds,
+} from "@/lib/school-hut-leader-kinds";
 
 /**
  * The one presence-aware coverage definition (#3818, `INV-DATE-031`): a night
@@ -37,15 +48,38 @@ function stay(
   memberId: string,
   checkIn: string,
   checkOut: string,
-  options: { lodgeId?: string; nights?: string[] } = {},
+  options: { lodgeId?: string; nights?: string[]; bookingId?: string } = {},
 ): HutLeaderStay {
   return {
     memberId,
     stayStart: d(checkIn),
     stayEnd: d(checkOut),
     nights: (options.nights ?? []).map((night) => ({ stayDate: d(night) })),
-    booking: { lodgeId: options.lodgeId ?? "lodge-a", checkIn: d(checkIn), checkOut: d(checkOut) },
+    booking: {
+      id: options.bookingId ?? `booking-${memberId}`,
+      lodgeId: options.lodgeId ?? "lodge-a",
+      checkIn: d(checkIn),
+      checkOut: d(checkOut),
+    },
   };
+}
+
+/** A school group's booking at lodge-a, 10 Aug to the morning of the 13th. */
+const SCHOOL: HutLeaderSchoolBooking = {
+  id: "school-booking",
+  lodgeId: "lodge-a",
+  checkIn: d("2026-08-10"),
+  checkOut: d("2026-08-13"),
+};
+
+function onlyKinds(...ticked: SchoolHutLeaderKind[]): SchoolHutLeaderKinds {
+  return Object.fromEntries(
+    SCHOOL_HUT_LEADER_KINDS.map((kind) => [kind, ticked.includes(kind)]),
+  ) as SchoolHutLeaderKinds;
+}
+
+function schoolNights(kinds: SchoolHutLeaderKinds = DEFAULT_SCHOOL_HUT_LEADER_KINDS) {
+  return { bookings: [SCHOOL], kindsByLodge: new Map([["lodge-a", kinds]]) };
 }
 
 describe("buildHutLeaderNightCover", () => {
@@ -84,16 +118,16 @@ describe("buildHutLeaderNightCover", () => {
     expect(cover.isCovered("lodge-a", d("2026-08-06"))).toBe(false);
   });
 
-  it("a school-booking teacher row covers its booking's nights, arrival to checkout − 1", () => {
-    // The school writer stamps request.checkIn .. request.checkOut; teachers are
-    // not booking guests, so no stay is loaded for them.
-    const cover = buildHutLeaderNightCover(
-      [shift({ source: "SCHOOL_BOOKING", startDate: d("2026-08-10"), endDate: d("2026-08-13") })],
-      [],
-    );
+  it("a teacher row covers only while a school booking stays at its lodge (#3819)", () => {
+    // Stamped the pre-#3819 way, through the checkout day: the school's stay,
+    // not the row, ends the cover. Teachers ticked at this lodge.
+    const teacher = shift({ source: "SCHOOL_BOOKING", startDate: d("2026-08-10"), endDate: d("2026-08-13") });
+    const cover = buildHutLeaderNightCover([teacher], [], schoolNights(onlyKinds("teacherOnBooking")));
     expect(cover.isCovered("lodge-a", d("2026-08-10"))).toBe(true);
     expect(cover.isCovered("lodge-a", d("2026-08-12"))).toBe(true);
     expect(cover.isCovered("lodge-a", d("2026-08-13"))).toBe(false);
+    // No school booking staying (cancelled, moved, or never loaded): no cover.
+    expect(buildHutLeaderNightCover([teacher], []).isCovered("lodge-a", d("2026-08-11"))).toBe(false);
   });
 
   it("a custodian's bed hold is presence on every night it covers, inclusive (INV-LIFE-062)", () => {
@@ -126,14 +160,20 @@ describe("buildHutLeaderNightCover", () => {
 });
 
 describe("loadHutLeaderNightCover", () => {
-  function buildDb(shifts: HutLeaderShift[], stays: HutLeaderStay[]) {
+  function buildDb(
+    shifts: HutLeaderShift[],
+    stays: HutLeaderStay[],
+    school: { bookings?: HutLeaderSchoolBooking[]; settingsRow?: Record<string, unknown> | null } = {},
+  ) {
     return {
       hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue(shifts) },
       bookingGuest: { findMany: vi.fn().mockResolvedValue(stays) },
+      booking: { findMany: vi.fn().mockResolvedValue(school.bookings ?? []) },
+      lodgeSettings: { findUnique: vi.fn().mockResolvedValue(school.settingsRow ?? null) },
     };
   }
 
-  it("reads in two queries and loads only operational, undeleted, consented stays at the leaders' lodges", async () => {
+  it("loads only operational, undeleted, consented stays at the leaders' lodges", async () => {
     const db = buildDb(
       [shift({ startDate: d("2026-08-03"), endDate: d("2026-08-05") })],
       [stay("leader", "2026-08-03", "2026-08-05")],
@@ -189,9 +229,9 @@ describe("loadHutLeaderNightCover", () => {
     });
   });
 
-  it("skips the stay read when no row needs a member stay", async () => {
+  it("skips the stay read when every row is a teacher's", async () => {
     const db = buildDb(
-      [shift({ bedId: "bed-1", startDate: d("2026-08-03"), endDate: d("2026-08-05") })],
+      [shift({ source: "SCHOOL_BOOKING", startDate: d("2026-08-03"), endDate: d("2026-08-05") })],
       [],
     );
     await loadHutLeaderNightCover(db, {
@@ -202,7 +242,7 @@ describe("loadHutLeaderNightCover", () => {
     expect(db.bookingGuest.findMany).not.toHaveBeenCalled();
   });
 
-  it("skips the stay read for a ticked custodian with no bed", async () => {
+  it("a ticked custodian with no bed covers without a stay", async () => {
     const db = buildDb(
       [shift({ isCustodian: true, startDate: d("2026-08-03"), endDate: d("2026-08-05") })],
       [],
@@ -212,8 +252,72 @@ describe("loadHutLeaderNightCover", () => {
       from: d("2026-08-01"),
       to: d("2026-08-31"),
     });
-    expect(db.bookingGuest.findMany).not.toHaveBeenCalled();
     expect(cover.isCovered("lodge-a", d("2026-08-04"))).toBe(true);
+  });
+
+  it("reads the school bookings at the leaders' lodges, and each school lodge's kinds on the same client (#3819)", async () => {
+    const db = buildDb(
+      [shift({ isCustodian: true, startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      [],
+      // An own settings row that leaves the custodian unticked.
+      { bookings: [SCHOOL], settingsRow: { capacity: null, schoolHutLeaderCustodian: false } },
+    );
+    const cover = await loadHutLeaderNightCover(db, {
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      from: d("2026-08-01"),
+      to: d("2026-08-31"),
+    });
+
+    const [[args]] = db.booking.findMany.mock.calls as [[{ where: Record<string, unknown> }]];
+    expect(args.where).toEqual({
+      lodgeId: "lodge-a",
+      deletedAt: null,
+      checkIn: { lte: d("2026-08-31") },
+      checkOut: { gt: d("2026-08-01") },
+      // The capacity engine's population, not the paid-only stay list: an
+      // approved school booking is CONFIRMED until its invoice is paid.
+      AND: [capacityHoldingBookingFilter(), SCHOOL_GROUP_BOOKING_WHERE],
+    });
+    expect(db.lodgeSettings.findUnique).toHaveBeenCalledWith({ where: { id: "lodge-a" } });
+    // The custodian is present, but this lodge does not accept a custodian
+    // for a school night; the night after the school leaves is an ordinary one.
+    expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(false);
+    expect(cover.isCovered("lodge-a", d("2026-08-13"))).toBe(false);
+    expect(cover.isCovered("lodge-a", d("2026-08-09"))).toBe(false);
+  });
+
+  it("counts a CONFIRMED, not-yet-paid school booking as staying (its teachers cover)", async () => {
+    // What the population admits: an approved school booking awaiting its
+    // invoice is CONFIRMED, which holds capacity.
+    const filter = capacityHoldingBookingFilter() as { OR: Array<{ status?: { in?: string[] } }> };
+    expect(filter.OR[0]?.status?.in).toContain(BookingStatus.CONFIRMED);
+
+    // And when the read returns that booking, the lodge's ticked teacher covers.
+    const db = buildDb(
+      [shift({ source: "SCHOOL_BOOKING", startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      [],
+      { bookings: [SCHOOL], settingsRow: { capacity: null, schoolHutLeaderTeacherOnBooking: true } },
+    );
+    const cover = await loadHutLeaderNightCover(db, {
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      from: d("2026-08-01"),
+      to: d("2026-08-31"),
+    });
+    expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(true);
+  });
+
+  it("reads no lodge settings when no school booking is in the window", async () => {
+    const db = buildDb(
+      [shift({ isCustodian: true, startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      [],
+    );
+    const cover = await loadHutLeaderNightCover(db, {
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      from: d("2026-08-01"),
+      to: d("2026-08-31"),
+    });
+    expect(db.lodgeSettings.findUnique).not.toHaveBeenCalled();
+    expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(true);
   });
 
   it("isHutLeaderNightCovered answers one lodge night", async () => {
@@ -294,5 +398,74 @@ describe("handovers across a one-night overlap", () => {
         to: [{ memberId: "ben", name: "Ben Jones" }],
       }),
     ]);
+  });
+});
+
+describe("a school booking's nights obey the lodge's ticked kinds (#3819)", () => {
+  // One leader of each kind, each present on night 11 Aug at lodge-a.
+  const LEADERS: Record<SchoolHutLeaderKind, { shifts: HutLeaderShift[]; stays: HutLeaderStay[] }> = {
+    teacherOnBooking: {
+      shifts: [shift({ source: "SCHOOL_BOOKING", startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      stays: [],
+    },
+    custodian: {
+      shifts: [shift({ isCustodian: true, startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      stays: [],
+    },
+    memberOnBooking: {
+      shifts: [shift({ startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      stays: [stay("leader", "2026-08-10", "2026-08-13", { bookingId: SCHOOL.id })],
+    },
+    memberStayingSeparately: {
+      shifts: [shift({ startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      stays: [stay("leader", "2026-08-10", "2026-08-13", { bookingId: "own-booking" })],
+    },
+  };
+
+  it.each(SCHOOL_HUT_LEADER_KINDS)("%s covers a school night when ticked, and not when it is the only kind unticked", (kind) => {
+    const { shifts, stays } = LEADERS[kind];
+    const ticked = buildHutLeaderNightCover(shifts, stays, schoolNights(onlyKinds(kind)));
+    expect(ticked.isCovered("lodge-a", d("2026-08-11"))).toBe(true);
+
+    const othersOnly = SCHOOL_HUT_LEADER_KINDS.filter((other) => other !== kind);
+    const unticked = buildHutLeaderNightCover(shifts, stays, schoolNights(onlyKinds(...othersOnly)));
+    expect(unticked.isCovered("lodge-a", d("2026-08-11"))).toBe(false);
+  });
+
+  it("leaves a night with no school booking to the ordinary rule", () => {
+    const cover = buildHutLeaderNightCover(
+      [shift({ startDate: d("2026-08-08"), endDate: d("2026-08-12") })],
+      [stay("leader", "2026-08-08", "2026-08-13", { bookingId: "own-booking" })],
+      schoolNights(onlyKinds()),
+    );
+    // 8-9 Aug: no school there, so nothing is unticked.
+    expect(cover.isCovered("lodge-a", d("2026-08-09"))).toBe(true);
+    // 10 Aug: the school has arrived and this lodge ticks nothing.
+    expect(cover.isCovered("lodge-a", d("2026-08-10"))).toBe(false);
+  });
+
+  it("counts a leader of two kinds when either is ticked", () => {
+    // A ticked custodian who is also a guest on a booking of their own.
+    const cover = buildHutLeaderNightCover(
+      LEADERS.custodian.shifts,
+      [stay("leader", "2026-08-10", "2026-08-13", { bookingId: "own-booking" })],
+      schoolNights(onlyKinds("memberStayingSeparately")),
+    );
+    expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(true);
+  });
+
+  it("a lodge with no settings read keeps the defaults: everyone but teachers", () => {
+    const teacher = buildHutLeaderNightCover(
+      LEADERS.teacherOnBooking.shifts,
+      [],
+      { bookings: [SCHOOL], kindsByLodge: new Map() },
+    );
+    expect(teacher.isCovered("lodge-a", d("2026-08-11"))).toBe(false);
+    const custodian = buildHutLeaderNightCover(
+      LEADERS.custodian.shifts,
+      [],
+      { bookings: [SCHOOL], kindsByLodge: new Map() },
+    );
+    expect(custodian.isCovered("lodge-a", d("2026-08-11"))).toBe(true);
   });
 });

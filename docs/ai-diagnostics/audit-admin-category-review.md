@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  499
+row-producing sites:  500
 uncategorised:        0
-category values: admin 109, booking 107, xero 39, family 35, payment 52,
+category values: admin 110, booking 107, xero 39, family 35, payment 52,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -772,7 +772,10 @@ both (RE-MEASURED on the tree #3829 composed): #3827's
 `booking.modify.promo_reprice`, a guest's acceptance re-pricing the booking's
 promo codes (`booking` 106 -> 107, 497 -> 498), and #3492's
 `promo_code.guest_lookup`, a booker looking up their guests' promo codes for
-the chips (`privacy` 20 -> 21, 498 -> 499).
+the chips (`privacy` 20 -> 21, 498 -> 499). #3819 then added one, disjoint from
+both (`admin` 109 -> 110, 499 -> 500, RE-MEASURED): the per-lodge "Who can be
+hut leader for school bookings" save, `LODGE_SETTINGS_UPDATED` beside its
+lodge-settings sibling.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

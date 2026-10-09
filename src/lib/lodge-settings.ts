@@ -2,6 +2,12 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
+import {
+  DEFAULT_SCHOOL_HUT_LEADER_KINDS,
+  SCHOOL_HUT_LEADER_KINDS,
+  type SchoolHutLeaderKind,
+  type SchoolHutLeaderKinds,
+} from "@/lib/school-hut-leader-kinds";
 
 const LODGE_SETTINGS_ID = "default";
 const DEFAULT_HUT_LEADER_LOOKAHEAD_DAYS = 14;
@@ -11,6 +17,10 @@ type LodgeSettingsRecord = {
   hutLeaderLookaheadDays?: number | null;
   schoolGroupSoftCap?: number | null;
   lodgeId?: string | null;
+  schoolHutLeaderTeacherOnBooking?: boolean;
+  schoolHutLeaderCustodian?: boolean;
+  schoolHutLeaderMemberOnBooking?: boolean;
+  schoolHutLeaderMemberStayingSeparately?: boolean;
 };
 
 // Per-lodge conversion (lodge-scoping contract): a lodge's settings row is
@@ -40,6 +50,36 @@ export function normalizeHutLeaderLookaheadDays(value: unknown): number {
   return Number.isInteger(value) && Number(value) > 0
     ? Number(value)
     : DEFAULT_HUT_LEADER_LOOKAHEAD_DAYS;
+}
+
+/**
+ * THE ROW THAT SERVES A LODGE — the one resolution every per-lodge reader asks
+ * (`INV-SSOT-001`): the lodge's own row (`id = lodgeId`); else the legacy
+ * "default" row when it is unlinked or linked to this lodge; else none, so the
+ * caller's code default applies. Without a lodge id it is the legacy row,
+ * which is the pre-conversion club-wide behaviour. A legacy row linked to a
+ * different lodge is never returned, so one lodge's values cannot leak to
+ * another. Errors propagate; each caller decides whether a failed read may
+ * fall back.
+ */
+async function servingLodgeSettingsRow(
+  db: Required<LodgeSettingsReader>,
+  lodgeId?: string | null,
+): Promise<LodgeSettingsRecord | null> {
+  if (lodgeId && lodgeId !== LODGE_SETTINGS_ID) {
+    const ownRow = await db.lodgeSettings.findUnique({ where: { id: lodgeId } });
+    if (ownRow) return ownRow;
+  }
+  const legacy = await db.lodgeSettings.findUnique({
+    where: { id: LODGE_SETTINGS_ID },
+  });
+  if (!legacy) return null;
+  if (lodgeId && legacy.lodgeId != null && legacy.lodgeId !== lodgeId) return null;
+  return legacy;
+}
+
+function hasLodgeSettings(db: LodgeSettingsReader): db is Required<LodgeSettingsReader> {
+  return typeof db.lodgeSettings?.findUnique === "function";
 }
 
 /**
@@ -101,27 +141,10 @@ export async function loadSchoolGroupSoftCap(
   db: LodgeSettingsReader = prisma,
   lodgeId?: string | null,
 ): Promise<number> {
-  if (!db.lodgeSettings?.findUnique) return DEFAULT_SCHOOL_GROUP_SOFT_CAP;
+  if (!hasLodgeSettings(db)) return DEFAULT_SCHOOL_GROUP_SOFT_CAP;
   try {
-    if (lodgeId && lodgeId !== LODGE_SETTINGS_ID) {
-      const ownRow = await db.lodgeSettings.findUnique({
-        where: { id: lodgeId },
-      });
-      if (ownRow) return ownRow.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP;
-    }
-    const record = await db.lodgeSettings.findUnique({
-      where: { id: LODGE_SETTINGS_ID },
-    });
-    if (!record) return DEFAULT_SCHOOL_GROUP_SOFT_CAP;
-    if (
-      lodgeId &&
-      record.lodgeId !== undefined &&
-      record.lodgeId !== null &&
-      record.lodgeId !== lodgeId
-    ) {
-      return DEFAULT_SCHOOL_GROUP_SOFT_CAP;
-    }
-    return record.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP;
+    const row = await servingLodgeSettingsRow(db, lodgeId);
+    return row?.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP;
   } catch {
     return DEFAULT_SCHOOL_GROUP_SOFT_CAP;
   }
@@ -142,28 +165,10 @@ export async function loadLodgeCapacityOverride(
   db: LodgeSettingsReader = prisma,
   lodgeId?: string,
 ): Promise<number | null> {
-  if (!db.lodgeSettings?.findUnique) return null;
-
+  if (!hasLodgeSettings(db)) return null;
   try {
-    if (lodgeId && lodgeId !== LODGE_SETTINGS_ID) {
-      const ownRow = await db.lodgeSettings.findUnique({
-        where: { id: lodgeId },
-      });
-      if (ownRow) return ownRow.capacity ?? null;
-    }
-    const record = await db.lodgeSettings.findUnique({
-      where: { id: LODGE_SETTINGS_ID },
-    });
-    if (!record) return null;
-    if (
-      lodgeId &&
-      record.lodgeId !== undefined &&
-      record.lodgeId !== null &&
-      record.lodgeId !== lodgeId
-    ) {
-      return null;
-    }
-    return record.capacity ?? null;
+    const row = await servingLodgeSettingsRow(db, lodgeId);
+    return row?.capacity ?? null;
   } catch {
     return null;
   }
@@ -249,38 +254,116 @@ export async function writeImportedLodgeCapacity(
     lodgeCreatedByThisImport: boolean;
   },
 ): Promise<void> {
-  const base = {
-    lodgeId: input.lodgeId,
-    capacity: input.capacity,
-    updatedByMemberId: input.updatedByMemberId,
-  };
-  if (input.lodgeCreatedByThisImport) return createNewLodgeSettings(tx, base);
-
-  const edit = (id: string) =>
-    tx.lodgeSettings.update({
-      where: { id },
-      data: { capacity: input.capacity, updatedByMemberId: input.updatedByMemberId },
-      select: { id: true },
+  if (input.lodgeCreatedByThisImport) {
+    return createNewLodgeSettings(tx, {
+      lodgeId: input.lodgeId,
+      capacity: input.capacity,
+      updatedByMemberId: input.updatedByMemberId,
     });
+  }
+  await writeLodgeOwnSettings(tx, {
+    lodgeId: input.lodgeId,
+    data: { capacity: input.capacity },
+    updatedByMemberId: input.updatedByMemberId,
+  });
+}
+
+/**
+ * Every per-lodge value a settings row serves. When a lodge stops being served
+ * by an unlinked legacy row — because it gets a row of its own, or because the
+ * legacy row is claimed by another lodge — these are what it resolved to, and
+ * they are carried onto its new row so nothing it reads moves (#3407, #3819).
+ * The club-wide `hutLeaderLookaheadDays` is not one: it is read from the legacy
+ * row alone.
+ */
+function servedPerLodgeValues(row: LodgeSettingsRecord) {
+  return {
+    capacity: row.capacity ?? null,
+    schoolGroupSoftCap: row.schoolGroupSoftCap ?? null,
+    ...kindsToColumns(kindsFromRecord(row)),
+  };
+}
+
+/**
+ * Write per-lodge values onto the row that serves `lodgeId` — THE one targeting
+ * rule for a per-lodge settings write (`INV-SSOT-001`), used by the config
+ * importer and the school hut-leader setting:
+ *
+ * - a lodge with its own row is edited there;
+ * - the legacy "default" row is edited ONLY when it is already linked to this
+ *   lodge;
+ * - otherwise the lodge gets its own row. It never claims an unlinked legacy
+ *   row, which serves every lodge without an own row (a guided-setup install
+ *   writes one), so claiming it for one lodge would silently take its values
+ *   away from the others. When that unlinked row is what was serving this
+ *   lodge, everything it served is carried onto the new own row
+ *   ({@link servedPerLodgeValues}), because an own row is read first and would
+ *   otherwise reset the lodge's other values to the code defaults. A legacy row
+ *   linked to another lodge never served this one, so nothing is copied.
+ *
+ * Returns the row written, as the resolver would read it.
+ */
+async function writeLodgeOwnSettings(
+  tx: Pick<Prisma.TransactionClient, "lodgeSettings">,
+  input: {
+    lodgeId: string;
+    data: Prisma.LodgeSettingsUncheckedUpdateInput;
+    updatedByMemberId: string;
+  },
+): Promise<LodgeSettingsRecord> {
+  const data = { ...input.data, updatedByMemberId: input.updatedByMemberId };
   const ownRow = await tx.lodgeSettings.findUnique({
     where: { id: input.lodgeId },
     select: { id: true },
   });
   if (ownRow) {
-    await edit(input.lodgeId);
-    return;
+    return tx.lodgeSettings.update({ where: { id: input.lodgeId }, data });
   }
   const legacy = await tx.lodgeSettings.findUnique({
     where: { id: LODGE_SETTINGS_ID },
-    select: { lodgeId: true, schoolGroupSoftCap: true },
   });
   if (legacy && legacy.lodgeId === input.lodgeId) {
-    await edit(LODGE_SETTINGS_ID);
-    return;
+    return tx.lodgeSettings.update({ where: { id: LODGE_SETTINGS_ID }, data });
   }
-  return createNewLodgeSettings(tx, {
-    ...base,
-    schoolGroupSoftCap: legacy && legacy.lodgeId === null ? legacy.schoolGroupSoftCap : null,
+  const carried = legacy && legacy.lodgeId === null ? servedPerLodgeValues(legacy) : {};
+  return tx.lodgeSettings.create({
+    data: {
+      ...carried,
+      ...(data as Prisma.LodgeSettingsUncheckedCreateInput),
+      id: input.lodgeId,
+      lodgeId: input.lodgeId,
+    },
+  });
+}
+
+/**
+ * Before an unlinked legacy row is claimed for `claimingLodgeId`, give every
+ * other lodge it serves (one with no own row) its own row holding the values it
+ * resolved to through that legacy row ({@link servedPerLodgeValues}).
+ */
+async function giveServedLodgesTheirOwnRows(
+  legacy: LodgeSettingsRecord,
+  claimingLodgeId: string,
+): Promise<void> {
+  const lodges = await prisma.lodge.findMany({
+    where: { id: { not: claimingLodgeId } },
+    select: { id: true },
+  });
+  if (lodges.length === 0) return;
+  const ids = lodges.map((lodge) => lodge.id);
+  const owned = new Set(
+    (
+      await prisma.lodgeSettings.findMany({
+        where: { id: { in: ids } },
+        select: { id: true },
+      })
+    ).map((row) => row.id),
+  );
+  const served = ids.filter((id) => !owned.has(id));
+  if (served.length === 0) return;
+  await prisma.lodgeSettings.createMany({
+    data: served.map((id) => ({ id, lodgeId: id, ...servedPerLodgeValues(legacy) })),
+    skipDuplicates: true,
   });
 }
 
@@ -303,7 +386,6 @@ export async function updateLodgeSettings(input: {
   const [legacy, ownRow] = await Promise.all([
     prisma.lodgeSettings.findUnique({
       where: { id: LODGE_SETTINGS_ID },
-      select: { lodgeId: true },
     }),
     input.lodgeId && input.lodgeId !== LODGE_SETTINGS_ID
       ? prisma.lodgeSettings.findUnique({
@@ -329,6 +411,13 @@ export async function updateLodgeSettings(input: {
       legacy.lodgeId === input.lodgeId);
 
   if (targetsLegacyRow) {
+    if (legacy && legacy.lodgeId === null && input.lodgeId) {
+      // Claiming the unlinked legacy row for this lodge stops it serving every
+      // other lodge without a row of its own. Each of those first gets its own
+      // row carrying what it resolved to (#3819), so its capacity, soft cap and
+      // school hut-leader kinds do not move under it.
+      await giveServedLodgesTheirOwnRows(legacy, input.lodgeId);
+    }
     const row = await prisma.lodgeSettings.upsert({
       where: { id: LODGE_SETTINGS_ID },
       create: {
@@ -408,4 +497,89 @@ export async function updateLodgeSettings(input: {
       savedOwnRow.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP,
     updatedAt: savedOwnRow.updatedAt,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Who can be hut leader for school bookings (#3819)
+// ---------------------------------------------------------------------------
+
+const SCHOOL_HUT_LEADER_KIND_COLUMNS = {
+  teacherOnBooking: "schoolHutLeaderTeacherOnBooking",
+  custodian: "schoolHutLeaderCustodian",
+  memberOnBooking: "schoolHutLeaderMemberOnBooking",
+  memberStayingSeparately: "schoolHutLeaderMemberStayingSeparately",
+} as const satisfies Record<SchoolHutLeaderKind, keyof LodgeSettingsRecord>;
+
+function kindsFromRecord(record: LodgeSettingsRecord): SchoolHutLeaderKinds {
+  const kinds = { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+  for (const kind of SCHOOL_HUT_LEADER_KINDS) {
+    const value = record[SCHOOL_HUT_LEADER_KIND_COLUMNS[kind]];
+    if (typeof value === "boolean") kinds[kind] = value;
+  }
+  return kinds;
+}
+
+function kindsToColumns(kinds: SchoolHutLeaderKinds) {
+  return {
+    schoolHutLeaderTeacherOnBooking: kinds.teacherOnBooking,
+    schoolHutLeaderCustodian: kinds.custodian,
+    schoolHutLeaderMemberOnBooking: kinds.memberOnBooking,
+    schoolHutLeaderMemberStayingSeparately: kinds.memberStayingSeparately,
+  };
+}
+
+/**
+ * A lodge's school hut-leader kinds, resolved like its soft cap: the lodge's
+ * own row, else the legacy "default" row when it is unlinked or linked to this
+ * lodge, else {@link DEFAULT_SCHOOL_HUT_LEADER_KINDS}.
+ *
+ * Unlike the soft cap, a failed read is NOT turned into the defaults: this
+ * answer decides whether an approval makes teachers hut leaders and whether a
+ * night counts as covered, and a silent default would do either wrongly. Pass
+ * the transaction client when the answer decides a write.
+ */
+export async function loadSchoolHutLeaderKinds(
+  db: LodgeSettingsReader,
+  lodgeId: string,
+): Promise<SchoolHutLeaderKinds> {
+  if (!hasLodgeSettings(db)) return { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+  const row = await servingLodgeSettingsRow(db, lodgeId);
+  return row ? kindsFromRecord(row) : { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+}
+
+/**
+ * Save one lodge's school hut-leader kinds (#3819) through the one per-lodge
+ * writer ({@link writeLodgeOwnSettings}), reading what the lodge resolved to
+ * BEFORE the write in the same transaction, so the audit row's "previous" is
+ * the value this save replaced and not one a concurrent save already moved.
+ */
+export async function saveSchoolHutLeaderKinds(input: {
+  lodgeId: string;
+  kinds: SchoolHutLeaderKinds;
+  updatedByMemberId: string;
+}): Promise<{ previous: SchoolHutLeaderKinds; saved: SchoolHutLeaderKinds }> {
+  return prisma.$transaction(async (tx) => {
+    const previous = await loadSchoolHutLeaderKinds(tx, input.lodgeId);
+    const row = await writeLodgeOwnSettings(tx, {
+      lodgeId: input.lodgeId,
+      data: kindsToColumns(input.kinds),
+      updatedByMemberId: input.updatedByMemberId,
+    });
+    return { previous, saved: kindsFromRecord(row) };
+  });
+}
+
+/**
+ * A config import's school hut-leader kinds for one lodge (#3819), through the
+ * same per-lodge writer as its capacity.
+ */
+export async function writeImportedSchoolHutLeaderKinds(
+  tx: Pick<Prisma.TransactionClient, "lodgeSettings">,
+  input: { lodgeId: string; kinds: SchoolHutLeaderKinds; updatedByMemberId: string },
+): Promise<void> {
+  await writeLodgeOwnSettings(tx, {
+    lodgeId: input.lodgeId,
+    data: kindsToColumns(input.kinds),
+    updatedByMemberId: input.updatedByMemberId,
+  });
 }

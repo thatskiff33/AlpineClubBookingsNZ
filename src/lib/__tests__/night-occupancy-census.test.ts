@@ -193,6 +193,10 @@ const NON_OCCUPANCY_READERS: Array<{
     file: "src/lib/seasonal-membership-assignments.ts",
     why: "lists a member's own capacity-holding bookings for the season roll-over; no bed count",
   },
+  {
+    file: "src/lib/hut-leader-night-cover.ts",
+    why: "decides which nights a school group is staying, for who may lead them (#3819): a CONFIRMED, not-yet-paid school booking holds its beds and so stays; no bed count",
+  },
 ];
 
 /**

@@ -801,8 +801,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
     // #2765's fifteen, plus #2749's three other-lodges sites classified under
     // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
-    // name-detail writer, classified the same way for the same reason.
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(19);
+    // name-detail writer, classified the same way for the same reason, plus
+    // #3819's school hut-leader kinds writer, likewise.
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(20);
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -1000,8 +1001,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       "src/app/api/admin/lockers/route.ts",
     ]);
     // Eight files from #2765's fifteen sites, plus #2749's two other-lodges
-    // route files, plus #2942's roster-settings route file.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
+    // route files, plus #2942's roster-settings route file, plus #3819's
+    // school hut-leaders route file.
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(12);
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1417,7 +1419,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 369 -> 370 (#3827, composed by #3829): the guest-acceptance re-price record, unpinned
     // `booking`. RE-MEASURED with `pnpm run audit:census`.
     // 370 -> 371 (#3492, composed by #3829): the guest promo-code lookup, unpinned `privacy`.
-    ).toEqual({ pinned: 128, unpinned: 371 });
+    // 128 -> 129 pinned (#3819): the school hut-leader kinds writer, pinned in
+    // LODGE_GATED_ADMIN_CATEGORIES_2765. RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 129, unpinned: 371 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

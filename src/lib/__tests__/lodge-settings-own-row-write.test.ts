@@ -44,6 +44,9 @@ vi.mock("@/lib/prisma", () => {
   return {
     prisma: {
       lodgeSettings,
+      // #3819: claiming an unlinked legacy row first gives the OTHER lodges it
+      // serves their own rows; this club has no other lodge.
+      lodge: { findMany: vi.fn(async () => []) },
       $transaction: vi.fn(async (ops: Array<Promise<unknown>>) => Promise.all(ops)),
     },
   };

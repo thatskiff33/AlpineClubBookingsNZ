@@ -78,12 +78,14 @@ type HutLeaderBooking = {
   };
 };
 
-type HutLeaderCoverageDb = LodgeSettingsReader &
-  HutLeaderNightCoverDb & {
-    booking: {
-      findMany(args: unknown): Promise<HutLeaderBooking[]>;
-    };
+// The coverage reader's own booking read comes first, so it is the overload a
+// call here resolves to; the cover's school-booking read shares the delegate.
+type HutLeaderCoverageDb = {
+  booking: {
+    findMany(args: unknown): Promise<HutLeaderBooking[]>;
   };
+} & LodgeSettingsReader &
+  HutLeaderNightCoverDb;
 
 export type HutLeaderCoverageScope = HutLeaderNightCoverScope;
 

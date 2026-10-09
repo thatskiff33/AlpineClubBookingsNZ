@@ -17,6 +17,7 @@ import { findHutLeaderOverlapRefusal } from "./hut-leader-overlap-guard";
 import {
   isHutLeaderNightCovered,
   loadHutLeaderNightCover,
+  memberMayLeadNight,
 } from "./hut-leader-night-cover";
 import { loadHutLeaderLookaheadDays } from "./lodge-settings";
 import { loadEffectiveModuleFlags } from "./module-settings";
@@ -116,7 +117,10 @@ export async function autoAssignHutLeaders(): Promise<{
       // claims the night AND its leader is staying that night — so the cron
       // and the dashboard can never disagree about which nights need a leader.
       // Still source-blind as above: a teacher row covers its school booking's
-      // nights (`hut-leader-night-cover.ts`).
+      // nights (`hut-leader-night-cover.ts`) — when the lodge ticks teachers in
+      // "Who can be hut leader for school bookings" (#3819). On a school night
+      // the cover counts only a leader of a ticked kind, and the job adds a
+      // member only when their kind is ticked (below).
       if (cheapCover.isCovered(lodge.id, day)) continue;
 
       // Find distinct adult members staying this night at this lodge. Scoped,
@@ -141,6 +145,7 @@ export async function autoAssignHutLeaders(): Promise<{
           },
         },
         select: {
+          id: true,
           checkIn: true,
           checkOut: true,
           guests: {
@@ -197,6 +202,8 @@ export async function autoAssignHutLeaders(): Promise<{
         id: string;
         firstNight: Date;
         lastNight: Date;
+        /** The booking they are a guest on this night (#3819). */
+        bookingId: string;
       }>();
 
       for (const booking of bookingsForDate) {
@@ -213,6 +220,7 @@ export async function autoAssignHutLeaders(): Promise<{
             id: guest.memberId,
             firstNight: parseDateOnly(run.first),
             lastNight: parseDateOnly(run.last),
+            bookingId: booking.id,
           });
         }
       }
@@ -224,6 +232,20 @@ export async function autoAssignHutLeaders(): Promise<{
       // Unreachable: `adultMembers.size === 1` is checked just above.
       if (!onlyEntry) continue;
       const [, member] = onlyEntry;
+
+      // #3819: on a school night the lodge decides who may lead. A member of a
+      // kind it does not tick would write a row the cover never counts — and
+      // that row would then block, by overlap, the ticked leader an officer
+      // goes to add. Leave the night for the officer instead.
+      if (
+        !memberMayLeadNight(cheapCover, {
+          lodgeId: lodge.id,
+          night: day,
+          stayBookingId: member.bookingId,
+        })
+      ) {
+        continue;
+      }
 
       // Overlap validation, per lodge for the same reason the admin route is:
       // an assignment at another lodge is not a conflict here. Asked through

@@ -7,6 +7,7 @@
  * The `Planner*` projections stay server-private — family membership is not a
  * board DTO.
  */
+import { isSchoolGroupBooking } from "@/lib/school-group-booking";
 import type {
   BedAllocationBooking,
   BedAllocationRoom,
@@ -425,9 +426,7 @@ export function candidateGuestBookings(
         // SCHOOL request bookings (#1768): adults room together, students
         // separately — covers both the converted booking and a SCHOOL
         // request's pre-approval held booking.
-        isSchoolGroup:
-          booking.originBookingRequest?.type === "SCHOOL" ||
-          booking.heldForBookingRequest?.type === "SCHOOL",
+        isSchoolGroup: isSchoolGroupBooking(booking),
         guests,
       };
     })

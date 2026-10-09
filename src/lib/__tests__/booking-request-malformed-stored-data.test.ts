@@ -94,6 +94,12 @@ vi.mock("@/lib/lodge-capacity", () => ({
 }));
 vi.mock("@/lib/lodge-settings", () => ({
   loadSchoolGroupSoftCap: vi.fn().mockResolvedValue(25),
+  loadSchoolHutLeaderKinds: vi.fn().mockResolvedValue({
+    teacherOnBooking: false,
+    custodian: true,
+    memberOnBooking: true,
+    memberStayingSeparately: true,
+  }),
 }));
 vi.mock("@/lib/lodge-pin-session", () => ({
   generateHutLeaderPin: vi.fn(() => "246810"),
