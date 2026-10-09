@@ -61,6 +61,15 @@ export function findComposeFiles(dir: string, out: string[] = []): string[] {
 
 export const BASE_COMPOSE = "docker-compose.yml";
 
+/** The app environment anchor up to the next top-level YAML key (INV-SSOT-001). */
+export function appEnvironmentAnchor(text: string): string | undefined {
+  const start = text.search(/^x-app-environment:\s*(?:&[\w.-]+)?\s*(?:#.*)?$/m);
+  if (start === -1) return undefined;
+  const rest = text.slice(start);
+  const end = rest.search(/\n[^\s#]/);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
 /** Every tracked Compose file, repo-relative and sorted. Discovered, never listed. */
 export const composeFiles: string[] = findComposeFiles(process.cwd())
   .map((file) => path.relative(process.cwd(), file).split(path.sep).join("/"))

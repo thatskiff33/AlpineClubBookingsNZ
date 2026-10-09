@@ -6,6 +6,7 @@ import { ciEnvHeredocs } from "./helpers/ci-env-heredocs";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 import {
+  appEnvironmentAnchor,
   composeFiles,
   composeServices,
   readRepoFile,
@@ -204,14 +205,11 @@ function captureCandidateBlocks(): ConfigBlock[] {
   }
 
   for (const file of composeFiles) {
-    const text = readRepoFile(file);
-    const anchor = text.indexOf("x-app-environment:");
-    if (anchor > -1) {
-      const rest = text.slice(anchor);
-      const end = rest.search(/\n[^\s#]/);
+    const anchor = appEnvironmentAnchor(readRepoFile(file));
+    if (anchor !== undefined) {
       blocks.push({
         id: `${file} -> x-app-environment`,
-        text: withoutDotenvComments(end === -1 ? rest : rest.slice(0, end)),
+        text: withoutDotenvComments(anchor),
       });
     }
     for (const [service, body] of composeServices(file)) {
