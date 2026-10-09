@@ -569,4 +569,13 @@ describe("DECLINE", () => {
       outcome: "failure",
     });
   });
+  it("#3954: answers an unpaid ask that moved under the removal with a 409 to try again, recording no outcome", async () => {
+    const { AdditionalAskChangedDuringReductionError } = await import("@/lib/additional-ask-reduction-error");
+    h.removeBookingGuestInTransaction.mockRejectedValue(new AdditionalAskChangedDuringReductionError());
+    const res = await callRoute(makeRequest({ action: "DECLINE" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: new AdditionalAskChangedDuringReductionError().message });
+    // Not a blocked row: nothing is audited as needing a human.
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
 });

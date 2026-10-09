@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
+import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -151,6 +152,11 @@ export async function POST(
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof MemberGuestConsentError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    // #3954: the booking's unpaid card ask moved while the decline's reduction
+    // was saved. Nothing was recorded; the member's answer goes through on retry.
+    if (err instanceof AdditionalAskChangedDuringReductionError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     logger.error(

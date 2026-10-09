@@ -17,6 +17,7 @@ import {
   type RemoveBookingGuestResult,
 } from "@/lib/booking-guest-removal-service";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import {
   familyAdultDelegateResolver,
   resolveDelegateAnswerRecipients,
@@ -226,8 +227,17 @@ export function classifyConsentRemovalRefusal(
  * be thrown. Anything else (a `TypeError`, a lost connection) is NOT a refusal and
  * must keep propagating: marking a row terminal on the strength of a bug would put
  * it on an operator's list with a meaningless reason.
+ *
+ * #3954 review round 4: NOR IS A RACE. `AdditionalAskChangedDuringReductionError`
+ * is an `ApiError`, but it says the booking's unpaid card ask moved while the
+ * removal's reduction was being saved - the member paid it, or a retry claimed
+ * its mint - and a moment later the same removal goes through. Read as a
+ * refusal it would mark the row BLOCKED for good and hold the bed for an
+ * operator; propagated, the claim rolls back to PENDING and the member's
+ * retry, or the next sweep, removes the guest.
  */
 function consentRemovalRefusalMessage(err: unknown): string | null {
+  if (err instanceof AdditionalAskChangedDuringReductionError) return null;
   if (
     err instanceof BookingGuestRemovalError ||
     err instanceof ApiError ||

@@ -160,6 +160,7 @@ import type { MemberGuestConsentDelegateResolver } from "@/lib/member-guest-dele
 // whole removal module is mocked, so its class is declared in the hoisted block
 // above and re-exported by the mock.
 import { ApiError } from "@/lib/api-error";
+import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { MembershipTypeBookingPolicyError } from "@/lib/membership-type-policy";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -1599,5 +1600,46 @@ describe("#3954: a decline or expiry whose reduction retired an unpaid ask settl
       actorMemberId: TARGET,
     });
     expect(h.mint).not.toHaveBeenCalled();
+  });
+});
+
+describe("#3954 review round 4: an unpaid ask moving under the removal is a retry, never a BLOCKED row", () => {
+  // The member paid the booking's unpaid card ask, or a retry claimed its mint,
+  // while the removal's reduction was being saved. A moment later the same
+  // removal goes through; filed as a refusal it would hold the bed for an
+  // operator for good.
+  function expectStillPending() {
+    expect(world().guests.get(GUEST)).toMatchObject({ consentStatus: "PENDING", consentRespondedAt: null });
+    expect(world().choreAssignments.get(GUEST)).toEqual(["chore-fire", "chore-dishes"]);
+  }
+
+  it("MUTATION: a decline propagates it (409), the claim rolls back to PENDING, and the member's retry removes the guest", async () => {
+    refuseAfterPartialRemoval(new AdditionalAskChangedDuringReductionError());
+    const decline = () =>
+      respondToMemberGuestConsent({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING,
+        guestId: GUEST,
+        actorMemberId: TARGET,
+        action: "DECLINE",
+        now: NOW,
+        delegateResolver: acceptDelegate,
+      });
+
+    await expect(decline()).rejects.toSatisfy(
+      (err: unknown) => err instanceof AdditionalAskChangedDuringReductionError && err.status === 409,
+    );
+    expectStillPending();
+
+    await expect(decline()).resolves.toMatchObject({ outcome: "DECLINED", removed: true });
+  });
+
+  it("MUTATION: an expiry propagates it, so the row stays PENDING for the next sweep", async () => {
+    refuseAfterPartialRemoval(new AdditionalAskChangedDuringReductionError());
+
+    await expect(
+      expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW }),
+    ).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
+    expectStillPending();
   });
 });
