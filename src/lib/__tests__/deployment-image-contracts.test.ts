@@ -807,11 +807,21 @@ describe("deployment image contracts", () => {
   it("deploys the resolved commit SHA image references from the production script", () => {
     const deployScript = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 
+    // Fork booking-fixes: the repositories are resolved in `resolve_image_refs`
+    // from the shell, then the source repository's .env, then these upstream
+    // defaults — so the defaults are named once, as constants, and the shell
+    // value is read into an empty-when-unset variable.
     expect(deployScript).toContain(
-      'GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-app}"',
+      'GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-}"',
     );
     expect(deployScript).toContain(
-      'GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"',
+      'GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-}"',
+    );
+    expect(deployScript).toContain(
+      'UPSTREAM_GHCR_APP_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-app"',
+    );
+    expect(deployScript).toContain(
+      'UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-migrate"',
     );
     expect(deployScript).toContain(
       'APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"',
