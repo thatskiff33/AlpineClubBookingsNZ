@@ -1388,6 +1388,9 @@ function resolveModifyReviewUpdate({
   };
 }
 
+/** No ACTIVE season prices a night; exported so #3750's approval can explain it (`INV-SSOT-001`). */
+export const NO_SEASON_RATE_MESSAGE = "No season rate found for the requested dates";
+
 export async function loadActiveSeasonRates(
   tx: Prisma.TransactionClient,
   lodgeId: string,
@@ -1847,7 +1850,7 @@ export async function calculateModifiedPricing(
         { err: error, bookingId: booking.id },
         "Failed to build the in-progress edit plan",
       );
-      throw new ApiError("No season rate found for the requested dates", 400);
+      throw new ApiError(NO_SEASON_RATE_MESSAGE, 400);
     }
     if (planResult.kind === "financial_review_required") {
       // #3031: NOTHING NUMERIC IS COMPUTED FROM HERE ON. Every price below would
@@ -2027,7 +2030,7 @@ export async function calculateModifiedPricing(
     if (error instanceof MembershipTypeBookingPolicyError) {
       throw error;
     }
-    throw new ApiError("No season rate found for the requested dates", 400);
+    throw new ApiError(NO_SEASON_RATE_MESSAGE, 400);
   }
   /**
    * #3166 (epic #2797): THE SAME EVIDENCE GATE, ON THE PATH MEMBERS ACTUALLY

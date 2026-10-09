@@ -1,3 +1,4 @@
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import {
   type AgeTier,
   type Booking,
@@ -965,12 +966,27 @@ export async function modifyBookingDates({
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
     if (appliedBeforeClamp > 0) {
+      // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
+      // payment is owed with the price, so credit is kept up to the booking's
+      // worth and the $0 decision reads what it owes — never the bare price.
+      const recordedChangeFeeCents = booking.payment?.changeFeeCents ?? null;
       const clampedCredit = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
+        {
+          memberId: bookingOwner(booking).memberId,
+          bookingId,
+          newWorthCents: bookingWorthCents({
+            finalPriceCents: newFinalPriceCents,
+            changeFeeCents: recordedChangeFeeCents,
+          }),
+          format,
+        },
         tx,
       );
-      const effectivePriceCents =
-        newFinalPriceCents - clampedCredit.appliedCreditCents;
+      const effectivePriceCents = bookingAmountOwedCents({
+        finalPriceCents: newFinalPriceCents,
+        changeFeeCents: recordedChangeFeeCents,
+        appliedCreditCents: clampedCredit.appliedCreditCents,
+      });
       if (effectivePriceCents === 0 && newStatus === "PAYMENT_PENDING") {
         newStatus = "PAID";
         zeroDollarAutoPaid = true;

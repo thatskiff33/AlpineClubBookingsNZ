@@ -512,7 +512,7 @@ describe("no edit door states the rule a second time", () => {
     );
   });
 
-  it("INV-PAY-119: every file that settles an edit reads the unpaid ask exactly ONCE, and nothing else reads it raw (#3954 round 4)", () => {
+  it("INV-PAY-120: every file that settles an edit reads the unpaid ask exactly ONCE, and nothing else reads it raw (#3954 round 4)", () => {
     // Two reads in one transaction split when the member's capture lands
     // between them: options sized on the ask, a save that no longer sees it.
     // Each settling door reads it once and hands the one value to everything.
@@ -529,7 +529,7 @@ describe("no edit door states the rule a second time", () => {
     );
     expect(
       Object.entries(reads).filter(([, count]) => count !== 1),
-      "INV-PAY-119: each of these must call readReductionAgainstUnpaidAsk exactly once and pass that value to the options and the save.",
+      "INV-PAY-120: each of these must call readReductionAgainstUnpaidAsk exactly once and pass that value to the options and the save.",
     ).toEqual([]);
     const rawReaders = filesMentioning(
       sourceFilesUnder("src").filter((file) => file !== "src/lib/additional-ask-reduction.ts"),
@@ -537,11 +537,11 @@ describe("no edit door states the rule a second time", () => {
     );
     expect(
       rawReaders,
-      "INV-PAY-119: read the ask through readReductionAgainstUnpaidAsk, which carries the net it was read for.",
+      "INV-PAY-120: read the ask through readReductionAgainstUnpaidAsk, which carries the net it was read for.",
     ).toEqual([]);
   });
 
-  it("INV-PAY-119: every edit door that sizes an increase's ask folds in a reduction's waiting re-issue (#3954 round 4)", () => {
+  it("INV-PAY-120: every edit door that sizes an increase's ask folds in a reduction's waiting re-issue (#3954 round 4)", () => {
     const sizers = filesMentioning(
       sourceFilesUnder("src").filter(
         (file) => !["src/lib/additional-payment-ask.ts", "src/lib/additional-ask-recovery-replay.ts"].includes(file),
@@ -551,11 +551,11 @@ describe("no edit door states the rule a second time", () => {
     expect(sizers.length).toBeGreaterThan(0);
     expect(
       sizers.filter((file) => !/waitingReissuedAskCents:\s*await foldWaitingReissuedAsks\(/.test(read(file))),
-      "INV-PAY-119: pass waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking), or the increase's mint overtakes a waiting re-issue and its money is lost.",
+      "INV-PAY-120: pass waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking), or the increase's mint overtakes a waiting re-issue and its money is lost.",
     ).toEqual([]);
   });
 
-  it("INV-PAY-119: every door that records a reduction's unpaid-ask offset makes its re-issued ask durable in the same transaction (#3954 round 4)", () => {
+  it("INV-PAY-120: every door that records a reduction's unpaid-ask offset makes its re-issued ask durable in the same transaction (#3954 round 4)", () => {
     const recorders = filesMentioning(
       sourceFilesUnder("src").filter((file) => file !== "src/lib/unpaid-ask-offset-marker.ts"),
       /\bunpaidAskOffsetHistory\(/,
@@ -563,7 +563,7 @@ describe("no edit door states the rule a second time", () => {
     expect(recorders.length).toBeGreaterThan(0);
     expect(
       recorders.filter((file) => (read(file).match(/\bqueueReissuedAskRecovery\(/g) ?? []).length !== 1),
-      "INV-PAY-119: call queueReissuedAskRecovery once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask.",
+      "INV-PAY-120: call queueReissuedAskRecovery once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask.",
     ).toEqual([]);
   });
 });

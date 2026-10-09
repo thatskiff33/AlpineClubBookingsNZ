@@ -638,7 +638,7 @@ export function classifyBookingContext(
             actionKeys: [manualAction.key],
           });
         } else if (!blockingOperation && retiringReductionFor(modification.id, booking.modifications)) {
-          // #3954 (`INV-PAY-119`, review round 4): a later reduction retired
+          // #3954 (`INV-PAY-120`, review round 4): a later reduction retired
           // this edit's unpaid ask - its parked invoice, or the ask itself
           // before its failed mint's retry ran - and its history names this
           // edit. What Xero is owed for it now is that reduction's: the smaller

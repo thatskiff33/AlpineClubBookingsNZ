@@ -1,17 +1,8 @@
 # File-size allowances for #3502 (PR #3948)
 
-One already-over-budget file grows by three lines. The split was taken first:
-the change-fee rule for a late primary invoice, its reasoning and its reads
-live in a new module, `src/lib/xero-primary-invoice-change-fee.ts`, and the
-fee line itself is the shared `changeFeeLineItem`. What is left is the import,
-a one-line pointer and the one call.
-
-file: src/lib/xero-booking-invoices.ts
-lines: 1553
-reason: the primary invoice must add its change-fee line where it assembles
-  its other lines, between the promotion lines and the invoice body, so the
-  call cannot move out of `createXeroInvoiceForBooking`. Everything else about
-  it already lives in `xero-primary-invoice-change-fee.ts`.
+The late primary invoice's change-fee line is main's (#3955,
+`recordedChangeFeeCents` and the shared `changeFeeLineItem`), so this PR no
+longer grows `src/lib/xero-booking-invoices.ts`.
 
 ## #3954, built in the same PR: a reduction cancels or shrinks the unpaid ask
 
@@ -26,7 +17,7 @@ file: src/app/api/bookings/[id]/modify-quote/route.ts
 lines: 2549
 reason: the quote must preview the same offset the save applies, beside the
   give-back preview it already computes in this handler; the read itself is the
-  shared `reductionLeftAfterUnpaidAsk`.
+  shared `readReductionAgainstUnpaidAsk`, read once.
 
 file: src/lib/booking-batch-modification-service.ts
 lines: 2679

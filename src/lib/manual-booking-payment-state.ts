@@ -4,8 +4,7 @@ import { BookingStatus, PaymentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   isManualSettleFromPaymentStatus,
-  MANUAL_CAPTURED_PAYMENT_REFUSAL,
-} from "@/lib/booking-payment-state";
+  MANUAL_CAPTURED_PAYMENT_REFUSAL, bookingAmountOwedCents } from "@/lib/booking-payment-state";
 import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import type { BookingManualPaymentState } from "@/components/admin/booking-manual-payment-controls";
@@ -58,6 +57,7 @@ export async function getBookingManualPaymentState(
           xeroInvoiceId: true,
           xeroRefundCreditNoteId: true,
           refundedAmountCents: true,
+          changeFeeCents: true,
           internetBankingHoldUntil: true,
           manuallyMarkedPaidAt: true,
           manualPaymentNote: true,
@@ -74,7 +74,13 @@ export async function getBookingManualPaymentState(
     _sum: { amountCents: true },
   });
   const creditAppliedCents = Math.max(0, -(appliedCredit._sum.amountCents ?? 0));
-  const amountOwingCents = booking.finalPriceCents - creditAppliedCents;
+  // #3750: through the one home, so a change fee recorded on the payment is
+  // part of what the officer is asked to record.
+  const amountOwingCents = bookingAmountOwedCents({
+    finalPriceCents: booking.finalPriceCents,
+    changeFeeCents: payment?.changeFeeCents ?? null,
+    appliedCreditCents: creditAppliedCents,
+  });
 
   const manuallyMarkedPaidAt = payment?.manuallyMarkedPaidAt ?? null;
   const manuallyMarkedPaidByName = payment?.manuallyMarkedPaidBy

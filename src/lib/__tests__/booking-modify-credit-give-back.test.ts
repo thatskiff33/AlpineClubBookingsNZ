@@ -532,3 +532,40 @@ describe("#3809: the quote previews the give-back the save makes", () => {
     expect(await preview(creditPaidBooking({ status: "CONFIRMED" }), 5_000, 0)).toBe(0);
   });
 });
+
+describe("#3750 (F2 on #3955): a finished-stay correction's give-back is not tiered twice", () => {
+  it("MUTATION: with the tier already charged as the removal fee, the remaining reduction comes back whole", async () => {
+    // A swap whose removal fee (the tier's share) is already in the change fee:
+    // $50 off the price, $20 of it kept as the fee, $30 left to give back.
+    credit.policy = TIERS["50% with a $20 fee"];
+    const result = await applyPaymentAdjustments(tx, {
+      booking: creditPaidBooking(),
+      priceDiffCents: -5_000,
+      changeFeeCents: 2_000,
+      reduction: noReductionAgainstUnpaidAsk(-3_000),
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+      reductionUntiered: true,
+    });
+    expect(result.appliedCreditGivenBackCents).toBe(3_000);
+    expect(result.policyRetainedAmountCents).toBe(0);
+
+    // Without it the same $30 is tiered again: half less $20 is $0 back.
+    vi.clearAllMocks();
+    credit.derive.mockImplementation(async () => credit.applied);
+    credit.giveBack.mockImplementation(async ({ giveBackCentsOf }) => {
+      const payment = { id: "payment_1", source: PaymentSource.INTERNET_BANKING, xeroInvoiceId: "INV-3809", creditAppliedCents: 20_000 };
+      const asked = await giveBackCentsOf(credit.applied, payment);
+      return { appliedCreditCents: credit.applied, givenBackCents: Math.max(0, Math.min(credit.applied, asked)), payment };
+    });
+    const tiered = await applyPaymentAdjustments(tx, {
+      booking: creditPaidBooking(),
+      priceDiffCents: -5_000,
+      changeFeeCents: 2_000,
+      reduction: noReductionAgainstUnpaidAsk(-3_000),
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(tiered.appliedCreditGivenBackCents).toBeLessThan(3_000);
+  });
+});

@@ -639,8 +639,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-booking-invoice-queue` | Thin helper: enqueue booking invoice + immediate kick, for callers that want one line. |
 | `xero-booking-edit-settlement` | Classifies an admin booking edit into the right financial follow-up (update invoice / supplementary invoice / credit note) and queues it. |
 | Kept late captures (#3635, `INV-PAY-110`) | A card payment captured after its booking was cancelled and KEPT by a treasurer (the #3639 task dismissed), recorded exactly as a card receipt: GROSS, dated the club day of the Stripe charge (`stripe-capture-date.ts`, stored on the row before the send; a kept change payment's supplementary invoice likewise), paid from `stripeBankAccount` that day. One pure decision, `decideLateCapture` (`late-capture-kept-xero-rules.ts`), serves the reaper, the late-capture release, the dismissal, the worker and the repair tool. A change payment on an invoiced booking keeps its supplementary invoice; the booking's own payment, and a change payment on a booking Xero never invoiced, get a `KEPT_LATE_CAPTURE_INVOICE` (`xero-kept-late-capture-invoice.ts`) anchored on the approval task (`ManualRefundTask`) and keyed by it, carrying `capturedCents` and `capturedOn`, its payment through `createXeroPaymentForInvoice`. It touches neither the booking's own invoice nor its clearing note. A new queue type rather than a third supplementary anchor, because that builder is a booking change's document and its task anchor already means a second ask. **Refunds** of every kind are the ordinary refund note, owed only once the app recorded the capture's receipt (`readLateCaptureXeroReceipt`, `late-capture-xero-receipt.ts`: none, recorded, or resolved by hand), so an invoice cleared at cancel never causes a Stripe-account refund. Notes are sized per capture (`noteLateCaptureRefunds`, the capture's refunds less the notes recording its `paymentIntentId`), name the capture's own receipt and never `payment.xeroInvoiceId`, and are dated the refund's day; the worker credits back refunds taken before its send (`creditBackLateCaptureRefunds`). Every refund-note cap and gap reads one figure, the note-eligible cash (`refund-note-eligible-cash.ts`): the cash evidence less refunds of late captures without an app-recorded receipt, so the nightly self-heal never raises one. **The task row is the lock**: the enqueue (dismissal, repair) and the worker's send-time check take it `FOR UPDATE`, the check and a withdrawal commit together, and a raised invoice's missing payment is retried whatever the task's status (the repair tool offers it). Approval: an unsent row is withdrawn, a PARTIAL one goes back for its payment. Retry sends FAILED/PARTIAL back to the outbox from the kept queued payload. |
-| Change fee on a late primary invoice (#3502) | A supplementary invoice needs a primary one to supplement, so a change fee the card collected before the booking's primary invoice was raised (a credit-paid or card-plus-credit booking edited while its invoice operation was still pending or failed) is billed on no supplementary invoice. `createXeroInvoiceForBooking` therefore adds the one change-fee line (`changeFeeLineItem`, `xero-modification-line-items.ts`, shared with the supplementary invoice and the modification documents) for `Payment.changeFeeCents` less any fee a supplementary invoice bills or is queued to bill (`xero-primary-invoice-change-fee.ts`), so the invoice total equals the cash recorded plus the applied credit allocated against it and is never billed twice. |
-| Reduction against an unpaid ask (#3954, `INV-PAY-119`) | An increase's supplementary invoice waits `WAITING_PAYMENT` on its card ask and is never raised before the payment, so an ask a later reduction cancels or shrinks has no Xero document to credit. The reduction CANCELS the parked operation in its own transaction (`ADDITIONAL_ASK_RETIRED_BY_REDUCTION`, never revived by a late capture, which is refunded), and its own credit note covers only what it returned of money paid. The edit records `unpaidAskOffsetCents` on its `BookingModification`; the booking-vs-Xero repair pass sizes the reduction's expected note net of it and reports the increase's retired invoice as `manual_review`, never as a one-click supplementary invoice. A smaller re-issued ask is carried, so like any carried balance it has no supplementary invoice of its own (`INV-PAY-070`). |
+| Change fee on a late primary invoice (#3502) | A supplementary invoice needs a primary one to supplement, so a change fee the card collected before the booking's primary invoice was raised (a credit-paid or card-plus-credit booking edited while its invoice operation was still pending or failed) is billed on no supplementary invoice. The primary invoice bills every fee recorded on the payment (`recordedChangeFeeCents`) on the one shared fee line (`changeFeeLineItem`), as [The change fee on a booking's primary invoice](#the-change-fee-on-a-bookings-primary-invoice-3750-inv-pay-119) describes, so its total equals the cash recorded plus the applied credit allocated against it and the fee is billed exactly once. |
+| Reduction against an unpaid ask (#3954, `INV-PAY-120`) | An increase's supplementary invoice waits `WAITING_PAYMENT` on its card ask and is never raised before the payment, so an ask a later reduction cancels or shrinks has no Xero document to credit. The reduction CANCELS the parked operation in its own transaction (`ADDITIONAL_ASK_RETIRED_BY_REDUCTION`, never revived by a late capture, which is refunded), and its own credit note covers only what it returned of money paid. The edit records `unpaidAskOffsetCents` on its `BookingModification`; the booking-vs-Xero repair pass sizes the reduction's expected note net of it and reports the increase's retired invoice as `manual_review`, never as a one-click supplementary invoice. A smaller re-issued ask is carried, so like any carried balance it has no supplementary invoice of its own (`INV-PAY-070`). |
 | Supplementary-invoice anchors | One booking change gets ONE supplementary invoice, anchored on its `BookingModification` — that anchor is what the enqueue's link-check and queued-check are scoped to, and what makes "one invoice per change" true rather than asserted. Since #3193 there is a second anchor: a `ManualRefundTask`, for the SECOND ASK — a settled financial-review share's own small invoice, raised when the change's invoice had already been sent and could not be raised to include it. It bills that share alone, never a total, and being on its own anchor is what keeps it out of every read scoped to the change. Same queue type, same handler, same advisory key namespace. **Only a SENT invoice buys one** (#3193 fix round): a row the outbox has merely claimed can return to the queue un-attempted and be raised to the combined total by the next settlement, which would then bill a separately-invoiced share twice - so the enqueue answers `short-sent` and `short-in-flight` separately and only the first raises anything. And because that anchor hides a second ask from the change's reads, it also hid it from the operator: `ManualRefundTask` is now a Xero local model, so the row opens on a record page, can be filtered for in the operations panel, and has a retry branch that replays it from its queued payload. |
 
 ### Financial document builders (called only by the outbox worker and repair)
@@ -1628,6 +1628,61 @@ the same operation finds the invoice already there, it records what it sees
 under `moneyReconciliationOnReplay` instead and leaves the raise-time verdict
 untouched — a retry months later must not be able to restate, or to erase, what
 was true when the money was invoiced.
+
+### The change fee on a booking's primary invoice (#3750, `INV-PAY-119`)
+
+The change fee recorded on a booking's payment (`recordedChangeFeeCents`) is
+the one figure the pay steps collect and the primary invoice bills, in full,
+on the one change-fee line (`changeFeeLineItem`). In full because no other
+document can have carried it first: an edit's supplementary invoice or credit
+note is raised only against an issued primary invoice, and no booking-payment
+writer clears that link once set. The combined group invoice bills each
+joiner's recorded fee the same way, and the guest-narration merge on an
+invoice update never relabels the fee line.
+
+The one gap is an invoice built before a fee was recorded — an edit committed
+while the create was in flight, or a lost response replayed under the same
+idempotency key, which returns the original invoice
+(`xero-primary-invoice-fee-gap.ts`):
+
+- **Measured at the link.** The create saves the payment's link and, in the
+  same transaction, writes onto its operation's payload what the returned
+  invoice billed (its fee lines and its total), the fee the payment held at
+  that instant, read back from the link's own row update, and the Stripe cash
+  recorded against the invoice (`primaryInvoiceCashCents`), computed once. The shortfall is
+  those two figures' difference — never the fee the payment records later,
+  which a later edit bills on its own document. A finished-stay correction
+  claims its fee write against the invoice link it read, so the row lock
+  orders the two: the figure read back holds every fee routed to the primary
+  invoice, and a later correction is refused.
+- **Billed on a supplementary invoice.** The shortfall is anchored on a
+  correction that routed its fee to the primary invoice (`feeOnPrimaryInvoice`
+  on its modification); none of those raised a document of its own. It is
+  raised unpaid, like any edit's supplementary invoice, unless a captured
+  Stripe payment holds it: the primary's Stripe payment is capped
+  (`primaryInvoiceStripeCashCents`) so the applied credit the card settle then
+  allocates still fits on it — the allocation engine's own ledger figure
+  (`cardSettleAppliedCreditCents`, `unallocatedAppliedCents`), never the
+  payment's `creditAppliedCents` mirror, which is only the settle's gate. The
+  cash left over after the stored `primaryInvoiceCashCents` must cover the
+  shortfall. Captured cash that neither invoice takes is logged with both
+  figures and recorded on the create's operation
+  (`primaryInvoiceCashShortfall`). Any enqueue outcome other than a fresh
+  operation is logged as an error.
+- **Retry-safe.** A run that dies after saving the link is re-driven through
+  the create's "invoice already exists" exit, which re-runs the check from the
+  stored figures alone. A shortfall already queued on one of the anchors is not
+  queued again, and no other edit's queued figure is raised. A run that dies
+  after recording its Stripe payment but before saving the link re-creates
+  under the same keys; where the invoice Xero returns already carries that
+  payment (found by its `Stripe <intent>` reference) and the cap reaches
+  zero, its `INVOICE_PAYMENT` link is recorded and its amount stored as the
+  primary's cash, rather than the cash being skipped.
+- **Limits.** The ordinary settled edit's fee increment (#3980) is not claimed
+  against the link, so its fee racing a create has no anchor: it is logged,
+  not billed. An invoice linked without stored figures (before this check, or
+  outside the create) is not checked; the retry warns when its payment records
+  a fee.
 
 ## OAuth and token lifecycle (supporting flow)
 

@@ -2,7 +2,7 @@
  * WHAT A FAILED MINT'S RECOVERY WILL ASK FOR, said once for the replay that
  * mints it (`processCreateAdditionalPaymentIntentOperation`) and for a price
  * reduction that nets it off before it runs (`readUnpaidPriceAsk`; #3954, owner
- * decision 9 Oct 2026, "retry nets it off"; `INV-PAY-119`).
+ * decision 9 Oct 2026, "retry nets it off"; `INV-PAY-120`).
  *
  * Pure, like the arithmetic it builds on (`additional-payment-ask.ts`): no
  * client, so the replay, the reduction and the tests all import it.

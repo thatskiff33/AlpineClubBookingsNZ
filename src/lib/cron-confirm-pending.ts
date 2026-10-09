@@ -1,3 +1,4 @@
+import { bookingWorthCents } from "@/lib/booking-payment-state";
 import {
   BookingEventType,
   BookingStatus,
@@ -183,6 +184,23 @@ export function shouldAlertOnSavedCardChargeRefusal(
 // reason to avoid cancelling the intent Stripe would re-return under the shared
 // `pending_charge_<bookingId>` key. There is no shared key any more, and the
 // sweep excludes attempt rows by the key prefix that module owns.
+
+/**
+ * #3750 (#3955 review F2, `INV-PAY-119`): what the saved card is charged — the
+ * booking's worth, its price plus a change fee recorded on its payment, read
+ * from the one home. Like the bare price it replaces, applied credit is not
+ * netted here (the settle admits a full-worth capture and gives back any
+ * credit it leaves spent, #3864).
+ */
+function savedCardChargeCents(booking: {
+  finalPriceCents: number;
+  payment: { changeFeeCents: number } | null;
+}): number {
+  return bookingWorthCents({
+    finalPriceCents: booking.finalPriceCents,
+    changeFeeCents: booking.payment?.changeFeeCents ?? null,
+  });
+}
 
 const pendingBookingInclude = {
   member: true,
@@ -888,7 +906,7 @@ async function resolveHoldWindowUnderLock(
     }
 
     // Before the claim, so a refused charge writes no status, no attempt row.
-    const refusal = localChargeRefusal(format, booking.finalPriceCents);
+    const refusal = localChargeRefusal(format, savedCardChargeCents(booking));
     if (refusal) return { type: "charge_refused", booking, refusal };
 
     const claimed = await tx.booking.updateMany({
@@ -949,16 +967,17 @@ async function resolveHoldWindowUnderLock(
     // neither launder a parent's pm nor resurrect one a concurrent replacement
     // mint just cleared.
     const rowStamp = savedPaymentMethodRowStamp(savedPayment);
+    const chargeCents = savedCardChargeCents(booking);
     const payment = await tx.payment.upsert({
       where: { bookingId: booking.id },
       create: {
         bookingId: booking.id,
-        amountCents: booking.finalPriceCents,
+        amountCents: chargeCents,
         status: PaymentStatus.PENDING,
         ...rowStamp,
       },
       update: {
-        amountCents: booking.finalPriceCents,
+        amountCents: chargeCents,
         status: PaymentStatus.PENDING,
         ...rowStamp,
       },
@@ -973,7 +992,7 @@ async function resolveHoldWindowUnderLock(
     const attempt = await beginSavedCardChargeAttempt(tx, {
       paymentId: payment.id,
       bookingId: booking.id,
-      amountCents: booking.finalPriceCents,
+      amountCents: chargeCents,
       card: savedPayment,
       reason: SAVED_CARD_CHARGE_REASON.cron,
     });
@@ -1625,7 +1644,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
             checkIn: resolution.booking.checkIn,
             checkOut: resolution.booking.checkOut,
-            amountCents: resolution.booking.finalPriceCents,
+            amountCents: savedCardChargeCents(resolution.booking),
             errorMessage: resolution.refusal.message,
             paymentIntentId: resolution.booking.payment?.stripePaymentIntentId ?? "N/A",
           }, format).catch((alertErr) =>
@@ -1667,7 +1686,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         attempt: resolution.attempt,
         bookingId: resolution.booking.id,
         memberId: bookingOwner(resolution.booking).memberId,
-        amountCents: resolution.booking.finalPriceCents,
+        amountCents: savedCardChargeCents(resolution.booking),
         card: resolution.payment,
       });
       paymentIntentId = paymentIntent.id;
@@ -1909,7 +1928,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
             checkIn: candidate.checkIn,
             checkOut: candidate.checkOut,
-            amountCents: candidate.finalPriceCents,
+            amountCents: savedCardChargeCents(candidate),
             errorMessage: err.message,
             paymentIntentId: err.paymentIntentId ?? paymentIntentId,
           }, format).catch((alertErr) =>
@@ -2010,7 +2029,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
             checkIn: candidate.checkIn,
             checkOut: candidate.checkOut,
-            amountCents: candidate.finalPriceCents,
+            amountCents: savedCardChargeCents(candidate),
             errorMessage: err instanceof Error ? err.message : String(err),
             paymentIntentId,
           }, format).catch((alertErr) =>

@@ -2959,7 +2959,7 @@ pending-refund sweep converge the child's refund lines after `lock(1)` and the
 participant or provider call changes.
 
 **#3954 adds the retirement of an unpaid ask to every reduction door, and no
-key** (`INV-PAY-119`). `applyPaymentAdjustments` already runs after the door's
+key** (`INV-PAY-120`). `applyPaymentAdjustments` already runs after the door's
 `lock(1)`, its lodge key and, on a credit give-back, the member's credit-ledger
 key; the retire (`retireUnpaidAskChain`) runs after the give-back, so the
 member key still precedes every `Payment` row write. It writes the ask's
@@ -4432,6 +4432,39 @@ Every one of these writers composes only the existing keys, so
 (`src/lib/booking-exception-request-service.ts` for the request-hold reservation
 and `src/lib/booking-exception-execution.ts` for the approval / terminal release)
 and no new key family.
+
+### Finished-stay change-request execution (#3750)
+
+Approving a `LOCKED_PERIOD` change request on a finished stay
+(`approveAndExecuteLockedPeriodChangeRequest`,
+`src/lib/booking-change-request-execution.ts`) composes only existing keys and
+adds one registered global site, `approveAndExecuteLockedPeriodChangeRequest#1`
+(`INV-LOCK-002`, `INV-LOCK-003`). Order, in one transaction:
+
+1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`
+   inline, then `acquireLodgeCapacityLock`. The canonical `modifyBookingBatch`
+   re-enters both (no-ops) and takes the member-night / member-credit keys after
+   them, so the order stays global → lodge → member.
+2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
+3. Re-read the request under the locks: `REQUESTED`, `LOCKED_PERIOD`, the
+   expected `version`. Check drift (the booking's dates and guest set against the
+   request's `original`) and the active-lifecycle status gate.
+4. Claim with `updateMany where {id, status: REQUESTED, kind, version}` →
+   `APPROVED`, `version + 1`. A lost claim runs no side effect.
+5. Run `modifyBookingBatch` on the same `tx` with `finishedStayCorrection` and a
+   `preTransaction` resolved before the transaction opened (`INV-LOCK-004`).
+   Any refusal throws and rolls the claim back.
+6. Write `linkedModificationId`, commit, then run the service's
+   `deferredPostCommit` (Stripe, Xero, email, audit) outside every lock.
+
+**Counterparts.** A cancel, capture or refund of the same booking holds
+`lock(1)`, so an approval that arrives during one queues behind it and then sees
+the committed state — a cancelled booking fails the status gate and nothing is
+claimed. Two approvals serialise on `lock(1)`; the second re-reads the request as
+`APPROVED` and loses the claim. The acknowledgement path (a stay that has not
+finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
+execution cannot both win. Proved against PostgreSQL in
+`booking-change-request-execution.realdb.test.ts`.
 
 ### One-open-request slot for exception requests (#2524)
 

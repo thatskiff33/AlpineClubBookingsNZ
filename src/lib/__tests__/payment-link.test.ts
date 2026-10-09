@@ -18,6 +18,10 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       findUnique: vi.fn(),
     },
+    // #3750: the link charges what the booking owes, net of applied credit.
+    memberCredit: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
+    },
     // #2258: the withheld-send audit row (written at most once per booking).
     emailLog: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -328,6 +332,61 @@ describe("getPaymentLinkContext", () => {
     expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
     expect(context.narrative.message).toContain("$120.00");
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  // #3955 round 3 (`INV-PAY-119`): the page quotes what the link's intent
+  // charges — price plus a recorded change fee, less applied credit.
+  it("quotes the amount owed, not the bare price", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          status: BookingStatus.PAYMENT_PENDING,
+          payment: { id: "pay-1", source: "STRIPE", status: PaymentStatus.PENDING, changeFeeCents: 2500 },
+        }),
+      }) as never
+    );
+    // $30 of account credit applied: 120.00 + 25.00 - 30.00.
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: -3000 } } as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.amountCents).toBe(11500);
+    expect(context.narrative.message).toContain("$115.00");
+  });
+
+  it("says there is nothing to pay, and offers no payment or fresh link, when credit covers what is owed", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+        booking: baseBooking({ status: BookingStatus.PAYMENT_PENDING }),
+      }) as never
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: -12000 } } as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("nothing_to_pay");
+    expect(context.payable).toBeNull();
+    expect(context.canRequestFreshLink).toBe(false);
+    expect(context.narrative.headline).toBe("Nothing to pay");
+    expect(context.narrative.message).toContain("the account credit applied to it covers what it owes");
+  });
+
+  // #3955 round 4 (finding 5): the credit is named only where some is applied.
+  it("says there is nothing to pay without naming credit when none is applied", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+        booking: baseBooking({ status: BookingStatus.PAYMENT_PENDING, finalPriceCents: 0 }),
+      }) as never
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: null } } as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("nothing_to_pay");
+    expect(context.narrative.message).toMatch(/has nothing left to pay\.$/);
+    expect(context.narrative.message).not.toContain("credit");
   });
 
   // #3638 delta D4: a switched booking's link page offers no card and keeps
@@ -1479,6 +1538,31 @@ describe("createPaymentIntentForPaymentLink", () => {
         metadata: expect.objectContaining({ bookingId: "booking-1", paymentLinkId: "link-1" }),
       })
     );
+  });
+
+  it("#3955 F2: sizes the intent, its payment row and its transaction at what the booking owes", async () => {
+    // Price 12000, a 2500 fee recorded on the payment by a finished-stay
+    // correction, 1500 of account credit applied: the link charges 13000.
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", status: PaymentStatus.PENDING, changeFeeCents: 2500, stripePaymentIntentId: null },
+        }),
+      }) as never,
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: -1500 } } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(baseBooking({ guests: [{ id: "guest-1" }] }) as never);
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_new",
+      client_secret: "secret_new", currency: "nzd",
+      amount: 13000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 13000 }));
   });
 
   // #3638 (`INV-PAY-102`): the link is the third card door. A booking switched

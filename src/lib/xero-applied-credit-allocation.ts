@@ -21,7 +21,7 @@
  */
 import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
-import { appliedCreditSettledByCancel, unallocatedAppliedCreditCentsByBooking } from "./xero-applied-credit-ledger-state";
+import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
 import { lockMemberCreditLedger } from "./member-credit";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
@@ -127,13 +127,6 @@ async function gatherAppliedCreditLots(
     });
   }
   return lots;
-}
-
-async function unallocatedAppliedCents(
-  bookingId: string,
-  db: Prisma.TransactionClient | typeof prisma,
-): Promise<number> {
-  return (await unallocatedAppliedCreditCentsByBooking([bookingId], db)).get(bookingId) ?? 0;
 }
 
 /** The remainder note this payment already minted, if any. */

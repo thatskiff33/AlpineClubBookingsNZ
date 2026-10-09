@@ -514,13 +514,13 @@ describe("#3954: the race with the member paying the ask", () => {
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, -2_000);
     await expect(
       calculateModificationSettlementOptions({ booking, netChargeCents: -8_000, reduction, db: tx as never, todayAtClub: TODAY }),
-    ).rejects.toThrow(/INV-PAY-119 \(#3954\).*read it once/);
+    ).rejects.toThrow(/INV-PAY-120 \(#3954\).*read it once/);
     await expect(
       applyPaymentAdjustments(tx, {
         booking, priceDiffCents: 1_000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-2_000),
         todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
       }),
-    ).rejects.toThrow(/INV-PAY-119 \(#3954\)/);
+    ).rejects.toThrow(/INV-PAY-120 \(#3954\)/);
   });
 });
 

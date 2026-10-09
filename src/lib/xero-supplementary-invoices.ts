@@ -237,7 +237,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   if (!itemised.lineItems && changeFeeCents > 0) {
-    lineItems.push(changeFeeLineItem(changeFeeCents, 1, incomeMapping));
+    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping));
   }
 
   // Both halves of this are real instants — `BookingModification.createdAt` is a

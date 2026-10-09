@@ -35,6 +35,7 @@
  */
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import {
@@ -69,33 +70,40 @@ type PromoDeltaLine = Extract<ModificationLine, { kind: "PROMO_DELTA" }>;
 
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
+/** A built invoice's total in cents, line by line as Xero will add it. */
+export function invoiceLineItemsTotalCents(lineItems: ReadonlyArray<LineItem>): number {
+  return lineItems.reduce(
+    (sum, line) =>
+      sum + (providerAmountToCents(line.unitAmount) ?? 0) * (line.quantity ?? 1),
+    0
+  );
+}
+
 /** The change-fee line's words, on every document that carries one. */
 export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";
 
 /**
- * THE change-fee line, on every document that bills or returns one: a
- * supplementary invoice, a modification credit note, and (#3502) a primary
- * booking invoice raised after a fee was already taken by card. Coded to the
- * hut-fee income mapping; `orientation` is +1 on an invoice and -1 on a note.
+ * The one change-fee line (#3750): a supplementary invoice that bills a fee,
+ * and a primary invoice raised after a fee was added to what an unpaid booking
+ * owes, carry the same words, tax and coding. Coded to hut-fee income, as the
+ * supplementary invoice always coded it.
  */
 export function changeFeeLineItem(
   changeFeeCents: number,
-  orientation: 1 | -1,
-  incomeMapping: Pick<ResolvedAccountMapping, "code" | "itemCode" | "codeExplicitlyConfigured">,
+  incomeMapping: ResolvedAccountMapping,
 ): LineItem {
-  return applyHutFeeLineCodes(
-    {
-      description: CHANGE_FEE_LINE_DESCRIPTION,
-      quantity: 1,
-      unitAmount: (orientation * changeFeeCents) / 100,
-      taxType: "OUTPUT2",
-    },
-    {
-      itemCode: incomeMapping.itemCode,
-      accountCode: incomeMapping.code ?? "200",
-      accountCodeExplicitlyConfigured: incomeMapping.codeExplicitlyConfigured,
-    },
-  );
+  const incomeCode = incomeMapping.code ?? "200";
+  const li: LineItem = {
+    description: CHANGE_FEE_LINE_DESCRIPTION,
+    quantity: 1,
+    unitAmount: changeFeeCents / 100,
+    taxType: "OUTPUT2",
+  };
+  if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
+  if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
+    li.accountCode = incomeCode;
+  }
+  return li;
 }
 
 /** A settled review share's words: the officer's note, or the bare sentence. */
@@ -316,7 +324,21 @@ export function buildModificationDocumentLineItems(args: {
   }
 
   if (changeFeeCents > 0) {
-    items.push(changeFeeLineItem(changeFeeCents, orientation, context.incomeMapping));
+    items.push(
+      applyHutFeeLineCodes(
+        {
+          description: CHANGE_FEE_LINE_DESCRIPTION,
+          quantity: 1,
+          unitAmount: (orientation * changeFeeCents) / 100,
+          taxType: "OUTPUT2",
+        },
+        {
+          itemCode: context.incomeMapping.itemCode,
+          accountCode: incomeCode,
+          accountCodeExplicitlyConfigured: context.incomeMapping.codeExplicitlyConfigured,
+        },
+      ),
+    );
   }
   return items;
 }

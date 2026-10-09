@@ -379,8 +379,8 @@ export async function deriveBookingAppliedCreditCents(
  *
  * The refund is an append-only positive `BOOKING_APPLIED` offset row against the
  * same booking, so `deriveBookingAppliedCreditCents` nets to exactly
- * `newFinalPriceCents` and `getMemberCreditBalance` regains the excess. Because
- * the clamp only fires when `applied > newFinalPriceCents`, it always lands the
+ * `newWorthCents` and `getMemberCreditBalance` regains the excess. Because
+ * the clamp only fires when `applied > newWorthCents`, it always lands the
  * booking fully credit-covered (effective price 0); the caller then advances it
  * to PAID through the shared zero-dollar path.
  *
@@ -401,13 +401,19 @@ export async function clampAppliedCreditToBookingPrice(
   {
     memberId,
     bookingId,
-    newFinalPriceCents,
+    newWorthCents,
     format,
   }: {
     /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
     memberId: string | null;
     bookingId: string;
-    newFinalPriceCents: number;
+    /**
+     * What the booking is worth after the reprice: its final price plus the
+     * change fee recorded on its payment (`bookingWorthCents`, #3750). Credit
+     * is kept up to this, never the bare price, so a recorded fee is not
+     * dropped by giving back the credit that pays it (#3955 review F1).
+     */
+    newWorthCents: number;
     /** Club format resolved before the caller's transaction or ledger lock. */
     format: ClubFormat;
   },
@@ -423,7 +429,7 @@ export async function clampAppliedCreditToBookingPrice(
   const { appliedCreditCents, givenBackCents: excessCents } = await giveBackAppliedCredit({
     memberId,
     bookingId,
-    giveBackCentsOf: (applied) => applied - Math.max(0, newFinalPriceCents),
+    giveBackCentsOf: (applied) => applied - Math.max(0, newWorthCents),
     description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
     format,
   }, tx);

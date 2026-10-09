@@ -518,7 +518,7 @@ single-guest removal (`DELETE …/guests/[guestId]`), and date change
 tier for the days until check-in, folding any change fee into the net delta, and
 requires the member to elect a card refund or account credit whenever a captured
 payment makes a settlement returnable. No reduction path refunds the full price
-delta outside the policy (after [INV-PAY-119]). Not an edit, a guest's acceptance re-pricing promo
+delta outside the policy (after [INV-PAY-120]). Not an edit, a guest's acceptance re-pricing promo
 codes returns its whole reduction as paid, credit included, untiered and
 unasked (`INV-MONEY-038`, D-3813-5; by hand via `INV-PAY-117`). A request against a booking with a captured payment
 that omits the settlement election is rejected rather than defaulted, so a
@@ -719,6 +719,17 @@ the added night alone would fail the minimum, but the whole stay satisfies it.
 A genuinely too-short whole stay is still reported. (The create path evaluates
 each new booking's own range, so a separate contiguous one-night booking is
 still subject to the minimum — deferred as scope B on #2124.)
+
+**Officer-approved exception (#3750).** Approving a `LOCKED_PERIOD` change request
+on a finished stay (fully past, or `COMPLETED`) applies every part of it through
+`modifyBookingBatch`'s `finishedStayCorrection` mode — reachable only from that
+approval's executor, never from a request body. Add-only carries no change fee;
+whatever else the correction removes — guests, or nights trimmed off kept
+guests, valued net of promotion — is charged the same-day (0-day) tier's
+retention as its change fee, paid or unpaid (on an unpaid stay it is added to
+what is owed, `INV-PAY-119`), never netted against what is added; nights it
+adds are charged normally, and the ordinary late-change fee does not apply.
+Member self-service on a finished stay stays refused.
 
 ## INV-MOD-025
 
