@@ -1795,15 +1795,27 @@ require_safe_database_password() {
 # site still defaults to AWS SES, so the SES keys stay required in that case.
 # `USE_LOCAL_CAPTURE=true` on a live site is refused by the app at boot; refusing
 # it here means the deploy stops at step 3 instead of at the health check.
+#
+# ENGINE-SECTION ONLY. Everything above `run_internal_blue_green_deploy` is
+# nested inside `run_production_wrapper`, which the `--internal-blue-green-deploy`
+# re-entry never calls, so the wrapper's `env_flag_is_true` does not exist in
+# this process. The flag test is therefore defined here, beside its one caller.
+env_file_flag_is_true() {
+  case "$1" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 require_email_transport_env_keys() {
   local use_ses use_relay use_capture enabled_count=0 role
 
   use_ses="$(trim_whitespace "$(get_env_file_value USE_AWS_SES)")"
   use_relay="$(trim_whitespace "$(get_env_file_value USE_SMTP_RELAY)")"
   use_capture="$(trim_whitespace "$(get_env_file_value USE_LOCAL_CAPTURE)")"
-  env_flag_is_true "$use_ses" && enabled_count=$((enabled_count + 1))
-  env_flag_is_true "$use_relay" && enabled_count=$((enabled_count + 1))
-  env_flag_is_true "$use_capture" && enabled_count=$((enabled_count + 1))
+  env_file_flag_is_true "$use_ses" && enabled_count=$((enabled_count + 1))
+  env_file_flag_is_true "$use_relay" && enabled_count=$((enabled_count + 1))
+  env_file_flag_is_true "$use_capture" && enabled_count=$((enabled_count + 1))
 
   if [ "$enabled_count" -gt 1 ]; then
     echo "Only one of USE_AWS_SES, USE_SMTP_RELAY and USE_LOCAL_CAPTURE may be true in .env" >&2
@@ -1819,7 +1831,7 @@ require_email_transport_env_keys() {
     return 1
   fi
 
-  if env_flag_is_true "$use_capture"; then
+  if env_file_flag_is_true "$use_capture"; then
     role="$(trim_whitespace "$(get_env_file_value APP_ENVIRONMENT_ROLE)")"
     if [ "$role" = "production" ]; then
       echo "USE_LOCAL_CAPTURE=true is refused on the club's live site (APP_ENVIRONMENT_ROLE=production): a capture mailbox would accept every message and deliver none" >&2
@@ -1830,7 +1842,7 @@ require_email_transport_env_keys() {
     return 0
   fi
 
-  if env_flag_is_true "$use_relay"; then
+  if env_file_flag_is_true "$use_relay"; then
     require_non_placeholder_env_key EMAIL_SERVER_HOST
     require_non_placeholder_env_key EMAIL_SERVER_PORT
     require_non_placeholder_env_key EMAIL_SERVER_USER

@@ -58,6 +58,21 @@ describe("the deploy requires email transport keys per provider", () => {
     expect(contract).toContain("require_non_placeholder_env_key EMAIL_FROM");
   });
 
+  it("lives in the engine section and calls nothing nested inside the wrapper", () => {
+    // Everything above `run_internal_blue_green_deploy` is nested inside
+    // `run_production_wrapper`, which the `--internal-blue-green-deploy`
+    // re-entry never calls — so a helper defined there (the wrapper's
+    // `env_flag_is_true`) is "command not found" at step 3. That is exactly
+    // how the first cut of this check failed on a live host.
+    const engineStart = script.indexOf("run_internal_blue_green_deploy() {");
+    expect(engineStart).toBeGreaterThan(0);
+    expect(script.indexOf("require_email_transport_env_keys() {")).toBeGreaterThan(engineStart);
+    expect(script.indexOf("env_file_flag_is_true() {")).toBeGreaterThan(engineStart);
+    const body = functionBody("require_email_transport_env_keys");
+    expect(body).not.toMatch(/(^|[^_])env_flag_is_true/);
+    expect(body).toContain("env_file_flag_is_true ");
+  });
+
   it("reads the three provider flags and requires each provider's own keys", () => {
     const body = functionBody("require_email_transport_env_keys");
     for (const flag of ["USE_AWS_SES", "USE_SMTP_RELAY", "USE_LOCAL_CAPTURE"]) {
