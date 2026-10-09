@@ -13,9 +13,9 @@ import { lateCaptureIntentOfApprovalRefundRecoveryKey } from "@/lib/payment-reco
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
   keptLateCaptureDocumentDate,
-  keptReceiptHeldForOfficer,
   lockKeptLateCaptureTask,
 } from "@/lib/xero-kept-late-capture-invoice";
+import { keptReceiptHeldForOfficer } from "@/lib/kept-late-capture-receipt-rows";
 import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";

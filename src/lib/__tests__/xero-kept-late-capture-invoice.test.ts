@@ -118,9 +118,9 @@ import {
 import {
   createXeroKeptLateCaptureInvoice,
   enqueueXeroKeptLateCaptureInvoiceOperation,
-  keptReceiptHeldForOfficer,
   settleKeptLateCaptureRecordOnApproval,
 } from "@/lib/xero-kept-late-capture-invoice";
+import { keptReceiptHeldForOfficer } from "@/lib/kept-late-capture-receipt-rows";
 import {
   queueWaitingPaidAnotherWayNote,
   queueWaitingPaidAnotherWayNotesForPayment,

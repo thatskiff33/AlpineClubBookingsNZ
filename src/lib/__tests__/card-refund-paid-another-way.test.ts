@@ -76,6 +76,8 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
     calls.push("xero-receipt");
     return mocks.enqueueKeptReceipt(...args);
   },
+}));
+vi.mock("@/lib/kept-late-capture-receipt-rows", () => ({
   keptReceiptHeldForOfficer: mocks.keptReceiptHeldForOfficer,
 }));
 vi.mock("@/lib/audit", () => ({

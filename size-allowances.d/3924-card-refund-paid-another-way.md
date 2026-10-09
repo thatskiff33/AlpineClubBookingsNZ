@@ -1,4 +1,4 @@
-# File-size allowance for #3924 (rounds 3 to 8)
+# File-size allowance for #3924 (rounds 3 to 9)
 
 PR #3924 (issue #3372) adds the "Paid another way" close of a dead card refund
 (owner, 7 Oct 2026: "Count + add close action"), and in round 7 the Resolved
@@ -37,7 +37,7 @@ reason: round 4 (M3): `enqueueXeroRefundCreditNoteOperation` takes the record
   same stepped branch, so the enqueue's fences stay one copy.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1331
+lines: 1346
 reason: round 7 (M5, C8): `createXeroCreditNote` credits an invoice its caller
   names (`creditsInvoiceId`), and treats a paid-another-way close's note as one
   of several on a non-card payment, as it already does a review's. Both are
@@ -46,13 +46,20 @@ reason: round 7 (M5, C8): `createXeroCreditNote` credits an invoice its caller
   Round 8 (M3): at execution the close's note is sized by the same record
   share as the enqueue, is never closed against another note's link, and its
   Xero idempotency key names the close - all inside the delta-mode branch that
-  already sizes every per-refund note.
+  already sizes every per-refund note. Round 9: that key is the close and its
+  own coverage rather than the payment-wide watermark, one more arm of the same
+  key choice, so a crash-and-retry is answered with the same note.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1954
+lines: 2005
 reason: round 7: an operator's retry of a refund note passes the close and the
   named invoice through, as it passes every other recorded field, so a retried
   close's note credits the same document. Three lines beside their siblings.
+  Round 9: a late capture's FAILED change invoice goes back to the outbox on
+  its own row (`releasedLateCaptureChangeInvoiceRequeuePayload`), beside the
+  kept receipt's and the group invoice's requeue payloads it mirrors, through
+  the one `requeueOutboxRowForRetry`; a second retry module would split the
+  dispatch that decides which rows requeue and which replay inline.
 
 file: src/lib/xero-booking-repair-classify.ts
 lines: 2319
