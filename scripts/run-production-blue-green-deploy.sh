@@ -1786,6 +1786,66 @@ require_safe_database_password() {
   fi
 }
 
+# The email transport's credentials, required per the provider the .env
+# declares — the rule CONFIGURATION.md states and `src/lib/email-delivery.ts`
+# applies at runtime. Until this helper the preflight demanded the AWS SES keys
+# and the SNS topic unconditionally, so a club relaying through its own SMTP
+# provider (`USE_SMTP_RELAY=true`, SES keys legitimately blank) could not deploy
+# at all. Exactly one provider flag may be true; with none set, the club's live
+# site still defaults to AWS SES, so the SES keys stay required in that case.
+# `USE_LOCAL_CAPTURE=true` on a live site is refused by the app at boot; refusing
+# it here means the deploy stops at step 3 instead of at the health check.
+require_email_transport_env_keys() {
+  local use_ses use_relay use_capture enabled_count=0 role
+
+  use_ses="$(trim_whitespace "$(get_env_file_value USE_AWS_SES)")"
+  use_relay="$(trim_whitespace "$(get_env_file_value USE_SMTP_RELAY)")"
+  use_capture="$(trim_whitespace "$(get_env_file_value USE_LOCAL_CAPTURE)")"
+  env_flag_is_true "$use_ses" && enabled_count=$((enabled_count + 1))
+  env_flag_is_true "$use_relay" && enabled_count=$((enabled_count + 1))
+  env_flag_is_true "$use_capture" && enabled_count=$((enabled_count + 1))
+
+  if [ "$enabled_count" -gt 1 ]; then
+    echo "Only one of USE_AWS_SES, USE_SMTP_RELAY and USE_LOCAL_CAPTURE may be true in .env" >&2
+    return 1
+  fi
+  # A flag that is present but false, with no other flag true, is the state
+  # the app's parser refuses ("Exactly one email provider flag must be true"):
+  # only an .env that names NONE of the three falls back to AWS SES. Refuse it
+  # here with the same words, instead of demanding SES keys for a provider the
+  # app would never open.
+  if [ "$enabled_count" -eq 0 ] && [ -n "${use_ses}${use_relay}${use_capture}" ]; then
+    echo "Exactly one email provider flag must be true (USE_AWS_SES, USE_SMTP_RELAY or USE_LOCAL_CAPTURE); .env sets one of them to false and none to true" >&2
+    return 1
+  fi
+
+  if env_flag_is_true "$use_capture"; then
+    role="$(trim_whitespace "$(get_env_file_value APP_ENVIRONMENT_ROLE)")"
+    if [ "$role" = "production" ]; then
+      echo "USE_LOCAL_CAPTURE=true is refused on the club's live site (APP_ENVIRONMENT_ROLE=production): a capture mailbox would accept every message and deliver none" >&2
+      return 1
+    fi
+    require_non_placeholder_env_key EMAIL_SERVER_HOST
+    require_non_placeholder_env_key EMAIL_SERVER_PORT
+    return 0
+  fi
+
+  if env_flag_is_true "$use_relay"; then
+    require_non_placeholder_env_key EMAIL_SERVER_HOST
+    require_non_placeholder_env_key EMAIL_SERVER_PORT
+    require_non_placeholder_env_key EMAIL_SERVER_USER
+    require_non_placeholder_env_key EMAIL_SERVER_PASSWORD
+    return 0
+  fi
+
+  # USE_AWS_SES=true, or no flag at all (the live site's legacy default).
+  require_non_placeholder_env_key SMTP_HOST
+  require_non_placeholder_env_key SMTP_PORT
+  require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
+  require_non_placeholder_env_key AWS_SES_SECRET_ACCESS_KEY
+  require_non_placeholder_env_key SES_SNS_TOPIC_ARN
+}
+
 validate_host_contract() {
   require_command docker
   require_command curl
@@ -1825,11 +1885,7 @@ validate_env_contract() {
   note_shell_stopped_ack_is_validator_only
   # Stripe credentials moved to encrypted, DB-backed storage (#2082) — no longer
   # required (or read) from .env. Legacy vars are warned about below.
-  require_non_placeholder_env_key SMTP_HOST
-  require_non_placeholder_env_key SMTP_PORT
-  require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
-  require_non_placeholder_env_key AWS_SES_SECRET_ACCESS_KEY
-  require_non_placeholder_env_key SES_SNS_TOPIC_ARN
+  require_email_transport_env_keys
   require_non_placeholder_env_key EMAIL_FROM
   require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
   # Backup configuration moved to the encrypted, DB-backed store in-app (#2095):

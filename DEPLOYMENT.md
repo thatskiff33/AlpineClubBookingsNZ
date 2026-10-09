@@ -461,8 +461,15 @@ Minimum production categories:
   Any legacy `XERO_*` credential env vars still present are ignored and flagged
   in setup readiness — see the **Upgrade: DB-only provider credentials** runbook
   below.
-- Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
-  `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`. `EMAIL_FROM` is
+- Email: `EMAIL_FROM`, plus the transport the provider flags declare — exactly
+  one of `USE_AWS_SES`, `USE_SMTP_RELAY` or `USE_LOCAL_CAPTURE` may be true,
+  and the step-3 preflight requires only that provider's keys: `SMTP_HOST`,
+  `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` and
+  `SES_SNS_TOPIC_ARN` for AWS SES (also the default when none of the three
+  flags is named at all), or `EMAIL_SERVER_HOST`, `EMAIL_SERVER_PORT`,
+  `EMAIL_SERVER_USER` and `EMAIL_SERVER_PASSWORD` for an SMTP relay. A flag
+  named but false with no other true is refused, as the app refuses it, and
+  `USE_LOCAL_CAPTURE=true` is refused on a production-role site. `EMAIL_FROM` is
   the only email-identity env var (besides these transport secrets): it is the
   envelope / Return-Path sender and must be a provider-verified (SES) address.
   Email identity — from display name, support address, and contact-form
