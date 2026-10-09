@@ -36,5 +36,9 @@ describe("Sentry 11 collects no more than v10 did (#3892, INV-INT-005, INV-PRIV-
     expect(source).toMatch(/Sentry\.init\(\{\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.SENTRY_PRIVACY_INIT_OPTIONS,\n/);
     expect(source).not.toMatch(/\bdataCollection\s*:/);
     expect(source).not.toMatch(/\bsendDefaultPii\b/);
+    // Nothing later in the init may restore a v11 default the spread turned off.
+    expect(source).not.toMatch(/\battachStacktrace\s*:/);
+    // An integration-level `include` overrides dataCollection (MIGRATION.md, RequestData).
+    expect(source).not.toMatch(/\b(?:requestDataIntegration|httpClientIntegration)\s*\(/);
   });
 });
