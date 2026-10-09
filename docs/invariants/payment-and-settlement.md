@@ -1945,33 +1945,34 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 
 ## INV-PAY-120
 
-- **A price reduction is first set against the booking's unpaid card ask**
-  (#3954, owner decision 8 Oct 2026), on card-paid and credit-paid ($0)
-  bookings alike, at every reduction door. The ask is cancelled when the
-  reduction covers it and re-issued smaller when it does not; only what is left
-  is refunded, credited or given back, by `INV-MOD-011`'s tier. The offset is
-  untiered: nobody paid it. The arithmetic is `setReductionAgainstUnpaidAsk`;
-  the settlement options, the save and the quote all read
-  `readUnpaidPriceAsk`, so they agree.
-- **Retired in the edit's transaction, under its locks**
-  (`retireUnpaidAskChain`): every unpaid ADDITIONAL row since the last paid one
-  is FAILED and stamped `withdrawnAt`, behind a fence re-asserting it is still
-  unpaid; each intent's cancellation is queued durably; a supplementary invoice
-  parked on it is CANCELLED (`ADDITIONAL_ASK_RETIRED_BY_REDUCTION`); the mirror
-  is reconciled. The minter cancels at Stripe after commit, then mints what is
-  left (`reissueUnpaidAdditionalAsk`, all carried, `INV-PAY-098`).
-- **The race.** A capture between the read and the fence rolls the edit back
-  (409). A capture after commit meets the queued cancellation and is refunded
-  in full by the superseded-capture path.
-- **Never an officer's money.** A chain holding a review-raised request
-  (`INV-ADDPAY-040`) is left alone; the reduction settles as before.
-- **Xero.** An unpaid ask has no Xero document, so nothing is credited for
-  it. The edit records `unpaidAskOffsetCents`; the repair pass sizes the note
-  net of it and reports the retired invoice for a person, never auto-billing it.
-- **An ask awaiting its failed mint's retry** counts too (owner decision 9 Oct
-  2026), sized as the replay would (`sizeRecoveryReplayAsk`). The retire closes
-  that recovery from the state it read; a retry that claimed it first refuses
-  the edit (409). The history row names the increase for the repair pass.
+- **A price reduction is first set against the member's unpaid card ask**
+  (#3954, owner decisions of 8 and 9 Oct 2026), card-paid and credit-paid alike, at
+  every reduction door: cancelled when covered, else re-issued smaller; only
+  the rest is refunded, credited or given back by `INV-MOD-011`'s tier. The
+  offset is untiered. Each door reads the ask ONCE
+  (`readReductionAgainstUnpaidAsk`) for the options, the save and the quote.
+- **Retired in the edit's transaction** (`retireUnpaidAskChain`): unpaid rows
+  FAILED and stamped `withdrawnAt` behind a still-unpaid fence; cancellations
+  queued; parked invoices CANCELLED; mirror reconciled. A capture after the read
+  rolls the edit back (409, `AdditionalAskChangedDuringReductionError`); one
+  after commit is refunded in full. The re-issue's recovery is written in the
+  same transaction (`queueReissuedAskRecovery`).
+- **Asks awaiting a failed mint's retry** count, sized as the replay would; the
+  retire closes each under its attempts and claim time. A retry claimed within
+  two minutes refuses the edit for a moment; an older claim is closed, and the
+  runner writes only while it holds its claim. A re-issue is settled only by
+  its own row; a later increase folds a waiting one in
+  (`foldWaitingReissuedAsks`).
+- **Only the member's price asks.** An officer's review charge, minted or
+  waiting, is never set against. A financial review's settled refund share
+  (`edit-financial-review-settlement.ts`) does not net either: an officer
+  priced it from the booking's evidence (D2, #3032); the ledger census reports
+  the booking if both are then paid.
+- **Xero** (decision A). The smaller ask gets its own supplementary invoice
+  for what the retired invoices left after the offset, waiting on its intent
+  (`queueReissuedAskSupplementaryInvoice`). An offset Xero had already billed
+  is recorded for a credit note by a person. The history names every retired
+  increase; the repair pass reads the reduction for them.
 
 ## INV-PAY-070
 

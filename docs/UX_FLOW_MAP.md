@@ -361,8 +361,9 @@ Internet Banking keeps the ordinary choices.
 
 A booking that still owes an unpaid extra payment from an earlier change shows,
 when the edit lowers its price, how much **comes off the unpaid additional
-payment** (#3954): that request is cancelled or replaced by a smaller one, and
-the **Return method** choice appears only for what is left, if anything.
+payment** (#3954), followed by what is then still owed or "nothing left to
+pay": that request is cancelled or replaced by a smaller one, and the **Return
+method** choice appears only for what is left, if anything.
 
 Picking one and saving again applies it. Both bookings move together or neither
 does. Choosing account credit can produce a different figure from the card

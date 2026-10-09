@@ -183,6 +183,8 @@ type ModifiedBooking = Booking & {
 
 type DateModificationTransactionResult =
   BookingModificationPaymentContext & {
+    /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
+    unpaidAskCancelled: boolean;
     /**
      * The plain figure the emails, the response body and the Xero leg read.
      * Inherited from `BookingModificationPaymentContext` until #3371 replaced
@@ -906,6 +908,7 @@ export async function modifyBookingDates({
       additionalAsk,
       // #3954: the unpaid asks this reduction retired, for the minter to cancel.
       retiredAdditionalAsks,
+      unpaidAskCancelled,
       pendingRefundAmountCents,
       hasSucceededPayment,
       hasIssuedXeroInvoice,
@@ -1471,6 +1474,7 @@ export async function modifyBookingDates({
       additionalAmountCents,
       additionalAsk,
       retiredAdditionalAsks,
+      unpaidAskCancelled,
       pendingRefundAmountCents,
       promoRemoved,
       promoCoverage,
@@ -1750,6 +1754,7 @@ async function dispatchDatePostTransactionSideEffects({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
+      unpaidAskCancelled: result.unpaidAskCancelled,
       additionalPaymentMethod:
         result.additionalAmountCents > 0 &&
         result.paymentSource === PaymentSource.INTERNET_BANKING
@@ -2323,6 +2328,7 @@ export async function adminShiftBookingDates({
       accountCreditAmountCents: 0,
       appliedCreditGivenBackCents: 0,
       additionalAmountCents: 0,
+      unpaidAskCancelled: false,
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,

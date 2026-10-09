@@ -756,6 +756,7 @@ describe("booking-modified default body (#2267)", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
       ...overrides,
     }, CLUB_FORMAT_TEST);

@@ -172,6 +172,8 @@ export type GuestAcceptanceReprice =
        * commit, and the smaller ask it re-issues for what is still owed.
        */
       retiredAdditionalAsks: RetiredAdditionalAsk[];
+      /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
+      unpaidAskCancelled: boolean;
       additionalAsk: AdditionalAsk;
       paymentCustomerId: string | null;
       /** What the member's email and the audit row read, as an ordinary edit carries them. */
@@ -363,6 +365,7 @@ export async function repriceBookingAfterGuestAcceptance(
       zeroDollarAutoPaid: false,
       supersededPrimaryPaymentIntentCount: 0,
       retiredAdditionalAsks: [],
+      unpaidAskCancelled: false,
       additionalAsk: NO_ADDITIONAL_ASK,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       priceLines: null,
@@ -558,6 +561,7 @@ export async function repriceBookingAfterGuestAcceptance(
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntentCount: lifecycle.supersededPrimaryPaymentIntents.length,
     retiredAdditionalAsks: adjusted.retiredAdditionalAsks,
+    unpaidAskCancelled: adjusted.unpaidAskCancelled,
     additionalAsk: adjusted.additionalAsk,
     paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
     priceLines: priceLines ?? null,
@@ -710,6 +714,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       refundReturnedToOrganiser: reprice.organiserChildRefund !== null,
       lodgeId: reprice.lodgeId,
       additionalAmountCents: reprice.additionalAsk.amountCents,
+      unpaidAskCancelled: reprice.unpaidAskCancelled,
     },
     format,
   ).catch((err) =>

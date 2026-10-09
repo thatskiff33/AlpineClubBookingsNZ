@@ -1488,6 +1488,8 @@ export async function POST(
         refundByBankTransfer: false,
         appliedCreditGivenBackCents: 0,
         additionalAmountCents: result.additionalAmountCents,
+        // A guest add only raises a price.
+        unpaidAskCancelled: false,
         additionalPaymentMethod:
           result.additionalAmountCents > 0 &&
           result.paymentSource === PaymentSource.INTERNET_BANKING

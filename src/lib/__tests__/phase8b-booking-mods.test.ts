@@ -3239,6 +3239,7 @@ describe("bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Booking Modified");
@@ -3269,6 +3270,7 @@ describe("bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guests Added");
@@ -3298,6 +3300,7 @@ describe("bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guest Removed");
@@ -3326,6 +3329,7 @@ describe("bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Change Fee");
@@ -3357,6 +3361,7 @@ describe("bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
 
@@ -3387,6 +3392,7 @@ describe("bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
     expect(html).not.toContain("<script>");

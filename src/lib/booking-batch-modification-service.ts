@@ -189,6 +189,8 @@ export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
 
 type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {
+    /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
+    unpaidAskCancelled: boolean;
     /**
      * The plain figure the emails, the response body and the Xero leg read.
      * Inherited from `BookingModificationPaymentContext` until #3371 replaced
@@ -2347,6 +2349,7 @@ export async function modifyBookingBatch({
       additionalAsk: payments.additionalAsk,
       // #3954: the unpaid asks this reduction retired, for the minter to cancel.
       retiredAdditionalAsks: payments.retiredAdditionalAsks,
+      unpaidAskCancelled: payments.unpaidAskCancelled,
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,
@@ -2882,6 +2885,7 @@ async function dispatchBatchPostTransactionSideEffects({
     accountCreditAmountCents: result.accountCreditAmountCents,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     additionalAmountCents: result.additionalAmountCents,
+    unpaidAskCancelled: result.unpaidAskCancelled,
     additionalPaymentMethod:
       result.additionalAmountCents > 0 &&
       result.paymentSource === PaymentSource.INTERNET_BANKING

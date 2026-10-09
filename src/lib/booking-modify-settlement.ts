@@ -109,6 +109,8 @@ export type PaymentAdjustmentResult = {
    * `additionalAsk` above, re-issued.
    */
   unpaidAskOffsetCents: number;
+  /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
+  unpaidAskCancelled: boolean;
   retiredAdditionalAsks: RetiredAdditionalAsk[];
   /**
    * #3954: the edits whose unpaid asks this reduction retired - a parked
@@ -509,6 +511,7 @@ export async function applyPaymentAdjustments(
     appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
     unpaidAskOffsetCents: setAgainstAsk.offsetCents,
+    unpaidAskCancelled: setAgainstAsk.offsetCents > 0 && setAgainstAsk.askLeftCents === 0,
     retiredAdditionalAsks,
     retiredAskModificationIds,
     reissuedAskInvoiceCents,

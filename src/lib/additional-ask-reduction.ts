@@ -10,43 +10,44 @@
  * (`setReductionAgainstUnpaidAsk`, the arithmetic's one home) and only what is
  * left of it is refunded or credited.
  *
- * This module holds the two database halves:
+ * This module holds the database halves:
  *
- * - `readUnpaidPriceAsk` - which ask a reduction may be set against: the ledger
- *   rows' ask, plus any ask whose mint failed and still waits on its recovery
- *   (owner decision 9 Oct 2026, "retry nets it off"). Read by the settlement
- *   options, the save (under its locks) and the quote, so the three cannot
- *   disagree.
+ * - `readReductionAgainstUnpaidAsk` - the ONE read per edit of which ask a
+ *   reduction may be set against (`readUnpaidPriceAsk`): the ledger rows' ask,
+ *   plus any ask whose mint failed and still waits on its recovery (owner
+ *   decision 9 Oct 2026, "retry nets it off"), never an officer's review charge
+ *   (decision B). The settlement options, the save and the quote all take that
+ *   one read (review round 4), so a capture between two reads cannot split them.
  * - `retireUnpaidAskChain` - inside the edit's transaction: the ask's rows are
  *   FAILED and stamped `withdrawnAt` (the projection reads past them,
  *   `INV-ADDPAY-040`), each intent's Stripe cancellation is queued durably, a
- *   pending recovery is closed before its retry can mint the old figure, any
- *   Xero supplementary invoice parked on them is retired, and the `Payment`
- *   mirror is reconciled. A smaller ask, when one is left, is minted after
- *   commit through the ordinary minter (`reissueUnpaidAdditionalAsk`).
+ *   waiting recovery is closed before its retry can mint the old figure, any
+ *   Xero supplementary invoice parked on them is read for what it bills and
+ *   retired, and the `Payment` mirror is reconciled. A smaller ask, when one is
+ *   left, is made durable in the same transaction (`queueReissuedAskRecovery`)
+ *   and minted after commit (`writeReissuedAskUnderRecovery`).
+ * - `foldWaitingReissuedAsks` - a later increase asks for a waiting re-issue too.
  *
  * And the after-commit half, `cancelRetiredAdditionalAsksNow`, which the minter
  * runs before minting anything.
  *
  * THE RACE WITH A PAYMENT. The webhook does not take the edit's locks, so the
  * member can pay the ask while the reduction is being saved. Two outcomes, both
- * safe. A capture that lands between this read and the retire's fenced write
- * leaves the row captured, the fence matches nothing, and the whole edit rolls
- * back (409) - the member's retry sees the ask paid and refunds by policy. A
- * capture after the fence finds the queued cancellation, and the existing
- * superseded-capture path refunds it in full
- * (`queueSupersededPaymentIntentRefundRecovery`, `processCancelPaymentIntentOperation`).
+ * safe. A capture that lands after the read leaves the row captured, the
+ * retire's fence matches nothing, and the whole edit rolls back
+ * (`AdditionalAskChangedDuringReductionError`, 409). A capture after the fence
+ * finds the queued cancellation, and the existing superseded-capture path
+ * refunds it in full (`queueSupersededPaymentIntentRefundRecovery`,
+ * `processCancelPaymentIntentOperation`).
  *
  * THE RACE WITH A RETRY. The recovery runner does not take the edit's locks
- * either. A pending ask is closed only from the state it was read in - not
- * claimed, no attempt since - so a retry that claimed it first rolls the edit
- * back (409) and one that comes after has nothing left to claim. A reduction
- * saved while that retry is minting is the one edit refused; the retry takes
- * seconds, and the member's next save nets against the ask it minted.
- *
- * ONLY A PRICE ASK. A review-raised request is money an officer decided, not the
- * price (`INV-ADDPAY-040`, D-3528-2), so a chain holding one is left alone and
- * the reduction settles exactly as before.
+ * either. A waiting ask is closed only from the state it was read in - same
+ * status, attempts and claim time. A retry claimed within
+ * `RECENT_RECOVERY_CLAIM_MS` refuses the edit for a moment; an older claim is a
+ * stalled worker and is closed, and the runner writes its row only while it
+ * still holds its claim (`holdAdditionalIntentRecoveryClaim`), re-stamping the
+ * claim time as it does - so whichever commits first wins, and the other
+ * changes nothing.
  */
 import {
   BookingStatus,

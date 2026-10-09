@@ -29,13 +29,19 @@
   refunded, credited or given back under the club's policy. This applies to
   card-paid bookings and to bookings paid with account credit, at every way of
   changing a booking, and the edit screen shows how much comes off the unpaid
-  request. A member who pays the old request at the same moment is refunded it
-  automatically; reminders stop for a cancelled request and quote the new
-  amount for a smaller one. Nothing is sent to Xero for a request that was never
-  paid, and the booking-vs-Xero repair tool no longer offers to bill one.
+  request and what is then left to pay. A member who pays the old request at the
+  same moment is refunded it automatically, or the change is refused with "try
+  again in a moment" and nothing is changed; reminders stop for a cancelled
+  request and quote the new amount for a smaller one, and the member's email
+  says when the extra payment was cancelled. A smaller request gets its own Xero
+  supplementary invoice, marked paid when the member pays it, so Xero matches
+  what the member is asked to pay. An officer's review charge is never reduced
+  this way.
 
   The same holds when the card request for the increase could not be created at
   the time and was waiting for its automatic retry: the reduction comes off it
   first, and the retry asks only for what the booking still owes, or for nothing.
-  A change saved in the few seconds while that retry is running is refused with
-  "try again", and goes through on the next save.
+  A change saved within two minutes of that retry starting is refused with "try
+  again in a moment", and goes through on the next save; a retry that stalled
+  longer no longer blocks it. A member-guest's decline or expiry caught in that
+  moment stays pending and is retried, instead of being parked for an officer.

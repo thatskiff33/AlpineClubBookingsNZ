@@ -719,29 +719,39 @@ left is refunded, credited or given back, by the policy tier.
 
 ```text
 reduction edit, under the door's locks
-  no unpaid ask, or the chain holds a review-raised request -> settles as before
-  unpaid ask = the rows' live ask
+  read the unpaid ask ONCE; the options, the save (and the quote) use that read
+  no unpaid price ask -> settles as before
+  unpaid ask = the rows' live ask (a chain holding a review-raised request -> none)
              + each ask whose mint FAILED and whose CREATE_ADDITIONAL_PAYMENT_INTENT
-               recovery will still run and was not overtaken by a later ask,
-               sized as its replay would size it ("retry nets it off", 9 Oct 2026)
-       a review charge's recovery, or one that cannot be sized -> settles as before
+               recovery will still run, sized as its replay would size it
+               ("retry nets it off", 9 Oct 2026); an increase's recovery a later
+               ask overtook, or a re-issue that wrote its own row -> already settled
+       an officer's review-charge recovery -> left exactly as set (decision B)
   -> offset = min(reduction, unpaid ask)
   -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt
-       a row captured since it was read -> 409, the whole edit rolls back
+       a row captured since the read -> 409, the whole edit rolls back
   -> each waiting recovery -> SUCCEEDED (closed unminted), fenced on the exact
-       status and attempts read
-       its retry minting now, or claimed since the read -> 409, edit rolls back
-       its retry later -> nothing to claim
+       status, attempts and processingStartedAt read
+       claimed under two minutes ago -> 409 "try again in a moment"
+       claimed since the read -> 409, the edit rolls back
+       its retry later -> nothing to claim; a stalled runner writes nothing
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
-  -> WAITING_PAYMENT supplementary invoice on it, or on a closed recovery's
-       increase -> CANCELLED (ADDITIONAL_ASK_RETIRED_BY_REDUCTION)
-  -> reconcile: the Payment mirror reads past the stamped rows -> nothing owed
+  -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
+       edit -> read for what they bill, then CANCELLED
+       (ADDITIONAL_ASK_RETIRED_BY_REDUCTION)
+  -> reconcile: the Payment mirror reads past the stamped rows
   -> what is left of the reduction -> policy-tiered refund / credit / give-back
+  -> ask left over -> PENDING CREATE_ADDITIONAL_PAYMENT_INTENT for it, under an
+       edit-scoped Stripe key, claimable after a one-minute grace
 after commit, the minter
   -> runs each retired intent's cancellation now
        Stripe already captured it -> REFUND_SUPERSEDED_PAYMENT, in full
-  -> ask left over (reduction < ask) -> mint it as a new ask, all of it carried
-       (mint fails -> CREATE_ADDITIONAL_PAYMENT_INTENT replays the frozen figure)
+  -> ask left over -> mint under the recovery's key, and complete that recovery
+       in one transaction with the row (recovery moved meanwhile -> writes nothing;
+       the runner, or a later reduction, owns it) -> queue its own supplementary
+       invoice, WAITING_PAYMENT on the intent (decision A)
+later increase while a re-issue still waits -> folds it in: one ask for both,
+  the re-issue's recovery closed under the same fence
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 

@@ -2977,8 +2977,17 @@ recovery the reduction nets off is closed by a status-guarded `updateMany` on
 the exact status and attempts it read, and the runner's claim is itself a
 status-guarded `updateMany` that moves both. A claim first fails the close and
 the edit rolls back (409); a close first leaves the claim matching nothing,
-whether it was already waiting on the row or comes later. A recovery read as
-PROCESSING refuses the edit before any write. Both proven on real Postgres.
+whether it was already waiting on the row or comes later. Review round 4: the
+door reads the ask ONCE and hands that read to the options and the save, so a
+capture between them meets only the fence. A recovery claimed within two
+minutes rolls the edit back (409, "try again in a moment"); an older claim is
+closed under its attempts and claim time, and the runner writes its row, its
+intent id and its supersede's durable rows only while it still holds that
+claim (`holdAdditionalIntentRecoveryClaim`, one transaction that re-stamps
+`processingStartedAt`), so whichever commits first wins. A re-issued ask's
+recovery is written in the edit's transaction; the door's own mint completes it
+fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
+waiting re-issue in closes it with the same fence. All proven on real Postgres.
 
 **#2700 adds one more, and it is the smallest participant in this cohort.**
 `raiseDeletedBookingModificationRefundTask`

@@ -134,6 +134,8 @@ export type RemoveBookingGuestResult = {
   additionalAsk: AdditionalAsk;
   /** #3954: the unpaid asks this removal's reduction retired, for the minter to cancel. */
   retiredAdditionalAsks: readonly RetiredAdditionalAsk[];
+  /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
+  unpaidAskCancelled: boolean;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
@@ -1357,6 +1359,7 @@ export async function removeBookingGuestInTransaction({
     additionalAmountCents: paymentImpact.additionalAmountCents,
     additionalAsk: paymentImpact.additionalAsk,
     retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
+    unpaidAskCancelled: paymentImpact.unpaidAskCancelled,
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
