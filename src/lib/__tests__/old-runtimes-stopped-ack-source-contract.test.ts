@@ -38,14 +38,59 @@ const ALLOWED_SHAPES: RegExp[] = [
 ];
 
 /**
- * Bounded source-contract scan of ordinary source/dot command positions, including
- * shell control words. This is Bash text, never JavaScript comment normalization.
- * It does not claim to resolve aliases, eval, or dynamically assembled commands.
+ * Bounded, line-local Bash command scan. Quotes and escapes protect separators
+ * in messages, while quoted filenames remain arguments. This is not JavaScript
+ * comment normalization or an evaluator of aliases, eval or command substitutions.
  */
 function loadsDotenv(line: string): boolean {
-  if (line.trimStart().startsWith("#")) return false;
-  return /^set\s+-[a-z]*a/.test(line) ||
-    /(?:^|[;&|]\s*)(?:(?:if|elif|then|else|do|while|until|!)\s+)*(?:source|\.)\s+\S*\.env\b/.test(line);
+  const commands: { value: string; quoted: boolean }[][] = [];
+  let command: { value: string; quoted: boolean }[] = [];
+  let word = "";
+  let quoted = false;
+  let quote: "'" | '"' | undefined;
+  const flushWord = () => {
+    if (word || quoted) command.push({ value: word, quoted });
+    word = "";
+    quoted = false;
+  };
+  for (let index = 0; index < line.length; index++) {
+    const character = line[index];
+    if (character === "\\" && quote !== "'") {
+      word += line[++index] ?? "";
+      quoted = true;
+    } else if (quote) {
+      if (character === quote) quote = undefined;
+      else word += character;
+    } else if (character === "'" || character === '"') {
+      quote = character;
+      quoted = true;
+    } else if (character === "#" && word === "") {
+      break;
+    } else if (/[;&|()]/.test(character) ||
+      (word === "" && /[{}]/.test(character) &&
+        (index + 1 === line.length || /\s/.test(line[index + 1])))) {
+      flushWord();
+      commands.push(command);
+      command = [];
+    } else if (/\s/.test(character)) {
+      flushWord();
+    } else {
+      word += character;
+    }
+  }
+  flushWord();
+  commands.push(command);
+  return commands.some((words) => {
+    let start = 0;
+    while (words[start] && !words[start].quoted &&
+      /^(?:if|elif|then|else|do|while|until|!)$/.test(words[start].value)) start++;
+    if (words[start]?.value === "builtin") start++;
+    const name = words[start]?.value;
+    if (name === "set" && /^-[a-z]*a/.test(words[start + 1]?.value ?? "")) return true;
+    if (name !== "source" && name !== ".") return false;
+    if (words[start + 1]?.value === "--") start++;
+    return /\.env\b/.test(words[start + 1]?.value ?? "");
+  });
 }
 
 describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
@@ -57,6 +102,11 @@ describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
     'while source "${SOURCE_REPO}/.env"; do :; done',
     'until . "${SOURCE_REPO}/.env"; do :; done',
     'if true; then source "${SOURCE_REPO}/.env"; fi',
+    'if source -- "${SOURCE_REPO}/.env"; then :; fi',
+    '{ source "${SOURCE_REPO}/.env"; }',
+    'builtin source "${SOURCE_REPO}/.env"',
+    'builtin . -- "${SOURCE_REPO}/.env"',
+    'echo "if true; then source .env"; source "${SOURCE_REPO}/.env"',
   ])("detects an ordinary dotenv loader: %s", (line) => {
     expect(loadsDotenv(line)).toBe(true);
   });
@@ -64,6 +114,9 @@ describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
   it.each([
     '# if source "${SOURCE_REPO}/.env"; then :; fi',
     'echo "if source .env"',
+    'echo "if true; then source .env"',
+    "echo 'if true; then source .env'",
+    'echo if\\ true\\;\\ then\\ source\\ .env',
     'source "${SOURCE_REPO}/helpers.sh"',
   ])("ignores comments, messages and other source files: %s", (line) => {
     expect(loadsDotenv(line)).toBe(false);

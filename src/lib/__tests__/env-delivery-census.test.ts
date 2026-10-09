@@ -166,8 +166,35 @@ const GATE_FILE = "src/lib/pending-school-adults-gate.ts";
 function gateEnvironmentReads(text: string): string[] {
   const source = ts.createSourceFile(GATE_FILE, stripComments(text), ts.ScriptTarget.Latest, true);
   const names = new Set<string>();
+  // Only named, same-file functions with the gate's explicit map type may
+  // receive the environment. Their parameter reads are inspected below too.
+  const functions = new Map<string, ts.FunctionDeclaration>();
+  const bindings = new Map<ts.Node, Set<string>>();
+  const isEnvParameter = (parameter: ts.ParameterDeclaration): boolean => {
+    const type = parameter.type;
+    return ts.isIdentifier(parameter.name) && !parameter.dotDotDotToken &&
+      type !== undefined && ts.isTypeReferenceNode(type) &&
+      ts.isIdentifier(type.typeName) && type.typeName.text === "Record" &&
+      type.typeArguments?.length === 2 &&
+      type.typeArguments[0].kind === ts.SyntaxKind.StringKeyword &&
+      ts.isUnionTypeNode(type.typeArguments[1]) && type.typeArguments[1].types.length === 2 &&
+      type.typeArguments[1].types.some((part) => part.kind === ts.SyntaxKind.StringKeyword) &&
+      type.typeArguments[1].types.some((part) => part.kind === ts.SyntaxKind.UndefinedKeyword);
+  };
+  for (const statement of source.statements) {
+    if (!ts.isFunctionDeclaration(statement) || !statement.name || !statement.body) continue;
+    functions.set(statement.name.text, statement);
+    bindings.set(statement, new Set(statement.parameters.filter(isEnvParameter)
+      .map((parameter) => (parameter.name as ts.Identifier).text)));
+  }
+  const isBoundMap = (node: ts.Identifier): boolean => {
+    for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
+      if (ts.isFunctionLike(parent)) return bindings.get(parent)?.has(node.text) ?? false;
+    }
+    return false;
+  };
   const isEnv = (node: ts.Node): boolean =>
-    (ts.isIdentifier(node) && node.text === "env") ||
+    (ts.isIdentifier(node) && (node.text === "env" || isBoundMap(node))) ||
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       ts.isIdentifier(node.expression) && node.expression.text === "process" &&
       (ts.isPropertyAccessExpression(node)
@@ -190,7 +217,12 @@ function gateEnvironmentReads(text: string): string[] {
       const parent = node.parent;
       const memberBase = (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === node;
       const parameter = ts.isParameter(parent) && (parent.name === node || parent.initializer === node);
-      const forwarded = ts.isCallExpression(parent) && parent.arguments.some((argument) => argument === node);
+      let forwarded = false;
+      if (ts.isCallExpression(parent) && ts.isIdentifier(parent.expression)) {
+        const callee = functions.get(parent.expression.text);
+        const parameter = callee?.parameters[parent.arguments.indexOf(node as ts.Expression)];
+        forwarded = parameter !== undefined && isEnvParameter(parameter);
+      }
       if (!memberBase && !parameter && !forwarded) unsupported(parent);
     }
     ts.forEachChild(node, visit);
@@ -476,8 +508,26 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
 
   it.each([
     "env[key]", "process.env[key]", "const alias = env", "const { THIRD_ACK } = env",
+    "external(env)", "helpers.thirdAck(env)",
+    "function untyped(settings) { return settings.THIRD_ACK; } untyped(env)",
+    "const arrow = (settings: Record<string, string | undefined>) => settings.THIRD_ACK; arrow(env)",
   ])("rejects unsupported gate map reads: %s", (source) => {
     expect(() => gateEnvironmentReads(source)).toThrow(/unsupported environment read/);
+  });
+
+  it("inspects a same-file helper's renamed environment parameter before accepting forwarding", () => {
+    const reads = gateEnvironmentReads(`
+      function gate(env: Record<string, string | undefined>) {
+        return env.FIRST_ACK === "1" && env.SECOND_ACK === "1" && thirdAck(env);
+      }
+      function thirdAck(settings: Record<string, string | undefined>) {
+        return settings.THIRD_ACK === "1";
+      }
+    `);
+    expect(reads).toEqual(["FIRST_ACK", "SECOND_ACK", "THIRD_ACK"]);
+    // A third read cannot be excused by delivery of only the original pair.
+    expect(reads.filter((name) => !new Set(["FIRST_ACK", "SECOND_ACK"]).has(name)))
+      .toEqual(["THIRD_ACK"]);
   });
 
   it("bounds the shared Compose anchor and ignores commented markers", () => {
