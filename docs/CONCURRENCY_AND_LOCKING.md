@@ -1643,7 +1643,10 @@ mispricing a booking.
   again in a second that queues a waiting close's bank-transfer note (#3924
   round 7). A change's supplementary invoice released for the capture takes it
   for the same note step once the invoice is sent (round 8), after its own row
-  completes. So a close either reads the receipt in Xero and queues its own
+  completes - also when an officer's retry of a FAILED one runs it again from
+  its own row through the outbox (round 9). The nightly credit reconciliation
+  and the repair tool's `QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE` run the same step,
+  each in a transaction of its own (round 9). So a close either reads the receipt in Xero and queues its own
   note, or commits first and is found by the note step; neither can miss the
   other. It adds no cycle: inside the
   dismissal it is a lock that transaction already holds, the worker and the
@@ -4655,8 +4658,11 @@ worker's row with the link standing and its retry runs only the note step,
 which queues a close's note at most once. A change's supplementary invoice sent
 for the capture runs the same note step after its row completes (round 8,
 `queueWaitingPaidAnotherWayNote`), in a transaction of its own under the same
-row, reading the receipt under it; a failure there is logged and left to the
-repair tool, never failing the sent invoice. None of these transactions writes
+row, reading the receipt under it; a failure there is logged, never failing the
+sent invoice, and the nightly credit reconciliation re-runs the step for any
+payment whose closes' notes do not cover them (round 9), as the repair tool
+does. A row that may have reached Xero is reported to the close as held for an
+officer, never as queued (round 9). None of these transactions writes
 the Payment row: a paid-another-way note always takes the refund-note enqueue's
 stepped path, which only reads it (C8), and is sized by the close's record less
 its own notes (`readPaidAnotherWayCloseShare`, round 8). A double click queues on the
