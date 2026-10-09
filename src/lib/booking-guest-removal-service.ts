@@ -1041,6 +1041,8 @@ export async function removeBookingGuestInTransaction({
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
+    // A removal records no change fee on an unpaid payment (`INV-PAY-119`).
+    feeRecordedByThisEditCents: 0,
     format,
     guestsForPricing,
     skipBookingLifecycleRules:

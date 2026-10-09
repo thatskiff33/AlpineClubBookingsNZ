@@ -842,6 +842,12 @@ describe("review finding source/schema contracts", () => {
         "src/lib/booking-batch-modification-service.ts",
         "export async function modifyBookingBatch",
       ],
+      // #3750: the finished-stay change-request executor claims the request
+      // and runs the batch modification on one transaction, global first.
+      [
+        "src/lib/booking-change-request-execution.ts",
+        "export async function approveAndExecuteLockedPeriodChangeRequest",
+      ],
       // #1881 — previously-unpinned two-tier writers (money/status + capacity).
       // The date-modification services both claim beds under a per-lodge lock
       // after the global lock(1).

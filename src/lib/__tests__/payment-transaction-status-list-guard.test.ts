@@ -228,6 +228,7 @@ const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
   ["src/lib/booking-ledger-projection-census-classes.ts", "payment.status in nothingCapturedFaceCents (#3583)"],
   ["src/lib/booking-ledger-projection-census-group.ts", "settlement.status: a share's settlement captured, REFUNDED included (#3854 K2)"],
   ["src/lib/booking-ledger-projection-census.ts", "payment.status in hasMoneyColumns (#3583)"],
+  ["src/lib/finance-booking-metrics.ts", "payment.status: a change fee is income only once captured (#3750, #3955 F9)"],
   ["src/lib/payment-net-collected.ts", "payment.status in netCollectedPaymentTookMoney (#3372)"],
   ["src/lib/refunded-total-shortfall-audit.ts", "Prisma payment.findMany status filter"],
   ["src/lib/xero-booking-edit-conditions.ts", "primary-invoice payment.status"],

@@ -115,6 +115,9 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
   "admin-member-delete-approved": ["reviewNoteLine"],
   "admin-member-delete-rejected": ["reviewNoteLine"],
   "admin-new-booking": ["reviewReasonNote"],
+  // #49: the "central server version" sentence, composed whole by the sender
+  // and EMPTY on every day the versions match - which is the ordinary day.
+  "admin-daily-digest": ["serverVersionNote"],
   "admin-refund-request": ["requestedAmountNote"],
   "admin-booking-change-request": ["reasonNote"],
   "admin-xero-repeated-failure": [

@@ -11,17 +11,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Clock frozen at 2026-07-01T00:00:00.000Z.
  */
 
-const mocks = vi.hoisted(() => ({
-  findUnique: vi.fn(),
-  findMany: vi.fn(),
-  update: vi.fn(),
-  count: vi.fn(),
-  withdrawClubPost: vi.fn(),
-  imageFindMany: vi.fn(),
-  imageDeleteMany: vi.fn(),
-  transaction: vi.fn(),
-  deletePostImage: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  class FakeVersionError extends Error {
+    expected = "2.0";
+    serverVersion = "2.1";
+    constructor() {
+      super("paused");
+      this.name = "ServerNzVersionMismatchError";
+    }
+  }
+  return {
+    FakeVersionError,
+    findUnique: vi.fn(),
+    findMany: vi.fn(),
+    update: vi.fn(),
+    count: vi.fn(),
+    withdrawClubPost: vi.fn(),
+    imageFindMany: vi.fn(),
+    imageDeleteMany: vi.fn(),
+    transaction: vi.fn(),
+    deletePostImage: vi.fn(),
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  };
+});
+
+vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -46,6 +60,7 @@ vi.mock("@/lib/post-image-storage", () => ({
 }));
 
 vi.mock("@/lib/servernz-api", () => ({
+  ServerNzVersionMismatchError: mocks.FakeVersionError,
   withdrawClubPost: mocks.withdrawClubPost,
 }));
 
@@ -175,6 +190,29 @@ describe("removal", () => {
       ([args]) => args.data.withdrawnAt !== undefined,
     );
     expect(stamped).toBeUndefined();
+  });
+
+  it("stands the removal, leaves the withdrawal pending and logs at info while the server version differs (#49)", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-1",
+      removedAt: null,
+      serverPostId: "server-9",
+      originClubCode: null,
+    });
+    mocks.withdrawClubPost.mockRejectedValue(new mocks.FakeVersionError());
+
+    await expect(removeClubPost("post-1")).resolves.toBeUndefined();
+
+    // Removed locally all the same...
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    // ...withdrawnAt left for the sweep...
+    expect(mocks.update.mock.calls.find(([args]) => args.data.withdrawnAt !== undefined)).toBeUndefined();
+    // ...and recorded as expected, not as a fault: info with the two numbers.
+    expect(mocks.logger.error).not.toHaveBeenCalled();
+    expect(mocks.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ expected: "2.0", serverVersion: "2.1" }),
+      expect.stringMatching(/waits until the central server API version matches/),
+    );
   });
 
   it("never withdraws a MIRROR — the network copy belongs to its origin club", async () => {

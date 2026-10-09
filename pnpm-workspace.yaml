@@ -13,7 +13,7 @@ nodeLinker: isolated
 # overrides below point here too, so each range is written exactly once; bump
 # it here.
 catalog:
-  nodemailer: ^10.0.10
+  nodemailer: ^10.0.13
   sharp: ^0.35.5
 
 # The former npm `overrides` block, translated one entry for one entry, less
@@ -62,7 +62,6 @@ overrides:
 # postinstall only prints a funding banner, and nothing here needs it run.
 allowBuilds:
   "@prisma/engines@7.10.0": true
-  "@sentry/cli@2.58.6": true
   core-js: false
   esbuild@0.28.1: true
   prisma@7.10.0: true

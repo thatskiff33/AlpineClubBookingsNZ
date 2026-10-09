@@ -1,3 +1,4 @@
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -151,12 +152,21 @@ export async function POST(
     // the full price (legacy in-flight intents). markBookingPaymentSucceeded
     // re-derives and enforces the same split under the capacity lock. The ledger
     // read is skipped for a full-price capture.
-    if (
-      pi.amount !== payment.booking.finalPriceCents &&
-      pi.amount !==
-        payment.booking.finalPriceCents -
-          (await deriveBookingAppliedCreditCents(bookingId, prisma))
-    ) {
+    // #3750: the booking's worth (price plus a recorded change fee) is the
+    // full-price figure; less applied credit it is the effective one.
+    const confirmWorthCents = bookingWorthCents({
+      finalPriceCents: payment.booking.finalPriceCents,
+      changeFeeCents: payment.changeFeeCents,
+    });
+    const confirmOwedCents =
+      pi.amount === confirmWorthCents
+        ? confirmWorthCents
+        : bookingAmountOwedCents({
+            finalPriceCents: payment.booking.finalPriceCents,
+            changeFeeCents: payment.changeFeeCents,
+            appliedCreditCents: await deriveBookingAppliedCreditCents(bookingId, prisma),
+          });
+    if (pi.amount !== confirmWorthCents && pi.amount !== confirmOwedCents) {
       // Stripe has already confirmed that money moved. An amount drift means
       // we cannot safely promote the booking from the snapshot above, but it
       // must never look like an ordinary validation failure that invites a
@@ -166,6 +176,8 @@ export async function POST(
         {
           bookingId,
           capturedAmountCents: pi.amount,
+          // #3955 review F7: what the booking owes is the expected figure.
+          expectedOwedCents: confirmOwedCents,
           bookingAmountCents: payment.booking.finalPriceCents,
         },
         "Succeeded payment amount no longer matches booking total",
@@ -215,6 +227,8 @@ export async function POST(
             organisation: { select: { name: true, email: true } },
             guests: true,
             promoRedemptions: { include: { promoCode: true } },
+            // #3750: a change fee recorded on the payment was paid too.
+            payment: { select: { changeFeeCents: true } },
           },
         });
         if (booking) {
@@ -231,7 +245,11 @@ export async function POST(
             booking.checkIn,
             booking.checkOut,
             booking.guests.length,
-            booking.finalPriceCents,
+            // #3955 review F8: the booking's worth is what was paid for.
+            bookingWorthCents({
+              finalPriceCents: booking.finalPriceCents,
+              changeFeeCents: booking.payment?.changeFeeCents ?? null,
+            }),
             format,
             {
               lodgeId: booking.lodgeId,

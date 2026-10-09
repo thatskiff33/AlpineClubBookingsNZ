@@ -1,17 +1,10 @@
 # File-size allowances for #3502 (PR #3948)
 
-One already-over-budget file grows by three lines. The split was taken first:
-the change-fee rule for a late primary invoice, its reasoning and its reads
-live in a new module, `src/lib/xero-primary-invoice-change-fee.ts`, and the
-fee line itself is the shared `changeFeeLineItem`. What is left is the import,
-a one-line pointer and the one call.
-
-file: src/lib/xero-booking-invoices.ts
-lines: 1553
-reason: the primary invoice must add its change-fee line where it assembles
-  its other lines, between the promotion lines and the invoice body, so the
-  call cannot move out of `createXeroInvoiceForBooking`. Everything else about
-  it already lives in `xero-primary-invoice-change-fee.ts`.
+No allowance of its own for `src/lib/xero-booking-invoices.ts` any more:
+merging `main` (#3955) converged this PR's late-primary-invoice fee rule onto
+#3750's (the recorded fee billed in full, `INV-PAY-119`), whose allowance
+(`3750-finished-stay-change-request.md`) already covers the file at its
+current length.
 
 ## #3954, built in the same PR: a reduction cancels or shrinks the unpaid ask
 

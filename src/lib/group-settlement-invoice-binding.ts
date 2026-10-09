@@ -20,6 +20,7 @@
  * lifecycle already serialises on (`INV-LOCK-001`) and re-reads the row under
  * it; a read-only projection only displays the answer.
  */
+import { bookingWorthCents } from "@/lib/booking-payment-state";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 
 /** The Xero object-link role for a combined settlement invoice. */
@@ -92,8 +93,29 @@ export function groupSettlementInvoiceBlocked(
   return latestCreate?.status === "FAILED" && payload?.invoiceLinesDisagreeWithPrices === true;
 }
 
+/**
+ * The organiser's combined total: each child's WORTH — its final price plus a
+ * change fee recorded on its payment (#3750, #3955 review F3, `INV-PAY-119`) —
+ * read from the one home, so the intent, the invoice and each child's settled
+ * payment all carry the fee. `payment` is required: a caller that loaded no
+ * fee cannot ask for a total.
+ */
 export function groupSettlementTotalCents(
-  children: ReadonlyArray<{ finalPriceCents: number }>
+  children: ReadonlyArray<GroupSettlementChildWorth>
 ): number {
-  return children.reduce((sum, child) => sum + child.finalPriceCents, 0);
+  return children.reduce((sum, child) => sum + groupSettlementChildWorthCents(child), 0);
+}
+
+/** A child's price and the fee recorded on its payment. */
+export type GroupSettlementChildWorth = {
+  finalPriceCents: number;
+  payment: { changeFeeCents: number } | null;
+};
+
+/** One child's share of the combined total: its worth. */
+export function groupSettlementChildWorthCents(child: GroupSettlementChildWorth): number {
+  return bookingWorthCents({
+    finalPriceCents: child.finalPriceCents,
+    changeFeeCents: child.payment?.changeFeeCents ?? null,
+  });
 }

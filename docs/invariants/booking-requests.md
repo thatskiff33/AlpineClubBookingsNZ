@@ -29,14 +29,18 @@ officer surfaces that decide a request on these tables and not just the
 policy-exception one: `BookingChangeRequest` holds both kinds of row, and its
 LOCKED_PERIOD half is decided from a different panel
 (`booking-change-requests-panel.tsx` → `PATCH
-/api/admin/booking-change-requests/[id]`) that writes the same column.
+/api/admin/booking-change-requests/[id]`) that writes the same column. On a
+finished stay that approval also APPLIES the request (#3750), and the two notes
+are written by the same guarded claim that executes it.
 
 ### INV-REQ-002
 
 - `adminNotes` is **member-visible**, on both request tables and for both kinds of
   `BookingChangeRequest` row. It is the decision explanation, written for the
   member: rendered on their own request list, on their booking page under "Change
-  Requests", and interpolated into the approval and refusal emails. Every officer
+  Requests", and interpolated into the policy-exception approval and refusal
+  emails. A `LOCKED_PERIOD` decision sends no email of its own; an executed one
+  (#3750) reaches the member as the ordinary booking-change email. Every officer
   screen labels it as member-visible *before* the decision is submitted, so nobody
   discovers the audience afterwards. A box headed only "Admin notes" over this
   column is a defect — it is what let an officer type a judgement about a member

@@ -94,7 +94,7 @@ is a reviewed edit there), `nodeLinker`, `verifyDepsBeforeRun` and
 `enableGlobalVirtualStore`. `.npmrc` exists for npm only.
 
 **Bumping a package that runs an install script.** The `allowBuilds` packages
-(`@prisma/engines`, `@sentry/cli`, `esbuild`, `prisma`, `unrs-resolver`) are
+(`@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`) are
 approved at one exact version each. Dependabot groups them, and the packages
 that pull them in, into their own `install-scripts` PR, so the ordinary
 minor-and-patch group is not held up. When a bump fails the install with
@@ -383,7 +383,8 @@ new names, and a required check that has never reported sits on
 
 1. merge the change that adds or renames the job;
 2. then add that job's context to branch protection;
-3. then rebase every open pull request onto the new `main`, oldest first.
+3. then merge the new `main` into every open pull request branch, oldest first,
+   following [`AGENTS.md` → "Safety"](AGENTS.md#safety) for branch-history handling.
 
 **Between step 1 and step 2 the new context is a red check, not a merge
 block.** Splitting out `Dependency audit` (#2946) opened exactly such a gap:

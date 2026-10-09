@@ -1,5 +1,6 @@
 import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   applyCreditToBooking,
@@ -163,6 +164,7 @@ export async function consumeStoredCreditElection(
       status: true,
       finalPriceCents: true,
       creditElectionCents: true,
+      payment: { select: { changeFeeCents: true } },
     },
   });
 
@@ -212,12 +214,23 @@ export async function consumeStoredCreditElection(
     ? await getMemberCreditBalance(balanceMemberId, tx)
     : 0;
   // Credit may already have been applied to this booking by another path (an
-  // admin, or a legacy flow). The election can only claim the REMAINING price,
-  // never re-cover a slice that is already covered.
+  // admin, or a legacy flow). The election can only claim what is still OWED,
+  // never re-cover a slice that is already covered. #3955 round 3
+  // (`INV-PAY-119`): what is owed is the booking's worth — its verified price
+  // plus a change fee recorded on its payment — less that credit, so an
+  // elected credit can pay a finished-stay correction's fee as cash would.
   const alreadyAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
+  const worthCents = bookingWorthCents({
+    finalPriceCents: verifiedFinalPriceCents,
+    changeFeeCents: booking.payment?.changeFeeCents ?? null,
+  });
   const outstandingPriceCents = Math.max(
     0,
-    verifiedFinalPriceCents - alreadyAppliedCents,
+    bookingAmountOwedCents({
+      finalPriceCents: verifiedFinalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+      appliedCreditCents: alreadyAppliedCents,
+    }),
   );
 
   // Which bound ACTUALLY bound? A bound only counts when it is below the
@@ -284,8 +297,8 @@ export async function consumeStoredCreditElection(
     shortfallReason,
     availableBalanceCents,
     fullyCovered:
-      verifiedFinalPriceCents > 0 &&
-      alreadyAppliedCents + creditAppliedCents >= verifiedFinalPriceCents,
+      worthCents > 0 &&
+      alreadyAppliedCents + creditAppliedCents >= worthCents,
     moneyBuildUp: moneyBuildUpSelection.historyMetadata,
   };
 }

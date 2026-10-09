@@ -2054,7 +2054,7 @@ by itself.
 reduction made while an earlier increase's card request was still unpaid left
 that request live, so a member who later paid it left the club holding more
 than the price; the census reads that as `retained`, like a policy retention.
-A reduction now cancels or shrinks the unpaid request first (`INV-PAY-119`), so
+A reduction now cancels or shrinks the unpaid request first (`INV-PAY-120`), so
 new rows of this kind should not appear. To tell an old one from a policy
 retention, look at the booking's changes: an increase, then a reduction, with an
 ADDITIONAL card payment captured after the reduction. Report them to the owner;

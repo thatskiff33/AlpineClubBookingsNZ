@@ -2427,7 +2427,7 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * and an additional intent minted by a *later* edit supersedes this one — in
  * that case the operation completes without creating anything.
  *
- * #3954 ("retry nets it off", owner decision 9 Oct 2026; `INV-PAY-119`): a price
+ * #3954 ("retry nets it off", owner decision 9 Oct 2026; `INV-PAY-120`): a price
  * reduction saved while this waits re-checks what the booking owes before the
  * retry can mint the old figure. It sizes this row exactly as the replay below
  * would (`sizeRecoveryReplayAsk`), sets the reduction against it, closes the row

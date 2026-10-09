@@ -619,7 +619,16 @@ export const AUDIT_CENSUS_TOTALS = {
   // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
   // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
   // tree composed by #3829.
-  writeSites: 499,
+  // 499 -> 497 (#52, other-lodges central-server sync): the other-lodges
+  // CREATE and DELETE handlers are removed with their `OTHER_LODGE_CREATED`
+  // and `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
+  // central server says it owns. RE-MEASURED with `npm run audit:census`.
+  // 497 -> 498 (#3750): the executed approval of a LOCKED_PERIOD change request
+  // on a finished stay (`booking-change-request.approve`, with `executed: true`),
+  // one `logAudit` in `src/lib/booking-change-request-admin-decision.ts`,
+  // categorised `booking` like the acknowledgement it sits beside. RE-MEASURED
+  // with `pnpm run audit:census`.
+  writeSites: 498,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -641,7 +650,12 @@ export const AUDIT_CENSUS_TOTALS = {
    * anything, because there was nothing to declare with: what a member read was
    * decided by whether the `details` column happened to parse as JSON.
    */
-  memberFacingSites: 6,
+  // 6 -> 7 (#3750): the executed change-request approval, which publishes the
+  // same `adminNotes` the acknowledgement path does for the same action — the
+  // blueprint the owner approved keeps `memberDisclosure` "exactly as it is
+  // today" (INV-PRIV-018), so this is the existing disclosure at a second site,
+  // not a widening.
+  memberFacingSites: 7,
   /**
    * Of those, sites whose declaration the census cannot read, pinned per site in
    * `APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695` with the reason each is
@@ -712,7 +726,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
     // above. RE-MEASURED with `pnpm run audit:census`.
     // 271 -> 272 (#3827, composed by #3829): the guest-acceptance re-price record, above.
-    logAudit: { total: 272, uncategorised: 0 },
+    // 272 -> 273 (#3750): the executed change-request approval, above. `logAudit`
+    // because it is written after the approval has committed.
+    logAudit: { total: 273, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -835,7 +851,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // same job, rather than a fifth form.
     // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
     // transaction beside the writer above, in the same form.
-    "auditLog.create": { total: 77, uncategorised: 0 },
+    // 77 -> 75 (#52): the two removed other-lodges writers above.
+    "auditLog.create": { total: 75, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -927,7 +944,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `main`) and RE-MEASURED with `pnpm run audit:census`: 106.
     // 106 -> 107 (#3827, composed by #3829): the guest-acceptance re-price record — a booking's
     // money changing, read by booking officers like every `booking.modify.*`.
-    booking: 107,
+    // 107 -> 108 (#3750): the executed change-request approval, `booking` like
+    // the acknowledgement of the same action.
+    booking: 108,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1127,7 +1146,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // of the administrator whose currency change cleared it - no member data -
     // and is `admin` for the reason its sibling AI_SPEND_CURRENCY_RATE_UPDATED
     // is: installation configuration.
-    admin: 109,
+    // 109 -> 107 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
+    // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
+    admin: 107,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2620,10 +2641,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // records (`admin/lodges/**`), files `admin` — so filing this registry `lodge`
   // would itself OPEN a split of exactly the kind the rule exists to close.
   // Gated `lodge:view`/`lodge:edit`, filing `admin`. Pinned on arrival so the
-  // next change is deliberate.
-  "src/app/api/admin/other-lodges/route.ts::POST#0": "admin",
+  // next change is deliberate. #52 removed the create and delete handlers (a
+  // site changes only its own lodge), so of the trio only the update remains.
   "src/app/api/admin/other-lodges/[id]/route.ts::PATCH#0": "admin",
-  "src/app/api/admin/other-lodges/[id]/route.ts::DELETE#0": "admin",
 };
 
 /**
@@ -2694,9 +2714,7 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "workparty.create",
   "workparty.update",
   "workparty.delete",
-  "OTHER_LODGE_CREATED",
   "OTHER_LODGE_UPDATED",
-  "OTHER_LODGE_DELETED",
 ];
 
 /**
@@ -3048,6 +3066,13 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // verbatim, which is what makes an edit to either branch a visible diff here.
   "src/app/api/admin/booking-change-requests/[id]/route.ts::PATCH#0":
     "(dynamic) parsed.data.status === \"APPROVED\" ? \"booking-change-request.approve\" : \"booking-change-request.reject\"",
+  // #3750: the SAME decision when the stay has finished and approving applies
+  // the request. PUBLISHES: the officer's `adminNotes`, and nothing when there
+  // is none — the acknowledgement's disclosure for the same action, kept as it
+  // is today by the owner-approved blueprint (INV-PRIV-018). `internalNotes`
+  // never reaches the row; only `internalNoteRecorded` does.
+  "src/lib/booking-change-request-admin-decision.ts::runFinishedStayApproval#0":
+    "booking-change-request.approve",
   // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
   // refusal without one — and which `notifyMemberOfRefusal` emails as well.
   "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#0":

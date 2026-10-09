@@ -21,6 +21,8 @@ import { attachMintedCardIntent } from "@/lib/card-intent-attach";
 import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { bookingAmountOwedCents } from "@/lib/booking-payment-state";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import {
   NOT_PAYABLE_MESSAGE,
   PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
@@ -143,6 +145,16 @@ export async function createPaymentIntentForPaymentLink(
     throw switchedToInternetBankingError();
   }
 
+  // #3750 (#3955 review F2, `INV-PAY-119`): what the link charges is what the
+  // booking owes — its price plus a change fee recorded on its payment, less
+  // applied credit — read from the one home, never the bare price. Every
+  // intent comparison, mint and row below uses this one figure.
+  const owedCents = bookingAmountOwedCents({
+    finalPriceCents: booking.finalPriceCents,
+    changeFeeCents: booking.payment?.changeFeeCents ?? null,
+    appliedCreditCents: await deriveBookingAppliedCreditCents(booking.id),
+  });
+
   // Reuse or reconcile an existing PaymentIntent before creating a new one
   // (same behaviour as the session payment-intent route).
   //
@@ -181,7 +193,7 @@ export async function createPaymentIntentForPaymentLink(
         await queueSupersededPrimaryIntentCancellations(prisma, {
           bookingId: booking.id,
           paymentId: booking.payment.id,
-          newFinalPriceCents: booking.finalPriceCents,
+          newFinalPriceCents: owedCents,
         });
       } else {
       // #2265 (#2319 door 1, settle arm). The card money is already captured, so
@@ -241,7 +253,7 @@ export async function createPaymentIntentForPaymentLink(
       repaySupersededIntentId === null &&
       existingIntent.status !== "canceled" &&
       // #3567: minted in another currency is superseded like a stale amount.
-      (existingIntent.amount !== booking.finalPriceCents || intentCurrencyDiffers(existingIntent, format))
+      (existingIntent.amount !== owedCents || intentCurrencyDiffers(existingIntent, format))
     ) {
       // The booking was modified after this intent was minted (#1161): a
       // stale client_secret would capture the old total. Queue the stale
@@ -250,7 +262,7 @@ export async function createPaymentIntentForPaymentLink(
         await queueSupersededPrimaryIntentCancellations(prisma, {
           bookingId: booking.id,
           paymentId: booking.payment.id,
-          newFinalPriceCents: booking.finalPriceCents,
+          newFinalPriceCents: owedCents,
           ...(intentCurrencyDiffers(existingIntent, format) ? { wrongCurrencyPaymentIntentId: existingIntent.id } : {}),
         });
       }
@@ -398,6 +410,11 @@ export async function createPaymentIntentForPaymentLink(
     throw new PaymentLinkError(CREDIT_ELECTION_PENDING_MESSAGE, 409);
   });
 
+  // Nothing left to charge (credit covers what is owed): never a $0 intent.
+  if (owedCents <= 0) {
+    throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
+
   // Stripe calls stay outside the database transaction.
   // #3369: the Stripe customer is keyed on WHO OWNS the booking. A school's
   // is keyed on its organisation, which is what stops a second customer being
@@ -413,7 +430,7 @@ export async function createPaymentIntentForPaymentLink(
 
   const paymentIntent = await createPaymentIntent({
     format,
-    amountCents: booking.finalPriceCents,
+    amountCents: owedCents,
     customerId: customer.id,
     metadata: {
       bookingId: booking.id,
@@ -436,14 +453,14 @@ export async function createPaymentIntentForPaymentLink(
     paymentIntentId: paymentIntent.id,
     payableStatuses: PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
     paymentCreate: {
-      amountCents: booking.finalPriceCents,
+      amountCents: owedCents,
       stripeCustomerId: customer.id,
     },
     paymentUpdate: {
       stripeCustomerId: customer.id,
     },
     transaction: {
-      amountCents: booking.finalPriceCents,
+      amountCents: owedCents,
       reason: repaySupersededIntentId
         ? "payment_link_repay_after_refund"
         : "payment_link_booking_payment",

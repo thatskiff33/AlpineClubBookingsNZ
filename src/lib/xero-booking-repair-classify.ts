@@ -638,7 +638,7 @@ export function classifyBookingContext(
           (modificationOperations.some(isAskRetiredByReductionOperation) ||
             isPendingAskRetiredByReduction(modification.id, booking.modifications))
         ) {
-          // #3954 (`INV-PAY-119`): a later reduction retired this edit's unpaid
+          // #3954 (`INV-PAY-120`): a later reduction retired this edit's unpaid
           // ask and its invoice - or netted off the ask before its failed mint's
           // retry ran, when no invoice was parked to carry the code; a one-click
           // bill would charge money nobody owes.

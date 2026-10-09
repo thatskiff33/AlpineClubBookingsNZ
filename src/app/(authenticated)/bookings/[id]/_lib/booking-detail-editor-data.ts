@@ -314,8 +314,14 @@ export async function buildBookingDetailEditorData({
       : {}),
     editPolicy: {
       // This is the member (non-override) policy, so mode is never
-      // "admin-override" here; the ternary only narrows the widened union.
-      mode: editPolicy.mode === "admin-override" ? null : editPolicy.mode,
+      // "admin-override" here — nor "finished-stay-correction" (#3750), which
+      // only the change-request executor asks for; the ternary only narrows the
+      // widened union.
+      mode:
+        editPolicy.mode === "admin-override" ||
+        editPolicy.mode === "finished-stay-correction"
+          ? null
+          : editPolicy.mode,
       today: formatDateOnly(editPolicy.today),
       editableFrom: editPolicy.editableFrom
         ? formatDateOnly(editPolicy.editableFrom)

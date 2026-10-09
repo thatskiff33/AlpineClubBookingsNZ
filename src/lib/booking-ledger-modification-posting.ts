@@ -97,6 +97,33 @@ export type ModificationPostingInput = {
   postedLines: readonly PostedChargeLine[];
 };
 
+/**
+ * An edit's change-fee line, anchored to its modification and keyed so it posts
+ * once (`INV-SSOT-001`). The modification posting writes it for a confirmed
+ * booking; the settle writes it at confirmation for a fee added to an unpaid
+ * booking's amount owed (#3750), where no confirmed ledger existed to take it.
+ */
+export function modificationChangeFeePosting(input: {
+  bookingId: string;
+  lodgeId: string;
+  bookingModificationId: string;
+  changeFeeCents: number;
+}): BookingLedgerPosting {
+  return {
+    bookingId: input.bookingId,
+    lodgeId: input.lodgeId,
+    anchorKind: "MODIFICATION",
+    anchorId: input.bookingModificationId,
+    side: "CHARGE",
+    kind: "CHANGE_FEE",
+    sign: 1,
+    quantity: 1,
+    unitCents: input.changeFeeCents,
+    narration: "Change fee",
+    postingKey: modificationChangeFeeKey(input.bookingModificationId),
+  };
+}
+
 export function planModificationChargeLines(
   input: ModificationPostingInput,
 ): ModificationPostingPlan {
@@ -120,7 +147,6 @@ export function planModificationChargeLines(
     anchorKind: "MODIFICATION" as const,
     anchorId: input.bookingModificationId,
   };
-  const base = { ...anchor, side: "CHARGE" as const };
   const postings: BookingLedgerPosting[] = [];
   const reversedHere = new Set<string>();
   const reverse = (line: PostedChargeLine): void => {
@@ -185,15 +211,14 @@ export function planModificationChargeLines(
   }
 
   if (input.changeFeeCents > 0) {
-    postings.push({
-      ...base,
-      kind: "CHANGE_FEE",
-      sign: 1,
-      quantity: 1,
-      unitCents: input.changeFeeCents,
-      narration: "Change fee",
-      postingKey: modificationChangeFeeKey(input.bookingModificationId),
-    });
+    postings.push(
+      modificationChangeFeePosting({
+        bookingId: input.bookingId,
+        lodgeId: input.lodgeId,
+        bookingModificationId: input.bookingModificationId,
+        changeFeeCents: input.changeFeeCents,
+      }),
+    );
   }
 
   const plannedCents = postings.reduce((sum, posting) => sum + ledgerLineAmountCents(posting), 0);

@@ -98,10 +98,11 @@ import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { hasCapturedPayment, hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
+  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
@@ -136,6 +137,8 @@ import {
   rosterOperationalDayRange,
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
+import { loadCancellationPolicy } from "@/lib/cancellation";
+import { calculateFullReductionSettlementOptions } from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -150,6 +153,17 @@ import {
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
+import {
+  assertFinishedStayCorrectionCall,
+  classifyFinishedStayChangeFeeRule,
+  finishedStayNoticeDay,
+  finishedStayRemovalFeeCents,
+  recordFinishedStayFeeOwed,
+  finishedStayRemovedPortion,
+  loadRemovalPromoRows,
+  type FinishedStayChangeFeeRule,
+  type FinishedStayCorrection,
+} from "@/lib/booking-finished-stay-correction";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -225,6 +239,17 @@ type BatchModificationTransactionResult =
     choreWarnings: string[];
     datesChanged: boolean;
     adminOverride: boolean;
+    /**
+     * #3750: set only on a finished-stay correction — the change request it
+     * executed and which half of the owner's fee rule priced it — so the audit
+     * row says why a finished booking moved.
+     */
+    finishedStayCorrection:
+      | (FinishedStayCorrection & {
+          changeFeeRule: FinishedStayChangeFeeRule;
+          confirmOverCapacity: boolean;
+        })
+      | null;
     notifyMember: boolean;
     capacityOverridden: boolean;
     oldCheckIn: Date;
@@ -267,6 +292,12 @@ type BatchModificationTransactionResult =
 
 export type BatchModificationResponse = {
   booking: ModifiedBooking;
+  /**
+   * The `BookingModification` row this edit wrote (#3750), so a caller that
+   * owns the transaction can link it — the finished-stay change-request
+   * executor writes it onto the request it approved, in the same transaction.
+   */
+  bookingModificationId: string;
   priceDiffCents: number;
   changeFeeCents: number;
   refundAmountCents: number;
@@ -653,6 +684,7 @@ export async function modifyBookingBatch({
   hostingReconcile,
   waiveChangeFee,
   preTransaction,
+  finishedStayCorrection,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -811,7 +843,23 @@ export async function modifyBookingBatch({
    * only function that can mint one — see `EVERY_BOOKING_LOCK_FACTS`.
    */
   preTransaction?: BatchModificationPreTransaction;
+  /**
+   * #3750: execute an officer-approved LOCKED_PERIOD change request on a
+   * FINISHED stay. A service argument, never a body field; requires `tx`,
+   * `preTransaction` and an ADMIN actor, and never combines with
+   * `adminOverride`. What it changes, and why so little, is
+   * `booking-finished-stay-correction.ts`; the executor is its only caller
+   * (`finished-stay-correction-call-sites.test.ts`).
+   */
+  finishedStayCorrection?: FinishedStayCorrection;
 }): Promise<BatchModificationResponse> {
+  if (finishedStayCorrection) {
+    assertFinishedStayCorrectionCall({
+      hasCallerTransaction: Boolean(callerTx && preTransaction),
+      actorRole: actor.role,
+      adminOverride: Boolean(input.adminOverride),
+    });
+  }
   if (callerTx && !preTransaction) {
     throw new Error(
       "INV-LOCK-004: modifyBookingBatch in caller-transaction mode requires " +
@@ -1126,7 +1174,33 @@ export async function modifyBookingBatch({
       role: actor.role,
       input,
       today: clubTodayDateOnly,
+      finishedStayCorrection: Boolean(finishedStayCorrection),
     });
+    if (finishedStayCorrection) {
+      // The flag only ASKS for the mode. A stay that has not finished took its
+      // ordinary window above, and running that as an officer edit wearing the
+      // request's approval is exactly what must not happen.
+      if (!dates.isFinishedStayCorrection) {
+        throw new ApiError(
+          "This booking's stay has not finished, so the change request cannot be applied as a finished-stay correction.",
+          409,
+        );
+      }
+      // The lock-date decision over the envelope that will really be written.
+      // The call above judged the request's own `checkIn`/`checkOut`; a change
+      // request's stay ranges can move the envelope without naming either, and
+      // on an unpaid booking with an issued invoice that re-dates the
+      // check-in-dated primary invoice. Arithmetic over facts resolved before
+      // the transaction opened (`INV-LOCK-004`), so nothing is read here.
+      assertDateEditClearsXeroLockDateFromFacts(
+        booking,
+        {
+          checkIn: formatDateOnly(dates.newCheckIn),
+          checkOut: formatDateOnly(dates.newCheckOut),
+        },
+        preparation.xeroLockDates,
+      );
+    }
 
     // Lock the complete old and proposed booking envelopes before any
     // Booking/BookingGuest tuple write. This includes empty roster partitions,
@@ -1324,7 +1398,10 @@ export async function modifyBookingBatch({
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
-          adminOverride,
+          // #3750: and on a finished-stay correction, by owner decision — the
+          // officer confirms past-night overbooking; a whole-lodge hold still
+          // refuses inside the pricing pass.
+          adminOverride: adminOverride || Boolean(finishedStayCorrection),
           confirmOverCapacity: input.confirmOverCapacity,
           // #1746: admin-flagged partner-sharers route capacity through the
           // #1745 reserved-slot check (gated to ADMIN actors above).
@@ -1456,7 +1533,10 @@ export async function modifyBookingBatch({
           newCheckIn: dates.newCheckIn,
           newTotalPriceCents: pricingResult.newTotalPriceCents,
           guestNightRates: pricingResult.guestNightRates,
-          todayAtClub,
+          // #3750 (F1): a finished stay's codes are judged on its check-in day,
+          // as its fee tiers are — on the real today an expired code would be
+          // released and its discount billed back to the member.
+          todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
         });
 
     /**
@@ -1533,18 +1613,73 @@ export async function modifyBookingBatch({
         : booking.finalPriceCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
+    // #3750: the owner's fee rule for a finished-stay correction, decided from
+    // what this edit will WRITE (see `classifyFinishedStayChangeFeeRule`), and
+    // the day its money tiers are measured from. An ordinary edit measures them
+    // from the club's today; a correction measures them from its own check-in,
+    // so the notice period is 0 days rather than a negative one that no tier
+    // covers. Only the three money tiers read it — every date gate above read
+    // the real today.
+    const finishedStayChangeFeeRule: FinishedStayChangeFeeRule | null =
+      finishedStayCorrection
+        ? classifyFinishedStayChangeFeeRule({
+            addedGuestCount: guestPlan.normalizedAddGuests?.length ?? 0,
+            removedGuestCount: guestPlan.removedGuests.length,
+            remainingGuests: guestPlan.proposedRemainingGuests.map((entry) => ({
+              stored: entry.guest,
+              proposed: entry,
+            })),
+          })
+        : null;
+    const moneyTierDay = finishedStayCorrection
+      ? finishedStayNoticeDay(booking)
+      : todayAtClub;
+    // #3750: what a correction REMOVES — removed guests, and nights trimmed off
+    // kept guests — valued net of the promotion it received, is charged the
+    // same-day tier's retention as its change fee, paid or unpaid (owner, 6 and
+    // 7 Oct 2026), and whatever reduction then remains comes back in full, so
+    // the tier is applied once and never netted against what was added.
+    const finishedStayRemovalCharged =
+      Boolean(finishedStayCorrection) &&
+      !parked &&
+      finishedStayChangeFeeRule !== "ADD_ONLY_NO_FEE";
+    const removedPortion = finishedStayRemovalCharged
+      ? finishedStayRemovedPortion({
+          storedGuests: booking.guests,
+          keptStays: new Map(
+            guestPlan.proposedRemainingGuests.map((entry) => [entry.guest.id, entry]),
+          ),
+          booking,
+          promoRows: await loadRemovalPromoRows(tx, bookingId),
+        })
+      : null;
+    const removalFeeCents =
+      removedPortion && removedPortion.netCents > 0
+        ? finishedStayRemovalFeeCents({
+            removedPortionCents: removedPortion.netCents,
+            policyRules: await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx),
+            settlementMethod: input.settlementMethod ?? "card",
+          })
+        : 0;
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is
-    // zero everywhere else on that path.
-    const chargeableChangeFeeCents = parked
+    // zero everywhere else on that path. #3750: an add-only finished-stay
+    // correction owes no change fee by owner decision — not a waiver of one.
+    // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
+    // stay correction is charged ONLY the same-day retention on what it removes
+    // — never the ordinary late-change fee across the whole booking.
+    const chargeableChangeFeeCents =
+      parked || finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE"
       ? 0
-      : await calculateModificationChangeFee({
+      : finishedStayCorrection
+        ? removalFeeCents
+        : await calculateModificationChangeFee({
       booking,
       newCheckIn: dates.newCheckIn,
       checkInChanged: dates.checkInChanged,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       db: tx, // locked transaction; see `CancellationPolicyDb`
-      todayAtClub,
+      todayAtClub: moneyTierDay,
     });
     // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
     // so the waived fee is genuinely absent from every downstream decision rather
@@ -1559,6 +1694,17 @@ export async function modifyBookingBatch({
     // reconciles against the club setting — and puts a waiver in a dragged-along
     // booking's history that nobody granted.
     const changeFeeWaived = waiveChangeFee === true && chargeableChangeFeeCents > 0;
+    // #3750 (owner D3, and "Add fee to amount owed", 7 Oct 2026): an unpaid stay
+    // owes the retained share too, "as if they had paid and then were being
+    // refunded less the cancellation fee". With nothing captured the fee is
+    // recorded on the payment below, so every pay step collects it with the
+    // rest (`bookingAmountOwedCents`); where an invoice was already issued the
+    // edit's credit note or supplementary invoice carries it as well, and
+    // where none was, the primary invoice raised later carries it. Decided on
+    // the fee this edit CHARGES (#3955 review F10), after any waiver.
+    const feeAddedToAmountOwed =
+      Boolean(finishedStayCorrection) && changeFeeCents > 0 && !hasCapturedPayment(booking.payment);
+    const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
 
     // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
     // inert below rather than a second zero literal beside it: with no options
@@ -1567,13 +1713,22 @@ export async function modifyBookingBatch({
     // payment row, and returns zeros for both Xero legs. The existing machinery
     // is what proves nothing moved, rather than a parallel hand-built result
     // that could drift from it.
+    // #3750: a correction already paid the tier in its fee, so what remains of a
+    // reduction comes back in full — the tier applies once, to the removed portion.
     const settlementOptions = parked
       ? null
-      : await calculateModificationSettlementOptions({
+      : finishedStayRemovalCharged
+        ? calculateFullReductionSettlementOptions({
+            booking,
+            netChargeCents: priceDiffCents + changeFeeCents,
+            refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
+            todayAtClub: moneyTierDay,
+          })
+        : await calculateModificationSettlementOptions({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
       db: tx,
-      todayAtClub,
+      todayAtClub: moneyTierDay,
     });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
@@ -1678,15 +1833,31 @@ export async function modifyBookingBatch({
       changeFeeCents,
       settlementOptions,
       settlementMethod: input.settlementMethod,
-      todayAtClub,
+      // #3750: the give-back tier is a refund tier too — the same 0-day frame.
+      todayAtClub: moneyTierDay,
       format,
+      // #3750 (F2): the tier was already applied in the removal fee, so an
+      // applied-credit give-back returns the remaining reduction once, untiered.
+      reductionUntiered: finishedStayRemovalCharged,
     });
+    if (feeAddedToAmountOwed) {
+      // Owner decision (7 Oct 2026, "Add fee to amount owed"): recorded where
+      // the pay steps read it, claimed against the invoice link this edit read
+      // (#3955 review X4) — see `recordFinishedStayFeeOwed`.
+      await recordFinishedStayFeeOwed(tx, {
+        bookingId,
+        payment: booking.payment,
+        changeFeeCents,
+      });
+    }
 
     const lifecycle = await applyLifecycleTransitions(tx, {
       booking,
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
+      // #3955 review F1: the fee just recorded is owed with the price.
+      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : 0,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
@@ -1769,14 +1940,18 @@ export async function modifyBookingBatch({
       include: { guests: true, payment: true },
     });
 
-    await reconcileBedAllocationsForBookingWithLodgeLockHeld({
-      bookingId,
-      db: tx,
-      previousRange: {
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-      },
-    });
+    // #3750 (owner D2, 7 Oct 2026): a finished-stay correction never touches
+    // past beds — no placement for added guests, no pruning, no promotion.
+    if (!finishedStayCorrection) {
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
+        bookingId,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
+    }
 
     /**
      * #3530: the lines behind `priceDiffCents`. BEFORE is the guest snapshot
@@ -1937,6 +2112,24 @@ export async function modifyBookingBatch({
                 adminOverride: true,
                 pricingMode: "recalculate",
                 capacityOverridden: capacityOverridden,
+              }
+            : {}),
+          // #3750: which approved change request this executed, how its fee was
+          // decided, and whether an officer confirmed a past-night overbooking.
+          ...(finishedStayCorrection && finishedStayChangeFeeRule
+            ? {
+                finishedStayCorrection: {
+                  changeRequestId: finishedStayCorrection.changeRequestId,
+                  changeFeeRule: finishedStayChangeFeeRule,
+                  removedPortionCents: removedPortion?.netCents ?? 0,
+                  removalFeeCents,
+                  feeAddedToAmountOwed,
+                  feeOnPrimaryInvoice,
+                  // Both, as the #1668 override records them: what the officer
+                  // confirmed, and whether capacity was in fact exceeded.
+                  confirmOverCapacity: input.confirmOverCapacity === true,
+                  capacityOverridden,
+                },
               }
             : {}),
           // #3232 D2: the zero beside this is a WAIVER, and which waiver. Only
@@ -2145,6 +2338,14 @@ export async function modifyBookingBatch({
       choreWarnings,
       datesChanged: dates.datesChanged,
       adminOverride,
+      finishedStayCorrection:
+        finishedStayCorrection && finishedStayChangeFeeRule
+          ? {
+              changeRequestId: finishedStayCorrection.changeRequestId,
+              changeFeeRule: finishedStayChangeFeeRule,
+              confirmOverCapacity: input.confirmOverCapacity === true,
+            }
+          : null,
       notifyMember,
       capacityOverridden: capacityOverridden,
       oldCheckIn: booking.checkIn,
@@ -2364,6 +2565,7 @@ export async function modifyBookingBatch({
 
     return {
       booking: result.booking,
+      bookingModificationId: result.bookingModificationId,
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
@@ -2405,6 +2607,7 @@ export async function modifyBookingBatch({
     // (`formatLinkedMoveMoneySentence`), rather than implying one payment step.
     return {
       booking: result.booking,
+      bookingModificationId: result.bookingModificationId,
       ...(result.pendingHostingReconcile
         ? { pendingHostingReconcile: result.pendingHostingReconcile }
         : {}),
@@ -2495,6 +2698,18 @@ async function dispatchBatchPostTransactionSideEffects({
     // Issue #1696: a non-override admin edit that suppressed the member email
     // records notifyMember: false too (notifyMember is false only when an admin
     // opted out — members always notify), so every suppressed edit is auditable.
+    // #3750: the change request this executed and its fee rule, so the audit
+    // trail answers "why did a finished stay change" on its own.
+    ...(result.finishedStayCorrection
+      ? {
+          finishedStayCorrection: {
+            changeRequestId: result.finishedStayCorrection.changeRequestId,
+            changeFeeRule: result.finishedStayCorrection.changeFeeRule,
+            confirmOverCapacity: result.finishedStayCorrection.confirmOverCapacity,
+            capacityOverridden: result.capacityOverridden,
+          },
+        }
+      : {}),
     ...(result.adminOverride
       ? {
           adminOverride: true,

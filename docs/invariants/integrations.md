@@ -531,3 +531,42 @@ Pinned by `xero-operation-outbox.test.ts`: every queue type's stored payload
 must reach its handler with the same arguments as the payload it was queued
 with. The retry is pinned by `xero-operation-retry.test.ts` and, against a real
 database, `xero-subscription-invoice-retry.realdb.test.ts`.
+
+## Alpine Central Server API version (#49)
+
+### INV-INT-027
+
+Syncing with the Alpine Central Server runs only while the server's API
+version is IDENTICAL to the one this site was built for; otherwise every
+server-bound transfer, both ways, is refused locally.
+
+- **One gate, where it cannot be bypassed.** `resolveConnection` in
+  `servernz-api.ts` refuses a server-bound request with
+  `ServerNzVersionMismatchError` before any request is built; every function
+  that reaches the server goes through it, and the only opt-out is the version
+  call itself. Callers that hold a single-flight claim or an attempt counter
+  ask first (`checkServerVersion` / `isServerSyncPaused`), so a pause takes no
+  claim and burns no attempt.
+- **Integer equality, never a float.** `compareServerVersions` in
+  `servernz-api-version.ts` is the one comparison: `major.minor` parsed as two
+  integers, equal only when both are; `1.10` is not `1.1`; a minor-only
+  difference pauses. No version string is read with `Number()` or
+  `parseFloat()` (census in `servernz-api-version.test.ts`).
+- **Nothing stored says "mismatch".** The row holds the server's last ANSWER
+  (`ServerNzSettings.serverVersion`: NULL never asked, `"unknown"` for a 404,
+  else `major.minor`); the mismatch is computed on every read against
+  `SERVERNZ_EXPECTED_SERVER_VERSION`, so upgrading this site is changing that
+  constant and nothing is reset.
+- **A failed check never pauses.** Unreachable or refused keeps the stored
+  answer and reports "could not check"; a NULL answer allows, after one inline
+  check. A 404 IS an answer (the server predates versioning) and pauses.
+- **Shown, and resumes by itself.** The nightly sync checks before its claim,
+  so a matching answer resumes syncing with no manual step; the setup page,
+  the lodges panel and the Daily digest show the two numbers while they
+  differ, and a lodge-only recipient gets only that entry, as its own
+  template (`INV-PRIV` masking).
+
+Pinned by `servernz-api-version.test.ts`, `servernz-api-version-gate.test.ts`,
+`servernz-version-check.test.ts`, `cron-alpine-server-sync.test.ts`,
+`club-post-sharing.test.ts`, `club-post-mirror.test.ts`,
+`admin-daily-digest-server-version.test.ts`.

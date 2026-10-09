@@ -1,8 +1,47 @@
 import "server-only";
-import { z } from "zod";
+import { ownedOtherLodgeNamesSchema } from "@/lib/other-lodges";
+import logger from "@/lib/logger";
+import {
+  MAX_SERVER_VERSION_CHARS,
+  distributedLodgeSchema,
+  pullEnvelopeSchema,
+  pushTargetResultSchema,
+  sharedPostResultSchema,
+  syncEnvelopeSchema,
+  uploadResultSchema,
+  versionResultSchema,
+  type OtherLodgeUploadItem,
+  type OtherLodgesPullResult,
+  type OtherLodgesUploadResult,
+  type PushTargetResult,
+  type SharedPostImage,
+  type SharedPostResult,
+  type SyncEnvelope,
+  type SyncPost,
+} from "@/lib/servernz-api-schemas";
+// The wire shapes are declared beside this client; callers keep importing the
+// result types from here, the module whose functions produce them.
+export type {
+  OtherLodgeUploadItem,
+  OtherLodgesPullResult,
+  OtherLodgesUploadResult,
+  PushTargetResult,
+  SharedPostImage,
+  SharedPostResult,
+  SyncEnvelope,
+  SyncPost,
+};
+import {
+  SERVERNZ_EXPECTED_SERVER_VERSION,
+  SERVER_VERSION_UNKNOWN,
+  describeServerVersionPause,
+  isStoredServerVersionMismatch,
+  storableServerVersion,
+} from "@/lib/servernz-api-version";
 import { getOperationalServerNzApiKey } from "@/lib/servernz-config";
 import {
   loadServerNzSettings,
+  recordServerVersionCheck,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
 
@@ -33,90 +72,43 @@ export class ServerNzApiError extends Error {
   }
 }
 
-/** A lodge entry pushed up to the server. `distribute` is never sent by clients. */
-export interface OtherLodgeUploadItem {
-  name: string;
-  location?: string | null;
-  bookingOfficerName?: string | null;
-  bookingOfficerEmail?: string | null;
-  bookingOfficerPhone?: string | null;
-  bedCapacity?: number | null;
+/**
+ * The central server is on a different API version from the one this site was
+ * built for, so nothing is transferred (#49, `INV-INT-027`). Thrown by
+ * `resolveConnection` BEFORE any request is built, so no caller can reach the
+ * server past it. Carries only the two numbers - never the key or the URL.
+ */
+export class ServerNzVersionMismatchError extends Error {
+  /** The version this site speaks. */
+  expected: string;
+  /** The server's last reported version, or "unknown" for a server that predates versioning. */
+  serverVersion: string;
+  constructor(expected: string, serverVersion: string) {
+    super(describeServerVersionPause(expected, serverVersion));
+    this.name = "ServerNzVersionMismatchError";
+    this.expected = expected;
+    this.serverVersion = serverVersion;
+  }
 }
-
-const uploadResultSchema = z.object({
-  created: z.number(),
-  updated: z.number(),
-  // Rows the server received but left unchanged (identical to what it stored).
-  // Defaulted so an older server that omits the field still validates.
-  unchanged: z.number().default(0),
-  skipped: z.number(),
-  results: z
-    .array(
-      z.object({
-        name: z.string(),
-        status: z.enum(["created", "updated", "unchanged", "skipped"]),
-        reason: z.string().optional(),
-      }),
-    )
-    .default([]),
-});
-export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
 
 /**
- * A lodge as the central server sends it, held to the SAME bounds the club's own
- * officer is held to in `POST /api/admin/other-lodges` (name 120, location 300,
- * officer name 200, email 320, phone 50, capacity 0..100000).
+ * The connection every request is built from, and THE ONE PLACE the version
+ * gate lives (#49, `INV-INT-027`). Every server-bound function in this module
+ * calls it, so a caller cannot reach the server past the gate; the only opt-out
+ * is `skipVersionGate`, used by `fetchServerVersion` alone, because the version
+ * call is how a paused site finds out it may resume.
  *
- * Matching those bounds is the point. `getPublicOtherLodges()` serves `id + name`
- * on the UNAUTHENTICATED booking-request settings endpoint, which renders on the
- * public form — so without a cap the central server controls unbounded text on
- * every connected club's public page, while the local admin typing the same row
- * is validated. Trusting the remote MORE than the local admin is the inversion.
- *
- * It also removes a partial-merge failure mode: `location`, `bookingOfficerName`,
- * `bookingOfficerEmail` and `bookingOfficerPhone` are VarChar-capped columns, so
- * an over-long value would raise a 22001 mid-loop — after earlier rows were
- * written, with no transaction around the loop and before the cursor advanced.
- * A row that fails these bounds is dropped by `pullOtherLodges` instead, which
- * costs one row rather than the rest of the batch.
+ * Gate order: base URL, key, URL shape (all unchanged), THEN the stored server
+ * version. A stored answer that differs from `SERVERNZ_EXPECTED_SERVER_VERSION`
+ * throws `ServerNzVersionMismatchError`; a stored `null` (never asked) runs one
+ * inline check first so a deployment that upgraded before its nightly sync, or a
+ * key saved a moment ago, learns the answer on its first request rather than
+ * syncing blind until 03:00. A check that FAILS leaves the row `null` and lets
+ * the request through: a failed check never pauses syncing.
  */
-const distributedLodgeSchema = z.object({
-  id: z.string().max(64),
-  name: z.string().trim().min(1).max(120),
-  location: z.string().trim().max(300).nullable(),
-  bookingOfficerName: z.string().trim().max(200).nullable(),
-  bookingOfficerEmail: z.string().trim().max(320).nullable(),
-  bookingOfficerPhone: z.string().trim().max(50).nullable(),
-  bedCapacity: z.number().int().min(0).max(100000).nullable(),
-  updatedAt: z.string().max(64),
-});
-
-/** Upper bound on one pull, so a hostile or broken server cannot stream forever. */
-const MAX_LODGES_PER_PULL = 5_000;
-
-// No exported alias for a single distributed lodge: nothing names one on its
-// own, and callers reach them through `OtherLodgesPullResult["lodges"]`.
-//
-// Rows arrive as `unknown` and are validated one at a time below, so ONE bad row
-// costs that row rather than the whole batch. `cursor` is capped at 64 to match
-// `ServerNzSettings.otherLodgesCursor`'s VarChar(64): an over-long cursor would
-// otherwise raise P2000 AFTER the rows were written and BEFORE the cursor
-// advanced, so every subsequent run would re-fetch and re-fail, permanently.
-const pullEnvelopeSchema = z.object({
-  lodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL),
-  cursor: z.string().max(64).nullable(),
-  count: z.number(),
-});
-
-export interface OtherLodgesPullResult {
-  lodges: z.infer<typeof distributedLodgeSchema>[];
-  cursor: string | null;
-  count: number;
-  /** Rows the server sent that failed the bounds above and were discarded. */
-  dropped: number;
-}
-
-async function resolveConnection(): Promise<{ baseUrl: string; apiKey: string }> {
+async function resolveConnection(
+  options: { skipVersionGate?: boolean } = {},
+): Promise<{ baseUrl: string; apiKey: string }> {
   const [apiKey, settings] = await Promise.all([
     getOperationalServerNzApiKey(),
     loadServerNzSettings(),
@@ -141,15 +133,137 @@ async function resolveConnection(): Promise<{ baseUrl: string; apiKey: string }>
       `The stored Alpine Central Server base URL is not usable: ${check.reason}`,
     );
   }
-  return { baseUrl: check.value as string, apiKey };
+  const connection = { baseUrl: check.value as string, apiKey };
+  if (options.skipVersionGate) return connection;
+
+  let stored = settings.serverVersion;
+  if (stored === null) {
+    // Self-heal: ask once, inline. `refreshStoredServerVersion` returns null
+    // for a call that FAILED, which allows the request (default 1); a record
+    // that fails after a received answer throws, like any other database
+    // failure on a server-bound path.
+    stored = await refreshStoredServerVersion(connection);
+  }
+  if (isStoredServerVersionMismatch(stored)) {
+    throw new ServerNzVersionMismatchError(
+      SERVERNZ_EXPECTED_SERVER_VERSION,
+      stored as string,
+    );
+  }
+  return connection;
 }
+
+/**
+ * Every request names the version this site speaks, so the server can refuse
+ * a transfer on its side too (409 `API_VERSION_MISMATCH`) and list the club on
+ * its Issues screen. The header is the server's documented name.
+ */
+const CLIENT_API_VERSION_HEADER = "X-Client-Api-Version";
 
 function authHeaders(apiKey: string): HeadersInit {
   return {
     "Content-Type": "application/json",
     Accept: "application/json",
     Authorization: `Bearer ${apiKey}`,
+    [CLIENT_API_VERSION_HEADER]: SERVERNZ_EXPECTED_SERVER_VERSION,
   };
+}
+
+/**
+ * Ask the central server its API version (#49).
+ *
+ * `GET /api/v1/version` always answers 200 with the server's number, even when
+ * the two differ - a 409 here would hide the very thing this asks for. A 404
+ * means the server predates versioning and is reported as
+ * `SERVER_VERSION_UNKNOWN`, which counts as a mismatch. Any other failure
+ * throws, and the CALLER decides what a failed check means (it keeps the
+ * stored answer; it never pauses syncing). The version gate is skipped here and
+ * nowhere else: this is the call that tells a paused site it may resume.
+ */
+export async function fetchServerVersion(connection?: {
+  baseUrl: string;
+  apiKey: string;
+}): Promise<string> {
+  const { baseUrl, apiKey } =
+    connection ?? (await resolveConnection({ skipVersionGate: true }));
+  const res = await fetch(`${baseUrl}/api/v1/version`, {
+    method: "GET",
+    cache: "no-store",
+    headers: authHeaders(apiKey),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (res.status === 404) return SERVER_VERSION_UNKNOWN;
+  if (!res.ok) await refuse(res, apiKey);
+  // Malformed or over-long on the wire reads as the unknown marker: still an
+  // ANSWER (and a mismatch), never a failed check.
+  return storableServerVersion(versionResultSchema.parse(await res.json()).version);
+}
+
+/**
+ * THE ONE PATH THAT WRITES THE VERSION COLUMN (#49 review items 3 and 4): the
+ * answer is normalised (`storableServerVersion`) and recorded only if the API
+ * key it was obtained with is STILL the stored key. A key saved while the call
+ * was in flight has already forgotten the old connection's answers, and the
+ * old server's late answer must not be written over that - it would pause, or
+ * clear a pause on, a connection it never described. Returns what was
+ * recorded, or null when the answer was dropped for that reason. A record that
+ * fails throws: a RECEIVED mismatch must never read as "could not check".
+ */
+async function recordServerAnswer(
+  raw: string,
+  apiKeyUsed: string,
+): Promise<string | null> {
+  const version = storableServerVersion(raw);
+  const currentKey = await getOperationalServerNzApiKey();
+  if (currentKey !== apiKeyUsed) {
+    logger.info(
+      { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
+      "Dropped a late Alpine Central Server version answer: the API key changed while it was in flight",
+    );
+    return null;
+  }
+  await recordServerVersionCheck(version);
+  if (version !== SERVERNZ_EXPECTED_SERVER_VERSION) {
+    logger.info(
+      { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
+      "Alpine Central Server reports a different API version; syncing is paused",
+    );
+  }
+  return version;
+}
+
+/**
+ * Fetch the server's version and record it, returning what was recorded - or
+ * `null` when the call failed or the answer arrived late (see above), in which
+ * case NOTHING is recorded and the stored answer stands. Shared by the gate's
+ * self-heal above and by `checkServerVersion` in `servernz-version-check.ts`.
+ * Only the FETCH is guarded: a received answer that cannot be recorded throws.
+ * `ServerNzNotConfiguredError` is rethrown quietly, without the warning - a key
+ * with no usable address is a configuration state the caller names, not a
+ * failed check to warn about on every pass. Logs only the two numbers
+ * (`INV-INT-005`).
+ */
+export async function refreshStoredServerVersion(connection?: {
+  baseUrl: string;
+  apiKey: string;
+}): Promise<string | null> {
+  const resolved =
+    connection ?? (await resolveConnection({ skipVersionGate: true }));
+  let version: string;
+  try {
+    version = await fetchServerVersion(resolved);
+  } catch (error) {
+    if (error instanceof ServerNzVersionMismatchError) {
+      // `refuse` already recorded the server's 409 answer.
+      return error.serverVersion;
+    }
+    logger.warn(
+      { err: error, expected: SERVERNZ_EXPECTED_SERVER_VERSION },
+      "Could not check the Alpine Central Server API version; keeping the last known answer",
+    );
+    return null;
+  }
+  return recordServerAnswer(version, resolved.apiKey);
 }
 
 /**
@@ -161,8 +275,11 @@ const SHARE_TIMEOUT_MS = 60_000;
 /** Longest remote-supplied error text we will carry into a message or audit row. */
 const MAX_REMOTE_ERROR_CHARS = 200;
 
+/** The server's refusal code for a request whose declared version differs from its own. */
+const SERVER_API_VERSION_MISMATCH_CODE = "API_VERSION_MISMATCH";
+
 /**
- * The remote's own error text, bounded and stripped of control characters.
+ * The server's own error text, bounded and stripped of control characters.
  *
  * This string travels: `respondToSyncError` writes it into the audit `details`
  * column and shows it in the admin UI. `sanitizeAuditDetails` catches `key=value`
@@ -170,21 +287,48 @@ const MAX_REMOTE_ERROR_CHARS = 200;
  * server matches none of those — so the honest fix is to stop treating the
  * remote's text as free-form. Bounded here, at the one place it enters.
  */
-async function readError(res: Response): Promise<string> {
-  const fallback = `Request failed (${res.status})`;
+function remoteErrorMessage(status: number, body: { error?: unknown }): string {
+  const fallback = `Request failed (${status})`;
+  if (typeof body.error !== "string" || !body.error.trim()) return fallback;
+  const cleaned = body.error
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_REMOTE_ERROR_CHARS);
+  return cleaned || fallback;
+}
+
+/**
+ * THE ONE WAY A FAILED RESPONSE BECOMES AN ERROR (#49 review item 1). The body
+ * is parsed once. A 409 carrying the server's `API_VERSION_MISMATCH` code is
+ * the server refusing the transfer for version - the same fact the local gate
+ * refuses for - so it RECORDS the server's number (through the one write path,
+ * with the same key-change guard) and throws `ServerNzVersionMismatchError`,
+ * which every caller already maps to its paused path. It used to surface as a
+ * plain 4xx `ServerNzApiError`, which `shareOnePost` reads as a refusal that
+ * will never change and retires the share for good. Every other failure is
+ * the `ServerNzApiError` it always was.
+ */
+async function refuse(res: Response, apiKeyUsed: string): Promise<never> {
+  let body: { error?: unknown; code?: unknown; serverVersion?: unknown } = {};
   try {
-    const body = (await res.json()) as { error?: unknown };
-    if (typeof body?.error !== "string" || !body.error.trim()) return fallback;
-    const cleaned = body.error
-      // eslint-disable-next-line no-control-regex -- stripping C0/C1 controls is the point
-      .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, MAX_REMOTE_ERROR_CHARS);
-    return cleaned || fallback;
+    body = (await res.json()) ?? {};
   } catch {
-    return fallback;
+    // No JSON body: the status is the whole message.
   }
+  if (
+    res.status === 409 &&
+    body.code === SERVER_API_VERSION_MISMATCH_CODE &&
+    typeof body.serverVersion === "string" &&
+    body.serverVersion.length <= MAX_SERVER_VERSION_CHARS
+  ) {
+    const stored = await recordServerAnswer(body.serverVersion, apiKeyUsed);
+    throw new ServerNzVersionMismatchError(
+      SERVERNZ_EXPECTED_SERVER_VERSION,
+      stored ?? storableServerVersion(body.serverVersion),
+    );
+  }
+  throw new ServerNzApiError(res.status, remoteErrorMessage(res.status, body));
 }
 
 /**
@@ -198,23 +342,9 @@ function multipartAuthHeaders(apiKey: string): HeadersInit {
   return {
     Accept: "application/json",
     Authorization: `Bearer ${apiKey}`,
+    [CLIENT_API_VERSION_HEADER]: SERVERNZ_EXPECTED_SERVER_VERSION,
   };
 }
-
-/** One image to send with a shared post. */
-export interface SharedPostImage {
-  /** This club's own publicId, so the server can rewrite the body's URLs. */
-  publicId: string;
-  mimeType: string;
-  bytes: Uint8Array;
-}
-
-const sharedPostResultSchema = z.object({
-  id: z.string().min(1),
-  images: z.number().int().nonnegative().optional(),
-  baseUrl: z.string().optional(),
-});
-export type SharedPostResult = z.infer<typeof sharedPostResultSchema>;
 
 /**
  * Share one board post with the network.
@@ -264,7 +394,7 @@ export async function shareClubPost(input: {
     body: form,
     signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return sharedPostResultSchema.parse(await res.json());
 }
 
@@ -288,57 +418,8 @@ export async function withdrawClubPost(serverPostId: string): Promise<void> {
     },
   );
   if (res.status === 404) return;
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
 }
-
-/**
- * One post as the central server serialises it. Note what is absent: no
- * author identifiers and no email — the server never sends another club's
- * member identity, only the display name.
- */
-const syncPostSchema = z.object({
-  id: z.string().min(1).max(64),
-  club: z.object({
-    id: z.string().min(1),
-    name: z.string().min(1).max(200),
-    code: z.string().min(1).max(40),
-  }),
-  authorName: z.string().min(1).max(200),
-  content: z.string().max(4000),
-  bodyHtml: z.string().max(20_000).nullable().optional(),
-  images: z
-    .array(
-      z.object({
-        url: z.string().min(1).max(2000),
-        width: z.number().int().nullable().optional(),
-        height: z.number().int().nullable().optional(),
-      }),
-    )
-    .max(12)
-    .default([]),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().min(1),
-});
-export type SyncPost = z.infer<typeof syncPostSchema>;
-
-const syncChangeSchema = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("visible"), post: syncPostSchema }),
-  z.object({
-    state: z.literal("removed"),
-    id: z.string().min(1).max(64),
-    reason: z.enum(["hidden", "removed"]),
-  }),
-]);
-
-const syncEnvelopeSchema = z.object({
-  changes: z.array(syncChangeSchema).max(200),
-  cursor: z
-    .object({ since: z.string().min(1), sinceId: z.string().min(1) })
-    .nullable()
-    .optional(),
-  hasMore: z.boolean().default(false),
-});
-export type SyncEnvelope = z.infer<typeof syncEnvelopeSchema>;
 
 /**
  * Pull one page of the shared-post mirror cursor.
@@ -363,7 +444,7 @@ export async function pullSharedPostSync(cursor: {
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return syncEnvelopeSchema.parse(await res.json());
 }
 
@@ -394,19 +475,21 @@ export async function fetchSharedPostImage(
   const res = await fetch(target, {
     method: "GET",
     cache: "no-store",
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      [CLIENT_API_VERSION_HEADER]: SERVERNZ_EXPECTED_SERVER_VERSION,
+    },
     signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // A missing or refused picture is null (the words still arrive) - except
+    // the server's version refusal, which is the pass's answer, not the
+    // picture's, and must not be mirrored away as "no image".
+    if (res.status === 409) await refuse(res, apiKey);
+    return null;
+  }
   return new Uint8Array(await res.arrayBuffer());
 }
-
-const pushTargetResultSchema = z.object({
-  url: z.string(),
-  secretVersion: z.number().int().positive(),
-  secret: z.string().min(32),
-});
-export type PushTargetResult = z.infer<typeof pushTargetResultSchema>;
 
 /**
  * Tell the central server where to push shared posts for this install.
@@ -426,7 +509,7 @@ export async function registerPushTarget(
     body: JSON.stringify({ url: callbackUrl }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return pushTargetResultSchema.parse(await res.json());
 }
 
@@ -442,7 +525,7 @@ export async function uploadOtherLodges(
     body: JSON.stringify({ lodges }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return uploadResultSchema.parse(await res.json());
 }
 
@@ -459,7 +542,7 @@ export async function pullOtherLodges(
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   const envelope = pullEnvelopeSchema.parse(await res.json());
 
   // Per-row validation: a row the server sends that breaks the bounds above is
@@ -467,7 +550,7 @@ export async function pullOtherLodges(
   // details until the server sends a valid version; throwing would lose the
   // whole pull AND leave the cursor unadvanced, so the same bad row would be
   // re-fetched and re-fail on every subsequent run.
-  const lodges: z.infer<typeof distributedLodgeSchema>[] = [];
+  const lodges: OtherLodgesPullResult["lodges"] = [];
   let dropped = 0;
   for (const raw of envelope.lodges) {
     const row = distributedLodgeSchema.safeParse(raw);
@@ -475,5 +558,24 @@ export async function pullOtherLodges(
     else dropped++;
   }
 
-  return { lodges, cursor: envelope.cursor, count: envelope.count, dropped };
+  // The owned list, validated apart from the rows and the cursor: refused
+  // whole when it breaks its bounds (one name over the bound could never match
+  // a local row, but a list that is wrong in one place is not a list to edit
+  // and upload by), and then reported as not sent rather than failing the pull.
+  let ownLodgeNames: string[] | undefined;
+  let ownLodgeNamesRefused = false;
+  if (envelope.ownLodgeNames !== undefined) {
+    const owned = ownedOtherLodgeNamesSchema.safeParse(envelope.ownLodgeNames);
+    if (owned.success) ownLodgeNames = owned.data;
+    else ownLodgeNamesRefused = true;
+  }
+
+  return {
+    lodges,
+    cursor: envelope.cursor,
+    count: envelope.count,
+    dropped,
+    ownLodgeNames,
+    ownLodgeNamesRefused,
+  };
 }

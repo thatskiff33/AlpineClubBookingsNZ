@@ -389,7 +389,18 @@ export async function repriceBookingAfterGuestAcceptance(
   const creditReturn = returnRoute.kind === "account-credit" ? returnRoute : returnRoute.kind === "money-back" ? returnRoute.creditRemainder : null;
   if (creditReturn) {
     const clamp = await clampAppliedCreditToBookingPrice(
-      { memberId: creditReturn.memberId, bookingId, newFinalPriceCents, format },
+      {
+        memberId: creditReturn.memberId,
+        bookingId,
+        // The PRICE, not the worth (#3955 round 3): the return route admitted
+        // this booking only because its applied credit and returnable cash sum
+        // to the price, so no credit here pays a recorded change fee — a fee
+        // the card already paid, or one still owed beside the price. Counting
+        // that fee would keep back credit the reduction returns, and the check
+        // below would fail the guest's acceptance (`INV-PAY-119`).
+        newWorthCents: newFinalPriceCents,
+        format,
+      },
       tx,
     );
     if (clamp.refundedExcessCents !== creditReturn.amountCents) {
@@ -412,6 +423,8 @@ export async function repriceBookingAfterGuestAcceptance(
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
+    // Records no change fee (`INV-PAY-119`).
+    feeRecordedByThisEditCents: 0,
     format,
     guestsForPricing: booking.guests,
     skipBookingLifecycleRules: false,

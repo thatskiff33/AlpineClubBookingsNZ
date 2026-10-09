@@ -173,7 +173,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-005` | A split guest portion always settles or is notified, never stranded |
 | `INV-CAP-006` | Bed-allocation eligibility is a status-only superset of capacity-holding |
 | `INV-CAP-032` | Every guest-creating path writes the canonical `BookingGuestNight` set, half-open and cents-exact |
-| `INV-CAP-035` | The guest-night backfill is idempotent; re-run it verbatim after cutover |
+| `INV-CAP-035` | Guest-night backfill: windowed deploy; repair stored nights before invoice refresh |
 | `INV-CAP-007` | Auto-allocated stays are room-continuous per booking, with bounded fallback |
 | `INV-CAP-008` | Allocation preferences are per lodge and advisory, never safety overrides |
 | `INV-CAP-009` | Automated placement never mixes one booking's minors with another's adult; manual warns |
@@ -280,7 +280,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-116` | Invoice-correction and officer-chosen cash notes have their own wordings |
 | `INV-PAY-117` | A by-hand edit refund raises one officer refund task |
 | `INV-PAY-118` | An approved appeal's non-card part raises one officer refund task |
-| `INV-PAY-119` | A reduction first cancels or shrinks the unpaid card ask |
+| `INV-PAY-119` | Owed is worth less credit, from one home; invoice bills the fee |
+| `INV-PAY-120` | A reduction first cancels or shrinks the unpaid card ask |
 | `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
@@ -877,6 +878,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
 | `INV-INT-025` | Resolved in Xero means done: no automatic retry or re-mint |
 | `INV-INT-026` | Outbox workers never read a target from a redacted payload key |
+| `INV-INT-027` | Central-server syncing pauses on any API version difference, integer-compared |
 
 ## Operations
 

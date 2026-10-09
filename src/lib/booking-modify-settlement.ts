@@ -35,10 +35,13 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
+  bookingAmountOwedCents,
+  bookingWorthCents,
   canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
+  recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
 import {
   type BookingModificationSettlementMethod,
@@ -220,6 +223,7 @@ export async function applyPaymentAdjustments(
     todayAtClub,
     format,
     appliedCreditReturnedByCaller = false,
+    reductionUntiered = false,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
@@ -238,6 +242,13 @@ export async function applyPaymentAdjustments(
      * Every ordinary edit door omits it and keeps #3809's give-back.
      */
     appliedCreditReturnedByCaller?: boolean;
+    /**
+     * #3750 (F2 on #3955): the caller already charged the cancellation tier in
+     * its change fee (a finished-stay correction), so the applied-credit
+     * give-back returns the remaining reduction in full rather than tiering it
+     * a second time.
+     */
+    reductionUntiered?: boolean;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
@@ -306,6 +317,7 @@ export async function applyPaymentAdjustments(
           cardBasisCents: hasSettledPayment ? Math.min(-netAmountCents, remainingRefundableCents) : 0,
           todayAtClub,
           format,
+          untiered: reductionUntiered,
         })
       : null;
   const xeroRefundAmountCents =
@@ -490,6 +502,7 @@ export async function applyLifecycleTransitions(
     bookingId,
     newCheckIn,
     newFinalPriceCents,
+    feeRecordedByThisEditCents,
     format,
     guestsForPricing,
     skipBookingLifecycleRules,
@@ -499,6 +512,15 @@ export async function applyLifecycleTransitions(
     bookingId: string;
     newCheckIn: Date;
     newFinalPriceCents: number;
+    /**
+     * #3750 (#3955 review F1): a change fee THIS edit recorded on the payment
+     * of a booking with nothing captured ("Add fee to amount owed"), already
+     * written by the caller. With the fee already on the payment it is what
+     * the booking is worth (`bookingWorthCents`), so the credit clamp, the $0
+     * decision and the stale-intent comparison below all read worth, never the
+     * bare price. Every other edit door records none and passes 0.
+     */
+    feeRecordedByThisEditCents: number;
     format: ClubFormat;
     guestsForPricing: Array<{ isMember: boolean }>;
     skipBookingLifecycleRules: boolean;
@@ -599,6 +621,16 @@ export async function applyLifecycleTransitions(
   const isRepriceablePrePayment =
     newStatus === BookingStatus.PENDING ||
     newStatus === BookingStatus.PAYMENT_PENDING;
+  // #3750 (#3955 review F1, `INV-PAY-119`): the fee recorded on the payment —
+  // before this edit, plus what this edit recorded — is owed with the price, so
+  // the clamp keeps credit up to the booking's WORTH and the $0 decision and
+  // stale-intent comparison read what it owes. Read from the one home.
+  const feeOwedCents =
+    recordedChangeFeeCents(booking.payment) + feeRecordedByThisEditCents;
+  const newWorthCents = bookingWorthCents({
+    finalPriceCents: newFinalPriceCents,
+    changeFeeCents: feeOwedCents,
+  });
   if (!skipBookingLifecycleRules && isRepriceablePrePayment) {
     const appliedBeforeClamp = await deriveBookingAppliedCreditCents(
       bookingId,
@@ -606,14 +638,18 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
+        { memberId: bookingOwner(booking).memberId, bookingId, newWorthCents, format },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;
       refundedExcessCreditCents = clamp.refundedExcessCents;
     }
   }
-  const effectivePriceCents = newFinalPriceCents - appliedCreditCents;
+  const effectivePriceCents = bookingAmountOwedCents({
+    finalPriceCents: newFinalPriceCents,
+    changeFeeCents: feeOwedCents,
+    appliedCreditCents,
+  });
 
   if (
     !skipBookingLifecycleRules &&

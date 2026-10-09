@@ -35,6 +35,7 @@
  */
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import {
@@ -69,14 +70,26 @@ type PromoDeltaLine = Extract<ModificationLine, { kind: "PROMO_DELTA" }>;
 
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
+/** A built invoice's total in cents, line by line as Xero will add it. */
+export function invoiceLineItemsTotalCents(lineItems: ReadonlyArray<LineItem>): number {
+  return lineItems.reduce(
+    (sum, line) =>
+      sum + (providerAmountToCents(line.unitAmount) ?? 0) * (line.quantity ?? 1),
+    0
+  );
+}
+
 /** The change-fee line's words, on every document that carries one. */
 export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";
 
 /**
  * THE change-fee line, on every document that bills or returns one: a
- * supplementary invoice, a modification credit note, and (#3502) a primary
- * booking invoice raised after a fee was already taken by card. Coded to the
- * hut-fee income mapping; `orientation` is +1 on an invoice and -1 on a note.
+ * supplementary invoice, a modification credit note, a group settlement's
+ * combined invoice, and a primary booking invoice raised after a fee was
+ * already taken by card (#3502) or added to what an unpaid booking owes
+ * (#3750). Same words, tax and coding everywhere: hut-fee income, as the
+ * supplementary invoice always coded it. `orientation` is +1 on an invoice
+ * and -1 on a note.
  */
 export function changeFeeLineItem(
   changeFeeCents: number,

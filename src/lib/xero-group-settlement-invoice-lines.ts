@@ -3,7 +3,8 @@
  * built from exactly the children the settlement committed.
  *
  * The settlement's total is the sum of its CONFIRMED organiser-settled
- * children's final prices (`groupSettlementTotalCents`) — PAID children were
+ * children's worth — final price plus a change fee recorded on the child's
+ * payment, billed on the change-fee line (#3750) — (`groupSettlementTotalCents`); PAID children were
  * settled already and are never on it. The invoice is built from the same
  * children and carries each child's promotion adjustment as its own line, the
  * way the per-booking invoice does, because a final price is the stay's total
@@ -34,20 +35,13 @@ import {
   type PromoAdjustmentLineRecord,
 } from "@/lib/xero-promo-adjustment-lines";
 import { groupSettlementTotalCents } from "@/lib/group-settlement-invoice-binding";
-import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { changeFeeLineItem, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
+import { recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
 
-/** A built invoice's total in cents, line by line as Xero will add it. */
-export function invoiceLineItemsTotalCents(lineItems: ReadonlyArray<LineItem>): number {
-  return lineItems.reduce(
-    (sum, line) =>
-      sum + (providerAmountToCents(line.unitAmount) ?? 0) * (line.quantity ?? 1),
-    0
-  );
-}
 
 export interface GroupSettlementInvoiceLines {
   lineItems: LineItem[];
@@ -80,6 +74,8 @@ export async function buildGroupSettlementInvoiceLines(
       guests: { include: { nights: true } },
       promoRedemptions: { include: { promoCode: true, allocations: true } },
       nightAdjustments: true,
+      // #3750: a change fee recorded on a child's payment is part of its worth.
+      payment: { select: { changeFeeCents: true } },
     },
   });
 
@@ -140,13 +136,17 @@ export async function buildGroupSettlementInvoiceLines(
     );
     const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
     if (promoLineRecord) promoLines.push({ bookingId: child.id, ...promoLineRecord });
+    // #3750 (#3955 review F3): the child's recorded change fee is in its worth,
+    // so the combined invoice bills it on the one change-fee line.
+    const childFeeCents = recordedChangeFeeCents(child.payment);
+    if (childFeeCents > 0) lineItems.push(changeFeeLineItem(childFeeCents, 1, hutFeeMapping));
   }
 
   return {
     lineItems,
     childCount: children.length,
     childrenCents: groupSettlementTotalCents(
-      children.map((child) => ({ finalPriceCents: child.finalPriceCents ?? 0 }))
+      children.map((child) => ({ finalPriceCents: child.finalPriceCents ?? 0, payment: child.payment }))
     ),
     lineCents: invoiceLineItemsTotalCents(lineItems),
     operationRecord: promoLines.length > 0 ? { promoLines } : {},

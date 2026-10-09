@@ -1,4 +1,16 @@
 import "server-only";
+import {
+  OTHER_LODGE_DATA_SELECT,
+  otherLodgeAmenitiesDiffer,
+  otherLodgeAmenitiesSelect,
+  otherLodgeDataColumns,
+  otherLodgeDataDiffers,
+  ownsOtherLodge,
+  replaceOtherLodgeAmenities,
+  serializeOtherLodgeAmenities,
+  serializeOtherLodgeData,
+} from "@/lib/other-lodges";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
   uploadOtherLodges,
@@ -27,14 +39,13 @@ export interface UploadSummary extends OtherLodgesUploadResult {
   sent: number;
 }
 
-// The contact/capacity columns that carry a lodge's data. Kept in one place so
-// the upload projection and the download diff stay in step.
+// The columns that carry a lodge's data, plus its amenity list. The list itself
+// lives in `@/lib/other-lodges` (`OTHER_LODGE_DATA_FIELDS`), shared with the
+// admin routes and the serializer, so the upload projection, the download
+// merge and the "differs" check below cannot drift from what the admin can edit.
 const LODGE_DATA_SELECT = {
-  location: true,
-  bookingOfficerName: true,
-  bookingOfficerEmail: true,
-  bookingOfficerPhone: true,
-  bedCapacity: true,
+  ...OTHER_LODGE_DATA_SELECT,
+  amenities: otherLodgeAmenitiesSelect,
 } as const;
 
 /**
@@ -44,32 +55,57 @@ const LODGE_DATA_SELECT = {
  * watermark (`otherLodgesLastUploadAt`) are sent — new and edited rows, never
  * the whole table. On the first upload (no watermark) every row is sent. When
  * nothing has changed, no request is made and the watermark is left untouched.
+ *
+ * ONLY THE CLUB'S OWN LODGES ARE SENT once the central server has said which
+ * those are (#52): the stored owned list, through the one `ownsOtherLodge`
+ * rule the admin PATCH route and the panel also apply. Before #52 every changed
+ * row went up — including other clubs' lodges this site had just DOWNLOADED,
+ * whose server-stamped `updatedAt` sat above the watermark — so each night
+ * re-sent the whole registry for the server to refuse (#53). While the list is
+ * UNKNOWN (never received: not connected, or an older server) the upload keeps
+ * its pre-#52 behaviour and sends every changed row, so a club on an older
+ * central server loses nothing. A row the server then reports as `skipped` is
+ * still held below the watermark exactly as before (INV-INT-004).
+ *
+ * A stored list that is PRESENT BUT UNREADABLE is neither: it is a defect in
+ * the column, and the honest answer is to send nothing until a download
+ * rewrites it, rather than fall back to sending every row because the parsed
+ * value happens to be `null`.
  */
 export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   const settings = await loadServerNzSettings();
+  if (settings.otherLodgesOwnedNamesUnreadable) {
+    logger.warn(
+      "The stored owned-lodge list cannot be read; uploading nothing until the next download rewrites it",
+    );
+    return { created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0 };
+  }
   const since = settings.otherLodgesLastUploadAt
     ? new Date(settings.otherLodgesLastUploadAt)
     : null;
+  const owned = settings.otherLodgesOwnedNames;
 
-  const lodges = await prisma.otherLodge.findMany({
+  const changed = await prisma.otherLodge.findMany({
     where: since ? { updatedAt: { gt: since } } : {},
     select: { name: true, updatedAt: true, ...LODGE_DATA_SELECT },
     orderBy: { name: "asc" },
   });
+  const lodges =
+    owned === null ? changed : changed.filter((l) => ownsOtherLodge(owned, l.name));
 
   if (lodges.length === 0) {
     // Nothing changed since the last upload — skip the round-trip entirely.
     return { created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0 };
   }
 
+  // Every data column (dates as `YYYY-MM-DD`) and the WHOLE amenity list: the
+  // server replaces its set for the lodge with what is sent, so a partial list
+  // would delete the rest.
   const result = await uploadOtherLodges(
     lodges.map((l) => ({
       name: l.name,
-      location: l.location,
-      bookingOfficerName: l.bookingOfficerName,
-      bookingOfficerEmail: l.bookingOfficerEmail,
-      bookingOfficerPhone: l.bookingOfficerPhone,
-      bedCapacity: l.bedCapacity,
+      ...serializeOtherLodgeData(l),
+      amenities: serializeOtherLodgeAmenities(l.amenities),
     })),
   );
 
@@ -130,7 +166,11 @@ export interface DownloadSummary {
   updated: number;
   /** Fetched rows already identical locally — left untouched (no `updatedAt` bump). */
   unchanged: number;
-  /** Rows where the LOCAL copy was newer, so the remote was not applied. */
+  /**
+   * Rows where the LOCAL copy was newer, so the remote was not applied — by the
+   * timestamp read before the write, or because a local edit landed between
+   * that read and the guarded write.
+   */
   keptLocal: number;
   /** Rows the server sent that failed validation and were discarded. */
   dropped: number;
@@ -142,8 +182,11 @@ export interface DownloadSummary {
  * changed since last time are fetched — deliberately overlapped backwards by
  * `PULL_CURSOR_OVERLAP_MS` WHEN that cursor is an ISO instant (see
  * `@/lib/servernz-cursor-overlap`) — and a fetched row is only written when
- * its data actually differs from the local copy, so an unchanged row keeps
- * its `updatedAt` and is never needlessly re-uploaded. Keyed by unique lodge name.
+ * its data — any data column, or its amenity list — actually differs from the
+ * local copy, so an unchanged row keeps its `updatedAt` and is never needlessly
+ * re-uploaded. Keyed by unique lodge name. A field the server did not send is
+ * left alone rather than cleared. A lodge's amenity set is replaced whole, in
+ * one transaction with the lodge row, after the pull has finished.
  *
  * TWO rules keep `updatedAt` honest as a sync signal, because the upload
  * watermark is derived from it:
@@ -173,22 +216,41 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
   );
 
+  if (pull.ownLodgeNamesRefused) {
+    logger.warn(
+      "The central server sent an owned-lodge list that failed its bounds; it was ignored and the stored list left as it was",
+    );
+  }
+  // Which lodges are OURS for this merge: the list this pull carried, else the
+  // stored one; `null` when neither is known. Decides two things per row below.
+  const owned = pull.ownLodgeNames ?? settings.otherLodgesOwnedNames;
+
   let created = 0;
   let updated = 0;
   let unchanged = 0;
   let keptLocal = 0;
+  // The pull has COMPLETED before this loop starts, so no transaction below is
+  // ever held open across the central server's HTTP call.
   for (const lodge of pull.lodges) {
     const existing = await prisma.otherLodge.findUnique({
       where: { name: lodge.name },
       select: { id: true, updatedAt: true, ...LODGE_DATA_SELECT },
     });
-    const data = {
-      location: lodge.location,
-      bookingOfficerName: lodge.bookingOfficerName,
-      bookingOfficerEmail: lodge.bookingOfficerEmail,
-      bookingOfficerPhone: lodge.bookingOfficerPhone,
-      bedCapacity: lodge.bedCapacity,
-    };
+    // Only the fields the server SENT: a field it omitted is absent here, so a
+    // server that does not yet carry it leaves the local value alone.
+    const data = otherLodgeDataColumns(lodge);
+    // Another club's lodge, once the owned list is known. Its booking officer's
+    // PHONE is never stored here (#52): a current server does not send it, and
+    // one that still does is overridden to null so the number does not land in
+    // this club's database — the one deliberate exception to "a field the
+    // server did not send is left alone", because what it would leave alone is
+    // a number an earlier download stored. The row is written only when
+    // something differs, so a row already at null is not touched for this.
+    const theirs = owned !== null && !ownsOtherLodge(owned, lodge.name);
+    if (theirs) data.bookingOfficerPhone = null;
+    // `undefined` when the server sent no amenity list at all — also "leave
+    // ours alone", never "the lodge has none".
+    const amenities = lodge.amenities;
 
     // The server's own timestamp for this row. An unparseable value falls back to
     // `null`, which means "let Prisma stamp it" — worse than the server's answer
@@ -196,6 +258,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     const remoteUpdatedAt = Number.isNaN(Date.parse(lodge.updatedAt))
       ? null
       : new Date(lodge.updatedAt);
+    const stamp = remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {};
 
     if (!existing) {
       // Upsert, not create: `name` is unique and this read-then-write is not
@@ -205,47 +268,78 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       // that aborts the whole merge part-way — after some rows were written and
       // before the cursor advanced, so the next run re-fetches from the old
       // cursor. The upsert lets the loser of that race fall through to the same
-      // update it would have made, and stays correct when it wins.
-      await prisma.otherLodge.upsert({
-        where: { name: lodge.name },
-        create: {
-          name: lodge.name,
-          ...data,
-          ...(remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {}),
-        },
-        update: { ...data, ...(remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {}) },
+      // update it would have made, and stays correct when it wins. The amenity
+      // replacement rides in the same transaction and is keyed on the unique
+      // (lodge, name), so the loser converges on the same set too.
+      await prisma.$transaction(async (tx) => {
+        const row = await tx.otherLodge.upsert({
+          where: { name: lodge.name },
+          create: { name: lodge.name, ...data, ...stamp },
+          update: { ...data, ...stamp },
+          select: { id: true },
+        });
+        if (amenities) await replaceOtherLodgeAmenities(tx, row.id, amenities);
       });
       created++;
       continue;
     }
 
-    const differs =
-      existing.location !== data.location ||
-      existing.bookingOfficerName !== data.bookingOfficerName ||
-      existing.bookingOfficerEmail !== data.bookingOfficerEmail ||
-      existing.bookingOfficerPhone !== data.bookingOfficerPhone ||
-      existing.bedCapacity !== data.bedCapacity;
-
-    if (!differs) {
+    // Amenities are part of "differs": a lodge whose only change is its amenity
+    // list is still a changed lodge, and still carries the server's timestamp.
+    const amenitiesChanged =
+      amenities !== undefined &&
+      otherLodgeAmenitiesDiffer(existing.amenities, amenities);
+    if (!otherLodgeDataDiffers(data, existing) && !amenitiesChanged) {
       unchanged++;
       continue;
     }
 
     // Rule 2: a local edit made after the server's copy wins and is left to the
     // next upload. Equal timestamps apply the remote, so a server correction
-    // issued in the same instant is not silently dropped.
-    if (remoteUpdatedAt && existing.updatedAt > remoteUpdatedAt) {
+    // issued in the same instant is not silently dropped. ONLY for a lodge this
+    // club may edit (#52): another club's lodge has no local edit to protect —
+    // nothing here can write one, and the next upload would not carry it — so
+    // the server's copy is authoritative whatever the local timestamp says
+    // (a stale server-stamped row, or a pre-#52 local edit). The guarded
+    // `updateMany` below still applies: it is what makes the write safe against
+    // a concurrent download of the same row, not a rule about who wins.
+    if (!theirs && remoteUpdatedAt && existing.updatedAt > remoteUpdatedAt) {
       keptLocal++;
       continue;
     }
 
-    await prisma.otherLodge.update({
-      where: { id: existing.id },
-      // Rule 1: carry the server's timestamp rather than letting `@updatedAt`
-      // stamp now(), so this row is not re-uploaded as though we had edited it.
-      data: { ...data, ...(remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {}) },
+    // One transaction for the lodge row and its amenities, so they change
+    // together or not at all. The lodge row is ALWAYS written, even when only
+    // the amenities changed: that write is what carries the server's
+    // `updatedAt` onto the row (rule 1) — an amenity-only change that left the
+    // row's timestamp alone would be re-presented as a local edit and echoed
+    // back on the next upload.
+    //
+    // The row write is GUARDED on the `updatedAt` we read above, and it comes
+    // FIRST. Rule 2 was decided on a read taken outside this transaction; an
+    // admin can save an edit between that read and this write, and an unguarded
+    // update would overwrite it and then stamp the row with the server's OLDER
+    // timestamp — below the upload watermark, so the admin's edit would never be
+    // sent. A guarded `updateMany` matches only the row as we read it: a miss is
+    // the local edit winning after all (keptLocal, nothing written, amenities
+    // untouched), exactly as if rule 2 had seen it. The same write also takes the
+    // row's lock for the rest of the transaction, so a concurrent amenity
+    // replacement on this lodge queues behind it rather than interleaving.
+    const applied = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.otherLodge.updateMany({
+        where: { id: existing.id, updatedAt: existing.updatedAt },
+        // Rule 1: carry the server's timestamp rather than letting `@updatedAt`
+        // stamp now(), so this row is not re-uploaded as though we had edited it.
+        data: { ...data, ...stamp },
+      });
+      if (claimed.count !== 1) return false;
+      if (amenitiesChanged && amenities) {
+        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+      }
+      return true;
     });
-    updated++;
+    if (applied) updated++;
+    else keptLocal++;
   }
 
   // The durable watermark is the SERVER's returned cursor, never the overlapped
@@ -255,8 +349,14 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // otherwise hand the overlapped value straight back. Reached only after every
   // row above merged, so a throw part-way leaves the old cursor standing and the
   // next run re-fetches.
+  //
+  // The owned list rides in the same write (#52), and only when the server sent
+  // one: `undefined` leaves the stored list alone, so an older server that does
+  // not send it cannot clear what a newer one recorded. A name in the list with
+  // no local row is simply absent locally until a download creates it.
   await recordOtherLodgesDownload(
     advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
+    pull.ownLodgeNames,
   );
   return {
     fetched: pull.count,
