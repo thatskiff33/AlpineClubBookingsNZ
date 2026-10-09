@@ -100,6 +100,16 @@ describe("who sees the card refunds Stripe gave up on", () => {
     expect(screen.getByText(/\$150\.00 still owed/)).toBeInTheDocument();
   });
 
+  it("#3924 round 9: a Finance viewer with nothing on either list sees neither card", async () => {
+    mocks.areas = ["support", "finance"];
+    mocks.listDeadCardRefunds.mockResolvedValue([]);
+    mocks.listCardRefundsPaidTwice.mockResolvedValue([]);
+    render(await AdminStuckStatesPage());
+
+    expect(screen.queryByText("Card refunds Stripe gave up on")).not.toBeInTheDocument();
+    expect(screen.queryByText("Card refunds paid back twice")).not.toBeInTheDocument();
+  });
+
   it("#3924 round 5 (concurrency F2): a Finance viewer also sees a close Stripe paid as well", async () => {
     mocks.areas = ["support", "finance"];
     render(await AdminStuckStatesPage());

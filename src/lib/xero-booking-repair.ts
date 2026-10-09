@@ -40,6 +40,7 @@ import {
 import { createCountMap } from "./xero-booking-repair-utils";
 import { readLateCaptureRefundsPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
 
 const MAX_APPLY_PASSES = 3;
 
@@ -49,10 +50,13 @@ const MAX_APPLY_PASSES = 3;
  * receipt finding (`PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`).
  * Round 8: with, for a close whose note waits for the receipt, where the
  * receipt and the note stand (`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`).
+ * Round 9: and the close's amount in the club's format
+ * (`PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`).
  */
 async function withPaidAnotherWayCloses(
   contexts: Awaited<ReturnType<typeof loadAuditData>>,
   deps: RepairDependencies,
+  format: ClubFormat,
 ) {
   const approved = contexts.flatMap((context) =>
     [...context.lateCaptureTasks].filter(([, task]) => task.status === "COMPLETED").map(([intent]) => intent),
@@ -62,10 +66,17 @@ async function withPaidAnotherWayCloses(
     for (const [intent, task] of context.lateCaptureTasks) {
       const close = closes.get(intent);
       if (!close) continue;
-      task.paidAnotherWayClose =
-        task.status === "COMPLETED" && close.xeroRefundNote === "after-receipt"
-          ? { ...close, receiptState: await deps.readPaidAnotherWayReceiptState(intent) }
-          : close;
+      if (task.status !== "COMPLETED" || close.xeroRefundNote !== "after-receipt") {
+        task.paidAnotherWayClose = close;
+        continue;
+      }
+      const receiptState = await deps.readPaidAnotherWayReceiptState(intent);
+      task.paidAnotherWayClose = {
+        ...close,
+        receiptState,
+        // Round 9: named in the club's format by the record-by-hand finding.
+        ...(receiptState.close ? { amountLabel: formatCents(receiptState.close.amountCents, format) } : {}),
+      };
     }
   }
   return contexts;
@@ -74,9 +85,10 @@ async function withPaidAnotherWayCloses(
 async function runSinglePass(
   pass: number,
   scope: BookingXeroRepairScope,
-  deps: RepairDependencies
+  deps: RepairDependencies,
+  format: ClubFormat,
 ) {
-  const contexts = await withPaidAnotherWayCloses(await loadAuditData(scope, deps), deps);
+  const contexts = await withPaidAnotherWayCloses(await loadAuditData(scope, deps), deps, format);
   const bookings = contexts.map((context) => classifyBookingContext(context));
   return buildPassReport(pass, bookings);
 }
@@ -106,7 +118,7 @@ export async function runBookingXeroRepair(
   const maxPasses = apply ? MAX_APPLY_PASSES : 1;
 
   for (let pass = 1; pass <= maxPasses; pass += 1) {
-    const passReport = await runSinglePass(pass, scope, deps);
+    const passReport = await runSinglePass(pass, scope, deps, format);
     passes.push(passReport);
 
     if (!apply) {

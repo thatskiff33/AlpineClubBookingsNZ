@@ -10,6 +10,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   PaidAnotherWayXeroChangedError,
+  paidAnotherWayXeroAuditFollowUp,
   paidAnotherWayXeroPlan,
   paidAnotherWayXeroPromise,
   queuePaidAnotherWayXero,
@@ -229,7 +230,9 @@ export interface DeadCardRefundRow {
    * How a close is recorded in Xero (`paidAnotherWayXeroPlan`): its refund note
    * queued with it (`now`), the late charge's receipt first and the note after
    * it (`after-receipt`), the note after a receipt already on its way to Xero
-   * (`after-receipt-on-its-way`, round 8), or no note (`none`).
+   * (`after-receipt-on-its-way`, round 8), the note after a receipt that
+   * reaches Xero only through an officer's retry (`after-receipt-failed`,
+   * `after-receipt-held-for-officer`, round 9), or no note (`none`).
    */
   xeroRefundNote: PaidAnotherWayXeroPromise;
   /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
@@ -616,10 +619,11 @@ export async function closeCardRefundPaidAnotherWay(
         category: "payment",
         severity: "important",
         outcome: "success",
-        summary:
+        summary: `${
           input.paidBack === "full"
             ? "Card refund Stripe gave up on closed as paid back in full another way"
-            : "Card refund Stripe gave up on closed as paid back in part another way; the rest is no longer owed",
+            : "Card refund Stripe gave up on closed as paid back in part another way; the rest is no longer owed"
+        }${paidAnotherWayXeroAuditFollowUp(xeroQueued)}`,
         details: note,
         metadata: {
           operationId: operation.id,

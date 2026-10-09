@@ -52,6 +52,30 @@ export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): P
 }
 
 /**
+ * #3924 round 9 (`INV-PAY-122`): THE NIGHTLY RETRY OF THE NOTE STEP, for a
+ * payment whose closes' own notes do not yet cover what they paid back
+ * (`paidAnotherWayUncoveredCents`). A note step that failed after a change's
+ * invoice reached Xero is only logged by that invoice's worker, so the credit
+ * reconciliation cron runs it again for every late capture on the payment
+ * whose approved refund was closed so: the one idempotent step above, each
+ * under its approval task's row lock, queuing at most one note per close.
+ * Returns how many captures now have a note row (queued now or before).
+ */
+export async function queueWaitingPaidAnotherWayNotesForPayment(paymentId: string): Promise<number> {
+  const tasks = await prisma.manualRefundTask.findMany({
+    where: { paymentId, status: "COMPLETED", lateCaptureApprovalIntentId: { not: null } },
+    select: { lateCaptureApprovalIntentId: true },
+  });
+  let noted = 0;
+  for (const { lateCaptureApprovalIntentId } of tasks) {
+    if (lateCaptureApprovalIntentId && (await queueWaitingPaidAnotherWayNote(lateCaptureApprovalIntentId)) !== null) {
+      noted += 1;
+    }
+  }
+  return noted;
+}
+
+/**
  * #3924 round 8 (money review, `INV-PAY-122`): WHERE A WAITING CLOSE'S RECEIPT
  * AND NOTE STAND, for the repair tool. The capture's receipt as Xero holds it
  * (`readLateCaptureXeroReceipt`); whether the close's bank-transfer note was
@@ -62,6 +86,8 @@ export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): P
  */
 export interface PaidAnotherWayReceiptState {
   receipt: LateCaptureXeroReceipt;
+  /** The close itself - its record and what it paid back (#3924 round 9). */
+  close: { id: string; amountCents: number } | null;
   noteAsked: boolean;
   invoiceLinked: boolean;
   paymentLinked: boolean;
@@ -95,6 +121,7 @@ export async function readPaidAnotherWayReceiptState(paymentIntentId: string): P
     : [];
   return {
     receipt,
+    close: close ? { id: close.id, amountCents: Math.max(0, close.amountCents ?? 0) } : null,
     noteAsked,
     invoiceLinked: roles.includes(KEPT_LATE_CAPTURE_INVOICE_ROLE),
     paymentLinked: roles.includes(KEPT_LATE_CAPTURE_PAYMENT_ROLE),

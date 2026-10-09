@@ -13,8 +13,10 @@ import { lateCaptureIntentOfApprovalRefundRecoveryKey } from "@/lib/payment-reco
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
   keptLateCaptureDocumentDate,
+  keptReceiptHeldForOfficer,
   lockKeptLateCaptureTask,
 } from "@/lib/xero-kept-late-capture-invoice";
+import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 
@@ -52,19 +54,37 @@ export type PaidAnotherWayXeroPlan =
        * so the close queues nothing and the note follows that invoice.
        */
       receipt: { manualRefundTaskId: string; paymentIntentId: string; capturedCents: number; raisedAt: Date } | null;
+      /**
+       * #3924 round 9: with `receipt: null`, that change's invoice FAILED
+       * (`invoiceFailed`): it reaches Xero only once an officer retries it.
+       */
+      receiptFailed?: true;
+      /**
+       * #3924 round 9: the receipt the close would queue is a FAILED row that
+       * may already be in Xero (`keptReceiptHeldForOfficer`): the close leaves
+       * it for an officer to check Xero and retry, and the note follows that.
+       */
+      receiptHeldForOfficer?: true;
     };
 
 /**
  * What the dialog promises before the close (#3924 round 8): the plan's note,
  * with a receipt already on its way to Xero told apart from one the close
- * queues, since the treasurer reads different words for each.
+ * queues, since the treasurer reads different words for each. Round 9: and a
+ * receipt that will not reach Xero until an officer retries it - a change's
+ * invoice that FAILED (`after-receipt-failed`), or a receipt row that failed
+ * after it may have reached Xero (`after-receipt-held-for-officer`).
  */
-export type PaidAnotherWayXeroPromise = PaidAnotherWayXeroNote | "after-receipt-on-its-way";
+export type PaidAnotherWayXeroPromise =
+  | PaidAnotherWayXeroNote
+  | "after-receipt-on-its-way"
+  | "after-receipt-failed"
+  | "after-receipt-held-for-officer";
 
 export function paidAnotherWayXeroPromise(plan: PaidAnotherWayXeroPlan): PaidAnotherWayXeroPromise {
-  return plan.xeroRefundNote === "after-receipt" && plan.receipt === null
-    ? "after-receipt-on-its-way"
-    : plan.xeroRefundNote;
+  if (plan.xeroRefundNote !== "after-receipt") return plan.xeroRefundNote;
+  if (plan.receipt === null) return plan.receiptFailed ? "after-receipt-failed" : "after-receipt-on-its-way";
+  return plan.receiptHeldForOfficer ? "after-receipt-held-for-officer" : "after-receipt";
 }
 
 /**
@@ -90,7 +110,10 @@ export function paidAnotherWayXeroPromise(plan: PaidAnotherWayXeroPlan): PaidAno
  * - a change's released invoice still queued, sending, or FAILED - has no
  * invoice to name (#3924 round 8; owner, 8 Oct 2026: "Raise a refund note for
  * all"): `after-receipt` with nothing to queue, and the note follows once that
- * invoice is in Xero (`noteWaitingPaidAnotherWayCloseAfterChangeInvoice`).
+ * invoice is in Xero (`queueWaitingPaidAnotherWayNote`). Round 9: a FAILED one
+ * is flagged (`receiptFailed`), and so is a receipt the close would queue that
+ * may already be in Xero (`receiptHeldForOfficer`): each reaches Xero only
+ * through an officer's retry, and the note follows that retry.
  *
  * `lockApprovalTask` (the close only): the approval task's row is taken BEFORE
  * the receipt is read; see the module's LOCKS.
@@ -124,7 +147,10 @@ export async function paidAnotherWayXeroPlan(
   // has no id to name yet, so the note waits for it.
   if (receipt.kind === "recorded") {
     if (receipt.invoiceId !== null) return { xeroRefundNote: "now", creditsInvoiceId: receipt.invoiceId };
-    return task ? { xeroRefundNote: "after-receipt", receipt: null } : { xeroRefundNote: "none" };
+    if (!task) return { xeroRefundNote: "none" };
+    return receipt.invoiceFailed
+      ? { xeroRefundNote: "after-receipt", receipt: null, receiptFailed: true }
+      : { xeroRefundNote: "after-receipt", receipt: null };
   }
   if (receipt.kind === "resolved-by-hand" || !task) return { xeroRefundNote: "none" };
   const capture = await db.paymentTransaction.findFirst({
@@ -147,6 +173,8 @@ export async function paidAnotherWayXeroPlan(
       capturedCents: recordCents,
       raisedAt: task.createdAt,
     },
+    // Round 9: the fact the enqueue answers `awaitingOfficerRetry` from.
+    ...((await keptReceiptHeldForOfficer(db, task.id)) ? { receiptHeldForOfficer: true as const } : {}),
   };
 }
 
@@ -167,13 +195,34 @@ export class PaidAnotherWayXeroChangedError extends Error {
 /**
  * What the close queued in Xero: its refund note, the late charge's receipt with
  * the note to follow it, the note to follow a receipt already on its way
- * (round 8), or nothing.
+ * (round 8), or nothing. Round 9: or the note to follow a receipt that reaches
+ * Xero only through an officer's retry - a change's invoice that FAILED
+ * (`refund-note-after-failed-receipt`), or the late charge's own receipt row,
+ * which failed after it may have reached Xero and which the close left FAILED
+ * for an officer to check Xero first (`receipt-held-for-officer`). Neither is a
+ * queued receipt.
  */
 export type PaidAnotherWayXeroQueued =
   | "refund-note"
   | "receipt-then-refund-note"
   | "refund-note-after-receipt"
+  | "refund-note-after-failed-receipt"
+  | "receipt-held-for-officer"
   | "nothing";
+
+/**
+ * #3924 round 9: what the close's audit summary adds when its receipt reaches
+ * Xero only through an officer's retry, so the record says what is left to do.
+ */
+export function paidAnotherWayXeroAuditFollowUp(queued: PaidAnotherWayXeroQueued): string {
+  if (queued === "receipt-held-for-officer") {
+    return `. ${paidAnotherWayReceiptRetryInstruction("held-for-officer")}; the refund note follows.`;
+  }
+  if (queued === "refund-note-after-failed-receipt") {
+    return `. ${paidAnotherWayReceiptRetryInstruction("failed")}; the refund note follows.`;
+  }
+  return "";
+}
 
 /**
  * Queue what the plan says, on the close's transaction, after its record:
@@ -188,7 +237,10 @@ export type PaidAnotherWayXeroQueued =
  *   plan and the enqueue ask the same facts under the same row lock, so a
  *   refusal is a fault and nothing commits. Round 8: with the receipt already
  *   on its way (a change's invoice), nothing is queued here; that invoice's
- *   worker queues the note once it is in Xero;
+ *   worker queues the note once it is in Xero. Round 9: a receipt that reaches
+ *   Xero only through an officer's retry is answered as such
+ *   (`refund-note-after-failed-receipt`, `receipt-held-for-officer`), never as
+ *   queued;
  * - `none`: nothing.
  */
 export async function queuePaidAnotherWayXero(
@@ -220,7 +272,7 @@ export async function queuePaidAnotherWayXero(
     return queued.queueOperationId !== null ? "refund-note" : "nothing";
   }
   if (plan.xeroRefundNote === "none") return "nothing";
-  if (plan.receipt === null) return "refund-note-after-receipt";
+  if (plan.receipt === null) return plan.receiptFailed ? "refund-note-after-failed-receipt" : "refund-note-after-receipt";
   const queued = await enqueueXeroKeptLateCaptureInvoiceOperation({
     manualRefundTaskId: plan.receipt.manualRefundTaskId,
     bookingId: close.bookingId,
@@ -231,7 +283,7 @@ export async function queuePaidAnotherWayXero(
     // Round 7 (money M2): a receipt row that failed before it reached Xero is
     // put back to run, never left FAILED as if it were live. Round 8: one that
     // may have reached Xero is left for an officer's retry, and the note
-    // follows that retry.
+    // follows that retry (round 9: answered `awaitingOfficerRetry`).
     requeueFailedUnsent: true,
     store: tx,
   });
@@ -241,5 +293,7 @@ export async function queuePaidAnotherWayXero(
       `Paid-another-way close ${close.operationId}: the late charge's Xero receipt could not be queued (${queued.message})`,
     );
   }
+  // Round 9: the id is the FAILED row left for an officer, not a queued one.
+  if (queued.awaitingOfficerRetry) return "receipt-held-for-officer";
   return "receipt-then-refund-note";
 }

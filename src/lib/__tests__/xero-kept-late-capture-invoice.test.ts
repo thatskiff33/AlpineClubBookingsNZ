@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   operationUpdate: vi.fn(),
   operationUpdateMany: vi.fn(),
   taskFindUnique: vi.fn(),
+  taskFindMany: vi.fn(),
   transactionFindFirst: vi.fn(),
   linkFindFirst: vi.fn(),
   linkCount: vi.fn(),
@@ -35,6 +36,7 @@ const db = vi.hoisted(() => {
     },
     manualRefundTask: {
       findUnique: (...a: unknown[]) => mocks.taskFindUnique(...a),
+      findMany: (...a: unknown[]) => mocks.taskFindMany(...a),
     },
     paymentTransaction: {
       findFirst: (...a: unknown[]) => mocks.transactionFindFirst(...a),
@@ -116,9 +118,13 @@ import {
 import {
   createXeroKeptLateCaptureInvoice,
   enqueueXeroKeptLateCaptureInvoiceOperation,
+  keptReceiptHeldForOfficer,
   settleKeptLateCaptureRecordOnApproval,
 } from "@/lib/xero-kept-late-capture-invoice";
-import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
+import {
+  queueWaitingPaidAnotherWayNote,
+  queueWaitingPaidAnotherWayNotesForPayment,
+} from "@/lib/paid-another-way-receipt-note";
 
 /**
  * #3635 (`INV-PAY-110`): the kept-capture invoice's enqueue, approval
@@ -300,9 +306,30 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
       mocks.operationFindMany.mockResolvedValue([row]);
       linked(...roles);
       const result = await enqueue({ requeueFailedUnsent: true });
-      expect(result).toMatchObject({ queueOperationId: "op_failed" });
+      // Round 9 (both lenses): the id is the FAILED row, and the caller is told
+      // it is held for an officer - never a queued receipt.
+      expect(result).toMatchObject({ queueOperationId: "op_failed", awaitingOfficerRetry: true });
       expect(result.message).toMatch(/may have reached Xero.*Check Xero, then retry it/);
       expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+      // The plan reads the same fact.
+      await expect(keptReceiptHeldForOfficer(db as never, "task_kept")).resolves.toBe(true);
+    });
+
+    it("MUTATION: round 9: a row put back to run, or one never failed, is not held for an officer", async () => {
+      mocks.operationFindMany.mockResolvedValue([failed]);
+      const requeued = await enqueue({ requeueFailedUnsent: true });
+      expect(requeued).not.toHaveProperty("awaitingOfficerRetry");
+      await expect(keptReceiptHeldForOfficer(db as never, "task_kept")).resolves.toBe(false);
+      for (const row of [
+        { ...failed, status: "PENDING", requestPayload: { ...QUEUED, invoices: [{}] } },
+        { ...failed, manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z"), requestPayload: { ...QUEUED, invoices: [{}] } },
+      ]) {
+        mocks.operationFindMany.mockResolvedValue([row]);
+        await expect(keptReceiptHeldForOfficer(db as never, "task_kept")).resolves.toBe(false);
+      }
+      mocks.operationFindMany.mockResolvedValue([{ ...failed, requestPayload: { ...QUEUED, invoices: [{}] } }]);
+      linked(KEPT_LATE_CAPTURE_INVOICE_ROLE);
+      await expect(keptReceiptHeldForOfficer(db as never, "task_kept")).resolves.toBe(false);
     });
 
     // #3924 round 8 (concurrency): an officer acted on the row after the read.
@@ -583,5 +610,40 @@ describe("queueWaitingPaidAnotherWayNote", () => {
     mocks.taskFindUnique.mockResolvedValue(null);
     await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
     expect(mocks.executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+// #3924 round 9: the nightly credit reconciliation's retry of the note step,
+// for a payment whose closes' own notes do not cover what they paid back.
+describe("queueWaitingPaidAnotherWayNotesForPayment", () => {
+  beforeEach(() => {
+    mocks.taskFindUnique.mockResolvedValue({ id: "task_kept" });
+    mocks.noteClose.mockResolvedValue("op_note");
+  });
+
+  it("MUTATION: runs the one note step, under each approval task's lock, for every approved late capture on the payment", async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      { lateCaptureApprovalIntentId: "pi_kept" },
+      { lateCaptureApprovalIntentId: "pi_other" },
+    ]);
+    mocks.noteClose.mockResolvedValueOnce("op_note").mockResolvedValueOnce(null);
+    await expect(queueWaitingPaidAnotherWayNotesForPayment("pay_1")).resolves.toBe(1);
+    expect(mocks.taskFindMany).toHaveBeenCalledWith({
+      where: { paymentId: "pay_1", status: "COMPLETED", lateCaptureApprovalIntentId: { not: null } },
+      select: { lateCaptureApprovalIntentId: true },
+    });
+    expect(mocks.noteClose.mock.calls.map(([call]) => (call as { paymentIntentId: string }).paymentIntentId)).toEqual([
+      "pi_kept",
+      "pi_other",
+    ]);
+    // Each read and queue under the task's row lock.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.readReceipt.mock.invocationCallOrder[0]);
+  });
+
+  it("nothing for a payment with no approved late capture", async () => {
+    mocks.taskFindMany.mockResolvedValue([]);
+    await expect(queueWaitingPaidAnotherWayNotesForPayment("pay_1")).resolves.toBe(0);
+    expect(mocks.noteClose).not.toHaveBeenCalled();
   });
 });

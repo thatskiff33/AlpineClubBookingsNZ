@@ -9,6 +9,7 @@ import {
   getRefundsMissingXeroCreditNotes,
 } from "@/lib/xero-admin-health";
 import { findOrphanedAppliedCredits } from "@/lib/orphaned-applied-credit-backfill";
+import { queueWaitingPaidAnotherWayNotesForPayment } from "@/lib/paid-another-way-receipt-note";
 import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -68,9 +69,21 @@ export async function reconcileCreditBalances(): Promise<{
     // note; the part of the gap its own notes do not yet cover - by the same
     // coverage the gap counts (`paidAnotherWayUncoveredCents`) - is taken off
     // the ask, never filled with card money. The close's note is retried as
-    // its own row.
+    // its own row. Round 9: and a close whose note waits for a late capture's
+    // receipt, whose note step failed after the receipt reached Xero, has that
+    // step run again here - idempotent, under the approval task's row lock.
     let reEnqueued = 0;
     for (const missing of refundsMissingCreditNotes.payments) {
+      if (missing.paidAnotherWayUncoveredCents > 0) {
+        try {
+          reEnqueued += await queueWaitingPaidAnotherWayNotesForPayment(missing.paymentId);
+        } catch (err) {
+          logger.error(
+            { err, paymentId: missing.paymentId },
+            "Failed to queue the refund note a paid-another-way close waits for"
+          );
+        }
+      }
       try {
         const cardAskCents = missing.uncoveredCents - missing.paidAnotherWayUncoveredCents;
         if (cardAskCents <= 0) continue;

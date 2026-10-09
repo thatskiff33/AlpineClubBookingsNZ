@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   findApprovalTask: vi.fn(),
   findCapture: vi.fn(),
   enqueueKeptReceipt: vi.fn(),
+  keptReceiptHeldForOfficer: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -75,6 +76,7 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
     calls.push("xero-receipt");
     return mocks.enqueueKeptReceipt(...args);
   },
+  keptReceiptHeldForOfficer: mocks.keptReceiptHeldForOfficer,
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => {
@@ -229,6 +231,7 @@ beforeEach(() => {
   mocks.findApprovalTask.mockResolvedValue({ id: "approval-1", status: "COMPLETED", createdAt: CREATED });
   mocks.findCapture.mockResolvedValue({ status: "SUCCEEDED", amountCents: 15_000 });
   mocks.enqueueKeptReceipt.mockResolvedValue({ queueOperationId: "xop-receipt" });
+  mocks.keptReceiptHeldForOfficer.mockResolvedValue(false);
 });
 
 describe("closing a dead card refund as paid another way", () => {
@@ -633,6 +636,62 @@ describe("closing a dead card refund as paid another way", () => {
       mocks.enqueueKeptReceipt.mockResolvedValue({ queueOperationId: null, message: "no longer kept" });
       await expect(close()).rejects.toThrow(/receipt could not be queued/);
       expect(mocks.kick).not.toHaveBeenCalled();
+    });
+
+    // Round 9 (both lenses): a receipt row that failed after it may have
+    // reached Xero is left FAILED for an officer - the enqueue says so - and
+    // the close never reports it as queued.
+    describe("round 9: a receipt that reaches Xero only through an officer's retry", () => {
+      it("MUTATION: a receipt held for an officer is reported as held - never as queued - in the result and the audit", async () => {
+        lateCharge();
+        mocks.enqueueKeptReceipt.mockResolvedValue({
+          queueOperationId: "xop-receipt",
+          awaitingOfficerRetry: true,
+          message: "held",
+        });
+        const result = await close();
+        expect(result.xeroQueued).toBe("receipt-held-for-officer");
+        const audit = mocks.createAuditLog.mock.calls[0]?.[0] as { summary: string; metadata: Record<string, unknown> };
+        expect(audit.metadata.xeroQueued).toBe("receipt-held-for-officer");
+        expect(audit.summary).toMatch(
+          /Xero record failed and may already be in Xero: check Xero, then retry it from the Xero operations list; the refund note follows\.$/,
+        );
+      });
+
+      it("MUTATION: the list promises the same, from the same fact the enqueue answers", async () => {
+        mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "none" });
+        mocks.keptReceiptHeldForOfficer.mockResolvedValue(true);
+        const late = deadOperation({ idempotencyKey: LATE_KEY });
+        mocks.listOperations.mockResolvedValue([{ ...late, payment: payment(late) }]);
+        expect(await listDeadCardRefunds()).toEqual([
+          expect.objectContaining({ operationId: "op-1", xeroRefundNote: "after-receipt-held-for-officer" }),
+        ]);
+        expect(mocks.keptReceiptHeldForOfficer).toHaveBeenCalledWith(expect.anything(), "approval-1");
+      });
+
+      it("MUTATION: a change's invoice that FAILED is told apart from one on its way, in the list, the result and the audit", async () => {
+        mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null, invoiceFailed: true });
+        const late = deadOperation({ idempotencyKey: LATE_KEY });
+        mocks.listOperations.mockResolvedValue([{ ...late, payment: payment(late) }]);
+        expect(await listDeadCardRefunds()).toEqual([
+          expect.objectContaining({ operationId: "op-1", xeroRefundNote: "after-receipt-failed" }),
+        ]);
+
+        lateCharge();
+        mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null, invoiceFailed: true });
+        const result = await close();
+        expect(result.xeroQueued).toBe("refund-note-after-failed-receipt");
+        expect(mocks.enqueueKeptReceipt).not.toHaveBeenCalled();
+        const audit = mocks.createAuditLog.mock.calls[0]?.[0] as { summary: string };
+        expect(audit.summary).toMatch(/invoice failed to reach Xero: retry it from the Xero operations list; the refund note follows\.$/);
+      });
+
+      it("a queued receipt's audit adds nothing", async () => {
+        lateCharge();
+        await close();
+        const audit = mocks.createAuditLog.mock.calls[0]?.[0] as { summary: string };
+        expect(audit.summary).toBe("Card refund Stripe gave up on closed as paid back in full another way");
+      });
     });
 
     it("the list says the receipt comes first, without taking the approval task's lock", async () => {

@@ -973,9 +973,16 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
       expect(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.queueWaitingPaidAnotherWayNote.mock.invocationCallOrder[0],
       );
+      // #3924 round 9: on the queued row itself - the row that names the
+      // capture, which an officer's retry now sends back through the outbox -
+      // so the capture's receipt (`readLateCaptureXeroReceipt`) reads the invoice.
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_q",
+        expect.objectContaining({ xeroObjectId: "inv_supp" }),
+      );
     });
 
-    it("MUTATION: a failed note step never fails the invoice, which is in Xero; it is logged for the repair tool", async () => {
+    it("MUTATION: a failed note step never fails the invoice, which is in Xero; it is logged for the repair tool and the nightly retry", async () => {
       mocks.queueWaitingPaidAnotherWayNote.mockRejectedValue(new Error("database blip"));
       await expect(sendReleasedChange("pi_late")).resolves.toBe("inv_supp");
       expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();

@@ -301,6 +301,59 @@ describe("the Paid another way dialog", () => {
     );
   });
 
+  // #3924 round 9: a receipt only an officer's retry sends is never said to
+  // be on its way, before or after the close.
+  it.each([
+    [
+      "after-receipt-held-for-officer",
+      "receipt-held-for-officer",
+      "This late card charge's Xero record failed and may already be in Xero: check Xero, then retry it from the Xero operations list",
+    ],
+    [
+      "after-receipt-failed",
+      "refund-note-after-failed-receipt",
+      "This late card charge's invoice failed to reach Xero: retry it from the Xero operations list",
+    ],
+  ] as const)("MUTATION: round 9: %s - the dialog and the message say an officer's retry is needed, and the note follows it", async (promise, queued, instruction) => {
+    openDialog(row({ xeroRefundNote: promise }));
+    expect(
+      screen.getByText(
+        `${instruction}. Closing this does not send it. Once it is in Xero, a Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued against it.`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/on its way/)).not.toBeInTheDocument();
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
+    respond(200, { success: true, xeroQueued: queued });
+    fireEvent.click(closeButton());
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        `Closed. $150.00 recorded as paid back in full. ${instruction}; its refund credit note, worded "${BANK_NOTE_WORDING}", follows.`,
+      ),
+    );
+  });
+
+  // #3924 round 9 (UX): the card stays when its last row closes, so focus
+  // still lands on its status line, and it says the list is empty.
+  it("MUTATION: round 9: closing the last row keeps the card, its status line and focus, and says the list is empty", async () => {
+    const { rerender } = openDialog();
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
+    respond(200, { success: true, xeroQueued: "refund-note" });
+    fireEvent.click(closeButton());
+    const notice = await screen.findByText("The card refund for booking BK-0001 was closed as paid another way.");
+    rerender(<DeadCardRefundsPanel rows={[]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByText("Card refunds Stripe gave up on")).toBeInTheDocument();
+    expect(screen.getByText("No card refunds are waiting to be closed.")).toBeInTheDocument();
+    expect(notice).toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toBe(notice));
+  });
+
+  it("a list that never had a row renders nothing", () => {
+    const { container } = render(<DeadCardRefundsPanel rows={[]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("shows a 409 in the dialog as a focused alert, and refreshes the list beneath it", async () => {
     openDialog();
     fireEvent.click(fullChoice());
@@ -396,7 +449,7 @@ describe("the closes Stripe paid as well", () => {
     );
     expect(screen.getByRole("link", { name: "Booking BK-0002" })).toHaveAttribute("href", "/admin/bookings/b-2");
     expect(screen.getByText(/\$90\.00 refunded to the card after \$90\.00 was paid back another way/)).toBeInTheDocument();
-    expect(screen.getByText(/paid back twice/)).toBeInTheDocument();
+    expect(screen.getByText(/so the member was paid back twice/)).toBeInTheDocument();
   });
 });
 
@@ -482,6 +535,24 @@ describe("marking a paid-twice row Resolved", () => {
     const notice = await screen.findByText("Booking BK-0002 was marked resolved.");
     expect(notice).toHaveAttribute("role", "status");
     await waitFor(() => expect(document.activeElement).toBe(notice));
+  });
+
+  it("MUTATION: round 9: resolving the last row keeps the card, its status line and focus, and says the list is empty", async () => {
+    const { rerender } = openResolve();
+    fireEvent.change(resolveNote(), { target: { value: "Sorted" } });
+    respond(200, { success: true });
+    fireEvent.click(resolveButton());
+    const notice = await screen.findByText("Booking BK-0002 was marked resolved.");
+    rerender(<CardRefundsPaidTwiceList rows={[]} />);
+    expect(screen.getByText("Card refunds paid back twice")).toBeInTheDocument();
+    expect(screen.getByText("No card refunds paid back twice are left to resolve.")).toBeInTheDocument();
+    expect(notice).toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toBe(notice));
+  });
+
+  it("a paid-twice list that never had a row renders nothing", () => {
+    const { container } = render(<CardRefundsPaidTwiceList rows={[]} />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("shows a 409 in the dialog as a focused alert and refreshes; the refresh dropping the row closes it and says why", async () => {

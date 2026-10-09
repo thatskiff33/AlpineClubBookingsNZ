@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   isXeroConnected: vi.fn(),
   getRefundsMissingXeroCreditNotes: vi.fn(),
   findOrphanedAppliedCredits: vi.fn(),
+  queueWaitingPaidAnotherWayNotesForPayment: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -45,6 +46,10 @@ vi.mock("@/lib/orphaned-applied-credit-backfill", () => ({
   findOrphanedAppliedCredits: mocks.findOrphanedAppliedCredits,
 }));
 
+vi.mock("@/lib/paid-another-way-receipt-note", () => ({
+  queueWaitingPaidAnotherWayNotesForPayment: mocks.queueWaitingPaidAnotherWayNotesForPayment,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: mocks.logger,
 }));
@@ -68,6 +73,7 @@ beforeEach(() => {
     count: 0,
     payments: [],
   });
+  mocks.queueWaitingPaidAnotherWayNotesForPayment.mockResolvedValue(0);
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
     queueOperationId: "op_heal_1",
     message: "queued",
@@ -192,6 +198,46 @@ describe("reconcileCreditBalances", () => {
     await reconcileCreditBalances();
 
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_both", 8000);
+  });
+
+  // #3924 round 9: a close whose note waits for a late capture's receipt, and
+  // whose note step failed after that receipt reached Xero, is retried here -
+  // the one idempotent step, under the approval task's row lock.
+  it("MUTATION: runs the waiting note step for each payment its closes' own notes do not cover, and kicks the outbox", async () => {
+    mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
+      count: 2,
+      payments: [
+        { paymentId: "pay_bank", bookingId: "b_1", refundedAmountCents: 9000, cashRefundedCents: 9000, uncoveredCents: 9000, paidAnotherWayUncoveredCents: 9000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+        { paymentId: "pay_card", bookingId: "b_2", refundedAmountCents: 3000, cashRefundedCents: 3000, uncoveredCents: 3000, paidAnotherWayUncoveredCents: 0, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+      ],
+    });
+    mocks.queueWaitingPaidAnotherWayNotesForPayment.mockResolvedValue(1);
+    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: null, message: "covered" });
+    mocks.isXeroConnected.mockResolvedValue(true);
+
+    await reconcileCreditBalances();
+
+    expect(mocks.queueWaitingPaidAnotherWayNotesForPayment).toHaveBeenCalledTimes(1);
+    expect(mocks.queueWaitingPaidAnotherWayNotesForPayment).toHaveBeenCalledWith("pay_bank");
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
+  });
+
+  it("a failed note step is logged and never stops the payment's card ask", async () => {
+    mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
+      count: 1,
+      payments: [
+        { paymentId: "pay_both", bookingId: "b_2", refundedAmountCents: 12000, cashRefundedCents: 12000, uncoveredCents: 12000, paidAnotherWayUncoveredCents: 4000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+      ],
+    });
+    mocks.queueWaitingPaidAnotherWayNotesForPayment.mockRejectedValue(new Error("lock timeout"));
+
+    await reconcileCreditBalances();
+
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay_both" }),
+      "Failed to queue the refund note a paid-another-way close waits for",
+    );
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_both", 8000);
   });
 

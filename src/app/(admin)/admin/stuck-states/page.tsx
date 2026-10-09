@@ -272,36 +272,16 @@ export default async function AdminStuckStatesPage() {
         })}
       </div>
 
-      {deadCardRefunds.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <CreditCard className="h-5 w-5 text-muted-foreground" />
-              Card refunds Stripe gave up on
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <DeadCardRefundsPanel
-              rows={deadCardRefunds}
-              bankNoteWording={describeRefundMethod("internet-banking")}
-            />
-          </CardContent>
-        </Card>
+      {/* #3924 round 9 (UX): each list renders its own card, which stays
+          after its last row is closed so focus has somewhere to land. */}
+      {viewerCanViewFinance ? (
+        <DeadCardRefundsPanel
+          rows={deadCardRefunds}
+          bankNoteWording={describeRefundMethod("internet-banking")}
+        />
       ) : null}
 
-      {cardRefundsPaidTwice.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <CreditCard className="h-5 w-5 text-muted-foreground" />
-              Card refunds paid back twice
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CardRefundsPaidTwiceList rows={cardRefundsPaidTwice} />
-          </CardContent>
-        </Card>
-      ) : null}
+      {viewerCanViewFinance ? <CardRefundsPaidTwiceList rows={cardRefundsPaidTwice} /> : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">

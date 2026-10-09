@@ -111,7 +111,25 @@ export function addPaidAnotherWayReceiptFinding({
   // its own operation to retry): the note follows it, and no second receipt
   // is queued beside it. Resolved by hand: the officer records the refund too.
   if (state.receipt.kind === "recorded") return true;
-  if (state.receipt.kind === "resolved-by-hand") return false;
+  if (state.receipt.kind === "resolved-by-hand") {
+    // Round 9: resolved by hand AFTER the close planned to wait for it (a
+    // close planned against a receipt already resolved raises `none`, and is
+    // never here). The waiting note will never be queued, so an officer is
+    // told to record the close's refund by hand. Report-only.
+    const amount = close.amountLabel ? `${close.amountLabel} ` : "";
+    addFinding(findings, {
+      code: "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+      severity: "warning",
+      summary: `A late card payment whose refund was paid another way has its Xero receipt recorded by hand in Xero, so the app raises no refund note for it: record the ${amount}bank-transfer refund by hand in Xero.`,
+      safeToAutoApply: false,
+      details: {
+        ...details,
+        ...(state.close ? { closeRecordId: state.close.id, closeAmountCents: state.close.amountCents } : {}),
+      },
+      actionKeys: [],
+    });
+    return false;
+  }
 
   if (!failed && keptLateCaptureInvoiceAsked(lateTask.operations)) return false;
   // Round 8 (money review): a FAILED receipt row that may have reached Xero -

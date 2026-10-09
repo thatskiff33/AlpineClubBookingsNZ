@@ -1,11 +1,13 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { CreditCard } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +29,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import type { PaidAnotherWayXeroPromise, PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way-xero";
 import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import { paidAnotherWayReceiptRetryInstruction } from "@/lib/paid-another-way-receipt-retry-wording";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 
@@ -42,7 +45,9 @@ export interface DeadCardRefundPanelRow {
    * How closing it is recorded in Xero: a bank-transfer refund note queued with
    * the close (`now`); a late card charge recorded as a receipt first, with the
    * note after it (`after-receipt`); the note after a receipt already on its
-   * way to Xero (`after-receipt-on-its-way`, round 8); or no note (`none`).
+   * way to Xero (`after-receipt-on-its-way`, round 8); the note after a
+   * receipt only an officer's retry sends (`after-receipt-failed`,
+   * `after-receipt-held-for-officer`, round 9); or no note (`none`).
    */
   xeroRefundNote: PaidAnotherWayXeroPromise;
   /** Its last failure looked like a timeout or network error: Stripe may have refunded. */
@@ -64,6 +69,33 @@ export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
   "Stripe may have refunded: check the Stripe dashboard first.";
 
 /**
+ * #3924 round 9 (UX): a list's card, once it has had a row, stays for as long
+ * as the page is open - also after its last row is closed or resolved - so the
+ * status line focus moves to after the action is still there, and the card
+ * says the list is empty. A list that never had a row renders nothing.
+ */
+function useShownOnceItHadRows(rowCount: number): boolean {
+  const [shown, setShown] = useState(rowCount > 0);
+  // Adjusted while rendering, as React's derived-state pattern does.
+  if (!shown && rowCount > 0) setShown(true);
+  return shown;
+}
+
+function RefundListCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <CreditCard className="h-5 w-5 text-muted-foreground" />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
+/**
  * What the dialog says, before the close, about Xero (#3924 rounds 5 to 7).
  * `bankNoteWording` is the bank-transfer note's own wording, from the one home
  * of refund-note words (`describeRefundMethod("internet-banking")`, passed by
@@ -79,6 +111,14 @@ function xeroRefundNotePromise(xeroRefundNote: PaidAnotherWayXeroPromise, bankNo
   if (xeroRefundNote === "after-receipt-on-its-way") {
     return `This late card charge's invoice is on its way to Xero but is not there yet. Once it is, a Xero refund credit note for the amount, worded "${bankNoteWording}", is queued against it.`;
   }
+  // Round 9: nothing sends these until an officer retries them, so the dialog
+  // never says they are on their way.
+  if (xeroRefundNote === "after-receipt-failed" || xeroRefundNote === "after-receipt-held-for-officer") {
+    const instruction = paidAnotherWayReceiptRetryInstruction(
+      xeroRefundNote === "after-receipt-failed" ? "failed" : "held-for-officer",
+    );
+    return `${instruction}. Closing this does not send it. Once it is in Xero, a Xero refund credit note for the amount, worded "${bankNoteWording}", is queued against it.`;
+  }
   // Round 7 (UX): an invoice may still be on its way to Xero, so this never
   // says there is none.
   return "No Xero refund credit note is queued: the app has no Xero invoice it can credit for this money yet. Check Xero, and record the refund there by hand if it needs one.";
@@ -92,6 +132,13 @@ function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefined, ban
   }
   if (xeroQueued === "refund-note-after-receipt") {
     return `Its Xero refund credit note, worded "${bankNoteWording}", follows once the late card charge's invoice reaches Xero.`;
+  }
+  // Round 9: an officer's retry is still needed; the note follows it.
+  if (xeroQueued === "refund-note-after-failed-receipt" || xeroQueued === "receipt-held-for-officer") {
+    const instruction = paidAnotherWayReceiptRetryInstruction(
+      xeroQueued === "refund-note-after-failed-receipt" ? "failed" : "held-for-officer",
+    );
+    return `${instruction}; its refund credit note, worded "${bankNoteWording}", follows.`;
   }
   return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
 }
@@ -152,6 +199,7 @@ export function DeadCardRefundsPanel({
   // status line, which says what happened, instead of to a vanished button.
   const listNoticeRef = useRef<HTMLParagraphElement>(null);
   const focusNoticeOnClose = useRef(false);
+  const shown = useShownOnceItHadRows(rows.length);
 
   const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
   // The list moved under the open dialog (a 409's refresh, another treasurer):
@@ -264,184 +312,190 @@ export function DeadCardRefundsPanel({
     }
   }
 
+  if (!shown) return null;
   return (
-    <div className="space-y-3">
-      <AdminViewOnlySectionBanner canEdit={canEdit} />
-      <p className="text-sm text-muted-foreground">
-        Stripe stopped retrying these card refunds. Each still counts in Refunds owed and comes off Net
-        Collected. If the member was paid back another way, for example by bank transfer, close it here. If
-        you refunded it in the Stripe dashboard instead, do not close it here: wait for that refund to show on
-        the payment.
-      </p>
-      <p
-        ref={listNoticeRef}
-        role="status"
-        tabIndex={-1}
-        className="text-sm text-muted-foreground outline-none empty:hidden"
-      >
-        {listNotice}
-      </p>
-      <ul className="space-y-2" aria-label="Card refunds Stripe gave up on">
-        {rows.map((row) => (
-          <li
-            key={row.operationId}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted p-2"
-          >
-            <div>
-              <div className="text-sm font-medium">
-                <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
-                  Booking {row.bookingReference}
-                </Link>
-                {" - "}
-                {formatCents(row.owedCents, format)} still owed
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Refund started {clubTime.instantDate(new Date(row.raisedAt))}
-              </div>
-              {row.stripeMayHaveRefunded ? (
-                <div className="text-xs font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</div>
-              ) : null}
-            </div>
-            <ViewOnlyActionButton
-              canEdit={canEdit}
-              describeReason={false}
-              variant="outline"
-              size="sm"
-              aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
-              onClick={() => open(row)}
-            >
-              Paid another way
-            </ViewOnlyActionButton>
-          </li>
-        ))}
-      </ul>
-
-      <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && close()}>
-        <DialogContent
-          className="max-h-[90vh] overflow-y-auto"
-          onCloseAutoFocus={(event) => {
-            if (!focusNoticeOnClose.current) return;
-            focusNoticeOnClose.current = false;
-            event.preventDefault();
-            listNoticeRef.current?.focus();
-          }}
+    <RefundListCard title="Card refunds Stripe gave up on">
+      <div className="space-y-3">
+        <AdminViewOnlySectionBanner canEdit={canEdit} />
+        <p className="text-sm text-muted-foreground">
+          Stripe stopped retrying these card refunds. Each still counts in Refunds owed and comes off Net
+          Collected. If the member was paid back another way, for example by bank transfer, close it here. If
+          you refunded it in the Stripe dashboard instead, do not close it here: wait for that refund to show on
+          the payment.
+        </p>
+        <p
+          ref={listNoticeRef}
+          role="status"
+          tabIndex={-1}
+          className="text-sm text-muted-foreground outline-none empty:hidden"
         >
-          <DialogHeader>
-            <DialogTitle>Close this card refund as paid another way?</DialogTitle>
-            <DialogDescription>
-              Stripe will not be asked again. The amount is recorded as refunded on the payment, and the refund
-              leaves Refunds owed. Only do this once the member has the money.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 text-sm">
-            {target?.stripeMayHaveRefunded ? (
-              <p className="font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</p>
-            ) : null}
-            <p className="text-muted-foreground">
-              Refunded it in the Stripe dashboard instead? Do not close it here: wait for that refund to show on
-              the payment.
-            </p>
-            <p className="text-muted-foreground">
-              {target ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording) : null}
-            </p>
-            <p className="font-medium text-foreground">
-              {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
-            </p>
-            {/* Always mounted, so a screen reader hears the change (round 7, UX). */}
-            <p role="status" className="font-medium text-warning-11 empty:hidden">
-              {owedChanged}
-            </p>
-          </div>
-          <div className="space-y-3">
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-medium">How much was paid back?</legend>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name={choiceName}
-                  className="size-4"
-                  checked={paidBack === "full"}
-                  onChange={() => setPaidBack("full")}
+          {listNotice}
+        </p>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No card refunds are waiting to be closed.</p>
+        ) : null}
+        <ul className="space-y-2" aria-label="Card refunds Stripe gave up on">
+          {rows.map((row) => (
+            <li
+              key={row.operationId}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted p-2"
+            >
+              <div>
+                <div className="text-sm font-medium">
+                  <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                    Booking {row.bookingReference}
+                  </Link>
+                  {" - "}
+                  {formatCents(row.owedCents, format)} still owed
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Refund started {clubTime.instantDate(new Date(row.raisedAt))}
+                </div>
+                {row.stripeMayHaveRefunded ? (
+                  <div className="text-xs font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</div>
+                ) : null}
+              </div>
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                describeReason={false}
+                variant="outline"
+                size="sm"
+                aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
+                onClick={() => open(row)}
+              >
+                Paid another way
+              </ViewOnlyActionButton>
+            </li>
+          ))}
+        </ul>
+
+        <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && close()}>
+          <DialogContent
+            className="max-h-[90vh] overflow-y-auto"
+            onCloseAutoFocus={(event) => {
+              if (!focusNoticeOnClose.current) return;
+              focusNoticeOnClose.current = false;
+              event.preventDefault();
+              listNoticeRef.current?.focus();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Close this card refund as paid another way?</DialogTitle>
+              <DialogDescription>
+                Stripe will not be asked again. The amount is recorded as refunded on the payment, and the refund
+                leaves Refunds owed. Only do this once the member has the money.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 text-sm">
+              {target?.stripeMayHaveRefunded ? (
+                <p className="font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</p>
+              ) : null}
+              <p className="text-muted-foreground">
+                Refunded it in the Stripe dashboard instead? Do not close it here: wait for that refund to show on
+                the payment.
+              </p>
+              <p className="text-muted-foreground">
+                {target ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording) : null}
+              </p>
+              <p className="font-medium text-foreground">
+                {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
+              </p>
+              {/* Always mounted, so a screen reader hears the change (round 7, UX). */}
+              <p role="status" className="font-medium text-warning-11 empty:hidden">
+                {owedChanged}
+              </p>
+            </div>
+            <div className="space-y-3">
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">How much was paid back?</legend>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={choiceName}
+                    className="size-4"
+                    checked={paidBack === "full"}
+                    onChange={() => setPaidBack("full")}
+                  />
+                  <span>Paid back in full</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={choiceName}
+                    className="size-4"
+                    checked={paidBack === "partial"}
+                    disabled={target?.wholeAmountOnly === true}
+                    aria-describedby={target?.wholeAmountOnly ? wholeAmountHintId : undefined}
+                    onChange={() => setPaidBack("partial")}
+                  />
+                  <span>Paid back part of it - the rest will no longer be owed</span>
+                </label>
+                {target?.wholeAmountOnly ? (
+                  <p id={wholeAmountHintId} className="text-xs text-muted-foreground">
+                    This refund replaces a superseded payment, so it closes for the whole amount.
+                  </p>
+                ) : null}
+              </fieldset>
+              {paidBack !== null && target ? (
+                <div className="space-y-1">
+                  <Label htmlFor={amountId}>Amount paid back</Label>
+                  <MoneyInput
+                    id={amountId}
+                    value={paidBack === "full" ? formatCentsPlain(target.owedCents) : amountInput}
+                    className="w-32"
+                    disabled={paidBack === "full"}
+                    required={paidBack === "partial"}
+                    aria-required={paidBack === "partial" ? "true" : undefined}
+                    aria-describedby={noLongerOwedCents !== null ? warningId : undefined}
+                    onValueChange={(value) => {
+                      setAmountInput(value);
+                      setAmountTouched(true);
+                    }}
+                    onBlur={() => setAmountTouched(true)}
+                    error={amountTouched ? amountProblem : null}
+                  />
+                  <p id={warningId} role="status" className="text-xs font-medium text-warning-11 empty:hidden">
+                    {noLongerOwedCents !== null
+                      ? `${formatCents(noLongerOwedCents, format)} will no longer be owed to the member, and will not be tracked anywhere.`
+                      : ""}
+                  </p>
+                </div>
+              ) : null}
+              <div className="space-y-1">
+                <Label htmlFor={noteId}>How was it paid back? (required)</Label>
+                <Textarea
+                  id={noteId}
+                  value={note}
+                  required
+                  aria-required="true"
+                  maxLength={MANUAL_PAYMENT_NOTE_MAX}
+                  placeholder="For example: bank transfer on 7 Oct, reference REF123"
+                  onChange={(event) => setNote(event.target.value)}
                 />
-                <span>Paid back in full</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name={choiceName}
-                  className="size-4"
-                  checked={paidBack === "partial"}
-                  disabled={target?.wholeAmountOnly === true}
-                  aria-describedby={target?.wholeAmountOnly ? wholeAmountHintId : undefined}
-                  onChange={() => setPaidBack("partial")}
-                />
-                <span>Paid back part of it - the rest will no longer be owed</span>
-              </label>
-              {target?.wholeAmountOnly ? (
-                <p id={wholeAmountHintId} className="text-xs text-muted-foreground">
-                  This refund replaces a superseded payment, so it closes for the whole amount.
+              </div>
+            </div>
+            <FocusedActionError id={errorId} error={error} attentionKey={errorAttention} />
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+              {submitHint ? (
+                <p id={submitHintId} className="text-xs text-muted-foreground sm:mr-auto">
+                  {submitHint}
                 </p>
               ) : null}
-            </fieldset>
-            {paidBack !== null && target ? (
-              <div className="space-y-1">
-                <Label htmlFor={amountId}>Amount paid back</Label>
-                <MoneyInput
-                  id={amountId}
-                  value={paidBack === "full" ? formatCentsPlain(target.owedCents) : amountInput}
-                  className="w-32"
-                  disabled={paidBack === "full"}
-                  required={paidBack === "partial"}
-                  aria-required={paidBack === "partial" ? "true" : undefined}
-                  aria-describedby={noLongerOwedCents !== null ? warningId : undefined}
-                  onValueChange={(value) => {
-                    setAmountInput(value);
-                    setAmountTouched(true);
-                  }}
-                  onBlur={() => setAmountTouched(true)}
-                  error={amountTouched ? amountProblem : null}
-                />
-                <p id={warningId} role="status" className="text-xs font-medium text-warning-11 empty:hidden">
-                  {noLongerOwedCents !== null
-                    ? `${formatCents(noLongerOwedCents, format)} will no longer be owed to the member, and will not be tracked anywhere.`
-                    : ""}
-                </p>
-              </div>
-            ) : null}
-            <div className="space-y-1">
-              <Label htmlFor={noteId}>How was it paid back? (required)</Label>
-              <Textarea
-                id={noteId}
-                value={note}
-                required
-                aria-required="true"
-                maxLength={MANUAL_PAYMENT_NOTE_MAX}
-                placeholder="For example: bank transfer on 7 Oct, reference REF123"
-                onChange={(event) => setNote(event.target.value)}
-              />
-            </div>
-          </div>
-          <FocusedActionError id={errorId} error={error} attentionKey={errorAttention} />
-          <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-            {submitHint ? (
-              <p id={submitHintId} className="text-xs text-muted-foreground sm:mr-auto">
-                {submitHint}
-              </p>
-            ) : null}
-            <Button variant="outline" disabled={busy} onClick={close}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!canSubmit}
-              aria-describedby={submitHint ? submitHintId : undefined}
-              onClick={() => void submit()}
-            >
-              {busy ? "Closing..." : "Close as paid another way"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+              <Button variant="outline" disabled={busy} onClick={close}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!canSubmit}
+                aria-describedby={submitHint ? submitHintId : undefined}
+                onClick={() => void submit()}
+              >
+                {busy ? "Closing..." : "Close as paid another way"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </RefundListCard>
   );
 }
 
@@ -482,6 +536,7 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
   const [listNotice, setListNotice] = useState("");
   const listNoticeRef = useRef<HTMLParagraphElement>(null);
   const focusNoticeOnClose = useRef(false);
+  const shown = useShownOnceItHadRows(rows.length);
 
   const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
   if (targetId !== null && target === null && !busy) {
@@ -543,113 +598,119 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
     }
   }
 
+  if (!shown) return null;
   return (
-    <div className="space-y-3">
-      <AdminViewOnlySectionBanner canEdit={canEdit} />
-      <p className="text-sm text-muted-foreground">
-        Each of these card refunds was closed as paid another way, and then Stripe refunded the card as well,
-        so the member was paid back twice. Contact the member to recover the extra money, and record what you
-        agree in Xero. Then mark it Resolved, saying how it was sorted out.
-      </p>
-      <p
-        ref={listNoticeRef}
-        role="status"
-        tabIndex={-1}
-        className="text-sm text-muted-foreground outline-none empty:hidden"
-      >
-        {listNotice}
-      </p>
-      <ul className="space-y-2" aria-label="Card refunds paid back twice">
-        {rows.map((row) => (
-          <li
-            key={row.operationId}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted p-2"
-          >
-            <div>
-              <div className="text-sm font-medium">
-                <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
-                  Booking {row.bookingReference}
-                </Link>
-                {" - "}
-                {formatCents(row.refundedByCardCents, format)} refunded to the card after{" "}
-                {formatCents(row.paidAnotherWayCents, format)} was paid back another way
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Closed as paid another way {clubTime.instantDate(new Date(row.closedAt))}
-              </div>
-            </div>
-            <ViewOnlyActionButton
-              canEdit={canEdit}
-              describeReason={false}
-              variant="outline"
-              size="sm"
-              aria-label={`Mark booking ${row.bookingReference} resolved`}
-              onClick={() => open(row)}
-            >
-              Resolved
-            </ViewOnlyActionButton>
-          </li>
-        ))}
-      </ul>
-
-      <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && setTargetId(null)}>
-        <DialogContent
-          className="max-h-[90vh] overflow-y-auto"
-          onCloseAutoFocus={(event) => {
-            if (!focusNoticeOnClose.current) return;
-            focusNoticeOnClose.current = false;
-            event.preventDefault();
-            listNoticeRef.current?.focus();
-          }}
+    <RefundListCard title="Card refunds paid back twice">
+      <div className="space-y-3">
+        <AdminViewOnlySectionBanner canEdit={canEdit} />
+        <p className="text-sm text-muted-foreground">
+          Each of these card refunds was closed as paid another way, and then Stripe refunded the card as well,
+          so the member was paid back twice. Contact the member to recover the extra money, and record what you
+          agree in Xero. Then mark it Resolved, saying how it was sorted out.
+        </p>
+        <p
+          ref={listNoticeRef}
+          role="status"
+          tabIndex={-1}
+          className="text-sm text-muted-foreground outline-none empty:hidden"
         >
-          <DialogHeader>
-            <DialogTitle>Mark this card refund, paid back twice, as resolved?</DialogTitle>
-            <DialogDescription>
-              Only once it is sorted out with the member. It leaves this list, and your note is kept in the audit
-              log. Nothing is refunded or charged, and nothing is sent to Xero: record what you agreed there yourself.
-            </DialogDescription>
-          </DialogHeader>
-          <p className="text-sm font-medium text-foreground">
-            {target
-              ? `Booking ${target.bookingReference}: ${formatCents(target.refundedByCardCents, format)} refunded to the card after ${formatCents(target.paidAnotherWayCents, format)} was paid back another way.`
-              : null}
-          </p>
-          {/* Always mounted, so a screen reader hears the change (round 8). */}
-          <p role="status" className="text-sm font-medium text-warning-11 empty:hidden">
-            {cardChanged}
-          </p>
-          <div className="space-y-1">
-            <Label htmlFor={noteId}>How was it sorted out? (required)</Label>
-            <Textarea
-              id={noteId}
-              value={note}
-              required
-              aria-required="true"
-              maxLength={MANUAL_PAYMENT_NOTE_MAX}
-              placeholder="For example: member paid the extra back by bank transfer on 12 Oct, reference REF123"
-              onChange={(event) => setNote(event.target.value)}
-            />
-          </div>
-          <FocusedActionError id={errorId} error={error} attentionKey={errorAttention} />
-          <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-            {target !== null && noteMissing && !busy ? (
-              <p id={submitHintId} className="text-xs text-muted-foreground sm:mr-auto">
-                Say how it was sorted out to mark it resolved.
-              </p>
-            ) : null}
-            <Button variant="outline" disabled={busy} onClick={() => setTargetId(null)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!canSubmit}
-              aria-describedby={target !== null && noteMissing && !busy ? submitHintId : undefined}
-              onClick={() => void submit()}
+          {listNotice}
+        </p>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No card refunds paid back twice are left to resolve.</p>
+        ) : null}
+        <ul className="space-y-2" aria-label="Card refunds paid back twice">
+          {rows.map((row) => (
+            <li
+              key={row.operationId}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted p-2"
             >
-              {busy ? "Saving..." : "Mark resolved"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+              <div>
+                <div className="text-sm font-medium">
+                  <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                    Booking {row.bookingReference}
+                  </Link>
+                  {" - "}
+                  {formatCents(row.refundedByCardCents, format)} refunded to the card after{" "}
+                  {formatCents(row.paidAnotherWayCents, format)} was paid back another way
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Closed as paid another way {clubTime.instantDate(new Date(row.closedAt))}
+                </div>
+              </div>
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                describeReason={false}
+                variant="outline"
+                size="sm"
+                aria-label={`Mark booking ${row.bookingReference} resolved`}
+                onClick={() => open(row)}
+              >
+                Resolved
+              </ViewOnlyActionButton>
+            </li>
+          ))}
+        </ul>
+
+        <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && setTargetId(null)}>
+          <DialogContent
+            className="max-h-[90vh] overflow-y-auto"
+            onCloseAutoFocus={(event) => {
+              if (!focusNoticeOnClose.current) return;
+              focusNoticeOnClose.current = false;
+              event.preventDefault();
+              listNoticeRef.current?.focus();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Mark this card refund, paid back twice, as resolved?</DialogTitle>
+              <DialogDescription>
+                Only once it is sorted out with the member. It leaves this list, and your note is kept in the audit
+                log. Nothing is refunded or charged, and nothing is sent to Xero: record what you agreed there yourself.
+              </DialogDescription>
+            </DialogHeader>
+            <p className="text-sm font-medium text-foreground">
+              {target
+                ? `Booking ${target.bookingReference}: ${formatCents(target.refundedByCardCents, format)} refunded to the card after ${formatCents(target.paidAnotherWayCents, format)} was paid back another way.`
+                : null}
+            </p>
+            {/* Always mounted, so a screen reader hears the change (round 8). */}
+            <p role="status" className="text-sm font-medium text-warning-11 empty:hidden">
+              {cardChanged}
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor={noteId}>How was it sorted out? (required)</Label>
+              <Textarea
+                id={noteId}
+                value={note}
+                required
+                aria-required="true"
+                maxLength={MANUAL_PAYMENT_NOTE_MAX}
+                placeholder="For example: member paid the extra back by bank transfer on 12 Oct, reference REF123"
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </div>
+            <FocusedActionError id={errorId} error={error} attentionKey={errorAttention} />
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+              {target !== null && noteMissing && !busy ? (
+                <p id={submitHintId} className="text-xs text-muted-foreground sm:mr-auto">
+                  Say how it was sorted out to mark it resolved.
+                </p>
+              ) : null}
+              <Button variant="outline" disabled={busy} onClick={() => setTargetId(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!canSubmit}
+                aria-describedby={target !== null && noteMissing && !busy ? submitHintId : undefined}
+                onClick={() => void submit()}
+              >
+                {busy ? "Saving..." : "Mark resolved"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </RefundListCard>
   );
 }

@@ -324,6 +324,8 @@ export async function createXeroCreditNote(
   // and succeeded PaymentRefund rows are never deleted).
   let effectiveRefundAmountCents = refundAmountCents;
   let effectiveWatermarkCents: number | null = null;
+  // #3924 round 9: what a close's OWN notes already cover, which keys its note.
+  let closeCoveredCents: number | null = null;
 
   if (isDeltaMode) {
     // #3880: no other run on this payment between its coverage read and its record.
@@ -374,6 +376,7 @@ export async function createXeroCreditNote(
         );
       }
       uncoveredCents = share.uncoveredCents;
+      closeCoveredCents = share.coveredCents;
       evidenceLog = { paidAnotherWayTaskId, closeAmountCents: share.amountCents, closeCoveredCents: share.coveredCents };
     } else {
       // #3635 round-3 R1: the cash a note may answer, the figure the enqueue
@@ -473,16 +476,28 @@ export async function createXeroCreditNote(
 
   const creditNoteIdempotencyKey = refundRequestId !== null
     ? refundRequestCreditNoteKey(paymentId, refundRequestId)
+    : isDeltaMode && options?.paidAnotherWayTaskId && closeCoveredCents !== null
+    ? // #3924 rounds 8 and 9: a close's note is its own document in Xero, keyed
+      // on the close and what ITS OWN notes already cover - never the
+      // payment-wide watermark, which another refund's note landing between a
+      // crash and its retry would move, so the retry would mint a second note
+      // for the same close. Replayed under any other note, the key is the same.
+      buildXeroIdempotencyKey(
+        "payment",
+        paymentId,
+        "refund-credit-note",
+        "paid-another-way",
+        options.paidAnotherWayTaskId,
+        closeCoveredCents,
+        "v3"
+      )
     : isDeltaMode
     ? buildXeroIdempotencyKey(
         "payment",
         paymentId,
         "refund-credit-note",
         effectiveWatermarkCents ?? watermarkCents,
-        "v2",
-        // #3924 round 8: a close's note is its own document in Xero, never
-        // answered with another note that reached the same watermark.
-        ...(options?.paidAnotherWayTaskId ? ["paid-another-way", options.paidAnotherWayTaskId] : [])
+        "v2"
       )
     : buildXeroIdempotencyKey(
         "payment",

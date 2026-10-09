@@ -923,6 +923,27 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
       expect(row("op_second")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: null });
       expect(row("op_second").responsePayload).toMatchObject({ skippedNothingUncovered: true, closeCoveredCents: 2500 });
     });
+
+    // #3924 round 9: the Xero key is the close's and its own coverage, never
+    // the payment-wide watermark another refund's note can move.
+    it("MUTATION: round 9: a close's note that reached Xero before a crash is answered by Xero with the same note on retry, though another note landed meanwhile", async () => {
+      seedPayment(PaymentSource.INTERNET_BANKING);
+      state.closes = { close_1: 2500 };
+      queueClose("op_close", "close_1", 2500, 2500);
+      state.crash = "at-completion";
+      await expect(dispatch("op_close")).rejects.toBe(CRASH);
+      expect(state.xero.notes.size).toBe(1);
+      const [firstKey] = [...state.xero.noteKeys.keys()];
+      expect(firstKey).toBe(`payment:${PAYMENT_ID}:refund-credit-note:paid-another-way:close_1:0:v3`);
+
+      // Another refund's note lands on the payment before the retry.
+      upsertLink({ localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_other", role: "REFUND_CREDIT_NOTE", active: true, metadata: { amountCents: 3000, watermarkCents: 3000 } });
+      row("op_close").status = "PENDING";
+      await dispatch("op_close");
+
+      expect(state.xero.notes.size).toBe(1);
+      expect(row("op_close")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: [...state.xero.notes.keys()][0] });
+    });
   });
 
   it("MUTATION: a sibling RUNNING past the stale threshold is a dead worker and does not hold the payment", async () => {
