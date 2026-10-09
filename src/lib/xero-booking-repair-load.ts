@@ -582,13 +582,8 @@ export async function loadAuditData(
         bookingId: booking.id,
         refundedAmountCents: payment.refundedAmountCents,
       });
-      // #3924 round 8 (`INV-PAY-122`): the arm sizes a CARD note, so the bank
-      // cash of "Paid another way" closes - answered only by their own notes -
-      // is left out of what it may ask.
-      refundNoteUncoveredCentsByPaymentId.set(
-        payment.id,
-        Math.max(0, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents),
-      );
+      // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
+      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
     } catch (err) {
       logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
     }

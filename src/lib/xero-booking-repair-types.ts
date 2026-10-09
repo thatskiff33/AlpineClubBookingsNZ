@@ -5,7 +5,7 @@
 import { Prisma } from "@prisma/client";
 import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
-import type { PaidAnotherWayReceiptState } from "@/lib/xero-kept-late-capture-invoice";
+import type { PaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",

@@ -22,11 +22,11 @@ import {
   processQueuedXeroOperationRetries,
 } from "@/lib/xero-operation-queue";
 import { prisma } from "@/lib/prisma";
+import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late-capture-invoice";
 import {
-  enqueueXeroKeptLateCaptureInvoiceOperation,
   queueWaitingPaidAnotherWayNote,
   readPaidAnotherWayReceiptState,
-} from "@/lib/xero-kept-late-capture-invoice";
+} from "@/lib/paid-another-way-receipt-note";
 import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
 import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";

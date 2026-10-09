@@ -40,7 +40,7 @@ import {
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
-import { queueWaitingPaidAnotherWayNote } from "@/lib/xero-kept-late-capture-invoice";
+import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   xeroDocumentDateForClubToday,

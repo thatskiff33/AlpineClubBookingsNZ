@@ -59,7 +59,7 @@ vi.mock("@/lib/stripe-capture-date", () => ({
 }));
 
 // #3924 round 8: the note step a paid-another-way close waits on.
-vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
+vi.mock("@/lib/paid-another-way-receipt-note", () => ({
   // No waiting close unless a test says so (the mocks reset to undefined).
   queueWaitingPaidAnotherWayNote: async (...a: unknown[]) => (await mocks.queueWaitingPaidAnotherWayNote(...a)) ?? null,
 }));

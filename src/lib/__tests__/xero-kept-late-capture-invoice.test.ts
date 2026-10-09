@@ -116,9 +116,9 @@ import {
 import {
   createXeroKeptLateCaptureInvoice,
   enqueueXeroKeptLateCaptureInvoiceOperation,
-  queueWaitingPaidAnotherWayNote,
   settleKeptLateCaptureRecordOnApproval,
 } from "@/lib/xero-kept-late-capture-invoice";
+import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
 
 /**
  * #3635 (`INV-PAY-110`): the kept-capture invoice's enqueue, approval

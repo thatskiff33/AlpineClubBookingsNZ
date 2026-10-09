@@ -71,8 +71,6 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
-import { readLateCaptureXeroReceipt, type LateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
-import { paidAnotherWayCloseNoteRowsWhere } from "@/lib/card-refund-paid-another-way-cash";
 import {
   KEPT_LATE_CAPTURE_INVOICE_ROLE,
   KEPT_LATE_CAPTURE_PAYMENT_ROLE,
@@ -404,92 +402,6 @@ async function recordKeptLateCaptureReceiptLink(params: {
 }
 
 /**
- * THE NOTE STEP, for whichever worker put the capture's receipt in Xero: this
- * one (the receipt the close queued), and - #3924 round 8 (owner, 8 Oct 2026:
- * "Raise a refund note for all") - a change's supplementary invoice released
- * for the capture (`createXeroSupplementaryInvoice`), which a close found
- * queued, sending or FAILED and so could not credit yet. Under the approval
- * task's row lock it reads the receipt as Xero now holds it
- * (`readLateCaptureXeroReceipt`, the invoice the close's plan would name) and
- * queues the waiting close's note against it (`notePaidAnotherWayCloseOnReceipt`,
- * at most once). Nothing without an approval task, or a receipt not yet in
- * Xero. Returns the note row's id, or null. Throws on a failure; the caller
- * decides whether that fails its row.
- */
-export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): Promise<string | null> {
-  const task = await prisma.manualRefundTask.findUnique({
-    where: { lateCaptureApprovalIntentId: paymentIntentId },
-    select: { id: true },
-  });
-  if (!task) return null;
-  const clubZone = await readClubTimeZoneOutsideRequest();
-  // Imported here, not at the top: that module reaches the outbox, which
-  // dispatches to this worker.
-  const { notePaidAnotherWayCloseOnReceipt } = await import("@/lib/late-capture-refund-credit-note");
-  return prisma.$transaction(async (tx) => {
-    await lockKeptLateCaptureTask(tx, task.id);
-    const receipt = await readLateCaptureXeroReceipt(paymentIntentId, tx);
-    if (receipt.kind !== "recorded" || receipt.invoiceId === null) return null;
-    return notePaidAnotherWayCloseOnReceipt({
-      paymentIntentId,
-      receiptInvoiceId: receipt.invoiceId,
-      clubZone,
-      store: tx,
-    });
-  });
-}
-
-/**
- * #3924 round 8 (money review, `INV-PAY-122`): WHERE A WAITING CLOSE'S RECEIPT
- * AND NOTE STAND, for the repair tool. The capture's receipt as Xero holds it
- * (`readLateCaptureXeroReceipt`); whether the close's bank-transfer note was
- * ever asked for (its own rows, `paidAnotherWayCloseNoteRowsWhere`, in any
- * state but withdrawn); and which of the receipt's links the approval task
- * carries - its invoice, and its Stripe payment, which says a FAILED row may
- * have reached Xero (`keptReceiptMayHaveReachedXero`).
- */
-export interface PaidAnotherWayReceiptState {
-  receipt: LateCaptureXeroReceipt;
-  noteAsked: boolean;
-  invoiceLinked: boolean;
-  paymentLinked: boolean;
-}
-
-export async function readPaidAnotherWayReceiptState(paymentIntentId: string): Promise<PaidAnotherWayReceiptState> {
-  const receipt = await readLateCaptureXeroReceipt(paymentIntentId);
-  const close = await findLateCaptureRefundPaidAnotherWay(paymentIntentId);
-  const noteAsked =
-    close !== null && close.paymentId !== null
-      ? (await prisma.xeroSyncOperation.count({
-          where: { ...paidAnotherWayCloseNoteRowsWhere(close.paymentId, close.id), status: { not: "CANCELLED" } },
-        })) > 0
-      : false;
-  const task = await prisma.manualRefundTask.findUnique({
-    where: { lateCaptureApprovalIntentId: paymentIntentId },
-    select: { id: true },
-  });
-  const roles = task
-    ? (
-        await prisma.xeroObjectLink.findMany({
-          where: {
-            localModel: "ManualRefundTask",
-            localId: task.id,
-            role: { in: [KEPT_LATE_CAPTURE_INVOICE_ROLE, KEPT_LATE_CAPTURE_PAYMENT_ROLE] },
-            active: true,
-          },
-          select: { role: true },
-        })
-      ).map((link) => link.role)
-    : [];
-  return {
-    receipt,
-    noteAsked,
-    invoiceLinked: roles.includes(KEPT_LATE_CAPTURE_INVOICE_ROLE),
-    paymentLinked: roles.includes(KEPT_LATE_CAPTURE_PAYMENT_ROLE),
-  };
-}
-
-/**
  * THE WORKER, from the outbox.
  *  1. If the task's invoice already exists (a retry, or an approval that sent
  *     a PARTIAL row back), only the missing Stripe payment is recorded, whatever
@@ -730,6 +642,8 @@ export async function createXeroKeptLateCaptureInvoice(
     }
     // Round 7 (C9): after the link, on its own; a failure fails this row with
     // the link standing, and the row's retry runs only this again.
+    // Imported here, not at the top: that module takes this one's task lock.
+    const { queueWaitingPaidAnotherWayNote } = await import("@/lib/paid-another-way-receipt-note");
     await queueWaitingPaidAnotherWayNote(paymentIntentId);
 
     await completeXeroSyncOperation(syncOperationId, {
