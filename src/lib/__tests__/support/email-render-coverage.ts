@@ -183,6 +183,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-daily-digest": "adminDailyDigestTemplate",
   "admin-issue-report": "adminIssueReportTemplate",
   "admin-maintenance-report": "adminMaintenanceReportTemplate",
+  "admin-server-version-paused": "adminServerVersionPausedTemplate",
   // booking
   "additional-payment-reminder": "additionalPaymentReminderTemplate",
   "booking-bumped": "bookingBumpedTemplate",

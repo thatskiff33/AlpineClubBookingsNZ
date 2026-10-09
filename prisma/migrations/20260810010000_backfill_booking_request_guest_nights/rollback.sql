@@ -1,0 +1,66 @@
+-- Operational rollback for 20260810010000_backfill_booking_request_guest_nights
+-- (#2739; ledgered old_code_compatible=windowed by #3933).
+--
+-- INTENTIONALLY NO STATEMENTS THAT CHANGE DATA. This file exists because a
+-- windowed ledger row must ship a reverse script beside its migration; the
+-- reverse here is a decision, not SQL. The one query below only reads.
+--
+-- The migration's own header predates its ledger row and says it is "not
+-- `windowed`" and that "there is no rollback.sql". Both were true when it was
+-- written. #3933 declared it windowed under the rule #3468 settled in
+-- docs/BLUE_GREEN_MIGRATION_POLICY.md, because the previous colour's in-place
+-- held-booking reassignment rewrites a guest's priceCents WITHOUT rewriting
+-- that guest's night rows, and this backfill is what gives those guests night
+-- rows to go stale: the nights keep the hold's per-night prices while the
+-- guest's total moves to the accepted option. Both releases invoice from
+-- stored night rows in preference to the guest's flat total. migration.sql is
+-- not edited: Prisma checksums it.
+--
+-- WHY NOTHING IS UNDONE. Every inserted BookingGuestNight row describes the
+-- stay the guest already had, at cents that sum exactly to the guest's stored
+-- priceCents and match the even split the invoice builder already synthesises
+-- for a guest with no night rows. The previous release reads these rows
+-- without error. Deleting them would only return the guests to the state this
+-- migration fixed: invisible to the bed-allocation board, the planner and the
+-- awaiting-a-bed count, on a confirmed booking.
+--
+-- TO RETURN TO THE PREVIOUS RELEASE. Keep the rows. Requester acceptance of a
+-- quote CANNOT be paused in the app: the public token route
+-- /api/booking-requests/respond/[token] has no switch, so blocking that path at
+-- the reverse proxy is the only way to stop it. Otherwise rely on the repair
+-- below once the new release is back.
+--
+-- RECOVERY IF THE PREVIOUS COLOUR RAN AFTER THIS MIGRATION. Find the affected
+-- guests with this read-only query - live bookings with a booking-request link
+-- with no night rows or whose night prices no longer add up to the stored total:
+--
+--   SELECT b."id" AS "bookingId", g."id" AS "bookingGuestId",
+--          g."priceCents" AS "guestPriceCents",
+--          sum(n."priceCents") AS "nightPriceCents"
+--   FROM "BookingGuest" g
+--   JOIN "Booking" b ON b."id" = g."bookingId"
+--   LEFT JOIN "BookingGuestNight" n ON n."bookingGuestId" = g."id"
+--   WHERE b."deletedAt" IS NULL
+--     AND b."status" NOT IN ('CANCELLED', 'BUMPED')
+--     AND EXISTS (
+--       SELECT 1 FROM "BookingRequest" r
+--       WHERE r."convertedBookingId" = b."id" OR r."heldBookingId" = b."id"
+--     )
+--   GROUP BY b."id", g."id", g."priceCents"
+--   HAVING count(n."id") = 0
+--      OR sum(n."priceCents") IS DISTINCT FROM g."priceCents"
+--   ORDER BY b."id", g."id";
+--
+-- For each row, FIRST repair the nights, THEN refresh the booking's invoice -
+-- refreshing first re-sends the stale night prices. The repair is the officer
+-- tool "Record what these nights sold for" in the booking's Admin tools card
+-- (#3214, src/lib/stored-night-price-strand-reconcile.ts); run it on a release
+-- that includes #3214, never on the previous colour. It also creates the
+-- missing rows when the previous colour created a guest without nights.
+-- If the tool does not offer a repair, stop and resolve its refusal.
+-- Normal invoice-state checks still apply: if refresh refuses a paid or
+-- credited document, stop and reconcile it rather than bypassing the refusal.
+-- To discard the rows
+-- themselves, restore the pre-migration backup: this file does not try to tell
+-- a backfilled row from one written later for the same guest, and a wrong
+-- guess there deletes a correct night.

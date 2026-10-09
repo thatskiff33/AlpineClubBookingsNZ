@@ -48,6 +48,12 @@ Each issue can include:
 {
   "title": "[Security] Review route guards",
   "body": "Issue body...",
-  "labels": ["codex-ready", "workstream:security", "risk:high"]
+  "labels": ["workstream:security", "risk:high"]
 }
 ```
+
+Creating a proposed issue does not authorise implementation. Leave `agent-ready`
+out of draft issue input; the owner applies it by hand after reviewing the issue
+and recording the decision under [the issue workflow](../../docs/agents/ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer).
+The label selects work; authorisation and attribution still follow
+[`AGENTS.md`](../../AGENTS.md#pre-authorisation-and-attributability).

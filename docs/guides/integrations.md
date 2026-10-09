@@ -135,13 +135,64 @@ club's booking officer by hand, each club maintains its own entry and the hub
 distributes it.
 
 **Read this before you turn it on.** This is the one integration that sends data
-*out* of your club. When you enable a shared item, your lodges' names, locations,
-bed counts and booking-officer contact details are uploaded to the central server
-and redistributed to every other connected club, where they appear on those
-clubs' pages. The booking-officer email is the committee **role's** shared
-address (for example `bookings@yourclub.nz`), never a member's personal one, and
-a member's phone number is shared **only** if your club already publishes it on
-your own committee page. No other member data is sent.
+*out* of your club. When you enable a shared item, everything recorded on **your
+own lodge's** entry in the **Other lodges** panel is uploaded to the central
+server and redistributed to every other connected club, where it appears on
+those clubs' pages. That is the lodge's name, location and bed count; its
+**booking officer's name, email and phone**; and the lodge details added
+alongside them — website, how to book, cancellation period, the winter and
+summer season start dates, the nine yes/no facilities (requires a lodge
+custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair
+accessible, breakfast / lunch / dinner included) and the list of amenities with
+their descriptions. The booking-officer email is the committee **role's** shared
+address (for example `bookings@yourclub.nz`), never a member's personal one,
+and a member's phone number is shared **only** if your club already publishes it
+on your own committee page. Once the central server is on a release that
+withholds it, it keeps the phone number for its operator and **does not pass it
+on to other clubs**; this site, for its part, never stores another club's
+officer phone from a download (a number an older server still sends is dropped,
+and a number an earlier download stored is cleared when that lodge is next
+downloaded) and never shows any booking officer's phone number in the Other
+lodges list (your own lodge's is in its edit popup). No other member data is
+sent. Everything in the panel is plain
+lodge description except the booking officer's contact details, so those are
+what to check before you enable the item.
+
+**Which lodge is "your own" is decided on the central server**, where its
+operator maps one or more lodge names to the connection your site uses. The
+server sends that list with every download, this site records it, and from then
+on only those lodges are uploaded and only those can be edited in the Other
+lodges panel. Until the first download from a server that sends the list, the
+panel is read-only and the upload keeps its older behaviour of sending every
+changed entry (so a club on an older central server loses nothing). A server
+that does not send the list leaves the recorded one as it was, and so does a
+server that sends a list this site cannot accept (too many names, or a name
+longer than a lodge name may be): the lodges still download and the sync
+continues, with a warning in the log. If the recorded list itself can no longer
+be read, the upload and the booking-officer sync below send and write
+**nothing** until the next download rewrites it, rather than falling back to
+treating every entry as yours. The list is forgotten when you disconnect,
+replace the API key or change the server address, because it belonged to that
+connection.
+
+The same list decides which entries your **Booking Officer** committee role is
+written into: when a member takes or leaves that role, the officer's name,
+role email and (if published) phone are written into the lodge entries the
+central server names as yours — and, until it has named any, into entries whose
+name exactly matches one of your own lodges.
+
+Two downloads can run at once (the nightly job and the **Download** button); if
+the one that finishes last carried an older list, the panel may briefly show the
+older answer until the next download records the current one. Likewise, an edit
+saved in the Other lodges popup is checked against the list recorded at that
+moment, so a download that changes the list while the popup is open can turn a
+Save into a refusal; reloading the page shows the current state.
+
+Downloading works the other way round: the central server's copy of every
+club's entry replaces yours, field by field and amenity list as a whole, unless
+your own copy was edited more recently — then yours is kept and sent up on the
+next upload. A field the server does not send is left exactly as you had it.
+Season start dates travel as calendar dates and are never shifted by time zone.
 
 1. Enable the **Alpine Central Server** module on [Modules](modules.md). With the
    module off the setup page is not reachable and the nightly sync does not run,
@@ -153,12 +204,67 @@ your own committee page. No other member data is sent.
    refused. **Changing the address clears the stored key**, because a key issued
    by one server means nothing to another.
 4. Paste the API key and save. It is stored encrypted and never shown again.
-5. Enable the **Other Clubs details** item, then press **Upload** to push your
-   entries and **Download** to pull the distributed set.
+5. Enable the **Other Clubs details** item, then press **Download** to pull the
+   distributed set — which also tells this site which lodge is yours and turns
+   on **Edit my Lodge** in the Other lodges panel — and **Upload** to push your
+   own lodge's entry.
 
 After that a nightly job at 3am syncs both directions on its own. It only sends
-entries that changed since last time and only writes entries that genuinely
-differ, so a quiet night costs almost nothing.
+your own lodge's entry, and only when it changed since last time, and only
+writes downloaded entries that genuinely differ, so a quiet night costs almost
+nothing.
+
+**The two sides must be on the same software version, and the page says
+whether they are.** The central server publishes one version number for
+everything it shares — the Other Clubs registry, the message board and the
+push registration — and this site is built for one particular number. The
+setup page shows both, beside the address and the key, under **Server
+software version** ("This site is built for server version 2.1 · Server:
+2.1"): it asks the server once each time you open the page, and again after
+you save a key or an address. With no API key stored nothing is asked and the
+server's number reads **0**, which is not a mismatch.
+
+While the two numbers differ — even by the second part, `2.1` against `2.0` —
+**all syncing with the central server is paused, in both directions**: the
+nightly Other Clubs sync, the **Upload** and **Download** buttons (which answer
+with the two numbers), sharing and withdrawing board posts, the message-board
+pull, push registration, and the central server's own pushes (which are still
+accepted and answered, but not acted on). Nothing is sent or received until the
+versions match. The page carries one message naming both numbers, the Other
+lodges panel on **Lodges** says the list may be out of date, and the
+[Daily digest](notification-recipients.md) carries a *Central server version*
+entry every day until the two match — to the digest's own readers and to
+everyone with Lodge Operations edit access. A central server from before
+version checks (it answers the version question with "not found") counts as a
+different version, so the pause applies to it too.
+
+Upgrade whichever side is behind. Syncing then **resumes on its own**: the
+nightly job asks the version first, records the new answer and carries on, and
+so does the next Upload, share or pull — there is nothing to reset and no
+button to press. A check that could not reach the server (a network blip, a
+rejected key) does **not** pause anything: the page says *Could not check* with
+the last known number, and the last answer stands. A key with no server address
+saved is told so rather than reported as a failed check. The last answer is
+forgotten when you remove or replace the API key or change the server address,
+because it belonged to that connection. The page re-asks the server at most
+once a minute; within that minute it shows the answer already recorded.
+
+The central server refuses a transfer for the same reason from its side, and
+this site reads that refusal as the same pause: the server's number is
+recorded and shown, and a board post whose share was refused this way simply
+waits — it is not counted as a failed attempt and is never given up on.
+
+**Upgrade the central server before this site** where you can. Besides the
+version pause above, the upload sends every field your lodge's entry holds,
+and a central server from before the version checks refuses an upload that
+names a field it does not know: pressing **Upload** shows **Central server
+error: Invalid upload payload**, and the nightly pass logs the same failure. In
+the nightly pass the upload runs first, so while the upload is failing that
+night's **download is skipped too** — the registry stops moving in both
+directions until the central server's operator upgrades it, after which the next
+upload and download go through unchanged with nothing to reset. Downloading from
+a central server that has not yet gained a field is harmless the other way
+round: a field the server does not send is left as you had it.
 
 Each download deliberately re-asks the server for a small window of time it has
 already covered — currently the last minute before where it got to. That looks
@@ -204,7 +310,7 @@ between them they decide where a credential is sent.
 | --- | --- | --- |
 | Xero Setup | The Xero connection and accounting configuration (`/admin/xero/setup`) | The `xeroIntegration` module; Xero OAuth credentials and tenant tokens configured server-side |
 | Google Analytics | Its settings in place on the hub: GA4 measurement id, consent-banner mode, banner wording, and **Ask visitors to choose again** | The `analytics` module; finance **view** to see the status, finance **edit** to change anything |
-| Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`) | The `alpineCentralServer` module; finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
+| Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`), including the **Server software version** check that pauses syncing while the two sides differ | The `alpineCentralServer` module; finance **view** to see the versions, finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
 | Video meetings | The MiroTalk meeting server, join-link behaviour and host sign-in (`/admin/video-meetings/setup`) | Finance **view** to read where every value comes from, **Full Admin** to change any of it — including the three host sign-in secrets. See [Calendar and meetings](calendar.md) |
 | Database Backups | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
 
@@ -225,6 +331,7 @@ and [`DEPLOYMENT.md`](../../DEPLOYMENT.md)).
 | The card reads **Setup required** and no tag appears | No measurement id is saved. Analytics fails closed: no id, an invalid id, or a database read failure all mean no analytics | Enter and save the measurement id |
 | Analytics reports no page views for one page | Its address is not analytics-eligible — an unhyphenated identifier-shaped slug, or a word the policy treats as credential-flavoured | Rename the page to a hyphenated word slug; the exclusion is deliberate and not configurable |
 | The **Analytics preferences** link is missing from the website footer | The module is off, or no valid measurement id is saved | Complete the setup; the link appears in both banner modes once configured |
+| **Upload** fails with **Central server error: Invalid upload payload**, and the nightly sync reports the same | The central server is on an older release than this site and does not know the lodge details or amenities this site sends; while the upload fails, the nightly pass skips that night's download as well | Ask the central server's operator to upgrade it; the next upload and download then go through with nothing to reset |
 
 ## Related links
 

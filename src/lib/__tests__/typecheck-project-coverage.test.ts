@@ -75,6 +75,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/filter-suppressed-sarif.test.mjs",
   "scripts/ci/render-epic-sync-pr-body.test.mjs",
   "scripts/ci/require-test-shards.test.mjs",
+  // #3513: the fast-census runner is a bare-node `.mjs` tool; its own suite
+  // deliberately remains JavaScript under the same convention.
+  "scripts/ci/run-fast-censuses.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/issue-thread.test.mjs",
   "scripts/release/compile-changelog.test.mjs",

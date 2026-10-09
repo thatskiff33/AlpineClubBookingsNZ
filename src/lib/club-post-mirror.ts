@@ -5,16 +5,19 @@ import logger from "@/lib/logger";
 import { deletePostImage, writePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 import {
+  ServerNzVersionMismatchError,
   fetchSharedPostImage,
   pullSharedPostSync,
   registerPushTarget,
   type SyncPost,
 } from "@/lib/servernz-api";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import { getServerNzSetupState } from "@/lib/servernz-config";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
+import { checkServerVersion } from "@/lib/servernz-version-check";
 import {
   getIntegrationCredentialValue,
   setIntegrationCredential,
@@ -61,7 +64,12 @@ const MAX_MIRROR_IMAGES = 6;
 const OVERLAP_SYNC_LABEL = "shared-post mirror";
 
 export interface MirrorSyncResult {
-  skipped?: "not-configured" | "busy";
+  /**
+   * `server-version-mismatch` (#49): the central server is on a different API
+   * version, so nothing was pulled, no push target was registered and no image
+   * was fetched. Decided BEFORE the claim, so a paused pass holds nothing.
+   */
+  skipped?: "not-configured" | "busy" | typeof SERVER_VERSION_MISMATCH_CODE;
   /** Visible changes that created or altered a mirror row. */
   upserted: number;
   /**
@@ -396,11 +404,22 @@ export async function ensurePushRegistration(): Promise<void> {
       "Registered this install for shared-post pushes",
     );
   } catch (error) {
+    // A version pause is the pass's answer, not registration's: let the pass
+    // report it (#49 review item 1).
+    if (error instanceof ServerNzVersionMismatchError) throw error;
     // Poll-only is a working state, so registration failing must not fail the
     // sync pass that attempted it.
     logger.warn({ err: error }, "Could not register the shared-post push target");
   }
 }
+
+const PAUSED: MirrorSyncResult = {
+  skipped: SERVER_VERSION_MISMATCH_CODE,
+  upserted: 0,
+  unchanged: 0,
+  removed: 0,
+  pages: 0,
+};
 
 /**
  * The cursor the FIRST page of a pass asks with: one overlap before the stored
@@ -452,6 +471,22 @@ export async function runMirrorSync(
       removed: 0,
       pages: 0,
     };
+  }
+
+  // The version check, BEFORE the claim (#49, `INV-INT-027`): every call this
+  // pass would make - registerPushTarget, pullSharedPostSync,
+  // fetchSharedPostImage - goes through the gate in resolveConnection, so a
+  // mismatch would refuse the first of them anyway; asking here is what keeps
+  // a paused pass from taking `commsSyncStartedAt` and holding it until the
+  // stale window reaps it. A check that could not reach the server keeps the
+  // last answer and the pass continues (the pull will fail on its own terms).
+  const version = await checkServerVersion();
+  if (version.status === "mismatch") {
+    logger.info(
+      { expected: version.expected, serverVersion: version.serverVersion },
+      "Shared-post mirror sync skipped: central server API version differs",
+    );
+    return { ...PAUSED };
   }
 
   // The single-flight claim, same pattern as every other sync in this repo: a
@@ -533,6 +568,11 @@ export async function runMirrorSync(
           // cursor row. Twice it aborts the pass so a transient cause (a
           // deploy, a database blip) gets its retries; the third pass steps
           // OVER it so one bad row cannot wedge every later change forever.
+          //
+          // A version pause is not a poison change (#49): it is the server's
+          // answer about the whole connection, so it neither counts against
+          // this change nor steps over it - the pass reports paused below.
+          if (error instanceof ServerNzVersionMismatchError) throw error;
           if (poisonId === changeKey && poisonCount >= 2) {
             logger.error(
               { changeKey, failures: poisonCount + 1, err: error },
@@ -597,6 +637,19 @@ export async function runMirrorSync(
       data: { commsLastSyncAt: now },
     });
     return result;
+  } catch (error) {
+    // The server refused mid-pass for version (its 409, recorded by the API
+    // client) or the gate did after a late self-heal: the pass is PAUSED, not
+    // failed. The claim is released below; the cursor is wherever the last
+    // applied page left it, so the next matching pass resumes from there.
+    if (error instanceof ServerNzVersionMismatchError) {
+      logger.info(
+        { expected: error.expected, serverVersion: error.serverVersion, ...result },
+        "Shared-post mirror sync paused mid-pass: central server API version differs",
+      );
+      return { ...PAUSED, ...result, skipped: SERVER_VERSION_MISMATCH_CODE };
+    }
+    throw error;
   } finally {
     // Released whatever happened: a failed pass must not wedge the next one.
     await prisma.serverNzSettings

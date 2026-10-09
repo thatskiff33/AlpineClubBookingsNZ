@@ -130,6 +130,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
+  // #49 (owner decision "second template"): the version-only notice a Lodge
+  // Operations editor who does not receive the Daily digest is sent while
+  // syncing with the Alpine Central Server is paused. Its own template so a
+  // club's override of the digest cannot garble or hide it; sendAdminAlertTo
+  // under the adminServerVersion preference and the club-wide delivery rules.
+  // Not delivery-locked: no money moves.
+  "admin-server-version-paused",
   "admin-membership-cancellation-request",
   "admin-account-deletion-requested",
   "admin-member-archive-requested",
@@ -234,6 +241,11 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
   // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
   "admin-capacity-warning": ["lodgeName"],
+  // #49: the raw numbers behind the composed {{serverVersionNote}} - the version
+  // this site is built for and the one the server reports - both empty on a day
+  // the versions match. A Lodge Operations editor who does not receive the
+  // digest is sent ONLY these three tokens, never the count keys.
+  "admin-daily-digest": ["serverVersionExpected", "serverVersionActual"],
   // #2268 raw values behind the pre-composed lines (see the note above).
   // #2269 review: {{guestFirstName}}/{{guestLastName}} are STILL SUPPLIED by
   // sendCheckinReminderEmail (src/lib/email/booking.ts) precisely so a club
@@ -787,6 +799,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary: "Scheduled Xero reconciliation report",
     frequency: "When the Xero reconciliation cron runs",
   },
+  "admin-server-version-paused": {
+    triggerSummary:
+      "Syncing with the Alpine Central Server is paused because the server is on a different software version from this site; sent to Lodge Operations editors who do not receive the Daily digest (digest readers get the same entry inside their digest)",
+    frequency: "Daily, with the digest, while the two versions differ",
+  },
   "admin-credit-sync-drift": {
     triggerSummary:
       "BookingApp's stamped applied credit drifted from Xero's live invoice allocation",
@@ -1286,6 +1303,15 @@ export function sampleValue(token: string): string {
   }
   if (token === "LODGE_CAPACITY") return String(FALLBACK_LODGE_CAPACITY);
   if (token === "doorCode") return "1234";
+  // #49: the central-server-version entry, exactly as the sender composes it
+  // (`describeServerVersionPause`), for a server one minor version ahead of
+  // the sample site; `servernz-api-version.test.ts` asserts equality with the
+  // composer so a wording change cannot leave a stale sample behind.
+  if (token === "serverVersionNote") {
+    return "Syncing with the Alpine Central Server is paused: this site is built for server version 2.0 and the server reports 2.1. Nothing is sent or received until the two match.";
+  }
+  if (token === "serverVersionExpected") return "2.0";
+  if (token === "serverVersionActual") return "2.1";
   // #2267: the whole pre-composed line, exactly as the send builds it, so the
   // preview shows what a member reads (and shows nothing extra when a club has
   // no door code — the live send renders this token empty).
@@ -2111,6 +2137,12 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
+  // #49: the Daily digest's central-server-version entry. `serverVersionNote`
+  // is the composed sentence (empty while the versions match); the other two
+  // are the raw numbers behind it. None carries a key, a URL or a member.
+  "serverVersionNote",
+  "serverVersionExpected",
+  "serverVersionActual",
   "y|ies",
 ] as const;
 

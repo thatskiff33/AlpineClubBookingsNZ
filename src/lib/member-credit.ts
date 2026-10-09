@@ -9,7 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
+import { RESTORED_CREDIT_PREFIX, bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
 import { createAuditLog } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
@@ -660,7 +660,7 @@ export async function restoreCreditFromBooking(
         memberId,
         amountCents: amount,
         type: CreditType.CANCELLATION_REFUND,
-        description: `Credit restored from cancelled booking ${bookingId.slice(0, 8)}`,
+        description: `${RESTORED_CREDIT_PREFIX} ${bookingId.slice(0, 8)}`,
         sourceBookingId: bookingId,
         restoredFromBookingId: bookingId,
       },

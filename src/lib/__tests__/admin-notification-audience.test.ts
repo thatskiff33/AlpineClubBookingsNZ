@@ -37,10 +37,10 @@ const MEMBERSHIP_KEYS = [
   "adminFamilyGroupRequest",
   "adminMemberDeleteRequest",
 ] as const;
-// #2780: the first and only `lodge`-area alert. A Booking Officer holds
-// lodge:edit ("manage bed allocation and lodge operations"), so it reaches them
-// too — see the Booking Officer test below.
-const LODGE_KEYS = ["adminMaintenanceReport"] as const;
+// #2780: the first `lodge`-area alert, joined by #49's central-server-version
+// digest entry. A Booking Officer holds lodge:edit ("manage bed allocation and
+// lodge operations"), so both reach them — see the Booking Officer test below.
+const LODGE_KEYS = ["adminMaintenanceReport", "adminServerVersion"] as const;
 
 function member(role: string) {
   return { accessRoles: [{ role }], canLogin: true };
@@ -87,7 +87,7 @@ describe("admin notification category → permission area map (#2548)", () => {
     }
   });
 
-  it("has a requirement for exactly the sixteen preference keys", () => {
+  it("has a requirement for exactly the seventeen preference keys", () => {
     expect(Object.keys(ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT).sort()).toEqual(
       [...ADMIN_NOTIFICATION_PREFERENCE_KEYS].sort(),
     );

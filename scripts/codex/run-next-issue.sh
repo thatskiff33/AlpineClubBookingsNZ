@@ -6,7 +6,7 @@ usage() {
 Usage:
   scripts/codex/run-next-issue.sh [--repo owner/name] [--execute] [--allow-high-risk]
 
-Defaults to prompt-only. Selects at most one open issue labelled codex-ready,
+Defaults to prompt-only. Selects at most one open issue labelled agent-ready,
 skipping codex-blocked, codex-in-progress, and codex-pr-opened.
 USAGE
 }
@@ -51,7 +51,7 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
-ISSUES_JSON="$(gh issue list "${REPO_ARGS[@]}" --state open --label codex-ready --limit 50 --json number,title,labels)"
+ISSUES_JSON="$(gh issue list "${REPO_ARGS[@]}" --state open --label agent-ready --limit 50 --json number,title,labels)"
 
 SELECTED_JSON="$(ISSUES_JSON="$ISSUES_JSON" node <<'NODE'
 const issues = JSON.parse(process.env.ISSUES_JSON);
@@ -63,7 +63,7 @@ if (!selected) {
 process.stdout.write(JSON.stringify(selected));
 NODE
 )" || {
-  echo "run-next-issue: no open codex-ready issue is available after skip labels." >&2
+  echo "run-next-issue: no open agent-ready issue is available after skip labels." >&2
   exit 0
 }
 

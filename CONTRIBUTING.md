@@ -383,7 +383,8 @@ new names, and a required check that has never reported sits on
 
 1. merge the change that adds or renames the job;
 2. then add that job's context to branch protection;
-3. then rebase every open pull request onto the new `main`, oldest first.
+3. then merge the new `main` into every open pull request branch, oldest first,
+   following [`AGENTS.md` → "Safety"](AGENTS.md#safety) for branch-history handling.
 
 **Between step 1 and step 2 the new context is a red check, not a merge
 block.** Splitting out `Dependency audit` (#2946) opened exactly such a gap:
