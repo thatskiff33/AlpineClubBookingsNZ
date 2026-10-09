@@ -91,7 +91,10 @@ import {
   isCapturedTransactionStatus,
 } from "@/lib/payment-transaction-status";
 import { reconcilePaymentAggregates } from "@/lib/payment-transactions";
-import { ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE } from "@/lib/unpaid-ask-offset-marker";
+import {
+  ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
+  recordedReissuedAskInvoiceCents,
+} from "@/lib/unpaid-ask-offset-marker";
 import { waitingSupplementaryInvoiceOperationsWhere } from "@/lib/xero-supplementary-invoice-statuses";
 
 /** What a recovery a reduction netted off says about itself (#3954). */
@@ -141,6 +144,13 @@ export type PendingAskRecovery = {
    * for it, but it is still closed (or refuses the edit) so it cannot write.
    */
   askCents: number;
+  /**
+   * The supplementary invoice its replay would have raised once minted (#3954
+   * decision A): an increase's own net where its edit had an issued primary
+   * invoice (`hadIssuedXeroInvoice`), a re-issue's recorded figure
+   * (`recordedReissuedAskInvoiceCents`), else 0.
+   */
+  invoiceCents: number;
 };
 
 export type UnpaidPriceAsk = {
@@ -274,7 +284,7 @@ export async function readUnpaidPriceAsk(
   const loadModifications = async () =>
     (modifications ??= await db.bookingModification.findMany({
       where: { bookingId: booking.id },
-      select: { id: true, priceDiffCents: true, changeFeeCents: true },
+      select: { id: true, priceDiffCents: true, changeFeeCents: true, newData: true },
     }));
   const chain = await unpaidChain(booking, payment, transactions, loadModifications);
   if (!chain) return NO_UNPAID_PRICE_ASK;
@@ -288,7 +298,7 @@ export async function readUnpaidPriceAsk(
   return askCents > 0 ? { askCents, rows: chain.rows, recoveries } : NO_UNPAID_PRICE_ASK;
 }
 
-type EditFigures = { id: string; priceDiffCents: number; changeFeeCents: number };
+type EditFigures = { id: string; priceDiffCents: number; changeFeeCents: number; newData?: unknown };
 
 type AskTransaction = {
   id: string;
@@ -379,6 +389,7 @@ async function inFlightAskRecoveries(
       idempotencyKey: true,
       paymentIntentId: true,
       amountCents: true,
+      hadIssuedXeroInvoice: true,
       createdAt: true,
     },
   });
@@ -397,6 +408,7 @@ type AskRecoveryOperation = {
   /** The Stripe key until its replay mints, then that intent's id. */
   paymentIntentId: string;
   amountCents: number;
+  hadIssuedXeroInvoice: boolean | null;
   createdAt: Date;
 };
 
@@ -427,12 +439,9 @@ function pendingAskRecoveries(
     const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(
       operation.idempotencyKey,
     );
+    const modification = modifications.find((row) => row.id === bookingModificationId) ?? null;
     const replay = bookingModificationId
-      ? sizeRecoveryReplayAsk({
-          frozenAmountCents: operation.amountCents,
-          modification: modifications.find((row) => row.id === bookingModificationId) ?? null,
-          payment,
-        })
+      ? sizeRecoveryReplayAsk({ frozenAmountCents: operation.amountCents, modification, payment })
       : null;
     const askCents = replay ? recoveryAskBeyondPaymentAskCents(replay) : null;
     if (!bookingModificationId || !replay || replay.kind === "frozen" || askCents === null) {
@@ -460,6 +469,13 @@ function pendingAskRecoveries(
       // Never `undefined`: an undefined filter is no filter at all in Prisma.
       processingStartedAt: operation.processingStartedAt ?? null,
       askCents: settled ? 0 : askCents,
+      invoiceCents: settled
+        ? 0
+        : replay.kind === "reissue"
+          ? recordedReissuedAskInvoiceCents(modification?.newData)
+          : operation.hadIssuedXeroInvoice === true
+            ? askCents
+            : 0,
     });
   }
   return pending;
@@ -492,7 +508,7 @@ export async function retireUnpaidAskChain(
     ask: UnpaidPriceAsk;
     now?: Date;
   },
-): Promise<RetiredAdditionalAsk[]> {
+): Promise<RetiredUnpaidAsk> {
   const retired: RetiredAdditionalAsk[] = [];
   for (const row of ask.rows) {
     // THE FENCE: still unpaid and still unretired, or the whole edit rolls back.
@@ -531,24 +547,42 @@ export async function retireUnpaidAskChain(
   const intentIds = ask.rows.flatMap((row) =>
     row.stripePaymentIntentId ? [row.stripePaymentIntentId] : [],
   );
+  let parkedInvoicedCents = 0;
+  const parkedAnchors = new Set<string>();
   if (intentIds.length > 0 || ask.recoveries.length > 0) {
     // The increase's supplementary invoice waits on its card payment and is
     // never raised before it, so nothing reached Xero for the ask; the parked
     // operation is retired, as a withdrawal retires one (`INV-ADDPAY-040`).
     // An unminted ask's invoice, if one was parked, waits on its edit instead.
+    const parkedWhere = {
+      status: "WAITING_PAYMENT",
+      direction: "OUTBOUND",
+      OR: [
+        ...intentIds.map((intentId) => ({
+          requestPayload: { path: ["paymentIntentId"], equals: intentId },
+        })),
+        ...ask.recoveries.map((recovery) =>
+          waitingSupplementaryInvoiceOperationsWhere(recovery.bookingModificationId),
+        ),
+      ],
+    } satisfies Prisma.XeroSyncOperationWhereInput;
+    // Decision A (#3954, 9 Oct 2026): what those parked invoices would have
+    // billed, so the smaller re-issued ask's own invoice bills exactly what is
+    // left of it - read in this transaction, before they are retired.
+    for (const parked of await tx.xeroSyncOperation.findMany({
+      where: parkedWhere,
+      select: { localModel: true, localId: true, requestPayload: true },
+    })) {
+      const payload = parked.requestPayload && typeof parked.requestPayload === "object" && !Array.isArray(parked.requestPayload)
+        ? (parked.requestPayload as Record<string, unknown>)
+        : {};
+      const priceDiffCents = Number.isInteger(payload.priceDiffCents) ? (payload.priceDiffCents as number) : 0;
+      const changeFeeCents = Number.isInteger(payload.changeFeeCents) ? (payload.changeFeeCents as number) : 0;
+      parkedInvoicedCents += Math.max(0, priceDiffCents + changeFeeCents);
+      if (parked.localModel === "BookingModification" && parked.localId) parkedAnchors.add(parked.localId);
+    }
     await tx.xeroSyncOperation.updateMany({
-      where: {
-        status: "WAITING_PAYMENT",
-        direction: "OUTBOUND",
-        OR: [
-          ...intentIds.map((intentId) => ({
-            requestPayload: { path: ["paymentIntentId"], equals: intentId },
-          })),
-          ...ask.recoveries.map((recovery) =>
-            waitingSupplementaryInvoiceOperationsWhere(recovery.bookingModificationId),
-          ),
-        ],
-      },
+      where: parkedWhere,
       data: {
         status: "CANCELLED",
         completedAt: now,
@@ -560,8 +594,31 @@ export async function retireUnpaidAskChain(
   }
 
   await reconcilePaymentAggregates({ paymentId, store: tx });
-  return retired;
+  // A waiting ask had no parked invoice to read: what its replay would have
+  // raised once minted is carried on it (`PendingAskRecovery.invoiceCents`).
+  const unparkedInvoicedCents = ask.recoveries
+    .filter((recovery) => !parkedAnchors.has(recovery.bookingModificationId))
+    .reduce((sum, recovery) => sum + recovery.invoiceCents, 0);
+  return {
+    retired,
+    invoicedCents: parkedInvoicedCents + unparkedInvoicedCents,
+    retiredAskModificationIds: [
+      ...new Set([...parkedAnchors, ...ask.recoveries.map((recovery) => recovery.bookingModificationId)]),
+    ],
+  };
 }
+
+/**
+ * What `retireUnpaidAskChain` retired: the intents to cancel at Stripe, what
+ * the retired asks' supplementary invoices would have billed (decision A sizes
+ * the re-issue's invoice from it), and the edits whose asks they were - parked
+ * invoices' anchors and waiting recoveries' edits - for the reduction's history.
+ */
+export type RetiredUnpaidAsk = {
+  retired: RetiredAdditionalAsk[];
+  invoicedCents: number;
+  retiredAskModificationIds: string[];
+};
 
 /**
  * Close asks still waiting on their failed mint's recovery, under the caller's
@@ -677,6 +734,7 @@ export async function foldWaitingReissuedAsks(
       attempts: operation.attempts,
       processingStartedAt: operation.processingStartedAt ?? null,
       askCents: replay.frozenCents,
+      invoiceCents: 0,
     });
   }
   await closeWaitingAskRecoveries(tx, waiting, now, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE);

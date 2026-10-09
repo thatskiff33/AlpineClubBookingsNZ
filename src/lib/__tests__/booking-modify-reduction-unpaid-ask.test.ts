@@ -59,6 +59,11 @@ const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
 }));
 
+// #3954 decision A: the re-issue's own invoice, queued after its mint
+// (`reissued-ask-invoice.test.ts` owns what it queues).
+const queueReissueInvoice = vi.hoisted(() => vi.fn(async (params: Record<string, unknown>) => { void params; }));
+vi.mock("@/lib/reissued-ask-invoice", () => ({ queueReissuedAskSupplementaryInvoice: queueReissueInvoice }));
+
 vi.mock("@/lib/stripe", async (importOriginal) => ({
   ...((await importOriginal()) as object),
   createPaymentIntent: mocks.createIntent,
@@ -135,6 +140,7 @@ const state = vi.hoisted(() => ({
   stampCount: 1,
   recoveries: [] as unknown[],
   recoveryCloseCount: 1,
+  parkedInvoices: [] as unknown[],
 }));
 
 const paymentUpdate = vi.fn();
@@ -158,7 +164,9 @@ const tx = {
     findMany: vi.fn(async () => state.recoveries),
     updateMany: recoveryUpdateMany,
   },
-  xeroSyncOperation: { updateMany: xeroUpdateMany },
+  // #3954 decision A: the parked invoices the retire cancels are read first,
+  // for what they would have billed.
+  xeroSyncOperation: { updateMany: xeroUpdateMany, findMany: vi.fn(async () => state.parkedInvoices) },
 } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 function askRow(overrides: Partial<Row> = {}): Row {
@@ -265,6 +273,7 @@ beforeEach(() => {
   state.stampCount = 1;
   state.recoveries = [];
   state.recoveryCloseCount = 1;
+  state.parkedInvoices = [];
   transactionUpdateMany.mockImplementation(async () => ({ count: state.stampCount }));
   recoveryUpdateMany.mockImplementation(async () => ({ count: state.recoveryCloseCount }));
   xeroUpdateMany.mockImplementation(async () => ({ count: 1 }));
@@ -616,6 +625,12 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     });
     // The row is written on the completing transaction's client.
     expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({ store: expect.anything() }));
+    // Decision A: then the smaller ask's own invoice, waiting on the intent.
+    expect(queueReissueInvoice).toHaveBeenCalledWith({
+      bookingId: "booking_3954",
+      bookingModificationId: "mod_reduction",
+      paymentIntentId: "pi_reissued_3000",
+    });
   });
 
   it.each(["PROCESSING", "SUCCEEDED"])(
@@ -637,6 +652,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
 
     expect(mocks.createIntent).toHaveBeenCalledTimes(1);
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(queueReissueInvoice).not.toHaveBeenCalled();
     expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined });
   });
 
@@ -707,7 +723,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       expect(result.additionalAsk.carriedCents).toBe(3_000);
       expect(result.additionalAsk.reissuesUnpaidAsk).toBe(true);
       expect(result.retiredAdditionalAsks).toEqual([]);
-      expect(result.retiredPendingAskModificationIds).toEqual(["mod_increase"]);
+      expect(result.retiredAskModificationIds).toEqual(["mod_increase"]);
       expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
       expect(recoveryUpdateMany).toHaveBeenCalledWith({
         where: { id: RECOVERY_ID, status: "FAILED", attempts: 1, processingStartedAt: null },
@@ -799,7 +815,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
     expect(transactionUpdateMany.mock.calls.map(([call]) => call.where.id)).toEqual([ASK_ROW_ID]);
     // Not counted, not closed: the officer's charge mints as set.
     expect(recoveryUpdateMany).not.toHaveBeenCalled();
-    expect(result.retiredPendingAskModificationIds).toEqual([]);
+    expect(result.retiredAskModificationIds).toEqual([]);
   });
 
   it("decision B: with only a review charge waiting there is no price ask to net, and the reduction settles as before", async () => {
@@ -1047,5 +1063,42 @@ describe("#3954 round 4: a re-issued ask is durable from the edit's commit", () 
       now: NOW,
     });
     expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("#3954 decision A: the smaller re-issued ask's own invoice bills what the retired invoices left", () => {
+  function parkedSupplementary(priceDiffCents: number, changeFeeCents = 0) {
+    return { localModel: "BookingModification", localId: "mod_increase", requestPayload: { priceDiffCents, changeFeeCents, paymentIntentId: ASK_INTENT } };
+  }
+
+  it("MUTATION: the increase's parked $50 invoice is retired and the $30 re-issue records a $30 invoice of its own", async () => {
+    state.parkedInvoices = [parkedSupplementary(5_000)];
+    const result = await adjust(grownBooking({ xeroInvoiceId: "INV-3954" }), -2_000);
+
+    expect(result.additionalAsk.amountCents).toBe(3_000);
+    expect(result.reissuedAskInvoiceCents).toBe(3_000);
+    expect(result.unpaidAskBilledOffsetCents).toBe(0);
+    expect(result.retiredAskModificationIds).toEqual(["mod_increase"]);
+  });
+
+  it("MUTATION: an ask the primary invoice already billed raises no second invoice - the offset Xero billed is recorded for the repair pass instead", async () => {
+    // The primary invoice was raised after the increase, so it bills the $50;
+    // no supplementary invoice was ever parked.
+    state.parkedInvoices = [];
+    const result = await adjust(grownBooking({ xeroInvoiceId: "INV-3954" }), -2_000);
+
+    expect(result.additionalAsk.amountCents).toBe(3_000);
+    expect(result.reissuedAskInvoiceCents).toBe(0);
+    expect(result.unpaidAskBilledOffsetCents).toBe(2_000);
+  });
+
+  it("a cancelled ask has no re-issue to invoice; with no issued primary invoice nothing was billed either", async () => {
+    state.parkedInvoices = [parkedSupplementary(5_000)];
+    const cancelled = await adjust(grownBooking({ xeroInvoiceId: "INV-3954" }), -5_000);
+    expect([cancelled.reissuedAskInvoiceCents, cancelled.unpaidAskBilledOffsetCents]).toEqual([0, 0]);
+
+    state.parkedInvoices = [];
+    const noInvoice = await adjust(grownBooking(), -2_000);
+    expect([noInvoice.reissuedAskInvoiceCents, noInvoice.unpaidAskBilledOffsetCents]).toEqual([0, 0]);
   });
 });

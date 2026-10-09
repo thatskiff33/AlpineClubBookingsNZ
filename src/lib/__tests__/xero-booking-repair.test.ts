@@ -7283,7 +7283,7 @@ describe("#3954: a reduction set against an unpaid ask", () => {
     expect(finding?.details).toMatchObject({ modificationId: "mod_reduction", refundDueCents: 3000 });
   });
 
-  it("MUTATION: reports the increase's retired invoice for a person, never as a one-click bill", async () => {
+  it("MUTATION: reports a retired invoice NO reduction names for a person, never as a one-click bill", async () => {
     const deps = createDependencies({
       bookings: [reducedAfterUnpaidAsk(-5000, 5000)],
       operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
@@ -7298,24 +7298,101 @@ describe("#3954: a reduction set against an unpaid ask", () => {
       safeToAutoApply: false,
       details: { modificationId: "mod_increase", retiredBy: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION" },
     });
+    expect(finding?.summary).toMatch(/supplementary Xero invoice was retired/);
     expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
   });
 
-  it("MUTATION: an increase whose mint failed and was netted off before its retry, with no parked invoice to carry the code, is reported for a person too", async () => {
+  it.each([
+    ["its parked invoice retired", true],
+    ["netted off before its failed mint's retry, with no invoice ever parked", false],
+  ])(
+    "MUTATION (round 4): an increase a reduction names (%s) and cancelled whole raises nothing - it does not sit in manual review for ever",
+    async (_label, parked) => {
+      const deps = createDependencies({
+        bookings: [reducedAfterUnpaidAsk(-5000, 5000, { unpaidAskRetiredModificationIds: ["mod_increase"] })],
+        operations: [makePrimaryInvoiceCreateOperation(), ...(parked ? [retiredSupplementary()] : [])],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      const bookingReport = report.passes[0].bookings[0];
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+    },
+  );
+
+  describe("decision A: the smaller re-issued ask's own invoice", () => {
+    const shrunk = () =>
+      reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], reissuedAskInvoiceCents: 3000 });
+    const reissueInvoice = (status: string) =>
+      makeOperation({
+        id: "operation_reissue_supplementary",
+        localModel: "BookingModification",
+        localId: "mod_reduction",
+        status,
+        queueType: "SUPPLEMENTARY_INVOICE",
+        xeroObjectType: null,
+        xeroObjectId: null,
+        requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: "pi_reissued", priceDiffCents: 3000, changeFeeCents: 0 },
+      });
+
+    it("MUTATION: reports the reduction - not the increase - when the smaller ask has no invoice, with the figure it records", async () => {
+      const deps = createDependencies({
+        bookings: [shrunk()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      const findings = report.passes[0].bookings[0].findings.filter((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({
+        severity: "manual_review",
+        safeToAutoApply: false,
+        details: { modificationId: "mod_reduction", reissuedAskInvoiceCents: 3000 },
+      });
+    });
+
+    it("is satisfied by the invoice queued waiting on the re-issued ask", async () => {
+      const deps = createDependencies({
+        bookings: [shrunk()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary(), reissueInvoice("WAITING_PAYMENT")],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+    });
+
+    it("MUTATION: is deferred while the re-issue's mint is still owed by its recovery", async () => {
+      const { buildAdditionalIntentRecoveryIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+      const deps = createDependencies({
+        bookings: [shrunk()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+        editReviewChargeIntentRecoveries: [
+          { bookingId: "booking_1", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_reduction"), status: "PENDING" },
+        ],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+    });
+  });
+
+  it("MUTATION (round 4): an offset Xero had already billed is reported for a credit note by a person", async () => {
     const deps = createDependencies({
-      bookings: [reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"] })],
+      bookings: [reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], unpaidAskBilledOffsetCents: 2000 })],
       operations: [makePrimaryInvoiceCreateOperation()],
     });
 
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
 
-    const bookingReport = report.passes[0].bookings[0];
-    const finding = bookingReport.findings.find((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+    const finding = report.passes[0].bookings[0].findings.find((candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE");
     expect(finding).toMatchObject({
       severity: "manual_review",
       safeToAutoApply: false,
-      details: { modificationId: "mod_increase", retiredBy: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION" },
+      details: { modificationId: "mod_reduction", unpaidAskBilledOffsetCents: 2000 },
     });
-    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
   });
 });

@@ -72,8 +72,12 @@ import {
   ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE,
   ASK_RETIRED_BY_REDUCTION_SUMMARY,
   isAskRetiredByReductionOperation,
-  isPendingAskRetiredByReduction,
+  recordedReissuedAskInvoiceCents,
+  recordedUnpaidAskBilledOffsetCents,
   recordedUnpaidAskOffsetCents,
+  REISSUED_ASK_INVOICE_MISSING_SUMMARY,
+  retiringReductionFor,
+  UNPAID_ASK_BILLED_OFFSET_SUMMARY,
 } from "@/lib/unpaid-ask-offset-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
 import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
@@ -633,15 +637,17 @@ export function classifyBookingContext(
             },
             actionKeys: [manualAction.key],
           });
-        } else if (
-          !blockingOperation &&
-          (modificationOperations.some(isAskRetiredByReductionOperation) ||
-            isPendingAskRetiredByReduction(modification.id, booking.modifications))
-        ) {
-          // #3954 (`INV-PAY-119`): a later reduction retired this edit's unpaid
-          // ask and its invoice - or netted off the ask before its failed mint's
-          // retry ran, when no invoice was parked to carry the code; a one-click
-          // bill would charge money nobody owes.
+        } else if (!blockingOperation && retiringReductionFor(modification.id, booking.modifications)) {
+          // #3954 (`INV-PAY-119`, review round 4): a later reduction retired
+          // this edit's unpaid ask - its parked invoice, or the ask itself
+          // before its failed mint's retry ran - and its history names this
+          // edit. What Xero is owed for it now is that reduction's: the smaller
+          // re-issued ask's own invoice, or nothing when the ask was cancelled,
+          // both checked on the reduction below. No finding here, so a fully
+          // cancelled ask does not sit in manual review for ever.
+        } else if (!blockingOperation && modificationOperations.some(isAskRetiredByReductionOperation)) {
+          // A retired invoice no reduction names: a one-click bill would charge
+          // money nobody owes, so a person looks.
           const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, ASK_RETIRED_BY_REDUCTION_SUMMARY));
           addFinding(findings, {
             code: "MISSING_SUPPLEMENTARY_INVOICE",
@@ -871,6 +877,49 @@ export function classifyBookingContext(
           });
         }
       }
+    }
+
+    // #3954 decision A (owner, 9 Oct 2026): a reduction that only shrank an
+    // unpaid ask re-issues it with its own supplementary invoice, raised once
+    // the smaller ask is minted. Present (queued, waiting, raised or linked),
+    // deferred (its mint's recovery still open), or carried on (a later
+    // reduction retired the re-issue in turn, and names this edit) - else a
+    // person raises it.
+    const reissuedAskInvoiceCents = recordedReissuedAskInvoiceCents(modification.newData);
+    if (
+      reissuedAskInvoiceCents > 0 &&
+      primaryInvoice &&
+      !modificationLinks.some((link) => link.xeroObjectType === "INVOICE" && link.role === "SUPPLEMENTARY_INVOICE") &&
+      !modificationOperations.some(
+        (operation) => operation.entityType === "INVOICE" && operation.operationType === "CREATE" && operation.status !== "CANCELLED",
+      ) &&
+      !context.openAdditionalIntentRecoveryModificationIds.has(modification.id) &&
+      !retiringReductionFor(modification.id, booking.modifications)
+    ) {
+      const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, REISSUED_ASK_INVOICE_MISSING_SUMMARY));
+      addFinding(findings, {
+        code: "MISSING_SUPPLEMENTARY_INVOICE",
+        severity: "manual_review",
+        summary: REISSUED_ASK_INVOICE_MISSING_SUMMARY,
+        safeToAutoApply: false,
+        details: { modificationId: modification.id, reissuedAskInvoiceCents, xeroInvoiceId: primaryInvoice.objectId },
+        actionKeys: [manualAction.key],
+      });
+    }
+    // #3954 review round 4: the part of the offset Xero had already billed (a
+    // primary invoice raised after the increase carries the ask) is owed a
+    // credit note this edit did not raise.
+    const unpaidAskBilledOffsetCents = recordedUnpaidAskBilledOffsetCents(modification.newData);
+    if (unpaidAskBilledOffsetCents > 0 && primaryInvoice) {
+      const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, UNPAID_ASK_BILLED_OFFSET_SUMMARY));
+      addFinding(findings, {
+        code: "MISSING_MODIFICATION_CREDIT_NOTE",
+        severity: "manual_review",
+        summary: UNPAID_ASK_BILLED_OFFSET_SUMMARY,
+        safeToAutoApply: false,
+        details: { modificationId: modification.id, unpaidAskBilledOffsetCents, xeroInvoiceId: primaryInvoice.objectId },
+        actionKeys: [manualAction.key],
+      });
     }
 
     // #3954: what an unpaid ask took of a reduction returned no money, so no note.

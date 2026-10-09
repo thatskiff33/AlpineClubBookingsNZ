@@ -107,8 +107,16 @@ export type PaymentAdjustmentResult = {
    */
   unpaidAskOffsetCents: number;
   retiredAdditionalAsks: RetiredAdditionalAsk[];
-  /** #3954: increases whose waiting mint recovery this reduction closed, for the history row. */
-  retiredPendingAskModificationIds: string[];
+  /**
+   * #3954: the edits whose unpaid asks this reduction retired - a parked
+   * invoice's anchor, or a waiting recovery's edit - for the history row the
+   * booking-vs-Xero repair pass reads.
+   */
+  retiredAskModificationIds: string[];
+  /** #3954 decision A: what the re-issued ask's own supplementary invoice bills, 0 for none. */
+  reissuedAskInvoiceCents: number;
+  /** #3954: the part of the offset Xero had already billed, for the repair pass. */
+  unpaidAskBilledOffsetCents: number;
 };
 
 /**
@@ -330,13 +338,31 @@ export async function applyPaymentAdjustments(
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
   let retiredAdditionalAsks: RetiredAdditionalAsk[] = [];
+  let retiredAskModificationIds: string[] = [];
+  let reissuedAskInvoiceCents = 0;
+  let unpaidAskBilledOffsetCents = 0;
 
   if (setAgainstAsk.offsetCents > 0 && booking.payment) {
-    retiredAdditionalAsks = await retireUnpaidAskChain(tx, {
+    const retiredAsk = await retireUnpaidAskChain(tx, {
       bookingId: booking.id,
       paymentId: booking.payment.id,
       ask: unpaidAsk,
     });
+    retiredAdditionalAsks = retiredAsk.retired;
+    retiredAskModificationIds = retiredAsk.retiredAskModificationIds;
+    // Decision A (#3954, owner 9 Oct 2026, "Raise a $30 invoice"): the smaller
+    // ask gets its own supplementary invoice for what the retired asks' invoices
+    // would have billed, less the offset - never more than the ask itself.
+    // What the offset took beyond those invoices was money Xero had ALREADY
+    // billed (a primary invoice raised after the increase), recorded for the
+    // repair pass rather than billed again.
+    reissuedAskInvoiceCents = Math.min(
+      setAgainstAsk.askLeftCents,
+      Math.max(0, retiredAsk.invoicedCents - setAgainstAsk.offsetCents),
+    );
+    unpaidAskBilledOffsetCents = hasIssuedXeroInvoice
+      ? Math.max(0, setAgainstAsk.offsetCents - retiredAsk.invoicedCents)
+      : 0;
     // What the reduction did not cover is still owed, on a fresh ask that
     // carries it (`INV-PAY-098`); the minter mints it after commit.
     additionalAsk = reissueUnpaidAdditionalAsk({ askLeftCents: setAgainstAsk.askLeftCents });
@@ -464,10 +490,9 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     unpaidAskOffsetCents: setAgainstAsk.offsetCents,
     retiredAdditionalAsks,
-    retiredPendingAskModificationIds:
-      setAgainstAsk.offsetCents > 0
-        ? unpaidAsk.recoveries.map((recovery) => recovery.bookingModificationId)
-        : [],
+    retiredAskModificationIds,
+    reissuedAskInvoiceCents,
+    unpaidAskBilledOffsetCents,
   };
 }
 

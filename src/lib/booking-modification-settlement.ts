@@ -8,6 +8,7 @@ import {
   writeReissuedAskUnderRecovery,
   type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
+import { queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   cancelSupersededAdditionalIntentsNow,
   queueSupersededAdditionalIntentCancellationRows,
@@ -418,6 +419,12 @@ export async function createModificationAdditionalPaymentIntent({
         };
       }
       await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded });
+      // Decision A (#3954): the smaller ask's own invoice, waiting on it.
+      await queueReissuedAskSupplementaryInvoice({
+        bookingId,
+        bookingModificationId: result.bookingModificationId,
+        paymentIntentId: pi.id,
+      });
       return {
         additionalPaymentClientSecret: pi.client_secret ?? undefined,
         additionalPaymentIntentId: pi.id,

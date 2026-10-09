@@ -20,6 +20,7 @@ import {
 } from "./xero-booking-repair-types";
 import {
   buildBookingCancellationRefundIdempotencyKey,
+  buildAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "./payment-recovery-keys";
@@ -273,6 +274,19 @@ export async function loadAuditData(
       modificationId,
     ])
   );
+  /**
+   * #3954 review round 4: the ORDINARY edit's key, read in the same query, so a
+   * reduction whose smaller re-issued ask has not been minted yet - its own
+   * recovery still open - is deferred rather than reported as missing the
+   * invoice that mint will raise. A different map, so neither key is ever read
+   * as the other's.
+   */
+  const modificationIdByOrdinaryIntentRecoveryKey = new Map<string, string>(
+    modificationIds.map((modificationId) => [
+      buildAdditionalIntentRecoveryIdempotencyKey(modificationId),
+      modificationId,
+    ])
+  );
 
   const [
     links,
@@ -359,7 +373,10 @@ export async function loadAuditData(
             type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
             status: { in: [...OPEN_PAYMENT_RECOVERY_STATUSES] },
             idempotencyKey: {
-              in: [...modificationIdByIntentRecoveryKey.keys()],
+              in: [
+                ...modificationIdByIntentRecoveryKey.keys(),
+                ...modificationIdByOrdinaryIntentRecoveryKey.keys(),
+              ],
             },
           },
           select: { bookingId: true, idempotencyKey: true },
@@ -505,7 +522,15 @@ export async function loadAuditData(
     string,
     Set<string>
   >();
+  const openAdditionalIntentRecoveriesByBookingId = new Map<string, Set<string>>();
   for (const recovery of editReviewChargeIntentRecoveries) {
+    const ordinaryModificationId = modificationIdByOrdinaryIntentRecoveryKey.get(recovery.idempotencyKey);
+    if (ordinaryModificationId) {
+      const anchors = openAdditionalIntentRecoveriesByBookingId.get(recovery.bookingId) ?? new Set<string>();
+      anchors.add(ordinaryModificationId);
+      openAdditionalIntentRecoveriesByBookingId.set(recovery.bookingId, anchors);
+      continue;
+    }
     // Redundant with the exact-key `in` filter above, and deliberately kept: if
     // that query is ever widened, an ORDINARY edit's recovery row must not be
     // read as a review charge's. Fail closed rather than defer the wrong edit.
@@ -695,5 +720,7 @@ export async function loadAuditData(
     openEditReviewChargeIntentRecoveryModificationIds:
       editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
       new Set<string>(),
+    openAdditionalIntentRecoveryModificationIds:
+      openAdditionalIntentRecoveriesByBookingId.get(booking.id) ?? new Set<string>(),
   }));
 }

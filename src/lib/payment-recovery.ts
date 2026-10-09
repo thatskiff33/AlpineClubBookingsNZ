@@ -40,6 +40,7 @@ import {
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
+import { queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import { isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
@@ -3041,8 +3042,16 @@ async function processCreateAdditionalPaymentIntentOperation(
    * late-change fee) separates - the pair is what `INV-MONEY`/#1356 requires and
    * what the booking-vs-Xero repair pass reads for the same invoice.
    */
-  // #3954: a re-issued ask deferred nothing - its edit lowered the price and
-  // ran its Xero leg inline - so there is no supplementary invoice to raise.
+  // #3954 decision A: a re-issued ask's invoice is its reducing edit's own,
+  // sized by that edit (`queueReissuedAskSupplementaryInvoice`), not the edit's
+  // signed components - which are a reduction.
+  if (bookingModificationId && reissuesReducedAsk) {
+    await queueReissuedAskSupplementaryInvoice({
+      bookingId: operation.bookingId,
+      bookingModificationId,
+      paymentIntentId: pi.id,
+    });
+  }
   if (bookingModificationId && !reissuesReducedAsk) {
     // Read above the mint, deliberately: see the hoist's own comment.
     if (modificationToBill) {

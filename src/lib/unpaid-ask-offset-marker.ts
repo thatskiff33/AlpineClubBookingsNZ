@@ -42,28 +42,70 @@ export function isAskRetiredByReductionOperation(operation: {
   );
 }
 
+/**
+ * The booking-vs-Xero repair pass's summary for an increase whose parked
+ * supplementary invoice carries the retired code but which no reduction's
+ * history names (#3954 review round 4). Only the retired-invoice path can reach
+ * it - an ask netted off before it minted is always named by its reduction and
+ * is accounted for there - so the sentence is true where it is said (Xero lens F4).
+ */
 export const ASK_RETIRED_BY_REDUCTION_SUMMARY =
   "A later change lowered this booking's price before the member paid the extra this edit asked for, so that card request was cancelled or made smaller and its supplementary Xero invoice was retired. Check the booking's later changes and payments before raising any invoice for this edit.";
 
+/** The repair pass's summary for a re-issued ask with no supplementary invoice (amount in the details). */
+export const REISSUED_ASK_INVOICE_MISSING_SUMMARY =
+  "This change made the member's unpaid extra payment smaller, and the smaller request has no supplementary Xero invoice. Raise one for the amount shown, waiting on that card request, or check whether the member has already paid it.";
+
+/** The repair pass's summary for an offset Xero had already billed (amount in the details). */
+export const UNPAID_ASK_BILLED_OFFSET_SUMMARY =
+  "This change cancelled part of an unpaid extra payment that Xero had already billed on the booking's invoice (the invoice was raised after the extra was asked for), so Xero still bills the amount shown, which the member no longer owes. Raise a credit note for it against the booking's invoice.";
+
 /**
- * #3954 "retry nets it off": the increases whose card ask had not been minted
- * yet - its mint failed and waited on a recovery - when this reduction netted
- * it off. Those increases have no parked invoice to carry the retired code, so
- * the reduction names them.
+ * #3954 "retry nets it off" and review round 4: the increases whose unpaid ask
+ * this reduction retired - an ask's parked supplementary invoice it cancelled,
+ * or an ask still waiting on its failed mint's recovery it closed. The repair
+ * pass reads the reduction, not the increase, for what Xero is owed for them.
  */
 const RETIRED_PENDING_ASKS_KEY = "unpaidAskRetiredModificationIds" as const;
+
+/**
+ * #3954 decision A (owner, 9 Oct 2026, "Raise a $30 invoice"): what the
+ * supplementary invoice for this reduction's smaller re-issued ask bills -
+ * raised once that ask is minted, waiting on it (`queueReissuedAskSupplementaryInvoice`).
+ * It is the retired asks' invoiced money less the offset, never more than the
+ * re-issued ask: money the booking's primary invoice already billed is not
+ * billed twice.
+ */
+const REISSUED_ASK_INVOICE_KEY = "reissuedAskInvoiceCents" as const;
+
+/**
+ * #3954 review round 4: the part of the offset Xero had ALREADY billed - the
+ * primary invoice was raised after the increase, so it carries the ask - which
+ * therefore needs a credit note this edit does not raise; the repair pass
+ * reports it for a person.
+ */
+const BILLED_OFFSET_KEY = "unpaidAskBilledOffsetCents" as const;
 
 /** The `newData` fields an edit writes for what of its reduction an unpaid ask took, or none. */
 export function unpaidAskOffsetHistory(settled: {
   unpaidAskOffsetCents: number;
-  retiredPendingAskModificationIds: readonly string[];
-}): { [HISTORY_KEY]?: number; [RETIRED_PENDING_ASKS_KEY]?: string[] } {
+  retiredAskModificationIds: readonly string[];
+  reissuedAskInvoiceCents: number;
+  unpaidAskBilledOffsetCents: number;
+}): {
+  [HISTORY_KEY]?: number;
+  [RETIRED_PENDING_ASKS_KEY]?: string[];
+  [REISSUED_ASK_INVOICE_KEY]?: number;
+  [BILLED_OFFSET_KEY]?: number;
+} {
   if (settled.unpaidAskOffsetCents <= 0) return {};
   return {
     [HISTORY_KEY]: settled.unpaidAskOffsetCents,
-    ...(settled.retiredPendingAskModificationIds.length > 0
-      ? { [RETIRED_PENDING_ASKS_KEY]: [...settled.retiredPendingAskModificationIds] }
+    ...(settled.retiredAskModificationIds.length > 0
+      ? { [RETIRED_PENDING_ASKS_KEY]: [...settled.retiredAskModificationIds] }
       : {}),
+    ...(settled.reissuedAskInvoiceCents > 0 ? { [REISSUED_ASK_INVOICE_KEY]: settled.reissuedAskInvoiceCents } : {}),
+    ...(settled.unpaidAskBilledOffsetCents > 0 ? { [BILLED_OFFSET_KEY]: settled.unpaidAskBilledOffsetCents } : {}),
   };
 }
 
@@ -73,22 +115,39 @@ function historyRecord(newData: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** The offset an edit's history row records, or 0. */
-export function recordedUnpaidAskOffsetCents(newData: unknown): number {
-  const value = historyRecord(newData)?.[HISTORY_KEY];
+function recordedPositiveCents(newData: unknown, key: string): number {
+  const value = historyRecord(newData)?.[key];
   return Number.isInteger(value) && (value as number) > 0 ? (value as number) : 0;
 }
 
+/** The offset an edit's history row records, or 0. */
+export function recordedUnpaidAskOffsetCents(newData: unknown): number {
+  return recordedPositiveCents(newData, HISTORY_KEY);
+}
+
+/** What a reduction's re-issued ask's supplementary invoice bills, or 0 (decision A). */
+export function recordedReissuedAskInvoiceCents(newData: unknown): number {
+  return recordedPositiveCents(newData, REISSUED_ASK_INVOICE_KEY);
+}
+
+/** The part of a reduction's offset Xero had already billed, or 0. */
+export function recordedUnpaidAskBilledOffsetCents(newData: unknown): number {
+  return recordedPositiveCents(newData, BILLED_OFFSET_KEY);
+}
+
 /**
- * Whether a later reduction netted off this increase's unminted ask - the
- * repair pass's reading for an increase with no parked invoice to look at.
+ * The reduction whose history names this modification as one whose unpaid ask
+ * it retired, or null - the repair pass's reading for an increase whose
+ * invoice a reduction retired, or whose ask it netted off before it minted.
  */
-export function isPendingAskRetiredByReduction(
+export function retiringReductionFor<M extends { id: string; newData: unknown }>(
   modificationId: string,
-  modifications: readonly { newData: unknown }[],
-): boolean {
-  return modifications.some((modification) => {
-    const ids = historyRecord(modification.newData)?.[RETIRED_PENDING_ASKS_KEY];
-    return Array.isArray(ids) && ids.includes(modificationId);
-  });
+  modifications: readonly M[],
+): M | null {
+  return (
+    modifications.find((modification) => {
+      const ids = historyRecord(modification.newData)?.[RETIRED_PENDING_ASKS_KEY];
+      return Array.isArray(ids) && ids.includes(modificationId);
+    }) ?? null
+  );
 }
