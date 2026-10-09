@@ -1,30 +1,30 @@
-# Fragility review: proposed business areas
+# Fragility review: business areas
 
 Audience: Maintainer
 
 This is the first half of Goal 1's first move ([GOALS.md](../GOALS.md#first-move-find-where-bugs-come-back)):
-a proposed list of business areas, with raw counts of "bugs that came back"
-per area. **Nothing here is ranked.** The maintainer edits and confirms the
-list first; the ranking, with each area's evidence pairs, follows in a
+a list of business areas, with raw counts of "bugs that came back" per area.
+**Nothing here is ranked.** The maintainer confirmed the 15-area list as is on
+9 Oct 2026; the ranking, with each area's evidence pairs, follows in a
 separate task (ALP-7).
 
-## Owner: edit this list
+## Owner decisions
 
-Change, merge, split or drop any area below, then say "confirmed". The
-mapping rules live in `AREAS` in `scripts/audit/fragility-areas.mjs`, so an
-edit here is a one-line edit there.
+The list below is confirmed. Its mapping rules live in `AREAS` in
+`scripts/audit/fragility-areas.mjs`, so any later edit is a one-line edit
+there.
 
-Decisions this list needs from you:
-
-1. **Area list.** These 15 areas, or an edited version.
+1. **Area list.** Confirmed as is (9 Oct 2026).
 2. **Dates and club time.** Fixes for the NZ lodge-night boundary (for
    example the lodge kiosk using the tablet's clock) currently fall into
-   whichever area the code sits in. Make it a 16th area, or leave it spread?
+   whichever area the code sits in. Left spread: confirming the 15 areas
+   as is means no 16th area.
 3. **Lookback.** Counts cover the full history; the "since 8 Aug" column
    counts only pairs whose later fix landed after the 8 Aug audit
-   (epics #2680, #2725). Rank on full history, or on the post-audit window?
+   (epics #2680, #2725). Open: rank on full history, the post-audit
+   window, or both side by side. ALP-7 needs this answer.
 
-| # | Proposed area | What it covers |
+| # | Area | What it covers |
 | --: | --- | --- |
 | 1 | Xero sync and accounting outbox | Outbox, retries, invoice and credit-note sync, repair passes |
 | 2 | Payments, refunds and member credit | Stripe, internet banking, refunds, member credit, promo codes, finance figures |
