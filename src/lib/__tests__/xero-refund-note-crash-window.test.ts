@@ -48,6 +48,8 @@ const state = vi.hoisted(() => ({
     failNextPayment: null as null | "before-commit" | "after-commit",
     /** #3880 F2: the next credit-note create is refused before Xero raises anything. */
     failNextCreate: false,
+    /** #3924 round 9: the next create raises its note in Xero, then its answer is lost. */
+    loseNextCreateAnswer: false,
     readBarrier: null as null | { waiting: Array<() => void>; size: number },
   },
 }));
@@ -262,6 +264,10 @@ function xeroApi() {
           payments: [],
         });
         state.xero.noteKeys.set(key, id);
+      }
+      if (state.xero.loseNextCreateAnswer) {
+        state.xero.loseNextCreateAnswer = false;
+        throw new Error("socket hang up after Xero raised the note");
       }
       const note = state.xero.notes.get(id)!;
       return { body: { creditNotes: [{ creditNoteID: note.creditNoteID, creditNoteNumber: note.creditNoteNumber }] } };
@@ -504,6 +510,7 @@ beforeEach(() => {
   state.xero.createPaymentsCalls = [];
   state.xero.failNextPayment = null;
   state.xero.failNextCreate = false;
+  state.xero.loseNextCreateAnswer = false;
   state.xero.readBarrier = null;
   seedPayment();
 });
@@ -926,12 +933,13 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
 
     // #3924 round 9: the Xero key is the close's and its own coverage, never
     // the payment-wide watermark another refund's note can move.
-    it("MUTATION: round 9: a close's note that reached Xero before a crash is answered by Xero with the same note on retry, though another note landed meanwhile", async () => {
+    it("MUTATION: round 9: a close's note Xero raised but whose answer was lost is answered by Xero with the same note on retry, though another note landed meanwhile", async () => {
       seedPayment(PaymentSource.INTERNET_BANKING);
       state.closes = { close_1: 2500 };
       queueClose("op_close", "close_1", 2500, 2500);
-      state.crash = "at-completion";
-      await expect(dispatch("op_close")).rejects.toBe(CRASH);
+      state.xero.loseNextCreateAnswer = true;
+      await expect(dispatch("op_close")).rejects.toThrow(/socket hang up/);
+      expect(row("op_close")).toMatchObject({ status: "FAILED", xeroObjectId: null });
       expect(state.xero.notes.size).toBe(1);
       const [firstKey] = [...state.xero.noteKeys.keys()];
       expect(firstKey).toBe(`payment:${PAYMENT_ID}:refund-credit-note:paid-another-way:close_1:0:v3`);
