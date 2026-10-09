@@ -5,6 +5,7 @@
  *
  *   GITHUB_TOKEN=… pnpm run audit:fragility:collect
  *   pnpm run audit:fragility:collect --git-only   # collectors 2 and 3 only
+ *   pnpm run audit:fragility:collect --github-only   # collector 1 only
  *
  * Writes `tmp/fragility/*.json` (git-ignored) under the checkout root, wherever
  * it is run from. Every run rebuilds every file it owns from scratch, so a
@@ -14,13 +15,16 @@
  *
  * 1. github.json  — every issue and PR, every comment, and every `reopened`
  *    event on the repository, via the REST API. Needs a read-only
- *    `GITHUB_TOKEN`; there is deliberately no anonymous fallback, because the
+ *    `GITHUB_TOKEN`; the anonymous fallback is opt-in (`--anonymous`) because the
  *    60-requests-an-hour limit cannot finish the ~390 pages this needs.
  *    Without a token, inside a Sekreton task (SECRETARIAT_INTEGRATIONS_URL and
  *    _TOKEN set), it reads every issue through Sekreton's integrations
  *    endpoint instead. That source has gaps, recorded in `github.json.gaps`:
  *    no PR bodies or PR comments, no `reopened` events, issue creation times
  *    estimated from PR numbering, and comments by untrusted authors left out.
+ *    With neither, `--anonymous` reads issues, PRs and comments (~110 pages)
+ *    through the unauthenticated API, waiting out each hourly limit (about two
+ *    hours), and skips the ~300 pages of events: `reopened` is then empty.
  * 2. fix-units.json — one unit per merged fix PR (a `fix` title, or a `fix/…`
  *    branch when the title is not conventional), plus each `fix…` commit made
  *    straight on main, with its issue numbers, commits, `fix(<scope>)` scopes,
@@ -80,13 +84,16 @@ function write(name, data) {
 // 1. GitHub
 // ---------------------------------------------------------------------------
 
+/** The REST API with `token`, or unauthenticated (no events) when it is null. */
 async function collectGithub(token) {
   const headers = {
     Accept: "application/vnd.github+json",
-    Authorization: `Bearer ${token}`,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "alpineclubbookings-fragility-audit",
   };
+  // Keep a margin for other work on a token; the 60-an-hour anonymous limit is spent to the last request.
+  const reserve = token ? 20 : 1;
 
   async function* pages(endpoint) {
     let url = `https://api.github.com/repos/${REPO}${endpoint}${endpoint.includes("?") ? "&" : "?"}per_page=100`;
@@ -102,7 +109,7 @@ async function collectGithub(token) {
       if (page % 20 === 0) console.error(`  ${endpoint}: page ${page}`);
       yield await response.json();
       const remaining = response.headers.get("x-ratelimit-remaining");
-      if (remaining !== null && Number(remaining) < 20) await waitForReset(response);
+      if (remaining !== null && Number(remaining) < reserve) await waitForReset(response);
       url = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1] ?? null;
     }
   }
@@ -134,14 +141,18 @@ async function collectGithub(token) {
     body: comment.body ?? "",
     url: comment.html_url,
   }));
-  console.error("GitHub: events (keeping reopened)");
-  const reopened = await all("/issues/events", (event) =>
-    event.event === "reopened" ? { issue: event.issue?.number, createdAt: event.created_at } : null,
-  );
+  let reopened = [];
+  if (token) {
+    console.error("GitHub: events (keeping reopened)");
+    reopened = await all("/issues/events", (event) =>
+      event.event === "reopened" ? { issue: event.issue?.number, createdAt: event.created_at } : null,
+    );
+  }
 
   const highest = Math.max(...issues.map((issue) => issue.number));
   console.error(`GitHub: ${issues.length} issues/PRs (highest #${highest}), ${comments.length} comments, ${reopened.length} reopens`);
-  return { collectedAt: new Date().toISOString(), highestNumber: highest, issues, comments, reopened };
+  const gaps = token ? [] : ["reopened events are not collected without a token (~300 pages at 60 an hour): the reopened signal is empty"];
+  return { collectedAt: new Date().toISOString(), source: token ? "github-rest" : "github-rest-anonymous", gaps, highestNumber: highest, issues, comments, reopened };
 }
 
 /** Sekreton's integrations MCP endpoint, called as plain JSON-RPC over HTTP. */
@@ -429,19 +440,21 @@ async function findCodeRepeats(units, commits) {
 
 async function main() {
   const gitOnly = process.argv.includes("--git-only");
+  const anonymous = process.argv.includes("--anonymous");
   const token = process.env.GITHUB_TOKEN;
   const integrations = Boolean(process.env.SECRETARIAT_INTEGRATIONS_URL && process.env.SECRETARIAT_INTEGRATIONS_TOKEN);
-  if (!gitOnly && !token && !integrations) {
+  if (!gitOnly && !anonymous && !token && !integrations) {
     console.error(
       "GITHUB_TOKEN is not set. The fragility review needs a read-only token (fine-grained, public repositories);\n" +
         "the anonymous 60-requests-an-hour limit cannot finish the ~390 pages this collects.\n" +
-        "Set GITHUB_TOKEN (or run inside a Sekreton task, which reads issues through its integrations endpoint), or pass --git-only to run collectors 2 and 3 without it.",
+        "Set GITHUB_TOKEN (or run inside a Sekreton task, which reads issues through its integrations endpoint), --anonymous to read issues and comments slowly without events, or --git-only to run collectors 2 and 3 without it.",
     );
     process.exit(2);
   }
 
   const commits = readCommits();
-  if (!gitOnly) write("github.json", token ? await collectGithub(token) : await collectViaIntegrations(commits));
+  if (!gitOnly) write("github.json", token || anonymous ? await collectGithub(token ?? null) : await collectViaIntegrations(commits));
+  if (process.argv.includes("--github-only")) return;
 
   console.error("git: fix units");
   const units = buildFixUnits(commits);
