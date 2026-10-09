@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 /*
   #3976 — every plural of the club's hut-leader label goes through
   `pluralHutLeaderLabel` (src/config/hut-leader-label.ts). Appending "s" by hand
@@ -23,8 +25,8 @@ import { describe, expect, it } from "vitest";
 
 const SRC = join(process.cwd(), "src");
 const NAMED =
-  /\{\s*[\w.]*(?:hutLeader|HUT_LEADER)\w*(?:\.to(?:Lower|Upper)Case\(\))?\s*\}s\b/;
-const BARE_LABEL = /\{\s*label(?:\.to(?:Lower|Upper)Case\(\))?\s*\}s\b/;
+  /\{\s*[\w.]*(?:hutLeader|HUT_LEADER)\w*(?:\.to(?:Lower|Upper)Case\(\))?\s*\}s\b/g;
+const BARE_LABEL = /\{\s*label(?:\.to(?:Lower|Upper)Case\(\))?\s*\}s\b/g;
 const READS_LABEL = /hutLeaderLabel|HUT_LEADER_LABEL/;
 
 function sourceFiles(dir: string): string[] {
@@ -42,10 +44,16 @@ function sourceFiles(dir: string): string[] {
 }
 
 function handBuiltPlurals(source: string): number[] {
-  const readsLabel = READS_LABEL.test(source);
-  return source.split("\n").flatMap((line, index) =>
-    NAMED.test(line) || (readsLabel && BARE_LABEL.test(line)) ? [index + 1] : [],
-  );
+  const code = stripComments(source);
+  const readsLabel = READS_LABEL.test(code);
+  const lines = new Set<number>();
+  for (const pattern of readsLabel ? [NAMED, BARE_LABEL] : [NAMED]) {
+    for (const match of code.matchAll(pattern)) {
+      // Comment normalization retains newlines, so these remain source lines.
+      lines.add(code.slice(0, match.index).split("\n").length);
+    }
+  }
+  return [...lines].sort((left, right) => left - right);
 }
 
 describe("hut-leader plural census (#3976)", () => {
@@ -55,7 +63,7 @@ describe("hut-leader plural census (#3976)", () => {
       "`${" + label + "}s`",
       "{hutLeaderLower}s rely on",
       "({club." + label + ".toLowerCase()}s)",
-      "`(Admin → ${label}s)` // " + label,
+      "const label = club.hutLeaderLabel; `(Admin → ${label}s)`",
     ]) {
       expect(handBuiltPlurals(bad), bad).not.toEqual([]);
     }
@@ -67,6 +75,25 @@ describe("hut-leader plural census (#3976)", () => {
     ]) {
       expect(handBuiltPlurals(fine), fine).toEqual([]);
     }
+  });
+
+  it("ignores old spellings in comments without hiding executable plurals", () => {
+    expect(
+      handBuiltPlurals(
+        "pluralHutLeaderLabel(hutLeaderLabel);\n// Formerly `${hutLeaderLabel}s`",
+      ),
+    ).toEqual([]);
+    expect(handBuiltPlurals("/* hutLeaderLabel */ `${label}s`")).toEqual([]);
+    expect(handBuiltPlurals("/* old\n spelling */ `${hutLeaderLabel}s`")).toEqual([2]);
+  });
+
+  it("finds multiline interpolations and reports their original source lines", () => {
+    expect(handBuiltPlurals("// Heading\nconst text = `${\n hutLeaderLabel\n}s`;"))
+      .toEqual([2]);
+    expect(handBuiltPlurals("const label = club.hutLeaderLabel;\n`${\n label.toLowerCase()\n}s`"))
+      .toEqual([2]);
+    expect(handBuiltPlurals("`${hutLeaderLabel}s ${hutLeaderLower}s`\n`${hutLeaderLabel}s`"))
+      .toEqual([1, 2]);
   });
 
   it("finds no plural of the hut-leader label built by appending s", () => {
