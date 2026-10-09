@@ -14,8 +14,13 @@ DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')}"
 SYNC_SOURCE_REPO_AFTER_DEPLOY="${SYNC_SOURCE_REPO_AFTER_DEPLOY:-1}"
 PRUNE_STALE_DEPLOY_WORKSPACES="${PRUNE_STALE_DEPLOY_WORKSPACES:-1}"
-GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-app}"
-GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"
+# Resolved in `resolve_image_refs`: the shell environment, then the source
+# repository's .env, then the upstream defaults. Left empty here so an operator
+# who set neither can be told which source the deploy ended up using.
+GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-}"
+GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-}"
+UPSTREAM_GHCR_APP_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-app"
+UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-migrate"
 APP_IMAGE="${APP_IMAGE:-}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 ALLOW_UNPUBLISHED_DEPLOY_COMMIT="${ALLOW_UNPUBLISHED_DEPLOY_COMMIT:-0}"
@@ -216,8 +221,59 @@ EOF
   warn "Push this commit as soon as the reason no longer holds, or the next release's preconditions are computed against a commit nobody else has."
 }
 
+# One key's value from the SOURCE repository's .env — the wrapper's own reader,
+# because the engine's `get_env_file_value` is nested inside
+# `run_internal_blue_green_deploy` and does not exist in this process. Same
+# grammar: a leading comment is skipped, a trailing ` # comment` is stripped.
+read_source_env_value() {
+  local key="$1"
+
+  [ -f "$SOURCE_REPO/.env" ] || return 0
+  awk -F= -v key="$key" '
+    /^[[:space:]]*#/ { next }
+    $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      sub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "$SOURCE_REPO/.env"
+}
+
+# Where each image repository came from: the shell environment, the source
+# repository's .env, or the upstream default. A fork publishes its images under
+# its own owner, so a fork operator sets these once — and `.env` is where every
+# other deployment value already lives, so it is honoured here too. The deploy
+# says which source won, because a default silently pointing at the upstream
+# registry is exactly how a fork's deploy fails at step 9 with "not found".
+resolve_image_repository() {
+  local key="$1"
+  local env_value="$2"
+  local upstream_default="$3"
+  local file_value
+
+  # The value goes to stdout for the caller's substitution; the provenance
+  # note goes to stderr so it reaches the operator rather than the variable.
+  if [ -n "$env_value" ]; then
+    printf '%s\n' "$env_value"
+    info "$key: from the shell environment" >&2
+    return 0
+  fi
+  file_value="$(read_source_env_value "$key")"
+  if [ -n "$file_value" ]; then
+    printf '%s\n' "$file_value"
+    info "$key: from $SOURCE_REPO/.env" >&2
+    return 0
+  fi
+  printf '%s\n' "$upstream_default"
+  info "$key: not set in the environment or .env; using the upstream default" >&2
+}
+
 resolve_image_refs() {
   if [ -z "$APP_IMAGE" ] && [ -z "$MIGRATE_IMAGE" ]; then
+    GHCR_APP_IMAGE_REPOSITORY="$(resolve_image_repository GHCR_APP_IMAGE_REPOSITORY "$GHCR_APP_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_APP_IMAGE_REPOSITORY")"
+    GHCR_MIGRATE_IMAGE_REPOSITORY="$(resolve_image_repository GHCR_MIGRATE_IMAGE_REPOSITORY "$GHCR_MIGRATE_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY")"
     APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"
     MIGRATE_IMAGE="${GHCR_MIGRATE_IMAGE_REPOSITORY}:${RESOLVED_REF}"
   elif [ -z "$APP_IMAGE" ] || [ -z "$MIGRATE_IMAGE" ]; then

@@ -19,3 +19,10 @@
   configuration guide says to leave empty unless the legacy finance export
   bridge is still in use. It is now optional: blank passes and disables the
   bridge, while a placeholder value is still refused.
+
+  A fork's image names (`GHCR_APP_IMAGE_REPOSITORY` and
+  `GHCR_MIGRATE_IMAGE_REPOSITORY`) are now also read from the source
+  repository's `.env` when the shell does not set them, instead of falling
+  straight back to the upstream registry, and step 3/8 says which source each
+  name came from. A deploy run under `sudo`, which strips the shell
+  environment, therefore still pulls the fork's own images.

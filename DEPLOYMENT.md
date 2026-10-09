@@ -577,7 +577,13 @@ preserves Caddy upstream state, then re-enters itself with
 fast-forwards the clean checkout after success.
 
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
-`GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults.
+`GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults —
+either in the shell environment or, more durably, in the source repository's
+`.env`. The shell wins over the file, the file wins over the upstream default,
+and step 3/8 prints which source each name came from, because a default that
+silently points at the upstream registry is how a fork's deploy fails at step
+9 with "not found". Note that `sudo` strips the shell environment; the `.env`
+route survives it.
 
 ### The deploy refuses a commit that exists on no remote (#3539)
 

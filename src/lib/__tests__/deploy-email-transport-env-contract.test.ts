@@ -106,6 +106,34 @@ describe("the deploy requires email transport keys per provider", () => {
     expect(helper).not.toContain("require_env_key");
   });
 
+  it("resolves a fork's image repositories from the shell, then .env, then the upstream default", () => {
+    // The wrapper used to read GHCR_*_IMAGE_REPOSITORY from the shell only and
+    // fall straight back to ghcr.io/thatskiff33, so a fork operator who put
+    // them in .env — or ran the deploy under sudo, which strips the shell
+    // environment — pulled the upstream images and failed at step 9.
+    const wrapperStart = script.indexOf("run_production_wrapper() {");
+    const engineStart = script.indexOf("run_internal_blue_green_deploy() {");
+    const resolver = script.indexOf("resolve_image_repository() {");
+    expect(resolver).toBeGreaterThan(wrapperStart);
+    expect(resolver).toBeLessThan(engineStart);
+    const body = functionBody("resolve_image_repository");
+    expect(body).toContain("read_source_env_value");
+    expect(body).toContain("from the shell environment");
+    expect(body).toContain("using the upstream default");
+    // The provenance note must not leak into the substituted value.
+    expect(body.match(/info "[^"]*" >&2/g)?.length).toBe(3);
+    const refs = functionBody("resolve_image_refs");
+    expect(refs).toContain(
+      'resolve_image_repository GHCR_APP_IMAGE_REPOSITORY "$GHCR_APP_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_APP_IMAGE_REPOSITORY"',
+    );
+    expect(refs).toContain(
+      'resolve_image_repository GHCR_MIGRATE_IMAGE_REPOSITORY "$GHCR_MIGRATE_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY"',
+    );
+    // The wrapper's own .env reader: the engine's is nested out of reach.
+    expect(script.indexOf("read_source_env_value() {")).toBeLessThan(engineStart);
+    expect(functionBody("read_source_env_value")).toContain('"$SOURCE_REPO/.env"');
+  });
+
   it("refuses the two states the app refuses, in the app's words", () => {
     const body = functionBody("require_email_transport_env_keys");
     expect(body).toContain(
