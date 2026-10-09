@@ -12,6 +12,11 @@ const mocks = vi.hoisted(() => ({
   getIntegrationCredentialValue: vi.fn(),
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
+  forgetServerConnectionAnswers: vi.fn(),
+}));
+
+vi.mock("@/lib/servernz-settings", () => ({
+  forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -85,6 +90,19 @@ describe("ServerNZ credential wiring", () => {
       actor,
       expect: { expect: "any" },
     });
+  });
+
+  it("forgets the owned-lodge list on disconnect, and only on disconnect (#52)", async () => {
+    // The list was the server's answer for THAT key; the next key may own
+    // different lodges. (The settings route routes a server-address change
+    // through this same helper, so it is covered too.)
+    const actor = { kind: "admin", memberId: "member-1" } as const;
+    await setServerNzApiKey("acs_new", actor);
+    expect(mocks.forgetServerConnectionAnswers).not.toHaveBeenCalled();
+    await clearServerNzApiKey(actor);
+    // #49: the server's last reported version was that connection's answer
+    // too, and both are forgotten in the one write.
+    expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -610,6 +610,19 @@ new ADR:
   registered at one building only — would be a new ADR, and would still not put
   a lodge on this row: it would be a restriction junction in the shape of
   `PromoCodeLodge` above.
+- Other lodges (`OtherLodge`, and `Amenity`, which hangs off it by
+  `otherLodgeId` with cascade delete, added by #50): the registry of **other
+  clubs'** lodges — the names the public booking-request form offers under "Are
+  you a member of another lodge?", the counterpart a booking officer picks when
+  charging a visiting club's members, and the entries the Alpine Central Server
+  exchanges between clubs. A row is another club's building, not one of this
+  club's, so it has no `lodgeId` and nothing here is lodge-scoped: `Booking`
+  and `BookingRequest` point AT an `OtherLodge` (restrict FK) and carry their own
+  lodge. The same reasoning as `ServerNzSettings` above applies to the sync: the
+  central server has no concept of this club's buildings, so a lodge dimension
+  on these rows would have nowhere to travel. An amenity is a fact about the
+  other club's lodge and follows its parent; it is replaced as a whole set, not
+  edited per row, so it carries no scoping of its own.
 
 ## Known Not-Yet-Scoped Surfaces (open)
 

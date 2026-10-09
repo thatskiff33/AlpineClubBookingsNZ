@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  500
+row-producing sites:  498
 uncategorised:        0
-category values: admin 109, booking 107, xero 39, family 35, payment 53,
+category values: admin 107, booking 107, xero 39, family 35, payment 53,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -775,6 +775,16 @@ promo codes (`booking` 106 -> 107, 497 -> 498), and #3492's
 the chips (`privacy` 20 -> 21, 498 -> 499). #3372 then added
 `booking-payment.card-refund.paid-another-way`, the treasurer closing a card
 refund Stripe gave up on (`payment` 52 -> 53, 499 -> 500).
+
+#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
+with all of the above; MEASURED with
+`npm run audit:census` on that branch rather than subtracted from the literal):
+`OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` went with the create and delete
+handlers of the other-lodges registry, because a site now changes only the lodge
+the central server says it owns and never adds to or removes from the shared
+list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
+the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
+anyone's readership changing.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

@@ -619,10 +619,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
   // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
   // tree composed by #3829.
-  // 499 -> 500 (#3372): `booking-payment.card-refund.paid-another-way`, the
-  // treasurer closing a card refund Stripe gave up on, awaited on the close's
-  // own transaction under `payment`.
-  writeSites: 500,
+  // 499 -> 497 (#52, other-lodges central-server sync): the other-lodges
+  // CREATE and DELETE handlers are removed with their `OTHER_LODGE_CREATED`
+  // and `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
+  // central server says it owns. RE-MEASURED with `npm run audit:census`.
+  // 497 -> 498 (#3372, composed with #52): `booking-payment.card-refund.paid-another-way`,
+  // the treasurer closing a card refund Stripe gave up on, awaited on the
+  // close's own transaction under `payment`.
+  writeSites: 498,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -840,7 +844,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // same job, rather than a fifth form.
     // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
     // transaction beside the writer above, in the same form.
-    "auditLog.create": { total: 77, uncategorised: 0 },
+    // 77 -> 75 (#52): the two removed other-lodges writers above.
+    "auditLog.create": { total: 75, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1135,7 +1140,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // of the administrator whose currency change cleared it - no member data -
     // and is `admin` for the reason its sibling AI_SPEND_CURRENCY_RATE_UPDATED
     // is: installation configuration.
-    admin: 109,
+    // 109 -> 107 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
+    // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
+    admin: 107,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2628,10 +2635,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // records (`admin/lodges/**`), files `admin` — so filing this registry `lodge`
   // would itself OPEN a split of exactly the kind the rule exists to close.
   // Gated `lodge:view`/`lodge:edit`, filing `admin`. Pinned on arrival so the
-  // next change is deliberate.
-  "src/app/api/admin/other-lodges/route.ts::POST#0": "admin",
+  // next change is deliberate. #52 removed the create and delete handlers (a
+  // site changes only its own lodge), so of the trio only the update remains.
   "src/app/api/admin/other-lodges/[id]/route.ts::PATCH#0": "admin",
-  "src/app/api/admin/other-lodges/[id]/route.ts::DELETE#0": "admin",
 };
 
 /**
@@ -2702,9 +2708,7 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "workparty.create",
   "workparty.update",
   "workparty.delete",
-  "OTHER_LODGE_CREATED",
   "OTHER_LODGE_UPDATED",
-  "OTHER_LODGE_DELETED",
 ];
 
 /**

@@ -1,7 +1,7 @@
 labels:
-  - name: codex-ready
+  - name: agent-ready
     color: "0E8A16"
-    description: Ready for one Codex issue-scoped run.
+    description: Owner-approved for one agent run. Applied by hand after review, never by a template.
   - name: codex-blocked
     color: "B60205"
     description: Blocked pending human decision, dependency, or corrected scope.

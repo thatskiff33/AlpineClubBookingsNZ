@@ -924,19 +924,16 @@ derivation).
   booking-request hut fees now reach the finance revenue reconciliation's booking
   side, and a member an officer linked to a converted booking's guest is credited
   with the nights they really stayed by `countMemberStayNights`.
-- **It is a DATA write taken before cutover**, at step 13 of
-  `docs/PRODUCTION_UPGRADE_RUNBOOK.md` while the old colour still serves, and it
-  is not `windowed`. So: (1) every approval and quote hold taken between
-  `migrate` and cutover is written by pre-#2739 code and gets no night rows —
-  **re-run the statement verbatim after cutover**, which inserts nothing where
-  the first pass already ran; (2) aborting the cutover un-does the code but NOT
-  the inserted rows, the only irreversible part of the release; (3) in that
-  window the old colour's in-place hold reassignment updates
-  `stayStart`/`stayEnd`/`priceCents` without rewriting night rows, so a quote
-  accepted at a different option than the hold can leave backfilled rows
-  describing the hold's dates and total — and invoicing prefers stored rows over
-  the guest's flat `priceCents`. Remedy: re-raise or refresh the invoice for any
-  request approved in the window, or take the deploy with quoting paused.
+- **It is a DATA write, ledgered `windowed` by #3933** (its own header predates
+  that and says otherwise). The previous colour's in-place hold reassignment
+  rewrites a guest's `priceCents` without rewriting night rows, so a quote
+  accepted while it serves leaves backfilled nights at the hold's per-night
+  prices, and invoicing prefers stored rows over the flat `priceCents`; a
+  re-run cannot correct that. Under the windowed sequence no old colour serves
+  between migrate and cutover, so no post-cutover re-run is needed. Aborting
+  un-does the code but NOT the inserted rows. If the old colour ever serves with
+  them, repair the nights its `rollback.sql` query lists (#3214) before
+  refreshing the invoice.
 
 ### INV-CAP-007
 
