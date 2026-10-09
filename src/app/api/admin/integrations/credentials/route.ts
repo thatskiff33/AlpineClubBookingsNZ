@@ -50,6 +50,7 @@ import {
   SERVERNZ_PROVIDER,
   SERVERNZ_WRITABLE_CREDENTIAL_KEYS,
 } from "@/lib/servernz-config";
+import { forgetServerConnectionAnswers } from "@/lib/servernz-settings";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -201,6 +202,11 @@ async function applyVerifyReset(
   if (provider === GOOGLE_PROVIDER) {
     await clearGoogleVerified(actor, request);
   }
+  // Alpine Central Server (#52): the owned-lodge list was the server's answer
+  // for the PREVIOUS key, so a replacement forgets it until the next download.
+  // The server's last reported API version (#49) was that key's answer too and
+  // is forgotten with it, in the same write; the next request asks again.
+  if (provider === SERVERNZ_PROVIDER) await forgetServerConnectionAnswers();
 }
 
 export async function POST(request: Request) {

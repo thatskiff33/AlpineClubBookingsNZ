@@ -97,6 +97,15 @@ server, so it comes off the other clubs' boards too. If the central server is
 unreachable at that moment the local removal still completes, and the
 withdrawal is retried.
 
+**While the central server is on a different software version from this
+site, everything that crosses to it is paused**: shares wait (without using
+up their retries), withdrawals wait, the pull that brings other clubs' posts
+here waits, and a push from the server is accepted but not acted on. Posts on
+your own board are unaffected. The
+[Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
+setup page shows both version numbers; once they match, sharing and the pull
+resume on their own.
+
 ### Set how long posts are kept
 
 1. On the same screen, find the **Retention** card.

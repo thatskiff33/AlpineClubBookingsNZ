@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Building, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { Building, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -10,6 +11,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,59 +34,33 @@ import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-
-type OtherLodgeRecord = {
-  id: string;
-  name: string;
-  location: string | null;
-  bookingOfficerName: string | null;
-  bookingOfficerEmail: string | null;
-  bookingOfficerPhone: string | null;
-  bedCapacity: number | null;
-};
-
-type OtherLodgeFormState = {
-  name: string;
-  location: string;
-  bookingOfficerName: string;
-  bookingOfficerEmail: string;
-  bookingOfficerPhone: string;
-  bedCapacity: string;
-};
-
-const emptyForm: OtherLodgeFormState = {
-  name: "",
-  location: "",
-  bookingOfficerName: "",
-  bookingOfficerEmail: "",
-  bookingOfficerPhone: "",
-  bedCapacity: "",
-};
-
-function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
-  return {
-    name: lodge.name,
-    location: lodge.location ?? "",
-    bookingOfficerName: lodge.bookingOfficerName ?? "",
-    bookingOfficerEmail: lodge.bookingOfficerEmail ?? "",
-    bookingOfficerPhone: lodge.bookingOfficerPhone ?? "",
-    bedCapacity:
-      lodge.bedCapacity === null ? "" : String(lodge.bedCapacity),
-  };
-}
-
-// Blank text fields save as null; bed capacity parses to an integer or null.
-function formPayload(form: OtherLodgeFormState) {
-  const capacity = form.bedCapacity.trim();
-  return {
-    name: form.name.trim(),
-    location: form.location.trim() || null,
-    bookingOfficerName: form.bookingOfficerName.trim() || null,
-    bookingOfficerEmail: form.bookingOfficerEmail.trim() || null,
-    bookingOfficerPhone: form.bookingOfficerPhone.trim() || null,
-    bedCapacity: capacity === "" ? null : Number(capacity),
-  };
-}
+import { isHttpUrl } from "@/lib/http-url";
+import {
+  AMENITIES_PER_LODGE_MAX,
+  OTHER_LODGE_BOUNDS,
+  OTHER_LODGE_NOT_OWNED_CODE,
+  ownedOtherLodgeEditLabel,
+  type AdminOtherLodgesResponse,
+  type OwnedOtherLodgeNames,
+} from "@/lib/other-lodges";
+import {
+  DATE_FIELDS,
+  DATE_FIELD_NAMES,
+  FACILITY_FIELDS,
+  FACILITY_LABELS,
+  ROOM_TYPE_CHOICES,
+  TEXT_FIELDS,
+  TEXT_FIELD_NAMES,
+  WHOLE_NUMBER_FIELDS,
+  WHOLE_NUMBER_FIELD_NAMES,
+  emptyForm,
+  formFromLodge,
+  formPayload,
+  formProblem,
+  type AmenityFormRow,
+  type OtherLodgeFormState,
+  type OtherLodgeRecord,
+} from "./other-lodge-form";
 
 export function OtherLodgesPanel({
   // #2160/#2168 vouch: the Lodges page renders one lodge-area
@@ -89,275 +72,434 @@ export function OtherLodgesPanel({
 }: {
   ancestorRendersViewOnlyBanner?: boolean;
 }) {
-  // Same edit gate as the club's own lodges: the write routes enforce lodge:edit,
+  // Same edit gate as the club's own lodges: the write route enforces lodge:edit,
   // so a lodge:view admin sees this panel read-only.
   const canEdit = useAdminAreaEditAccess("lodge");
   const [lodges, setLodges] = useState<OtherLodgeRecord[]>([]);
+  // Which lodges are THIS club's own, as the central server last said (#52):
+  // `null` until it has said anything, `[]` when it said none. Only an owned
+  // lodge gets an Edit button; both read-only states are explained below.
+  const [ownedNames, setOwnedNames] = useState<OwnedOtherLodgeNames>(null);
+  // Whether syncing with the central server is paused for version (#49): the
+  // list on screen may be stale while it is, so the panel says so and links
+  // to setup, where the two numbers are shown.
+  const [syncPaused, setSyncPaused] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<OtherLodgeFormState>(emptyForm);
 
-  const loadLodges = useCallback(async () => {
-    setLoading(true);
+  // The spinner is for the FIRST load only. A refresh after a save keeps the
+  // table mounted: replacing it with "Loading..." would unmount the Edit button
+  // that opened the dialog, and focus could not return to it when the dialog
+  // closes (it would land on the page body).
+  //
+  // Only the NEWEST load may write the list. Two refreshes can be in flight a
+  // moment apart, and if the older response arrived last it would put back
+  // what the newer one had already replaced.
+  const loadSeqRef = useRef(0);
+  const loadLodges = useCallback(async (showSpinner = false) => {
+    const seq = ++loadSeqRef.current;
+    if (showSpinner) setLoading(true);
     setError(null);
     try {
       const response = await fetch("/api/admin/other-lodges");
       if (!response.ok) {
         throw new Error("Failed to load other lodges");
       }
-      const data = (await response.json()) as {
-        otherLodges?: OtherLodgeRecord[];
-      };
+      const data = (await response.json()) as Partial<AdminOtherLodgesResponse>;
+      if (seq !== loadSeqRef.current) return;
       setLodges(Array.isArray(data?.otherLodges) ? data.otherLodges : []);
+      setOwnedNames(Array.isArray(data?.ownedLodgeNames) ? data.ownedLodgeNames : null);
+      setSyncPaused(data?.serverVersionStatus === "mismatch");
     } catch {
+      if (seq !== loadSeqRef.current) return;
       setError("Could not load other lodges. Please try again.");
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadLodges();
+    void loadLodges(true);
   }, [loadLodges]);
 
-  function startCreate() {
-    setCreating(true);
-    setEditingId(null);
-    setForm(emptyForm);
-    setError(null);
-  }
+  // The button that opened the dialog, so focus can go back to it on close.
+  // Radix restores focus to whatever was focused when the dialog mounted, but a
+  // button click does not focus the button in every browser (Safari, and Firefox
+  // on macOS), so that can be the page body; and the dialog's own close handler
+  // otherwise aims at a `DialogTrigger`, which this dialog does not have. Without
+  // this, a keyboard user lands on the page after Save or Cancel and has to tab
+  // back to where they were.
+  const openerRef = useRef<HTMLElement | null>(null);
 
-  function startEdit(lodge: OtherLodgeRecord) {
+  function startEdit(lodge: OtherLodgeRecord, opener: HTMLElement) {
+    openerRef.current = opener;
     setEditingId(lodge.id);
-    setCreating(false);
     setForm(formFromLodge(lodge));
     setError(null);
   }
 
   function cancelEdit() {
     setEditingId(null);
-    setCreating(false);
     setForm(emptyForm);
+    // An error belongs to the edit it came from. Left in place, closing the
+    // dialog would hand it to the page-level message, which would announce a
+    // validation error for an edit the administrator has just discarded.
+    setError(null);
+  }
+
+  /** Show a lodge the server has just saved, without waiting for the refresh. */
+  function applySaved(saved: OtherLodgeRecord) {
+    setLodges((prev) =>
+      [...prev.filter((l) => l.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
+    );
+  }
+
+  function setAmenity(index: number, patch: Partial<AmenityFormRow>) {
+    setForm((prev) => ({
+      ...prev,
+      amenities: prev.amenities.map((row, i) =>
+        i === index ? { ...row, ...patch } : row,
+      ),
+    }));
   }
 
   async function submitForm() {
-    if (!form.name.trim()) {
-      setError("Lodge name is required.");
-      return;
-    }
-    const capacity = form.bedCapacity.trim();
-    if (capacity !== "" && !/^\d+$/.test(capacity)) {
-      setError("Bed capacity must be a whole number.");
-      return;
-    }
-    // Mirror the server's upper bound so an unrealistic value gets a clear
-    // inline message instead of a generic "Invalid input" from the API.
-    if (capacity !== "" && Number(capacity) > 100_000) {
-      setError("Bed capacity looks too large. Enter a realistic number.");
+    const problem = formProblem(form);
+    if (problem) {
+      setError(problem);
       return;
     }
     setSaving(true);
     setError(null);
+    let saved = false;
     try {
-      const response = creating
-        ? await fetch("/api/admin/other-lodges", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formPayload(form)),
-          })
-        : await fetch(`/api/admin/other-lodges/${editingId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formPayload(form)),
-          });
+      const response = await fetch(`/api/admin/other-lodges/${editingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formPayload(form)),
+      });
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+        code?: string;
+        otherLodge?: OtherLodgeRecord;
+      } | null;
       if (response.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        // Two different refusals share the status: the administrator's role
+        // (the generic view-only message) and the central server's answer about
+        // whose lodge this is, which the route marks with a code and explains.
+        setError(
+          data?.code === OTHER_LODGE_NOT_OWNED_CODE && data.error
+            ? data.error
+            : ADMIN_FORBIDDEN_SAVE_REASON,
+        );
         return;
       }
       if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
         throw new Error(data?.error ?? "Failed to save lodge");
       }
-      cancelEdit();
-      await loadLodges();
+      // Show what was saved straight away, so the list is not stale (and an
+      // Edit click on the old row cannot overwrite this save) while the
+      // refresh below is still on its way.
+      if (data?.otherLodge) applySaved(data.otherLodge);
+      saved = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save lodge");
     } finally {
       setSaving(false);
     }
-  }
-
-  async function deleteLodge(lodge: OtherLodgeRecord) {
-    if (
-      !window.confirm(
-        `Delete "${lodge.name}"? This removes it from the list for good.`,
-      )
-    ) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/other-lodges/${lodge.id}`, {
-        method: "DELETE",
-      });
-      if (response.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
-        return;
-      }
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error ?? "Failed to delete lodge");
-      }
+    if (saved) {
+      // The save is done and `saving` is already cleared, so the refresh runs
+      // with the buttons enabled: held open across it, every Edit button would
+      // stay disabled and a disabled button cannot take focus back when the
+      // dialog closes. Closing and clearing `saving` land in one render.
+      cancelEdit();
       await loadLodges();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete lodge");
-    } finally {
-      setSaving(false);
     }
   }
 
-  const showForm = creating || editingId !== null;
+  const showForm = editingId !== null;
+  // The owned rows actually ON SCREEN. A name the server lists that has no
+  // local row yet (not downloaded) has no button, so the label counts what the
+  // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
+  // name on each when several are, and a note below when none is yet.
+  const localOwnedNames = lodges.filter((l) => l.owned).map((l) => l.name);
+  const editLabel = (name: string) => ownedOtherLodgeEditLabel(localOwnedNames, name);
+  const anyOwnedRow = localOwnedNames.length > 0;
+  const ownedButNotDownloaded =
+    !loading && ownedNames !== null && ownedNames.length > 0 && !anyOwnedRow;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">Other lodges</h2>
-          <p className="text-sm text-muted-foreground">
-            Details of other clubs&apos; lodges the club recognises. Their names
-            will be offered to non-members when they indicate they are a member
-            of another lodge.
-          </p>
-        </div>
-        <ViewOnlyActionButton
-          canEdit={canEdit}
-          describeReason={!ancestorRendersViewOnlyBanner}
-          onClick={startCreate}
-          disabled={saving || showForm}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add other lodge
-        </ViewOnlyActionButton>
+      <div>
+        <h2 className="text-xl font-semibold">Other lodges</h2>
+        <p className="text-sm text-muted-foreground">
+          Details of other clubs&apos; lodges the club recognises. Their names
+          will be offered to non-members when they indicate they are a member
+          of another lodge. The list comes from the Alpine Central Server; only
+          your own lodge can be changed here.
+        </p>
       </div>
 
-      {error ? (
+      {/* While the dialog is open it covers the page, so a save or validation
+          error is shown inside it, directly above Save and Cancel (the form is
+          long, and Save is where the administrator's attention is when it
+          fails). This one is for everything outside it: a list that could not
+          load. */}
+      {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       ) : null}
 
-      {showForm ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              {creating ? "Add other lodge" : "Edit other lodge"}
-            </CardTitle>
-            <CardDescription>
-              Only the name is required. Everything else is optional contact and
-              capacity detail.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+      {/* The controls in the dialog pass `describeReason={!ancestorRendersViewOnlyBanner}`
+          like the rest of the panel, although the page banner is hidden behind a
+          modal. That is safe because a view-only admin can never open this
+          dialog: Edit is itself gated, so none of these controls is ever shown
+          to them disabled. (If a session's permissions narrowed while the
+          dialog was open, Save would go dead without a reason beside it.) */}
+      <Dialog
+        open={showForm}
+        // Close is Escape, the close button or Cancel — never while a save is in
+        // flight, so the form cannot vanish under a request that may still land.
+        // This one guard covers Escape and the close button alike: Radix routes
+        // both through here. The close button is also hidden while saving, so
+        // there is no clickable button that does nothing.
+        onOpenChange={(next) => {
+          if (!next && !saving) cancelEdit();
+        }}
+      >
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"
+          showCloseButton={!saving}
+          // A click on the dimmed background does NOT close it: the form is long
+          // and one stray click outside must not throw away what was typed.
+          onInteractOutside={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            // Back to the button that opened the dialog. (If a refresh has since
+            // removed that row there is nothing to focus and this is a no-op.)
+            event.preventDefault();
+            openerRef.current?.focus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{editLabel(form.name)}</DialogTitle>
+            <DialogDescription>
+              Everything here is optional detail that is shared with other clubs
+              through the Alpine Central Server when that connection is on.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="other-lodge-name">Name</Label>
+                {/* READ-ONLY: the central server matches lodges by name, so a
+                    new name here would create a second lodge there and strand
+                    this one. The route refuses a change as well. */}
                 <Input
                   id="other-lodge-name"
                   value={form.name}
-                  maxLength={120}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, name: event.target.value }))
-                  }
+                  readOnly
+                  aria-describedby="other-lodge-name-note"
                 />
+                <p
+                  id="other-lodge-name-note"
+                  className="text-xs text-muted-foreground"
+                >
+                  The name is set on the central server and cannot be changed
+                  here.
+                </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-location">Location</Label>
-                <Input
-                  id="other-lodge-location"
-                  value={form.location}
-                  maxLength={300}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      location: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-officer-name">
-                  Booking officer&apos;s name
-                </Label>
-                <Input
-                  id="other-lodge-officer-name"
-                  value={form.bookingOfficerName}
-                  maxLength={200}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      bookingOfficerName: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-officer-email">
-                  Booking officer&apos;s email
-                </Label>
-                <Input
-                  id="other-lodge-officer-email"
-                  type="email"
-                  value={form.bookingOfficerEmail}
-                  maxLength={320}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      bookingOfficerEmail: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-officer-phone">
-                  Booking officer&apos;s phone
-                </Label>
-                <Input
-                  id="other-lodge-officer-phone"
-                  value={form.bookingOfficerPhone}
-                  maxLength={50}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      bookingOfficerPhone: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-bed-capacity">Bed capacity</Label>
-                <Input
-                  id="other-lodge-bed-capacity"
-                  type="number"
-                  min={0}
-                  inputMode="numeric"
-                  value={form.bedCapacity}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      bedCapacity: event.target.value,
-                    }))
-                  }
-                />
-              </div>
+              {TEXT_FIELD_NAMES.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`other-lodge-${field}`}>
+                    {TEXT_FIELDS[field].label}
+                  </Label>
+                  <Input
+                    id={`other-lodge-${field}`}
+                    type={TEXT_FIELDS[field].type}
+                    placeholder={TEXT_FIELDS[field].placeholder}
+                    maxLength={TEXT_FIELDS[field].maxLength}
+                    value={form.text[field]}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        text: { ...prev.text, [field]: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
+              {WHOLE_NUMBER_FIELD_NAMES.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`other-lodge-${field}`}>
+                    {WHOLE_NUMBER_FIELDS[field]}
+                  </Label>
+                  <Input
+                    id={`other-lodge-${field}`}
+                    type="number"
+                    min={0}
+                    max={OTHER_LODGE_BOUNDS.wholeNumberMax}
+                    inputMode="numeric"
+                    value={form.numbers[field]}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        numbers: { ...prev.numbers, [field]: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Room or dormitory</legend>
+                <div className="flex flex-wrap gap-4 pt-1 text-sm">
+                  {ROOM_TYPE_CHOICES.map(([value, label]) => (
+                    <label key={value || "unset"} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="other-lodge-roomType"
+                        className="h-4 w-4"
+                        value={value}
+                        checked={form.roomType === value}
+                        onChange={() =>
+                          setForm((prev) => ({ ...prev, roomType: value }))
+                        }
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              {DATE_FIELD_NAMES.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`other-lodge-${field}`}>{DATE_FIELDS[field]}</Label>
+                  <Input
+                    id={`other-lodge-${field}`}
+                    type="date"
+                    value={form.dates[field]}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        dates: { ...prev.dates, [field]: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
             </div>
+
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Facilities</legend>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {FACILITY_FIELDS.map((field) => (
+                  <label
+                    key={field}
+                    className="flex items-center gap-2 text-sm"
+                    htmlFor={`other-lodge-${field}`}
+                  >
+                    <Checkbox
+                      id={`other-lodge-${field}`}
+                      checked={form.facilities[field]}
+                      onCheckedChange={(checked) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          facilities: { ...prev.facilities, [field]: checked },
+                        }))
+                      }
+                    />
+                    {FACILITY_LABELS[field]}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Amenities</legend>
+              <p className="text-xs text-muted-foreground">
+                Anything else the lodge offers, one per row. Up to{" "}
+                {AMENITIES_PER_LODGE_MAX}; names must be unique.
+              </p>
+              {form.amenities.map((row, index) => (
+                <div
+                  key={index}
+                  className="grid gap-2 sm:grid-cols-[1fr_2fr_auto] sm:items-end"
+                >
+                  <div className="space-y-1">
+                    <Label htmlFor={`other-lodge-amenity-name-${index}`}>
+                      Name
+                    </Label>
+                    <Input
+                      id={`other-lodge-amenity-name-${index}`}
+                      value={row.name}
+                      maxLength={OTHER_LODGE_BOUNDS.amenityName}
+                      onChange={(event) =>
+                        setAmenity(index, { name: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label
+                      htmlFor={`other-lodge-amenity-description-${index}`}
+                    >
+                      Description
+                    </Label>
+                    <Input
+                      id={`other-lodge-amenity-description-${index}`}
+                      value={row.description}
+                      maxLength={OTHER_LODGE_BOUNDS.amenityDescription}
+                      onChange={(event) =>
+                        setAmenity(index, { description: event.target.value })
+                      }
+                    />
+                  </div>
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
+                    describeReason={!ancestorRendersViewOnlyBanner}
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Remove amenity ${row.name || index + 1}`}
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        amenities: prev.amenities.filter((_, i) => i !== index),
+                      }))
+                    }
+                    disabled={saving}
+                  >
+                    <X className="h-4 w-4" />
+                  </ViewOnlyActionButton>
+                </div>
+              ))}
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                describeReason={!ancestorRendersViewOnlyBanner}
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setForm((prev) => ({
+                    ...prev,
+                    amenities: [...prev.amenities, { name: "", description: "" }],
+                  }))
+                }
+                disabled={
+                  saving || form.amenities.length >= AMENITIES_PER_LODGE_MAX
+                }
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add amenity
+              </ViewOnlyActionButton>
+            </fieldset>
+
+            {error ? (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
             <div className="flex gap-2">
               <ViewOnlyActionButton
                 canEdit={canEdit}
@@ -372,9 +514,9 @@ export function OtherLodgesPanel({
                 Cancel
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
@@ -384,17 +526,64 @@ export function OtherLodgesPanel({
           </CardTitle>
           <CardDescription>
             These names will be offered to non-members who indicate they are a
-            member of another lodge. Use Delete to remove one from the list.
+            member of another lodge. Each club keeps its own lodge up to date;
+            the rest arrive by download from the central server.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {/* Syncing paused for version (#49): the rows below may be stale and
+              an edit saved here will not leave this site until it resumes. */}
+          {!loading && syncPaused ? (
+            <p className="text-sm text-destructive" role="status" data-testid="server-version-paused">
+              Syncing with the Alpine Central Server is paused because the server
+              is on a different software version from this site, so this list may
+              be out of date and changes made here are not sent until the two
+              match. See the{" "}
+              <Link href="/admin/alpine-server/setup" className="underline underline-offset-4">
+                Alpine Central Server setup page
+              </Link>{" "}
+              for both version numbers.
+            </p>
+          ) : null}
+          {/* Why nothing here can be edited, in the two read-only states. Not
+              shown while loading: the owned list is not known yet either way. */}
+          {!loading && ownedNames === null ? (
+            <p className="text-sm text-muted-foreground" data-testid="owned-unknown">
+              Which lodge is yours is set on the central server. Connect this
+              site to it on the Alpine Central Server setup page and press{" "}
+              <strong>Download</strong>; the lodge it names for this site can
+              then be edited here.
+            </p>
+          ) : null}
+          {!loading && ownedNames !== null && ownedNames.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="owned-none">
+              The central server has no lodge assigned to this site, so nothing
+              here can be edited. Ask the central server&apos;s operator to
+              assign your lodge.
+            </p>
+          ) : null}
+          {ownedButNotDownloaded ? (
+            <p className="text-sm text-muted-foreground" data-testid="owned-not-downloaded">
+              The central server names{" "}
+              {ownedNames?.length === 1 ? (
+                <strong>{ownedNames[0]}</strong>
+              ) : (
+                "your lodges"
+              )}{" "}
+              as yours, but {ownedNames?.length === 1 ? "it has" : "they have"}{" "}
+              not been downloaded to this site yet. Press <strong>Download</strong>{" "}
+              on the Alpine Central Server setup page; the Edit button appears
+              once the entry is here.
+            </p>
+          ) : null}
           {loading ? (
             <p className="text-sm text-muted-foreground">
               Loading other lodges...
             </p>
           ) : lodges.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No other lodges yet. Use &ldquo;Add other lodge&rdquo; to add one.
+              No other lodges yet. They arrive when the site downloads from the
+              central server.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -404,20 +593,34 @@ export function OtherLodgesPanel({
                     <TableHead>Name</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Booking officer</TableHead>
+                    <TableHead>Booking page</TableHead>
                     <TableHead className="text-right">Beds</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {anyOwnedRow ? (
+                      <TableHead className="text-right">Actions</TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {lodges.map((lodge) => (
                     <TableRow key={lodge.id}>
                       <TableCell>
-                        <span className="font-medium">{lodge.name}</span>
+                        <div className="font-medium">{lodge.name}</div>
+                        {lodge.amenities.length > 0 ? (
+                          <div className="text-xs text-muted-foreground">
+                            {lodge.amenities.length}{" "}
+                            {lodge.amenities.length === 1
+                              ? "amenity"
+                              : "amenities"}
+                          </div>
+                        ) : null}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {lodge.location ?? "—"}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
+                        {/* Name and email only. The phone is private: it is
+                            not shown for any lodge, and for another club's
+                            lodge it is not sent to the browser at all (#52). */}
                         {lodge.bookingOfficerName ? (
                           <div>
                             <div>{lodge.bookingOfficerName}</div>
@@ -426,45 +629,51 @@ export function OtherLodgesPanel({
                                 {lodge.bookingOfficerEmail}
                               </div>
                             ) : null}
-                            {lodge.bookingOfficerPhone ? (
-                              <div className="text-xs">
-                                {lodge.bookingOfficerPhone}
-                              </div>
-                            ) : null}
                           </div>
                         ) : (
                           "—"
                         )}
                       </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {/* A link only for an http(s) address, which is all the
+                            API accepts; anything else is shown as plain text. */}
+                        {lodge.siteUrl && isHttpUrl(lodge.siteUrl) ? (
+                          <a
+                            href={lodge.siteUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="break-all underline underline-offset-2"
+                          >
+                            {lodge.siteUrl}
+                          </a>
+                        ) : (
+                          lodge.siteUrl ?? "—"
+                        )}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {lodge.bedCapacity ?? "—"}
                       </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-2">
-                          <ViewOnlyActionButton
-                            canEdit={canEdit}
-                            describeReason={!ancestorRendersViewOnlyBanner}
-                            variant="outline"
-                            size="sm"
-                            onClick={() => startEdit(lodge)}
-                            disabled={saving}
-                          >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit
-                          </ViewOnlyActionButton>
-                          <ViewOnlyActionButton
-                            canEdit={canEdit}
-                            describeReason={!ancestorRendersViewOnlyBanner}
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void deleteLodge(lodge)}
-                            disabled={saving}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </ViewOnlyActionButton>
-                        </div>
-                      </TableCell>
+                      {anyOwnedRow ? (
+                        <TableCell>
+                          {lodge.owned ? (
+                            <div className="flex justify-end">
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={!ancestorRendersViewOnlyBanner}
+                                variant="outline"
+                                size="sm"
+                                onClick={(event) =>
+                                  startEdit(lodge, event.currentTarget)
+                                }
+                                disabled={saving}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" />
+                                {editLabel(lodge.name)}
+                              </ViewOnlyActionButton>
+                            </div>
+                          ) : null}
+                        </TableCell>
+                      ) : null}
                     </TableRow>
                   ))}
                 </TableBody>
