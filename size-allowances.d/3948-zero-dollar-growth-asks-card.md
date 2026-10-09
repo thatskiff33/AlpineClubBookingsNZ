@@ -83,4 +83,3 @@ lines: 1798
 reason: the Booking Modified sender's flat body composes its payment note
   where the HTML template does; it takes the required cancelled-ask flag and
   appends the shared sentence (`unpaidAskCancelledNote`).
-
