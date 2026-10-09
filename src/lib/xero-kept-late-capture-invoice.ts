@@ -503,11 +503,36 @@ export async function readPaidAnotherWayReceiptState(paymentIntentId: string): P
  *     its bank-transfer note, queued after the receipt's link (#3924 rounds 6
  *     and 7), on every run until it is queued.
  */
-export async function createXeroKeptLateCaptureInvoice(params: {
-  syncOperationId: string;
-  createdByMemberId?: string;
-  repairExistingLink?: boolean;
-}): Promise<string | null> {
+/**
+ * Test seam (#3924 round 8): the worker's provider calls - Xero's client and
+ * metered call, the invoiced party's contact, the receipt's Stripe payment in
+ * Xero, and Stripe's charge day - so the PostgreSQL proof drives this worker,
+ * locks and all, without Xero or Stripe. Production passes nothing.
+ */
+export interface KeptLateCaptureProviderSeam {
+  getAuthenticatedXeroClient: typeof getAuthenticatedXeroClient;
+  callXeroApi: typeof callXeroApi;
+  findOrCreateXeroContactForInvoicedParty: typeof findOrCreateXeroContactForInvoicedParty;
+  createXeroPaymentForInvoice: typeof createXeroPaymentForInvoice;
+  readStripeCaptureDocumentDate: typeof readStripeCaptureDocumentDate;
+}
+
+const KEPT_LATE_CAPTURE_PROVIDERS: KeptLateCaptureProviderSeam = {
+  getAuthenticatedXeroClient,
+  callXeroApi,
+  findOrCreateXeroContactForInvoicedParty,
+  createXeroPaymentForInvoice,
+  readStripeCaptureDocumentDate,
+};
+
+export async function createXeroKeptLateCaptureInvoice(
+  params: {
+    syncOperationId: string;
+    createdByMemberId?: string;
+    repairExistingLink?: boolean;
+  },
+  providers: KeptLateCaptureProviderSeam = KEPT_LATE_CAPTURE_PROVIDERS,
+): Promise<string | null> {
   const { syncOperationId } = params;
   const row = await prisma.xeroSyncOperation.findUnique({
     where: { id: syncOperationId },
@@ -578,7 +603,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       // raise day - stands only when Stripe cannot say.
       let storedPayload = asRecord(row?.requestPayload) ?? {};
       if (!queued.capturedOnFromStripe) {
-        const chargedOn = await readStripeCaptureDocumentDate(
+        const chargedOn = await providers.readStripeCaptureDocumentDate(
           paymentIntentId,
           await readClubTimeZoneOutsideRequest(),
         );
@@ -591,8 +616,8 @@ export async function createXeroKeptLateCaptureInvoice(params: {
           });
         }
       }
-      const { xero, tenantId } = await getAuthenticatedXeroClient();
-      const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
+      const { xero, tenantId } = await providers.getAuthenticatedXeroClient();
+      const contactId = await providers.findOrCreateXeroContactForInvoicedParty(booking, {
         createdByMemberId: params.createdByMemberId,
         repairExistingLink: params.repairExistingLink,
       });
@@ -639,7 +664,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
         createdByMemberId: params.createdByMemberId,
         buildRequestPayload: buildStoredPayload,
         run: ({ contactId: resolvedContactId }) =>
-          callXeroApi(
+          providers.callXeroApi(
             () =>
               xero.accountingApi.createInvoices(
                 tenantId,
@@ -669,7 +694,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
     let paymentError: unknown = null;
     if (!(await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE))) {
       try {
-        paymentId = await createXeroPaymentForInvoice({
+        paymentId = await providers.createXeroPaymentForInvoice({
           localModel: "ManualRefundTask",
           localId: taskId,
           invoiceId: invoiceId!,

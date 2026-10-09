@@ -199,9 +199,9 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", async (importOriginal) => {
       async (_paymentId: string, rowsWhere: { requestPayload: { equals: string } }) => {
         const noteIds = state.operations
           .filter((operation) => (operation.requestPayload as Row | undefined)?.paidAnotherWayTaskId === rowsWhere.requestPayload.equals)
-          .flatMap((operation) => (operation.xeroObjectId ? [operation.xeroObjectId] : []));
+          .flatMap((operation) => (typeof operation.xeroObjectId === "string" ? [operation.xeroObjectId] : []));
         return state.links
-          .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active && noteIds.includes(link.xeroObjectId))
+          .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active && noteIds.includes(String(link.xeroObjectId)))
           .reduce((sum, link) => sum + Number((link.metadata as Row | undefined)?.amountCents ?? 0), 0);
       },
     ),
