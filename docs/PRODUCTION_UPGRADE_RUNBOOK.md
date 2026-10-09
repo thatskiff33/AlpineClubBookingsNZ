@@ -538,7 +538,23 @@ validator, deploy the new runtime, check canonical capacity readers, and set
 `PENDING_SCHOOL_ADULTS_ENABLED=1`. The application requires both values exactly;
 the migration override is not a write permission.
 
-To roll back after activation, first disable `PENDING_SCHOOL_ADULTS_ENABLED`,
+The application reads both from its container environment. `docker-compose.yml`
+passes both through its `x-app-environment` block, empty by default (#3964). The
+only supported way to apply or remove either value is to edit the source
+repository's `.env`, then re-run `scripts/run-production-blue-green-deploy.sh` for
+the commit already deployed. Do not recreate containers by hand: the deploy copies
+`.env` into its workspace, pins `APP_IMAGE` and chooses the colour, and a hand-run
+`docker compose up` does none of that.
+
+`BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED` therefore has two separate meanings.
+Its `.env` copy is the application's lasting acknowledgement that no pre-#3413
+runtime remains; pending-adult cleanup needs it as well as admissions. That copy
+never satisfies the migration validator, which reads only the deploy shell's own
+environment, so every windowed migration still needs the value set in the shell
+that runs the deploy, exactly as above.
+
+To roll back after activation, first disable `PENDING_SCHOOL_ADULTS_ENABLED`
+(one deploy, as above),
 resolve or explicitly cancel every request with a pending adult, and prove both
 queries return zero before running this migration's `rollback.sql`:
 
