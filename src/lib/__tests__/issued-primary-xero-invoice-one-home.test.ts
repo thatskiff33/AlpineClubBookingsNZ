@@ -15,6 +15,7 @@ import {
 // failed at 5052ms cold, which is the profile of the two suites AGENTS.md
 // records as timing out under parallel CI load.
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({
@@ -273,6 +274,7 @@ describe("the settlement the first three doors share", () => {
         } as never,
         priceDiffCents: 12_500,
         changeFeeCents: 0,
+        reduction: noReductionAgainstUnpaidAsk(12_500),
         todayAtClub: "2026-07-01" as never,
         format: {} as never,
       },
@@ -508,6 +510,35 @@ describe("no edit door states the rule a second time", () => {
     expect(read(SETTLEMENT_MODULE)).toMatch(
       /hasIssuedXeroInvoice\s*=\s*hasIssuedPrimaryXeroInvoice\(booking\)/,
     );
+  });
+
+  it("INV-PAY-119: every file that settles an edit reads the unpaid ask exactly ONCE, and nothing else reads it raw (#3954 round 4)", () => {
+    // Two reads in one transaction split when the member's capture lands
+    // between them: options sized on the ask, a save that no longer sees it.
+    // Each settling door reads it once and hands the one value to everything.
+    const settlers = filesMentioning(
+      sourceFilesUnder("src").filter((file) => file !== SETTLEMENT_MODULE),
+      /\bapplyPaymentAdjustments\(/,
+    );
+    expect(settlers.length).toBeGreaterThan(0);
+    const reads = Object.fromEntries(
+      [...settlers, "src/app/api/bookings/[id]/modify-quote/route.ts"].map((file) => [
+        file,
+        (read(file).match(/\breadReductionAgainstUnpaidAsk\(/g) ?? []).length,
+      ]),
+    );
+    expect(
+      Object.entries(reads).filter(([, count]) => count !== 1),
+      "INV-PAY-119: each of these must call readReductionAgainstUnpaidAsk exactly once and pass that value to the options and the save.",
+    ).toEqual([]);
+    const rawReaders = filesMentioning(
+      sourceFilesUnder("src").filter((file) => file !== "src/lib/additional-ask-reduction.ts"),
+      /\breadUnpaidPriceAsk\(/,
+    );
+    expect(
+      rawReaders,
+      "INV-PAY-119: read the ask through readReductionAgainstUnpaidAsk, which carries the net it was read for.",
+    ).toEqual([]);
   });
 });
 

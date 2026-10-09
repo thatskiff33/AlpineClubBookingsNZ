@@ -33,7 +33,10 @@ import {
 } from "@/lib/booking-review";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
-import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
+import {
+  readReductionAgainstUnpaidAsk,
+  type RetiredAdditionalAsk,
+} from "@/lib/additional-ask-reduction";
 import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
@@ -999,11 +1002,15 @@ export async function removeBookingGuestInTransaction({
   // returns zeros for both Xero legs. The existing machinery is what proves
   // nothing moved, rather than a parallel hand-built result that could drift from
   // it.
+  // #3954: the unpaid ask, read ONCE for this removal and handed to both the
+  // options and the save, so a capture between two reads cannot split them.
+  const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents);
   const settlementOptions = parkedFinancialReview
     ? null
     : await calculateModificationSettlementOptions({
         booking: booking as unknown as LoadedBookingForModify,
         netChargeCents: priceDiffCents,
+        reduction,
         db: tx, // locked transaction; see `CancellationPolicyDb`
         // #3123 — the refund tier for this reduction, on the club's day.
         todayAtClub,
@@ -1023,6 +1030,7 @@ export async function removeBookingGuestInTransaction({
     booking: booking as unknown as LoadedBookingForModify,
     priceDiffCents,
     changeFeeCents: 0,
+    reduction,
     settlementOptions,
     settlementMethod,
     todayAtClub,

@@ -9,6 +9,7 @@ import {
 
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
+import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -1567,11 +1568,15 @@ export async function modifyBookingBatch({
     // payment row, and returns zeros for both Xero legs. The existing machinery
     // is what proves nothing moved, rather than a parallel hand-built result
     // that could drift from it.
+    // #3954: the unpaid ask, read ONCE for this edit and handed to both the
+    // options and the save, so a capture between two reads cannot split them.
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents + changeFeeCents);
     const settlementOptions = parked
       ? null
       : await calculateModificationSettlementOptions({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
+      reduction,
       db: tx,
       todayAtClub,
     });
@@ -1676,6 +1681,7 @@ export async function modifyBookingBatch({
       booking,
       priceDiffCents,
       changeFeeCents,
+      reduction,
       settlementOptions,
       settlementMethod: input.settlementMethod,
       todayAtClub,

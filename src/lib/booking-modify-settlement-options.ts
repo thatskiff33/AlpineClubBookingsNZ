@@ -4,8 +4,10 @@
 // the one basis both read. Code moved verbatim; import via
 // "@/lib/booking-modify" or "@/lib/booking-modify-settlement".
 
-import { setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
-import { readUnpaidPriceAsk, type UnpaidAskDb } from "@/lib/additional-ask-reduction";
+import {
+  assertReductionReadForNet,
+  type ReductionAgainstUnpaidAsk,
+} from "@/lib/additional-ask-reduction";
 import type { CalendarDate } from "@/lib/club-time";
 import {
   calculateDualRefundAmounts,
@@ -53,6 +55,7 @@ export type BookingModificationSettlementOptions = {
 export async function calculateModificationSettlementOptions({
   booking,
   netChargeCents,
+  reduction,
   db,
   todayAtClub,
 }: {
@@ -62,11 +65,17 @@ export async function calculateModificationSettlementOptions({
   >;
   netChargeCents: number;
   /**
-   * Also reads the payment's OPEN edit refund hand-backs (#3827,
-   * `INV-PAY-117`), so a reduction is sized off cash not already promised back,
-   * and its unpaid ask (#3954), so it is sized off what that ask leaves.
+   * #3954: this edit's net set against the booking's unpaid ask, READ ONCE by
+   * the caller (`readReductionAgainstUnpaidAsk`) and handed to
+   * `applyPaymentAdjustments` too, so the options are sized on exactly what the
+   * save retires - a capture between two reads can no longer split them.
    */
-  db: CancellationPolicyDb & OpenNonCancellationHandBackDb & UnpaidAskDb;
+  reduction: ReductionAgainstUnpaidAsk;
+  /**
+   * Also reads the payment's OPEN edit refund hand-backs (#3827,
+   * `INV-PAY-117`), so a reduction is sized off cash not already promised back.
+   */
+  db: CancellationPolicyDb & OpenNonCancellationHandBackDb;
   /**
    * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
    * transaction. It feeds `daysUntilDate` below, which is the refund-tier
@@ -75,9 +84,10 @@ export async function calculateModificationSettlementOptions({
    */
   todayAtClub: CalendarDate;
 }): Promise<BookingModificationSettlementOptions | null> {
+  assertReductionReadForNet(reduction, netChargeCents, booking.id);
   const basisAmountCents = settlementBasisCents(
     booking,
-    await reductionLeftAfterUnpaidAsk(db, booking, netChargeCents),
+    reduction.netChargeLeftCents,
     await refundableCashNetOfOpenHandBacks(db, booking.payment),
   );
   if (basisAmountCents === null) return null;
@@ -117,23 +127,6 @@ export async function calculateModificationSettlementOptions({
       cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
     returnsToOrganiser: false,
   };
-}
-
-/**
- * #3954: the edit's net once a reduction has been set against the booking's
- * unpaid ask - the figure every settlement option is sized on, so the quote,
- * the save's refusal and the save itself agree (`applyPaymentAdjustments` sets
- * the same ask against the same reduction under its locks).
- */
-export async function reductionLeftAfterUnpaidAsk(
-  db: UnpaidAskDb,
-  booking: Pick<LoadedBookingForModify, "id" | "status" | "payment">,
-  netChargeCents: number,
-): Promise<number> {
-  if (netChargeCents >= 0) return netChargeCents;
-  const ask = await readUnpaidPriceAsk(db, booking);
-  return setReductionAgainstUnpaidAsk({ netChargeCents, unpaidAskCents: ask.askCents })
-    .netChargeLeftCents;
 }
 
 /**

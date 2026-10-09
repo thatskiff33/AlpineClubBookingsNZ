@@ -140,7 +140,7 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
-import { reductionLeftAfterUnpaidAsk } from "@/lib/booking-modify-settlement-options";
+import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions, organiserChildChargeRefusal,
@@ -2475,16 +2475,18 @@ export async function POST(
     ? inProgressPlan.priceDiffCents
     : newFinalPriceCents - booking.finalPriceCents;
   const netChargeCents = priceDiffCents + changeFeeCents;
+  // #3954: what of a reduction releases the member from an unpaid ask before
+  // anything is refunded, credited or given back - read ONCE, so the options
+  // below and the figures returned agree; the save re-reads it under its locks.
+  const reduction = await readReductionAgainstUnpaidAsk(prisma, booking, netChargeCents);
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
+    reduction,
     db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
-  // #3954: what of a reduction releases the member from an unpaid ask before
-  // anything is refunded, credited or given back - the save sets the same ask
-  // against the same reduction under its locks.
-  const netChargeLeftCents = await reductionLeftAfterUnpaidAsk(prisma, booking, netChargeCents);
+  const netChargeLeftCents = reduction.netChargeLeftCents;
   // #3809: what saving would give back of the booking's applied credit - all of
   // a credit-paid booking's tiered reduction, or what the card basis leaves.
   const appliedCreditGiveBackCents = await previewPaidReductionCreditGiveBackCents({
@@ -2505,8 +2507,10 @@ export async function POST(
     changeFeeCents,
     netChargeCents,
     settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), // #3653: an increase the save refuses
-    // #3954: the part of a reduction that cancels or shrinks the unpaid card ask.
-    unpaidAskOffsetCents: netChargeLeftCents - netChargeCents,
+    // #3954: the part of a reduction that cancels or shrinks the unpaid card
+    // ask, and what is left of that ask afterwards (0: nothing left to pay).
+    unpaidAskOffsetCents: reduction.offsetCents,
+    askLeftCents: reduction.askLeftCents,
     appliedCreditGiveBackCents,
     // #2266: create-flow parity (api/bookings/quote/route.ts) — the member's
     // live balance so the edit panel can offer credit against the new price.

@@ -13,14 +13,13 @@ import {
 import {
   NO_ADDITIONAL_ASK,
   reissueUnpaidAdditionalAsk,
-  setReductionAgainstUnpaidAsk,
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
 import {
-  NO_UNPAID_PRICE_ASK,
-  readUnpaidPriceAsk,
+  assertReductionReadForNet,
   retireUnpaidAskChain,
+  type ReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -215,6 +214,7 @@ export async function applyPaymentAdjustments(
     booking,
     priceDiffCents,
     changeFeeCents,
+    reduction,
     settlementOptions,
     settlementMethod,
     todayAtClub,
@@ -224,6 +224,13 @@ export async function applyPaymentAdjustments(
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
+    /**
+     * #3954: this edit's net set against the booking's unpaid ask - the SAME
+     * read the caller's settlement options were sized on
+     * (`readReductionAgainstUnpaidAsk`, once per edit, after the caller's
+     * locks). An increase passes `noReductionAgainstUnpaidAsk`.
+     */
+    reduction: ReductionAgainstUnpaidAsk;
     settlementOptions?: BookingModificationSettlementOptions | null;
     settlementMethod?: BookingModificationSettlementMethod;
     /** #3809: the club's day, the tier boundary of a credit-paid booking's give-back. */
@@ -244,17 +251,12 @@ export async function applyPaymentAdjustments(
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
   // #3954 (owner decision, 8 Oct 2026): a reduction is first set against the
-  // booking's unpaid ask - read here, after the caller's locks, as the caller's
-  // settlement options read it - and every branch below settles only what is
-  // left. An increase reads no ask and is unchanged.
-  const unpaidAsk =
-    priceDiffCents + changeFeeCents < 0
-      ? await readUnpaidPriceAsk(tx, booking)
-      : NO_UNPAID_PRICE_ASK;
-  const setAgainstAsk = setReductionAgainstUnpaidAsk({
-    netChargeCents: priceDiffCents + changeFeeCents,
-    unpaidAskCents: unpaidAsk.askCents,
-  });
+  // booking's unpaid ask - read ONCE by the caller, after its locks, and the
+  // same read its settlement options were sized on - and every branch below
+  // settles only what is left. An increase carries no ask and is unchanged.
+  assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
+  const unpaidAsk = reduction.ask;
+  const setAgainstAsk = reduction;
   const netAmountCents = setAgainstAsk.netChargeLeftCents;
   // #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit or a
   // 100% promotion carries `{ amountCents: 0, status: SUCCEEDED }`, which

@@ -68,6 +68,7 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
+import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
@@ -867,11 +868,15 @@ export async function modifyBookingDates({
     // payment row, and returns zeros for both Xero legs. The existing machinery
     // is what proves nothing moved, rather than a parallel hand-built result
     // that could drift from it.
+    // #3954: the unpaid ask, read ONCE for this edit and handed to both the
+    // options and the save, so a capture between two reads cannot split them.
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     const settlementOptions = parked
       ? null
       : await calculateModificationSettlementOptions({
           booking: booking as unknown as LoadedBookingForModify,
           netChargeCents,
+          reduction,
           db: tx, // locked transaction; see `CancellationPolicyDb`
           todayAtClub,
         });
@@ -885,6 +890,7 @@ export async function modifyBookingDates({
       booking: booking as unknown as LoadedBookingForModify,
       priceDiffCents,
       changeFeeCents,
+      reduction,
       settlementOptions,
       settlementMethod,
       todayAtClub,

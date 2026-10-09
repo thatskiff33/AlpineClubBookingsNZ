@@ -48,6 +48,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 
 const { applyPaymentAdjustments, organiserChildChargeRefusal } = await import("@/lib/booking-modify-settlement");
+const { noReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
 const { canAskCardForIncrease, hasCapturedPayment } = await import("@/lib/booking-payment-state");
 const { classifyXeroBookingEditSettlement } = await import("@/lib/xero-booking-edit-settlement");
 const { bookingLedgerResidualCents, bookingLedgerVerdict } = await import("@/lib/additional-payment-ask");
@@ -100,7 +101,7 @@ function zeroDollarBooking(overrides: {
 }
 
 const adjust = (booking: LoadedBookingForModify, priceDiffCents: number, changeFeeCents = 0) =>
-  applyPaymentAdjustments(tx, {
+  applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk((priceDiffCents) + (changeFeeCents)),
     booking,
     priceDiffCents,
     changeFeeCents,

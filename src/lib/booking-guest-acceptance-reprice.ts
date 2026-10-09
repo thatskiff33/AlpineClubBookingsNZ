@@ -1,6 +1,9 @@
 import { Role, type Prisma } from "@prisma/client";
 
-import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
+import {
+  readReductionAgainstUnpaidAsk,
+  type RetiredAdditionalAsk,
+} from "@/lib/additional-ask-reduction";
 import { NO_ADDITIONAL_ASK, type AdditionalAsk } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
@@ -291,7 +294,10 @@ export async function repriceBookingAfterGuestAcceptance(
 
   // D-3813-5: how the whole reduction goes back, decided BEFORE anything is
   // written, so a reduction that cannot be returned in full moves no code.
-  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, todayAtClub);
+  // #3954: the unpaid ask, read ONCE for this re-price and handed to both the
+  // return route and the save.
+  const reduction = await readReductionAgainstUnpaidAsk(tx, loaded, priceDiffCents);
+  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, reduction, todayAtClub);
   if (returnRoute === null) {
     logger.warn(
       { bookingId, priceDiffCents },
@@ -368,6 +374,7 @@ export async function repriceBookingAfterGuestAcceptance(
     booking: loaded,
     priceDiffCents,
     changeFeeCents: 0,
+    reduction,
     ...(returnRoute.kind === "money-back"
       ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
       : {}),

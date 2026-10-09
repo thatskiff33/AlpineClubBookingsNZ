@@ -276,6 +276,9 @@ export interface QuoteResult {
   // #3954: the part of a reduction that comes off an unpaid additional payment
   // (cancelling or shrinking it) before anything is refunded or credited.
   unpaidAskOffsetCents?: number;
+  // #3954 round 4: what is left of that additional payment afterwards - 0 when
+  // the reduction cancels it, so the panel can say what the member still owes.
+  askLeftCents?: number;
   /**
    * #3653: set when the save would refuse this increase because the group
    * organiser paid for the booking by card. The server's sentence, shown

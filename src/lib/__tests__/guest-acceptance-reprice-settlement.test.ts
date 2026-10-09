@@ -85,6 +85,7 @@ import {
   settleGuestAcceptanceRepriceAfterCommit,
 } from "@/lib/booking-guest-acceptance-reprice";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -592,7 +593,7 @@ describe("the credit share comes back once, untiered, on the acceptance only (#3
 
   it("an ordinary edit's reduction still takes #3809's give-back; only the caller's flag skips it", async () => {
     const creditPaid = booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } });
-    const args = { booking: creditPaid as never, priceDiffCents: -6000, changeFeeCents: 0, todayAtClub: TODAY, format: CLUB_FORMAT_TEST };
+    const args = { booking: creditPaid as never, priceDiffCents: -6000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-6000), todayAtClub: TODAY, format: CLUB_FORMAT_TEST };
     h.giveBackPaidReductionCredit.mockResolvedValueOnce({ basisCents: 6000, givenBackCents: 3000 });
     const ordinary = await applyPaymentAdjustments(tx(creditPaid) as never, args);
     expect(h.giveBackPaidReductionCredit).toHaveBeenCalledTimes(1);

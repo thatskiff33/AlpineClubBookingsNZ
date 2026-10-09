@@ -59,6 +59,7 @@ import {
 } from "@prisma/client";
 
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
+import { setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
 import {
   isRecoveryOvertakenByLaterAsk,
   recoveryAskBeyondPaymentAskCents,
@@ -127,6 +128,68 @@ export type UnpaidPriceAsk = {
 };
 
 export const NO_UNPAID_PRICE_ASK: UnpaidPriceAsk = { askCents: 0, rows: [], recoveries: [] };
+
+/**
+ * ONE EDIT'S NET, SET AGAINST THE ASK READ FOR IT - read ONCE per edit
+ * (`readReductionAgainstUnpaidAsk`) and handed to everything that sizes or
+ * settles that edit: the settlement options, `applyPaymentAdjustments`, a
+ * guest acceptance's return route and the quote (#3954 review round 4).
+ *
+ * Two reads in one transaction could disagree: a capture landing between them
+ * left the options sized on an ask the save no longer saw, so the save either
+ * refunded the netted part untiered or tripped its guard with a 500. One read
+ * means the retire's fence is the only place a capture can be noticed, and it
+ * rolls the edit back with a 409. `netChargeCents` travels with the read so a
+ * consumer handed a read for a different net refuses it.
+ */
+export type ReductionAgainstUnpaidAsk = {
+  readonly netChargeCents: number;
+  readonly ask: UnpaidPriceAsk;
+} & ReturnType<typeof setReductionAgainstUnpaidAsk>;
+
+/** Nothing set against: an increase, an unpriced edit, or a booking with no ask. */
+export function noReductionAgainstUnpaidAsk(netChargeCents: number): ReductionAgainstUnpaidAsk {
+  return {
+    netChargeCents,
+    ask: NO_UNPAID_PRICE_ASK,
+    ...setReductionAgainstUnpaidAsk({ netChargeCents, unpaidAskCents: 0 }),
+  };
+}
+
+/**
+ * Read the booking's unpaid price ask for an edit whose own net is
+ * `netChargeCents`, and set the reduction against it. An increase reads
+ * nothing. The ONE read per edit; see `ReductionAgainstUnpaidAsk`.
+ */
+export async function readReductionAgainstUnpaidAsk(
+  db: UnpaidAskDb,
+  booking: UnpaidAskBooking,
+  netChargeCents: number,
+): Promise<ReductionAgainstUnpaidAsk> {
+  if (netChargeCents >= 0) return noReductionAgainstUnpaidAsk(netChargeCents);
+  const ask = await readUnpaidPriceAsk(db, booking);
+  return {
+    netChargeCents,
+    ask,
+    ...setReductionAgainstUnpaidAsk({ netChargeCents, unpaidAskCents: ask.askCents }),
+  };
+}
+
+/**
+ * The guard every consumer runs: the read it was handed was taken for THIS
+ * edit's net. A mismatch is a caller bug, never a race, so it is a plain error.
+ */
+export function assertReductionReadForNet(
+  reduction: ReductionAgainstUnpaidAsk,
+  netChargeCents: number,
+  bookingId: string,
+): void {
+  if (reduction.netChargeCents !== netChargeCents) {
+    throw new Error(
+      `INV-PAY-119 (#3954): booking ${bookingId}'s unpaid ask was read for a net of ${reduction.netChargeCents} cents and handed to an edit whose net is ${netChargeCents}; read it once for this edit (readReductionAgainstUnpaidAsk).`,
+    );
+  }
+}
 
 export type UnpaidAskDb = Pick<
   Prisma.TransactionClient,

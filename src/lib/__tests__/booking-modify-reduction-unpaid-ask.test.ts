@@ -81,6 +81,7 @@ const {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
 } = await import("@/lib/payment-recovery-keys");
 const { ApiError } = await import("@/lib/api-error");
+const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
 const { createModificationAdditionalPaymentIntent } = await import("@/lib/booking-modification-settlement");
 const { ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE } = await import("@/lib/unpaid-ask-offset-marker");
 
@@ -183,9 +184,12 @@ async function adjust(
   priceDiffCents: number,
   { changeFeeCents = 0, settlementMethod }: { changeFeeCents?: number; settlementMethod?: "card" | "credit" } = {},
 ) {
+  // #3954 round 4: the ask is read ONCE and handed to both, as every door does.
+  const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents + changeFeeCents);
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents: priceDiffCents + changeFeeCents,
+    reduction,
     db: tx as never,
     todayAtClub: TODAY,
   });
@@ -193,6 +197,7 @@ async function adjust(
     booking,
     priceDiffCents,
     changeFeeCents,
+    reduction,
     settlementOptions,
     settlementMethod: settlementMethod ?? (settlementOptions?.requiresSettlementMethod ? "card" : undefined),
     todayAtClub: TODAY,
@@ -348,6 +353,7 @@ describe("#3954: a card-paid booking's reduction is set against its unpaid ask f
     const options = await calculateModificationSettlementOptions({
       booking,
       netChargeCents: -5_000,
+      reduction: await readReductionAgainstUnpaidAsk(tx, booking, -5_000),
       db: tx as never,
       todayAtClub: TODAY,
     });
@@ -440,6 +446,44 @@ describe("#3954: the race with the member paying the ask", () => {
     expect(mocks.enqueueCancel).not.toHaveBeenCalled();
     expect(paymentFindUnique).not.toHaveBeenCalled();
   });
+
+  it("MUTATION: one read for the options and the save - a capture between them is the fence's 409, never an untiered refund or a 500", async () => {
+    mocks.policy = [{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }];
+    const booking = grownBooking();
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, -8_000);
+    const reads = (tx.paymentTransaction.findMany as ReturnType<typeof vi.fn>).mock.calls.length;
+    const settlementOptions = await calculateModificationSettlementOptions({
+      booking, netChargeCents: -8_000, reduction, db: tx as never, todayAtClub: TODAY,
+    });
+    expect(settlementOptions?.basisAmountCents).toBe(3_000);
+    // The member pays the $50 ask on another connection: a second read would
+    // now see no ask and settle the whole $80 on options sized for $30.
+    state.rows = [askRow({ status: PaymentStatus.SUCCEEDED })];
+    state.stampCount = 0;
+    await expect(
+      applyPaymentAdjustments(tx, {
+        booking, priceDiffCents: -8_000, changeFeeCents: 0, reduction, settlementOptions,
+        settlementMethod: "card", todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
+      }),
+    ).rejects.toSatisfy((err: unknown) => err instanceof ApiError && err.status === 409);
+    // Neither the options nor the save read the ask again.
+    expect((tx.paymentTransaction.findMany as ReturnType<typeof vi.fn>).mock.calls.length).toBe(reads);
+    expect(mocks.enqueueCancel).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a read taken for another net is refused, in the options and in the save", async () => {
+    const booking = grownBooking();
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, -2_000);
+    await expect(
+      calculateModificationSettlementOptions({ booking, netChargeCents: -8_000, reduction, db: tx as never, todayAtClub: TODAY }),
+    ).rejects.toThrow(/INV-PAY-119 \(#3954\).*read it once/);
+    await expect(
+      applyPaymentAdjustments(tx, {
+        booking, priceDiffCents: 1_000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-2_000),
+        todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
+      }),
+    ).rejects.toThrow(/INV-PAY-119 \(#3954\)/);
+  });
 });
 
 describe("#3954: the save refuses options sized before the offset", () => {
@@ -450,6 +494,7 @@ describe("#3954: the save refuses options sized before the offset", () => {
         booking,
         priceDiffCents: -5_000,
         changeFeeCents: 0,
+        reduction: await readReductionAgainstUnpaidAsk(tx, booking, -5_000),
         settlementOptions: {
           basisAmountCents: 5_000,
           cardRefundAmountCents: 5_000,
@@ -618,9 +663,11 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
   });
 
   it("the settlement options are sized on what the waiting ask leaves, as the save is", async () => {
+    const booking = awaitingRetryBooking();
     const options = await calculateModificationSettlementOptions({
-      booking: awaitingRetryBooking(),
+      booking,
       netChargeCents: -8_000,
+      reduction: await readReductionAgainstUnpaidAsk(tx, booking, -8_000),
       db: tx as never,
       todayAtClub: TODAY,
     });
