@@ -188,8 +188,15 @@ function gateEnvironmentReads(text: string): string[] {
       .map((parameter) => (parameter.name as ts.Identifier).text)));
   }
   const isBoundMap = (node: ts.Identifier): boolean => {
+    let crossedFunction = false;
     for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
-      if (ts.isFunctionLike(parent)) return bindings.get(parent)?.has(node.text) ?? false;
+      if (!ts.isFunctionLike(parent)) continue;
+      if (bindings.get(parent)?.has(node.text)) {
+        // Nested functions may capture or shadow this binding. Reject that
+        // unsupported scope rather than silently omitting an environment read.
+        return crossedFunction ? unsupported(node) : true;
+      }
+      crossedFunction = true;
     }
     return false;
   };
@@ -528,6 +535,16 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
     // A third read cannot be excused by delivery of only the original pair.
     expect(reads.filter((name) => !new Set(["FIRST_ACK", "SECOND_ACK"]).has(name)))
       .toEqual(["THIRD_ACK"]);
+  });
+
+  it.each([
+    "[1].some(() => settings.THIRD_ACK === '1')",
+    "[{}].some((settings) => settings.THIRD_ACK === '1')",
+  ])("fails closed on nested map capture or shadowing: %s", (expression) => {
+    expect(() => gateEnvironmentReads(`
+      function gate(env: Record<string, string | undefined>) { return thirdAck(env); }
+      function thirdAck(settings: Record<string, string | undefined>) { return ${expression}; }
+    `)).toThrow(/unsupported environment read/);
   });
 
   it("bounds the shared Compose anchor and ignores commented markers", () => {

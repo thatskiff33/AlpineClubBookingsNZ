@@ -84,7 +84,14 @@ function loadsDotenv(line: string): boolean {
     let start = 0;
     while (words[start] && !words[start].quoted &&
       /^(?:if|elif|then|else|do|while|until|!)$/.test(words[start].value)) start++;
-    if (words[start]?.value === "builtin") start++;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[start]?.value ?? "")) start++;
+    while (words[start]?.value === "builtin" || words[start]?.value === "command") {
+      const wrapper = words[start++].value;
+      // These options inspect command names; they do not execute the loader.
+      if (wrapper === "command" && /^-[vV]+$/.test(words[start]?.value ?? "")) return false;
+      if (wrapper === "command" && words[start]?.value === "-p") start++;
+      if (words[start]?.value === "--") start++;
+    }
     const name = words[start]?.value;
     if (name === "set" && /^-[a-z]*a/.test(words[start + 1]?.value ?? "")) return true;
     if (name !== "source" && name !== ".") return false;
@@ -106,6 +113,12 @@ describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
     '{ source "${SOURCE_REPO}/.env"; }',
     'builtin source "${SOURCE_REPO}/.env"',
     'builtin . -- "${SOURCE_REPO}/.env"',
+    'SAFE_VALUE=example source "${SOURCE_REPO}/.env"',
+    'SAFE_VALUE="example with spaces" source "${SOURCE_REPO}/.env"',
+    'command source "${SOURCE_REPO}/.env"',
+    'command -- source "${SOURCE_REPO}/.env"',
+    'command -p -- source "${SOURCE_REPO}/.env"',
+    'builtin -- source "${SOURCE_REPO}/.env"',
     'echo "if true; then source .env"; source "${SOURCE_REPO}/.env"',
   ])("detects an ordinary dotenv loader: %s", (line) => {
     expect(loadsDotenv(line)).toBe(true);
@@ -118,6 +131,8 @@ describe(`${NAME} is read only from the deploy shell (#3964)`, () => {
     "echo 'if true; then source .env'",
     'echo if\\ true\\;\\ then\\ source\\ .env',
     'source "${SOURCE_REPO}/helpers.sh"',
+    'command -v source "${SOURCE_REPO}/.env"',
+    'command -V source "${SOURCE_REPO}/.env"',
   ])("ignores comments, messages and other source files: %s", (line) => {
     expect(loadsDotenv(line)).toBe(false);
   });
