@@ -66,6 +66,7 @@ const ASK_INTENT = "pi_race_3954_ask";
 const INCREASE_MOD_ID = "race-3954-increase";
 const WAITING_OP_ID = "race-3954-waiting-supplementary";
 const RECOVERY_ID = "race-3954-ask-recovery";
+const PRIMARY_INVOICE_ID = "inv_race_3954_primary";
 
 const TODAY = new Date("2026-07-01T00:00:00.000Z");
 const NIGHTS = [new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-02T00:00:00.000Z")];
@@ -124,6 +125,7 @@ let webhookClient: PrismaClient;
       leavingNightCents: number,
       refundPercentage = 100,
       ask: "minted" | "awaiting-retry" = "minted",
+      invoice: "parked" | "primary-after-increase" = "parked",
     ) {
       const stayingNightCents = 7_500 - leavingNightCents;
       await deleteFixtures();
@@ -163,6 +165,9 @@ let webhookClient: PrismaClient;
           amountCents: shape === "card" ? 10_000 : 0,
           creditAppliedCents: shape === "card" ? 0 : 10_000,
           ...(shape === "card" ? { stripePaymentIntentId: "pi_race_3954_primary" } : {}),
+          // Round 5: the primary invoice was raised AFTER the increase, so it
+          // bills the ask and no supplementary invoice was ever parked on it.
+          ...(invoice === "primary-after-increase" ? { xeroInvoiceId: PRIMARY_INVOICE_ID } : {}),
         },
       });
       if (shape === "card") {
@@ -206,7 +211,7 @@ let webhookClient: PrismaClient;
           amountCents: 5_000, stripePaymentIntentId: ASK_INTENT, reason: "guest_add_price_increase",
         },
       });
-      await prisma.xeroSyncOperation.create({
+      if (invoice === "parked") await prisma.xeroSyncOperation.create({
         data: {
           id: WAITING_OP_ID, direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE", status: "WAITING_PAYMENT",
           localModel: "BookingModification", localId: INCREASE_MOD_ID, queueType: "SUPPLEMENTARY_INVOICE",
@@ -816,6 +821,118 @@ let webhookClient: PrismaClient;
 
       expect(await claim).toEqual({ count: 0 });
       expect(await recovery()).toMatchObject({ status: "SUCCEEDED", attempts: 1 });
+    });
+
+    // ROUND 5 (owner decision 10 Oct 2026, "Auto credit note"): the primary
+    // invoice raised after the increase bills the ask, so the part of the
+    // offset it billed takes a scoped invoice-correction note against it,
+    // queued in the edit's own transaction and keyed on the reducing edit.
+    const billedOffsetNotes = (bookingModificationId: string) =>
+      prisma.xeroSyncOperation.findMany({
+        where: { entityType: "CREDIT_NOTE", operationType: "CREATE", localModel: "BookingModification", localId: bookingModificationId },
+        select: { id: true, status: true, correlationKey: true, requestPayload: true },
+      });
+
+    it.each([
+      { shape: "card" as const, leavingNightCents: 2_500, billedCents: 5_000, reissuedCents: 0 },
+      { shape: "credit" as const, leavingNightCents: 2_500, billedCents: 5_000, reissuedCents: 0 },
+      { shape: "card" as const, leavingNightCents: 1_000, billedCents: 2_000, reissuedCents: 3_000 },
+    ])(
+      "ROUND 5: $shape-paid, the primary invoice billed the ask - a $billedCents offset queues one scoped invoice-correction note for exactly it, and every replay finds that one",
+      async ({ shape, leavingNightCents, billedCents, reissuedCents }) => {
+        await grownBooking(shape, leavingNightCents, 100, "minted", "primary-after-increase");
+
+        const result = await removeLeavingGuest();
+        const reductionId = result.bookingModificationId!;
+
+        expect(result.refundAmountCents).toBe(0);
+        expect(result.additionalAsk.amountCents).toBe(reissuedCents);
+        const history = await prisma.bookingModification.findUniqueOrThrow({ where: { id: reductionId }, select: { newData: true } });
+        expect(history.newData).toMatchObject({ unpaidAskOffsetCents: billedCents, unpaidAskBilledOffsetCents: billedCents });
+        // Never doubled with decision A: nothing of the ask's money was on a
+        // parked invoice, so the smaller re-issue has no invoice of its own.
+        expect(history.newData).not.toHaveProperty("reissuedAskInvoiceCents");
+
+        const { buildXeroIdempotencyKey } = await import("@/lib/xero-sync");
+        const { UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE } = await import("@/lib/xero-review-task-key");
+        const key = buildXeroIdempotencyKey("booking-mod", reductionId, "review-task", UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE, "mod-credit-note", billedCents, "v1");
+        const [note, ...others] = await billedOffsetNotes(reductionId);
+        expect(others).toEqual([]);
+        expect(note).toMatchObject({
+          status: "PENDING",
+          correlationKey: key,
+          requestPayload: {
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: BOOKING_ID,
+            bookingModificationId: reductionId,
+            refundAmountCents: billedCents,
+            noteWording: "invoice-correction",
+            reviewTaskId: UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE,
+          },
+        });
+
+        // Replays: the door's follow-ups again, then the repair pass's enqueue
+        // while it is pending, and again once it has landed in Xero.
+        const { queueReductionAskFollowUps } = await import("@/lib/unpaid-ask-billed-offset-note");
+        await prisma.$transaction((tx) =>
+          queueReductionAskFollowUps(tx, {
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            bookingModificationId: reductionId,
+            settled: { additionalAsk: result.additionalAsk, hasIssuedXeroInvoice: true, unpaidAskBilledOffsetCents: billedCents },
+          }),
+        );
+        const { enqueueXeroModificationCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
+        const repairEnqueue = () =>
+          enqueueXeroModificationCreditNoteOperation({
+            bookingId: BOOKING_ID,
+            bookingModificationId: reductionId,
+            refundAmountCents: billedCents,
+            noteWording: "invoice-correction",
+            reviewTaskId: UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE,
+          });
+        expect((await repairEnqueue()).queueOperationId).toBe(note!.id);
+        await prisma.xeroSyncOperation.update({ where: { id: note!.id }, data: { status: "SUCCEEDED", completedAt: TODAY } });
+        expect((await repairEnqueue()).queueOperationId).toBe(note!.id);
+        expect((await billedOffsetNotes(reductionId)).map((row) => row.id)).toEqual([note!.id]);
+      },
+    );
+
+    it("ROUND 5: where the increase's own invoice was parked on the ask, it is retired instead and no note is queued", async () => {
+      await grownBooking("card", 2_500);
+      const result = await removeLeavingGuest();
+
+      expect(await waitingOp()).toEqual({ status: "CANCELLED", lastErrorCode: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION" });
+      const history = await prisma.bookingModification.findUniqueOrThrow({ where: { id: result.bookingModificationId! }, select: { newData: true } });
+      expect(history.newData).not.toHaveProperty("unpaidAskBilledOffsetCents");
+      expect(await billedOffsetNotes(result.bookingModificationId!)).toEqual([]);
+    });
+
+    it("ROUND 5: the note commits with the edit - an edit that rolls back leaves no note behind", async () => {
+      await grownBooking("card", 2_500, 100, "minted", "primary-after-increase");
+      const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
+      let reductionId: string | undefined;
+
+      const outcome = await prisma
+        .$transaction(
+          async (tx) => {
+            const result = await removeBookingGuestInTransaction({
+              tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+              settlementMethod: "card",
+            });
+            reductionId = result.bookingModificationId!;
+            // Queued inside the edit's transaction, visible to it before commit.
+            expect(await tx.xeroSyncOperation.count({ where: { entityType: "CREDIT_NOTE", localId: reductionId } })).toBe(1);
+            throw new Error("a later step of the same edit failed");
+          },
+          { maxWait: 10_000, timeout: 20_000 },
+        )
+        .catch((err: unknown) => err);
+
+      expect((outcome as Error).message).toBe("a later step of the same edit failed");
+      expect(reductionId).toBeDefined();
+      expect(await billedOffsetNotes(reductionId!)).toEqual([]);
+      expect(await askAfter()).toEqual({ status: "PENDING", withdrawnAt: null });
     });
   },
 );
