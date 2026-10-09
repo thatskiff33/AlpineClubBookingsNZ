@@ -1,3 +1,4 @@
+import { bookingWorthCents } from "@/lib/booking-payment-state";
 import "server-only";
 
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
@@ -247,6 +248,8 @@ export async function applyManualBookingPayment(
           checkIn: true,
           checkOut: true,
           finalPriceCents: true,
+          // #3750: a change fee recorded on the payment was settled too.
+          payment: { select: { changeFeeCents: true } },
           discountCents: true,
           promoAdjustmentCents: true,
           member: { select: { email: true, firstName: true } },
@@ -312,7 +315,12 @@ export async function applyManualBookingPayment(
           recipient.checkIn,
           recipient.checkOut,
           recipient._count.guests,
-          recipient.finalPriceCents,
+          // #3955 review F8: the booking's worth — its price plus a recorded
+          // change fee — is what the member settled (the email nets credit).
+          bookingWorthCents({
+            finalPriceCents: recipient.finalPriceCents,
+            changeFeeCents: recipient.payment?.changeFeeCents ?? null,
+          }),
           format,
           {
             lodgeId: recipient.lodgeId,

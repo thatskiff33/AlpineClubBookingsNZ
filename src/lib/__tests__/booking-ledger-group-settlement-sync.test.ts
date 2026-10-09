@@ -125,8 +125,8 @@ describe("postGroupSettlementLedgerLines", () => {
       store,
       settlement: { id: "gs1", source: "STRIPE", amountCents: 4_500 },
       children: [
-        { id: "good", lodgeId: "l1", finalPriceCents: 4_500 },
-        { id: "bad", lodgeId: "l1", finalPriceCents: 0 },
+        { id: "good", lodgeId: "l1", finalPriceCents: 4_500, payment: null },
+        { id: "bad", lodgeId: "l1", finalPriceCents: 0, payment: null },
       ],
     });
 
@@ -136,5 +136,27 @@ describe("postGroupSettlementLedgerLines", () => {
       { settlementId: "gs1", failedBookingIds: ["bad"] },
       expect.stringContaining("posted no lines for these children"),
     );
+  });
+
+  it("#3750: a child's share is its worth, so a fee recorded on its payment is in the share and the settlement reconciles", async () => {
+    const store = {
+      booking: {
+        findMany: vi.fn(async () => [
+          { id: "fee", lodgeId: "l1", totalPriceCents: 4_500, promoAdjustmentCents: 0, guests: [guest("fee", 4_500)] },
+        ]),
+      },
+      bookingLedgerLine: { findFirst: vi.fn(async () => ({ id: "confirmed" })), createMany: mocks.createMany },
+    } as never;
+    mocks.createMany.mockClear();
+
+    await postGroupSettlementLedgerLines({
+      store,
+      settlement: { id: "gs3", source: "STRIPE", amountCents: 5_000 },
+      children: [{ id: "fee", lodgeId: "l1", finalPriceCents: 4_500, payment: { changeFeeCents: 500 } }],
+    });
+
+    expect(logger.error).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("do not add up"));
+    const written = (mocks.createMany.mock.calls[0] as unknown as [{ data: Array<{ bookingId: string; kind: string; amountCents: number }> }])[0].data;
+    expect(written).toEqual([expect.objectContaining({ bookingId: "fee", kind: "CARD_CAPTURE", amountCents: 5_000 })]);
   });
 });

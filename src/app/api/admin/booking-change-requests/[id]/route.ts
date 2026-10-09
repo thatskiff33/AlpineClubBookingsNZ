@@ -4,6 +4,11 @@ import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
+import {
+  finishedStayApprovalFields,
+  finishedStayApprovalResponse,
+  includeRequestDetail,
+} from "@/lib/booking-change-request-admin-decision";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -23,50 +28,11 @@ const reviewSchema = z.object({
    */
   internalNotes: z.string().max(2000).optional(),
   linkedModificationId: z.string().min(1).optional(),
+  // #3750: read only when approving EXECUTES the request (a finished stay).
+  ...finishedStayApprovalFields,
 });
 
-const includeRequestDetail = {
-  requestedBy: {
-    select: { id: true, firstName: true, lastName: true, email: true },
-  },
-  reviewedBy: {
-    select: { id: true, firstName: true, lastName: true },
-  },
-  linkedModification: {
-    select: {
-      id: true,
-      createdAt: true,
-      modificationType: true,
-      priceDiffCents: true,
-      changeFeeCents: true,
-    },
-  },
-  booking: {
-    select: {
-      id: true,
-      checkIn: true,
-      checkOut: true,
-      status: true,
-      finalPriceCents: true,
-      memberId: true,
-      member: {
-        select: { id: true, firstName: true, lastName: true, email: true },
-      },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-      payment: {
-        select: {
-          id: true,
-          amountCents: true,
-          refundedAmountCents: true,
-          status: true,
-          xeroInvoiceId: true,
-          xeroInvoiceNumber: true,
-        },
-      },
-    },
-  },
-} as const;
+
 
 export async function GET(
   _req: NextRequest,
@@ -119,7 +85,7 @@ export async function PATCH(
 
   const existing = await prisma.bookingChangeRequest.findUnique({
     where: { id },
-    include: { booking: { select: { id: true, memberId: true } } },
+    include: { booking: { select: { id: true, memberId: true, checkOut: true, status: true } } },
   });
 
   if (!existing) {
@@ -149,6 +115,14 @@ export async function PATCH(
     );
   }
 
+  // #3750: on a FINISHED stay, approving executes the request instead.
+  const executed = await finishedStayApprovalResponse(req, {
+    request: existing,
+    body: parsed.data,
+    actorMemberId: session.user.id,
+  });
+  if (executed) return executed;
+
   if (parsed.data.linkedModificationId) {
     const modification = await prisma.bookingModification.findUnique({
       where: { id: parsed.data.linkedModificationId },
@@ -175,6 +149,7 @@ export async function PATCH(
     where: { id, status: "REQUESTED", kind: "LOCKED_PERIOD" },
     data: {
       status: parsed.data.status,
+      version: { increment: 1 }, // #3750: every mutating write bumps the CAS token
       adminNotes: parsed.data.adminNotes?.trim() || null,
       // #2562: the private half, stored beside the member-facing half. No
       // member-facing projection, route select, email template or notification
@@ -212,7 +187,8 @@ export async function PATCH(
     details: parsed.data.adminNotes?.trim() || null,
     // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
     // reads today rather than widening it: `adminNotes` is #2562's member-facing
-    // half, already emailed to them with this decision, while `internalNotes`
+    // half, which they read on their own booking page (a locked-period decision
+    // sends no email of its own — #3750 corrected this comment), while `internalNotes`
     // reaches no member surface and is not in this row at all.
     memberDisclosure: parsed.data.adminNotes?.trim()
       ? { visibility: "member-facing", text: parsed.data.adminNotes.trim() }
@@ -221,6 +197,7 @@ export async function PATCH(
       bookingId: existing.booking.id,
       requestId: id,
       status: parsed.data.status,
+      executed: false, // #3750: an acknowledgement, not an execution
       linkedModificationId: parsed.data.linkedModificationId ?? null,
       // WHETHER an internal note was left, never its text (#2562). The audit log
       // is read by more surfaces than this queue, and a private note copied into

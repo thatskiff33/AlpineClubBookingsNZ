@@ -29,10 +29,8 @@ vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
   getHutFeeItemCodeMap: vi.fn().mockResolvedValue(new Map()),
 }));
 
-import {
-  buildGroupSettlementInvoiceLines,
-  invoiceLineItemsTotalCents,
-} from "@/lib/xero-group-settlement-invoice-lines";
+import { buildGroupSettlementInvoiceLines } from "@/lib/xero-group-settlement-invoice-lines";
+import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 
 function child(overrides: Record<string, unknown>) {
   return {
@@ -82,6 +80,21 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
     );
     // One code records nothing new on the operation.
     expect(lines.operationRecord).toEqual({});
+  });
+
+  it("#3955 F3: bills a joiner's recorded change fee, so the invoice still totals the settlement", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "with-fee", finalPriceCents: 5000, payment: { changeFeeCents: 1250 } }),
+      child({ id: "no-fee", finalPriceCents: 5000, payment: null }),
+    ]);
+
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+
+    expect(lines.childrenCents).toBe(11250);
+    expect(lines.lineCents).toBe(11250);
+    expect(lines.lineItems.filter((line) => line.description === CHANGE_FEE_LINE_DESCRIPTION)).toEqual([
+      expect.objectContaining({ unitAmount: 12.5, quantity: 1 }),
+    ]);
   });
 
   it("gives a several-code joiner one coded promotion line per code, totalling the settlement (#3828)", async () => {

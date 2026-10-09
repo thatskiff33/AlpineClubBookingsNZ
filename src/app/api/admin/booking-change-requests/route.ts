@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { isFinishedStay } from "@/lib/booking-edit-policy";
 
 const querySchema = z.object({
   status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
@@ -84,5 +86,14 @@ export async function GET(req: NextRequest) {
     prisma.bookingChangeRequest.count({ where }),
   ]);
 
-  return NextResponse.json({ data: requests, page, pageSize, total });
+  // #3750: whether approving a request EXECUTES it — its booking's stay has
+  // finished — answered here from the same `isFinishedStay` the decision route
+  // asks, so the panel's wording and the route's behaviour cannot disagree.
+  const today = await clubTodayDateOnlyInstant();
+  const data = requests.map((request) => ({
+    ...request,
+    executesOnApproval: isFinishedStay(request.booking, today),
+  }));
+
+  return NextResponse.json({ data, page, pageSize, total });
 }
