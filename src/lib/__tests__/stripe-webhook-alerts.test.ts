@@ -209,7 +209,7 @@ vi.mock("@/lib/stripe", () => ({
   getPaymentMethod: (...args: unknown[]) => mockGetPaymentMethod(...args),
 }));
 // DB-only (#2082): the webhook route resolves its signing secret via
-// stripe-config and records a test-mode verified marker; mock both so the route
+// stripe-config and records the webhook-verified marker; mock both so the route
 // reaches signature verification without a DB.
 vi.mock("@/lib/stripe-config", () => ({
   getOperationalStripeWebhookSecret: vi.fn().mockResolvedValue("whsec_test"),
