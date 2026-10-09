@@ -458,8 +458,7 @@ export function bookingModifiedTemplate(params: {
   /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
-  /** #3954: the price drop cancelled the unpaid extra payment outright. Required, as `financialReviewPending` is. */
-  unpaidAskCancelled: boolean;
+  unpaidAskCancelled: boolean; // #3954: the drop cancelled the unpaid extra payment; required, like financialReviewPending
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
   xeroInvoiceNumber?: string | null;
@@ -615,10 +614,8 @@ export function bookingModifiedTemplate(params: {
   // #3809: beside the settlement note (both apply to card plus credit).
   const giveBackSentence = appliedCreditGiveBackNote(appliedCreditGivenBackCents, format);
   const giveBackNote = giveBackSentence ? alertBox(giveBackSentence, "success") : "";
-  // #3954: beside any refund or credit for the rest of the drop.
-  const askCancelledSentence = unpaidAskCancelledNote(params.unpaidAskCancelled);
-  const askCancelledNote = askCancelledSentence ? alertBox(askCancelledSentence, "success") : "";
-  const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}${askCancelledNote}`;
+  const askCancelled = unpaidAskCancelledNote(params.unpaidAskCancelled); // #3954, beside any refund
+  const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}${askCancelled ? alertBox(askCancelled, "success") : ""}`;
 
   return layout(`
     ${heading("Booking Modified")}

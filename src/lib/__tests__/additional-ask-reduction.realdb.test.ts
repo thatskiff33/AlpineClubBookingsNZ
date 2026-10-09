@@ -745,7 +745,7 @@ let webhookClient: PrismaClient;
       expect(await runPaymentRecoveryOperationNow(reissue.id, CLUB_FORMAT_TEST)).toBe("not-claimed");
 
       const [{ writeReissuedAskUnderRecovery, readReissuedAskRecovery }, { upsertPaymentIntentTransaction }] = await Promise.all([
-        import("@/lib/additional-ask-reduction"),
+        import("@/lib/additional-ask-reissue"),
         import("@/lib/payment-transactions"),
       ]);
       const read = (await readReissuedAskRecovery(result.bookingModificationId!))!;
@@ -765,7 +765,7 @@ let webhookClient: PrismaClient;
     it("ROUND 4 (item 4): a runner that claimed the re-issue first leaves the door's mint writing nothing", async () => {
       await grownBooking("card", 1_000);
       const result = await removeLeavingGuest();
-      const { writeReissuedAskUnderRecovery, readReissuedAskRecovery } = await import("@/lib/additional-ask-reduction");
+      const { writeReissuedAskUnderRecovery, readReissuedAskRecovery } = await import("@/lib/additional-ask-reissue");
       const read = (await readReissuedAskRecovery(result.bookingModificationId!))!;
       // The grace passed and the runner claimed it (`claimPaymentRecoveryOperation`'s write).
       await webhookClient.paymentRecoveryOperation.update({

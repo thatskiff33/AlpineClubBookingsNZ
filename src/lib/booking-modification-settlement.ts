@@ -2,12 +2,12 @@ import type { ModificationLine } from "@/lib/booking-modification-lines";
 import { PaymentRecoveryOperationStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
+import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import {
   cancelRetiredAdditionalAsksNow,
   readReissuedAskRecovery,
   writeReissuedAskUnderRecovery,
-  type RetiredAdditionalAsk,
-} from "@/lib/additional-ask-reduction";
+} from "@/lib/additional-ask-reissue";
 import { queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   cancelSupersededAdditionalIntentsNow,

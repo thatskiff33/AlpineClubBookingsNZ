@@ -9,7 +9,8 @@ import {
 
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
-import { queueReissuedAskRecovery, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { queueReissuedAskRecovery } from "@/lib/additional-ask-reissue";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";

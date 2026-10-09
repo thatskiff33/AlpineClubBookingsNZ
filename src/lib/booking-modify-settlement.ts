@@ -12,17 +12,19 @@ import {
 
 import {
   NO_ADDITIONAL_ASK,
-  reissueUnpaidAdditionalAsk,
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
 import {
   assertReductionReadForNet,
-  foldWaitingReissuedAsks,
-  retireUnpaidAskChain,
   type ReductionAgainstUnpaidAsk,
-  type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
+import {
+  assertOptionsSizedAfterUnpaidAsk,
+  foldWaitingReissuedAsks,
+  settleReductionAgainstUnpaidAsk,
+  type UnpaidAskSettlement,
+} from "@/lib/additional-ask-reissue";
 import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
@@ -56,7 +58,6 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { ApiError } from "@/lib/api-error";
-import { formatCents } from "@/lib/utils";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
@@ -102,27 +103,7 @@ export type PaymentAdjustmentResult = {
    * `BookingModification` row exists; null for every other booking.
    */
   organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
-  /**
-   * #3954: how much of the reduction released the member from an unpaid ask
-   * rather than being refunded or credited, and the asks it retired inside this
-   * transaction (cancelled at Stripe after commit by the minter). A shrunk ask is
-   * `additionalAsk` above, re-issued.
-   */
-  unpaidAskOffsetCents: number;
-  /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
-  unpaidAskCancelled: boolean;
-  retiredAdditionalAsks: RetiredAdditionalAsk[];
-  /**
-   * #3954: the edits whose unpaid asks this reduction retired - a parked
-   * invoice's anchor, or a waiting recovery's edit - for the history row the
-   * booking-vs-Xero repair pass reads.
-   */
-  retiredAskModificationIds: string[];
-  /** #3954 decision A: what the re-issued ask's own supplementary invoice bills, 0 for none. */
-  reissuedAskInvoiceCents: number;
-  /** #3954: the part of the offset Xero had already billed, for the repair pass. */
-  unpaidAskBilledOffsetCents: number;
-};
+} & UnpaidAskSettlement; // #3954: what the reduction did to the unpaid ask
 
 /**
  * #3653 (`INV-PAY-114`): the refusal an edit that raises the price of a booking
@@ -240,12 +221,7 @@ export async function applyPaymentAdjustments(
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
-    /**
-     * #3954: this edit's net set against the booking's unpaid ask - the SAME
-     * read the caller's settlement options were sized on
-     * (`readReductionAgainstUnpaidAsk`, once per edit, after the caller's
-     * locks). An increase passes `noReductionAgainstUnpaidAsk`.
-     */
+    /** #3954: the caller's ONE read of the unpaid ask, which its options were sized on. */
     reduction: ReductionAgainstUnpaidAsk;
     settlementOptions?: BookingModificationSettlementOptions | null;
     settlementMethod?: BookingModificationSettlementMethod;
@@ -268,34 +244,22 @@ export async function applyPaymentAdjustments(
      * a second time.
      */
     reductionUntiered?: boolean;
-    /**
-     * #3954 x #3750: the caller records this edit's fee on the payment itself
-     * (a finished-stay correction's fee added to the amount owed,
-     * `recordFinishedStayFeeOwed`), so the unpaid-ask arm below must not record
-     * it a second time.
-     */
+    /** #3954 x #3750: the caller records the fee on the amount owed (`recordFinishedStayFeeOwed`). */
     changeFeeRecordedByCaller?: boolean;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
-  // #3954 (owner decision, 8 Oct 2026): a reduction is first set against the
-  // booking's unpaid ask - read ONCE by the caller, after its locks, and the
-  // same read its settlement options were sized on - and every branch below
-  // settles only what is left. An increase carries no ask and is unchanged.
+  // #3954 (`INV-PAY-120`): every branch below settles only what the unpaid ask
+  // leaves of a reduction, from the caller's one read.
   assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
-  const unpaidAsk = reduction.ask;
-  const setAgainstAsk = reduction;
-  const netAmountCents = setAgainstAsk.netChargeLeftCents;
+  assertOptionsSizedAfterUnpaidAsk(settlementOptions, reduction, booking.id, format);
+  const netAmountCents = reduction.netChargeLeftCents;
   // #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit or a
-  // 100% promotion carries `{ amountCents: 0, status: SUCCEEDED }`, which
-  // `hasCapturedPayment` rightly reads as "nothing captured" - so every
-  // REDUCTION branch below keeps reading `hasSettledPayment` and #3809's
-  // give-back is untouched. An INCREASE on it is asked of the member's card,
-  // exactly as on a card-paid booking: before this it fell through to the Xero
-  // arm, which bills only when an invoice has been issued, so with Xero off (or
-  // before the primary invoice was raised) the extra was asked of nobody.
+  // 100% promotion (`{ amountCents: 0, SUCCEEDED }`, "nothing captured") is
+  // asked by card for an INCREASE, as a card-paid one is - not left to a Xero
+  // invoice that may not exist. Every REDUCTION branch reads `hasSettledPayment`.
   const zeroDollarCardIncrease =
     netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
   const hasSucceededPayment =
@@ -304,15 +268,6 @@ export async function applyPaymentAdjustments(
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
-
-  // #3954: the options must have been sized on what is left of the reduction
-  // (`calculateModificationSettlementOptions` reads the same ask), or a
-  // reduction would both release the ask and refund the same money.
-  if (settlementOptions && settlementOptions.basisAmountCents > Math.max(0, -netAmountCents)) {
-    throw new Error(
-      `INV-PAY-047 (#3954): booking ${booking.id}'s settlement options return ${formatCents(settlementOptions.basisAmountCents, format)} of a reduction whose unpaid-ask offset leaves ${formatCents(Math.max(0, -netAmountCents), format)}; they were sized before the reduction was set against the unpaid ask.`,
-    );
-  }
 
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
@@ -359,45 +314,19 @@ export async function applyPaymentAdjustments(
   // every non-card ending is safe by construction rather than by remembering.
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
-  let retiredAdditionalAsks: RetiredAdditionalAsk[] = [];
-  let retiredAskModificationIds: string[] = [];
-  let reissuedAskInvoiceCents = 0;
-  let unpaidAskBilledOffsetCents = 0;
-
-  if (setAgainstAsk.offsetCents > 0 && booking.payment) {
-    const retiredAsk = await retireUnpaidAskChain(tx, {
-      bookingId: booking.id,
-      paymentId: booking.payment.id,
-      ask: unpaidAsk,
-    });
-    retiredAdditionalAsks = retiredAsk.retired;
-    retiredAskModificationIds = retiredAsk.retiredAskModificationIds;
-    // Decision A (#3954, owner 9 Oct 2026, "Raise a $30 invoice"): the smaller
-    // ask gets its own supplementary invoice for what the retired asks' invoices
-    // would have billed, less the offset - never more than the ask itself.
-    // What the offset took beyond those invoices was money Xero had ALREADY
-    // billed (a primary invoice raised after the increase), recorded for the
-    // repair pass rather than billed again.
-    reissuedAskInvoiceCents = Math.min(
-      setAgainstAsk.askLeftCents,
-      Math.max(0, retiredAsk.invoicedCents - setAgainstAsk.offsetCents),
-    );
-    unpaidAskBilledOffsetCents = hasIssuedXeroInvoice
-      ? Math.max(0, setAgainstAsk.offsetCents - retiredAsk.invoicedCents)
-      : 0;
-    // What the reduction did not cover is still owed, on a fresh ask that
-    // carries it (`INV-PAY-098`); the minter mints it after commit.
-    additionalAsk = reissueUnpaidAdditionalAsk({ askLeftCents: setAgainstAsk.askLeftCents });
-    additionalAmountCents = additionalAsk.amountCents;
-    // The fee this edit charges was collected by shrinking the ask, so it is
-    // recorded beside the ask like any fee an ask collects (`INV-PAY-047`) -
-    // also on a credit-paid booking, which the settled arm below never reaches.
-    if (changeFeeCents > 0 && !hasSettledPayment && !changeFeeRecordedByCaller) {
-      await tx.payment.update({
-        where: { id: booking.payment.id },
-        data: { changeFeeCents: { increment: changeFeeCents } },
-      });
-    }
+  // #3954: retire the unpaid ask the reduction was set against; what it did
+  // not cover is still owed, on a fresh ask the minter mints after commit.
+  const { reissuedAsk, ...unpaidAskSettlement } = await settleReductionAgainstUnpaidAsk(tx, {
+    booking,
+    reduction,
+    changeFeeCents,
+    hasSettledPayment,
+    hasIssuedXeroInvoice,
+    changeFeeRecordedByCaller,
+  });
+  if (reissuedAsk.amountCents > 0) {
+    additionalAsk = reissuedAsk;
+    additionalAmountCents = reissuedAsk.amountCents;
   }
 
   // #3502: the zero-dollar increase joins the settled arm. It is an increase by
@@ -510,12 +439,7 @@ export async function applyPaymentAdjustments(
     appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
     appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
-    unpaidAskOffsetCents: setAgainstAsk.offsetCents,
-    unpaidAskCancelled: setAgainstAsk.offsetCents > 0 && setAgainstAsk.askLeftCents === 0,
-    retiredAdditionalAsks,
-    retiredAskModificationIds,
-    reissuedAskInvoiceCents,
-    unpaidAskBilledOffsetCents,
+    ...unpaidAskSettlement,
   };
 }
 

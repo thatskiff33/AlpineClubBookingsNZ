@@ -1,7 +1,7 @@
 import { Role, type Prisma } from "@prisma/client";
 
+import { queueReissuedAskRecovery } from "@/lib/additional-ask-reissue";
 import {
-  queueReissuedAskRecovery,
   readReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
@@ -167,12 +167,8 @@ export type GuestAcceptanceReprice =
       zeroDollarAutoPaid: boolean;
       /** Primary intents a zero-dollar auto-pay superseded, to cancel after commit. */
       supersededPrimaryPaymentIntentCount: number;
-      /**
-       * #3954: the unpaid asks this reduction retired, cancelled at Stripe after
-       * commit, and the smaller ask it re-issues for what is still owed.
-       */
+      /** #3954: the asks retired (cancelled after commit), cancelled outright, and the smaller one re-issued. */
       retiredAdditionalAsks: RetiredAdditionalAsk[];
-      /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
       unpaidAskCancelled: boolean;
       additionalAsk: AdditionalAsk;
       paymentCustomerId: string | null;
@@ -278,10 +274,7 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   const loaded = booking as unknown as LoadedBookingForModify;
-  // #3502: `canAskCardForIncrease` too, so a credit-paid ($0) booking in any
-  // settled status is refused here rather than handed to
-  // `applyPaymentAdjustments`, which would now size a card ask this path never
-  // mints.
+  // #3502: a credit-paid ($0) booking too - this path never mints a card ask.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||
     canAskCardForIncrease(booking) ||
@@ -297,8 +290,7 @@ export async function repriceBookingAfterGuestAcceptance(
 
   // D-3813-5: how the whole reduction goes back, decided BEFORE anything is
   // written, so a reduction that cannot be returned in full moves no code.
-  // #3954: the unpaid ask, read ONCE for this re-price and handed to both the
-  // return route and the save.
+  // #3954: the unpaid ask, read ONCE, for the return route and the save.
   const reduction = await readReductionAgainstUnpaidAsk(tx, loaded, priceDiffCents);
   const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, reduction, todayAtClub);
   if (returnRoute === null) {
@@ -523,14 +515,8 @@ export async function repriceBookingAfterGuestAcceptance(
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price",
   });
-  // #3954 review round 4: a smaller re-issued ask is durable from this
-  // commit, not from the after-commit mint.
-  await queueReissuedAskRecovery(tx, {
-    bookingId,
-    paymentId: booking.payment?.id ?? null,
-    bookingModificationId: bookingModification.id,
-    settled: paymentImpact,
-  });
+  // #3954: a smaller re-issued ask is durable from this commit.
+  await queueReissuedAskRecovery(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, settled: paymentImpact });
   // #3653 (composed by #3829): an organiser-settled child's refund debt, before
   // this re-price commits, as every edit door reserves it.
   await reserveOrganiserChildModificationRefund(tx, {
@@ -592,21 +578,14 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
   });
   // The card's share, through the edit's own refund helper: a key scoped to
   // this modification and durable recovery on failure (#818).
+  const { pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks, hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines } = reprice;
   const paymentContext = {
-    pendingRefundAmountCents: reprice.pendingRefundAmountCents,
-    organiserChildRefund: reprice.organiserChildRefund,
-    paymentId: reprice.paymentId,
-    additionalAsk: reprice.additionalAsk,
-    retiredAdditionalAsks: reprice.retiredAdditionalAsks,
-    hasSucceededPayment: reprice.hasSucceededPayment,
-    hasIssuedXeroInvoice: reprice.hasIssuedXeroInvoice,
-    paymentCustomerId: reprice.paymentCustomerId,
+    pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks,
+    hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines, bookingModificationId,
     memberEmail: reprice.owner.email,
     memberName: reprice.owner.firstName,
     memberFirstName: reprice.owner.firstName,
     memberId: reprice.owner.memberId,
-    bookingModificationId,
-    priceLines: reprice.priceLines,
   };
   const stripeRefundId = await executeBookingModificationRefund({
     format,
@@ -618,14 +597,10 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
     recoveryFailureMessage:
       "Failed to enqueue guest-acceptance re-price refund recovery - manual reconciliation required",
   });
-  // #3954: the asks this reduction retired are cancelled at Stripe, and what is
-  // still owed of them is re-issued, smaller, on a fresh ask. A re-price never
-  // raises a settled price, so this is the only ask it can mint.
+  // #3954: the retired asks die at Stripe and the smaller one is minted - the
+  // only ask a re-price can mint, since it never raises a settled price.
   await createModificationAdditionalPaymentIntent({
-    format,
-    bookingId,
-    result: paymentContext,
-    reason: "guest_accepted_promo_reprice_reissued_ask",
+    format, bookingId, result: paymentContext, reason: "guest_accepted_promo_reprice_reissued_ask",
     idempotencyKey: `guest_accept_${bookingId}_${bookingModificationId}`,
     failureMessage: "Failed to re-issue an unpaid additional PaymentIntent after a guest-acceptance re-price",
   });

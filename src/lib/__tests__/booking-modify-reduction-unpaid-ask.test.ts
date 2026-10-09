@@ -110,9 +110,8 @@ const {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
 } = await import("@/lib/payment-recovery-keys");
 const { ApiError } = await import("@/lib/api-error");
-const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } = await import(
-  "@/lib/additional-ask-reduction"
-);
+const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
+const { WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } = await import("@/lib/additional-ask-reissue");
 const { ADDITIONAL_ASK_BEING_RAISED_MESSAGE, AdditionalAskChangedDuringReductionError } = await import(
   "@/lib/additional-ask-reduction-error"
 );
@@ -1040,7 +1039,7 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
   });
 });
 
-const { queueReissuedAskRecovery, REISSUED_ASK_INLINE_MINT_GRACE_MS } = await import("@/lib/additional-ask-reduction");
+const { queueReissuedAskRecovery, REISSUED_ASK_INLINE_MINT_GRACE_MS } = await import("@/lib/additional-ask-reissue");
 
 describe("#3954 round 4: a re-issued ask is durable from the edit's commit", () => {
   const upsert = vi.fn(async (args: unknown) => { void args; return { id: "op_reissue" }; });

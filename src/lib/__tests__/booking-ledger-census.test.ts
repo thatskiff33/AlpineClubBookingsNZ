@@ -525,7 +525,8 @@ const ASK_MINTING_DOORS: readonly {
      * reduction retired - sized in the shared settlement, like the edit doors'.
      */
     door: "src/lib/booking-guest-acceptance-reprice.ts",
-    sizedIn: "src/lib/booking-modify-settlement.ts",
+    // #3954 round 4: the shared settlement's unpaid-ask half, split out.
+    sizedIn: "src/lib/additional-ask-reissue.ts",
     reachedBy: "applyPaymentAdjustments",
     builtWith: "reissueUnpaidAdditionalAsk",
   },
@@ -703,7 +704,9 @@ function sourceFiles(dir: string, found: string[] = []): string[] {
 
 describe("a reduction that retires an unpaid ask re-issues what is left through the one home (#3954, INV-PAY-047)", () => {
   it("retires and re-issues in the one settlement every reduction door shares", () => {
-    const settlement = read("src/lib/booking-modify-settlement.ts");
+    // #3954 round 4: `applyPaymentAdjustments` delegates to the unpaid-ask half.
+    expect(read("src/lib/booking-modify-settlement.ts")).toContain("settleReductionAgainstUnpaidAsk(tx, {");
+    const settlement = read("src/lib/additional-ask-reissue.ts");
     expect(
       settlement.includes("retireUnpaidAskChain(tx, {"),
       "INV-PAY-047 (#3954): `applyPaymentAdjustments` no longer retires the unpaid " +
@@ -711,7 +714,7 @@ describe("a reduction that retires an unpaid ask re-issues what is left through 
         "settlement can still pay it, and the club holds more than the price.",
     ).toBe(true);
     expect(
-      settlement.includes("reissueUnpaidAdditionalAsk({ askLeftCents: setAgainstAsk.askLeftCents })"),
+      settlement.includes("reissueUnpaidAdditionalAsk({ askLeftCents: reduction.askLeftCents })"),
       "INV-PAY-098 (#3954): what a reduction leaves of a retired ask must be " +
         "re-issued through the one home, carrying it - otherwise the retirement " +
         "deletes money the member still owes.",
@@ -797,7 +800,8 @@ describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
     for (const file of retirers) {
       const source = read(file);
       expect(
-        source.includes(`${RETIRER}({`),
+        // #3954 round 4: or its durable half, on a store, inside a claim hold.
+        source.includes(`${RETIRER}({`) || source.includes("queueSupersededAdditionalIntentCancellationRows({"),
         `INV-PAY-098: ${file} no longer retires superseded asks. Update this ` +
           "list in the same change.",
       ).toBe(true);

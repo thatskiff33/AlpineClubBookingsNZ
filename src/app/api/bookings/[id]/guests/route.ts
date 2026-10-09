@@ -70,7 +70,7 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
-import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reduction";
+import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
