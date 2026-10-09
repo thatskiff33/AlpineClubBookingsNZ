@@ -928,7 +928,6 @@ describe("package manager contract (#3673)", () => {
     });
     expect(parsed.map(({ name, allowed }) => `${name}=${allowed}`)).toEqual([
       "@prisma/engines=true",
-      "@sentry/cli=true",
       "core-js=false",
       "esbuild=true",
       "prisma=true",
