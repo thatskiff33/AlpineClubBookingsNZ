@@ -7,7 +7,7 @@ import {
 } from "@/lib/manual-refund-task-settlement-rules";
 
 /**
- * #3924 round 4 (money review, M1 and M3; `INV-PAY-121`): THE BANK CASH A
+ * #3924 round 4 (money review, M1 and M3; `INV-PAY-122`): THE BANK CASH A
  * "PAID ANOTHER WAY" CLOSE SENT BACK, AS THE XERO REFUND-NOTE PIPELINE READS IT.
  *
  * The close raises the payment's `refundedAmountCents` by the amount paid back
@@ -83,7 +83,7 @@ export async function readPaidAnotherWayCash(
 }
 
 /**
- * #3924 round 7 (money M1, `INV-PAY-121`): THE NOTED BANK CASH WHOSE OWN NOTE
+ * #3924 round 7 (money M1, `INV-PAY-122`): THE NOTED BANK CASH WHOSE OWN NOTE
  * HAS NOT LANDED. A close counted as noted (`readPaidAnotherWayCash`) puts its
  * bank cash into what a refund note may answer, and only its own
  * bank-transfer note - keyed on the close's record (`paidAnotherWayTaskId`) -

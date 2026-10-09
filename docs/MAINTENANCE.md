@@ -1436,7 +1436,7 @@ of that capture raises the report-only
 A late capture the treasurer **approved** refunding, whose card refund Stripe
 gave up on and which was then closed as **Paid another way** before Xero had
 its receipt, owes that receipt too, and the close's bank-transfer note waits
-for it (#3372, `INV-PAY-121`). When the receipt row failed before reaching
+for it (#3372, `INV-PAY-122`). When the receipt row failed before reaching
 Xero, or none was queued, `PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`
 retries or queues it. Both are safe to auto-apply: the worker and the enqueue
 re-read the task and the close under the task's row lock before anything is

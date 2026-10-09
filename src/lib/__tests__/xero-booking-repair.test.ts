@@ -4343,7 +4343,7 @@ describe("runBookingXeroRepair", () => {
       expect(byHand((await run(keptBooking(), "DISMISSED", [resolved])).bookingReport)).toBeUndefined();
     });
 
-    // #3924 round 7 (money M2, `INV-PAY-121`): an APPROVED capture whose card
+    // #3924 round 7 (money M2, `INV-PAY-122`): an APPROVED capture whose card
     // refund Stripe gave up on and the treasurer closed as paid another way,
     // with its note waiting for the receipt.
     describe("a late capture's refund paid another way, waiting for its receipt", () => {

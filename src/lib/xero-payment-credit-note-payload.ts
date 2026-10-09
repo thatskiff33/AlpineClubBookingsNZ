@@ -50,7 +50,7 @@ export function parsePaymentCreditNoteRetryInput(
   refundRequestId?: string;
   /** #3935 (`INV-PAY-116`): the officer's cash answer, carried on both shapes. */
   noteWording?: RefundNoteWording;
-  /** #3924 round 7 (`INV-PAY-121`): the paid-another-way close a note answers, and the invoice it named. */
+  /** #3924 round 7 (`INV-PAY-122`): the paid-another-way close a note answers, and the invoice it named. */
   paidAnotherWayTaskId?: string;
   creditsInvoiceId?: string;
 } | null {

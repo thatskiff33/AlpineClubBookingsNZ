@@ -16,7 +16,7 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit";
- * `INV-PAY-110`, `INV-PAY-121`): A LATE CARD CHARGE WHOSE APPROVED REFUND WAS
+ * `INV-PAY-110`, `INV-PAY-122`): A LATE CARD CHARGE WHOSE APPROVED REFUND WAS
  * CLOSED AS PAID ANOTHER WAY.
  *
  * The treasurer approved refunding a late capture on a cancelled booking, every

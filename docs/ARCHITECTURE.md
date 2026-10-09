@@ -1098,7 +1098,7 @@ The page also lists the card refunds Stripe gave up on (#3372), each with its
 page loads it only for `{ area: "finance", level: "view" }`, and the close
 (`DeadCardRefundsPanel` -> `POST /api/admin/payments/card-refunds/[id]/paid-another-way`
 -> `closeCardRefundPaidAnotherWay`) is gated `finance:edit` in the panel and the
-route, with the section's own finance banner (`INV-PAY-121`). Under the same
+route, with the section's own finance banner (`INV-PAY-122`). Under the same
 finance:view gate it lists the closes Stripe paid as well
 (`listCardRefundsPaidTwice`, #3924 round 5), each with a "Resolved" mark
 (owner, 9 Oct 2026: `CardRefundsPaidTwiceList` -> `POST

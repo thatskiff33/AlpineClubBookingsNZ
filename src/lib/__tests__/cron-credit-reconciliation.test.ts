@@ -179,7 +179,7 @@ describe("reconcileCreditBalances", () => {
     );
   });
 
-  // #3924 round 7 (money M1, `INV-PAY-121`): the self-heal's note is a CARD
+  // #3924 round 7 (money M1, `INV-PAY-122`): the self-heal's note is a CARD
   // note; a paid-another-way close's bank cash is only its own note's.
   it("MUTATION: never fills a paid-another-way close's bank cash with a card note while that close's own note has not landed (FAILED)", async () => {
     mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({

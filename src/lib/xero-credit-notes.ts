@@ -117,7 +117,7 @@ export interface CreateXeroRefundCreditNoteOptions
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
   /**
-   * #3924 round 7 (`INV-PAY-121`): the "Paid another way" close this note
+   * #3924 round 7 (`INV-PAY-122`): the "Paid another way" close this note
    * answers - one of several notes on its payment whatever its source, and
    * never the payment's one refund-note pointer.
    */

@@ -18,7 +18,7 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * #3924 round 5 (concurrency F2) and round 7 (owner, 9 Oct 2026: "Add a
- * 'Resolved' button"; `INV-PAY-121`): CARD REFUNDS PAID BACK TWICE.
+ * 'Resolved' button"; `INV-PAY-122`): CARD REFUNDS PAID BACK TWICE.
  *
  * A card refund the treasurer closed as paid another way that Stripe ALSO
  * refunded - a refund Stripe made before the close (its answer lost to a

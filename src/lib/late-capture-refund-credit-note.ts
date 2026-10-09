@@ -240,7 +240,7 @@ export async function finishApprovedLateCaptureRefundAfterReplay(operation: {
 
 /**
  * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit";
- * `INV-PAY-121`): THE SECOND STEP for a late capture whose approved refund
+ * `INV-PAY-122`): THE SECOND STEP for a late capture whose approved refund
  * Stripe gave up on and the treasurer closed as paid another way. The close
  * queued the capture's receipt; this queues the close's bank-transfer refund
  * note against it (`INV-PAY-101`), for exactly the amount paid back, keyed on

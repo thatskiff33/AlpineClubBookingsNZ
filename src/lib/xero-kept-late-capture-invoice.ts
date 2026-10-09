@@ -34,7 +34,7 @@
  * the worker has withdrawn it, queues a new one.
  *
  * ALSO THE RECEIPT OF A REFUND PAID ANOTHER WAY (#3924 round 6; owner, 8 Oct
- * 2026: "Record receipt, then credit"; `INV-PAY-121`). An APPROVED refund of
+ * 2026: "Record receipt, then credit"; `INV-PAY-122`). An APPROVED refund of
  * the capture that Stripe gave up on, closed as paid another way, leaves the
  * charge in the Stripe account: the close queues this same receipt, on the same
  * task, and its worker queues the close's bank-transfer refund note in the

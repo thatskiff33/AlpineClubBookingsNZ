@@ -44,7 +44,7 @@ import type { ClubFormat } from "@/lib/club-format";
 const MAX_APPLY_PASSES = 3;
 
 /**
- * #3924 round 7 (money M2, `INV-PAY-121`): each APPROVED capture's close of its
+ * #3924 round 7 (money M2, `INV-PAY-122`): each APPROVED capture's close of its
  * card refund as paid another way, on its approval task's entry, for the
  * receipt finding (`PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`).
  */

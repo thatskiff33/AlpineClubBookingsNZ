@@ -10,7 +10,7 @@ import type {
 import { addAction, addFinding, buildRetryAction } from "./xero-booking-repair-findings";
 
 /**
- * #3924 round 7 (money M2, `INV-PAY-121`; owner, 8 Oct 2026: "Record receipt,
+ * #3924 round 7 (money M2, `INV-PAY-122`; owner, 8 Oct 2026: "Record receipt,
  * then credit"): THE REPAIR TOOL'S HALF OF A LATE CAPTURE'S REFUND PAID ANOTHER
  * WAY. Adds the finding and its action, and says whether it did, so the caller
  * looks no further at this capture.

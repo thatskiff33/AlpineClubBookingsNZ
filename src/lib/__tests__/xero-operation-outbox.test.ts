@@ -1425,7 +1425,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
-  // #3924 round 7 (concurrency C8, `INV-PAY-121`): a paid-another-way close's
+  // #3924 round 7 (concurrency C8, `INV-PAY-122`): a paid-another-way close's
   // note is one of several on its payment whatever the source - never the
   // single-note skip, which would read the payment's note as its own and write
   // the Payment row under the receipt worker's task row.

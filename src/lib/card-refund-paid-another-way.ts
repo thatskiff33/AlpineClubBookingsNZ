@@ -44,7 +44,7 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; 8 Oct 2026: "Keep it
- * together"): A DEAD CARD REFUND, CLOSED AS PAID ANOTHER WAY (`INV-PAY-121`).
+ * together"): A DEAD CARD REFUND, CLOSED AS PAID ANOTHER WAY (`INV-PAY-122`).
  *
  * A card refund operation whose retries are spent stays owed - in "Refunds
  * owed" and off Net Collected (`openCardRefundOwedCents`) - until the treasurer

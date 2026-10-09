@@ -843,7 +843,7 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     expect((row("op_a").requestPayload as Row).reviewTaskId).toBe("task_a");
   });
 
-  // #3924 round 7 (C8, M5; `INV-PAY-121`): a paid-another-way close's note.
+  // #3924 round 7 (C8, M5; `INV-PAY-122`): a paid-another-way close's note.
   it("MUTATION: a paid-another-way close's note is one of several on a bank-transfer payment, credits the invoice it names, and keeps its close on the row", async () => {
     seedPayment(PaymentSource.INTERNET_BANKING);
     state.eligibleCents = 1000;

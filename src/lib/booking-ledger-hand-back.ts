@@ -25,7 +25,7 @@
  * The one exception is not a completion that reaches here: a dead card refund
  * the treasurer closed as paid another way has no refund row, so its close
  * posts its own `BANK_REFUND` on its own completed task
- * (`closeCardRefundPaidAnotherWay`, `INV-PAY-121`, `INV-MONEY-035`).
+ * (`closeCardRefundPaidAnotherWay`, `INV-PAY-122`, `INV-MONEY-035`).
  *
  * Build in pure code, caught and logged; write unwrapped (#3590's review). The
  * key is the task id, and a task completes at most once, so a replay of the

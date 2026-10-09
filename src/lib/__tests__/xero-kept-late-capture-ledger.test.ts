@@ -974,7 +974,7 @@ describe("C2: the repair tool's refund of a late capture Xero never received", (
 });
 
 /**
- * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit"; `INV-PAY-121`):
+ * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit"; `INV-PAY-122`):
  * the treasurer approves refunding the late charge, every Stripe retry fails,
  * and they pay the member back by bank and close it as "Paid another way". The
  * charge never left the Stripe account, so Xero records it as a receipt, then a

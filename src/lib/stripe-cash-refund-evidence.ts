@@ -35,7 +35,7 @@
  *   mirror). Pre-ledger genuine cash refunds keep self-healing; pre-ledger
  *   account-credit cancellations are excluded.
  *
- * - #3924 round 4 (money review, M1; `INV-PAY-121`): a card refund the
+ * - #3924 round 4 (money review, M1; `INV-PAY-122`): a card refund the
  *   treasurer closed as "Paid another way" raised `refundedAmountCents` with no
  *   refund row. On both paths a close that took its own refund note (every
  *   kind, where the payment had an invoice to credit: #3924 round 5) counts,

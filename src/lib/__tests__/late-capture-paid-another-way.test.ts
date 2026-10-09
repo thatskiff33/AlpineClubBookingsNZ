@@ -1,5 +1,5 @@
 // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit";
-// `INV-PAY-121`): a late capture's approved refund closed as paid another way -
+// `INV-PAY-122`): a late capture's approved refund closed as paid another way -
 // finding the close from the capture, the receipt gate the cash evidence asks,
 // and the note the receipt's worker queues.
 import { beforeEach, describe, expect, it, vi } from "vitest";

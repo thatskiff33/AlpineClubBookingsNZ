@@ -18,7 +18,7 @@ import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbo
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 
 /**
- * #3372 / #3924 rounds 5 and 6 (`INV-PAY-121`): WHAT A "PAID ANOTHER WAY" CLOSE
+ * #3372 / #3924 rounds 5 and 6 (`INV-PAY-122`): WHAT A "PAID ANOTHER WAY" CLOSE
  * RECORDS IN XERO - decided before the close's record, whose key carries the
  * answer (`PaidAnotherWayXeroNote`), and queued on the close's transaction
  * after it. The close itself, its locks and its money are
@@ -91,7 +91,7 @@ export async function paidAnotherWayXeroPlan(
   });
   if (task && lockApprovalTask) await lockKeptLateCaptureTask(db, task.id);
   const receipt = await readLateCaptureXeroReceipt(lateCaptureIntent, db);
-  // Round 7 (money M5, `INV-PAY-121`): the note credits THIS receipt, named by
+  // Round 7 (money M5, `INV-PAY-122`): the note credits THIS receipt, named by
   // its invoice id - never by `paymentIntentId`, which would count the bank
   // note as the capture's card refund note. A receipt recorded but not yet in
   // Xero (a change's released invoice still sending) has no id to name: the

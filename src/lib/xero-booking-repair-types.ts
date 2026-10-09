@@ -23,7 +23,7 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // refunded; the app raises no note for it, so an officer records the refund
   // by hand too. Report-only, never actionable.
   "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
-  // #3924 round 7 (money M2, `INV-PAY-121`): a late capture whose approved
+  // #3924 round 7 (money M2, `INV-PAY-122`): a late capture whose approved
   // refund was closed as paid another way, and whose Xero receipt - which the
   // close's bank-transfer note waits for - failed or was never queued.
   "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT",

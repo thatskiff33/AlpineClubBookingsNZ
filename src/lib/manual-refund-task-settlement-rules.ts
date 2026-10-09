@@ -77,7 +77,7 @@ export function refundRequestHandBackOccurrenceKey(refundRequestId: string): str
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; #3924 round 4, M2,
- * `INV-PAY-121`): THE OCCURRENCE-KEY PREFIX of the record a "Paid another way"
+ * `INV-PAY-122`): THE OCCURRENCE-KEY PREFIX of the record a "Paid another way"
  * close writes - a card refund Stripe gave up on, which the treasurer paid back
  * by bank transfer instead (`closeCardRefundPaidAnotherWay`). One per
  * `PaymentRecoveryOperation`: with the kind, the key is the marker, and the
@@ -97,7 +97,7 @@ export function refundRequestHandBackOccurrenceKey(refundRequestId: string): str
  * - `after-receipt` (`:note-after-receipt`; #3924 round 6, owner, 8 Oct 2026:
  *   "Record receipt, then credit"): a late card charge Xero holds no receipt
  *   for. The close queues the charge's receipt, and the receipt's worker raises
- *   the note once the receipt is in Xero (`INV-PAY-110`, `INV-PAY-121`);
+ *   the note once the receipt is in Xero (`INV-PAY-110`, `INV-PAY-122`);
  * - `none` (`:no-xero-note`): nothing to credit, and no receipt the app can
  *   record.
  */

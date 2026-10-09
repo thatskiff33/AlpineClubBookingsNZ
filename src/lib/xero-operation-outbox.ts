@@ -815,7 +815,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * noted per refund, capped by coverage, on a bank transfer as on a card. */
     reviewTaskId?: string;
     /**
-     * #3924 round 4 (M3, `INV-PAY-121`): the record of a "Paid another way"
+     * #3924 round 4 (M3, `INV-PAY-122`): the record of a "Paid another way"
      * close this note answers. Keyed on it, so the close's note is a row of its
      * own beside any card delta on the payment - never deduplicated into a
      * pending card note that happens to share its watermark - and sized by the
@@ -825,7 +825,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
      */
     paidAnotherWayTaskId?: string;
     /**
-     * #3924 round 7 (money M5, `INV-PAY-121`): the invoice this note credits,
+     * #3924 round 7 (money M5, `INV-PAY-122`): the invoice this note credits,
      * when the caller knows it - a paid-another-way close of a late capture's
      * refund names that capture's receipt. Never `paymentIntentId` for that:
      * a note recording the capture is counted as the capture's CARD refund note
