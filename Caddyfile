@@ -19,6 +19,20 @@
 			import /etc/caddy/deploy/log-redaction.caddy
 		}
 	}
+
+	# How Caddy gets its certificates — a per-installation choice, so it is a
+	# setting (`CADDY_TLS_MODE`, docker-compose.yml) rather than an edit to this
+	# file: a local edit dirties the checkout the deploy refuses to run from and
+	# is dropped by the next `git archive` workspace anyway.
+	#
+	#   acme  (default) Caddy is the public edge and obtains certificates from
+	#         Let's Encrypt itself.
+	#   local Caddy sits behind a proxy that terminates TLS (Nginx Proxy Manager,
+	#         Traefik, a cloud load balancer). Let's Encrypt can never reach it,
+	#         so it issues its own certificates from its internal CA and the
+	#         proxy is told to accept them. Without this, a freshly created Caddy
+	#         container has no certificate at all and the proxy answers 502.
+	import /etc/caddy/deploy/tls-{$CADDY_TLS_MODE:acme}.caddy
 }
 
 {$DOMAIN} {

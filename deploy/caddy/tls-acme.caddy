@@ -1,0 +1,5 @@
+# CADDY_TLS_MODE=acme (the default): Caddy is the public edge and obtains its
+# certificates from Let's Encrypt itself, which is Caddy's own default — so
+# this snippet adds nothing. It exists so the Caddyfile's single
+# `import /etc/caddy/deploy/tls-{$CADDY_TLS_MODE:acme}.caddy` resolves to a
+# file in every mode. The alternative is `tls-local.caddy`.

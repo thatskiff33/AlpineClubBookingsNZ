@@ -1,0 +1,9 @@
+# CADDY_TLS_MODE=local: Caddy sits behind a proxy that terminates TLS (Nginx
+# Proxy Manager, Traefik, a cloud load balancer), so Let's Encrypt can never
+# reach it to validate a certificate. Every site — the domain, its www/
+# bookings/dashboard redirect hosts and the meeting host — is issued a
+# certificate from Caddy's internal CA instead, and the proxy is configured to
+# accept a certificate that is not publicly trusted (Nginx Proxy Manager:
+# forward scheme https, port 443, "Ignore Invalid SSL" on). The browser only
+# ever sees the proxy's own certificate.
+local_certs

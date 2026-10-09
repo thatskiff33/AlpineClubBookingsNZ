@@ -446,6 +446,11 @@ services:
       # for a host `docker run`, or a compose service name).
       MEET_HOST: ${MEET_HOST:-meet.localhost}
       MIROTALK_UPSTREAM: ${MIROTALK_UPSTREAM:-host.docker.internal:3010}
+      # How Caddy obtains certificates: acme (Caddy is the public edge; the
+      # default) or local (behind a TLS-terminating proxy, Caddy issues its own
+      # from its internal CA). Selects deploy/caddy/tls-<mode>.caddy; see
+      # CONFIGURATION.md.
+      CADDY_TLS_MODE: ${CADDY_TLS_MODE:-acme}
     # Lets the Caddy container reach a MiroTalk started with its own `docker run`
     # via host.docker.internal (Linux needs this mapping).
     extra_hosts:

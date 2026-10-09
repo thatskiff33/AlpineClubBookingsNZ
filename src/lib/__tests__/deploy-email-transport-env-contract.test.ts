@@ -134,6 +134,26 @@ describe("the deploy requires email transport keys per provider", () => {
     expect(functionBody("read_source_env_value")).toContain('"$SOURCE_REPO/.env"');
   });
 
+  it("refuses a CADDY_TLS_MODE the Caddyfile cannot import, at step 3 rather than at cutover", () => {
+    // The Caddyfile's global options import deploy/caddy/tls-<mode>.caddy, so
+    // the only values that resolve to a file are the snippets that exist.
+    const contract = functionBody("validate_env_contract");
+    expect(contract).toContain("\n  require_caddy_tls_mode_env_key\n");
+    const helper = functionBody("require_caddy_tls_mode_env_key");
+    expect(helper).toContain('""|acme|local) return 0 ;;');
+    expect(helper).toContain("get_env_file_value CADDY_TLS_MODE");
+    // The modes the check accepts are exactly the snippet files shipped.
+    const snippets = ["acme", "local"].map((mode) =>
+      readFileSync(join(process.cwd(), "deploy", "caddy", `tls-${mode}.caddy`), "utf8"),
+    );
+    expect(snippets[0]).not.toMatch(/^\s*local_certs/m);
+    expect(snippets[1]).toMatch(/^local_certs$/m);
+    const caddyfile = readFileSync(join(process.cwd(), "Caddyfile"), "utf8");
+    expect(caddyfile).toContain("import /etc/caddy/deploy/tls-{$CADDY_TLS_MODE:acme}.caddy");
+    const compose = readFileSync(join(process.cwd(), "docker-compose.yml"), "utf8");
+    expect(compose).toContain("CADDY_TLS_MODE: ${CADDY_TLS_MODE:-acme}");
+  });
+
   it("refuses the two states the app refuses, in the app's words", () => {
     const body = functionBody("require_email_transport_env_keys");
     expect(body).toContain(

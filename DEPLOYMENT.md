@@ -738,6 +738,36 @@ Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
 
+### Behind a TLS-terminating proxy: `CADDY_TLS_MODE=local`
+
+The shipped `Caddyfile` assumes Caddy is the public edge: `{$DOMAIN}` is an
+HTTPS site, Caddy obtains its certificates from Let's Encrypt over ports 80 and
+443, and plain HTTP is answered with a `308` to HTTPS. An installation that
+puts another proxy in front — Nginx Proxy Manager, Traefik, a cloud load
+balancer — breaks both halves at once: Let's Encrypt can no longer reach Caddy
+to validate, so a freshly created Caddy container has **no certificate at all**
+and the proxy answers `502`; and if the proxy forwards to port 80 instead, it
+relays Caddy's `308` back to the browser forever. The deploy's outside check
+(`https://<DOMAIN>/api/health/ready`) fails the same way the browser does, so
+step 17 reports an empty health payload and rolls the upstream back.
+
+Set `CADDY_TLS_MODE=local` in `.env` for that shape. The Caddyfile's global
+options import `deploy/caddy/tls-local.caddy`, which turns on `local_certs`:
+Caddy issues every site's certificate from its own internal CA and never
+contacts Let's Encrypt. Then point the proxy at the VM's **443** with scheme
+**https** and tell it to accept a certificate that is not publicly trusted
+(Nginx Proxy Manager: "Ignore Invalid SSL"). The browser only ever sees the
+proxy's certificate. A `.env` change is picked up when the Caddy container is
+next created; to apply it to a running one:
+
+```bash
+docker compose --project-name <project> up -d caddy
+```
+
+Do **not** edit `Caddyfile` on the host for this: the deploy refuses a dirty
+checkout, and the workspace it builds is a clean `git archive` that would drop
+the edit on the next release.
+
 ### Keep-alive windows must stay ordered (#3293)
 
 **The app must hold an idle connection open for longer than Caddy will keep one

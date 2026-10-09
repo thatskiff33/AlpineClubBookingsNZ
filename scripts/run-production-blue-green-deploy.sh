@@ -1528,6 +1528,22 @@ require_optional_non_placeholder_env_key() {
   fi
 }
 
+# CADDY_TLS_MODE selects `deploy/caddy/tls-<mode>.caddy` from the Caddyfile's
+# global options (DEPLOYMENT.md, "Behind a TLS-terminating proxy"). Absent or
+# blank means acme, Caddy's own default. Only the two snippet files exist.
+require_caddy_tls_mode_env_key() {
+  local value
+
+  value="$(trim_whitespace "$(get_env_file_value CADDY_TLS_MODE)")"
+  case "$value" in
+    ""|acme|local) return 0 ;;
+    *)
+      echo "CADDY_TLS_MODE must be 'acme' (Caddy is the public edge) or 'local' (behind a TLS-terminating proxy); .env has '${value}'" >&2
+      return 1
+      ;;
+  esac
+}
+
 # NOTE: require_boolean_env_key / require_positive_integer_env_key /
 # env_key_is_true were removed with the BACKUP_ENABLED / BACKUP_RETENTION_DAYS
 # preflight (#2095) — backup config is DB-backed now and no other .env key needs
@@ -1974,6 +1990,10 @@ validate_env_contract() {
   # required (or read) from .env. Legacy vars are warned about below.
   require_email_transport_env_keys
   require_non_placeholder_env_key EMAIL_FROM
+  # Caddy's certificate source (CADDY_TLS_MODE): acme (the default) or local.
+  # Any other value makes the Caddyfile's `import tls-<mode>.caddy` fail and
+  # Caddy refuse to start — at step 17, after the migration. Refuse it here.
+  require_caddy_tls_mode_env_key
   # Optional: blank disables the legacy export bridge (CONFIGURATION.md).
   require_optional_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
   # Backup configuration moved to the encrypted, DB-backed store in-app (#2095):
