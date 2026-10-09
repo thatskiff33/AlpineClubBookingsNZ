@@ -72,8 +72,12 @@ export async function getAdminEmails(): Promise<string[]> {
  * Categories outside a member's areas are masked off regardless of the stored
  * row, so widening the audience beyond Full Admins never leaks another area's
  * alerts to a scoped officer.
+ *
+ * Exported (#49) for the one sender that addresses TWO categories with two
+ * different bodies - the Daily digest's central-server-version entry - which
+ * has to see both audiences to give a member in both exactly one email.
  */
-async function getAdminAlertEmails(
+export async function getAdminAlertEmails(
   preferenceKey: AdminNotificationPreferenceKey,
 ): Promise<string[]> {
   const admins = await prisma.member.findMany({
@@ -132,10 +136,47 @@ export async function sendToAdmins({
     };
   }
 
+  const emails = await getAdminAlertEmails(preferenceKey);
+  return sendAdminAlertTo({
+    emails,
+    subject,
+    html,
+    templateName,
+    preferenceKey,
+    templateData,
+    attachments,
+  });
+}
+
+/**
+ * The delivery half of `sendToAdmins`, for a caller that has ALREADY resolved
+ * its recipients and checked the delivery policy (#49): one send per address
+ * with per-recipient error isolation, and the undeliverable escalation when not
+ * one recipient received it. `preferenceKey` names the category the audience
+ * was resolved from, for the escalation record. Nothing here reads a
+ * preference or a policy - that is the caller's job, and the reason this is
+ * separate from `sendToAdmins` rather than a flag on it.
+ */
+export async function sendAdminAlertTo({
+  emails,
+  subject,
+  html,
+  templateName,
+  preferenceKey,
+  templateData,
+  attachments,
+}: {
+  emails: string[];
+  subject: string;
+  html: string;
+  templateName: string;
+  preferenceKey: AdminNotificationPreferenceKey;
+  templateData?: EmailTemplateData;
+  attachments?: EmailAttachment[];
+}): Promise<AdminAlertSendResult> {
   // A FAILED row is replayed only when it kept its body (`core.ts`); a
   // sensitive template's does not, and goes to the review queue instead.
   const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
-  const emails = await getAdminAlertEmails(preferenceKey);
   const outcomes = await Promise.all(
     emails.map(async (email): Promise<
       AdminAlertRecipientDeliveryOutcome & { queuedForRetry: boolean }

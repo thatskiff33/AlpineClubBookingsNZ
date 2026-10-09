@@ -18,6 +18,17 @@ const mocks = vi.hoisted(() => ({
   getIntegrationCredentialValue: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
   after: vi.fn(),
+  loggerInfo: vi.fn(),
+  loggerError: vi.fn(),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: {
+    info: mocks.loggerInfo,
+    error: mocks.loggerError,
+    warn: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/club-post-mirror", () => ({
@@ -127,6 +138,29 @@ describe("POST /api/webhooks/servernz-posts", () => {
     mocks.getIntegrationCredentialValue.mockResolvedValue(null);
     const res = await POST(signedRequest());
     expect(res.status).toBe(401);
+  });
+
+  it("still verifies and answers 200 while the server version differs; the sync inside declines at info (#49)", async () => {
+    mocks.runMirrorSync.mockResolvedValue({
+      skipped: "server-version-mismatch",
+      upserted: 0,
+      unchanged: 0,
+      removed: 0,
+      pages: 0,
+    });
+
+    // A forged push is still refused: the pause changes nothing about auth.
+    expect((await POST(signedRequest({ secret: "w".repeat(64) }))).status).toBe(401);
+
+    const res = await POST(signedRequest());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(mocks.runMirrorSync).toHaveBeenCalledTimes(1);
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      { skipped: "server-version-mismatch" },
+      expect.stringMatching(/paused/),
+    );
+    expect(mocks.loggerError).not.toHaveBeenCalled();
   });
 
   it("answers 200-ignored with the module off, so the server stops retrying", async () => {
