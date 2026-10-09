@@ -1451,7 +1451,14 @@ close's note was never queued, `PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED` queues
 it through the same note step the receipt's workers run, under the approval
 task's row; it is safe to auto-apply and queues a close's note at most once.
 While a change's invoice for the capture is still on its way to Xero, the tool
-queues no second receipt beside it: the note follows that invoice.
+queues no second receipt beside it: the note follows that invoice. If that
+invoice FAILED, retry it from the Xero operations list: since #3924 round 9 the
+retry sends it back through the outbox on its own row, and the note follows. The
+nightly credit reconciliation also re-runs the note step for any payment whose
+closes' notes do not cover what they paid back. If an officer resolved the
+change's invoice by hand after the close, the report-only
+`PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND` names the close's amount and
+record: record that bank-transfer refund by hand in Xero.
 
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
 entirely with account credit was invoiced at its full price, but the credit was

@@ -125,19 +125,25 @@ payment.
 
 The note always waits for the record: it is not queued until the record is in
 Xero. If the charge's record is already on its way - a booking change's invoice
-that is queued, sending or failed - closing the refund queues nothing more, and
-the note follows once that invoice is in Xero. If a record fails to send, press
+that is queued or sending - closing the refund queues nothing more, and the
+note follows once that invoice is in Xero. If a record fails to send, press
 **Retry in background** on its failed operation in [Xero](xero.md), and the
-note follows. A record that failed after it may already have reached Xero is
-never retried automatically: check Xero for it first, then retry it. The Xero
-repair tool a developer runs retries the others, and queues a note that never
-followed its record. If the note itself fails, the record stays in Xero and only
-the note is retried. If an officer already recorded the charge in Xero by hand,
-no note is raised: record the refund by hand too.
+note follows. When the record has already failed, the dialog and the
+confirmation say so rather than "on its way". A record that failed after it may
+already have reached Xero is never retried automatically, not even by closing
+the refund: check Xero for it first, then retry it, and the note follows. The
+Xero repair tool a developer runs retries the others, and queues a note that
+never followed its record. If the note itself fails, the record stays in Xero
+and only the note is retried; the nightly credit check tries it again too. If an
+officer recorded the charge in Xero by hand, before or after the close, no note
+is raised: record the refund by hand too. The repair tool names the amount when
+that happened after the close.
 
 The dialog says before you close what will be recorded in Xero, and the
 confirmation says what was queued. When nothing is, check the refund is
-recorded in Xero and raise the note by hand if it needs one.
+recorded in Xero and raise the note by hand if it needs one. When you close the
+last refund on the list, the section stays and says the list is empty until you
+leave the page; the same goes for the paid-back-twice list below.
 
 **Paid back twice.** If Stripe did refund the card after all and the refund
 reaches the app after you closed it, the booking appears under **Card refunds

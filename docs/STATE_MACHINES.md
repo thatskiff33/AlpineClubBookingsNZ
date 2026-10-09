@@ -3321,7 +3321,9 @@ credit note for exactly the amount paid back, keyed on the close's task and
 dated the close's club day, where there is an invoice to credit (owner, 8 Oct
 2026: "Raise a refund note for all"). The note is sized by the close's record
 less what its own notes already cover, never by the payment-wide gap (#3924
-round 8). A late card charge's refund is credited
+round 8), and its Xero key is the close and what its own notes cover, so a
+retry after a crash is answered with the same note whatever else landed
+(round 9). A late card charge's refund is credited
 against the charge's own receipt, named by its invoice id; when Xero has none,
 the close queues that receipt (the kept-charge invoice, on the approval task,
 put back to PENDING if it failed before it could have reached Xero) and the
@@ -3344,12 +3346,22 @@ receipt FAILED unsent -> no note; the repair tool's
   PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT retries (or queues) it,
   and the note follows
 receipt FAILED after it may have reached Xero (payment linked, or the invoice
-  call attempted) -> left FAILED for an officer, who checks Xero, then retries
+  call attempted) -> left FAILED for an officer, who checks Xero, then retries;
+  a close finding it so reports receipt-held-for-officer, never queued (round 9)
 close (receipt on its way: a change invoice) -> waiting key, nothing queued
+  (refund-note-after-failed-receipt when that invoice FAILED, round 9)
 change invoice sent -> its row SUCCEEDED, then the note step under the
   approval task's row: bank-transfer REFUND_CREDIT_NOTE PENDING
+change invoice FAILED -> an officer's retry puts that row back to PENDING with
+  its queued payload (round 9), so it is sent from its own row and the note
+  step follows; never an inline replay on a new row that names no capture
 note step never ran (receipt in Xero, no note asked) -> the repair tool's
-  PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED queues it through the same step
+  PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED queues it through the same step, and
+  the nightly credit reconciliation runs the step for every payment its
+  closes' notes do not cover (round 9)
+change invoice resolved by hand after the close -> no note; the repair tool's
+  report-only PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND names the close's
+  amount to record by hand (round 9)
 ```
 
 A close Stripe also paid is listed as paid twice. The treasurer marks it
