@@ -59,6 +59,8 @@
     "quality:report": "tsx scripts/quality-report.ts",
     "quality:budget": "tsx scripts/ci/check-file-size-budget.ts",
     "audit:census": "tsx scripts/audit/audit-writer-census.ts",
+    "audit:fragility:collect": "node scripts/audit/fragility-collect.mjs",
+    "audit:fragility:signals": "node scripts/audit/fragility-signals.mjs",
     "booking-money:census": "tsx --conditions=react-server scripts/booking-money-reconciliation-census.ts",
     "booking-ledger:back-post": "tsx --conditions=react-server scripts/backfill-booking-ledger.ts",
     "booking-ledger:census": "tsx --conditions=react-server scripts/booking-ledger-census.ts",
