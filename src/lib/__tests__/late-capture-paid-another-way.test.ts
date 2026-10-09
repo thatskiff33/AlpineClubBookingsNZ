@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findOperation: vi.fn(),
   findClose: vi.fn(),
-  hasXeroReceiptForLateCapture: vi.fn(),
+  readLateCaptureXeroReceipt: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   findAskedNote: vi.fn(),
 }));
@@ -15,7 +15,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 vi.mock("@/lib/late-capture-xero-receipt", () => ({
-  hasXeroReceiptForLateCapture: (...args: unknown[]) => mocks.hasXeroReceiptForLateCapture(...args),
+  readLateCaptureXeroReceipt: (...args: unknown[]) => mocks.readLateCaptureXeroReceipt(...args),
+  hasXeroReceiptForLateCapture: async (...args: unknown[]) =>
+    ((await mocks.readLateCaptureXeroReceipt(...args)) as { kind: string }).kind === "recorded",
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: (...args: unknown[]) => mocks.enqueueXeroRefundCreditNoteOperation(...args),
@@ -54,7 +56,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.findOperation.mockResolvedValue({ id: "op-dead", idempotencyKey: "late_capture_approval_refund_recovery_pi_late" });
   mocks.findClose.mockResolvedValue(null);
-  mocks.hasXeroReceiptForLateCapture.mockResolvedValue(false);
+  mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "none" });
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: "xop-note" });
   mocks.findAskedNote.mockResolvedValue(null);
 });
@@ -90,12 +92,19 @@ describe("findLateCaptureRefundPaidAnotherWay", () => {
 
 describe("paidAnotherWayCloseReceiptRecorded: the cash evidence's gate", () => {
   it("MUTATION: asks the late capture's own receipt, read off the close's operation", async () => {
-    mocks.hasXeroReceiptForLateCapture.mockResolvedValue(true);
+    mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv-receipt" });
     await expect(paidAnotherWayCloseReceiptRecorded(closeRecord("after-receipt"), store as never)).resolves.toBe(true);
     expect(mocks.findOperation).toHaveBeenCalledWith({ where: { id: "op-dead" }, select: { idempotencyKey: true } });
-    expect(mocks.hasXeroReceiptForLateCapture).toHaveBeenCalledWith("pi_late", store);
+    expect(mocks.readLateCaptureXeroReceipt).toHaveBeenCalledWith("pi_late", store);
 
-    mocks.hasXeroReceiptForLateCapture.mockResolvedValue(false);
+    mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "none" });
+    await expect(paidAnotherWayCloseReceiptRecorded(closeRecord("after-receipt"), store as never)).resolves.toBe(false);
+  });
+
+  // #3924 round 8 (money review): a change's invoice released for the capture
+  // is "recorded" from the moment it is queued, but has nothing to credit yet.
+  it("MUTATION: a receipt recorded but not yet in Xero (no invoice id) is not in Xero", async () => {
+    mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null });
     await expect(paidAnotherWayCloseReceiptRecorded(closeRecord("after-receipt"), store as never)).resolves.toBe(false);
   });
 
@@ -105,7 +114,7 @@ describe("paidAnotherWayCloseReceiptRecorded: the cash evidence's gate", () => {
     await expect(
       paidAnotherWayCloseReceiptRecorded({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null }, store as never),
     ).resolves.toBe(false);
-    expect(mocks.hasXeroReceiptForLateCapture).not.toHaveBeenCalled();
+    expect(mocks.readLateCaptureXeroReceipt).not.toHaveBeenCalled();
   });
 });
 

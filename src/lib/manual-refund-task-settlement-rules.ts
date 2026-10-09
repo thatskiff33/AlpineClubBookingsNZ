@@ -123,6 +123,17 @@ export function cardRefundPaidAnotherWayOccurrenceKey(
 }
 
 /**
+ * Every key a close of this card refund operation can carry, one per way its
+ * note is raised: the one way to find a close's record by the operation it
+ * closed (#3924 round 8, `INV-SSOT`).
+ */
+export function closeKeysOf(paymentRecoveryOperationId: string): string[] {
+  return (Object.keys(PAID_ANOTHER_WAY_KEY_SUFFIX) as PaidAnotherWayXeroNote[]).map((xeroRefundNote) =>
+    cardRefundPaidAnotherWayOccurrenceKey(paymentRecoveryOperationId, { xeroRefundNote }),
+  );
+}
+
+/**
  * #3827 (`INV-PAY-117`): the key prefixes of every hand-back that is NOT a
  * cancellation's - money promised back by bank transfer on a decision other
  * than a cancel (an edit's reduction, an approved refund request). The one

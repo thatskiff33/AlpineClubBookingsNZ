@@ -11,6 +11,13 @@ const mocks = vi.hoisted(() => ({
   sumCovered: vi.fn(),
   resolveEvidence: vi.fn(),
   readResolvedRefundCreditNoteCoverage: vi.fn(),
+  readPaidAnotherWayUncoveredCents: vi.fn(),
+}));
+
+// #3924 round 8: the closes' bank cash their own notes do not cover. Its
+// counting is `card-refund-paid-another-way.realdb.test.ts`'s.
+vi.mock("@/lib/card-refund-paid-another-way-cash", () => ({
+  readPaidAnotherWayUncoveredCents: (...a: unknown[]) => mocks.readPaidAnotherWayUncoveredCents(...a),
 }));
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
@@ -51,6 +58,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sumCovered.mockResolvedValue(0);
+  mocks.readPaidAnotherWayUncoveredCents.mockResolvedValue(0);
   mocks.readResolvedRefundCreditNoteCoverage.mockResolvedValue({
     coveredCents: 0,
     correlationKeys: [],
@@ -117,8 +125,32 @@ describe("getRefundsMissingXeroCreditNotes (issue #818/#1162)", () => {
       refundedAmountCents: 4200,
       cashRefundedCents: 4200,
       uncoveredCents: 4200,
+      paidAnotherWayUncoveredCents: 0,
       refundedAt: "2026-06-19T00:00:00.000Z",
     });
+  });
+
+  // #3924 round 8 (money review, `INV-PAY-122`): the part of the gap a card
+  // note must not fill - never more than the gap itself.
+  it("MUTATION: says how much of the gap is a paid-another-way close's bank cash its own notes do not cover", async () => {
+    const row = (id: string, refundedAmountCents: number) => ({
+      id,
+      bookingId: `book_${id}`,
+      refundedAmountCents,
+      updatedAt: new Date("2026-06-19T00:00:00.000Z"),
+      booking: { member: { firstName: "Sam", lastName: "Lee", email: "sam@example.com" } },
+    });
+    mocks.findMany.mockResolvedValue([row("pay_close", 8000), row("pay_capped", 3000)]);
+    mocks.sumCovered.mockImplementation(async (paymentId: string) => (paymentId === "pay_capped" ? 1000 : 0));
+    mocks.readPaidAnotherWayUncoveredCents.mockResolvedValue(3000);
+
+    const result = await getRefundsMissingXeroCreditNotes();
+
+    expect(mocks.readPaidAnotherWayUncoveredCents).toHaveBeenCalledWith(expect.anything(), "pay_close");
+    expect(result.payments.map((payment) => [payment.uncoveredCents, payment.paidAnotherWayUncoveredCents])).toEqual([
+      [8000, 3000],
+      [2000, 2000],
+    ]);
   });
 
   it("counts a hand-resolved note's amount as covered, and still lists a later refund beyond it (#3635 round 4)", async () => {
@@ -184,6 +216,7 @@ describe("getRefundsMissingXeroCreditNotes (issue #818/#1162)", () => {
         refundedAmountCents: 8000,
         cashRefundedCents: 8000,
         uncoveredCents: 3000,
+        paidAnotherWayUncoveredCents: 0,
         refundedAt: "2026-06-19T00:00:00.000Z",
       },
     ]);
@@ -246,6 +279,7 @@ describe("getRefundsMissingXeroCreditNotes (issue #818/#1162)", () => {
         refundedAmountCents: 9000,
         cashRefundedCents: 4000,
         uncoveredCents: 3000,
+        paidAnotherWayUncoveredCents: 0,
         refundedAt: "2026-06-19T00:00:00.000Z",
       },
     ]);

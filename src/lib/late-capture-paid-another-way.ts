@@ -1,9 +1,9 @@
 import type { Prisma } from "@prisma/client";
 
-import { hasXeroReceiptForLateCapture } from "@/lib/late-capture-xero-receipt";
+import { readLateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import {
   CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-  cardRefundPaidAnotherWayOccurrenceKey,
+  closeKeysOf,
   paidAnotherWayCloseXeroNote,
   paymentRecoveryOperationIdOfPaidAnotherWay,
   type PaidAnotherWayXeroNote,
@@ -69,13 +69,6 @@ export async function findLateCaptureRefundPaidAnotherWay(
   });
 }
 
-/** Every key a close of this card refund row can carry, one per way its note is raised. */
-function closeKeysOf(operationId: string): string[] {
-  return (["now", "after-receipt", "none"] as const).map((xeroRefundNote) =>
-    cardRefundPaidAnotherWayOccurrenceKey(operationId, { xeroRefundNote }),
-  );
-}
-
 /**
  * #3924 round 7 (money M2): the same join for many captures at once, for the
  * Xero repair tool - by capture, how its approved refund's close is recorded in
@@ -127,10 +120,16 @@ type ReceiptGateStore = Pick<
 
 /**
  * Whether the late capture a close's card refund was refunding now has the
- * receipt the app recorded in Xero (`hasXeroReceiptForLateCapture`). Asked of a
- * close whose note waits for that receipt: until it is in Xero, no refund note
- * may answer the close's bank transfer. False for a close that is not a late
- * capture's.
+ * receipt the app recorded IN XERO (`readLateCaptureXeroReceipt`, with its
+ * invoice id). Asked of a close whose note waits for that receipt: until it is
+ * in Xero, no refund note may answer the close's bank transfer. False for a
+ * close that is not a late capture's.
+ *
+ * #3924 round 8 (money review): "recorded" is not enough. A change's released
+ * supplementary invoice for the capture counts as the receipt from the moment
+ * it is queued, but has no invoice for a note to credit until it is sent
+ * (queued, sending, or FAILED and waiting for an officer's retry). Its note
+ * waits for the invoice id like a receipt the close queued itself.
  */
 export async function paidAnotherWayCloseReceiptRecorded(
   task: { kind: string | null; occurrenceKey: string | null },
@@ -143,5 +142,7 @@ export async function paidAnotherWayCloseReceiptRecorded(
     select: { idempotencyKey: true },
   });
   const paymentIntentId = operation ? lateCaptureIntentOfApprovalRefundRecoveryKey(operation.idempotencyKey) : null;
-  return paymentIntentId !== null && hasXeroReceiptForLateCapture(paymentIntentId, store);
+  if (paymentIntentId === null) return false;
+  const receipt = await readLateCaptureXeroReceipt(paymentIntentId, store);
+  return receipt.kind === "recorded" && receipt.invoiceId !== null;
 }

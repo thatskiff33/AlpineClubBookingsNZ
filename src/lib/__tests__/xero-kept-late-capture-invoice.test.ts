@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   transactionFindFirst: vi.fn(),
   linkFindFirst: vi.fn(),
   linkCount: vi.fn(),
+  linkFindMany: vi.fn(),
+  readReceipt: vi.fn(),
   bookingFindUnique: vi.fn(),
   executeRaw: vi.fn(),
   startXeroSyncOperation: vi.fn(),
@@ -40,6 +42,7 @@ const db = vi.hoisted(() => {
     xeroObjectLink: {
       findFirst: (...a: unknown[]) => mocks.linkFindFirst(...a),
       count: (...a: unknown[]) => mocks.linkCount(...a),
+      findMany: (...a: unknown[]) => mocks.linkFindMany(...a),
     },
     booking: { findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a) },
     $executeRaw: (...a: unknown[]) => mocks.executeRaw(...a),
@@ -61,6 +64,9 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 vi.mock("@/lib/late-capture-paid-another-way", () => ({
   findLateCaptureRefundPaidAnotherWay: (...a: unknown[]) => mocks.findClose(...a),
+}));
+vi.mock("@/lib/late-capture-xero-receipt", () => ({
+  readLateCaptureXeroReceipt: (...a: unknown[]) => mocks.readReceipt(...a),
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",
@@ -110,6 +116,7 @@ import {
 import {
   createXeroKeptLateCaptureInvoice,
   enqueueXeroKeptLateCaptureInvoiceOperation,
+  queueWaitingPaidAnotherWayNote,
   settleKeptLateCaptureRecordOnApproval,
 } from "@/lib/xero-kept-late-capture-invoice";
 
@@ -142,6 +149,9 @@ beforeEach(() => {
   });
   mocks.linkFindFirst.mockResolvedValue(null);
   mocks.linkCount.mockResolvedValue(0);
+  mocks.linkFindMany.mockResolvedValue([]);
+  // The receipt as Xero holds it once the worker has linked it.
+  mocks.readReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_kept" });
   mocks.bookingFindUnique.mockResolvedValue({
     id: QUEUED.bookingId,
     member: {},
@@ -247,13 +257,21 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
-  // #3924 round 7 (money M2): a FAILED row is not live work - nothing else retries it.
-  describe("requeueFailedUnsent (the paid-another-way close and the repair tool's receipt finding)", () => {
-    const failed = { id: "op_failed", queueType: "KEPT_LATE_CAPTURE_INVOICE", status: "FAILED", manuallyResolvedAt: null };
+  // #3924 round 7 (money M2): a FAILED row is not live work - nothing else retries
+  // it automatically. Only the paid-another-way close asks for this; the repair
+  // tool offers the row's own retry (`addPaidAnotherWayReceiptFinding`).
+  describe("requeueFailedUnsent (the paid-another-way close)", () => {
+    const failed = {
+      id: "op_failed",
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      status: "FAILED",
+      manuallyResolvedAt: null,
+      requestPayload: { ...QUEUED },
+    };
+    const linked = (...roles: string[]) => mocks.linkFindMany.mockResolvedValue(roles.map((role) => ({ role })));
 
     it("MUTATION: puts a FAILED row whose invoice never reached Xero back to PENDING, status-guarded", async () => {
       mocks.operationFindMany.mockResolvedValue([failed]);
-      mocks.linkCount.mockResolvedValue(0);
       await expect(enqueue({ requeueFailedUnsent: true })).resolves.toMatchObject({ queueOperationId: "op_failed" });
       expect(mocks.operationUpdateMany).toHaveBeenCalledWith({
         where: { id: "op_failed", status: "FAILED", manuallyResolvedAt: null },
@@ -263,14 +281,51 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
     });
 
     it.each([
-      ["without being asked (a keep)", {}, [failed], 0],
-      ["once its invoice is linked in Xero", { requeueFailedUnsent: true }, [failed], 1],
-      ["when an officer resolved it in Xero", { requeueFailedUnsent: true }, [{ ...failed, manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") }], 0],
-    ])("leaves it as it is %s", async (_when, options, rows, linked) => {
+      ["without being asked (a keep)", {}, [failed], []],
+      ["once its invoice is linked in Xero", { requeueFailedUnsent: true }, [failed], [KEPT_LATE_CAPTURE_INVOICE_ROLE]],
+      ["when an officer resolved it in Xero", { requeueFailedUnsent: true }, [{ ...failed, manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") }], []],
+    ])("leaves it as it is %s", async (_when, options, rows, roles) => {
       mocks.operationFindMany.mockResolvedValue(rows);
-      mocks.linkCount.mockResolvedValue(linked);
+      linked(...roles);
       await expect(enqueue(options)).resolves.toMatchObject({ queueOperationId: "op_failed" });
       expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+    });
+
+    // #3924 round 8 (money review): running it again could raise a second
+    // receipt in Xero, so it is left FAILED for an officer, who checks Xero.
+    it.each([
+      ["its Stripe payment is linked", { ...failed }, [KEPT_LATE_CAPTURE_PAYMENT_ROLE]],
+      ["it attempted createInvoices (the invoice it sent is on the row)", { ...failed, requestPayload: { ...QUEUED, invoices: [{}] } }, []],
+    ])("MUTATION: never puts it back to run when %s - it may have reached Xero", async (_when, row, roles) => {
+      mocks.operationFindMany.mockResolvedValue([row]);
+      linked(...roles);
+      const result = await enqueue({ requeueFailedUnsent: true });
+      expect(result).toMatchObject({ queueOperationId: "op_failed" });
+      expect(result.message).toMatch(/may have reached Xero.*Check Xero, then retry it/);
+      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+    });
+
+    // #3924 round 8 (concurrency): an officer acted on the row after the read.
+    describe("MUTATION: a requeue that claims nothing answers what the row is now", () => {
+      it("an officer resolved it by hand: nothing is queued, and the caller is told it changed", async () => {
+        mocks.operationFindMany.mockResolvedValue([failed]);
+        mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+        mocks.operationFindUnique.mockResolvedValue({ status: "FAILED", manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") });
+        await expect(enqueue({ requeueFailedUnsent: true })).resolves.toMatchObject({
+          queueOperationId: null,
+          changedByOfficer: true,
+        });
+      });
+
+      it("an officer retried it: the row is live", async () => {
+        mocks.operationFindMany.mockResolvedValue([failed]);
+        mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+        mocks.operationFindUnique.mockResolvedValue({ status: "RUNNING", manuallyResolvedAt: null });
+        const result = await enqueue({ requeueFailedUnsent: true });
+        expect(result).toMatchObject({ queueOperationId: "op_failed" });
+        expect(result.message).toBe("The Xero invoice for this payment is already queued or sent.");
+        expect(result).not.toHaveProperty("changedByOfficer");
+      });
     });
   });
 });
@@ -489,5 +544,44 @@ describe("createXeroKeptLateCaptureInvoice", () => {
       itemCode: "HUT",
       accountCode: "4100",
     });
+  });
+});
+
+// #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): the one note
+// step, for the receipt this worker sends and for a change's invoice sent for
+// the capture (`createXeroSupplementaryInvoice`).
+describe("queueWaitingPaidAnotherWayNote", () => {
+  beforeEach(() => {
+    mocks.taskFindUnique.mockResolvedValue({ id: "task_kept" });
+    mocks.noteClose.mockResolvedValue("op_note");
+  });
+
+  it("MUTATION: reads the receipt under the approval task's lock and credits the invoice Xero holds", async () => {
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe("op_note");
+    expect(lockedTask()).toBe(true);
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.readReceipt.mock.invocationCallOrder[0]);
+    expect(mocks.readReceipt).toHaveBeenCalledWith("pi_kept", db);
+    expect(mocks.noteClose).toHaveBeenCalledWith({
+      paymentIntentId: "pi_kept",
+      receiptInvoiceId: "inv_kept",
+      clubZone: "Pacific/Auckland",
+      store: db,
+    });
+  });
+
+  it.each([
+    ["recorded but not yet in Xero (a change's invoice still sending)", { kind: "recorded", invoiceId: null }],
+    ["not recorded", { kind: "none" }],
+    ["resolved by hand", { kind: "resolved-by-hand" }],
+  ])("MUTATION: queues nothing while the receipt is %s", async (_when, receipt) => {
+    mocks.readReceipt.mockResolvedValue(receipt);
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
+    expect(mocks.noteClose).not.toHaveBeenCalled();
+  });
+
+  it("nothing for a capture with no approval task", async () => {
+    mocks.taskFindUnique.mockResolvedValue(null);
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
   });
 });

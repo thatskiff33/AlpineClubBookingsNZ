@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  readPaidAnotherWayCloseShare: vi.fn(),
   createAuditLog: vi.fn(),
   findFirstLink: vi.fn(),
   findUniqueBooking: vi.fn(),
@@ -177,6 +178,12 @@ vi.mock("@/lib/xero-sync", () => ({
 // keeps the pre-#2902 stepped-refund scenarios meaning what they said.
 vi.mock("@/lib/stripe-cash-refund-evidence", () => ({
   resolveStripeCashRefundEvidence: mocks.resolveStripeCashRefundEvidence,
+}));
+
+// #3924 round 8: a paid-another-way close's own share; the one row matcher stays real.
+vi.mock("@/lib/card-refund-paid-another-way-cash", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/card-refund-paid-another-way-cash")),
+  readPaidAnotherWayCloseShare: mocks.readPaidAnotherWayCloseShare,
 }));
 
 vi.mock("@/lib/xero-group-settlement-invoices", () => ({
@@ -1438,6 +1445,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     });
     mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
     mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+    mocks.readPaidAnotherWayCloseShare.mockResolvedValue({ amountCents: 2500, coveredCents: 0, uncoveredCents: 2500 });
 
     await expect(
       enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
@@ -1461,6 +1469,71 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     );
     // The single-note branch would have written the Payment row (no mock here).
     expect(mocks.findCanonicalPaymentRefundCreditNote).toHaveBeenCalled();
+  });
+
+  // #3924 round 8 (money review, `INV-PAY-122`): a close's note is sized by its
+  // record - what it paid back less what its own notes cover - never by the
+  // payment-wide gap.
+  describe("round 8: a paid-another-way close's note is sized by its record", () => {
+    const enqueueClose = () =>
+      enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
+        refundMethod: "internet-banking",
+        paidAnotherWayTaskId: "close_1",
+      });
+
+    it("MUTATION: earlier hand-backs' notes, or no eligible cash at all, never shrink or drop it", async () => {
+      // The payment-wide gap is empty: other notes cover more than the cash.
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(9000);
+      mocks.resolveStripeCashRefundEvidence.mockResolvedValue({
+        cashRefundCents: 0,
+        countedRefundCents: 0,
+        refundLedgerRowCount: 0,
+        accountCreditCents: 0,
+        source: "provider-ledger",
+      });
+      mocks.readPaidAnotherWayCloseShare.mockResolvedValue({ amountCents: 2500, coveredCents: 0, uncoveredCents: 2500 });
+      await expect(enqueueClose()).resolves.toMatchObject({ queueOperationId: "op_credit_note_1" });
+      expect(mocks.readPaidAnotherWayCloseShare).toHaveBeenCalledWith(expect.anything(), "payment_1", "close_1");
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ requestPayload: expect.objectContaining({ refundAmountCents: 2500, watermarkCents: 11500 }) }),
+      );
+    });
+
+    it("MUTATION: only what its own notes do not cover", async () => {
+      mocks.readPaidAnotherWayCloseShare.mockResolvedValue({ amountCents: 2500, coveredCents: 1000, uncoveredCents: 1500 });
+      await enqueueClose();
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ requestPayload: expect.objectContaining({ refundAmountCents: 1500 }) }),
+      );
+    });
+
+    it("nothing once its own notes cover it", async () => {
+      mocks.readPaidAnotherWayCloseShare.mockResolvedValue({ amountCents: 2500, coveredCents: 2500, uncoveredCents: 0 });
+      await expect(enqueueClose()).resolves.toMatchObject({ queueOperationId: null });
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("refuses a close that is not on the payment", async () => {
+      mocks.readPaidAnotherWayCloseShare.mockResolvedValue(null);
+      await expect(enqueueClose()).rejects.toThrow(/close close_1 is not on this payment/);
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: returns the close's own queued row, whatever watermark the payment's coverage gave it", async () => {
+      mocks.readPaidAnotherWayCloseShare.mockResolvedValue({ amountCents: 2500, coveredCents: 0, uncoveredCents: 2500 });
+      mocks.findFirstOperation.mockResolvedValue({ id: "op_close_note" });
+      await expect(enqueueClose()).resolves.toMatchObject({ queueOperationId: "op_close_note" });
+      expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            localId: "payment_1",
+            requestPayload: { path: ["paidAnotherWayTaskId"], equals: "close_1" },
+            status: { in: ["PENDING", "RUNNING"] },
+          }),
+        }),
+      );
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
   });
 
   // #3880: a review's refund on a CANCELLED booking - by card or handed back by

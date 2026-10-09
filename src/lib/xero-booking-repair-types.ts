@@ -5,6 +5,7 @@
 import { Prisma } from "@prisma/client";
 import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
+import type { PaidAnotherWayReceiptState } from "@/lib/xero-kept-late-capture-invoice";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",
@@ -27,6 +28,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // refund was closed as paid another way, and whose Xero receipt - which the
   // close's bank-transfer note waits for - failed or was never queued.
   "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT",
+  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): that
+  // close's receipt is in Xero - a change's invoice sent after the close, or
+  // a receipt row that failed after its link - and its note was never queued.
+  "PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -69,6 +74,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
   // #3635: the invoice, paid from Stripe, recording a kept late capture.
   "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+  // #3924 round 8: a paid-another-way close's note, once its receipt is in Xero.
+  "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE",
   // #3548: operator-applied only (`--apply-action`), through the one settle.
   "SETTLE_REFUND_CREDIT_NOTE",
   // #3836: the applied-credit allocation operation, as booking creation queues it.
@@ -484,7 +491,15 @@ export interface BookingClassificationContext {
        * raised (the capture day its receipt is dated from). Absent when it was
        * never closed so. Set after the load (`withPaidAnotherWayCloses`).
        */
-      paidAnotherWayClose?: { xeroRefundNote: PaidAnotherWayXeroNote; raisedAt: Date };
+      paidAnotherWayClose?: {
+        xeroRefundNote: PaidAnotherWayXeroNote;
+        raisedAt: Date;
+        /**
+         * #3924 round 8: for a close whose note waits for the receipt, where
+         * the receipt and the note stand (`readPaidAnotherWayReceiptState`).
+         */
+        receiptState?: PaidAnotherWayReceiptState;
+      };
     }
   >;
   /**

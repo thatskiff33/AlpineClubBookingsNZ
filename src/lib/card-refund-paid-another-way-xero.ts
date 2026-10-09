@@ -8,6 +8,7 @@ import {
   findKeptLateCaptureInvoiceIdForPayment,
   readLateCaptureXeroReceipt,
 } from "@/lib/late-capture-xero-receipt";
+import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { lateCaptureIntentOfApprovalRefundRecoveryKey } from "@/lib/payment-recovery-keys";
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
@@ -44,9 +45,27 @@ export type PaidAnotherWayXeroPlan =
   | { xeroRefundNote: "none" }
   | {
       xeroRefundNote: "after-receipt";
-      /** The late capture's receipt the close queues first, on its approval task. */
-      receipt: { manualRefundTaskId: string; paymentIntentId: string; capturedCents: number; raisedAt: Date };
+      /**
+       * The late capture's receipt the close queues first, on its approval
+       * task; null (#3924 round 8) when the receipt is already on its way - a
+       * change's released invoice for the capture, queued, sending or FAILED -
+       * so the close queues nothing and the note follows that invoice.
+       */
+      receipt: { manualRefundTaskId: string; paymentIntentId: string; capturedCents: number; raisedAt: Date } | null;
     };
+
+/**
+ * What the dialog promises before the close (#3924 round 8): the plan's note,
+ * with a receipt already on its way to Xero told apart from one the close
+ * queues, since the treasurer reads different words for each.
+ */
+export type PaidAnotherWayXeroPromise = PaidAnotherWayXeroNote | "after-receipt-on-its-way";
+
+export function paidAnotherWayXeroPromise(plan: PaidAnotherWayXeroPlan): PaidAnotherWayXeroPromise {
+  return plan.xeroRefundNote === "after-receipt" && plan.receipt === null
+    ? "after-receipt-on-its-way"
+    : plan.xeroRefundNote;
+}
 
 /**
  * #3924 round 5 (F4; owner, 8 Oct 2026: "Raise a refund note for all") and
@@ -67,11 +86,18 @@ export type PaidAnotherWayXeroPlan =
  *   (`findKeptLateCaptureInvoiceIdForPayment` ?? `payment.xeroInvoiceId`):
  *   `now`, or `none` without one.
  *
+ * A late capture's receipt the app recorded but which has not reached Xero yet
+ * - a change's released invoice still queued, sending, or FAILED - has no
+ * invoice to name (#3924 round 8; owner, 8 Oct 2026: "Raise a refund note for
+ * all"): `after-receipt` with nothing to queue, and the note follows once that
+ * invoice is in Xero (`noteWaitingPaidAnotherWayCloseAfterChangeInvoice`).
+ *
  * `lockApprovalTask` (the close only): the approval task's row is taken BEFORE
  * the receipt is read; see the module's LOCKS.
  *
- * STATED LIMIT: a payment whose invoice is still on its way to Xero reads as
- * having none, and its close queues no note; the toast says to check Xero.
+ * STATED LIMIT: a payment that is not a late capture's, whose invoice is still
+ * on its way to Xero, reads as having none, and its close queues no note; the
+ * toast says to check Xero.
  */
 export async function paidAnotherWayXeroPlan(
   db: XeroPlanStore,
@@ -93,13 +119,12 @@ export async function paidAnotherWayXeroPlan(
   const receipt = await readLateCaptureXeroReceipt(lateCaptureIntent, db);
   // Round 7 (money M5, `INV-PAY-122`): the note credits THIS receipt, named by
   // its invoice id - never by `paymentIntentId`, which would count the bank
-  // note as the capture's card refund note. A receipt recorded but not yet in
-  // Xero (a change's released invoice still sending) has no id to name: the
-  // stated limit below, as for any invoice still on its way.
+  // note as the capture's card refund note. Round 8: a receipt recorded but
+  // not yet in Xero (a change's released invoice queued, sending or FAILED)
+  // has no id to name yet, so the note waits for it.
   if (receipt.kind === "recorded") {
-    return receipt.invoiceId !== null
-      ? { xeroRefundNote: "now", creditsInvoiceId: receipt.invoiceId }
-      : { xeroRefundNote: "none" };
+    if (receipt.invoiceId !== null) return { xeroRefundNote: "now", creditsInvoiceId: receipt.invoiceId };
+    return task ? { xeroRefundNote: "after-receipt", receipt: null } : { xeroRefundNote: "none" };
   }
   if (receipt.kind === "resolved-by-hand" || !task) return { xeroRefundNote: "none" };
   const capture = await db.paymentTransaction.findFirst({
@@ -125,8 +150,30 @@ export async function paidAnotherWayXeroPlan(
   };
 }
 
-/** What the close queued in Xero: its refund note, the late charge's receipt with the note to follow it, or nothing. */
-export type PaidAnotherWayXeroQueued = "refund-note" | "receipt-then-refund-note" | "nothing";
+/**
+ * #3924 round 8 (concurrency): an officer resolved or withdrew the late
+ * charge's Xero receipt between the plan's read and its requeue - neither takes
+ * the approval task's row. The plan no longer holds (a receipt resolved by hand
+ * takes no note), so the close refuses with a 409 and nothing commits; asked
+ * again, it plans from what is there now.
+ */
+export class PaidAnotherWayXeroChangedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PaidAnotherWayXeroChangedError";
+  }
+}
+
+/**
+ * What the close queued in Xero: its refund note, the late charge's receipt with
+ * the note to follow it, the note to follow a receipt already on its way
+ * (round 8), or nothing.
+ */
+export type PaidAnotherWayXeroQueued =
+  | "refund-note"
+  | "receipt-then-refund-note"
+  | "refund-note-after-receipt"
+  | "nothing";
 
 /**
  * Queue what the plan says, on the close's transaction, after its record:
@@ -139,7 +186,9 @@ export type PaidAnotherWayXeroQueued = "refund-note" | "receipt-then-refund-note
  *   the receipt's worker queues the note once it is in Xero. The record is
  *   already in this transaction, so the enqueue reads the refund as closed. The
  *   plan and the enqueue ask the same facts under the same row lock, so a
- *   refusal is a fault and nothing commits;
+ *   refusal is a fault and nothing commits. Round 8: with the receipt already
+ *   on its way (a change's invoice), nothing is queued here; that invoice's
+ *   worker queues the note once it is in Xero;
  * - `none`: nothing.
  */
 export async function queuePaidAnotherWayXero(
@@ -171,6 +220,7 @@ export async function queuePaidAnotherWayXero(
     return queued.queueOperationId !== null ? "refund-note" : "nothing";
   }
   if (plan.xeroRefundNote === "none") return "nothing";
+  if (plan.receipt === null) return "refund-note-after-receipt";
   const queued = await enqueueXeroKeptLateCaptureInvoiceOperation({
     manualRefundTaskId: plan.receipt.manualRefundTaskId,
     bookingId: close.bookingId,
@@ -179,11 +229,14 @@ export async function queuePaidAnotherWayXero(
     capturedOn: keptLateCaptureDocumentDate(plan.receipt.raisedAt, close.clubZone),
     createdByMemberId: close.actingMemberId,
     // Round 7 (money M2): a receipt row that failed before it reached Xero is
-    // put back to run, never left FAILED as if it were live.
+    // put back to run, never left FAILED as if it were live. Round 8: one that
+    // may have reached Xero is left for an officer's retry, and the note
+    // follows that retry.
     requeueFailedUnsent: true,
     store: tx,
   });
   if (queued.queueOperationId === null) {
+    if (queued.changedByOfficer) throw new PaidAnotherWayXeroChangedError(queued.message);
     throw new Error(
       `Paid-another-way close ${close.operationId}: the late charge's Xero receipt could not be queued (${queued.message})`,
     );

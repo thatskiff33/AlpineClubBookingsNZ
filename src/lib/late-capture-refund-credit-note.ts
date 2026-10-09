@@ -20,6 +20,7 @@ import type { Prisma } from "@prisma/client";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import { paidAnotherWayCloseXeroNote } from "@/lib/manual-refund-task-settlement-rules";
+import { paidAnotherWayCloseNoteRowsWhere } from "@/lib/card-refund-paid-another-way-cash";
 
 /**
  * #1350 / #3639 / #3635: the Xero correction that follows a refund of a late
@@ -248,10 +249,12 @@ export async function finishApprovedLateCaptureRefundAfterReplay(operation: {
  * naming the receipt's invoice (`creditsInvoiceId`, round 7, money M5) - never
  * its `paymentIntentId`, which would count it as the capture's card note.
  *
- * Run ONLY by the receipt's worker, once the receipt's link is written, under
- * the approval task's row lock (`queueWaitingPaidAnotherWayNote`). Until that
- * link exists the close's bank cash is outside what any refund note may answer
- * (`readPaidAnotherWayCash`), so the note cannot be sized earlier by anyone.
+ * Run ONLY once the receipt is in Xero, under the approval task's row lock
+ * (`queueWaitingPaidAnotherWayNote`): by the receipt's worker once its link is
+ * written, or (round 8) by a change's supplementary invoice for the capture
+ * once it is sent. Until then the close's bank cash is outside what any refund
+ * note may answer (`readPaidAnotherWayCash`), so the note cannot be sized
+ * earlier by anyone.
  *
  * Only a close whose key says its note waits for the receipt
  * (`after-receipt`): one that queued its note itself, or raises none, is left
@@ -273,16 +276,9 @@ export async function notePaidAnotherWayCloseOnReceipt(params: {
   if (!close || paidAnotherWayCloseXeroNote(close) !== "after-receipt" || close.paymentId === null) return null;
   const amountCents = Math.max(0, close.amountCents ?? 0);
   if (amountCents === 0) return null;
+  // Round 8 (`INV-SSOT`): the close's rows, found the one way they are.
   const asked = await params.store.xeroSyncOperation.findFirst({
-    where: {
-      direction: "OUTBOUND",
-      entityType: "CREDIT_NOTE",
-      operationType: "CREATE",
-      localModel: "Payment",
-      localId: close.paymentId,
-      status: { not: "CANCELLED" },
-      requestPayload: { path: ["paidAnotherWayTaskId"], equals: close.id },
-    },
+    where: { ...paidAnotherWayCloseNoteRowsWhere(close.paymentId, close.id), status: { not: "CANCELLED" } },
     select: { id: true },
   });
   if (asked) return asked.id;

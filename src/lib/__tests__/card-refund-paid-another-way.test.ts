@@ -559,17 +559,40 @@ describe("closing a dead card refund as paid another way", () => {
       expect(options).not.toHaveProperty("paymentIntentId");
     });
 
-    it("M5 (round 7): a receipt recorded but not yet in Xero has no invoice to name, so no note is promised", async () => {
+    // Round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): a receipt
+    // recorded but not yet in Xero - a change's invoice queued, sending or
+    // FAILED - has no invoice to name yet. Its note waits for it: no second
+    // receipt is queued, and that invoice's worker queues the note.
+    it("MUTATION: a receipt recorded but not yet in Xero gets the waiting key, queues nothing, and its note follows the invoice", async () => {
       lateCharge();
       mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null });
       const result = await close();
-      expect(result.xeroQueued).toBe("nothing");
+      expect(result.xeroQueued).toBe("refund-note-after-receipt");
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.enqueueKeptReceipt).not.toHaveBeenCalled();
       expect(mocks.createRecord).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ occurrenceKey: "card-refund-paid-another-way:op-1:no-xero-note" }),
+          data: expect.objectContaining({ occurrenceKey: "card-refund-paid-another-way:op-1:note-after-receipt" }),
         }),
       );
+    });
+
+    it("the list tells a receipt on its way apart from one the close queues", async () => {
+      mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null });
+      const late = deadOperation({ idempotencyKey: LATE_KEY });
+      mocks.listOperations.mockResolvedValue([{ ...late, payment: payment(late) }]);
+      expect(await listDeadCardRefunds()).toEqual([
+        expect.objectContaining({ operationId: "op-1", xeroRefundNote: "after-receipt-on-its-way" }),
+      ]);
+    });
+
+    // Round 8 (concurrency): an officer resolved the receipt between the plan
+    // and its requeue; the plan no longer holds.
+    it("MUTATION: a receipt an officer changed under the close is a 409, and nothing commits", async () => {
+      lateCharge();
+      mocks.enqueueKeptReceipt.mockResolvedValue({ queueOperationId: null, changedByOfficer: true, message: "resolved" });
+      await expect(close()).rejects.toMatchObject({ status: 409 });
+      expect(mocks.kick).not.toHaveBeenCalled();
     });
 
     it("MUTATION: M2 (round 7): the receipt's enqueue is asked to put a failed unsent row back to run", async () => {

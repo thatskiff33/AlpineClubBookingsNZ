@@ -430,7 +430,12 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       ]);
 
       const resolve = () =>
-        resolveCardRefundPaidTwice({ operationId: OPERATION_ID, note: "Member paid it back", actingMemberId: OFFICER_ID });
+        resolveCardRefundPaidTwice({
+          operationId: OPERATION_ID,
+          note: "Member paid it back",
+          expectedRefundedByCardCents: REFUND_CENTS,
+          actingMemberId: OFFICER_ID,
+        });
       const settled = await Promise.allSettled([resolve(), resolve()]);
       expect(settled.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
       const [refused] = settled.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");

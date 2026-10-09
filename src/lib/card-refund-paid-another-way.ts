@@ -9,9 +9,12 @@ import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-le
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
+  PaidAnotherWayXeroChangedError,
   paidAnotherWayXeroPlan,
+  paidAnotherWayXeroPromise,
   queuePaidAnotherWayXero,
   type PaidAnotherWayXeroPlan,
+  type PaidAnotherWayXeroPromise,
   type PaidAnotherWayXeroQueued,
 } from "@/lib/card-refund-paid-another-way-xero";
 import { PAID_BACK_CHOICES, type PaidBackChoice } from "@/lib/card-refund-paid-back";
@@ -19,10 +22,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import {
-  cardRefundPaidAnotherWayOccurrenceKey,
-  type PaidAnotherWayXeroNote,
-} from "@/lib/manual-refund-task-settlement-rules";
+import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   CARD_REFUND_OPERATION_WHERE,
   cardRefundSlicesByOperation,
@@ -228,9 +228,10 @@ export interface DeadCardRefundRow {
   /**
    * How a close is recorded in Xero (`paidAnotherWayXeroPlan`): its refund note
    * queued with it (`now`), the late charge's receipt first and the note after
-   * it (`after-receipt`), or no note (`none`).
+   * it (`after-receipt`), the note after a receipt already on its way to Xero
+   * (`after-receipt-on-its-way`, round 8), or no note (`none`).
    */
-  xeroRefundNote: PaidAnotherWayXeroNote;
+  xeroRefundNote: PaidAnotherWayXeroPromise;
   /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
   stripeMayHaveRefunded: boolean;
 }
@@ -281,9 +282,9 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
       raisedAt: operation.createdAt.toISOString(),
       owedCents,
       wholeAmountOnly: operation.type === "REFUND_SUPERSEDED_PAYMENT",
-      xeroRefundNote: (
-        await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
-      ).xeroRefundNote,
+      xeroRefundNote: paidAnotherWayXeroPromise(
+        await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false }),
+      ),
       stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
     })),
   );
@@ -580,16 +581,28 @@ export async function closeCardRefundPaidAnotherWay(
     });
 
     // M3 / round 5 / round 6: the note now, or the late charge's receipt first.
-    const xeroQueued: PaidAnotherWayXeroQueued = await queuePaidAnotherWayXero(tx, xeroPlan, {
-      operationId: operation.id,
-      bookingId: booking.id,
-      paymentId: payment.id,
-      recordId: record.id,
-      amountCents: input.amountCents,
-      actingMemberId: input.actingMemberId,
-      clubZone,
-      closedAt,
-    });
+    let xeroQueued: PaidAnotherWayXeroQueued;
+    try {
+      xeroQueued = await queuePaidAnotherWayXero(tx, xeroPlan, {
+        operationId: operation.id,
+        bookingId: booking.id,
+        paymentId: payment.id,
+        recordId: record.id,
+        amountCents: input.amountCents,
+        actingMemberId: input.actingMemberId,
+        clubZone,
+        closedAt,
+      });
+    } catch (error) {
+      // Round 8: the receipt changed under the plan; nothing commits.
+      if (error instanceof PaidAnotherWayXeroChangedError) {
+        throw new CardRefundPaidAnotherWayError(
+          "This late card charge's Xero record changed while you were closing it - refresh and try again.",
+          409,
+        );
+      }
+      throw error;
+    }
 
     await createAuditLog(
       {

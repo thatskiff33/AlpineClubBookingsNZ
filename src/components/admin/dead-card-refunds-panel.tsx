@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -24,10 +24,9 @@ import {
 import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import type { PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way-xero";
+import type { PaidAnotherWayXeroPromise, PaidAnotherWayXeroQueued } from "@/lib/card-refund-paid-another-way-xero";
 import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
-import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 
@@ -42,9 +41,10 @@ export interface DeadCardRefundPanelRow {
   /**
    * How closing it is recorded in Xero: a bank-transfer refund note queued with
    * the close (`now`); a late card charge recorded as a receipt first, with the
-   * note after it (`after-receipt`); or no note (`none`).
+   * note after it (`after-receipt`); the note after a receipt already on its
+   * way to Xero (`after-receipt-on-its-way`, round 8); or no note (`none`).
    */
-  xeroRefundNote: PaidAnotherWayXeroNote;
+  xeroRefundNote: PaidAnotherWayXeroPromise;
   /** Its last failure looked like a timeout or network error: Stripe may have refunded. */
   stripeMayHaveRefunded: boolean;
 }
@@ -69,12 +69,15 @@ export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
  * of refund-note words (`describeRefundMethod("internet-banking")`, passed by
  * the server page so this client file does not bundle that module).
  */
-function xeroRefundNotePromise(xeroRefundNote: PaidAnotherWayXeroNote, bankNoteWording: string): string {
+function xeroRefundNotePromise(xeroRefundNote: PaidAnotherWayXeroPromise, bankNoteWording: string): string {
   if (xeroRefundNote === "now") {
     return `A Xero refund credit note for the amount, worded "${bankNoteWording}", is queued when you close it.`;
   }
   if (xeroRefundNote === "after-receipt") {
     return `Xero has no record of this late card charge yet. Closing it records the charge in Xero as a payment received into the Stripe account, then queues a Xero refund credit note for the amount, worded "${bankNoteWording}", against it.`;
+  }
+  if (xeroRefundNote === "after-receipt-on-its-way") {
+    return `This late card charge's invoice is on its way to Xero but is not there yet. Once it is, a Xero refund credit note for the amount, worded "${bankNoteWording}", is queued against it.`;
   }
   // Round 7 (UX): an invoice may still be on its way to Xero, so this never
   // says there is none.
@@ -86,6 +89,9 @@ function xeroQueuedMessage(xeroQueued: PaidAnotherWayXeroQueued | undefined, ban
   if (xeroQueued === "refund-note") return `Its Xero refund credit note, worded "${bankNoteWording}", is queued.`;
   if (xeroQueued === "receipt-then-refund-note") {
     return `The late card charge is queued to be recorded in Xero as a payment received into the Stripe account; its refund credit note, worded "${bankNoteWording}", follows once it is.`;
+  }
+  if (xeroQueued === "refund-note-after-receipt") {
+    return `Its Xero refund credit note, worded "${bankNoteWording}", follows once the late card charge's invoice reaches Xero.`;
   }
   return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
 }
@@ -142,6 +148,10 @@ export function DeadCardRefundsPanel({
   const [errorAttention, setErrorAttention] = useState(0);
   const [owedChanged, setOwedChanged] = useState("");
   const [listNotice, setListNotice] = useState("");
+  // Round 8 (UX): after a close the row is gone, so focus goes to the list's
+  // status line, which says what happened, instead of to a vanished button.
+  const listNoticeRef = useRef<HTMLParagraphElement>(null);
+  const focusNoticeOnClose = useRef(false);
 
   const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
   // The list moved under the open dialog (a 409's refresh, another treasurer):
@@ -243,6 +253,8 @@ export function DeadCardRefundsPanel({
               format,
             )} is no longer owed.`;
       toast.success(`${recorded} ${xeroQueuedMessage(data.xeroQueued, bankNoteWording)}`);
+      setListNotice(`The card refund for booking ${target.bookingReference} was closed as paid another way.`);
+      focusNoticeOnClose.current = true;
       close();
       router.refresh();
     } catch {
@@ -261,7 +273,12 @@ export function DeadCardRefundsPanel({
         you refunded it in the Stripe dashboard instead, do not close it here: wait for that refund to show on
         the payment.
       </p>
-      <p role="status" className="text-sm text-muted-foreground empty:hidden">
+      <p
+        ref={listNoticeRef}
+        role="status"
+        tabIndex={-1}
+        className="text-sm text-muted-foreground outline-none empty:hidden"
+      >
         {listNotice}
       </p>
       <ul className="space-y-2" aria-label="Card refunds Stripe gave up on">
@@ -290,6 +307,7 @@ export function DeadCardRefundsPanel({
               describeReason={false}
               variant="outline"
               size="sm"
+              aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
               onClick={() => open(row)}
             >
               Paid another way
@@ -299,7 +317,15 @@ export function DeadCardRefundsPanel({
       </ul>
 
       <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && close()}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto"
+          onCloseAutoFocus={(event) => {
+            if (!focusNoticeOnClose.current) return;
+            focusNoticeOnClose.current = false;
+            event.preventDefault();
+            listNoticeRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Close this card refund as paid another way?</DialogTitle>
             <DialogDescription>
@@ -429,8 +455,12 @@ export function DeadCardRefundsPanel({
  * with the member, the treasurer marks the row Resolved with a note saying how.
  * The note is audited and the row leaves the list; nothing moves in the app or
  * in Xero. Gated `finance:edit` like the close, with its own section banner
- * (`describeReason={false}` on the row buttons). A 409 shows in the dialog and
- * refreshes the list; if the refresh drops the row the dialog closes and says why.
+ * (`describeReason={false}` on the row buttons). The Resolved carries the card
+ * figure the dialog showed, and the server refuses a moved one (#3924 round 8),
+ * so a Stripe refund the treasurer never saw is never marked resolved. A 409
+ * shows in the dialog and refreshes the list; if the refresh drops the row the
+ * dialog closes and says why, and if the card figure moved it says so. After a
+ * success focus moves to the list's status line, which says what was done.
  */
 export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePanelRow[] }) {
   const canEdit = useAdminAreaEditAccess("finance");
@@ -441,22 +471,36 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
   const errorId = useId();
   const submitHintId = useId();
   const [targetId, setTargetId] = useState<string | null>(null);
+  // Round 8 (concurrency): the card figure the dialog showed, sent with the
+  // Resolved; a Stripe refund recorded since is refused with a 409.
+  const [seenRefundedByCardCents, setSeenRefundedByCardCents] = useState<number | null>(null);
+  const [cardChanged, setCardChanged] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [errorAttention, setErrorAttention] = useState(0);
   const [listNotice, setListNotice] = useState("");
+  const listNoticeRef = useRef<HTMLParagraphElement>(null);
+  const focusNoticeOnClose = useRef(false);
 
   const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
   if (targetId !== null && target === null && !busy) {
     setTargetId(null);
     setListNotice("That card refund is no longer on this list, so its dialog was closed. The list is up to date.");
   }
+  if (target !== null && seenRefundedByCardCents !== null && target.refundedByCardCents !== seenRefundedByCardCents) {
+    setSeenRefundedByCardCents(target.refundedByCardCents);
+    setCardChanged(
+      `Stripe has now refunded ${formatCents(target.refundedByCardCents, format)} to the card. Check it is sorted out before marking it resolved.`,
+    );
+  }
   const noteMissing = note.trim() === "";
   const canSubmit = target !== null && !noteMissing && !busy;
 
   function open(row: CardRefundPaidTwicePanelRow) {
     setTargetId(row.operationId);
+    setSeenRefundedByCardCents(row.refundedByCardCents);
+    setCardChanged("");
     setNote("");
     setError("");
     setListNotice("");
@@ -475,7 +519,11 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
       const res = await fetch(`/api/admin/payments/card-refunds/${target.operationId}/paid-twice-resolved`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note, confirmed: true }),
+        body: JSON.stringify({
+          note,
+          expectedRefundedByCardCents: seenRefundedByCardCents ?? target.refundedByCardCents,
+          confirmed: true,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -484,6 +532,8 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
         return;
       }
       toast.success(`Marked resolved. Booking ${target.bookingReference} has left the list, and your note is in the audit log.`);
+      setListNotice(`Booking ${target.bookingReference} was marked resolved.`);
+      focusNoticeOnClose.current = true;
       setTargetId(null);
       router.refresh();
     } catch {
@@ -501,7 +551,12 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
         so the member was paid back twice. Contact the member to recover the extra money, and record what you
         agree in Xero. Then mark it Resolved, saying how it was sorted out.
       </p>
-      <p role="status" className="text-sm text-muted-foreground empty:hidden">
+      <p
+        ref={listNoticeRef}
+        role="status"
+        tabIndex={-1}
+        className="text-sm text-muted-foreground outline-none empty:hidden"
+      >
         {listNotice}
       </p>
       <ul className="space-y-2" aria-label="Card refunds paid back twice">
@@ -528,6 +583,7 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
               describeReason={false}
               variant="outline"
               size="sm"
+              aria-label={`Mark booking ${row.bookingReference} resolved`}
               onClick={() => open(row)}
             >
               Resolved
@@ -537,9 +593,17 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
       </ul>
 
       <Dialog open={target !== null} onOpenChange={(next) => !busy && !next && setTargetId(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto"
+          onCloseAutoFocus={(event) => {
+            if (!focusNoticeOnClose.current) return;
+            focusNoticeOnClose.current = false;
+            event.preventDefault();
+            listNoticeRef.current?.focus();
+          }}
+        >
           <DialogHeader>
-            <DialogTitle>Mark this paid-twice refund resolved?</DialogTitle>
+            <DialogTitle>Mark this card refund, paid back twice, as resolved?</DialogTitle>
             <DialogDescription>
               Only once it is sorted out with the member. It leaves this list, and your note is kept in the audit
               log. Nothing is refunded or charged, and nothing is sent to Xero: record what you agreed there yourself.
@@ -549,6 +613,10 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
             {target
               ? `Booking ${target.bookingReference}: ${formatCents(target.refundedByCardCents, format)} refunded to the card after ${formatCents(target.paidAnotherWayCents, format)} was paid back another way.`
               : null}
+          </p>
+          {/* Always mounted, so a screen reader hears the change (round 8). */}
+          <p role="status" className="text-sm font-medium text-warning-11 empty:hidden">
+            {cardChanged}
           </p>
           <div className="space-y-1">
             <Label htmlFor={noteId}>How was it sorted out? (required)</Label>

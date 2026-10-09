@@ -3,13 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { CardRefundPaidTwiceError, resolveCardRefundPaidTwice } from "@/lib/card-refund-paid-twice";
 
-/** A confirmed body with the treasurer's note on how it was sorted out. */
+/** A confirmed body with the treasurer's note on how it was sorted out, and the card figure they saw. */
 const bodySchema = z
   .object({
     note: z.string().max(MANUAL_PAYMENT_NOTE_MAX),
+    // #3924 round 8: the card figure the dialog showed; a moved one is a 409.
+    expectedRefundedByCardCents: nonNegativeCentsSchema,
     confirmed: z.literal(true),
   })
   .strict();
@@ -54,6 +57,7 @@ export async function POST(
     const result = await resolveCardRefundPaidTwice({
       operationId: id,
       note: parsed.data.note,
+      expectedRefundedByCardCents: parsed.data.expectedRefundedByCardCents,
       actingMemberId: guard.session.user.id,
     });
     revalidatePath("/admin/stuck-states");

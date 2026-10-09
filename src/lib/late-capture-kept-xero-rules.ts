@@ -117,3 +117,29 @@ export function keptLateCaptureInvoiceAsked(
       operation.status !== "CANCELLED",
   );
 }
+
+/**
+ * #3924 round 8 (money review): MAY THIS FAILED RECEIPT ROW HAVE REACHED XERO?
+ * The worker writes the invoice it is about to send onto the row
+ * (`invoices`, beside the queued payload) before it calls Xero, and records
+ * the receipt's Stripe payment, with its link, after Xero returned the
+ * invoice. Either one means `createInvoices` was attempted: Xero may hold the
+ * receipt though the app never linked it, and running the row again could
+ * raise a second. Such a row is never put back to run automatically - not by a
+ * close, not by the repair tool - and is left for an officer, who checks Xero
+ * first. The enqueue and the repair tool both ask this, and nothing else
+ * spells it.
+ */
+export function keptReceiptMayHaveReachedXero(input: {
+  requestPayload: unknown;
+  paymentLinked: boolean;
+}): boolean {
+  if (input.paymentLinked) return true;
+  const payload = input.requestPayload;
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    Array.isArray((payload as Record<string, unknown>).invoices)
+  );
+}

@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
   links: [] as Row[],
   operations: [] as Row[],
   eligibleCents: 5000,
+  /** #3924 round 8: paid-another-way closes on the payment - record id to amount paid back. */
+  closes: {} as Record<string, number>,
   resolved: { coveredCents: 0, correlationKeys: [] as string[], operationIds: [] as string[], unreadableOperationIds: [] as string[] },
   /** Read the officer's resolved rows off the ledger through the real reader. */
   realResolved: false,
@@ -92,7 +94,13 @@ vi.mock("@/lib/prisma", () => {
         return state.payment;
       }),
     },
-    manualRefundTask: { findMany: vi.fn(async () => []) },
+    manualRefundTask: {
+      findMany: vi.fn(async () => []),
+      // #3924 round 8: a paid-another-way close's record, by id.
+      findFirst: vi.fn(async ({ where }: { where: { id: string } }) =>
+        where.id in state.closes ? { amountCents: state.closes[where.id] } : null,
+      ),
+    },
     xeroObjectLink: {
       findMany: vi.fn(async ({ where }: { where?: Row }) => state.links.filter((link) => matches(link, where))),
       findFirst: vi.fn(async ({ where }: { where?: Row }) => state.links.find((link) => matches(link, where)) ?? null),
@@ -184,6 +192,18 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", async (importOriginal) => {
     ),
     sumRefundCreditNoteCoverageCents: vi.fn(
       async (_paymentId: string, resolved: { coveredCents: number }) => coveredCents() + resolved.coveredCents,
+    ),
+    // #3924 round 8: the same coverage over one close's own rows - the active
+    // links of the notes those rows raised.
+    sumRefundCreditNoteCoverageOfRowsCents: vi.fn(
+      async (_paymentId: string, rowsWhere: { requestPayload: { equals: string } }) => {
+        const noteIds = state.operations
+          .filter((operation) => (operation.requestPayload as Row | undefined)?.paidAnotherWayTaskId === rowsWhere.requestPayload.equals)
+          .flatMap((operation) => (operation.xeroObjectId ? [operation.xeroObjectId] : []));
+        return state.links
+          .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active && noteIds.includes(link.xeroObjectId))
+          .reduce((sum, link) => sum + Number((link.metadata as Row | undefined)?.amountCents ?? 0), 0);
+      },
     ),
   };
 });
@@ -471,6 +491,7 @@ beforeEach(() => {
   state.links = [];
   state.operations = [];
   state.eligibleCents = 5000;
+  state.closes = {};
   state.resolved = { coveredCents: 0, correlationKeys: [], operationIds: [], unreadableOperationIds: [] };
   state.realResolved = false;
   state.onFailedPayment = null;
@@ -847,6 +868,7 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
   it("MUTATION: a paid-another-way close's note is one of several on a bank-transfer payment, credits the invoice it names, and keeps its close on the row", async () => {
     seedPayment(PaymentSource.INTERNET_BANKING);
     state.eligibleCents = 1000;
+    state.closes = { close_1: 1000 };
     queueRefundNote("op_a", 1000, 1000, "internet-banking");
     row("op_a").requestPayload = {
       ...(row("op_a").requestPayload as Row),
@@ -862,6 +884,45 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     expect((executed.allocation as Row).invoiceId).toBe("inv_receipt");
     expect(executed).toMatchObject({ paidAnotherWayTaskId: "close_1", creditsInvoiceId: "inv_receipt" });
     expect(executed).not.toHaveProperty("paymentIntentId");
+  });
+
+  // #3924 round 8 (money review, `INV-PAY-122`): a close's note is sized by its
+  // record and answered only by its own notes.
+  describe("round 8: a paid-another-way close's note, sized by its record", () => {
+    function queueClose(id: string, closeId: string, cents: number, watermarkCents: number) {
+      queueRefundNote(id, cents, watermarkCents, "internet-banking");
+      row(id).requestPayload = { ...(row(id).requestPayload as Row), paidAnotherWayTaskId: closeId };
+    }
+
+    it("MUTATION: earlier notes covering every cent the payment-wide gap sees never shrink or drop it, and it is never closed against their link", async () => {
+      seedPayment(PaymentSource.INTERNET_BANKING);
+      // An earlier hand-back's note covers 5000, and the gap reads nothing uncovered.
+      upsertLink({ localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_hand_back", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 5000, watermarkCents: 99_999 } });
+      state.eligibleCents = 5000;
+      state.closes = { close_1: 2500 };
+      queueClose("op_close", "close_1", 2500, 7500);
+
+      await dispatch("op_close");
+
+      const minted = [...state.xero.notes.values()];
+      expect(minted.map((note) => note.total)).toEqual([25]);
+      expect(row("op_close")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: minted[0]!.creditNoteID });
+      expect(row("op_close").xeroObjectId).not.toBe("cn_hand_back");
+    });
+
+    it("MUTATION: once its own note covers it, a second row for it raises nothing and borrows no other note", async () => {
+      seedPayment(PaymentSource.INTERNET_BANKING);
+      state.closes = { close_1: 2500 };
+      queueClose("op_first", "close_1", 2500, 2500);
+      await dispatch("op_first");
+      queueClose("op_second", "close_1", 2500, 5000);
+
+      await dispatch("op_second");
+
+      expect(state.xero.notes.size).toBe(1);
+      expect(row("op_second")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: null });
+      expect(row("op_second").responsePayload).toMatchObject({ skippedNothingUncovered: true, closeCoveredCents: 2500 });
+    });
   });
 
   it("MUTATION: a sibling RUNNING past the stale threshold is a dead worker and does not hold the payment", async () => {

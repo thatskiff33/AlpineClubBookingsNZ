@@ -39,7 +39,7 @@ function request(body: unknown) {
 }
 
 const params = Promise.resolve({ id: "op-1" });
-const valid = { note: "Member paid the extra back", confirmed: true };
+const valid = { note: "Member paid the extra back", expectedRefundedByCardCents: 9_000, confirmed: true };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -64,7 +64,10 @@ describe("who may mark a paid-twice row resolved", () => {
 describe("what the mark needs", () => {
   it.each([
     ["no confirmation", { note: "Sorted" }],
-    ["no note", { confirmed: true }],
+    ["no note", { expectedRefundedByCardCents: 9_000, confirmed: true }],
+    // #3924 round 8 (concurrency): the card figure the dialog showed.
+    ["no card figure", { note: "Sorted", confirmed: true }],
+    ["a card figure that is not whole cents", { ...valid, expectedRefundedByCardCents: 90.5 }],
     ["a confirmation that is not literally true", { ...valid, confirmed: "yes" }],
     ["a field it does not know", { ...valid, amountCents: 100 }],
     ["a note past the column's width", { ...valid, note: "x".repeat(501) }],
@@ -74,12 +77,13 @@ describe("what the mark needs", () => {
     expect(mocks.resolveCardRefundPaidTwice).not.toHaveBeenCalled();
   });
 
-  it("hands the operation, the note and the acting treasurer to the mark, and refreshes the page", async () => {
+  it("MUTATION: hands the operation, the note, the card figure the dialog showed and the acting treasurer to the mark, and refreshes the page", async () => {
     const response = await POST(request(valid), { params });
     expect(response.status).toBe(200);
     expect(mocks.resolveCardRefundPaidTwice).toHaveBeenCalledWith({
       operationId: "op-1",
       note: "Member paid the extra back",
+      expectedRefundedByCardCents: 9_000,
       actingMemberId: "treasurer-1",
     });
     expect(revalidatePath).toHaveBeenCalledWith("/admin/stuck-states");

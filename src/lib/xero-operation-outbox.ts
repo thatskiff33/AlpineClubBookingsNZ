@@ -6,6 +6,10 @@ import {
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import {
+  paidAnotherWayCloseNoteRowsWhere,
+  readPaidAnotherWayCloseShare,
+} from "@/lib/card-refund-paid-another-way-cash";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -818,10 +822,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * #3924 round 4 (M3, `INV-PAY-122`): the record of a "Paid another way"
      * close this note answers. Keyed on it, so the close's note is a row of its
      * own beside any card delta on the payment - never deduplicated into a
-     * pending card note that happens to share its watermark - and sized by the
-     * stepped path against cash that counts the close
-     * (`readPaidAnotherWayCash`), so it comes out at exactly the amount paid
-     * back.
+     * pending card note that happens to share its watermark. Round 8: sized by
+     * the record alone - what it paid back less what its own notes cover
+     * (`readPaidAnotherWayCloseShare`) - so `refundAmountCents` is not read.
      */
     paidAnotherWayTaskId?: string;
     /**
@@ -918,13 +921,28 @@ export async function enqueueXeroRefundCreditNoteOperation(
       resolvedCoverage,
       db
     );
-    // #3635 round-3 R1: the cash a note may answer, which leaves out refunds of
-    // late captures the app never recorded in Xero (`INV-PAY-110`).
-    const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
-    noteAmountCents = Math.max(
-      0,
-      Math.min(refundAmountCents, eligibleCashCents - coveredCents)
-    );
+    if (options?.paidAnotherWayTaskId) {
+      // #3924 round 8 (money review, `INV-PAY-122`): a close's note is sized by
+      // its record - exactly what it paid back less what its OWN notes already
+      // cover (`readPaidAnotherWayCloseShare`) - never by the payment-wide gap,
+      // which an internet-banking payment's earlier hand-backs, or any other
+      // refund's note, could shrink or empty.
+      const share = await readPaidAnotherWayCloseShare(db, paymentId, options.paidAnotherWayTaskId);
+      if (!share) {
+        throw new Error(
+          `Refusing to queue a paid-another-way Xero refund note for payment ${paymentId}: its close ${options.paidAnotherWayTaskId} is not on this payment`
+        );
+      }
+      noteAmountCents = share.uncoveredCents;
+    } else {
+      // #3635 round-3 R1: the cash a note may answer, which leaves out refunds of
+      // late captures the app never recorded in Xero (`INV-PAY-110`).
+      const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
+      noteAmountCents = Math.max(
+        0,
+        Math.min(refundAmountCents, eligibleCashCents - coveredCents)
+      );
+    }
     watermarkCents = coveredCents + noteAmountCents;
     if (noteAmountCents <= 0) {
       if (resolvedCoverage.coveredCents > 0) {
@@ -935,8 +953,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
       }
       return {
         queueOperationId: null,
-        message:
-          "No provider-backed Stripe cash refund remains uncovered by refund credit notes for this payment.",
+        message: options?.paidAnotherWayTaskId
+          ? "This paid-another-way close's own refund credit notes already cover what it paid back."
+          : "No provider-backed Stripe cash refund remains uncovered by refund credit notes for this payment.",
       };
     }
   } else if (canonicalLink) {
@@ -998,14 +1017,20 @@ export async function enqueueXeroRefundCreditNoteOperation(
     };
   }
 
+  // #3924 round 8: a close's note is one row per close, whatever watermark
+  // the payment's coverage gave it - found the one way a close's rows are.
   const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
-      correlationKey,
-      direction: "OUTBOUND",
-      entityType: "CREDIT_NOTE",
-      operationType: "CREATE",
-      localModel: "Payment",
-      localId: paymentId,
+      ...(options?.paidAnotherWayTaskId
+        ? paidAnotherWayCloseNoteRowsWhere(paymentId, options.paidAnotherWayTaskId)
+        : {
+            correlationKey,
+            direction: "OUTBOUND",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            localModel: "Payment",
+            localId: paymentId,
+          }),
       status: {
         in: ["PENDING", "RUNNING"],
       },

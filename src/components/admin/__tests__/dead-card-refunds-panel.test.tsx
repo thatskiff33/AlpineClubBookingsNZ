@@ -60,7 +60,9 @@ const BANK_NOTE_WORDING = describeRefundMethod("internet-banking");
 
 function openDialog(subject = row()) {
   const view = render(<DeadCardRefundsPanel rows={[subject]} bankNoteWording={BANK_NOTE_WORDING} />);
-  fireEvent.click(screen.getByRole("button", { name: "Paid another way" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: `Close the card refund for booking ${subject.bookingReference} as paid another way` }),
+  );
   return view;
 }
 
@@ -266,6 +268,39 @@ describe("the Paid another way dialog", () => {
     );
   });
 
+  // #3924 round 8 (UX): the row is gone after a close, so focus goes to the
+  // list's status line, which says what was done.
+  it("MUTATION: after a close, focus moves to the list's status line, which says what was done", async () => {
+    openDialog();
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
+    respond(200, { success: true, xeroQueued: "refund-note" });
+    fireEvent.click(closeButton());
+
+    const notice = await screen.findByText("The card refund for booking BK-0001 was closed as paid another way.");
+    expect(notice).toHaveAttribute("role", "status");
+    await waitFor(() => expect(document.activeElement).toBe(notice));
+  });
+
+  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all").
+  it("a late charge whose invoice is on its way to Xero: the dialog and the message say its note follows that invoice", async () => {
+    openDialog(row({ xeroRefundNote: "after-receipt-on-its-way" }));
+    expect(
+      screen.getByText(
+        `This late card charge's invoice is on its way to Xero but is not there yet. Once it is, a Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued against it.`,
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(fullChoice());
+    fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
+    respond(200, { success: true, xeroQueued: "refund-note-after-receipt" });
+    fireEvent.click(closeButton());
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        `Closed. $150.00 recorded as paid back in full. Its Xero refund credit note, worded "${BANK_NOTE_WORDING}", follows once the late card charge's invoice reaches Xero.`,
+      ),
+    );
+  });
+
   it("shows a 409 in the dialog as a focused alert, and refreshes the list beneath it", async () => {
     openDialog();
     fireEvent.click(fullChoice());
@@ -380,7 +415,7 @@ describe("marking a paid-twice row Resolved", () => {
 
   function openResolve(rows = [twice]) {
     const view = render(<CardRefundsPaidTwiceList rows={rows} />);
-    fireEvent.click(screen.getByRole("button", { name: "Resolved" }));
+    fireEvent.click(screen.getByRole("button", { name: `Mark booking ${rows[0]!.bookingReference} resolved` }));
     return view;
   }
 
@@ -406,13 +441,47 @@ describe("marking a paid-twice row Resolved", () => {
       "/api/admin/payments/card-refunds/op-2/paid-twice-resolved",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ note: "Member paid the extra back, ref 9", confirmed: true }),
+        body: JSON.stringify({
+          note: "Member paid the extra back, ref 9",
+          expectedRefundedByCardCents: 9_000,
+          confirmed: true,
+        }),
       }),
     );
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
       "Marked resolved. Booking BK-0002 has left the list, and your note is in the audit log.",
     );
     expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the row plainly in the dialog's title", () => {
+    openResolve();
+    expect(screen.getByRole("dialog", { name: "Mark this card refund, paid back twice, as resolved?" })).toBeInTheDocument();
+  });
+
+  // #3924 round 8 (concurrency): a Stripe refund recorded while the dialog is
+  // open is said, and the figure sent is the one now shown.
+  it("MUTATION: a further card refund while it is open is said, and the figure sent is the one shown", async () => {
+    const { rerender } = openResolve();
+    rerender(<CardRefundsPaidTwiceList rows={[{ ...twice, refundedByCardCents: 12_000 }]} />);
+    expect(
+      screen.getByText("Stripe has now refunded $120.00 to the card. Check it is sorted out before marking it resolved."),
+    ).toHaveAttribute("role", "status");
+    fireEvent.change(resolveNote(), { target: { value: "Sorted" } });
+    respond(200, { success: true });
+    fireEvent.click(resolveButton());
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
+    expect(JSON.parse(mocks.fetch.mock.calls[0]![1].body)).toMatchObject({ expectedRefundedByCardCents: 12_000 });
+  });
+
+  it("MUTATION: after Resolved, focus moves to the list's status line, which says what was done", async () => {
+    openResolve();
+    fireEvent.change(resolveNote(), { target: { value: "Sorted" } });
+    respond(200, { success: true });
+    fireEvent.click(resolveButton());
+    const notice = await screen.findByText("Booking BK-0002 was marked resolved.");
+    expect(notice).toHaveAttribute("role", "status");
+    await waitFor(() => expect(document.activeElement).toBe(notice));
   });
 
   it("shows a 409 in the dialog as a focused alert and refreshes; the refresh dropping the row closes it and says why", async () => {
@@ -434,7 +503,7 @@ describe("marking a paid-twice row Resolved", () => {
     mocks.canEdit = false;
     render(<CardRefundsPaidTwiceList rows={[twice]} />);
     expect(screen.getByTestId("admin-view-only-banner")).toHaveTextContent(/view-only access/i);
-    const button = screen.getByRole("button", { name: "Resolved" });
+    const button = screen.getByRole("button", { name: "Mark booking BK-0002 resolved" });
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -448,7 +517,7 @@ describe("view-only", () => {
 
     expect(screen.getByTestId("admin-view-only-banner")).toHaveTextContent(/view-only access/i);
     expect(screen.getByText(/\$150\.00 still owed/)).toBeInTheDocument();
-    const button = screen.getByRole("button", { name: "Paid another way" });
+    const button = screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" });
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

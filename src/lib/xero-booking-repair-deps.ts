@@ -22,7 +22,11 @@ import {
   processQueuedXeroOperationRetries,
 } from "@/lib/xero-operation-queue";
 import { prisma } from "@/lib/prisma";
-import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late-capture-invoice";
+import {
+  enqueueXeroKeptLateCaptureInvoiceOperation,
+  queueWaitingPaidAnotherWayNote,
+  readPaidAnotherWayReceiptState,
+} from "@/lib/xero-kept-late-capture-invoice";
 import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
 import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
@@ -68,6 +72,10 @@ export type RepairDependencies = {
   readRefundCreditNoteGap: typeof readRefundCreditNoteGap;
   // #3548: the one read-back-then-settle, for the operator-applied settle.
   finishRefundCreditNoteSettlement: typeof finishRefundCreditNoteSettlement;
+  // #3924 round 8: a waiting paid-another-way close's receipt and note, and
+  // the one note step that queues it once the receipt is in Xero.
+  readPaidAnotherWayReceiptState: typeof readPaidAnotherWayReceiptState;
+  queueWaitingPaidAnotherWayNote: typeof queueWaitingPaidAnotherWayNote;
 };
 
 const defaultDependencies: RepairDependencies = {
@@ -94,6 +102,8 @@ const defaultDependencies: RepairDependencies = {
   recordAndNoteRepairedLateCaptureRefunds,
   readRefundCreditNoteGap,
   finishRefundCreditNoteSettlement,
+  readPaidAnotherWayReceiptState,
+  queueWaitingPaidAnotherWayNote,
 };
 
 export function getDependencies(overrides?: Partial<RepairDependencies>): RepairDependencies {

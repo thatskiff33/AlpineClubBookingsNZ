@@ -9,9 +9,8 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import { normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import {
   CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-  cardRefundPaidAnotherWayOccurrenceKey,
+  closeKeysOf,
   paymentRecoveryOperationIdOfPaidAnotherWay,
-  type PaidAnotherWayXeroNote,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { cardRefundSentAfterPaidAnotherWay } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
@@ -42,6 +41,11 @@ import { prisma } from "@/lib/prisma";
  * close's own shape, and the resolution it carried then (none, or an earlier
  * one) - so a second click, or a second treasurer, writes nothing and is told.
  * No lock: nothing else writes that column of a close's record.
+ *
+ * WHAT THE TREASURER SAW (#3924 round 8): the request carries the card figure
+ * the dialog showed. A Stripe refund recorded since - one they never saw - makes
+ * the figure differ, and the Resolved is refused with a 409. The resolution
+ * then records exactly the figure they saw.
  */
 
 const PAYMENT_SELECT = {
@@ -163,6 +167,13 @@ export interface ResolveCardRefundPaidTwiceInput {
   operationId: string;
   /** How it was sorted out with the member. Required. */
   note: string | null | undefined;
+  /**
+   * What the treasurer saw Stripe had refunded to the card when they chose
+   * (#3924 round 8, concurrency). A further card refund since then is one they
+   * never saw, so a Resolved against the old figure is refused with a 409 and
+   * the page refreshes to show the new one.
+   */
+  expectedRefundedByCardCents: number;
   actingMemberId: string;
 }
 
@@ -177,11 +188,7 @@ export async function resolveCardRefundPaidTwice(
   const record = await prisma.manualRefundTask.findFirst({
     where: {
       ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-      occurrenceKey: {
-        in: (["now", "after-receipt", "none"] as const satisfies readonly PaidAnotherWayXeroNote[]).map(
-          (xeroRefundNote) => cardRefundPaidAnotherWayOccurrenceKey(input.operationId, { xeroRefundNote }),
-        ),
-      },
+      occurrenceKey: { in: closeKeysOf(input.operationId) },
     },
     select: { ...RECORD_SELECT, booking: { select: { memberId: true } } },
   });
@@ -190,6 +197,12 @@ export async function resolveCardRefundPaidTwice(
   if (!stillPaidTwice(record, refundedByCardCents)) {
     throw new CardRefundPaidTwiceError(
       "This card refund is no longer on the paid-twice list. The list has been refreshed.",
+      409,
+    );
+  }
+  if (refundedByCardCents !== input.expectedRefundedByCardCents) {
+    throw new CardRefundPaidTwiceError(
+      "Stripe's refund to the card changed since you opened this. The list has been refreshed: check the amount and mark it resolved again.",
       409,
     );
   }

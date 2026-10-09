@@ -3,6 +3,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import { prisma } from "@/lib/prisma";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import { readPaidAnotherWayUncoveredCents } from "@/lib/card-refund-paid-another-way-cash";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
@@ -61,6 +62,12 @@ interface RefundMissingCreditNote {
   // Cash-refunded cents not yet covered by any active refund credit note
   // (#1162, #2902).
   uncoveredCents: number;
+  /**
+   * #3924 round 8 (`INV-PAY-122`): the part of `uncoveredCents` that is bank
+   * cash a "Paid another way" close sent back and its own note does not yet
+   * cover. Only that close's note answers it - never a card note.
+   */
+  paidAnotherWayUncoveredCents: number;
   refundedAt: string;
 }
 
@@ -292,6 +299,11 @@ export async function getMissingXeroInvoiceBookings(options?: {
  * later refund beyond it still shows. One home for the self-heal list and the
  * booking page. A resolved note whose amount cannot be read covers nothing
  * here, so the gap stays visible and the enqueue refuses it loudly.
+ *
+ * #3924 round 8 (`INV-PAY-122`): it also says how much of that gap is the bank
+ * cash of "Paid another way" closes their own notes do not yet cover
+ * (`paidAnotherWayUncoveredCents`, by the same coverage). A caller that sizes a
+ * CARD note takes it off; only each close's own note answers it.
  */
 export async function readRefundCreditNoteGap(payment: {
   id: string;
@@ -302,6 +314,7 @@ export async function readRefundCreditNoteGap(payment: {
   coveredCents: number;
   resolvedInXeroCents: number;
   uncoveredCents: number;
+  paidAnotherWayUncoveredCents: number;
 }> {
   // #2902: cash evidence first — an account-credit-only cancellation resolves
   // to zero cash and is excluded before any coverage query runs. #3635 round-3
@@ -309,15 +322,24 @@ export async function readRefundCreditNoteGap(payment: {
   // received is not a gap - the self-heal must not raise it a day later.
   const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment);
   if (eligibleCashCents <= 0) {
-    return { cashRefundCents: 0, coveredCents: 0, resolvedInXeroCents: 0, uncoveredCents: 0 };
+    return {
+      cashRefundCents: 0,
+      coveredCents: 0,
+      resolvedInXeroCents: 0,
+      uncoveredCents: 0,
+      paidAnotherWayUncoveredCents: 0,
+    };
   }
   const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
   const coveredCents = await sumRefundCreditNoteCoverageCents(payment.id, resolved);
+  const uncoveredCents = Math.max(0, eligibleCashCents - coveredCents);
   return {
     cashRefundCents: eligibleCashCents,
     coveredCents,
     resolvedInXeroCents: resolved.coveredCents,
-    uncoveredCents: Math.max(0, eligibleCashCents - coveredCents),
+    uncoveredCents,
+    paidAnotherWayUncoveredCents:
+      uncoveredCents > 0 ? Math.min(uncoveredCents, await readPaidAnotherWayUncoveredCents(prisma, payment.id)) : 0,
   };
 }
 
@@ -374,6 +396,7 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
       refundedAmountCents: payment.refundedAmountCents,
       cashRefundedCents: gap.cashRefundCents,
       uncoveredCents: gap.uncoveredCents,
+      paidAnotherWayUncoveredCents: gap.paidAnotherWayUncoveredCents,
       refundedAt: payment.updatedAt.toISOString(),
     });
   }

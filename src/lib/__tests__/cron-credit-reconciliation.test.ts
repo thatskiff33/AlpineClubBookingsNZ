@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   isXeroConnected: vi.fn(),
   getRefundsMissingXeroCreditNotes: vi.fn(),
   findOrphanedAppliedCredits: vi.fn(),
-  readPaidAnotherWayNotesNotLandedCents: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -42,10 +41,6 @@ vi.mock("@/lib/xero-admin-health", () => ({
   getRefundsMissingXeroCreditNotes: mocks.getRefundsMissingXeroCreditNotes,
 }));
 
-vi.mock("@/lib/card-refund-paid-another-way-cash", () => ({
-  readPaidAnotherWayNotesNotLandedCents: (...args: unknown[]) => mocks.readPaidAnotherWayNotesNotLandedCents(...args),
-}));
-
 vi.mock("@/lib/orphaned-applied-credit-backfill", () => ({
   findOrphanedAppliedCredits: mocks.findOrphanedAppliedCredits,
 }));
@@ -69,7 +64,6 @@ beforeEach(() => {
   mocks.memberCreditGroupBy.mockResolvedValue([]);
   mocks.memberCreditCount.mockResolvedValue(0);
   mocks.isXeroConnected.mockResolvedValue(false);
-  mocks.readPaidAnotherWayNotesNotLandedCents.mockResolvedValue(0);
   mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
     count: 0,
     payments: [],
@@ -179,21 +173,21 @@ describe("reconcileCreditBalances", () => {
     );
   });
 
-  // #3924 round 7 (money M1, `INV-PAY-122`): the self-heal's note is a CARD
-  // note; a paid-another-way close's bank cash is only its own note's.
-  it("MUTATION: never fills a paid-another-way close's bank cash with a card note while that close's own note has not landed (FAILED)", async () => {
+  // #3924 rounds 7 and 8 (money M1, `INV-PAY-122`): the self-heal's note is a
+  // CARD note; a paid-another-way close's bank cash is only its own note's. The
+  // gap says how much of it the close's own notes do not cover
+  // (`paidAnotherWayUncoveredCents`, by the gap's own coverage), and only that
+  // comes off - the readers' agreement is `card-refund-paid-another-way.realdb.test.ts`'s.
+  it("MUTATION: never fills a paid-another-way close's uncovered bank cash with a card note", async () => {
     mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
       count: 2,
       payments: [
-        // Only the close's FAILED bank note is missing: nothing for a card note.
-        { paymentId: "pay_bank", bookingId: "b_1", refundedAmountCents: 9000, cashRefundedCents: 9000, uncoveredCents: 9000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+        // Only the close's own note is missing: nothing for a card note.
+        { paymentId: "pay_bank", bookingId: "b_1", refundedAmountCents: 9000, cashRefundedCents: 9000, uncoveredCents: 9000, paidAnotherWayUncoveredCents: 9000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
         // A card refund is missing too: the card note asks only for that.
-        { paymentId: "pay_both", bookingId: "b_2", refundedAmountCents: 12000, cashRefundedCents: 12000, uncoveredCents: 12000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+        { paymentId: "pay_both", bookingId: "b_2", refundedAmountCents: 12000, cashRefundedCents: 12000, uncoveredCents: 12000, paidAnotherWayUncoveredCents: 4000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
       ],
     });
-    mocks.readPaidAnotherWayNotesNotLandedCents.mockImplementation((_db: unknown, paymentId: string) =>
-      Promise.resolve(paymentId === "pay_bank" ? 9000 : 4000),
-    );
 
     await reconcileCreditBalances();
 
@@ -214,6 +208,7 @@ describe("reconcileCreditBalances", () => {
           refundedAmountCents: 8000,
           cashRefundedCents: 6000,
           uncoveredCents: 5000,
+          paidAnotherWayUncoveredCents: 0,
           refundedAt: new Date("2026-07-01T00:00:00.000Z"),
         },
         {
@@ -222,6 +217,7 @@ describe("reconcileCreditBalances", () => {
           refundedAmountCents: 3000,
           cashRefundedCents: 3000,
           uncoveredCents: 3000,
+          paidAnotherWayUncoveredCents: 0,
           refundedAt: new Date("2026-07-02T00:00:00.000Z"),
         },
       ],

@@ -37,6 +37,7 @@ import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import { readPaidAnotherWayCloseShare } from "@/lib/card-refund-paid-another-way-cash";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -357,30 +358,52 @@ export async function createXeroCreditNote(
       );
     }
     const coveredCents = await sumRefundCreditNoteCoverageCents(paymentId, resolvedCoverage);
-    // #3635 round-3 R1: the cash a note may answer, the figure the enqueue
-    // capped against, never refunds of late captures Xero never received.
-    const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash({
-      id: payment.id,
-      bookingId: payment.bookingId,
-      refundedAmountCents: payment.refundedAmountCents,
-    });
-    const uncoveredCents = Math.max(
-      0,
-      eligibleCashCents - coveredCents
-    );
+    const paidAnotherWayTaskId = options?.paidAnotherWayTaskId ?? null;
+    let uncoveredCents: number;
+    let evidenceLog: Record<string, unknown>;
+    if (paidAnotherWayTaskId !== null) {
+      // #3924 round 8 (money review, `INV-PAY-122`): a "Paid another way"
+      // close's note is sized by its record - what it paid back less what its
+      // OWN notes cover (`readPaidAnotherWayCloseShare`), the figure the
+      // enqueue used - never by the payment-wide gap, which other refunds'
+      // notes can shrink or empty.
+      const share = await readPaidAnotherWayCloseShare(prisma, paymentId, paidAnotherWayTaskId);
+      if (!share) {
+        throw new Error(
+          `Refusing to create a paid-another-way Xero refund credit note for payment ${paymentId}: its close ${paidAnotherWayTaskId} is not on this payment`
+        );
+      }
+      uncoveredCents = share.uncoveredCents;
+      evidenceLog = { paidAnotherWayTaskId, closeAmountCents: share.amountCents, closeCoveredCents: share.coveredCents };
+    } else {
+      // #3635 round-3 R1: the cash a note may answer, the figure the enqueue
+      // capped against, never refunds of late captures Xero never received.
+      const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash({
+        id: payment.id,
+        bookingId: payment.bookingId,
+        refundedAmountCents: payment.refundedAmountCents,
+      });
+      uncoveredCents = Math.max(0, eligibleCashCents - coveredCents);
+      evidenceLog = { cashRefundCents: evidence.cashRefundCents, cashEvidenceSource: evidence.source };
+    }
 
     if (uncoveredCents <= 0) {
       // Nothing uncovered at execution time: the enqueue-time delta was
       // already settled by other notes (or the request raced a competing
       // note). Close against the covering link — by watermark when one
       // matches, else the newest active note.
+      // #3924 round 8: never for a close's note. What covers a close is its
+      // own notes only, and another note's link is not one of them; its row
+      // completes as covered, raising nothing.
       const coveringLink =
-        activeLinks.find((link) => {
-          const linkWatermark = readLinkWatermarkCents(link.metadata);
-          return linkWatermark !== null && linkWatermark >= watermarkCents;
-        }) ??
-        activeLinks[0] ??
-        null;
+        paidAnotherWayTaskId !== null
+          ? null
+          : (activeLinks.find((link) => {
+              const linkWatermark = readLinkWatermarkCents(link.metadata);
+              return linkWatermark !== null && linkWatermark >= watermarkCents;
+            }) ??
+            activeLinks[0] ??
+            null);
       if (coveringLink) {
         existingCreditNoteId = coveringLink.xeroObjectId;
         existingCreditNoteNumber = coveringLink.xeroObjectNumber ?? null;
@@ -394,8 +417,7 @@ export async function createXeroCreditNote(
             paymentId,
             refundAmountCents,
             coveredCents,
-            cashRefundCents: evidence.cashRefundCents,
-            cashEvidenceSource: evidence.source,
+            ...evidenceLog,
           },
           "No uncovered provider-backed Stripe cash refund at execution time; completing without creating a Xero refund credit note"
         );
@@ -404,8 +426,7 @@ export async function createXeroCreditNote(
             responsePayload: {
               skippedNothingUncovered: true,
               coveredCents,
-              cashRefundCents: evidence.cashRefundCents,
-              cashEvidenceSource: evidence.source,
+              ...evidenceLog,
             },
           });
         }
@@ -416,7 +437,9 @@ export async function createXeroCreditNote(
       // requested), and key the note by the EXECUTION-TIME watermark so a
       // replay under unchanged state mints the identical Xero idempotency
       // key, while changed state produces a consistent new intent.
-      effectiveRefundAmountCents = Math.min(refundAmountCents, uncoveredCents);
+      // #3924 round 8: a close's note is exactly its own uncovered share.
+      effectiveRefundAmountCents =
+        paidAnotherWayTaskId !== null ? uncoveredCents : Math.min(refundAmountCents, uncoveredCents);
       effectiveWatermarkCents = coveredCents + effectiveRefundAmountCents;
     }
   } else if (refundRequestId !== null) {
@@ -456,7 +479,10 @@ export async function createXeroCreditNote(
         paymentId,
         "refund-credit-note",
         effectiveWatermarkCents ?? watermarkCents,
-        "v2"
+        "v2",
+        // #3924 round 8: a close's note is its own document in Xero, never
+        // answered with another note that reached the same watermark.
+        ...(options?.paidAnotherWayTaskId ? ["paid-another-way", options.paidAnotherWayTaskId] : [])
       )
     : buildXeroIdempotencyKey(
         "payment",

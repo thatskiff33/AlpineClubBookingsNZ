@@ -47,6 +47,8 @@ const MAX_APPLY_PASSES = 3;
  * #3924 round 7 (money M2, `INV-PAY-122`): each APPROVED capture's close of its
  * card refund as paid another way, on its approval task's entry, for the
  * receipt finding (`PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`).
+ * Round 8: with, for a close whose note waits for the receipt, where the
+ * receipt and the note stand (`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`).
  */
 async function withPaidAnotherWayCloses(
   contexts: Awaited<ReturnType<typeof loadAuditData>>,
@@ -59,7 +61,11 @@ async function withPaidAnotherWayCloses(
   for (const context of contexts) {
     for (const [intent, task] of context.lateCaptureTasks) {
       const close = closes.get(intent);
-      if (close) task.paidAnotherWayClose = close;
+      if (!close) continue;
+      task.paidAnotherWayClose =
+        task.status === "COMPLETED" && close.xeroRefundNote === "after-receipt"
+          ? { ...close, receiptState: await deps.readPaidAnotherWayReceiptState(intent) }
+          : close;
     }
   }
   return contexts;

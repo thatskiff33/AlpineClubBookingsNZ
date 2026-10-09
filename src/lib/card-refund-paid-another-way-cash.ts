@@ -5,6 +5,7 @@ import {
   CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
   paidAnotherWayCloseXeroNote,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { sumRefundCreditNoteCoverageOfRowsCents } from "@/lib/xero-resolved-in-xero-fences";
 
 /**
  * #3924 round 4 (money review, M1 and M3; `INV-PAY-122`): THE BANK CASH A
@@ -55,87 +56,120 @@ export interface PaidAnotherWayCash {
   awaitingReceiptCents: number;
 }
 
+type CashStore = Pick<
+  Prisma.TransactionClient,
+  "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
+>;
+
+/** One close on the payment, and how its bank cash counts (see the module comment). */
+interface PaidAnotherWayCloseCash {
+  id: string;
+  amountCents: number;
+  counted: "noted" | "unnoted" | "awaiting-receipt";
+}
+
+async function readPaidAnotherWayCloses(db: CashStore, paymentId: string): Promise<PaidAnotherWayCloseCash[]> {
+  const tasks = await db.manualRefundTask.findMany({
+    where: { paymentId, ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE },
+    select: { id: true, kind: true, occurrenceKey: true, amountCents: true },
+  });
+  const closes: PaidAnotherWayCloseCash[] = [];
+  for (const task of tasks ?? []) {
+    const amountCents = Math.max(0, task.amountCents ?? 0);
+    const note = paidAnotherWayCloseXeroNote(task);
+    const counted =
+      note === "now"
+        ? "noted"
+        : note !== "after-receipt"
+          ? "unnoted"
+          : (await paidAnotherWayCloseReceiptRecorded(task, db))
+            ? "noted"
+            : "awaiting-receipt";
+    closes.push({ id: task.id, amountCents, counted });
+  }
+  return closes;
+}
+
 /**
  * The bank cash every paid-another-way close on one payment sent back, split by
  * whether its close took a refund note. One read; almost no payment has any.
  */
-export async function readPaidAnotherWayCash(
-  db: Pick<
-    Prisma.TransactionClient,
-    "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
-  >,
-  paymentId: string,
-): Promise<PaidAnotherWayCash> {
-  const tasks = await db.manualRefundTask.findMany({
-    where: { paymentId, ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE },
-    select: { kind: true, occurrenceKey: true, amountCents: true },
-  });
+export async function readPaidAnotherWayCash(db: CashStore, paymentId: string): Promise<PaidAnotherWayCash> {
   const cash: PaidAnotherWayCash = { notedCents: 0, unnotedCents: 0, awaitingReceiptCents: 0 };
-  for (const task of tasks) {
-    const cents = Math.max(0, task.amountCents ?? 0);
-    const note = paidAnotherWayCloseXeroNote(task);
-    if (note === "now") cash.notedCents += cents;
-    else if (note !== "after-receipt") cash.unnotedCents += cents;
-    else if (await paidAnotherWayCloseReceiptRecorded(task, db)) cash.notedCents += cents;
-    else cash.awaitingReceiptCents += cents;
+  for (const close of await readPaidAnotherWayCloses(db, paymentId)) {
+    if (close.counted === "noted") cash.notedCents += close.amountCents;
+    else if (close.counted === "unnoted") cash.unnotedCents += close.amountCents;
+    else cash.awaitingReceiptCents += close.amountCents;
   }
   return cash;
 }
 
 /**
- * #3924 round 7 (money M1, `INV-PAY-122`): THE NOTED BANK CASH WHOSE OWN NOTE
- * HAS NOT LANDED. A close counted as noted (`readPaidAnotherWayCash`) puts its
- * bank cash into what a refund note may answer, and only its own
- * bank-transfer note - keyed on the close's record (`paidAnotherWayTaskId`) -
- * may answer it. While that note is queued, running or FAILED it covers
- * nothing, so the payment reads that cash as uncovered; a caller that sizes a
- * note WITHOUT the record - the nightly self-heal - would otherwise fill it
- * with a card note settled from the Stripe account. Such a caller takes this
- * off what it asks for. The close's note itself is retried as its own row.
- *
- * Landed: a refund-note create on the payment for this record, either
- * SUCCEEDED with the Xero note it raised or resolved by hand in Xero
- * (`INV-INT-025`). Matched by the record id the row carries, and by its key.
+ * #3924 round 8 (money review, `INV-SSOT`): THE ONE WAY TO FIND A CLOSE'S OWN
+ * NOTE ROWS - the refund-note creates on its payment whose payload names its
+ * record (`paidAnotherWayTaskId`), in any status. Every row the note pipeline
+ * writes for the close carries it: the queued payload and the executed one. The
+ * receipt's note step (`notePaidAnotherWayCloseOnReceipt`), the enqueue's
+ * dedupe and the close's coverage all ask this, and nothing else.
  */
-export async function readPaidAnotherWayNotesNotLandedCents(
-  db: Pick<
-    Prisma.TransactionClient,
-    "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
-  >,
+export function paidAnotherWayCloseNoteRowsWhere(paymentId: string, closeId: string) {
+  return {
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: paymentId,
+    requestPayload: { path: ["paidAnotherWayTaskId"], equals: closeId },
+  } satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
+/**
+ * #3924 round 8 (money review, `INV-PAY-122`): WHAT A CLOSE'S OWN NOTE STILL
+ * HAS TO ANSWER. The close's record holds what it paid back
+ * (`amountCents`); its own notes - and only those - answer it, counted as the
+ * payment's coverage counts them (`sumRefundCreditNoteCoverageOfRowsCents`).
+ * So a note the close raised whose refund payment failed (PARTIAL) covers its
+ * amount here, as it does in the payment's coverage, and a row that raised no
+ * note covers nothing. `uncoveredCents` sizes the close's note exactly: the
+ * enqueue and the note's execution both ask it, never the payment-wide gap.
+ * Null when the payment has no such record.
+ */
+export async function readPaidAnotherWayCloseShare(
+  db: Pick<Prisma.TransactionClient, "manualRefundTask" | "xeroObjectLink" | "xeroSyncOperation">,
   paymentId: string,
-): Promise<number> {
-  const tasks = await db.manualRefundTask.findMany({
-    where: { paymentId, ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE },
-    select: { id: true, kind: true, occurrenceKey: true, amountCents: true },
+  closeId: string,
+): Promise<{ amountCents: number; coveredCents: number; uncoveredCents: number } | null> {
+  const record = await db.manualRefundTask.findFirst({
+    where: { id: closeId, paymentId, ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE },
+    select: { amountCents: true },
   });
-  let notLandedCents = 0;
-  for (const task of tasks) {
-    const note = paidAnotherWayCloseXeroNote(task);
-    const noted =
-      note === "now" || (note === "after-receipt" && (await paidAnotherWayCloseReceiptRecorded(task, db)));
-    if (!noted) continue;
-    const landed = await db.xeroSyncOperation.count({
-      where: {
-        direction: "OUTBOUND",
-        entityType: "CREDIT_NOTE",
-        operationType: "CREATE",
-        localModel: "Payment",
-        localId: paymentId,
-        OR: [
-          { requestPayload: { path: ["paidAnotherWayTaskId"], equals: task.id } },
-          { correlationKey: { endsWith: `:paid-another-way:${task.id}` } },
-        ],
-        AND: [
-          {
-            OR: [
-              { status: "SUCCEEDED", xeroObjectId: { not: null } },
-              { manuallyResolvedAt: { not: null } },
-            ],
-          },
-        ],
-      },
-    });
-    if (landed === 0) notLandedCents += Math.max(0, task.amountCents ?? 0);
+  if (!record) return null;
+  const amountCents = Math.max(0, record.amountCents ?? 0);
+  const coveredCents = await sumRefundCreditNoteCoverageOfRowsCents(
+    paymentId,
+    paidAnotherWayCloseNoteRowsWhere(paymentId, closeId),
+    db,
+  );
+  return { amountCents, coveredCents, uncoveredCents: Math.max(0, amountCents - coveredCents) };
+}
+
+/**
+ * #3924 round 7 (money M1) and round 8 (`INV-PAY-122`): THE NOTED BANK CASH
+ * THE CLOSES' OWN NOTES DO NOT YET COVER. A close counted as noted puts its
+ * bank cash into what a refund note may answer, and only its own bank-transfer
+ * note may answer it. The payment's gap (`readRefundCreditNoteGap`) is that
+ * cash and the card cash, less all coverage; this is the closes' part of it,
+ * by the same coverage (`readPaidAnotherWayCloseShare`), so a caller that sizes
+ * a CARD note - the nightly self-heal, the repair tool - takes off exactly what
+ * coverage does not already count for the closes, and never fills it with a
+ * card note settled from the Stripe account. Each close's note is retried as
+ * its own row.
+ */
+export async function readPaidAnotherWayUncoveredCents(db: CashStore, paymentId: string): Promise<number> {
+  let uncoveredCents = 0;
+  for (const close of await readPaidAnotherWayCloses(db, paymentId)) {
+    if (close.counted !== "noted") continue;
+    uncoveredCents += (await readPaidAnotherWayCloseShare(db, paymentId, close.id))?.uncoveredCents ?? 0;
   }
-  return notLandedCents;
+  return uncoveredCents;
 }

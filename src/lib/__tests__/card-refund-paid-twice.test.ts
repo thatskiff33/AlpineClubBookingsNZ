@@ -124,8 +124,8 @@ describe("the list of card refunds paid back twice", () => {
 });
 
 describe("marking a paid-twice row Resolved", () => {
-  const resolve = (note: string | null = "Member paid the extra back by bank, ref 9") =>
-    resolveCardRefundPaidTwice({ operationId: "op-1", note, actingMemberId: "treasurer-1" });
+  const resolve = (note: string | null = "Member paid the extra back by bank, ref 9", expectedRefundedByCardCents = 15_000) =>
+    resolveCardRefundPaidTwice({ operationId: "op-1", note, expectedRefundedByCardCents, actingMemberId: "treasurer-1" });
 
   it("finds the close by the operation under any of its three keys", async () => {
     await resolve();
@@ -220,6 +220,13 @@ describe("marking a paid-twice row Resolved", () => {
     it("MUTATION: one already resolved (a second click that read it after the first wrote)", async () => {
       mocks.findRecord.mockResolvedValue(closeRecord([STRIPE_BEFORE_CLOSE], { reviewContext: resolution(15_000) }));
       await expectRefusal(resolve(), 409);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
+    // #3924 round 8 (concurrency): a card refund recorded after the dialog
+    // opened is one the treasurer never saw.
+    it("MUTATION: a card figure other than the one the treasurer saw", async () => {
+      await expectRefusal(resolve(undefined, 10_000), 409);
       expect(mocks.claim).not.toHaveBeenCalled();
     });
 
