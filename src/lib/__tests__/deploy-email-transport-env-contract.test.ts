@@ -91,6 +91,21 @@ describe("the deploy requires email transport keys per provider", () => {
     }
   });
 
+  it("treats the legacy dashboard export token as optional, refusing only a placeholder", () => {
+    // .env.example and CONFIGURATION.md both say "leave empty to disable the
+    // bridge", and the route reads an empty token as "bridge off". The
+    // preflight used to demand a value regardless.
+    const contract = functionBody("validate_env_contract");
+    expect(contract).not.toContain("require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN");
+    expect(contract).toContain(
+      "require_optional_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN",
+    );
+    const helper = functionBody("require_optional_non_placeholder_env_key");
+    expect(helper).toContain('if [ -z "$value" ]; then\n    return 0');
+    expect(helper).toContain("placeholder|changeme|example\\.com");
+    expect(helper).not.toContain("require_env_key");
+  });
+
   it("refuses the two states the app refuses, in the app's words", () => {
     const body = functionBody("require_email_transport_env_keys");
     expect(body).toContain(

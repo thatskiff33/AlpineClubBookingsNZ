@@ -14,3 +14,8 @@
   false with none true, and refuses a capture mailbox on the live site, all at
   step 3 rather than at the health check. Nothing changes for a club running
   AWS SES.
+
+  The same preflight also demanded `LEGACY_DASHBOARD_EXPORT_TOKEN`, which the
+  configuration guide says to leave empty unless the legacy finance export
+  bridge is still in use. It is now optional: blank passes and disables the
+  bridge, while a placeholder value is still refused.

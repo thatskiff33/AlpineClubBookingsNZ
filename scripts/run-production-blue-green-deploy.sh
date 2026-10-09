@@ -1453,6 +1453,25 @@ require_non_placeholder_env_key() {
   fi
 }
 
+# A key the app treats as OPTIONAL — absent or blank means "feature off" — but
+# which must not be left holding a placeholder if it is set at all. Until this
+# helper the preflight demanded LEGACY_DASHBOARD_EXPORT_TOKEN unconditionally,
+# while .env.example and CONFIGURATION.md both say to leave it empty to disable
+# the bridge, so a club that never ran the legacy export could not deploy.
+require_optional_non_placeholder_env_key() {
+  local key="$1"
+  local value
+
+  value="$(trim_whitespace "$(get_env_file_value "$key")")"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  if printf '%s' "$value" | grep -Eqi '(^<.*>$|placeholder|changeme|example\.com)'; then
+    echo ".env entry appears to be a placeholder and must be replaced or left empty: $key" >&2
+    return 1
+  fi
+}
+
 # NOTE: require_boolean_env_key / require_positive_integer_env_key /
 # env_key_is_true were removed with the BACKUP_ENABLED / BACKUP_RETENTION_DAYS
 # preflight (#2095) — backup config is DB-backed now and no other .env key needs
@@ -1899,7 +1918,8 @@ validate_env_contract() {
   # required (or read) from .env. Legacy vars are warned about below.
   require_email_transport_env_keys
   require_non_placeholder_env_key EMAIL_FROM
-  require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
+  # Optional: blank disables the legacy export bridge (CONFIGURATION.md).
+  require_optional_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
   # Backup configuration moved to the encrypted, DB-backed store in-app (#2095):
   # BACKUP_ENABLED / BACKUP_RETENTION_DAYS / BACKUP_S3_* / BACKUP_RESTORE_VALIDATION_URL
   # are no longer read from .env, so they are not validated here — only warned
