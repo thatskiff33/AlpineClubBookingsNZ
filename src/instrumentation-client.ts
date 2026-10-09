@@ -4,8 +4,11 @@ import {
   redactSensitiveQueryParams,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json";
+import { SENTRY_PRIVACY_INIT_OPTIONS } from "@/lib/sentry-privacy-options";
 
 Sentry.init({
+  // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
+  ...SENTRY_PRIVACY_INIT_OPTIONS,
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN || "",
 
   environment: process.env.NODE_ENV || "development",
@@ -18,8 +21,9 @@ Sentry.init({
   replaysOnErrorSampleRate: 1.0,
 
   integrations: [
+    // Console breadcrumbs come from Sentry's default consoleIntegration since
+    // v11, which removed this option (MIGRATION.md, @sentry/browser).
     Sentry.breadcrumbsIntegration({
-      console: true,
       dom: true,
       fetch: true,
       history: true,

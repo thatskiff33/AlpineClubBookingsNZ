@@ -785,7 +785,11 @@ BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1
 Use this only with a written rollback and lock-impact plan. For a pending
 `windowed` row, set the stopped-runtime acknowledgement only after public traffic
 is removed, the old web colour and every worker/scheduler/queue consumer are
-stopped, and `pg_stat_activity` confirms no old connection remains.
+stopped, and `pg_stat_activity` confirms no old connection remains. The
+validator reads these three only from the deploy shell's environment, never from
+`.env`. A `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` kept in `.env` is a different
+thing: the app's lasting #3413 acknowledgement, described in
+`docs/PRODUCTION_UPGRADE_RUNBOOK.md`, and it never satisfies this check.
 
 ### Expand then contract (multi-lodge)
 
