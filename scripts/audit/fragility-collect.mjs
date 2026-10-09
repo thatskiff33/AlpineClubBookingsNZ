@@ -91,7 +91,8 @@ async function collectGithub(token) {
       page += 1;
       if (page % 20 === 0) console.error(`  ${endpoint}: page ${page}`);
       yield await response.json();
-      if (Number(response.headers.get("x-ratelimit-remaining")) < 20) await waitForReset(response);
+      const remaining = response.headers.get("x-ratelimit-remaining");
+      if (remaining !== null && Number(remaining) < 20) await waitForReset(response);
       url = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1] ?? null;
     }
   }
