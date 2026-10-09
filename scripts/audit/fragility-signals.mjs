@@ -116,6 +116,7 @@ export function buildRepeats({ units, codePairs, github, reverts }) {
       add(unitRef(earlier), later ? unitRef(later) : issueRef(byNumber.get(text.number), text.date, text.number), {
         kind: "mention",
         url: text.url,
+        wording: mention.wording,
         note: `cites #${mention.number} ("${mention.wording}"): ${mention.excerpt}`,
       });
     }

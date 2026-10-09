@@ -18,6 +18,7 @@ import {
   revertedCommit,
 } from "./fragility-lib.mjs";
 import { areasForPair } from "./fragility-areas.mjs";
+import { chainsOf, rankAreas, renderRanking, replaceGenerated, screenCandidate, validateVerdicts } from "./fragility-rank.mjs";
 import { buildRepeats } from "./fragility-signals.mjs";
 
 /**
@@ -320,5 +321,74 @@ describe("proposed business areas", () => {
     expect(scoped.map((match) => match.area)).toEqual(["admin"]);
     const testsOnly = { files: ["src/lib/__tests__/xero-sync.test.ts"] };
     expect(areasForPair(entry(side("pr-1", testsOnly), side("pr-2", testsOnly)), new Map())).toEqual([]);
+  });
+});
+
+describe("ranking by confirmed repeats", () => {
+  const side = (key, date) => ({ key, date, title: key, url: `https://example.test/${key}`, issues: [] });
+  const pair = (earlier, later, evidence = [{ kind: "code-history", url: "https://example.test/e" }]) => ({
+    earlier: side(earlier, `2026-${earlier}T00:00:00.000Z`),
+    later: side(later, `2026-${later}T00:00:00.000Z`),
+    evidence,
+    signals: [...new Set(evidence.map((item) => item.kind))],
+  });
+  const confirmed = (area) => ({ verdict: "confirmed", area, reason: "same bug" });
+
+  it("screens out still-only citations and re-fixes under three days, keeping the pair's other signals", () => {
+    const stillOnly = pair("05-01", "06-01", [{ kind: "mention", wording: "still", url: "u" }]);
+    expect(screenCandidate(stillOnly)).toBeNull();
+    const regressed = pair("05-01", "06-01", [{ kind: "mention", wording: "regressed", url: "u" }]);
+    expect(screenCandidate(regressed)?.signals).toEqual(["mention"]);
+    const quickRefix = pair("05-01", "05-02", [
+      { kind: "refix", url: "u" },
+      { kind: "code-history", url: "u" },
+    ]);
+    expect(screenCandidate(quickRefix)?.signals).toEqual(["code-history"]);
+    expect(screenCandidate(pair("05-01", "05-05", [{ kind: "refix", url: "u" }]))?.signals).toEqual(["refix"]);
+  });
+
+  it("joins pairs that share a fix into one chain", () => {
+    const chains = chainsOf([pair("06-01", "07-01"), pair("05-01", "06-01"), pair("05-10", "05-20")]);
+    expect(chains.map((chain) => chain.map((link) => `${link.earlier.key}>${link.later.key}`))).toEqual([["05-01>06-01", "06-01>07-01"], ["05-10>05-20"]]);
+  });
+
+  it("ranks by confirmed pairs, counting each once in its verdict's area and ignoring rejected ones", () => {
+    const candidates = [pair("05-01", "06-01"), pair("06-01", "08-20"), pair("05-02", "05-30"), pair("05-03", "09-01")];
+    const verdicts = {
+      "05-01->06-01": confirmed("email"),
+      "06-01->08-20": confirmed("email"),
+      "05-02->05-30": { verdict: "rejected", reason: "unrelated" },
+      "05-03->09-01": confirmed("xero"),
+    };
+    const rows = rankAreas(candidates, verdicts);
+    expect(rows.slice(0, 2).map((row) => [row.id, row.confirmed.length, row.sinceAudit, row.chains.length])).toEqual([
+      ["email", 2, 1, 1],
+      ["xero", 1, 1, 1],
+    ]);
+    expect(rows.reduce((sum, row) => sum + row.confirmed.length, 0)).toBe(3);
+  });
+
+  it("breaks a tie on confirmed pairs by the count since the audit", () => {
+    const rows = rankAreas([pair("05-01", "06-01"), pair("05-02", "09-01")], {
+      "05-01->06-01": confirmed("xero"),
+      "05-02->09-01": confirmed("tests"),
+    });
+    expect(rows.slice(0, 2).map((row) => row.id)).toEqual(["tests", "xero"]);
+  });
+
+  it("rejects a confirmed verdict without a confirmed area", () => {
+    expect(() => validateVerdicts({ "a->b": { verdict: "confirmed", area: "dates", reason: "x" } })).toThrow(/area/);
+    expect(() => validateVerdicts({ "a->b": { verdict: "maybe", reason: "x" } })).toThrow(/verdict/);
+    expect(() => validateVerdicts({ "a->b": confirmed("email") })).not.toThrow();
+  });
+
+  it("rewrites only the generated block of the ranking doc", () => {
+    const rows = rankAreas([pair("05-01", "06-01")], { "05-01->06-01": confirmed("email") });
+    const block = renderRanking(rows, { reviewed: 1, rejected: 0, screenedOut: 0, total: 1 });
+    const doc = replaceGenerated(`# Title\n\nIntro.\n\n${block.replace("05-01", "old")}\n\n## Method\n`, block);
+    expect(doc.startsWith("# Title\n\nIntro.\n\n")).toBe(true);
+    expect(doc.endsWith("\n\n## Method\n")).toBe(true);
+    expect(doc).toContain("| 1 | [Email and notifications]");
+    expect(doc).toContain("[code-history overlap](https://example.test/e). same bug");
   });
 });

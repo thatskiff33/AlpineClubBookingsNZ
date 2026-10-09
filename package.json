@@ -62,6 +62,7 @@
     "audit:fragility:collect": "node scripts/audit/fragility-collect.mjs",
     "audit:fragility:signals": "node scripts/audit/fragility-signals.mjs",
     "audit:fragility:areas": "node scripts/audit/fragility-areas.mjs",
+    "audit:fragility:rank": "node scripts/audit/fragility-rank.mjs",
     "booking-money:census": "tsx --conditions=react-server scripts/booking-money-reconciliation-census.ts",
     "booking-ledger:back-post": "tsx --conditions=react-server scripts/backfill-booking-ledger.ts",
     "booking-ledger:census": "tsx --conditions=react-server scripts/booking-ledger-census.ts",
