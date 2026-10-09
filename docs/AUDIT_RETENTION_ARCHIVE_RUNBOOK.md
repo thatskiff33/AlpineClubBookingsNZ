@@ -5,7 +5,7 @@ This runbook covers the production audit-log retention job and the optional arch
 ## Runtime
 
 - The audit retention job runs inside the existing `data-pruning` cron in `src/instrumentation.ts`.
-- Schedule: daily at `03:30 Pacific/Auckland`.
+- Schedule: daily at `03:30` club time, in the club's saved timezone (`INV-CONFIG-002`).
 - The job only runs on app instances with `CRON_ENABLED=true`; blue/green web slots should keep `CRON_ENABLED=false`.
 - Cron run summaries are recorded under the `data-pruning` job name and include anonymized, archived, main-pruned, and archive-pruned counts.
 
@@ -16,6 +16,8 @@ This runbook covers the production audit-log retention job and the optional arch
 - `critical` audit logs remain in the main database for 7 years before pruning, subject to `expiresAt`.
 - `diagnostic_high_volume` audit logs are pruned from the main database when their `expiresAt` passes and are not moved to the archive database.
 - Archive rows older than 7 years are pruned from the archive database.
+- Unclassified rows (no `retentionClass`, from before every writer recorded a category) are pruned when their `expiresAt` passes unless their severity is `critical`, which keeps them for 7 years like the `critical` class. A row whose severity was **never set** counts as not critical and is pruned on its expiry (#3524); see "Unclassified rows with no severity" below.
+- A row with no `expiresAt` at all is never pruned, whatever its class or severity. That is the deliberate keep-forever escape hatch, and #3524 did not change it.
 
 ## Hard invariant: prune never outruns archival (#2506)
 
@@ -31,6 +33,46 @@ The accepted cost of this gate is that an expired archivable row can outlive its
 Because that over-retention is otherwise invisible, the archive step emits a nightly **backlog warning** so drift does not go unnoticed: whenever a run's archive batch comes back full (the bounded 500 rows), more archivable rows remain unarchived, so the job logs `reason: "archive-backlog"` at `warn` level. A one-off warning is normal after a busy day and clears the first night the batch is not full; a warning that **persists** night after night means archival is falling behind — expired rows are being retained past their window — and archive throughput (or the batch size) should be investigated.
 
 When **no** archive database is configured there is no archive to outrun and nowhere for the data to go, so archivable rows are pruned on `expiresAt` as normal; the gate applies only to the archive-active case. `diagnostic_high_volume` and the unclassified/`critical` classes are never archived, so they always prune on their own expiry regardless of archive state.
+
+## Unclassified rows with no severity (#3524)
+
+**What changed.** The prune used to keep an unclassified row whose severity was never set, indefinitely. Nobody chose that: the database reads "is not critical" as *unknown* rather than *yes* when the severity is empty, and an unknown never matches a delete. The owner decided on 6 Oct 2026 ([#3524](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3524)) that such a row counts as **not critical**, so it now ages out on its own `expiresAt` like any other non-critical unclassified row.
+
+**One deliberate asymmetry.** Today's writer, `classifyAuditRetention` in `src/lib/audit.ts`, files a new event with no severity and no special category as `critical` (seven years). A legacy row with no class and no severity is instead pruned at its explicit expiry. The two differ on purpose: the writer's rule governs rows recorded from now on, and #3524 only settles the rows that were recorded before every writer classified its events.
+
+**What the first run after deploy does.** It deletes, once, every row that only this behaviour had kept: no `retentionClass`, no `severity`, and an `expiresAt` already in the past. They are not copied to the archive first (unclassified rows never are), so this is permanent. After that night the rows age out one by one as they reach their expiry, like everything else.
+
+**Count them before you deploy, on a copy.** Run the query below on a **restored copy** of the production database, never on production itself and never on the primary. It only reads, and the transaction is opened read-only so a mistyped edit fails instead of running:
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+
+-- Rows the first post-deploy prune will delete that the previous release kept.
+-- Exactly the widened predicate: unclassified, no severity, already expired.
+SELECT count(*)              AS "willPrune",
+       min("createdAt")      AS "oldestCreated",
+       max("createdAt")      AS "newestCreated",
+       max("expiresAt")      AS "latestExpiry"
+FROM "AuditLog"
+WHERE "retentionClass" IS NULL
+  AND "severity" IS NULL
+  AND "expiresAt" < timezone('UTC', now());
+
+-- The same rows, by category and event name, so you can see what they are.
+SELECT "category", "action", "incidentPreserved", count(*)
+FROM "AuditLog"
+WHERE "retentionClass" IS NULL
+  AND "severity" IS NULL
+  AND "expiresAt" < timezone('UTC', now())
+GROUP BY 1, 2, 3
+ORDER BY 4 DESC;
+
+ROLLBACK;
+```
+
+`now()` is the moment you run it. The nightly job runs at 03:30 club time, so a row whose expiry falls between your count and that run is deleted too; it would have been deleted on that night under the new rule anyway. Rows with no `expiresAt` are not in this count and are not deleted.
+
+If the number is larger than you expected, or the breakdown shows entries the club wants to keep, hold the deploy and raise it on the issue before upgrading. Do not edit the audit rows by hand to save them: the audit log is append-only evidence.
 
 ## Archive Database Env Vars
 

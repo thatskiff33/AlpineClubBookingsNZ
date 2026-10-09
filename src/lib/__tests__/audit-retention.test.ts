@@ -95,15 +95,12 @@ function archiveRow(overrides: Record<string, unknown> = {}) {
 // by showing an unarchived row genuinely deleted (the data loss the gate exists
 // to prevent).
 //
-// `severity` is REQUIRED on a fixture row, not optional as it once was. The
-// prune's unclassified branch is `NOT: { severity: "critical" }` and
-// `AuditLog.severity` is nullable: PostgreSQL evaluates `NOT (NULL = 'critical')`
-// to unknown and RETAINS a null-severity row, where the hand-rolled evaluator this
-// replaced (`value !== cond`) would have deleted it. The shared evaluator throws
-// on that negation rather than answer either way, so every row here names its
-// severity explicitly; whether the production predicate in `audit-retention.ts`
-// should prune a null-severity unclassified row is a question for that module and is filed as #3524,
-// not for this fixture.
+// `severity` is REQUIRED on a fixture row, not optional as it once was, so each
+// row states whether it is null rather than leaving it to a default. The shared
+// evaluator follows PostgreSQL's three-valued logic and THROWS on a negation over
+// a NULL column, so a predicate that left the null case to `NOT` could not pass
+// here by accident. #3524 made the unclassified branch name the null case
+// explicitly; "null severity" below pins the decided answer.
 type PruneRow = {
   id: string;
   retentionClass: string | null;
@@ -552,6 +549,97 @@ describe("audit retention lifecycle", () => {
       // One row against a batch cap of two: no backlog, so no spurious warning.
       // A warn keyed on anything looser than a full batch would redden here.
       expect(mocks.loggerWarn).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // #3524 — an unclassified row whose severity was never set. Owner decision,
+  // 6 Oct 2026: "Prune them, count first" — a null severity is NOT critical, so
+  // such a row ages out on its own expiry like any other non-critical
+  // unclassified row. The branch used to read `NOT: { severity: "critical" }`,
+  // which PostgreSQL evaluates to unknown on a NULL and therefore retained the
+  // row forever. The shared evaluator throws on that negation over NULL, so
+  // reverting the predicate reddens these tests rather than passing them.
+  // -------------------------------------------------------------------------
+  describe("null severity on an unclassified row (#3524)", () => {
+    const now = new Date("2026-05-10T00:00:00.000Z");
+
+    function unclassified(overrides: Partial<PruneRow> & { id: string }): PruneRow {
+      return {
+        retentionClass: null,
+        severity: null,
+        createdAt: new Date("2020-01-01T00:00:00.000Z"),
+        expiresAt: new Date("2025-01-01T00:00:00.000Z"),
+        archivedAt: null,
+        ...overrides,
+      };
+    }
+
+    for (const archiveActive of [true, false]) {
+      it(`prunes an expired null-severity row and keeps a recent one (archive ${
+        archiveActive ? "active" : "not configured"
+      })`, async () => {
+        const fake = makeFakeAuditDb([
+          unclassified({ id: "null-expired" }),
+          unclassified({
+            id: "null-recent",
+            createdAt: new Date("2026-01-01T00:00:00.000Z"),
+            expiresAt: new Date("2033-01-01T00:00:00.000Z"),
+          }),
+        ]);
+
+        const result = await pruneExpiredAuditLogs(fake.db as never, now, {
+          archiveActive,
+        });
+
+        expect(result.deleted).toBe(1);
+        expect(fake.remainingIds()).toEqual(["null-recent"]);
+      });
+    }
+
+    it("still keeps a critical unclassified row until seven years, and an unexpiring null-severity row forever", async () => {
+      const fake = makeFakeAuditDb([
+        // Critical, expired, but created inside the 7-year window: kept.
+        unclassified({ id: "critical-young", severity: "critical" }),
+        // Critical and older than the 7-year cutoff (2019-05-10): pruned, as before.
+        unclassified({
+          id: "critical-old",
+          severity: "critical",
+          createdAt: new Date("2018-01-01T00:00:00.000Z"),
+        }),
+        // `expiresAt: null` is the deliberate keep-forever escape hatch; #3524
+        // does not touch it, null severity or not.
+        unclassified({ id: "null-no-expiry", expiresAt: null }),
+        // A non-critical classified severity on the same branch: pruned, as before.
+        unclassified({ id: "info-expired", severity: "info" }),
+        unclassified({ id: "null-expired" }),
+      ]);
+
+      const result = await pruneExpiredAuditLogs(fake.db as never, now, {
+        archiveActive: true,
+      });
+
+      expect(result.deleted).toBe(3);
+      expect(fake.remainingIds()).toEqual(["critical-young", "null-no-expiry"]);
+    });
+
+    it("names the null case explicitly in the predicate, not through a NOT over a nullable column", async () => {
+      await pruneExpiredAuditLogs(mockDb() as never, now, { archiveActive: true });
+
+      // Pins the SQL shape, not just the in-memory answer: the evaluator above
+      // models PostgreSQL, but Prisma's own `not` on a nullable column is what
+      // reaches the database, so the IS NULL arm must be present in its own right.
+      expect(mocks.deleteMany).toHaveBeenCalledWith({
+        where: {
+          OR: expect.arrayContaining([
+            {
+              retentionClass: null,
+              expiresAt: { lt: now },
+              OR: [{ severity: null }, { severity: { not: "critical" } }],
+            },
+          ]),
+        },
+      });
     });
   });
 });
