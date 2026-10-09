@@ -3319,12 +3319,17 @@ refund at its full raised amount (owner, 8 Oct 2026: "Difference is gone"). The
 close makes no Stripe call. In Xero every kind queues a bank-transfer refund
 credit note for exactly the amount paid back, keyed on the close's task and
 dated the close's club day, where there is an invoice to credit (owner, 8 Oct
-2026: "Raise a refund note for all"). A late card charge's refund is credited
+2026: "Raise a refund note for all"). The note is sized by the close's record
+less what its own notes already cover, never by the payment-wide gap (#3924
+round 8). A late card charge's refund is credited
 against the charge's own receipt, named by its invoice id; when Xero has none,
 the close queues that receipt (the kept-charge invoice, on the approval task,
-put back to PENDING if it failed unsent) and the receipt's worker queues the
-note after it records the receipt's link (owner, 8 Oct 2026: "Record receipt,
-then credit"):
+put back to PENDING if it failed before it could have reached Xero) and the
+receipt's worker queues the note after it records the receipt's link (owner,
+8 Oct 2026: "Record receipt, then credit"). When the receipt is already on its
+way - a change's supplementary invoice for the capture, queued, sending or
+FAILED - the close queues nothing and takes the same waiting key; that
+invoice's worker runs the note step once it is sent (round 8):
 
 ```text
 close (no receipt in Xero) -> KEPT_LATE_CAPTURE_INVOICE PENDING, no note
@@ -3338,6 +3343,13 @@ note step fails -> receipt row FAILED with its link standing; its retry finds
 receipt FAILED unsent -> no note; the repair tool's
   PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT retries (or queues) it,
   and the note follows
+receipt FAILED after it may have reached Xero (payment linked, or the invoice
+  call attempted) -> left FAILED for an officer, who checks Xero, then retries
+close (receipt on its way: a change invoice) -> waiting key, nothing queued
+change invoice sent -> its row SUCCEEDED, then the note step under the
+  approval task's row: bank-transfer REFUND_CREDIT_NOTE PENDING
+note step never ran (receipt in Xero, no note asked) -> the repair tool's
+  PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED queues it through the same step
 ```
 
 A close Stripe also paid is listed as paid twice. The treasurer marks it
@@ -3346,8 +3358,9 @@ kept on the close's task and audited under `payment`; the row leaves the list
 and comes back only if Stripe refunds the card for it again. No money moves:
 
 ```text
-listed paid twice -> Resolved (finance:edit, a note, one status-guarded write on
-  the close's task, guarded on the resolution it carried; audited)
+listed paid twice -> Resolved (finance:edit, a note, refused (409) unless the
+  card figure is the one the dialog showed; one status-guarded write on the
+  close's task, guarded on the resolution it carried; audited)
 Resolved -> listed again (a later card refund for the same close)
 ```
 
@@ -3363,10 +3376,12 @@ charge's close, whatever order the outbox runs in) and
 `card-refund-paid-another-way.realdb.test.ts` (a double click closes once; a
 refund recorded while the close waits for the payment row is refused with a
 409; a close that waits on the approval task's row behind the receipt's worker
-reads the receipt recorded and queues its own note; the receipt's note step runs
-at most once; a self-heal never fills an un-landed close's note with card
-money; a Resolved double click writes once), `card-refund-paid-twice.test.ts`
-and `xero-booking-repair.test.ts` (round 7: the receipt finding).
+reads the receipt recorded and queues its own note - both against the real
+receipt worker since round 8; the receipt's note step runs at most once; the
+gap's close share agrees with coverage, a PARTIAL note and a covered second row
+included; a close's note is sized by its record; a Resolved double click writes
+once), `card-refund-paid-twice.test.ts` and `xero-booking-repair.test.ts`
+(rounds 7 and 8: the receipt and note findings).
 
 ### Confirm-pending saved-card charge (#3268)
 

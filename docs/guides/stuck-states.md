@@ -73,7 +73,7 @@ refund here:
    and the banner above the list says why.
 3. The dialog says how much is still owed, and what will be recorded in Xero
    (below). If the amount still owed changes while the dialog is open, the
-   dialog says so and clears what you typed. If it changes just as you close
+   dialog says so and clears the amount you typed. If it changes just as you close
    it, the close is refused and the list refreshes: check the amount and close
    it again.
 4. Choose how much you paid back. Nothing is chosen for you, and the app never
@@ -121,12 +121,19 @@ Xero, the refund credit note for the amount you paid back follows, as a bank
 transfer, dated the day you closed it, and naming that record. Xero then shows
 both movements - the money into the Stripe account and the money out of the
 bank - and the charge nets to nil, or to what was given up after a part
-payment. The note always waits for the record: it is not queued until the
-record is in Xero. If the record fails to send, press **Retry in background**
-on its failed operation in [Xero](xero.md), and the note follows; the Xero
-repair tool a developer runs retries it too. If the note itself fails, the
-record stays in Xero and only the note is retried. If an officer already recorded the charge
-in Xero by hand, no note is raised: record the refund by hand too.
+payment.
+
+The note always waits for the record: it is not queued until the record is in
+Xero. If the charge's record is already on its way - a booking change's invoice
+that is queued, sending or failed - closing the refund queues nothing more, and
+the note follows once that invoice is in Xero. If a record fails to send, press
+**Retry in background** on its failed operation in [Xero](xero.md), and the
+note follows. A record that failed after it may already have reached Xero is
+never retried automatically: check Xero for it first, then retry it. The Xero
+repair tool a developer runs retries the others, and queues a note that never
+followed its record. If the note itself fails, the record stays in Xero and only
+the note is retried. If an officer already recorded the charge in Xero by hand,
+no note is raised: record the refund by hand too.
 
 The dialog says before you close what will be recorded in Xero, and the
 confirmation says what was queued. When nothing is, check the refund is
@@ -149,7 +156,10 @@ and the banner above the list says why.
 The row leaves the list, and your note goes in the [audit log](audit-log.md)
 under **Payment**. Nothing is refunded or charged, and nothing is sent to Xero:
 record what you agreed there yourself. If Stripe later refunds the card again
-for the same refund, the row comes back with the new amount.
+for the same refund, the row comes back with the new amount. If that happens
+while the dialog is open, the dialog says so; if it happens just as you mark it
+resolved, the app refuses and the list refreshes, so you only ever resolve the
+amount you saw.
 
 This action does not cover two kinds of refund:
 
@@ -174,7 +184,7 @@ The page has no settings. What it shows:
 | Operator Queue | One row per signal: domain, description, severity, owner, count, and an **Open** link to the fix screen |
 | Generated timestamp | When the dashboard was last computed (shown in the header) |
 | Card refunds Stripe gave up on | Each dead card refund still owed, with a **Paid another way** close. Shown to Finance view (on a page that needs Support view), closed with Finance edit |
-| Card refunds paid back twice | Each refund closed as paid another way that Stripe also refunded to the card afterwards, with both amounts. Shown to Finance view; nothing to click |
+| Card refunds paid back twice | Each refund closed as paid another way that Stripe also refunded to the card afterwards, with both amounts and a **Resolved** action. Shown to Finance view, resolved with Finance edit |
 
 ### Who sees the named rows
 
@@ -204,6 +214,8 @@ without widening who can read the membership roll.
 | A row says **Stripe may have refunded** | Its last retry failed with a timeout, a network or Stripe server error, or Stripe saying it was already refunded | Check the payment's refunds in the Stripe dashboard before paying the member another way |
 | **Paid another way** says paid back in full "must be exactly what is still owed" | What is owed changed since the page loaded | Reload the page, check the amount, and choose again |
 | The dialog says what is still owed changed, or closes and says the refund is no longer waiting | A refund was recorded, or someone else closed it, while the dialog was open | Check the new amount, or the payment, before doing anything more |
+| **Paid another way** says the late card charge's Xero record "changed while you were closing it" | An officer resolved or withdrew the charge's record in Xero while you were closing the refund | Reload the page. The dialog then says what will be recorded in Xero now |
+| **Mark resolved** says Stripe's refund to the card changed | Stripe refunded the card again since you opened the dialog | Check the new amount with the member before marking it resolved |
 
 ## Related links
 

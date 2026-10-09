@@ -1639,10 +1639,13 @@ mispricing a booking.
   approved card refund takes it third - after `lock(1)` and the Payment row -
   BEFORE it reads whether Xero has the capture's receipt, and queues the
   receipt under it when there is none. The worker, once its invoice is in Xero,
-  takes it again in a short transaction that writes the receipt's link and
-  queues a waiting close's bank-transfer note. So a close either reads the
-  receipt recorded and queues its own note, or commits first and is found by
-  the worker; neither can miss the other. It adds no cycle: inside the
+  takes it again in a short transaction that writes the receipt's link, and
+  again in a second that queues a waiting close's bank-transfer note (#3924
+  round 7). A change's supplementary invoice released for the capture takes it
+  for the same note step once the invoice is sent (round 8), after its own row
+  completes. So a close either reads the receipt in Xero and queues its own
+  note, or commits first and is found by the note step; neither can miss the
+  other. It adds no cycle: inside the
   dismissal it is a lock that transaction already holds, the worker and the
   repair tool take no other lock while holding it, and the close is the only
   holder that takes it after other locks. No provider call is made while it is
@@ -4638,12 +4641,25 @@ takes the approval task's row (`lockKeptLateCaptureTask`, #3924 round 6) after
 the Payment row and before it reads the capture's Xero receipt, because the
 receipt's worker writes that receipt's link under the same row (the kept
 late-capture task row, above). Order: `lock(1)`, the Payment row, the approval
-task's row. The worker then queues a waiting close's note in a second
+task's row. Under that row the close also puts a receipt row that failed before
+reaching Xero back from FAILED to PENDING, with a status-guarded `updateMany`
+(#3924 round 7). An officer's retry or resolve takes no task row, so a claim
+that matches nothing is re-read (round 8): a resolved or withdrawn row means the
+plan no longer holds, and the close refuses with a 409 and commits nothing. A
+FAILED row that may have reached Xero - its Stripe payment linked, or
+`createInvoices` attempted (`keptReceiptMayHaveReachedXero`) - is never put
+back to run, by the close or the repair tool; it waits for an officer. The
+worker then queues a waiting close's note in a second
 transaction under the same row (#3924 round 7, C9), so a note failure fails the
 worker's row with the link standing and its retry runs only the note step,
-which queues a close's note at most once. Neither worker transaction writes the
-Payment row: a paid-another-way note always takes the refund-note enqueue's
-stepped path, which only reads it (C8). A double click queues on the
+which queues a close's note at most once. A change's supplementary invoice sent
+for the capture runs the same note step after its row completes (round 8,
+`queueWaitingPaidAnotherWayNote`), in a transaction of its own under the same
+row, reading the receipt under it; a failure there is logged and left to the
+repair tool, never failing the sent invoice. None of these transactions writes
+the Payment row: a paid-another-way note always takes the refund-note enqueue's
+stepped path, which only reads it (C8), and is sized by the close's record less
+its own notes (`readPaidAnotherWayCloseShare`, round 8). A double click queues on the
 key and the second reads the row closed; a refund recorded mid-close gives a
 409 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
 `closeCardRefundPaidAnotherWay#1`.
@@ -4663,7 +4679,10 @@ status-guarded `updateMany` on the close's record, guarded on the resolution
 the record carried when read, with its audit row in the same transaction; a
 second click or a second treasurer matches nothing and is refused with a 409
 (`card-refund-paid-another-way.realdb.test.ts`). Nothing else writes that
-column of a close's record.
+column of a close's record. A Stripe refund recorded after the dialog opened is
+not stopped by any lock either, so the request carries the card figure the
+dialog showed (`expectedRefundedByCardCents`, round 8) and a different figure
+is a 409: a refund the treasurer never saw is never marked resolved.
 
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 
