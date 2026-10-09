@@ -112,6 +112,22 @@ describe("readLateCaptureXeroReceipt", () => {
     ]);
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
   });
+
+  // #3924 round 9: a released invoice that FAILED reaches Xero only through
+  // an officer's retry, so it is told apart from one queued or sending.
+  it("MUTATION: says when every unsent released invoice FAILED, and not while any is queued or sending", async () => {
+    const failed = { status: "FAILED", xeroObjectId: null, manuallyResolvedAt: null };
+    mocks.operationFindMany.mockResolvedValue([failed]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
+      kind: "recorded",
+      invoiceId: null,
+      invoiceFailed: true,
+    });
+    mocks.operationFindMany.mockResolvedValue([failed, { ...failed, status: "RUNNING" }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: null });
+    mocks.operationFindMany.mockResolvedValue([failed, { status: "SUCCEEDED", xeroObjectId: "inv_change", manuallyResolvedAt: null }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_change" });
+  });
 });
 
 describe("findLateCapturePaymentIntents (round-3 R1)", () => {

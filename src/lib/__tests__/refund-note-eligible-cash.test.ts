@@ -32,7 +32,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: 0 } }) },
     manualRefundTask: {
-      findMany: async ({ where }: { where: { OR: [{ lateCaptureApprovalIntentId: { in: string[] } }, { reason: { in: string[] } }] } }) =>
+      // #3924 round 4: the cash evidence's paid-another-way read (by key prefix) finds none here.
+      findMany: async ({ where }: { where: { occurrenceKey?: unknown; OR: [{ lateCaptureApprovalIntentId: { in: string[] } }, { reason: { in: string[] } }] } }) =>
+        where.occurrenceKey !== undefined ? [] :
         state.tasks.filter(
           (t) =>
             (t.lateCaptureApprovalIntentId && where.OR[0].lateCaptureApprovalIntentId.in.includes(t.lateCaptureApprovalIntentId)) ||

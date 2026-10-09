@@ -2522,6 +2522,69 @@ describe("retryXeroSyncOperation", () => {
     ).toBe(false);
   });
 
+  // #3924 round 9 (`INV-PAY-122`): a late card charge's change invoice that
+  // FAILED goes back to the outbox on its own row, so its worker - not an
+  // inline replay minting a row that does not name the charge - records the
+  // invoice where the charge's receipt reads it, and queues the note a
+  // "Paid another way" close waits for.
+  it("MUTATION: returns a FAILED late-capture change invoice to the outbox on its own row, never replaying it inline", async () => {
+    const queued = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "book_123",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      paymentIntentId: "pi_late",
+      keptLateCaptureDay: "2026-06-10",
+      invoices: [{ type: "ACCREC" }],
+    };
+    const operation = makeOperation({
+      status: "FAILED",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: "mod_123",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      requestPayload: queued,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(operation);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Queued the late card charge's change invoice for retry.",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      // The whole payload: the intent the note step reads, and the charge day.
+      data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
+    });
+    expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
+  it("replays a change invoice that names no late charge inline, as before", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 3000, changeFeeCents: 0 });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledTimes(1);
+  });
+
   // #3635 composition (`INV-INT-025`): a kept late-capture invoice an officer
   // recorded by hand in Xero is never re-run - refused on read, and a resolve
   // landing between the read and the requeue makes the claim lose.

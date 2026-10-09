@@ -2,6 +2,11 @@
  * Help for the `/finance` workspace — the finance-scope corpus, separate from
  * the admin one and resolved under `scope: "finance"`.
  */
+import {
+  CREDITS_OWED_LABEL,
+  REFUNDS_AND_CREDITS_OWED_NOTE,
+  REFUNDS_OWED_LABEL,
+} from "@/lib/refunds-and-credits-owed-shared";
 import { entry, help, type HelpEntry } from "./types";
 
 export const financeHelpEntries: HelpEntry[] = [
@@ -58,8 +63,9 @@ export const financeHelpEntries: HelpEntry[] = [
         {
           title: "Charts and KPI cards",
           details: [
-            "Cards summarise the selected window and comparison window.",
-            "Net Collected is captured payments less refunds and credits for every booking staying in the window, whatever its status: cancelled bookings count only what the club kept of what was paid (money not refunded, credited or owed back by hand, plus account credit the cancellation kept; nothing if never paid), and deleted bookings never count. The admin dashboard, Payments and Reports use the same rule.",
+            `Cards summarise the selected window and comparison window, except ${REFUNDS_OWED_LABEL} and ${CREDITS_OWED_LABEL}.`,
+            "Net Collected is captured payments less refunds and credits for every booking staying in the window, whatever its status. Money still owed back comes off straight away, on any booking: a refund owed by hand, a card refund Stripe has not yet paid, or a late card charge awaiting the treasurer's refund-or-keep decision. Cancelled bookings count only what the club kept of what was paid (plus account credit the cancellation kept, less late bank payments credited back; nothing if never paid), and deleted bookings never count. The admin dashboard, Payments and Reports use the same rule.",
+            `${REFUNDS_OWED_LABEL} is every refund owed and not yet paid, and ${CREDITS_OWED_LABEL} every member's account credit not yet used. ${REFUNDS_AND_CREDITS_OWED_NOTE} Each comes off Net Collected only for its own booking.`,
             "No Finance figure counts a deleted booking, the same as Reports' default view.",
             "Trend and mix charts use the same filters as the report table and exports.",
           ],

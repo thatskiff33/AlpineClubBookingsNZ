@@ -42,6 +42,10 @@ import {
   type StuckStateSeverity,
 } from "@/lib/stuck-state-dashboard";
 import { cn } from "@/lib/utils";
+import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { listCardRefundsPaidTwice } from "@/lib/card-refund-paid-twice";
+import { CardRefundsPaidTwiceList, DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
+import { describeRefundMethod } from "@/lib/xero-refund-method";
 
 const domainIcons: Record<StuckStateDomain, typeof CreditCard> = {
   payment: CreditCard,
@@ -186,7 +190,20 @@ export default async function AdminStuckStatesPage() {
   const viewerCanViewMembership = session?.user
     ? hasAdminAreaAccess(session.user, { area: "membership", level: "view" })
     : false;
-  const dashboard = await getStuckStateDashboard({ viewerCanViewMembership });
+  // #3372 (owner, 7 Oct 2026): the card refunds Stripe gave up on, with their
+  // "Paid another way" close. Each names a booking and the money it still owes,
+  // so the list is finance information: shown to finance:view, closed at
+  // finance:edit (the panel's own gate and the route's). Fail closed.
+  const viewerCanViewFinance = session?.user
+    ? hasAdminAreaAccess(session.user, { area: "finance", level: "view" })
+    : false;
+  // #3924 round 5 (concurrency F2): and the closes Stripe paid as well - the
+  // member was paid back twice - under the same finance:view gate.
+  const [dashboard, deadCardRefunds, cardRefundsPaidTwice] = await Promise.all([
+    getStuckStateDashboard({ viewerCanViewMembership }),
+    viewerCanViewFinance ? listDeadCardRefunds() : Promise.resolve([]),
+    viewerCanViewFinance ? listCardRefundsPaidTwice() : Promise.resolve([]),
+  ]);
   const clubTime = await resolveClubTime();
 
   return (
@@ -254,6 +271,17 @@ export default async function AdminStuckStatesPage() {
           );
         })}
       </div>
+
+      {/* #3924 round 9 (UX): each list renders its own card, which stays
+          after its last row is closed so focus has somewhere to land. */}
+      {viewerCanViewFinance ? (
+        <DeadCardRefundsPanel
+          rows={deadCardRefunds}
+          bankNoteWording={describeRefundMethod("internet-banking")}
+        />
+      ) : null}
+
+      {viewerCanViewFinance ? <CardRefundsPaidTwiceList rows={cardRefundsPaidTwice} /> : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">

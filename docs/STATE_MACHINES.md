@@ -3281,6 +3281,120 @@ The rule and its stated limits are `INV-PAY-112`; the interleavings are in
 `edit-financial-review-charge-raise-claim.realdb.test.ts` and
 `payment-recovery.test.ts` ("#3402").
 
+### Card refund recovery row: dead, then paid another way (#3372)
+
+A card refund the club decided to make and Stripe has not yet paid is a
+`REFUND_BOOKING_MODIFICATION` or `REFUND_SUPERSEDED_PAYMENT` recovery row. Until
+it closes it counts in "Refunds owed" and comes off Net Collected (owner, 7 Oct
+2026), at its unsent slices: a recorded refund counts toward a slice only if it
+is on that slice's transaction, is exactly the slice's amount, and falls
+inside the row's window - made by Stripe no earlier than the row was raised
+(floored to its second) and, once the row is closed, no later than its
+`succeededAt` (`openCardRefundOwedByOperation`; one clock at both ends since
+#3924 round 7). So a refund Stripe made before a close and
+the app recorded after it stays the closed row's; after a "Paid another way"
+close it is money paid twice, listed on the stuck-states page.
+
+```text
+PENDING -> PROCESSING (worker claim, attempts < MAX) -> SUCCEEDED (Stripe refunded every slice)
+PROCESSING -> FAILED  (attempts left: retried at nextRetryAt)
+PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
+DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
+                       Payment row, refused (409) unless what is owed is the
+                       figure the treasurer saw, then a status-guarded claim on
+                       PENDING|FAILED with attempts >= MAX; lastError is the
+                       paid-another-way marker, nextRetryAt null, succeededAt
+                       now; the amount - all of what is still owed, or part
+                       of it, as the treasurer chooses - is recorded
+                       on the payment with applyLocalRefundAllocation; a
+                       COMPLETED hand-back task and its BANK_REFUND line record
+                       it; audited under `payment`)
+```
+
+The treasurer says "paid back in full" or "paid back part of it"; the route
+refuses an amount that does not match the answer, and any close for $0 - a row
+that owes nothing is not offered (#3924 round 7). A part close ENDS the refund:
+the rest stops being owed anywhere, and a later review's netting counts the
+refund at its full raised amount (owner, 8 Oct 2026: "Difference is gone"). The
+close makes no Stripe call. In Xero every kind queues a bank-transfer refund
+credit note for exactly the amount paid back, keyed on the close's task and
+dated the close's club day, where there is an invoice to credit (owner, 8 Oct
+2026: "Raise a refund note for all"). The note is sized by the close's record
+less what its own notes already cover, never by the payment-wide gap (#3924
+round 8), and its Xero key is the close and what its own notes cover, so a
+retry after a crash is answered with the same note whatever else landed
+(round 9). A late card charge's refund is credited
+against the charge's own receipt, named by its invoice id; when Xero has none,
+the close queues that receipt (the kept-charge invoice, on the approval task,
+put back to PENDING if it failed before it could have reached Xero) and the
+receipt's worker queues the note after it records the receipt's link (owner,
+8 Oct 2026: "Record receipt, then credit"). When the receipt is already on its
+way - a change's supplementary invoice for the capture, queued, sending or
+FAILED - the close queues nothing and takes the same waiting key; that
+invoice's worker runs the note step once it is sent (round 8):
+
+```text
+close (no receipt in Xero) -> KEPT_LATE_CAPTURE_INVOICE PENDING, no note
+receipt worker: invoice + Stripe payment sent
+  -> transaction 1 under the approval task's row: receipt link written
+  -> transaction 2 under the same row: bank-transfer REFUND_CREDIT_NOTE
+     PENDING (keyed on the close), unless one was already asked for it
+  -> receipt row SUCCEEDED (or PARTIAL)
+note step fails -> receipt row FAILED with its link standing; its retry finds
+  the invoice and payment linked and runs only the note step
+receipt FAILED unsent -> no note; the repair tool's
+  PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT retries (or queues) it,
+  and the note follows
+receipt FAILED after it may have reached Xero (payment linked, or the invoice
+  call attempted) -> left FAILED for an officer, who checks Xero, then retries;
+  a close finding it so reports receipt-held-for-officer, never queued (round 9)
+close (receipt on its way: a change invoice) -> waiting key, nothing queued
+  (refund-note-after-failed-receipt when that invoice FAILED, round 9)
+change invoice sent -> its row SUCCEEDED, then the note step under the
+  approval task's row: bank-transfer REFUND_CREDIT_NOTE PENDING
+change invoice FAILED -> an officer's retry puts that row back to PENDING with
+  its queued payload (round 9), so it is sent from its own row and the note
+  step follows; never an inline replay on a new row that names no capture
+note step never ran (receipt in Xero, no note asked) -> the repair tool's
+  PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED queues it through the same step, and
+  the nightly credit reconciliation runs the step for every payment its
+  closes' notes do not cover (round 9)
+change invoice resolved by hand after the close -> no note; the repair tool's
+  report-only PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND names the close's
+  amount to record by hand (round 9)
+```
+
+A close Stripe also paid is listed as paid twice. The treasurer marks it
+Resolved once it is sorted out with the member (owner, 9 Oct 2026): a note,
+kept on the close's task and audited under `payment`; the row leaves the list
+and comes back only if Stripe refunds the card for it again. No money moves:
+
+```text
+listed paid twice -> Resolved (finance:edit, a note, refused (409) unless the
+  card figure is the one the dialog showed; one status-guarded write on the
+  close's task, guarded on the resolution it carried; audited)
+Resolved -> listed again (a later card refund for the same close)
+```
+
+It refuses an organiser child's refund (#3653) and a group
+organiser-cancel settlement's refund (`isOwedCardRefundOperation`); a
+superseded intent's refund closes whole, never at nil, and only while its
+charge still holds exactly what it owes. The rules are
+`INV-PAY-121` and `INV-PAY-122`; the lock is registered as
+`closeCardRefundPaidAnotherWay#1`. To verify:
+`card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`,
+`xero-kept-late-capture-ledger.test.ts` (round 6: the Xero books of a late
+charge's close, whatever order the outbox runs in) and
+`card-refund-paid-another-way.realdb.test.ts` (a double click closes once; a
+refund recorded while the close waits for the payment row is refused with a
+409; a close that waits on the approval task's row behind the receipt's worker
+reads the receipt recorded and queues its own note - both against the real
+receipt worker since round 8; the receipt's note step runs at most once; the
+gap's close share agrees with coverage, a PARTIAL note and a covered second row
+included; a close's note is sized by its record; a Resolved double click writes
+once), `card-refund-paid-twice.test.ts` and `xero-booking-repair.test.ts`
+(rounds 7 and 8: the receipt and note findings).
+
 ### Confirm-pending saved-card charge (#3268)
 
 `confirmPendingBookings` claims a hold-expired booking (PENDING -> CONFIRMED

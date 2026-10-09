@@ -213,7 +213,15 @@ describe("Net Collected counts a refunded status only with capture evidence", ()
   const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [] };
   const live = { deletedAt: null, status: "CONFIRMED", ...noRows };
   const cancelled = { deletedAt: null, status: "CANCELLED", ...noRows };
-  const nothing = { capturedGrossCents: 0, heldCashCents: 0, handBackOwedCents: 0, keptCreditCents: 0 };
+  const nothing = {
+    capturedGrossCents: 0,
+    heldCashCents: 0,
+    handBackOwedCents: 0,
+    cardRefundOwedCents: 0,
+    lateCaptureOwedCents: 0,
+    lateCashCreditedCents: 0,
+    keptCreditCents: 0,
+  };
 
   describe("a never-paid Internet Banking payment the reconcile folded to PARTIALLY_REFUNDED", () => {
     // $450.00 booked, edited down by $50.00; no money ever arrived.
@@ -223,6 +231,8 @@ describe("Net Collected counts a refunded status only with capture evidence", ()
       refundedAmountCents: 5_000,
       source: "INTERNET_BANKING",
       _count: { transactions: 0 },
+      recoveryOperations: [],
+      refunds: [],
     };
 
     it("adds nothing on a live booking", () => {
@@ -251,6 +261,8 @@ describe("Net Collected counts a refunded status only with capture evidence", ()
       refundedAmountCents: 5_000,
       source: "INTERNET_BANKING",
       _count: { transactions: 1 },
+      recoveryOperations: [],
+      refunds: [],
     };
     expect(getNetCollectedPaymentParts({ ...paid, booking: live })).toEqual({
       ...nothing,
@@ -265,7 +277,14 @@ describe("Net Collected counts a refunded status only with capture evidence", ()
   });
 
   it("counts a STRIPE PARTIALLY_REFUNDED payment as before, ledger row or not", () => {
-    const card = { status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 5_000, source: "STRIPE" };
+    const card = {
+      status: "PARTIALLY_REFUNDED",
+      amountCents: 20_000,
+      refundedAmountCents: 5_000,
+      source: "STRIPE",
+      recoveryOperations: [],
+      refunds: [],
+    };
     const counted = { ...nothing, capturedGrossCents: 20_000, heldCashCents: 15_000 };
     expect(getNetCollectedPaymentParts({ ...card, _count: { transactions: 1 }, booking: live })).toEqual(counted);
     // Pre-ledger: the STRIPE refund mirror is the evidence (`stripeRefundMirrorShowsCapture`).
@@ -280,6 +299,8 @@ describe("Net Collected counts a refunded status only with capture evidence", ()
         refundedAmountCents: 0,
         source: "INTERNET_BANKING",
         _count: { transactions: 0 },
+      recoveryOperations: [],
+      refunds: [],
         booking: live,
       }),
     ).toEqual({ ...nothing, capturedGrossCents: 20_000, heldCashCents: 20_000 });
@@ -290,7 +311,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
   const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [] };
   // A card payment with a captured ledger row: the capture evidence a
   // refunded status needs to count (`getNetCollectedPaymentParts`).
-  const cardEvidence = { source: "STRIPE", _count: { transactions: 1 } };
+  const cardEvidence = { source: "STRIPE", _count: { transactions: 1 }, recoveryOperations: [], refunds: [] };
   const otherBooking = {
     status: "SUCCEEDED",
     amountCents: 10_000,
@@ -301,7 +322,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
   type CancelledBooking = Partial<NetCollectedPaymentRow["booking"]>;
   const netWith = (
     cancelled: { status: string | null; amountCents: number; refundedAmountCents: number } &
-      Partial<Pick<NetCollectedPaymentRow, "source" | "_count">>,
+      Partial<Pick<NetCollectedPaymentRow, "source" | "_count" | "recoveryOperations" | "refunds">>,
     booking: CancelledBooking = {},
   ) =>
     summarizeCollectedCash([
@@ -338,6 +359,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       capturedGrossCents: 10_000,
       refundedCents: 0,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 10_000,
     });
@@ -353,6 +377,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       capturedGrossCents: 30_000,
       refundedCents: 15_000,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 15_000,
     });
@@ -363,6 +390,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       capturedGrossCents: 30_000,
       refundedCents: 20_000,
       handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 10_000,
     });
@@ -385,6 +415,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         capturedGrossCents: 10_000,
         refundedCents: 0,
         handBackOwedCents: 0,
+        cardRefundOwedCents: 0,
+        lateCaptureOwedCents: 0,
+        lateCashCreditedCents: 0,
         keptCreditCents: 2_000,
         netCollectedCents: 12_000,
       });
@@ -466,6 +499,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
           capturedGrossCents: 10_000,
           refundedCents: 0,
           handBackOwedCents: 0,
+          cardRefundOwedCents: 0,
+          lateCaptureOwedCents: 0,
+          lateCashCreditedCents: 0,
           keptCreditCents: 0,
           netCollectedCents: 10_000,
         });
@@ -488,6 +524,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         capturedGrossCents: 10_000,
         refundedCents: 0,
         handBackOwedCents: 0,
+        cardRefundOwedCents: 0,
+        lateCaptureOwedCents: 0,
+        lateCashCreditedCents: 0,
         keptCreditCents: 0,
         netCollectedCents: 10_000,
       });
@@ -520,6 +559,8 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         refundedAmountCents: 10_000,
         source: "INTERNET_BANKING",
         _count: { transactions: 1 },
+      recoveryOperations: [],
+      refunds: [],
       }).netCollectedCents,
     ).toBe(20_000);
   });
@@ -532,6 +573,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         capturedGrossCents: 30_000,
         refundedCents: 0,
         handBackOwedCents: 10_000,
+        cardRefundOwedCents: 0,
+        lateCaptureOwedCents: 0,
+        lateCashCreditedCents: 0,
         keptCreditCents: 0,
         netCollectedCents: 20_000,
       });
@@ -579,6 +623,9 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         capturedGrossCents: 30_000,
         refundedCents: 0,
         handBackOwedCents: 10_000,
+        cardRefundOwedCents: 0,
+        lateCaptureOwedCents: 0,
+        lateCashCreditedCents: 0,
         keptCreditCents: 0,
         netCollectedCents: 20_000,
       });
@@ -591,18 +638,22 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       ).toBe(30_000);
     });
 
-    it("never takes a hand-back off a LIVE booking", () => {
-      expect(
+    it("takes an open hand-back off a LIVE booking straight away (owner decision, 7 Oct 2026)", () => {
+      // The owner's example: $200.00 paid, edited down by $50.00, the refund
+      // (an edit's hand-back, `INV-PAY-117`) still open - Net Collected $150.00.
+      // Completing it writes `refundedAmountCents`, so the figure holds.
+      const live = (status: string, refundedAmountCents: number) =>
         summarizeCollectedCash([
           {
-            status: "SUCCEEDED",
+            status: refundedAmountCents > 0 ? "PARTIALLY_REFUNDED" : "SUCCEEDED",
             amountCents: 20_000,
-            refundedAmountCents: 0,
+            refundedAmountCents,
             ...cardEvidence,
-            booking: { deletedAt: null, status: "PAID", ...noRows, manualRefundTasks: [handBack("OPEN", 10_000)] },
+            booking: { deletedAt: null, status: "PAID", ...noRows, manualRefundTasks: [handBack(status, 5_000)] },
           },
-        ]).netCollectedCents,
-      ).toBe(20_000);
+        ]);
+      expect(live("OPEN", 0)).toMatchObject({ handBackOwedCents: 5_000, netCollectedCents: 15_000 });
+      expect(live("COMPLETED", 5_000)).toMatchObject({ handBackOwedCents: 0, netCollectedCents: 15_000 });
     });
   });
 
@@ -610,21 +661,21 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
     const cents = (value: number) => `$${(value / 100).toFixed(2)}`;
     expect(
       formatNetCollectedBreakdown(
-        { capturedGrossCents: 30_000, refundedCents: 15_000, handBackOwedCents: 7_500, keptCreditCents: 2_000 },
+        { capturedGrossCents: 30_000, refundedCents: 15_000, handBackOwedCents: 7_500, cardRefundOwedCents: 0, lateCaptureOwedCents: 0, lateCashCreditedCents: 0, keptCreditCents: 2_000 },
         cents,
       ),
     ).toBe(
-      "$300.00 paid, $150.00 refunded or credited, $75.00 owed back on cancellation, plus $20.00 account credit kept on cancellation",
+      "$300.00 paid, $150.00 refunded or credited, $75.00 owed back by hand, plus $20.00 account credit kept on cancellation",
     );
     expect(
       formatNetCollectedBreakdown(
-        { capturedGrossCents: 0, refundedCents: 0, handBackOwedCents: 0, keptCreditCents: 2_000 },
+        { capturedGrossCents: 0, refundedCents: 0, handBackOwedCents: 0, cardRefundOwedCents: 0, lateCaptureOwedCents: 0, lateCashCreditedCents: 0, keptCreditCents: 2_000 },
         cents,
       ),
     ).toBe("$0.00 paid, plus $20.00 account credit kept on cancellation");
     expect(
       formatNetCollectedBreakdown(
-        { capturedGrossCents: 10_000, refundedCents: 0, handBackOwedCents: 0, keptCreditCents: 0 },
+        { capturedGrossCents: 10_000, refundedCents: 0, handBackOwedCents: 0, cardRefundOwedCents: 0, lateCaptureOwedCents: 0, lateCashCreditedCents: 0, keptCreditCents: 0 },
         cents,
       ),
     ).toBeNull();

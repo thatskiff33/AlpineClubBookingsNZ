@@ -388,6 +388,11 @@ async function settledSinceCancellation({
   });
   if (siblings.length === 0) return { sharesCents: 0, captureReturnedCents: 0 };
   const ids = siblings.map((task) => task.id);
+  // Each sibling's card refund counts at its full raised amount, even one the
+  // treasurer closed as paid another way for less (#3372, owner, 8 Oct 2026:
+  // "Difference is gone"): a part close is final, the difference is owed
+  // nowhere, and this share pays exactly its own part - as the cancellation's
+  // own refund counts at its frozen figure however it was paid back.
   const refunded = await store.paymentRecoveryOperation.aggregate({
     where: { idempotencyKey: { in: ids.map((id) => buildEditFinancialReviewRefundRecoveryIdempotencyKey(id)) } },
     _sum: { amountCents: true },

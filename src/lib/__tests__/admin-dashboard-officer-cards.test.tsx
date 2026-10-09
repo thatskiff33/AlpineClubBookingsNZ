@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+    manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
     // when it is ABSENT, and the page then falls back to the environment — the
     // very defect CT-4 removes, silently, with nothing able to tell. Every test
@@ -66,12 +71,15 @@ import { prisma } from "@/lib/prisma";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  creditBalanceGroupRows,
+  refundsOwedTaskRows,
   netCollectedFixtureBooking,
   netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
 } from "@/lib/additional-ledger-gap";
 
 /*
@@ -195,13 +203,17 @@ function mockStats() {
       // refunded status needs to count (#3372).
       source: "STRIPE",
       _count: { transactions: 1 },
-      booking: { deletedAt: null },
+      recoveryOperations: [],
+      refunds: [],
+      booking: { deletedAt: null, manualRefundTasks: [] },
     },
     {
       status: "PENDING",
       amountCents: 90_000,
       refundedAmountCents: 0,
-      booking: { deletedAt: null },
+      recoveryOperations: [],
+      refunds: [],
+      booking: { deletedAt: null, manualRefundTasks: [] },
     },
   ] as any);
   vi.mocked(prisma.refundRequest.count).mockResolvedValue(0);
@@ -350,6 +362,8 @@ describe("admin dashboard officer key cards", () => {
       refundedAmountCents: true,
       // Net Collected's capture evidence (#3372, owner's rule on PR #3811).
       ...netCollectedCaptureEvidenceSelect,
+      // Card refunds not yet paid, and the refunds that net them (#3372, 7 Oct 2026).
+      ...netCollectedCardRefundSelect,
       // The one shared booking select (#3372, owner decision 3 Oct 2026).
       booking: { select: netCollectedBookingSelect },
     });
@@ -371,7 +385,9 @@ describe("admin dashboard officer key cards", () => {
         status: "SUCCEEDED",
         amountCents: 123_400,
         refundedAmountCents: 0,
-        booking: { deletedAt: null },
+        recoveryOperations: [],
+        refunds: [],
+        booking: { deletedAt: null, manualRefundTasks: [] },
       },
     ] as any);
 
@@ -390,6 +406,8 @@ describe("admin dashboard officer key cards", () => {
   */
   it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
     mockActorMatrix({ overview: "edit", finance: "edit" });
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue(refundsOwedTaskRows() as any);
+    vi.mocked(prisma.memberCredit.groupBy).mockResolvedValue(creditBalanceGroupRows() as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue(
       NET_COLLECTED_SCOPE_PAYMENTS.map((payment) => ({
         status: payment.status,
@@ -402,15 +420,21 @@ describe("admin dashboard officer key cards", () => {
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    expect(NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents).toBe(9_500);
-    expect(html).toContain(">$95.00</div>");
+    expect(NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents).toBe(24_500);
+    expect(html).toContain(">$245.00</div>");
     // The breakdown is over the same in-scope payments: the deleted booking's
     // $70.00 is in no figure, the never-paid booking's $200.00 and its $30.00
-    // mirror refund in none either, and the line adds up to the headline:
-    // 300 - 150 - 75 + 20 = 95.
+    // mirror refund in none either, the fully refunded booking's $120.00 is
+    // paid and refunded alike, the live booking's open $50.00 edit refund is
+    // owed back like the cancellation's $75.00, and the line adds up to the
+    // headline: 620 - 270 - 125 + 20 = 245.
     expect(html).toContain(
-      ">$300.00 paid, $150.00 refunded or credited, $75.00 owed back on cancellation, plus $20.00 account credit kept on cancellation</p>",
+      ">$620.00 paid, $270.00 refunded or credited, $125.00 owed back by hand, plus $20.00 account credit kept on cancellation</p>",
     );
+    // Beside it, as at today and club-wide (owner, 7 Oct 2026).
+    expect(html).toContain('<dt class="text-muted-foreground">Refunds owed</dt><dd class="font-medium text-foreground">$165.00</dd>');
+    expect(html).toContain('<dt class="text-muted-foreground">Credits owed</dt><dd class="font-medium text-foreground">$85.00</dd>');
+    expect(html).toContain("As at today, across the club");
   });
 
   it("hides officer cards whose target page the actor cannot open", async () => {

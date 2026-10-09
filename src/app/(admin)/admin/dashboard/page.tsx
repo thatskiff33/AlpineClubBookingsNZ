@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
-import { netCollectedBookingSelect, netCollectedCaptureEvidenceSelect } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
+} from "@/lib/additional-ledger-gap";
 import { formatNetCollectedBreakdown, summarizeCollectedCash } from "@/lib/payment-net-collected";
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
+import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -117,6 +123,7 @@ async function getStats() {
     totalBookings,
     activeBookings,
     netCollectedResult,
+    refundsAndCreditsOwed,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -161,9 +168,14 @@ async function getStats() {
         refundedAmountCents: true,
         // #3372: a refunded status counts only with capture evidence.
         ...netCollectedCaptureEvidenceSelect,
+        // #3372 (7 Oct 2026): card refunds not yet paid come off straight away.
+        ...netCollectedCardRefundSelect,
         booking: { select: netCollectedBookingSelect },
       },
     }),
+    // #3372 (owner, 7 Oct 2026): beside Net Collected, what is still owed back
+    // as at today - club-wide, not this month's.
+    readRefundsAndCreditsOwed(),
     // Bookings officer card headline (#2091): check-ins in the next 7 days.
     // Uses UPCOMING_CHECK_IN_BOOKING_STATUSES (not the wider
     // ACTIVE_BOOKING_STATUSES) so the count equals the list the card deep links
@@ -302,6 +314,7 @@ async function getStats() {
     totalBookings,
     activeBookings,
     netCollectedThisMonth,
+    refundsAndCreditsOwed,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -723,7 +736,9 @@ export default async function AdminDashboardPage() {
           {canViewPayments && (
             <Link href="/admin/payments" className="group">
               <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
-                <CardContent className="flex items-center justify-between gap-3 py-4">
+                {/* #3372: on a narrow screen the figures stack under the
+                    title rather than squeezing beside it. */}
+                <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
                     Net Collected This Month
@@ -733,7 +748,7 @@ export default async function AdminDashboardPage() {
                       exact cents, so the arithmetic on the card adds up. The subline
                       makes no claim about when money arrived: the month is the
                       one each payment record was created in. */}
-                  <div className="text-right">
+                  <div className="sm:text-right">
                     <div className="text-xl font-semibold text-foreground">
                       {money.cents(stats.netCollectedThisMonth.netCollectedCents)}
                     </div>
@@ -745,6 +760,13 @@ export default async function AdminDashboardPage() {
                         {netCollectedBreakdown}
                       </p>
                     )}
+                    {/* #3372 (owner, 7 Oct 2026): still owed back, as at today. */}
+                    <RefundsAndCreditsOwedList
+                      owed={stats.refundsAndCreditsOwed}
+                      formatCents={money.cents}
+                      className="mt-1 flex flex-col sm:items-end"
+                      stacked
+                    />
                   </div>
                 </CardContent>
               </Card>

@@ -743,9 +743,16 @@ the card what it covers:
   account credits on them. A payment that is still pending or failed does not
   count, and neither does an unpaid bank-transfer payment that shows as partly
   refunded only because a Xero credit note was applied to its invoice: only
-  money actually received counts. A **cancelled** booking counts only what the club kept of what was
-  paid on it: money not refunded or credited back, less any refund still owed
-  on an open hand-back task, plus any account credit the cancellation kept. One
+  money actually received counts. Money still owed back comes off straight
+  away, on any booking: a refund owed by hand on an open hand-back task (a
+  cancellation's, an edit's that lowered the price, or an approved refund
+  request's), a card refund the club has started that Stripe has not yet paid
+  (pending, processing, or failed and waiting for a retry), and a late card
+  charge on a cancelled booking waiting for the treasurer to refund or keep
+  it. A **cancelled** booking counts only what the club kept of what was paid
+  on it: money not refunded or credited back, less anything still owed back,
+  less a bank transfer that arrived after the cancel and was credited to the
+  member's account, plus any account credit the cancellation kept. One
   cancelled before anything was paid adds nothing, and a **deleted** booking
   does not count
   at all, even though its row stays in the list. All four Net Collected
@@ -761,6 +768,31 @@ the card what it covers:
 - **Refunded / Credited** covers every payment matching the filters,
   cancelled and deleted bookings included: every card refund and every
   cancellation credit on them.
+
+Beneath the cards, **Refunds owed** and **Credits owed** say what the club
+still owes back, **as at today and across the club**. Your filters do not
+narrow them:
+
+- **Refunds owed** is every refund owed and not yet paid: each open
+  hand-back task in the queue on this page, each card refund Stripe has not
+  yet paid, and each late card charge waiting for the treasurer's decision.
+  It drops when you mark a task paid back (or dismiss it), when Stripe pays
+  the refund, or when the treasurer keeps or refunds the late charge. A card
+  refund Stripe gave up on stays in it until you close it as **Paid another
+  way** on [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on).
+  It also holds one club-wide amount that belongs to no booking: what the
+  card refunds of group cancellations from before #3653 still have to send
+  (owner decision on #3372, 8 Oct 2026).
+- **Credits owed** is every member's account credit that has not yet been
+  used: the total of their credit balances. It drops as credit is applied to
+  a booking.
+
+Each amount owed comes off Net Collected only for its own booking. A refund
+owed on a booking your filters leave out, or on a deleted booking, is in
+**Refunds owed** but not in the Net Collected beside it, so the two are not a
+subtraction of one another either. Nor is the club-wide group cancellation
+amount, or a refund owed by hand on a payment that never showed money taken:
+both are in Refunds owed and in no booking's Net Collected.
 
 ## Troubleshooting
 

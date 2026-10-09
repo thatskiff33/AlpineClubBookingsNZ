@@ -317,7 +317,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     summary: `${counts.exhaustedFailed} payment recovery ${plural(
       counts.exhaustedFailed,
       "operation",
-    )} reached ${MAX_PAYMENT_RECOVERY_ATTEMPTS} attempts and need manual reconciliation.`,
+    )} reached ${MAX_PAYMENT_RECOVERY_ATTEMPTS} attempts and need manual reconciliation. A card refund among them that the member was paid another way can be closed under "Card refunds Stripe gave up on" on this page (Finance view).`,
   });
   addItem(items, {
     id: "payment-recovery-stale-processing",

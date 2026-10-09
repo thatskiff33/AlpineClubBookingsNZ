@@ -70,6 +70,7 @@ import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled
 import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
 import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
+import { addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
@@ -2025,6 +2026,10 @@ export function classifyBookingContext(
             actionKeys: [],
           });
         }
+        continue;
+      }
+      // #3924 round 7 (money M2): the receipt a paid-another-way close waits for.
+      if (addPaidAnotherWayReceiptFinding({ findings, actionMap, booking, paymentId: payment.id, transaction, lateTask, keptInvoice })) {
         continue;
       }
       if (

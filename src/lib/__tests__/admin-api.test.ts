@@ -3,12 +3,20 @@ import { NextRequest } from "next/server";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  REFUNDS_AND_CREDITS_OWED_FIXTURE,
+  creditBalanceGroupRows,
+  refundsOwedTaskRows,
   netCollectedFixtureBooking,
   netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+    manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     member: { count: vi.fn(), findMany: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
     payment: {
@@ -283,6 +291,8 @@ describe("Admin Payments API", () => {
       // #3372: Net Collected's capture evidence (one captured ledger row).
       _count: { transactions: 1 },
       refunds: [],
+      // #3372 (7 Oct 2026): no card refund outstanding.
+      recoveryOperations: [],
       booking: {
         id: "b1",
         status: "PAID",
@@ -449,6 +459,9 @@ describe("Admin Payments API", () => {
       // (#773) it would read 6_500; were PENDING/FAILED gross added it would
       // read 34_500.
       netCollectedCents: 21_500,
+      // As at today, club-wide: nothing owed in this fixture's empty ledgers.
+      refundsOwedCents: 0,
+      creditsOwedCents: 0,
       // 6_500 + 5_000.
       refundedCents: 11_500,
       count: 4,
@@ -475,6 +488,8 @@ describe("Admin Payments API", () => {
   */
   it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue(refundsOwedTaskRows() as any);
+    vi.mocked(prisma.memberCredit.groupBy).mockResolvedValue(creditBalanceGroupRows() as any);
 
     vi.mocked(prisma.payment.findMany)
       .mockResolvedValueOnce(
@@ -510,9 +525,17 @@ describe("Admin Payments API", () => {
     // The refund tile is every matched row, as its hint says - the never-paid
     // cancelled booking's $30.00 mirror refund and the never-paid live
     // booking's $50.00 folded credit note included, though the Net Collected
-    // tile (owner review on #3811) gives both bookings nil.
-    expect(body.summary.refundedCents).toBe(23_000);
-    expect(body.summary.count).toBe(6);
+    // tile (owner review on #3811) gives both bookings nil, as it does the
+    // booking refunded its whole $120.00.
+    expect(body.summary.refundedCents).toBe(35_000);
+    expect(body.summary.count).toBe(8);
+    // Beside it, as at today and club-wide (owner, 7 Oct 2026).
+    expect(body.summary.refundsOwedCents).toBe(
+      REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedRefundsOwedCents,
+    );
+    expect(body.summary.creditsOwedCents).toBe(
+      REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedCreditsOwedCents,
+    );
   });
 
   /*

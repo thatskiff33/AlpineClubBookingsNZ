@@ -23,7 +23,8 @@ export type LateCaptureDecision = {
   state: LateCaptureRefundState;
   /**
    * What Xero owes this capture as its receipt: the GROSS captured cents when
-   * it is kept and was captured, else 0. Gross, the way a card receipt is
+   * it is kept - or its approved refund was closed as paid another way - and
+   * was captured, else 0. Gross, the way a card receipt is
    * recorded (orchestrator decision 29 Sep 2026 on #3635): any refund, from
    * the dashboard or on approval, is answered by its own refund credit note,
    * so netting it here as well would count it twice.
@@ -37,12 +38,20 @@ export type LateCaptureDecision = {
  *   approval is the refund), DISMISSED kept (owner decision 29 Sep 2026).
  * - With no task, the webhook's own routing: a CANCELLED booking's late capture
  *   or a superseded intent's is refunded by design; anything else is kept.
+ * - #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit"): an
+ *   approval whose card refund Stripe gave up on, closed as paid another way
+ *   (`refundClosedPaidAnotherWay`), is still refunded - the member has the
+ *   money back - but Stripe never paid it out, so the capture is still in the
+ *   Stripe account and Xero owes its receipt, GROSS, as for a kept one. The
+ *   bank transfer is the close's own refund note against that receipt.
  */
 export function decideLateCapture(input: {
   taskStatus: "OPEN" | "COMPLETED" | "DISMISSED" | null;
   bookingStatus: string | null | undefined;
   superseded: boolean;
   capture: { status: PaymentStatus; amountCents: number } | null;
+  /** The approval's card refund was closed as paid another way (`findLateCaptureRefundPaidAnotherWay`). */
+  refundClosedPaidAnotherWay?: boolean;
 }): LateCaptureDecision {
   let state: LateCaptureRefundState;
   if (input.taskStatus === "OPEN") state = "awaiting-decision";
@@ -51,8 +60,10 @@ export function decideLateCapture(input: {
   else if (isLateCaptureRefundedBookingStatus(input.bookingStatus) || input.superseded) {
     state = "refunded";
   } else state = "kept";
+  const receiptOwed =
+    state === "kept" || (input.taskStatus === "COMPLETED" && input.refundClosedPaidAnotherWay === true);
   const recordCents =
-    state === "kept" && input.capture && isCapturedTransactionStatus(input.capture.status)
+    receiptOwed && input.capture && isCapturedTransactionStatus(input.capture.status)
       ? Math.max(input.capture.amountCents, 0)
       : 0;
   return { state, recordCents };
@@ -104,5 +115,31 @@ export function keptLateCaptureInvoiceAsked(
     (operation) =>
       operation.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE &&
       operation.status !== "CANCELLED",
+  );
+}
+
+/**
+ * #3924 round 8 (money review): MAY THIS FAILED RECEIPT ROW HAVE REACHED XERO?
+ * The worker writes the invoice it is about to send onto the row
+ * (`invoices`, beside the queued payload) before it calls Xero, and records
+ * the receipt's Stripe payment, with its link, after Xero returned the
+ * invoice. Either one means `createInvoices` was attempted: Xero may hold the
+ * receipt though the app never linked it, and running the row again could
+ * raise a second. Such a row is never put back to run automatically - not by a
+ * close, not by the repair tool - and is left for an officer, who checks Xero
+ * first. The enqueue and the repair tool both ask this, and nothing else
+ * spells it.
+ */
+export function keptReceiptMayHaveReachedXero(input: {
+  requestPayload: unknown;
+  paymentLinked: boolean;
+}): boolean {
+  if (input.paymentLinked) return true;
+  const payload = input.requestPayload;
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    Array.isArray((payload as Record<string, unknown>).invoices)
   );
 }

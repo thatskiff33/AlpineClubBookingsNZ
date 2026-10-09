@@ -361,8 +361,14 @@ const FIGURES = {
    * 370 -> 371 (#3750): the change-request card's Confirm overbooking and
    * apply, shown when an executed finished-stay approval needs the officer to
    * confirm an over-capacity past night. MEASURED.
+   *
+   * 371 -> 372 (#3372): the stuck-states page's "Paid another way" close on a
+   * card refund Stripe gave up on, and 372 -> 373 (owner 9 Oct 2026) the same
+   * page's "Resolved" on a card refund paid back twice. Each dialog's confirm
+   * is a plain Button, reachable only once its gated row button opened it.
+   * MEASURED by re-running this census.
    */
-  callSites: 371,
+  callSites: 373,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -400,8 +406,10 @@ const FIGURES = {
    * Delete) and one arrives (Edit my Lodge).
    *
    * 315 -> 316 (#3750): so does the change-request card's overbooking confirm.
+   * 316 -> 318 (#3372): the dead card refunds panel's "Paid another way" and
+   * the paid-twice list's "Resolved" each opt out under their own banner.
    */
-  optOuts: 316,
+  optOuts: 318,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -467,8 +475,10 @@ const FIGURES = {
    *
    * 281 -> 282 (#3750): the overbooking confirm is rendered in the change-
    * request panel itself, beside that panel's own banner.
+   * 282 -> 284 (#3372): the dead card refunds panel's "Paid another way" and
+   * the paid-twice list's "Resolved" sit in the same file as their banners.
    */
-  staticOptOuts: 282,
+  staticOptOuts: 284,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -552,8 +562,11 @@ const FIGURES = {
    * 97 -> 98 (#3596): the club currency and locale panel, which #3563 built
    * without one because every visitor was a Full Admin. #3596 gave it a view
    * tier. Mounted in all three of its branches (load failed, loading, loaded).
+   *
+   * 98 -> 99 (#3372): the stuck-states page's dead card refunds panel, gated on
+   * finance inside a support page, so it states its own area's reason.
    */
-  bannerComponents: 98,
+  bannerComponents: 99,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

@@ -241,7 +241,7 @@ export function buildXeroIdempotencyKey(
 export async function recoverRefundCreditNoteLinkAmountCents(
   paymentId: string,
   link: { xeroObjectId: string; metadata: unknown },
-  db: Prisma.TransactionClient = prisma
+  db: Pick<Prisma.TransactionClient, "xeroSyncOperation"> = prisma
 ): Promise<number | null> {
   if (isRefundCreditNoteLinkCancelledInXero(link.metadata)) {
     return null;
@@ -283,8 +283,12 @@ export async function sumCoveredRefundCreditNoteCents(
   paymentId: string,
   // Optional transaction client (#1357) so a tx-scoped enqueue sees its own
   // uncommitted writes; defaults to the global client for existing callers.
-  db: Prisma.TransactionClient = prisma
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink" | "xeroSyncOperation"> = prisma,
+  // #3924 round 8: only these notes - the ones a single refund's own rows
+  // raised (`sumRefundCreditNoteCoverageOfRowsCents`). Omitted, every note.
+  onlyNoteIds?: readonly string[]
 ): Promise<number> {
+  if (onlyNoteIds && onlyNoteIds.length === 0) return 0;
   const links = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
@@ -292,6 +296,7 @@ export async function sumCoveredRefundCreditNoteCents(
       xeroObjectType: "CREDIT_NOTE",
       role: "REFUND_CREDIT_NOTE",
       active: true,
+      ...(onlyNoteIds ? { xeroObjectId: { in: [...onlyNoteIds] } } : {}),
     },
     select: { xeroObjectId: true, metadata: true },
   });

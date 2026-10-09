@@ -11,6 +11,9 @@ import { resolveBookingDetailPayment } from "../_lib/booking-detail-payment";
 function ceiling(manualRefundTasks: { amountCents: number | null }[]) {
   const booking = {
     status: "CANCELLED",
+    deletedAt: null,
+    // #3372: the retained line's Net Collected rule reads these too.
+    manualRefundTasks: [],
     finalPriceCents: 15000,
     organiserSettled: false,
     creditsFromCancellation: [],
@@ -23,6 +26,9 @@ function ceiling(manualRefundTasks: { amountCents: number | null }[]) {
       amountCents: 20000,
       refundedAmountCents: 7500,
       creditAppliedCents: 0,
+      _count: { transactions: 1 },
+      recoveryOperations: [],
+      refunds: [],
       manualRefundTasks,
     },
   };

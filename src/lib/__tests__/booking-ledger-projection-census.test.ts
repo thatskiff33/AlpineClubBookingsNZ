@@ -1953,3 +1953,50 @@ describe("an open edit refund hand-back on a cancelled internet-banking booking 
     });
   });
 });
+
+describe("#3924 round 4 (M2): a dead card refund closed as paid another way is a hand-back the census explains", () => {
+  /**
+   * Card paid, cancelled at 50%; the $95 card refund died and the treasurer
+   * paid it back by bank. The close raised the refunded total with no refund
+   * row, wrote its COMPLETED record and the bank-refund line on it.
+   */
+  function cardCancelledPaidAnotherWay(withLine: boolean): BookingLedgerCensusRow {
+    const ledger = confirmedLedger();
+    const base = row({ lines: [], transactions: [txn("t1", 19_000)] });
+    settle(ledger, base);
+    const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents: 9_500, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
+    if (cancel.kind !== "lines") throw new Error("cancel plan refused");
+    ledger.post(cancel.postings, LATER);
+    if (withLine) {
+      ledger.post([planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: "task-paw", amountCents: 9_500, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })], LATER);
+    }
+    return {
+      ...base,
+      lines: ledger.lines,
+      booking: { ...base.booking, status: "CANCELLED" },
+      transactions: [txn("t1", 19_000, { refundedAmountCents: 9_500 })],
+      payment: payment({ refundedAmountCents: 9_500 }),
+      tasks: [{ id: "task-paw", kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", amountCents: 9_500, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
+      recoveryOperations: [
+        { type: "REFUND_BOOKING_MODIFICATION", status: "SUCCEEDED", attempts: 5, nextRetryAt: null, amountCents: 9_500, idempotencyKey: buildBookingCancellationRefundIdempotencyKey(B), paymentId: "pay-3583", paymentIntentId: "pi-3583" },
+      ],
+      cancellation: { refundMethod: "card", settledAmountCents: 9_500, keptCents: 9_500 },
+    };
+  }
+
+  it("the refunded column is explained as REFUND_MIRROR_HAND_BACK, and nothing disagrees", () => {
+    const closed = cardCancelledPaidAnotherWay(true);
+    const results = evaluateBookingLedgerIdentities(closed);
+    expect(results.integrity).toEqual([]);
+    const refunded = identity(closed, "REFUNDED");
+    expect(refunded.status).toBe("CLASSIFIED");
+    expect(refunded.explainedBy).toEqual([{ name: "REFUND_MIRROR_HAND_BACK", cents: 9_500 }]);
+    expect(results.identities.filter((each) => each.status === "DISAGREE")).toEqual([]);
+  });
+
+  it("without the line (round 3's close) the raised refunded total is unexplained", () => {
+    const refunded = identity(cardCancelledPaidAnotherWay(false), "REFUNDED");
+    expect(refunded.status).toBe("DISAGREE");
+    expect(refunded.deltaCents).toBe(9_500);
+  });
+});

@@ -114,6 +114,7 @@ describe("telling an appeal's hand-back apart (INV-PAY-118)", () => {
       OR: [
         { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
         { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+        { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
       ],
     });
   });
@@ -288,6 +289,7 @@ describe("the refund appeal ceiling (INV-PAY-118)", () => {
         OR: [
           { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
           { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+          { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
         ],
       }),
       _sum: { amountCents: true },

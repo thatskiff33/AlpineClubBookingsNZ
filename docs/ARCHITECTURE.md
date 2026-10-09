@@ -1093,6 +1093,18 @@ link stay for every support admin (#2823). Both callers (the page and
 `/api/admin/stuck-states`) resolve that flag from the acting admin's permission
 matrix and default it to `false`, so a caller that omits it fails closed to no
 names.
+The page also lists the card refunds Stripe gave up on (#3372), each with its
+"Paid another way" close: the list names bookings and money still owed, so the
+page loads it only for `{ area: "finance", level: "view" }`, and the close
+(`DeadCardRefundsPanel` -> `POST /api/admin/payments/card-refunds/[id]/paid-another-way`
+-> `closeCardRefundPaidAnotherWay`) is gated `finance:edit` in the panel and the
+route, with the section's own finance banner (`INV-PAY-122`). Under the same
+finance:view gate it lists the closes Stripe paid as well
+(`listCardRefundsPaidTwice`, #3924 round 5), each with a "Resolved" mark
+(owner, 9 Oct 2026: `CardRefundsPaidTwiceList` -> `POST
+/api/admin/payments/card-refunds/[id]/paid-twice-resolved` ->
+`resolveCardRefundPaidTwice`), gated `finance:edit` in the list, under its own
+finance banner, and in the route; it moves no money and touches no Xero.
 `src/lib/booking-provider-mismatches.ts` answers the same provider-divergence
 questions for a single booking (paid while the club's records hold no Xero invoice,
 Stripe refund with no Xero credit note, waitlist offer whose email needs
@@ -1162,12 +1174,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **98 components render a banner, and
- 316 of the 371 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **99 components render a banner, and
+ 318 of the 373 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 316 split by WHICH rule
-covers them: **282** pass the literal
+test currently pins, which is the only authority.) Those 318 split by WHICH rule
+covers them: **284** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the

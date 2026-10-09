@@ -27,7 +27,9 @@ type ReceiptStore = Pick<
  *    (queued, sending or sent - the rule
  *    `hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent` applied
  *    before #3635). `invoiceId` is the document a refund note names; null
- *    while the released invoice has not reached Xero yet. A kept row still
+ *    while the released invoice has not reached Xero yet, and then
+ *    `invoiceFailed` (#3924 round 9) says its row FAILED - nothing sends it
+ *    until an officer retries it - rather than being queued or sending. A kept row still
  *    queued or sending is not yet a receipt: its worker credits back any
  *    refund once it has sent (`createXeroKeptLateCaptureInvoice`).
  *  - `resolved-by-hand`: an officer recorded the receipt by hand and resolved
@@ -38,7 +40,7 @@ type ReceiptStore = Pick<
 export type LateCaptureXeroReceipt =
   | { kind: "none" }
   | { kind: "resolved-by-hand" }
-  | { kind: "recorded"; invoiceId: string | null };
+  | { kind: "recorded"; invoiceId: string | null; invoiceFailed?: true };
 
 export async function readLateCaptureXeroReceipt(
   paymentIntentId: string,
@@ -89,7 +91,10 @@ export async function readLateCaptureXeroReceipt(
   const live = released.filter((row) => !row.manuallyResolvedAt);
   if (live.length > 0) {
     const sent = live.find((row) => row.xeroObjectId);
-    return { kind: "recorded", invoiceId: sent?.xeroObjectId ?? null };
+    if (sent?.xeroObjectId) return { kind: "recorded", invoiceId: sent.xeroObjectId };
+    return live.every((row) => row.status === "FAILED")
+      ? { kind: "recorded", invoiceId: null, invoiceFailed: true }
+      : { kind: "recorded", invoiceId: null };
   }
   if (resolvedByHand || released.length > 0) return { kind: "resolved-by-hand" };
   return { kind: "none" };
@@ -148,13 +153,14 @@ export async function findLateCapturePaymentIntents(
  */
 export async function findKeptLateCaptureInvoiceIdForPayment(
   paymentId: string,
+  store: Pick<Prisma.TransactionClient, "manualRefundTask" | "xeroObjectLink"> = prisma,
 ): Promise<string | null> {
-  const tasks = await prisma.manualRefundTask.findMany({
+  const tasks = await store.manualRefundTask.findMany({
     where: { paymentId, lateCaptureApprovalIntentId: { not: null } },
     select: { id: true },
   });
   if (tasks.length === 0) return null;
-  const link = await prisma.xeroObjectLink.findFirst({
+  const link = await store.xeroObjectLink.findFirst({
     where: {
       localModel: "ManualRefundTask",
       localId: { in: tasks.map((task) => task.id) },

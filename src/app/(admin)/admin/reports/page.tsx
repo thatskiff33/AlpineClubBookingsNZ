@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
+import { CREDITS_OWED_LABEL, REFUNDS_OWED_LABEL } from "@/lib/refunds-and-credits-owed-shared";
 import dynamic from "next/dynamic";
 import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reconciliation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,6 +77,9 @@ interface ReportData {
     // Booking-level net cash from captured Payment.amountCents less refunds;
     // unlike booked revenue, this is not allocated across stay nights.
     netCollectedCents: number;
+    // #3372 (owner, 7 Oct 2026): as at today, club-wide; not narrowed by the range.
+    refundsOwedCents: number;
+    creditsOwedCents: number;
     // #2408: aggregate warning only. The API never exposes transaction rows or
     // affected booking ids to this page.
     additionalLedgerGapCents: number;
@@ -339,6 +344,8 @@ export default function ReportsPage() {
     }
     rows.push(["Booked Revenue", formatCentsPlain(data.summary.totalRevenueCents)]);
     rows.push(["Net Collected", formatCentsPlain(data.summary.netCollectedCents)]);
+    rows.push([`${REFUNDS_OWED_LABEL} (as at today)`, formatCentsPlain(data.summary.refundsOwedCents)]);
+    rows.push([`${CREDITS_OWED_LABEL} (as at today)`, formatCentsPlain(data.summary.creditsOwedCents)]);
     if (additionalLedgerGapWarning) {
       rows.push(["Net Collected Warning", additionalLedgerGapWarning]);
       rows.push([
@@ -593,7 +600,7 @@ export default function ReportsPage() {
               <StatCard
                 title="Net Collected"
                 value={formatCents(data.summary.netCollectedCents, clubFormat)}
-                subtitle={`Money kept on overlapping bookings of any status: cash less refunds, plus account credit kept and less refunds still owed back on cancelled ones; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
+                subtitle={`Money kept on overlapping bookings of any status: cash less refunds, plus account credit kept on cancelled ones, less refunds still owed back by hand; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
                 icon={DollarSign}
               />
               <StatCard
@@ -619,6 +626,11 @@ export default function ReportsPage() {
                 icon={TrendingUp}
               />
             </div>
+            {/* #3372 (owner, 7 Oct 2026): beside Net Collected, still owed back as at today. */}
+            <RefundsAndCreditsOwedList
+              owed={data.summary}
+              formatCents={(cents) => formatCents(cents, clubFormat)}
+            />
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 print:grid-cols-2 print:gap-3">
               <StatCard

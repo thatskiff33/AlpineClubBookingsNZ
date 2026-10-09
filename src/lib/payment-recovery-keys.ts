@@ -123,10 +123,17 @@ export function buildLateCaptureRefundMetadata(
 }
 // #3639: the recovery row of a treasurer-approved late-capture refund. One per
 // capture: the approval task is one per payment intent (its `occurrenceKey`).
+const LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX = "late_capture_approval_refund_recovery_";
 export function buildLateCaptureApprovalRefundRecoveryIdempotencyKey(
   paymentIntentId: string,
 ) {
-  return `late_capture_approval_refund_recovery_${paymentIntentId}`;
+  return `${LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX}${paymentIntentId}`;
+}
+/** The late capture a treasurer-approved late-capture refund's recovery row refunds; null for any other row. */
+export function lateCaptureIntentOfApprovalRefundRecoveryKey(key: string): string | null {
+  if (!key.startsWith(LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX)) return null;
+  const intent = key.slice(LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX.length);
+  return intent.length > 0 ? intent : null;
 }
 // The inverse of `buildLateCaptureRefundStripeKeyPrefix`, for the recovery
 // replay: the operation's own `paymentIntentId` is the payment's representative
@@ -456,12 +463,29 @@ export function organiserChildRefundReasonForKey(key: string) {
 }
 export { ORGANISER_CHILD_REFUND_KEY_PREFIX };
 
-// The organiser cancel's durable retry of a pre-#3653 group settlement refund
-// (F3, #1351): ONE operation for the whole group's plan. Here, not in
-// payment-recovery.ts, so the booking-ledger census (#3854) can find an
-// in-flight one without importing the Prisma client.
-export const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX = "group_settlement_refund_recovery_";
-
+// Group organiser-cancel settlement refund (F3, #1351): the organiser cancel's
+// durable retry of a pre-#3653 group settlement refund - ONE operation for the
+// whole group's plan, keyed on the settlement. Its `paymentId` is only an anchor
+// for the schema FK - the money belongs to the children in the settlement's
+// frozen `{childId: cents}` plan - so a reader of the row's payment must
+// recognise it by this key. Here, not in payment-recovery.ts, so a reader can
+// recognise one without importing the Prisma client.
+const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX = "group_settlement_refund_recovery_";
 export function buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId: string) {
   return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
+}
+export function isGroupSettlementRefundRecoveryKey(key: string) {
+  return key.startsWith(GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX);
+}
+/**
+ * #3372 (owner, 8 Oct 2026: "Separate club-wide line"): every group settlement
+ * refund row, as a `PaymentRecoveryOperation` where fragment, for the
+ * club-wide part of "Refunds owed" (`readRefundsAndCreditsOwed`).
+ */
+export const GROUP_SETTLEMENT_REFUND_RECOVERY_WHERE = {
+  idempotencyKey: { startsWith: GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX },
+} as const;
+/** The settlement a group settlement refund row replays. */
+export function groupSettlementIdForRefundRecoveryKey(key: string) {
+  return key.slice(GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length);
 }

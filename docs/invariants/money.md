@@ -633,7 +633,9 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   **A hand-back posts `BANK_REFUND`** when a task completes on the
   `local-allocation` route, keyed `handback:<taskId>`, naming the officer, by
   internet banking (#3529's wording decision, `INV-PAY-101`) — except on a
-  card payment, whose refund posts from its refund row.
+  card payment, whose refund posts from its refund row. A card refund closed
+  as paid another way has no refund row, so its close posts the line on its
+  own completed task (`INV-PAY-122`).
   `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
   writers and the real resolver.
 

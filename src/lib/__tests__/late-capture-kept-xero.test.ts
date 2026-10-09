@@ -116,6 +116,33 @@ describe("decideLateCapture (the one decision)", () => {
     );
   });
 
+  // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit").
+  it("MUTATION: an approved refund closed as paid another way is still refunded, but Xero owes the GROSS receipt", () => {
+    expect(
+      decideLateCapture({
+        taskStatus: "COMPLETED",
+        bookingStatus: "CANCELLED",
+        superseded: false,
+        capture,
+        refundClosedPaidAnotherWay: true,
+      }),
+    ).toEqual({ state: "refunded", recordCents: 24000 });
+    // Only an approval's close: an undecided task owes nothing yet.
+    expect(
+      decideLateCapture({ taskStatus: "OPEN", bookingStatus: "CANCELLED", superseded: false, capture, refundClosedPaidAnotherWay: true }),
+    ).toEqual({ state: "awaiting-decision", recordCents: 0 });
+    // And never a charge that was not taken.
+    expect(
+      decideLateCapture({
+        taskStatus: "COMPLETED",
+        bookingStatus: "CANCELLED",
+        superseded: false,
+        capture: { status: "FAILED", amountCents: 24000 },
+        refundClosedPaidAnotherWay: true,
+      }).recordCents,
+    ).toBe(0);
+  });
+
   it("records the GROSS capture, even one refunded since - the refund is its own note", () => {
     for (const status of ["PARTIALLY_REFUNDED", "REFUNDED"] as const) {
       expect(

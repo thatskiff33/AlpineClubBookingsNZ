@@ -52,6 +52,8 @@ export interface ResolvedRefundCreditNoteCoverage {
 export async function readResolvedRefundCreditNoteCoverage(
   paymentId: string,
   db: CoverageReader = prisma,
+  /** #3924 round 8: only these rows - one refund's own (`sumRefundCreditNoteCoverageOfRowsCents`). */
+  rowsWhere?: Prisma.XeroSyncOperationWhereInput,
 ): Promise<ResolvedRefundCreditNoteCoverage> {
   const rows = await db.xeroSyncOperation.findMany({
     where: {
@@ -64,6 +66,7 @@ export async function readResolvedRefundCreditNoteCoverage(
       // A legacy row with no recorded queue type is read too; its payload
       // says whether it was a refund or an account-credit note.
       OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
+      ...(rowsWhere ? { AND: [rowsWhere] } : {}),
     },
     orderBy: { createdAt: "asc" },
     select: { id: true, correlationKey: true, requestPayload: true, xeroObjectId: true },
@@ -124,6 +127,38 @@ export async function sumRefundCreditNoteCoverageCents(
   db: Prisma.TransactionClient = prisma,
 ): Promise<number> {
   return (await sumCoveredRefundCreditNoteCents(paymentId, db)) + resolved.coveredCents;
+}
+
+/**
+ * #3924 round 8 (money review, `INV-PAY-122`): THE SAME COVERAGE, ASKED OF ONE
+ * REFUND'S OWN NOTE ROWS - the refund-note creates `rowsWhere` selects on this
+ * payment (a "Paid another way" close's, `paidAnotherWayCloseNoteRowsWhere`).
+ * Counted exactly as `sumRefundCreditNoteCoverageCents` counts the payment: the
+ * active link of each note those rows raised, plus the recorded amount of a row
+ * resolved by hand whose note has no link. So what those notes cover here is
+ * exactly their share of the payment's coverage, never more and never less. A
+ * resolved row whose amount cannot be read covers nothing, as there.
+ */
+export async function sumRefundCreditNoteCoverageOfRowsCents(
+  paymentId: string,
+  rowsWhere: Prisma.XeroSyncOperationWhereInput,
+  db: CoverageReader = prisma,
+): Promise<number> {
+  const rows = await db.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      AND: [rowsWhere],
+    },
+    select: { xeroObjectId: true },
+  });
+  const noteIds = [...new Set((rows ?? []).flatMap((row) => (row.xeroObjectId ? [row.xeroObjectId] : [])))];
+  const linkedCents = await sumCoveredRefundCreditNoteCents(paymentId, db, noteIds);
+  const resolved = await readResolvedRefundCreditNoteCoverage(paymentId, db, rowsWhere);
+  return linkedCents + resolved.coveredCents;
 }
 
 /**

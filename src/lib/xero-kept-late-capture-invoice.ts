@@ -32,6 +32,14 @@
  * dismissal's, reopen's and approval's status-fenced claims write, so a keep, a
  * reopen and the worker serialise: a re-keep either finds a live row or, once
  * the worker has withdrawn it, queues a new one.
+ *
+ * ALSO THE RECEIPT OF A REFUND PAID ANOTHER WAY (#3924 round 6; owner, 8 Oct
+ * 2026: "Record receipt, then credit"; `INV-PAY-122`). An APPROVED refund of
+ * the capture that Stripe gave up on, closed as paid another way, leaves the
+ * charge in the Stripe account: the close queues this same receipt, on the same
+ * task, and its worker queues the close's bank-transfer refund note in the
+ * transaction that records the receipt's link - so the note exists exactly
+ * when the receipt does, and never runs before it.
  */
 import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
@@ -46,6 +54,8 @@ import {
   failXeroSyncOperation,
   sanitizeForJson,
   startXeroSyncOperation,
+  upsertXeroObjectLink,
+  type XeroObjectLinkInput,
 } from "@/lib/xero-sync";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -60,11 +70,16 @@ import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
+import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
+import {
+  KEPT_INVOICE_CREATE,
+  findLiveKeptReceiptRow,
+  readFailedKeptReceiptLinks,
+} from "@/lib/kept-late-capture-receipt-rows";
 import {
   KEPT_LATE_CAPTURE_INVOICE_ROLE,
   KEPT_LATE_CAPTURE_PAYMENT_ROLE,
   decideLateCapture,
-  keptLateCaptureInvoiceAsked,
 } from "@/lib/late-capture-kept-xero-rules";
 import {
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
@@ -88,14 +103,6 @@ function paymentKey(taskId: string) {
   return buildXeroIdempotencyKey("manual-refund-task", taskId, "kept-late-capture-payment", "v1");
 }
 
-const KEPT_INVOICE_CREATE = {
-  direction: "OUTBOUND",
-  entityType: "INVOICE",
-  operationType: "CREATE",
-  localModel: "ManualRefundTask",
-  queueType: XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
-} as const;
-
 /**
  * Lock the approval task's row `FOR UPDATE` inside the caller's transaction.
  * A LOCK, NEVER A READ: the values are read back through the model under it.
@@ -117,9 +124,11 @@ export function keptLateCaptureDocumentDate(capturedAt: Date, zone: ClubTimeZone
 /**
  * QUEUE IT, once per task, on the caller's transaction and under the task's
  * row lock: the dismissal inside its status-fenced claim, the repair tool in a
- * transaction of its own. Re-reads the task under the lock and queues nothing
- * unless it is DISMISSED, so a stale repair snapshot cannot queue a record for
- * a capture since reopened or refunded. Both writers hold the lock across
+ * transaction of its own, and (#3924 round 6) a paid-another-way close of the
+ * capture's approved refund, after writing its record. Re-reads the task under
+ * the lock and queues nothing unless it is DISMISSED, or COMPLETED with its
+ * refund closed as paid another way, so a stale repair snapshot cannot queue a
+ * record for a capture since reopened or refunded. Both writers hold the lock across
  * find-and-create, so the active-correlation index can never raise inside the
  * transaction (whose fallback re-read an aborted Postgres transaction could not
  * run - the hazard `lockSupplementaryInvoiceAnchor` documents).
@@ -132,8 +141,32 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
   /** The Xero date of the receipt: the club day of the capture. */
   capturedOn: string;
   createdByMemberId?: string | null;
+  /**
+   * #3924 round 7 (money M2): a row found FAILED before its invoice reached
+   * Xero - no invoice link, never resolved by hand - is put back to PENDING
+   * rather than taken as live, since nothing else retries it automatically.
+   * Only the paid-another-way close asks for this; a keep does not, and the
+   * repair tool offers the row's own retry instead
+   * (`addPaidAnotherWayReceiptFinding`).
+   *
+   * Round 8 (money review): never a row that may have reached Xero
+   * (`keptReceiptMayHaveReachedXero`: its Stripe payment is linked, or it
+   * attempted `createInvoices`). That one is left FAILED for an officer, who
+   * checks Xero before retrying it; the close's note then follows the retry.
+   */
+  requeueFailedUnsent?: boolean;
   store: Prisma.TransactionClient;
-}): Promise<{ queueOperationId: string | null; message: string }> {
+}): Promise<{
+  queueOperationId: string | null;
+  message: string;
+  changedByOfficer?: true;
+  /**
+   * #3924 round 9: the id is a FAILED row that may have reached Xero, left for
+   * an officer to check Xero and retry (`keptReceiptHeldForOfficer`) - not a
+   * queued one.
+   */
+  awaitingOfficerRetry?: true;
+}> {
   const db = params.store;
   if (!Number.isInteger(params.capturedCents) || params.capturedCents <= 0) {
     return { queueOperationId: null, message: "Nothing was captured, so no Xero invoice is needed." };
@@ -143,17 +176,70 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
     where: { id: params.manualRefundTaskId },
     select: { status: true },
   });
-  if (task?.status !== "DISMISSED") {
+  // Kept, or (#3924 round 6) approved and its card refund closed as paid
+  // another way: either way the charge is still in the Stripe account.
+  const receiptOwed =
+    task?.status === "DISMISSED" ||
+    (task?.status === "COMPLETED" &&
+      (await findLateCaptureRefundPaidAnotherWay(params.paymentIntentId, db)) !== null);
+  if (!receiptOwed) {
     return {
       queueOperationId: null,
       message: "The payment is no longer kept, so no Xero invoice was queued.",
     };
   }
-  const existing = await db.xeroSyncOperation.findMany({
-    where: { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId },
-    select: { id: true, queueType: true, status: true },
-  });
-  const live = existing.find((row) => keptLateCaptureInvoiceAsked([row]));
+  const live = await findLiveKeptReceiptRow(db, params.manualRefundTaskId);
+  if (live && params.requeueFailedUnsent && live.status === "FAILED" && live.manuallyResolvedAt === null) {
+    const { invoiceLinked, mayHaveReachedXero } = await readFailedKeptReceiptLinks(
+      db,
+      params.manualRefundTaskId,
+      live.requestPayload,
+    );
+    if (!invoiceLinked && mayHaveReachedXero) {
+      // #3924 round 9: the row is left FAILED, and the caller is told so - it
+      // is not queued, and its note waits for the officer's retry.
+      return {
+        queueOperationId: live.id,
+        awaitingOfficerRetry: true,
+        message:
+          "The Xero invoice for this payment failed after it may have reached Xero, so it is not run again automatically. Check Xero, then retry it from the Xero operations list.",
+      };
+    }
+    if (!invoiceLinked) {
+      // Status-guarded: only the FAILED row this read found goes back to run.
+      const requeued = await db.xeroSyncOperation.updateMany({
+        where: { id: live.id, status: "FAILED", manuallyResolvedAt: null },
+        data: { status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+      });
+      if (requeued.count === 0) {
+        // Round 8 (concurrency): an officer retried or resolved it after the
+        // read above - neither takes the task row. Answer what it is now.
+        const now = await db.xeroSyncOperation.findUnique({
+          where: { id: live.id },
+          select: { status: true, manuallyResolvedAt: true },
+        });
+        // Resolved by hand (or withdrawn): the receipt is the officer's now, as
+        // `readLateCaptureXeroReceipt` reads it, so the caller's plan - made
+        // before - no longer holds. The close refuses and is asked again.
+        if (!now || now.manuallyResolvedAt !== null || now.status === "CANCELLED") {
+          return {
+            queueOperationId: null,
+            changedByOfficer: true,
+            message:
+              "An officer resolved or withdrew this payment's Xero invoice while it was being queued again.",
+          };
+        }
+        return {
+          queueOperationId: live.id,
+          message: "The Xero invoice for this payment is already queued or sent.",
+        };
+      }
+      return {
+        queueOperationId: live.id,
+        message: "The failed Xero invoice for this payment was queued to run again.",
+      };
+    }
+  }
   if (live) {
     return {
       queueOperationId: live.id,
@@ -274,6 +360,63 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
 }
 
 /**
+ * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit"): THE ORDER
+ * OF THE TWO XERO STEPS of a late capture's refund closed as paid another way.
+ *
+ * FIRST THE RECEIPT'S LINK - what makes the receipt "recorded"
+ * (`readLateCaptureXeroReceipt`) - written under the task's row lock in a
+ * transaction of its own (`recordKeptLateCaptureReceiptLink`). Until it
+ * exists the close's bank cash is outside what any refund note may answer
+ * (`readPaidAnotherWayCash`), so no note can run before its receipt.
+ *
+ * THEN THE NOTE, in a second transaction under the same lock
+ * (`queueWaitingPaidAnotherWayNote`, #3924 round 7, concurrency C9): a failure
+ * there no longer rolls the link back with it. The link stands, the row is
+ * failed, and its retry - by an officer, or the repair tool's receipt finding -
+ * finds the invoice and its payment linked and runs only this step again.
+ *
+ * The close takes the same row lock BEFORE it reads whether the receipt is
+ * recorded (`closeCardRefundPaidAnotherWay`), so the two cannot miss each
+ * other: a close that committed before the link is found by the note step,
+ * and one that waited reads the receipt recorded and queues its note itself
+ * (its key then says `now`, which the note step leaves alone). The note step
+ * runs on every run of the row and queues a close's note at most once
+ * (`notePaidAnotherWayCloseOnReceipt`). No provider call is made under the
+ * lock; the zone is read before it (`INV-LOCK-004`).
+ */
+async function recordKeptLateCaptureReceiptLink(params: {
+  taskId: string;
+  receiptLink: XeroObjectLinkInput;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await lockKeptLateCaptureTask(tx, params.taskId);
+    await upsertXeroObjectLink(params.receiptLink, { store: tx });
+  });
+}
+
+/**
+ * Test seam (#3924 round 8): the worker's provider calls - Xero's client and
+ * metered call, the invoiced party's contact, the receipt's Stripe payment in
+ * Xero, and Stripe's charge day - so the PostgreSQL proof drives this worker,
+ * locks and all, without Xero or Stripe. Production passes nothing.
+ */
+export interface KeptLateCaptureProviderSeam {
+  getAuthenticatedXeroClient: typeof getAuthenticatedXeroClient;
+  callXeroApi: typeof callXeroApi;
+  findOrCreateXeroContactForInvoicedParty: typeof findOrCreateXeroContactForInvoicedParty;
+  createXeroPaymentForInvoice: typeof createXeroPaymentForInvoice;
+  readStripeCaptureDocumentDate: typeof readStripeCaptureDocumentDate;
+}
+
+const KEPT_LATE_CAPTURE_PROVIDERS: KeptLateCaptureProviderSeam = {
+  getAuthenticatedXeroClient,
+  callXeroApi,
+  findOrCreateXeroContactForInvoicedParty,
+  createXeroPaymentForInvoice,
+  readStripeCaptureDocumentDate,
+};
+
+/**
  * THE WORKER, from the outbox.
  *  1. If the task's invoice already exists (a retry, or an approval that sent
  *     a PARTIAL row back), only the missing Stripe payment is recorded, whatever
@@ -283,13 +426,18 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
  *     transaction, so a re-keep waiting on that lock then queues a new one.
  *  3. The invoice and its payment are sent, both dated the capture day.
  *  4. Any refund of the capture already taken is credited back by the ordinary
- *     refund note, now that Xero has the receipt.
+ *     refund note, now that Xero has the receipt - a refund paid another way by
+ *     its bank-transfer note, queued after the receipt's link (#3924 rounds 6
+ *     and 7), on every run until it is queued.
  */
-export async function createXeroKeptLateCaptureInvoice(params: {
-  syncOperationId: string;
-  createdByMemberId?: string;
-  repairExistingLink?: boolean;
-}): Promise<string | null> {
+export async function createXeroKeptLateCaptureInvoice(
+  params: {
+    syncOperationId: string;
+    createdByMemberId?: string;
+    repairExistingLink?: boolean;
+  },
+  providers: KeptLateCaptureProviderSeam = KEPT_LATE_CAPTURE_PROVIDERS,
+): Promise<string | null> {
   const { syncOperationId } = params;
   const row = await prisma.xeroSyncOperation.findUnique({
     where: { id: syncOperationId },
@@ -327,8 +475,11 @@ export async function createXeroKeptLateCaptureInvoice(params: {
         bookingStatus: "CANCELLED",
         superseded: false,
         capture,
+        refundClosedPaidAnotherWay:
+          task?.status === "COMPLETED" &&
+          (await findLateCaptureRefundPaidAnotherWay(paymentIntentId, tx)) !== null,
       });
-      if (decision.state === "kept" && decision.recordCents > 0) return null;
+      if (decision.recordCents > 0) return null;
       const reason = `The kept payment's task is ${task?.status ?? "missing"}, not kept, so no Xero invoice was raised.`;
       await completeXeroSyncOperation(
         syncOperationId,
@@ -357,7 +508,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       // raise day - stands only when Stripe cannot say.
       let storedPayload = asRecord(row?.requestPayload) ?? {};
       if (!queued.capturedOnFromStripe) {
-        const chargedOn = await readStripeCaptureDocumentDate(
+        const chargedOn = await providers.readStripeCaptureDocumentDate(
           paymentIntentId,
           await readClubTimeZoneOutsideRequest(),
         );
@@ -370,8 +521,10 @@ export async function createXeroKeptLateCaptureInvoice(params: {
           });
         }
       }
-      const { xero, tenantId } = await getAuthenticatedXeroClient();
-      const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
+      const { xero, tenantId } = await providers.getAuthenticatedXeroClient();
+      // The seam's metered call, under the one name the Xero wrapper audit reads.
+      const { callXeroApi } = providers;
+      const contactId = await providers.findOrCreateXeroContactForInvoicedParty(booking, {
         createdByMemberId: params.createdByMemberId,
         repairExistingLink: params.repairExistingLink,
       });
@@ -448,7 +601,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
     let paymentError: unknown = null;
     if (!(await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE))) {
       try {
-        paymentId = await createXeroPaymentForInvoice({
+        paymentId = await providers.createXeroPaymentForInvoice({
           localModel: "ManualRefundTask",
           localId: taskId,
           invoiceId: invoiceId!,
@@ -469,6 +622,25 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       }
     }
 
+    const receiptLink: XeroObjectLinkInput = {
+      localModel: "ManualRefundTask",
+      localId: taskId,
+      xeroObjectType: "INVOICE",
+      xeroObjectId: invoiceId!,
+      xeroObjectNumber: invoiceNumber,
+      xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
+      role: KEPT_LATE_CAPTURE_INVOICE_ROLE,
+      metadata: { amountCents: capturedCents, paymentIntentId },
+    };
+    if (!invoiceLink) {
+      await recordKeptLateCaptureReceiptLink({ taskId, receiptLink });
+    }
+    // Round 7 (C9): after the link, on its own; a failure fails this row with
+    // the link standing, and the row's retry runs only this again.
+    // Imported here, not at the top: that module takes this one's task lock.
+    const { queueWaitingPaidAnotherWayNote } = await import("@/lib/paid-another-way-receipt-note");
+    await queueWaitingPaidAnotherWayNote(paymentIntentId);
+
     await completeXeroSyncOperation(syncOperationId, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: { invoice: invoiceBody, paymentId, paymentError },
@@ -476,18 +648,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       xeroObjectId: invoiceId,
       xeroObjectNumber: invoiceNumber,
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
-      extraLinks: [
-        {
-          localModel: "ManualRefundTask",
-          localId: taskId,
-          xeroObjectType: "INVOICE",
-          xeroObjectId: invoiceId!,
-          xeroObjectNumber: invoiceNumber,
-          xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
-          role: KEPT_LATE_CAPTURE_INVOICE_ROLE,
-          metadata: { amountCents: capturedCents, paymentIntentId },
-        },
-      ],
+      extraLinks: [receiptLink],
     });
 
     // Imported here, not at the top: that module reaches the outbox, which

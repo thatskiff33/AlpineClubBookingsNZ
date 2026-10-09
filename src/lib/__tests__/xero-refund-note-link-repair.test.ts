@@ -198,14 +198,18 @@ const fakePrisma = vi.hoisted(() => {
     },
     manualRefundTask: {
       // `findLateCapturePaymentIntents`' read, and the receipt reader's.
+      // #3924 round 4: the cash evidence's paid-another-way read (by key
+      // prefix) finds none in these fixtures.
       findMany: async (args: {
         where: {
+          occurrenceKey?: unknown;
           OR: Array<{
             lateCaptureApprovalIntentId?: { in: string[] };
             reason?: { in: string[] };
           }>;
         };
       }) =>
+        args.where.occurrenceKey !== undefined ? [] :
         state.manualRefundTasks.filter((row) =>
           args.where.OR.some(
             (branch) =>

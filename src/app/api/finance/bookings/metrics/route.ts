@@ -120,6 +120,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const metrics = await getFinanceBookingMetrics({
+      // #3372: one request, one window set - so it carries the owed figures.
+      includeRefundsAndCreditsOwed: true,
       ...(parsed.data.realizedFrom && parsed.data.realizedTo
         ? {
             realized: {

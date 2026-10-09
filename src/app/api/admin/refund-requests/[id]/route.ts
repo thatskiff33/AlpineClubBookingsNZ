@@ -26,6 +26,7 @@ import {
 import { getRemainingRefundableCentsNetOf } from "@/lib/booking-payment-state";
 import { refundRequestHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
+  PartialRefundError,
   planStripeRefundAllocation,
   refundPaymentTransactions,
 } from "@/lib/payment-transactions";
@@ -314,22 +315,21 @@ export async function PUT(
         { err, refundRequestId: id },
         "Stripe refund failed for approved appeal - enqueueing durable recovery"
       );
-      // Persist the SAME frozen slices the inline attempt executed (#1510), not
-      // a remainder or a re-derivation: the recovery cron replays the full plan
-      // under the identical `refund_request_<id>_<txn>_<amount>` Stripe keys, so
-      // a slice the inline path already completed is replayed by Stripe (not
-      // repeated) and the PaymentRefund ledger dedupes on refund id, while an
-      // uncompleted slice moves the remaining money. This is the #1349 booking-
-      // cancellation guarantee applied to refund appeals; it supersedes the
-      // #1097 remainder heuristic, which could still re-derive a shifted plan.
+      // Persist the frozen slices the inline attempt did NOT refund and record
+      // (#1510; #3924 F1): the cron replays their keys, Refunds owed reads only them.
+      // Any failure after a Stripe call is a `PartialRefundError`, an unrecorded
+      // slice included (#3924 C2); any other came before one, so all are unsent.
+      const unsentPlan =
+        err instanceof PartialRefundError ? refundPlan.slice(err.refunds.length) : refundPlan;
+      const unsentCents = unsentPlan.reduce((sum, slice) => sum + slice.amountCents, 0);
       try {
-        if (plannedAmountCents > 0) {
+        if (unsentCents > 0) {
           await enqueueRefundRequestRefundRecovery({
             bookingId: booking.id,
             paymentId: payment.id,
             refundRequestId: id,
-            amountCents: plannedAmountCents,
-            allocationPlan: refundPlan,
+            amountCents: unsentCents,
+            allocationPlan: unsentPlan,
           });
         }
       } catch (enqueueErr) {

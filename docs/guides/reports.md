@@ -97,16 +97,35 @@ bookings do not silently become revenue.
 
 **Net Collected** is different: it is the money the club kept on the
 overlapping bookings — captured `Payment.amountCents` less refunds and
-credits, plus account credit a cancellation kept, less refunds still owed back
-on cancelled bookings — and it is not allocated to individual nights.
+credits, plus account credit a cancellation kept, less money still owed back —
+and it is not allocated to individual nights. Money owed back comes off
+straight away, on any booking: a refund owed by hand on an open hand-back task
+(a cancellation's, an edit's that lowered the price, or an approved refund
+request's), a card refund Stripe has not yet paid, and a late card charge
+waiting for the treasurer to refund or keep it.
 It does not use the status list above. It counts every overlapping booking in
 the chosen lodge whatever its status, so a cancelled booking counts what the
-club kept of what was paid on it: money not refunded, credited or owed back by
-hand, plus account credit the cancellation kept (nothing at all if it was
+club kept of what was paid on it: money not refunded, credited or owed back,
+less a bank transfer that arrived after the cancel and was credited to the
+member, plus account credit the cancellation kept (nothing at all if it was
 cancelled before anything was paid), and it leaves deleted bookings out whichever
 **Deleted** view is chosen. All four Net Collected figures (this card, the
 dashboard's, the Payments page's and the Finance dashboard's Net
 Collected) use that same rule for which bookings count.
+
+Beside it, **Refunds owed** and **Credits owed** say what the club still owes
+back, **as at today and across the club**: neither the dates, the lodge nor
+the **Deleted** view narrows them. **Refunds owed** is every refund owed and
+not yet paid (each open hand-back task, each card refund Stripe has not yet
+paid, each late card charge waiting for the treasurer, and one club-wide amount
+for group cancellation card refunds from before #3653 that belongs to no
+booking); **Credits owed** is
+every member's account credit not yet used (the total of their credit
+balances). Each stays until it is paid, kept or the credit is spent. Each
+amount owed comes off Net Collected only for its own booking, so one outside
+the chosen dates or lodge is in Refunds owed and not in the Net Collected
+beside it. Both are in the CSV, labelled "as at today".
+
 A captured later addition is already inside that payment amount and is never
 added again. **Outstanding Additions** remains the booking-level amount still
 owing after an upward change. Do not subtract it from selected stay-night

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   retryXeroWriteWithContactRepair: vi.fn(),
   manualRefundTaskFindUnique: vi.fn(),
   readStripeCaptureDocumentDate: vi.fn(),
+  queueWaitingPaidAnotherWayNote: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -55,6 +56,12 @@ vi.mock("@/lib/logger", () => ({
 // #3635 round-3 R2: the Stripe charge day of a kept late capture.
 vi.mock("@/lib/stripe-capture-date", () => ({
   readStripeCaptureDocumentDate: mocks.readStripeCaptureDocumentDate,
+}));
+
+// #3924 round 8: the note step a paid-another-way close waits on.
+vi.mock("@/lib/paid-another-way-receipt-note", () => ({
+  // No waiting close unless a test says so (the mocks reset to undefined).
+  queueWaitingPaidAnotherWayNote: async (...a: unknown[]) => (await mocks.queueWaitingPaidAnotherWayNote(...a)) ?? null,
 }));
 
 vi.mock("@/lib/xero-links", () => ({
@@ -925,5 +932,65 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     expect(payloads).toHaveLength(1);
     expect(payloads[0].invoices[0].date).not.toBe("2026-06-10");
     expect(mocks.readStripeCaptureDocumentDate).not.toHaveBeenCalled();
+  });
+
+  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): a change
+  // invoice released for a late capture may be the receipt a paid-another-way
+  // close's note waits for.
+  describe("the note a paid-another-way close waits for", () => {
+    const sendReleasedChange = async (paymentIntentId: string | null) => {
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "bk1",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: false,
+          paymentIntentId,
+        },
+      });
+      mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi: {} }, tenantId: "tenant_1" });
+      mocks.retryXeroWriteWithContactRepair.mockResolvedValue({
+        body: { invoices: [{ invoiceID: "inv_supp", invoiceNumber: "INV-0042" }] },
+      });
+      return createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        recordPayment: false,
+        syncOperationId: "op_q",
+      });
+    };
+
+    it("MUTATION: runs the note step for the capture once the invoice's row has completed", async () => {
+      mocks.queueWaitingPaidAnotherWayNote.mockResolvedValue("op_note");
+      await expect(sendReleasedChange("pi_late")).resolves.toBe("inv_supp");
+      expect(mocks.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_late");
+      expect(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.queueWaitingPaidAnotherWayNote.mock.invocationCallOrder[0],
+      );
+      // #3924 round 9: on the queued row itself - the row that names the
+      // capture, which an officer's retry now sends back through the outbox -
+      // so the capture's receipt (`readLateCaptureXeroReceipt`) reads the invoice.
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_q",
+        expect.objectContaining({ xeroObjectId: "inv_supp" }),
+      );
+    });
+
+    it("MUTATION: a failed note step never fails the invoice, which is in Xero; it is logged for the repair tool and the nightly retry", async () => {
+      mocks.queueWaitingPaidAnotherWayNote.mockRejectedValue(new Error("database blip"));
+      await expect(sendReleasedChange("pi_late")).resolves.toBe("inv_supp");
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("no note step for a change invoice that records no late capture", async () => {
+      await sendReleasedChange(null);
+      expect(mocks.queueWaitingPaidAnotherWayNote).not.toHaveBeenCalled();
+    });
   });
 });

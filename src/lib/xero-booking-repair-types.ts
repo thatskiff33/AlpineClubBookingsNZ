@@ -4,6 +4,8 @@
 // subset. Import xero source modules directly (no @/lib/xero facade, #1208).
 import { Prisma } from "@prisma/client";
 import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
+import type { PaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",
@@ -22,6 +24,18 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // refunded; the app raises no note for it, so an officer records the refund
   // by hand too. Report-only, never actionable.
   "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
+  // #3924 round 7 (money M2, `INV-PAY-122`): a late capture whose approved
+  // refund was closed as paid another way, and whose Xero receipt - which the
+  // close's bank-transfer note waits for - failed or was never queued.
+  "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT",
+  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): that
+  // close's receipt is in Xero - a change's invoice sent after the close, or
+  // a receipt row that failed after its link - and its note was never queued.
+  "PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED",
+  // #3924 round 9: that close's receipt - a change's invoice - was resolved by
+  // hand in Xero after the close, so the app raises no note for it; an officer
+  // records the close's bank-transfer refund by hand too. Report-only.
+  "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -64,6 +78,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
   // #3635: the invoice, paid from Stripe, recording a kept late capture.
   "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+  // #3924 round 8: a paid-another-way close's note, once its receipt is in Xero.
+  "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE",
   // #3548: operator-applied only (`--apply-action`), through the one settle.
   "SETTLE_REFUND_CREDIT_NOTE",
   // #3836: the applied-credit allocation operation, as booking creation queues it.
@@ -469,7 +485,31 @@ export interface BookingClassificationContext {
    */
   lateCaptureTasks: Map<
     string,
-    { taskId: string; status: string; operations: XeroOperationRecord[] }
+    {
+      taskId: string;
+      status: string;
+      operations: XeroOperationRecord[];
+      /**
+       * #3924 round 7 (money M2): how the close of this APPROVED capture's card
+       * refund as paid another way is recorded in Xero, and when the task was
+       * raised (the capture day its receipt is dated from). Absent when it was
+       * never closed so. Set after the load (`withPaidAnotherWayCloses`).
+       */
+      paidAnotherWayClose?: {
+        xeroRefundNote: PaidAnotherWayXeroNote;
+        raisedAt: Date;
+        /**
+         * #3924 round 8: for a close whose note waits for the receipt, where
+         * the receipt and the note stand (`readPaidAnotherWayReceiptState`).
+         */
+        receiptState?: PaidAnotherWayReceiptState;
+        /**
+         * #3924 round 9: the close's amount in the club's format, for the
+         * report-only finding that asks an officer to record it by hand.
+         */
+        amountLabel?: string;
+      };
+    }
   >;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm

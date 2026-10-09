@@ -1,3 +1,4 @@
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import type { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { z } from "zod";
@@ -19,6 +20,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
   summarizeNetCollectedWithLedgerGap,
 } from "@/lib/additional-ledger-gap";
 import { getPaymentNetOfRefundsCents } from "@/lib/booking-payment-state";
@@ -156,7 +158,8 @@ type PaymentCandidate = {
   additionalPaymentStatus: string | null;
   updatedAt: Date;
   transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
-  refunds: Array<{ updatedAt: Date }>;
+  refunds: Array<{ updatedAt: Date } & NetCollectedPaymentRow["refunds"][number]>; // activity; card-refund net-out
+  recoveryOperations: NetCollectedPaymentRow["recoveryOperations"];
   _count: NetCollectedPaymentRow["_count"]; // #3372: Net Collected's capture evidence
   booking: {
     id: string;
@@ -479,7 +482,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         transactions: {
           select: { updatedAt: true, kind: true, status: true, amountCents: true },
         },
-        refunds: { select: { updatedAt: true } },
+        // #3372 (7 Oct 2026): card refunds not yet paid, and the refunds that net them.
+        recoveryOperations: netCollectedCardRefundSelect.recoveryOperations,
+        refunds: { select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select } },
         booking: {
           select: {
             id: true,
@@ -512,7 +517,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     });
 
     const candidatePaymentIds = candidates.map((payment) => payment.id);
-    const [activityOperations, invoiceEvidence] = await Promise.all([
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, club-wide as at today.
+    const [activityOperations, invoiceEvidence, owed] = await Promise.all([
       candidatePaymentIds.length
         ? prisma.xeroSyncOperation.findMany({
             where: {
@@ -532,6 +538,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
       // #3467: "is there an invoice" is the one evidence rule, read in its set
       // form — the payment's stored id, else an active PRIMARY_INVOICE link.
       readBookingInvoiceEvidenceForPayments(candidates),
+      readRefundsAndCreditsOwed(),
     ]);
     const activityByRecord = buildXeroActivityByRecord(activityOperations);
 
@@ -663,18 +670,15 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    // #3372: "Net Collected" is net of refunds and credits over captured
-    // payments, in the one Net Collected booking scope (owner decision A) -
-    // both applied by `summarizeCollectedCash`, as on the dashboard and
-    // Reports. It was "Total Revenue": gross, pending and failed included,
-    // cancelled bookings left out (#773). `refundedCents` is every matched
-    // row, as the "Refunded / Credited" hint says; the tiles are not a
-    // subtraction of one another. The ledger-gap check is Reports' (#2408),
-    // over exactly the payments the tile counts.
-    const { collected, ledgerGap } =
-      summarizeNetCollectedWithLedgerGap(filteredCandidates);
+    // #3372: "Net Collected" (once gross "Total Revenue", #773) is net over
+    // captured payments in the one booking scope (owner decision A), by
+    // `summarizeCollectedCash` as on the dashboard and Reports. `refundedCents`
+    // is every matched row; the tiles are not a subtraction of one another.
+    // The ledger-gap check is Reports' (#2408), over the payments the tile counts.
+    const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(filteredCandidates);
     const summary = {
       netCollectedCents: collected.netCollectedCents,
+      ...owed, // refundsOwedCents, creditsOwedCents
       refundedCents: sumRefundedAndCreditedCents(filteredCandidates),
       count: filteredCandidates.length,
       additionalLedgerGapCents: ledgerGap.additionalLedgerGapCents,

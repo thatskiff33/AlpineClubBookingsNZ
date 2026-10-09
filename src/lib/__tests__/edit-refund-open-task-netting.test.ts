@@ -79,6 +79,7 @@ describe("the money already promised back by hand", () => {
         OR: [
           { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
           { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+          { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
         ],
       },
       _sum: { amountCents: true },

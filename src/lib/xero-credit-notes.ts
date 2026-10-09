@@ -37,6 +37,7 @@ import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import { readPaidAnotherWayCloseShare } from "@/lib/card-refund-paid-another-way-cash";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -116,6 +117,19 @@ export interface CreateXeroRefundCreditNoteOptions
   reviewTaskId?: string;
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
+  /**
+   * #3924 round 7 (`INV-PAY-122`): the "Paid another way" close this note
+   * answers - one of several notes on its payment whatever its source, and
+   * never the payment's one refund-note pointer.
+   */
+  paidAnotherWayTaskId?: string;
+  /**
+   * #3924 round 7 (money M5): the invoice this note credits, named by the
+   * caller - a paid-another-way close of a late capture's refund names that
+   * capture's receipt, without `paymentIntentId` (which would count this bank
+   * note as the capture's card refund note).
+   */
+  creditsInvoiceId?: string;
   /**
    * #3827 (D-3813-8, `INV-PAY-118`): this is that refund request's OWN note,
    * raised when its task is marked paid back. Keyed by the request, linked
@@ -217,8 +231,13 @@ export async function createXeroCreditNote(
     // since the payment's own may be the cleared pre-cancel one. The note is
     // unallocated either way (it settles by its own refund payment), so the id
     // records which document it answers.
+    // #3924 round 7: a caller that named the invoice it credits is taken at
+    // its word - a paid-another-way close of a late capture's refund names
+    // that capture's receipt, which the payment-wide default could miss.
     originalInvoiceId =
-      (await findKeptLateCaptureInvoiceIdForPayment(paymentId)) ?? payment.xeroInvoiceId;
+      options?.creditsInvoiceId ??
+      (await findKeptLateCaptureInvoiceIdForPayment(paymentId)) ??
+      payment.xeroInvoiceId;
   }
   if (!originalInvoiceId) {
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
@@ -230,7 +249,11 @@ export async function createXeroCreditNote(
     refundRequestId === null &&
     typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
   // #3880: a review's non-Stripe delta note is one of several (`isPerDeltaRefundNoteLink`).
-  const perRefundNote = isDeltaMode && payment.source !== PaymentSource.STRIPE && Boolean(options?.reviewTaskId);
+  // #3924 round 7: so is a paid-another-way close's note (`paidAnotherWayTaskId`).
+  const perRefundNote =
+    isDeltaMode &&
+    payment.source !== PaymentSource.STRIPE &&
+    (Boolean(options?.reviewTaskId) || Boolean(options?.paidAnotherWayTaskId));
   const { refundMethod, refundMethodRecorded } = resolveRefundNoteMethod(
     options?.refundMethod,
     payment.source,
@@ -301,6 +324,8 @@ export async function createXeroCreditNote(
   // and succeeded PaymentRefund rows are never deleted).
   let effectiveRefundAmountCents = refundAmountCents;
   let effectiveWatermarkCents: number | null = null;
+  // #3924 round 9: what a close's OWN notes already cover, which keys its note.
+  let closeCoveredCents: number | null = null;
 
   if (isDeltaMode) {
     // #3880: no other run on this payment between its coverage read and its record.
@@ -335,30 +360,53 @@ export async function createXeroCreditNote(
       );
     }
     const coveredCents = await sumRefundCreditNoteCoverageCents(paymentId, resolvedCoverage);
-    // #3635 round-3 R1: the cash a note may answer, the figure the enqueue
-    // capped against, never refunds of late captures Xero never received.
-    const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash({
-      id: payment.id,
-      bookingId: payment.bookingId,
-      refundedAmountCents: payment.refundedAmountCents,
-    });
-    const uncoveredCents = Math.max(
-      0,
-      eligibleCashCents - coveredCents
-    );
+    const paidAnotherWayTaskId = options?.paidAnotherWayTaskId ?? null;
+    let uncoveredCents: number;
+    let evidenceLog: Record<string, unknown>;
+    if (paidAnotherWayTaskId !== null) {
+      // #3924 round 8 (money review, `INV-PAY-122`): a "Paid another way"
+      // close's note is sized by its record - what it paid back less what its
+      // OWN notes cover (`readPaidAnotherWayCloseShare`), the figure the
+      // enqueue used - never by the payment-wide gap, which other refunds'
+      // notes can shrink or empty.
+      const share = await readPaidAnotherWayCloseShare(prisma, paymentId, paidAnotherWayTaskId);
+      if (!share) {
+        throw new Error(
+          `Refusing to create a paid-another-way Xero refund credit note for payment ${paymentId}: its close ${paidAnotherWayTaskId} is not on this payment`
+        );
+      }
+      uncoveredCents = share.uncoveredCents;
+      closeCoveredCents = share.coveredCents;
+      evidenceLog = { paidAnotherWayTaskId, closeAmountCents: share.amountCents, closeCoveredCents: share.coveredCents };
+    } else {
+      // #3635 round-3 R1: the cash a note may answer, the figure the enqueue
+      // capped against, never refunds of late captures Xero never received.
+      const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash({
+        id: payment.id,
+        bookingId: payment.bookingId,
+        refundedAmountCents: payment.refundedAmountCents,
+      });
+      uncoveredCents = Math.max(0, eligibleCashCents - coveredCents);
+      evidenceLog = { cashRefundCents: evidence.cashRefundCents, cashEvidenceSource: evidence.source };
+    }
 
     if (uncoveredCents <= 0) {
       // Nothing uncovered at execution time: the enqueue-time delta was
       // already settled by other notes (or the request raced a competing
       // note). Close against the covering link — by watermark when one
       // matches, else the newest active note.
+      // #3924 round 8: never for a close's note. What covers a close is its
+      // own notes only, and another note's link is not one of them; its row
+      // completes as covered, raising nothing.
       const coveringLink =
-        activeLinks.find((link) => {
-          const linkWatermark = readLinkWatermarkCents(link.metadata);
-          return linkWatermark !== null && linkWatermark >= watermarkCents;
-        }) ??
-        activeLinks[0] ??
-        null;
+        paidAnotherWayTaskId !== null
+          ? null
+          : (activeLinks.find((link) => {
+              const linkWatermark = readLinkWatermarkCents(link.metadata);
+              return linkWatermark !== null && linkWatermark >= watermarkCents;
+            }) ??
+            activeLinks[0] ??
+            null);
       if (coveringLink) {
         existingCreditNoteId = coveringLink.xeroObjectId;
         existingCreditNoteNumber = coveringLink.xeroObjectNumber ?? null;
@@ -372,8 +420,7 @@ export async function createXeroCreditNote(
             paymentId,
             refundAmountCents,
             coveredCents,
-            cashRefundCents: evidence.cashRefundCents,
-            cashEvidenceSource: evidence.source,
+            ...evidenceLog,
           },
           "No uncovered provider-backed Stripe cash refund at execution time; completing without creating a Xero refund credit note"
         );
@@ -382,8 +429,7 @@ export async function createXeroCreditNote(
             responsePayload: {
               skippedNothingUncovered: true,
               coveredCents,
-              cashRefundCents: evidence.cashRefundCents,
-              cashEvidenceSource: evidence.source,
+              ...evidenceLog,
             },
           });
         }
@@ -394,7 +440,9 @@ export async function createXeroCreditNote(
       // requested), and key the note by the EXECUTION-TIME watermark so a
       // replay under unchanged state mints the identical Xero idempotency
       // key, while changed state produces a consistent new intent.
-      effectiveRefundAmountCents = Math.min(refundAmountCents, uncoveredCents);
+      // #3924 round 8: a close's note is exactly its own uncovered share.
+      effectiveRefundAmountCents =
+        paidAnotherWayTaskId !== null ? uncoveredCents : Math.min(refundAmountCents, uncoveredCents);
       effectiveWatermarkCents = coveredCents + effectiveRefundAmountCents;
     }
   } else if (refundRequestId !== null) {
@@ -428,6 +476,21 @@ export async function createXeroCreditNote(
 
   const creditNoteIdempotencyKey = refundRequestId !== null
     ? refundRequestCreditNoteKey(paymentId, refundRequestId)
+    : isDeltaMode && options?.paidAnotherWayTaskId && closeCoveredCents !== null
+    ? // #3924 rounds 8 and 9: a close's note is its own document in Xero, keyed
+      // on the close and what ITS OWN notes already cover - never the
+      // payment-wide watermark, which another refund's note landing between a
+      // crash and its retry would move, so the retry would mint a second note
+      // for the same close. Replayed under any other note, the key is the same.
+      buildXeroIdempotencyKey(
+        "payment",
+        paymentId,
+        "refund-credit-note",
+        "paid-another-way",
+        options.paidAnotherWayTaskId,
+        closeCoveredCents,
+        "v3"
+      )
     : isDeltaMode
     ? buildXeroIdempotencyKey(
         "payment",
@@ -453,6 +516,10 @@ export async function createXeroCreditNote(
     // a retry or a repair of this row keeps it a request's own note.
     ...(refundRequestId !== null ? { refundRequestId } : {}),
     ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
+    // #3924 round 7: the close and the invoice it named ride the row, so a
+    // retry credits the same document and the close's note stays findable.
+    ...(options?.paidAnotherWayTaskId ? { paidAnotherWayTaskId: options.paidAnotherWayTaskId } : {}),
+    ...(options?.creditsInvoiceId ? { creditsInvoiceId: options.creditsInvoiceId } : {}),
     // #3935: the officer's cash answer rides the row, so a retry says the same.
     ...(noteWording ? { noteWording } : {}),
     // #3880 F2: a delta run's watermark rides its row, so an operator retry of

@@ -16,6 +16,11 @@ import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import type { Prisma } from "@prisma/client";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
+import { paidAnotherWayCloseXeroNote } from "@/lib/manual-refund-task-settlement-rules";
+import { paidAnotherWayCloseNoteRowsWhere } from "@/lib/card-refund-paid-another-way-cash";
 
 /**
  * #1350 / #3639 / #3635: the Xero correction that follows a refund of a late
@@ -232,4 +237,60 @@ export async function finishApprovedLateCaptureRefundAfterReplay(operation: {
     approvedByMemberId: task?.completedByMemberId ?? null,
     manualRefundTaskId: task?.id ?? null,
   });
+}
+
+/**
+ * #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit";
+ * `INV-PAY-122`): THE SECOND STEP for a late capture whose approved refund
+ * Stripe gave up on and the treasurer closed as paid another way. The close
+ * queued the capture's receipt; this queues the close's bank-transfer refund
+ * note against it (`INV-PAY-101`), for exactly the amount paid back, keyed on
+ * the close's record (`paidAnotherWayTaskId`), dated the day it closed, and
+ * naming the receipt's invoice (`creditsInvoiceId`, round 7, money M5) - never
+ * its `paymentIntentId`, which would count it as the capture's card note.
+ *
+ * Run ONLY once the receipt is in Xero, under the approval task's row lock
+ * (`queueWaitingPaidAnotherWayNote`): by the receipt's worker once its link is
+ * written, or (round 8) by a change's supplementary invoice for the capture
+ * once it is sent. Until then the close's bank cash is outside what any refund
+ * note may answer (`readPaidAnotherWayCash`), so the note cannot be sized
+ * earlier by anyone.
+ *
+ * Only a close whose key says its note waits for the receipt
+ * (`after-receipt`): one that queued its note itself, or raises none, is left
+ * alone. AT MOST ONCE (round 7, C9): the worker runs this on every run of the
+ * receipt's row, so a note row already asked for this record - in any state
+ * but withdrawn; a failed one is retried as its own row - is returned, never a
+ * second. Returns the queued row's id, or null when none is. Throws: the
+ * worker then fails its row with the link standing, and the row's retry runs
+ * this again.
+ */
+export async function notePaidAnotherWayCloseOnReceipt(params: {
+  paymentIntentId: string;
+  /** The receipt's Xero invoice, which the note credits. */
+  receiptInvoiceId: string;
+  clubZone: ClubTimeZone;
+  store: Prisma.TransactionClient;
+}): Promise<string | null> {
+  const close = await findLateCaptureRefundPaidAnotherWay(params.paymentIntentId, params.store);
+  if (!close || paidAnotherWayCloseXeroNote(close) !== "after-receipt" || close.paymentId === null) return null;
+  const amountCents = Math.max(0, close.amountCents ?? 0);
+  if (amountCents === 0) return null;
+  // Round 8 (`INV-SSOT`): the close's rows, found the one way they are.
+  const asked = await params.store.xeroSyncOperation.findFirst({
+    where: { ...paidAnotherWayCloseNoteRowsWhere(close.paymentId, close.id), status: { not: "CANCELLED" } },
+    select: { id: true },
+  });
+  if (asked) return asked.id;
+  const queued = await enqueueXeroRefundCreditNoteOperation(close.paymentId, amountCents, {
+    refundMethod: "internet-banking",
+    paidAnotherWayTaskId: close.id,
+    creditsInvoiceId: params.receiptInvoiceId,
+    ...(close.completedAt
+      ? { documentDate: xeroDocumentDateFromInstant(close.completedAt, params.clubZone) }
+      : {}),
+    ...(close.completedByMemberId ? { createdByMemberId: close.completedByMemberId } : {}),
+    store: params.store,
+  });
+  return queued.queueOperationId;
 }

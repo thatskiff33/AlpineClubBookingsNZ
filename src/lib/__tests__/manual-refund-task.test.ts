@@ -274,7 +274,12 @@ const tx = {
     findMany: (...a: unknown[]) => mocks.manualRefundTaskFindMany(...a),
   },
   // #3835: what those siblings sent back to the card.
-  paymentRecoveryOperation: { aggregate: (...a: unknown[]) => mocks.paymentRecoveryOperationAggregate(...a) },
+  paymentRecoveryOperation: {
+    aggregate: (...a: unknown[]) => mocks.paymentRecoveryOperationAggregate(...a),
+    // #3924 round 4 (M7): the siblings' refund debts, read row by row so a
+    // paid-another-way close for less counts only what it paid back.
+    findMany: vi.fn().mockResolvedValue([]),
+  },
   // #3032: the anchor-taken check (owner decision D-3032-1) reads this inside
   // the same transaction, before the claim.
   memberCredit: {

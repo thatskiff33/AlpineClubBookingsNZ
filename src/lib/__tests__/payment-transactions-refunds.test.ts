@@ -780,6 +780,44 @@ describe("multi-transaction refund allocation (#1097)", () => {
     expect(totalRecordedCents).toBe(6000);
   });
 
+  it("#3924 round 4 (C2): a slice Stripe refunded but that could not be recorded is a partial failure carrying only the slices before it", async () => {
+    const { store, refunds } = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce(stripeRefund("re_slice_a", 3000, "pi_2", "ch_2"))
+      .mockResolvedValueOnce(stripeRefund("re_slice_b", 3000, "pi_1", "ch_1"));
+    const recordingFault = new Error("database connection lost");
+    const createMany = store.paymentRefund.createMany as ReturnType<typeof vi.fn>;
+    const recordOnce = createMany.getMockImplementation()!;
+    createMany.mockImplementationOnce(recordOnce).mockRejectedValueOnce(recordingFault);
+
+    let thrown: unknown;
+    try {
+      await refundPaymentTransactions({
+        format: CLUB_FORMAT_TEST,
+        paymentId: "payment_1",
+        amountCents: 6000,
+        allocation: [
+          { paymentTransactionId: "txn_2", amountCents: 3000 },
+          { paymentTransactionId: "txn_1", amountCents: 3000 },
+        ],
+        idempotencyKeyPrefix: "refund_request_rq2",
+        store: store as any,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    // Not the raw fault: a caller would then re-queue the whole plan.
+    expect(thrown).toBeInstanceOf(PartialRefundError);
+    const partial = thrown as PartialRefundError;
+    expect(partial.cause).toBe(recordingFault);
+    // Only the first slice was refunded AND recorded; the second goes to the
+    // recovery, which replays its same key and records Stripe's original refund.
+    expect(partial.refunds).toEqual([expect.objectContaining({ refundId: "re_slice_a", amountCents: 3000 })]);
+    expect(partial.completedRefundCents).toBe(3000);
+    expect([...refunds.keys()]).toEqual(["re_slice_a"]);
+  });
+
   it("rejects an allocation slice that references an unknown transaction", async () => {
     const { store } = twoTransactionStore();
 

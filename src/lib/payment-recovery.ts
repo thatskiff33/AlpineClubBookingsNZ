@@ -34,6 +34,8 @@ import {
   upsertPaymentIntentTransaction,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
+// #3372: the one plan parser, shared with the "Refunds owed" net-out.
+import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import {
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   // Type-only, so it adds nothing to this module's runtime import graph.
@@ -530,8 +532,6 @@ export async function enqueueRefundRequestRefundRecovery({
 }
 
 import {
-  buildGroupSettlementRefundRecoveryIdempotencyKey,
-  GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -544,6 +544,7 @@ import {
   buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
+  buildGroupSettlementRefundRecoveryIdempotencyKey,
   buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
   buildLateCaptureRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
@@ -551,6 +552,8 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  groupSettlementIdForRefundRecoveryKey,
+  isGroupSettlementRefundRecoveryKey,
   isOrganiserChildRefundKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
@@ -1999,32 +2002,6 @@ async function processRefundSupersededPaymentOperation(
   });
 }
 
-/** Parse a persisted allocation plan (#1097); null when absent or malformed. */
-function parseRefundAllocationPlan(
-  value: unknown,
-): RefundAllocationSlice[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const slices: RefundAllocationSlice[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") return null;
-    const { paymentTransactionId, amountCents } = entry as Record<
-      string,
-      unknown
-    >;
-    if (
-      typeof paymentTransactionId !== "string" ||
-      !paymentTransactionId ||
-      typeof amountCents !== "number" ||
-      !Number.isInteger(amountCents) ||
-      amountCents <= 0
-    ) {
-      return null;
-    }
-    slices.push({ paymentTransactionId, amountCents });
-  }
-  return slices;
-}
-
 async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
@@ -2044,14 +2021,8 @@ async function processBookingModificationRefundOperation(
   // executor replays the settlement's persisted plan under the inline
   // `group_cancel_refund_<settlementId>` Stripe key and applies the
   // per-child refundedAmountCents mirrors idempotently.
-  if (
-    operation.idempotencyKey.startsWith(
-      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
-    )
-  ) {
-    const settlementId = operation.idempotencyKey.slice(
-      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length,
-    );
+  if (isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)) {
+    const settlementId = groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey);
     // Dynamic import: group-cancel imports this module for the enqueue/mark
     // helpers (same pattern as booking-payment-cleanup above).
     const { executeGroupSettlementRefundPlan } = await import(

@@ -115,6 +115,8 @@ const fakePrisma = vi.hoisted(() => {
 
   const client = {
     member: { findMany: async () => [] },
+    // #3924 round 4: the cash evidence's paid-another-way read finds none here.
+    manualRefundTask: { findMany: async () => [] },
     memberSubscription: { findMany: async () => [] },
     memberCredit: {
       groupBy: async () => [],

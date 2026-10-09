@@ -1,5 +1,6 @@
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { prisma } from "./prisma";
+import { readMemberCreditBalances, sumOutstandingCreditCents } from "@/lib/member-credit-balances";
 import { isXeroConnected } from "./xero";
 import logger from "@/lib/logger";
 import { reportCronError } from "@/lib/observability-bridge";
@@ -8,6 +9,7 @@ import {
   getRefundsMissingXeroCreditNotes,
 } from "@/lib/xero-admin-health";
 import { findOrphanedAppliedCredits } from "@/lib/orphaned-applied-credit-backfill";
+import { queueWaitingPaidAnotherWayNotesForPayment } from "@/lib/paid-another-way-receipt-note";
 import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -30,24 +32,14 @@ export async function reconcileCreditBalances(): Promise<{
   orphanedAppliedCredits: number;
 }> {
   // Get per-member credit balances from local ledger
-  const balances = await prisma.memberCredit.groupBy({
-    by: ["memberId"],
-    _sum: { amountCents: true },
-  });
+  const balances = await readMemberCreditBalances();
 
-  const membersWithCredit = balances.filter(
-    (b) => (b._sum.amountCents ?? 0) > 0
-  ).length;
+  const membersWithCredit = balances.filter((b) => b.balanceCents > 0).length;
 
-  const totalCreditCents = balances.reduce(
-    (sum, b) => sum + Math.max(0, b._sum.amountCents ?? 0),
-    0
-  );
+  const totalCreditCents = sumOutstandingCreditCents(balances);
 
   // Check for negative balances (should never happen — indicates a bug)
-  const negativeBalances = balances.filter(
-    (b) => (b._sum.amountCents ?? 0) < 0
-  );
+  const negativeBalances = balances.filter((b) => b.balanceCents < 0);
 
   const discrepancies = negativeBalances.length;
 
@@ -70,12 +62,34 @@ export async function reconcileCreditBalances(): Promise<{
     // collapse into the existing PENDING operation. Alerting below is
     // unchanged: operators still see the divergence until the books actually
     // heal.
+    //
+    // #3924 rounds 7 and 8 (money M1, `INV-PAY-122`): what it asks for here is
+    // a CARD note, settled from the Stripe account. Bank cash a "Paid another
+    // way" close sent back is answered only by that close's own bank-transfer
+    // note; the part of the gap its own notes do not yet cover - by the same
+    // coverage the gap counts (`paidAnotherWayUncoveredCents`) - is taken off
+    // the ask, never filled with card money. The close's note is retried as
+    // its own row. Round 9: and a close whose note waits for a late capture's
+    // receipt, whose note step failed after the receipt reached Xero, has that
+    // step run again here - idempotent, under the approval task's row lock.
     let reEnqueued = 0;
     for (const missing of refundsMissingCreditNotes.payments) {
+      if (missing.paidAnotherWayUncoveredCents > 0) {
+        try {
+          reEnqueued += await queueWaitingPaidAnotherWayNotesForPayment(missing.paymentId);
+        } catch (err) {
+          logger.error(
+            { err, paymentId: missing.paymentId },
+            "Failed to queue the refund note a paid-another-way close waits for"
+          );
+        }
+      }
       try {
+        const cardAskCents = missing.uncoveredCents - missing.paidAnotherWayUncoveredCents;
+        if (cardAskCents <= 0) continue;
         const queued = await enqueueXeroRefundCreditNoteOperation(
           missing.paymentId,
-          missing.uncoveredCents
+          cardAskCents
         );
         if (queued.queueOperationId) {
           reEnqueued += 1;

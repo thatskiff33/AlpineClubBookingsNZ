@@ -1,4 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
+} from "@/lib/additional-ledger-gap";
 import { OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT } from "@/lib/manual-refund-task-settlement-rules";
 import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import {
@@ -45,11 +50,20 @@ export async function loadBookingDetail(id: string) {
             orderBy: { createdAt: "desc" },
             take: 1,
           },
+          // #3811: the capture evidence Net Collected's cash rule reads, so the
+          // "Non-refundable amount retained" line is that rule's figure.
+          _count: netCollectedCaptureEvidenceSelect._count,
+          // #3372 (7 Oct 2026): a card refund not yet paid comes off that
+          // line too, as it does Net Collected.
+          ...netCollectedCardRefundSelect,
           // #3827 (`INV-PAY-118`): every hand-back still promised back by
           // bank transfer, so the appeal ceiling matches the route's.
           manualRefundTasks: OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT,
         },
       },
+      // #3811 (owner decision on #3372, 3 Oct 2026): an open hand-back refund
+      // comes off the retained line straight away, as it does Net Collected.
+      manualRefundTasks: netCollectedBookingSelect.manualRefundTasks,
       member: { select: { firstName: true, lastName: true } },
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },

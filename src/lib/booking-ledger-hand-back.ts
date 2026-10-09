@@ -22,6 +22,10 @@
  * refund posts `CARD_REFUND` from its `PaymentRefund` row when Stripe reports
  * it (#3581); a `BANK_REFUND` here as well would record one refund twice, the
  * second by the wrong method. So a Stripe payment's completion posts nothing.
+ * The one exception is not a completion that reaches here: a dead card refund
+ * the treasurer closed as paid another way has no refund row, so its close
+ * posts its own `BANK_REFUND` on its own completed task
+ * (`closeCardRefundPaidAnotherWay`, `INV-PAY-122`, `INV-MONEY-035`).
  *
  * Build in pure code, caught and logged; write unwrapped (#3590's review). The
  * key is the task id, and a task completes at most once, so a replay of the

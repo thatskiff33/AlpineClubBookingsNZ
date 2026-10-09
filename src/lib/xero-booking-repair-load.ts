@@ -582,7 +582,8 @@ export async function loadAuditData(
         bookingId: booking.id,
         refundedAmountCents: payment.refundedAmountCents,
       });
-      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents);
+      // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
+      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
     } catch (err) {
       logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
     }
