@@ -42,8 +42,10 @@ import {
   type StuckStateSeverity,
 } from "@/lib/stuck-state-dashboard";
 import { cn } from "@/lib/utils";
-import { listCardRefundsPaidTwice, listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { listCardRefundsPaidTwice } from "@/lib/card-refund-paid-twice";
 import { CardRefundsPaidTwiceList, DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
+import { describeRefundMethod } from "@/lib/xero-refund-method";
 
 const domainIcons: Record<StuckStateDomain, typeof CreditCard> = {
   payment: CreditCard,
@@ -279,7 +281,10 @@ export default async function AdminStuckStatesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <DeadCardRefundsPanel rows={deadCardRefunds} />
+            <DeadCardRefundsPanel
+              rows={deadCardRefunds}
+              bankNoteWording={describeRefundMethod("internet-banking")}
+            />
           </CardContent>
         </Card>
       ) : null}

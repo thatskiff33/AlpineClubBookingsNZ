@@ -15,6 +15,7 @@ import {
   lockKeptLateCaptureTask,
 } from "@/lib/xero-kept-late-capture-invoice";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
+import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 
 /**
  * #3372 / #3924 rounds 5 and 6 (`INV-PAY-121`): WHAT A "PAID ANOTHER WAY" CLOSE
@@ -31,7 +32,15 @@ type XeroPlanStore = Pick<
 
 /** What a close of this card refund records in Xero (`paidAnotherWayXeroPlan`). */
 export type PaidAnotherWayXeroPlan =
-  | { xeroRefundNote: "now" }
+  | {
+      xeroRefundNote: "now";
+      /**
+       * Round 7 (money M5): the invoice the note credits, where the plan read
+       * it - a late capture's recorded receipt. Absent, the note executor names
+       * the payment's (`createXeroCreditNote`).
+       */
+      creditsInvoiceId?: string;
+    }
   | { xeroRefundNote: "none" }
   | {
       xeroRefundNote: "after-receipt";
@@ -82,7 +91,16 @@ export async function paidAnotherWayXeroPlan(
   });
   if (task && lockApprovalTask) await lockKeptLateCaptureTask(db, task.id);
   const receipt = await readLateCaptureXeroReceipt(lateCaptureIntent, db);
-  if (receipt.kind === "recorded") return { xeroRefundNote: "now" };
+  // Round 7 (money M5, `INV-PAY-121`): the note credits THIS receipt, named by
+  // its invoice id - never by `paymentIntentId`, which would count the bank
+  // note as the capture's card refund note. A receipt recorded but not yet in
+  // Xero (a change's released invoice still sending) has no id to name: the
+  // stated limit below, as for any invoice still on its way.
+  if (receipt.kind === "recorded") {
+    return receipt.invoiceId !== null
+      ? { xeroRefundNote: "now", creditsInvoiceId: receipt.invoiceId }
+      : { xeroRefundNote: "none" };
+  }
   if (receipt.kind === "resolved-by-hand" || !task) return { xeroRefundNote: "none" };
   const capture = await db.paymentTransaction.findFirst({
     where: { source: "STRIPE", stripePaymentIntentId: lateCaptureIntent },
@@ -135,6 +153,8 @@ export async function queuePaidAnotherWayXero(
     amountCents: number;
     actingMemberId: string;
     clubZone: ClubTimeZone;
+    /** When the close committed its record: the note's date (round 7, money M4). */
+    closedAt: Date;
   },
 ): Promise<PaidAnotherWayXeroQueued> {
   if (plan.xeroRefundNote === "now") {
@@ -142,6 +162,10 @@ export async function queuePaidAnotherWayXero(
       createdByMemberId: close.actingMemberId,
       refundMethod: "internet-banking",
       paidAnotherWayTaskId: close.recordId,
+      // Round 7 (money M4): the club day of the close, as the receipt's worker
+      // dates a waiting close's note (`notePaidAnotherWayCloseOnReceipt`).
+      documentDate: xeroDocumentDateFromInstant(close.closedAt, close.clubZone),
+      ...(plan.creditsInvoiceId ? { creditsInvoiceId: plan.creditsInvoiceId } : {}),
       store: tx,
     });
     return queued.queueOperationId !== null ? "refund-note" : "nothing";
@@ -154,6 +178,9 @@ export async function queuePaidAnotherWayXero(
     capturedCents: plan.receipt.capturedCents,
     capturedOn: keptLateCaptureDocumentDate(plan.receipt.raisedAt, close.clubZone),
     createdByMemberId: close.actingMemberId,
+    // Round 7 (money M2): a receipt row that failed before it reached Xero is
+    // put back to run, never left FAILED as if it were live.
+    requeueFailedUnsent: true,
     store: tx,
   });
   if (queued.queueOperationId === null) {

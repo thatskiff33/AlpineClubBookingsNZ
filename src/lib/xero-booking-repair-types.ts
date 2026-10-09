@@ -4,6 +4,7 @@
 // subset. Import xero source modules directly (no @/lib/xero facade, #1208).
 import { Prisma } from "@prisma/client";
 import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",
@@ -22,6 +23,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // refunded; the app raises no note for it, so an officer records the refund
   // by hand too. Report-only, never actionable.
   "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
+  // #3924 round 7 (money M2, `INV-PAY-121`): a late capture whose approved
+  // refund was closed as paid another way, and whose Xero receipt - which the
+  // close's bank-transfer note waits for - failed or was never queued.
+  "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -469,7 +474,19 @@ export interface BookingClassificationContext {
    */
   lateCaptureTasks: Map<
     string,
-    { taskId: string; status: string; operations: XeroOperationRecord[] }
+    {
+      taskId: string;
+      status: string;
+      /** The capture day the receipt is dated from: the task is raised by the capture. */
+      raisedAt: Date;
+      operations: XeroOperationRecord[];
+      /**
+       * #3924 round 7 (money M2): how the close of this capture's approved
+       * card refund as paid another way is recorded in Xero, or null when it
+       * was never closed so (`findLateCaptureRefundPaidAnotherWay`).
+       */
+      paidAnotherWayClose: PaidAnotherWayXeroNote | null;
+    }
   >;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm

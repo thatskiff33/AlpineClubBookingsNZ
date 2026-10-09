@@ -5,6 +5,7 @@ import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import { PAID_BACK_CHOICES } from "@/lib/card-refund-paid-back";
 import {
   CardRefundPaidAnotherWayError,
   closeCardRefundPaidAnotherWay,
@@ -15,12 +16,16 @@ import {
  * obligation is never a single-click accident; a note saying how the member
  * was paid back; and the treasurer's own answer to "in full, or part of it?"
  * (owner, 8 Oct 2026), never inferred from the amount. The close checks the
- * answer against what is still owed and refuses an inconsistent one with a 400.
+ * answer against what is still owed and refuses an inconsistent one with a 400,
+ * and refuses with a 409 when what is still owed is no longer what the dialog
+ * showed (`expectedOwedCents`, #3924 round 7), so the page refreshes.
  */
 const bodySchema = z
   .object({
     amountCents: nonNegativeCentsSchema,
-    paidBack: z.enum(["full", "partial"]),
+    paidBack: z.enum(PAID_BACK_CHOICES),
+    // #3924 round 7 (C7): what the dialog showed still owed; a mismatch is a 409.
+    expectedOwedCents: nonNegativeCentsSchema,
     note: z.string().max(MANUAL_PAYMENT_NOTE_MAX),
     confirmed: z.literal(true),
   })
@@ -67,6 +72,7 @@ export async function POST(
       operationId: id,
       amountCents: parsed.data.amountCents,
       paidBack: parsed.data.paidBack,
+      expectedOwedCents: parsed.data.expectedOwedCents,
       note: parsed.data.note,
       actingMemberId: guard.session.user.id,
     });

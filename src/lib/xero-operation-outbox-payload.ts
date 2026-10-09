@@ -105,6 +105,10 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // #3635: the late capture this note answers, and its refund's club day.
   paymentIntentId?: string;
   documentDate?: string;
+  // #3924 round 7 (`INV-PAY-121`): the "Paid another way" close this note
+  // answers, and the invoice it credits when the close named one.
+  paidAnotherWayTaskId?: string;
+  creditsInvoiceId?: string;
 }
 
 interface QueuedAccountCreditNoteOutboxPayload {
@@ -347,6 +351,8 @@ export function readQueuedOutboxPayload(
       noteWording: readRefundNoteWording(payload),
       paymentIntentId: readString(payload.paymentIntentId) ?? undefined,
       documentDate: readString(payload.documentDate) ?? undefined,
+      paidAnotherWayTaskId: readString(payload.paidAnotherWayTaskId) ?? undefined,
+      creditsInvoiceId: readString(payload.creditsInvoiceId) ?? undefined,
     };
   }
 

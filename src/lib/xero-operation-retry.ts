@@ -1747,6 +1747,9 @@ export async function retryXeroSyncOperation(
           ...(retryInput.noteWording ? { noteWording: retryInput.noteWording } : {}),
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
+          // #3924 round 7: a paid-another-way close's note retries as its own, on the invoice it named.
+          ...(retryInput.paidAnotherWayTaskId ? { paidAnotherWayTaskId: retryInput.paidAnotherWayTaskId } : {}),
+          ...(retryInput.creditsInvoiceId ? { creditsInvoiceId: retryInput.creditsInvoiceId } : {}),
           ...(retryInput.refundRequestId ? { refundRequestId: retryInput.refundRequestId } : {}),
           ...(options?.requeueOperationId ? { requeueOperationId: options.requeueOperationId } : {}),
           ...(retriedReviewTaskId ? { reviewTaskId: retriedReviewTaskId } : {}),

@@ -301,6 +301,24 @@ describe("openCardRefundOwedCents attributes each recorded refund to the operati
       expect(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op2"])).size).toBe(0);
     });
 
+    // #3924 round 7 (money M3): one clock at both ends of the window.
+    it("MUTATION: round 7: a refund Stripe made BEFORE an operation was raised, recorded after it, is never that operation's", () => {
+      // A dashboard refund Stripe made at minute 15, before op2 was raised at
+      // 20, that the sync recorded at 25 - inside op2's window by the app's clock.
+      const dashboard = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(15), createdAt: at(25) });
+      const owing = payment([op1, op2Closed], [dashboard], { amountCents: 50_000, refundedAmountCents: 10_000 });
+      // It is op1's slice, the only operation raised before Stripe made it.
+      expect(Object.fromEntries(openCardRefundOwedByOperation(owing))).toEqual({ op1: 3_000 });
+      expect(cardRefundSentAfterPaidAnotherWay(owing, new Set(["op2"])).size).toBe(0);
+    });
+
+    it("round 7: the raise is floored to its second, so a refund Stripe dates in that same second is still the operation's", () => {
+      const raisedMidSecond = { ...op2Closed, createdAt: new Date(at(20).getTime() + 700) };
+      const sameSecond = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(20), createdAt: at(21) });
+      const owing = payment([op1, raisedMidSecond], [sameSecond], { amountCents: 50_000, refundedAmountCents: 5_000 });
+      expect(Object.fromEntries(openCardRefundOwedByOperation(owing))).toEqual({ op1: 8_000 });
+    });
+
     it("round 5: asked only of the closes named, and only once every operation is closed too", () => {
       const op1Closed = { ...op1, status: "SUCCEEDED", succeededAt: at(35) };
       const late = refund({ paymentTransactionId: "txn-a", amountCents: 5_000, stripeCreatedAt: at(25), createdAt: at(40) });

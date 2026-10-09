@@ -44,7 +44,13 @@ function request(body: unknown) {
 }
 
 const params = Promise.resolve({ id: "op-1" });
-const valid = { amountCents: 5_000, paidBack: "full", note: "Bank transfer, ref 123", confirmed: true };
+const valid = {
+  amountCents: 5_000,
+  paidBack: "full",
+  expectedOwedCents: 5_000,
+  note: "Bank transfer, ref 123",
+  confirmed: true,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -83,12 +89,15 @@ describe("who may close a card refund as paid another way", () => {
 
 describe("what the close needs", () => {
   it.each([
-    ["no confirmation", { amountCents: 5_000, paidBack: "full", note: "Bank transfer" }],
+    ["no confirmation", { amountCents: 5_000, paidBack: "full", expectedOwedCents: 5_000, note: "Bank transfer" }],
     // Owner, 8 Oct 2026: the treasurer says full or part; it is never inferred.
-    ["no full-or-part answer", { amountCents: 5_000, note: "Bank transfer", confirmed: true }],
+    ["no full-or-part answer", { amountCents: 5_000, expectedOwedCents: 5_000, note: "Bank transfer", confirmed: true }],
+    // #3924 round 7 (C7): the owed figure the treasurer saw is required.
+    ["no owed figure the treasurer saw", { amountCents: 5_000, paidBack: "full", note: "Bank transfer", confirmed: true }],
+    ["a negative owed figure", { ...valid, expectedOwedCents: -1 }],
     ["an answer that is neither full nor part", { ...valid, paidBack: "most" }],
     ["a confirmation that is not literally true", { ...valid, confirmed: "yes" }],
-    ["no note", { amountCents: 5_000, paidBack: "full", confirmed: true }],
+    ["no note", { amountCents: 5_000, paidBack: "full", expectedOwedCents: 5_000, confirmed: true }],
     ["a negative amount", { ...valid, amountCents: -1 }],
     ["fractional cents", { ...valid, amountCents: 10.5 }],
     ["a field it does not know", { ...valid, refundToCard: true }],
@@ -99,7 +108,7 @@ describe("what the close needs", () => {
     expect(mocks.closeCardRefundPaidAnotherWay).not.toHaveBeenCalled();
   });
 
-  it("hands the operation, amount, full-or-part answer, note and acting treasurer to the close", async () => {
+  it("hands the operation, amount, full-or-part answer, the owed figure seen, note and acting treasurer to the close", async () => {
     const response = await POST(request({ ...valid, paidBack: "partial", amountCents: 4_000 }), { params });
 
     expect(response.status).toBe(200);
@@ -107,6 +116,7 @@ describe("what the close needs", () => {
       operationId: "op-1",
       amountCents: 4_000,
       paidBack: "partial",
+      expectedOwedCents: 5_000,
       note: "Bank transfer, ref 123",
       actingMemberId: "treasurer-1",
     });

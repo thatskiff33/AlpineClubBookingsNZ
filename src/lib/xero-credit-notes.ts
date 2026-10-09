@@ -117,6 +117,19 @@ export interface CreateXeroRefundCreditNoteOptions
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
   /**
+   * #3924 round 7 (`INV-PAY-121`): the "Paid another way" close this note
+   * answers - one of several notes on its payment whatever its source, and
+   * never the payment's one refund-note pointer.
+   */
+  paidAnotherWayTaskId?: string;
+  /**
+   * #3924 round 7 (money M5): the invoice this note credits, named by the
+   * caller - a paid-another-way close of a late capture's refund names that
+   * capture's receipt, without `paymentIntentId` (which would count this bank
+   * note as the capture's card refund note).
+   */
+  creditsInvoiceId?: string;
+  /**
    * #3827 (D-3813-8, `INV-PAY-118`): this is that refund request's OWN note,
    * raised when its task is marked paid back. Keyed by the request, linked
    * under `REFUND_REQUEST_CREDIT_NOTE_ROLE`, never per-delta and never the
@@ -217,8 +230,13 @@ export async function createXeroCreditNote(
     // since the payment's own may be the cleared pre-cancel one. The note is
     // unallocated either way (it settles by its own refund payment), so the id
     // records which document it answers.
+    // #3924 round 7: a caller that named the invoice it credits is taken at
+    // its word - a paid-another-way close of a late capture's refund names
+    // that capture's receipt, which the payment-wide default could miss.
     originalInvoiceId =
-      (await findKeptLateCaptureInvoiceIdForPayment(paymentId)) ?? payment.xeroInvoiceId;
+      options?.creditsInvoiceId ??
+      (await findKeptLateCaptureInvoiceIdForPayment(paymentId)) ??
+      payment.xeroInvoiceId;
   }
   if (!originalInvoiceId) {
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
@@ -230,7 +248,11 @@ export async function createXeroCreditNote(
     refundRequestId === null &&
     typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
   // #3880: a review's non-Stripe delta note is one of several (`isPerDeltaRefundNoteLink`).
-  const perRefundNote = isDeltaMode && payment.source !== PaymentSource.STRIPE && Boolean(options?.reviewTaskId);
+  // #3924 round 7: so is a paid-another-way close's note (`paidAnotherWayTaskId`).
+  const perRefundNote =
+    isDeltaMode &&
+    payment.source !== PaymentSource.STRIPE &&
+    (Boolean(options?.reviewTaskId) || Boolean(options?.paidAnotherWayTaskId));
   const { refundMethod, refundMethodRecorded } = resolveRefundNoteMethod(
     options?.refundMethod,
     payment.source,
@@ -453,6 +475,10 @@ export async function createXeroCreditNote(
     // a retry or a repair of this row keeps it a request's own note.
     ...(refundRequestId !== null ? { refundRequestId } : {}),
     ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
+    // #3924 round 7: the close and the invoice it named ride the row, so a
+    // retry credits the same document and the close's note stays findable.
+    ...(options?.paidAnotherWayTaskId ? { paidAnotherWayTaskId: options.paidAnotherWayTaskId } : {}),
+    ...(options?.creditsInvoiceId ? { creditsInvoiceId: options.creditsInvoiceId } : {}),
     // #3935: the officer's cash answer rides the row, so a retry says the same.
     ...(noteWording ? { noteWording } : {}),
     // #3880 F2: a delta run's watermark rides its row, so an operator retry of

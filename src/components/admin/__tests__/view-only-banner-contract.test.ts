@@ -362,8 +362,12 @@ const FIGURES = {
    * card refund Stripe gave up on. One render site, one per row at run time.
    * The dialog's confirm is a plain Button, only reachable once the gated row
    * button opened it. MEASURED by re-running this census.
+   *
+   * 371 -> 372 (#3372, owner 9 Oct 2026): the same page's "Resolved" on a card
+   * refund paid back twice. Its dialog's confirm is a plain Button, reachable
+   * only once the gated row button opened it. MEASURED by re-running this census.
    */
-  callSites: 371,
+  callSites: 372,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -402,8 +406,10 @@ const FIGURES = {
    *
    * 315 -> 316 (#3372): the dead card refunds panel's "Paid another way" opts
    * out under its own banner.
+   * 316 -> 317 (#3372, owner 9 Oct 2026): the paid-twice list's "Resolved"
+   * opts out under that list's own banner.
    */
-  optOuts: 316,
+  optOuts: 317,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -469,8 +475,10 @@ const FIGURES = {
    *
    * 281 -> 282 (#3372): the dead card refunds panel's "Paid another way" sits
    * in the same file as its finance banner.
+   * 282 -> 283 (#3372, owner 9 Oct 2026): so does the paid-twice list's
+   * "Resolved", beside that list's own banner.
    */
-  staticOptOuts: 282,
+  staticOptOuts: 283,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

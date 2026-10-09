@@ -212,9 +212,20 @@ function stripeMadeAt(refund: RecordedCardRefundRow): Date {
   return refund.stripeCreatedAt ?? refund.createdAt;
 }
 
+/** An instant floored to its whole second: Stripe dates a refund in whole seconds. */
+function flooredToSecond(at: Date): number {
+  return Math.floor(at.getTime() / 1000) * 1000;
+}
+
 /**
- * Whether an operation can take a refund: one RECORDED at or after it was
- * raised and, once it closed, MADE BY STRIPE at or before its close.
+ * Whether an operation can take a refund: one MADE BY STRIPE at or after it
+ * was raised and, once it closed, at or before its close.
+ *
+ * - One clock at both ends (#3924 round 7, money M3): the raised end reads
+ *   Stripe's time too, against the raise floored to its second, so a refund
+ *   Stripe made before the operation existed - a dashboard refund the app
+ *   recorded late - is never the operation's, and one the operation asked for
+ *   in the second it was raised still is.
  *
  * - The close bound (#3924 round-4 money review, M4): a closed operation's
  *   slices stop at its close, so a refund Stripe made later - another
@@ -228,10 +239,12 @@ function stripeMadeAt(refund: RecordedCardRefundRow): Date {
  *
  * A row closed before `succeededAt` was written has no close bound, as before.
  * STATED LIMIT: Stripe dates a refund in whole seconds, so a refund Stripe made
- * in the same second as a close, just after it, reads as made before it.
+ * in the same second as a close, just after it, reads as made before it; and
+ * one made in the second an operation was raised, just before it, reads as
+ * made after it. A refund with no Stripe time is read at when the app recorded it.
  */
 function operationWindowTakes(operation: CardRefundOperationRow, refund: RecordedCardRefundRow): boolean {
-  if (operation.createdAt.getTime() > refund.createdAt.getTime()) return false;
+  if (flooredToSecond(operation.createdAt) > stripeMadeAt(refund).getTime()) return false;
   if (operation.status !== SUCCEEDED || operation.succeededAt === null) return true;
   return stripeMadeAt(refund).getTime() <= operation.succeededAt.getTime();
 }
@@ -247,9 +260,9 @@ function operationWindowTakes(operation: CardRefundOperationRow, refund: Recorde
  * open with some slices sent. A row carries no link to the operation that sent
  * it, so each is matched by what a slice's own refund must look like: on that
  * slice's transaction, of exactly its amount, inside the operation's window
- * (`operationWindowTakes`: recorded after it was raised and, once it closed,
- * made by Stripe no later than its close). A refund recorded BEFORE an operation was raised is never
- * its: every writer that raises one after a partial inline refund carries only
+ * (`operationWindowTakes`: made by Stripe no earlier than it was raised and,
+ * once it closed, no later than its close). A refund made BEFORE an operation
+ * was raised is never its: every writer that raises one after a partial inline refund carries only
  * the remainder - the refund request's route enqueues the plan's unsent slices
  * (a recording failure included, since round 4: `refundPaymentTransactions`
  * wraps it in `PartialRefundError`), an edit's enqueues the amount less what

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findClose: vi.fn(),
   hasXeroReceiptForLateCapture: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
+  findAskedNote: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -33,6 +34,7 @@ import type { ClubTimeZone } from "@/lib/club-time";
 const store = {
   paymentRecoveryOperation: { findUnique: (...args: unknown[]) => mocks.findOperation(...args) },
   manualRefundTask: { findFirst: (...args: unknown[]) => mocks.findClose(...args) },
+  xeroSyncOperation: { findFirst: (...args: unknown[]) => mocks.findAskedNote(...args) },
 };
 
 function closeRecord(xeroRefundNote: PaidAnotherWayXeroNote, overrides: Record<string, unknown> = {}) {
@@ -54,6 +56,7 @@ beforeEach(() => {
   mocks.findClose.mockResolvedValue(null);
   mocks.hasXeroReceiptForLateCapture.mockResolvedValue(false);
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: "xop-note" });
+  mocks.findAskedNote.mockResolvedValue(null);
 });
 
 describe("findLateCaptureRefundPaidAnotherWay", () => {
@@ -108,18 +111,41 @@ describe("paidAnotherWayCloseReceiptRecorded: the cash evidence's gate", () => {
 
 describe("notePaidAnotherWayCloseOnReceipt: the second step, run by the receipt's worker", () => {
   const ZONE = "Pacific/Auckland" as ClubTimeZone;
-  const note = () => notePaidAnotherWayCloseOnReceipt({ paymentIntentId: "pi_late", clubZone: ZONE, store: store as never });
+  const note = () =>
+    notePaidAnotherWayCloseOnReceipt({
+      paymentIntentId: "pi_late",
+      receiptInvoiceId: "kept-inv-1",
+      clubZone: ZONE,
+      store: store as never,
+    });
 
-  it("queues the waiting close's bank-transfer note for the amount paid back, keyed on the close, dated the day it closed", async () => {
+  it("queues the waiting close's bank-transfer note for the amount paid back, keyed on the close, dated the day it closed, crediting the receipt", async () => {
     mocks.findClose.mockResolvedValue(closeRecord("after-receipt"));
     await expect(note()).resolves.toBe("xop-note");
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p-1", 24_000, {
       refundMethod: "internet-banking",
       paidAnotherWayTaskId: "close-1",
+      creditsInvoiceId: "kept-inv-1",
       documentDate: "2026-06-20",
       createdByMemberId: "treasurer-1",
       store,
     });
+  });
+
+  it("MUTATION: C9 (round 7): at most once - a note already asked for this close, in any state but withdrawn, is returned, never a second", async () => {
+    mocks.findClose.mockResolvedValue(closeRecord("after-receipt"));
+    mocks.findAskedNote.mockResolvedValue({ id: "xop-failed-note" });
+    await expect(note()).resolves.toBe("xop-failed-note");
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.findAskedNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          localId: "p-1",
+          status: { not: "CANCELLED" },
+          requestPayload: { path: ["paidAnotherWayTaskId"], equals: "close-1" },
+        }),
+      }),
+    );
   });
 
   it.each(["now", "none"] as const)(
@@ -140,7 +166,7 @@ describe("notePaidAnotherWayCloseOnReceipt: the second step, run by the receipt'
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
-  it("throws what the enqueue throws, so the receipt's link rolls back with it", async () => {
+  it("throws what the enqueue throws, so the receipt's worker fails its row and its retry runs this again", async () => {
     mocks.findClose.mockResolvedValue(closeRecord("after-receipt"));
     mocks.enqueueXeroRefundCreditNoteOperation.mockRejectedValue(new Error("database blip"));
     await expect(note()).rejects.toThrow("database blip");

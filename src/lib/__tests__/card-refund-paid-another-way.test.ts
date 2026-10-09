@@ -135,11 +135,10 @@ import {
   closeCardRefundPaidAnotherWay,
   deadCardRefundOperationWhere,
   lastErrorSuggestsStripeMayHaveRefunded,
-  listCardRefundsPaidTwice,
   listDeadCardRefunds,
   PAID_ANOTHER_WAY_MARKER,
-  type PaidBackChoice,
 } from "@/lib/card-refund-paid-another-way";
+import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
 import { getNetCollectedPaymentParts } from "@/lib/payment-net-collected";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
 
@@ -191,12 +190,24 @@ function payment(operation = deadOperation(), overrides: Record<string, unknown>
   };
 }
 
-/** Full when the amount is the whole $150.00 owed, part otherwise - unless a case says which. */
+/**
+ * Full when the amount is the whole $150.00 owed, part otherwise - unless a
+ * case says which. The treasurer saw $150.00 owed unless a case says otherwise.
+ */
 const close = (
   amountCents = 15_000,
   note: string | null = "Bank transfer, ref 123",
   paidBack: PaidBackChoice = amountCents === 15_000 ? "full" : "partial",
-) => closeCardRefundPaidAnotherWay({ operationId: "op-1", amountCents, paidBack, note, actingMemberId: "treasurer-1" });
+  expectedOwedCents = 15_000,
+) =>
+  closeCardRefundPaidAnotherWay({
+    operationId: "op-1",
+    amountCents,
+    paidBack,
+    expectedOwedCents,
+    note,
+    actingMemberId: "treasurer-1",
+  });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -284,7 +295,7 @@ describe("closing a dead card refund as paid another way", () => {
       }),
     );
 
-    const result = await close(10_000, "Bank transfer", "full");
+    const result = await close(10_000, "Bank transfer", "full", 10_000);
 
     expect(result.owedCents).toBe(10_000);
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
@@ -386,6 +397,16 @@ describe("closing a dead card refund as paid another way", () => {
       }),
     );
     expect(mocks.kick).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION: M4 (round 7): the note is dated the club day of the close", async () => {
+    await close();
+    // The frozen clock: 2026-07-01T00:00Z is midday 1 July in the club's zone.
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "p-1",
+      15_000,
+      expect.objectContaining({ documentDate: "2026-07-01" }),
+    );
   });
 
   it("M3: says honestly when no note was queued", async () => {
@@ -529,6 +550,34 @@ describe("closing a dead card refund as paid another way", () => {
       );
     });
 
+    it("MUTATION: M5 (round 7): that note names the receipt's invoice, and never the capture's intent", async () => {
+      lateCharge();
+      mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "kept-inv-1" });
+      await close();
+      const options = mocks.enqueueXeroRefundCreditNoteOperation.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(options.creditsInvoiceId).toBe("kept-inv-1");
+      expect(options).not.toHaveProperty("paymentIntentId");
+    });
+
+    it("M5 (round 7): a receipt recorded but not yet in Xero has no invoice to name, so no note is promised", async () => {
+      lateCharge();
+      mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null });
+      const result = await close();
+      expect(result.xeroQueued).toBe("nothing");
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.createRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ occurrenceKey: "card-refund-paid-another-way:op-1:no-xero-note" }),
+        }),
+      );
+    });
+
+    it("MUTATION: M2 (round 7): the receipt's enqueue is asked to put a failed unsent row back to run", async () => {
+      lateCharge();
+      await close();
+      expect(mocks.enqueueKeptReceipt).toHaveBeenCalledWith(expect.objectContaining({ requeueFailedUnsent: true }));
+    });
+
     it("never the booking's invoice: a receipt an officer resolved by hand in Xero gets no app note and no second receipt", async () => {
       lateCharge();
       mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "resolved-by-hand" });
@@ -572,7 +621,7 @@ describe("closing a dead card refund as paid another way", () => {
     });
   });
 
-  it("a refund that owes nothing closes with no money, record, line or note", async () => {
+  it("MUTATION: M6 (round 7): a refund that owes nothing is refused for every kind, and writes nothing", async () => {
     const sent = deadOperation();
     mocks.findOperation.mockResolvedValue(sent);
     mocks.findPayment.mockResolvedValue(
@@ -584,9 +633,10 @@ describe("closing a dead card refund as paid another way", () => {
         ],
       }),
     );
-    const result = await close(0, "Bank transfer, ref 123", "full");
-    expect(result).toMatchObject({ amountCents: 0, owedCents: 0, xeroQueued: "nothing" });
-    expect(calls).toEqual(["lock(1)", "read-operation", "lock-payment-row", "read-payment", "claim", "audit"]);
+    await expect(close(0, "Bank transfer, ref 123", "full", 0)).rejects.toMatchObject({ status: 400 });
+    expect(calls).toEqual([]);
+    expect(mocks.claim).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 
   it("MUTATION: F3: a whole superseded payment's refund closes, through the fence, when its charge still holds exactly that", async () => {
@@ -631,6 +681,12 @@ describe("a close that must not happen writes nothing", () => {
     mocks.findOperation.mockResolvedValue(deadOperation({ attempts: 4 }));
     await expectRefusal(close(), 409);
     expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: C7 (round 7): what is owed moved since the treasurer saw it - refused with a 409 before the claim", async () => {
+    await expectRefusal(close(15_000, "Bank transfer", "full", 14_000), 409);
+    expect(mocks.claim).not.toHaveBeenCalled();
+    expect(calls).toEqual(["lock(1)", "read-operation", "lock-payment-row", "read-payment"]);
   });
 
   it("more than it still owes", async () => {
@@ -694,7 +750,7 @@ describe("a close that must not happen writes nothing", () => {
       // $100 while the refund's own charge still owes $150.
       mocks.findOperation.mockResolvedValue(superseded());
       mocks.findPayment.mockResolvedValue(payment(superseded(), { refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" }));
-      await expectRefusal(close(10_000, "Bank transfer", "full"), 409);
+      await expectRefusal(close(10_000, "Bank transfer", "full", 10_000), 409);
       expect(mocks.claim).not.toHaveBeenCalled();
     });
 
@@ -711,7 +767,8 @@ describe("a close that must not happen writes nothing", () => {
       );
       // Its charge reads fully refunded, so the fence alone would let it through.
       mocks.findTransaction.mockResolvedValue({ paymentId: "p-1", amountCents: 15_000, refundedAmountCents: 15_000 });
-      await expectRefusal(close(0, "Bank transfer", "full"), 409);
+      // Round 7 (M6): refused before anything is read, as for every kind.
+      await expectRefusal(close(0, "Bank transfer", "full", 0), 400);
       expect(mocks.claim).not.toHaveBeenCalled();
     });
   });
@@ -800,6 +857,23 @@ describe("the list on the stuck-states page", () => {
       }),
     ]);
     expect(mocks.listOperations).toHaveBeenCalledWith(expect.objectContaining({ where: deadCardRefundOperationWhere }));
+  });
+
+  it("MUTATION: M6 (round 7): leaves out a refund that owes nothing, which no close may record", async () => {
+    const sent = deadOperation();
+    mocks.listOperations.mockResolvedValue([
+      {
+        ...sent,
+        payment: payment(sent, {
+          refundedAmountCents: 15_000,
+          status: "PARTIALLY_REFUNDED",
+          refunds: [
+            { paymentTransactionId: "txn-1", amountCents: 15_000, status: "succeeded", createdAt: new Date("2026-06-20T01:00:00.000Z") },
+          ],
+        }),
+      },
+    ]);
+    expect(await listDeadCardRefunds()).toEqual([]);
   });
 });
 
@@ -909,59 +983,5 @@ describe("#3924 round 4 (M2): the close's record is told apart by kind and key, 
     expect(isCardRefundPaidAnotherWayTask({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null })).toBe(false);
     expect(isCardRefundPaidAnotherWayTask({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: record.occurrenceKey })).toBe(false);
     expect(paymentRecoveryOperationIdOfPaidAnotherWay({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "edit-refund-hand-back:m" })).toBeNull();
-  });
-});
-
-describe("#3924 round 5 (concurrency F2): a close Stripe paid as well is listed", () => {
-  const closedAt = new Date("2026-06-25T00:00:00.000Z");
-  function closedRecord(refunds: unknown[]) {
-    const closed = { ...deadOperation(), status: "SUCCEEDED", succeededAt: closedAt, lastError: PAID_ANOTHER_WAY_MARKER };
-    return {
-      kind: "CANCELLED_BOOKING_HAND_BACK",
-      occurrenceKey: "card-refund-paid-another-way:op-1",
-      bookingId: "b-1",
-      amountCents: 15_000,
-      completedAt: closedAt,
-      payment: payment(closed, { refundedAmountCents: 30_000, refunds }),
-    };
-  }
-
-  it("MUTATION: a refund Stripe made before the close and the app recorded after it", async () => {
-    mocks.listRecords.mockResolvedValue([
-      closedRecord([
-        {
-          paymentTransactionId: "txn-1",
-          amountCents: 15_000,
-          status: "succeeded",
-          stripeCreatedAt: new Date("2026-06-24T23:59:00.000Z"),
-          createdAt: new Date("2026-06-26T00:00:00.000Z"),
-        },
-      ]),
-    ]);
-    expect(await listCardRefundsPaidTwice()).toEqual([
-      {
-        operationId: "op-1",
-        bookingId: "b-1",
-        bookingReference: expect.any(String),
-        closedAt: closedAt.toISOString(),
-        paidAnotherWayCents: 15_000,
-        refundedByCardCents: 15_000,
-      },
-    ]);
-  });
-
-  it("not a refund Stripe made after the close: that is another operation's", async () => {
-    mocks.listRecords.mockResolvedValue([
-      closedRecord([
-        {
-          paymentTransactionId: "txn-1",
-          amountCents: 15_000,
-          status: "succeeded",
-          stripeCreatedAt: new Date("2026-06-26T00:00:00.000Z"),
-          createdAt: new Date("2026-06-26T00:00:01.000Z"),
-        },
-      ]),
-    ]);
-    expect(await listCardRefundsPaidTwice()).toEqual([]);
   });
 });

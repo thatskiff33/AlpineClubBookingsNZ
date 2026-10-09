@@ -425,6 +425,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // The /api/admin/payments prefix already resolves to finance, so no
   // SPECIAL_ROUTE_AREA_PATTERNS entry is needed for this one.
   "/api/admin/payments/card-refunds/[id]/paid-another-way": "finance",
+  // #3372 (owner, 9 Oct 2026): a paid-twice row marked Resolved, gated as the close is.
+  "/api/admin/payments/card-refunds/[id]/paid-twice-resolved": "finance",
   "/api/admin/payments/manual-refund-tasks": "finance",
   "/api/admin/payments/manual-refund-tasks/[id]": "finance",
   // #3498 (owner decision D2): putting a dismissed money task back on the queue

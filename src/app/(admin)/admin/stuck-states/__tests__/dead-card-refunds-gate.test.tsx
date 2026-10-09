@@ -24,6 +24,8 @@ vi.mock("@/lib/stuck-state-dashboard", () => ({
 }));
 vi.mock("@/lib/card-refund-paid-another-way", () => ({
   listDeadCardRefunds: mocks.listDeadCardRefunds,
+}));
+vi.mock("@/lib/card-refund-paid-twice", () => ({
   listCardRefundsPaidTwice: mocks.listCardRefundsPaidTwice,
 }));
 vi.mock("@/lib/club-time/server", async () => {

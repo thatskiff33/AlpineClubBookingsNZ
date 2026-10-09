@@ -83,6 +83,9 @@ let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transac
 let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsedMs"];
 let resolveRefundNoteEligibleCash: (typeof import("@/lib/refund-note-eligible-cash"))["resolveRefundNoteEligibleCash"];
 let notePaidAnotherWayCloseOnReceipt: (typeof import("@/lib/late-capture-refund-credit-note"))["notePaidAnotherWayCloseOnReceipt"];
+let readPaidAnotherWayNotesNotLandedCents: (typeof import("@/lib/card-refund-paid-another-way-cash"))["readPaidAnotherWayNotesNotLandedCents"];
+let resolveCardRefundPaidTwice: (typeof import("@/lib/card-refund-paid-twice"))["resolveCardRefundPaidTwice"];
+let listCardRefundsPaidTwice: (typeof import("@/lib/card-refund-paid-twice"))["listCardRefundsPaidTwice"];
 let lockHolderClient: import("@prisma/client").PrismaClient;
 let observerClient: import("@prisma/client").PrismaClient;
 
@@ -94,6 +97,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
   () => {
     async function deleteCloseRecords() {
       await prisma.auditLog.deleteMany({ where: { entityId: OPERATION_ID } });
+      await prisma.auditLog.deleteMany({ where: { targetId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
@@ -135,6 +139,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       ({ realElapsedMs } = await import("@/lib/__tests__/helpers/clock"));
       ({ resolveRefundNoteEligibleCash } = await import("@/lib/refund-note-eligible-cash"));
       ({ notePaidAnotherWayCloseOnReceipt } = await import("@/lib/late-capture-refund-credit-note"));
+      ({ readPaidAnotherWayNotesNotLandedCents } = await import("@/lib/card-refund-paid-another-way-cash"));
+      ({ resolveCardRefundPaidTwice, listCardRefundsPaidTwice } = await import("@/lib/card-refund-paid-twice"));
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
         import("@prisma/client"),
         import("@/lib/prisma-adapter"),
@@ -251,6 +257,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         operationId: OPERATION_ID,
         amountCents: REFUND_CENTS,
         paidBack: "full",
+        expectedOwedCents: REFUND_CENTS,
         note: "Bank transfer, ref RACE",
         actingMemberId: OFFICER_ID,
       });
@@ -365,6 +372,85 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       expect(await prisma.auditLog.count({ where: { entityId: OPERATION_ID } })).toBe(0);
     });
 
+    // Round 7 (money M1): the self-heal takes off what a close's own note has
+    // not landed; the read must find that note on the real JSON payload.
+    it("M1: a close's bank note that has not landed - queued, then FAILED - is taken off; once it lands, nothing is", async () => {
+      await close();
+      expect(await readPaidAnotherWayNotesNotLandedCents(prisma, PAYMENT_ID)).toBe(REFUND_CENTS);
+      const [note] = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+      await prisma.xeroSyncOperation.update({ where: { id: note!.id }, data: { status: "FAILED" } });
+      expect(await readPaidAnotherWayNotesNotLandedCents(prisma, PAYMENT_ID)).toBe(REFUND_CENTS);
+      await prisma.xeroSyncOperation.update({
+        where: { id: note!.id },
+        data: { status: "SUCCEEDED", xeroObjectId: "cn_race_3372_paw" },
+      });
+      expect(await readPaidAnotherWayNotesNotLandedCents(prisma, PAYMENT_ID)).toBe(0);
+    });
+
+    it("C7: a close against an owed figure that moved is refused, and nothing is written", async () => {
+      await expect(
+        closeCardRefundPaidAnotherWay({
+          operationId: OPERATION_ID,
+          amountCents: REFUND_CENTS,
+          paidBack: "full",
+          expectedOwedCents: REFUND_CENTS + 1,
+          note: "Bank transfer, ref RACE",
+          actingMemberId: OFFICER_ID,
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      const operation = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: OPERATION_ID } });
+      expect(operation.status).toBe("FAILED");
+      expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+    });
+
+    // #3372 (owner, 9 Oct 2026: "Add a 'Resolved' button").
+    it("Resolved: a double click on a paid-twice row writes one resolution and one audit row, and the row leaves the list", async () => {
+      await prisma.paymentRecoveryOperation.update({
+        where: { id: OPERATION_ID },
+        data: { createdAt: new Date("2026-06-01T00:00:00.000Z") },
+      });
+      await close();
+      const closed = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: OPERATION_ID } });
+      // Stripe made the refund a second before the close; the sync recorded it after.
+      await prisma.paymentRefund.create({
+        data: {
+          paymentId: PAYMENT_ID,
+          paymentTransactionId: TRANSACTION_ID,
+          stripeRefundId: "re_race_3372_paw_twice",
+          stripePaymentIntentId: "pi_race_3372_paw",
+          amountCents: REFUND_CENTS,
+          currency: "nzd",
+          status: "succeeded",
+          stripeCreatedAt: new Date(closed.succeededAt!.getTime() - 1_000),
+          createdAt: new Date(closed.succeededAt!.getTime() + 1_000),
+        },
+      });
+      expect(await listCardRefundsPaidTwice()).toEqual([
+        expect.objectContaining({ operationId: OPERATION_ID, refundedByCardCents: REFUND_CENTS }),
+      ]);
+
+      const resolve = () =>
+        resolveCardRefundPaidTwice({ operationId: OPERATION_ID, note: "Member paid it back", actingMemberId: OFFICER_ID });
+      const settled = await Promise.allSettled([resolve(), resolve()]);
+      expect(settled.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      const [refused] = settled.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+      expect(refused?.reason).toMatchObject({ status: 409 });
+
+      expect(
+        await prisma.auditLog.count({ where: { action: "booking-payment.card-refund.paid-twice-resolved", targetId: BOOKING_ID } }),
+      ).toBe(1);
+      const record = await prisma.manualRefundTask.findFirstOrThrow({
+        where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+      });
+      expect(record.reviewContext).toMatchObject({
+        paidTwiceResolved: { note: "Member paid it back", resolvedByMemberId: OFFICER_ID, refundedByCardCents: REFUND_CENTS },
+      });
+      expect(await listCardRefundsPaidTwice()).toEqual([]);
+      // It moved no money.
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+      expect(payment.refundedAmountCents).toBe(REFUND_CENTS);
+    });
+
     describe("round 6: a late card charge's refund - record the receipt, then credit it", () => {
       const KEPT_ROW = {
         direction: "OUTBOUND",
@@ -453,11 +539,14 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         const notes = await noteRows();
         expect(notes).toHaveLength(1);
         expect(notes[0]?.requestPayload).toMatchObject({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking" });
+        // Round 7 (M5): it names the receipt's invoice, never the capture's intent.
+        expect(notes[0]?.requestPayload).toMatchObject({ creditsInvoiceId: RECEIPT_LINK.xeroObjectId });
+        expect(notes[0]?.requestPayload).not.toHaveProperty("paymentIntentId");
         // One receipt: the worker's.
         expect(await prisma.xeroSyncOperation.count({ where: KEPT_ROW })).toBe(1);
       });
 
-      it("with no receipt in Xero the close queues the receipt and no note; the receipt's link and the note are then written together", async () => {
+      it("with no receipt in Xero the close queues the receipt and no note; the receipt's link, then the note, once", async () => {
         const result = await close();
 
         expect(result.xeroQueued).toBe("receipt-then-refund-note");
@@ -477,24 +566,41 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
         expect((await resolveRefundNoteEligibleCash(payment)).eligibleCashCents).toBe(0);
 
-        // The receipt's worker, once the invoice is in Xero: the link and the
-        // note in one transaction under the task row
-        // (`recordReceiptThenQueueItsPaidAnotherWayNote`).
+        // The receipt's worker, once the invoice is in Xero (round 7, C9): the
+        // link under the task row, then the note in a transaction of its own
+        // (`recordKeptLateCaptureReceiptLink`, `queueWaitingPaidAnotherWayNote`).
         await prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT 1 FROM "ManualRefundTask" WHERE "id" = ${APPROVAL_TASK_ID} FOR UPDATE`;
           await tx.xeroObjectLink.create({ data: RECEIPT_LINK });
-          await notePaidAnotherWayCloseOnReceipt({
-            paymentIntentId: LATE_INTENT,
-            clubZone: "Pacific/Auckland" as never,
-            store: tx,
-          });
         });
+        const noteStep = () =>
+          prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT 1 FROM "ManualRefundTask" WHERE "id" = ${APPROVAL_TASK_ID} FOR UPDATE`;
+            return notePaidAnotherWayCloseOnReceipt({
+              paymentIntentId: LATE_INTENT,
+              receiptInvoiceId: RECEIPT_LINK.xeroObjectId,
+              clubZone: "Pacific/Auckland" as never,
+              store: tx,
+            });
+          });
+        const first = await noteStep();
 
         const notes = await noteRows();
         expect(notes).toHaveLength(1);
         expect(notes[0]?.correlationKey).toContain(`paid-another-way:${record.id}`);
-        expect(notes[0]?.requestPayload).toMatchObject({ refundAmountCents: REFUND_CENTS, refundMethod: "internet-banking" });
+        expect(notes[0]?.requestPayload).toMatchObject({
+          refundAmountCents: REFUND_CENTS,
+          refundMethod: "internet-banking",
+          paidAnotherWayTaskId: record.id,
+          creditsInvoiceId: RECEIPT_LINK.xeroObjectId,
+        });
         expect((await resolveRefundNoteEligibleCash(payment)).eligibleCashCents).toBe(REFUND_CENTS);
+
+        // Round 7 (C9): the row's retry after a failed note step runs it again;
+        // the note it already asked for - even FAILED - is the one, never a second.
+        await prisma.xeroSyncOperation.update({ where: { id: notes[0]!.id }, data: { status: "FAILED" } });
+        await expect(noteStep()).resolves.toBe(first);
+        expect(await noteRows()).toHaveLength(1);
       });
     });
   },

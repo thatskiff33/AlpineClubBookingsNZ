@@ -81,3 +81,61 @@ export async function readPaidAnotherWayCash(
   }
   return cash;
 }
+
+/**
+ * #3924 round 7 (money M1, `INV-PAY-121`): THE NOTED BANK CASH WHOSE OWN NOTE
+ * HAS NOT LANDED. A close counted as noted (`readPaidAnotherWayCash`) puts its
+ * bank cash into what a refund note may answer, and only its own
+ * bank-transfer note - keyed on the close's record (`paidAnotherWayTaskId`) -
+ * may answer it. While that note is queued, running or FAILED it covers
+ * nothing, so the payment reads that cash as uncovered; a caller that sizes a
+ * note WITHOUT the record - the nightly self-heal - would otherwise fill it
+ * with a card note settled from the Stripe account. Such a caller takes this
+ * off what it asks for. The close's note itself is retried as its own row.
+ *
+ * Landed: a refund-note create on the payment for this record, either
+ * SUCCEEDED with the Xero note it raised or resolved by hand in Xero
+ * (`INV-INT-025`). Matched by the record id the row carries, and by its key.
+ */
+export async function readPaidAnotherWayNotesNotLandedCents(
+  db: Pick<
+    Prisma.TransactionClient,
+    "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
+  >,
+  paymentId: string,
+): Promise<number> {
+  const tasks = await db.manualRefundTask.findMany({
+    where: { paymentId, ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE },
+    select: { id: true, kind: true, occurrenceKey: true, amountCents: true },
+  });
+  let notLandedCents = 0;
+  for (const task of tasks) {
+    const note = paidAnotherWayCloseXeroNote(task);
+    const noted =
+      note === "now" || (note === "after-receipt" && (await paidAnotherWayCloseReceiptRecorded(task, db)));
+    if (!noted) continue;
+    const landed = await db.xeroSyncOperation.count({
+      where: {
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: paymentId,
+        OR: [
+          { requestPayload: { path: ["paidAnotherWayTaskId"], equals: task.id } },
+          { correlationKey: { endsWith: `:paid-another-way:${task.id}` } },
+        ],
+        AND: [
+          {
+            OR: [
+              { status: "SUCCEEDED", xeroObjectId: { not: null } },
+              { manuallyResolvedAt: { not: null } },
+            ],
+          },
+        ],
+      },
+    });
+    if (landed === 0) notLandedCents += Math.max(0, task.amountCents ?? 0);
+  }
+  return notLandedCents;
+}

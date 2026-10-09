@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -28,6 +28,7 @@ import {
   type DeadCardRefundPanelRow,
 } from "@/components/admin/dead-card-refunds-panel";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { describeRefundMethod } from "@/lib/xero-refund-method";
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; #3924 round 4, U6):
@@ -54,8 +55,11 @@ function respond(status: number, body: unknown) {
   mocks.fetch.mockResolvedValueOnce({ ok: status >= 200 && status < 300, status, json: async () => body });
 }
 
+/** The bank-transfer note's own wording, which the server page passes (`describeRefundMethod`). */
+const BANK_NOTE_WORDING = describeRefundMethod("internet-banking");
+
 function openDialog(subject = row()) {
-  const view = render(<DeadCardRefundsPanel rows={[subject]} />);
+  const view = render(<DeadCardRefundsPanel rows={[subject]} bankNoteWording={BANK_NOTE_WORDING} />);
   fireEvent.click(screen.getByRole("button", { name: "Paid another way" }));
   return view;
 }
@@ -82,13 +86,19 @@ describe("the Paid another way dialog", () => {
     openDialog();
 
     expect(screen.getByText("$150.00 is still owed.")).toBeInTheDocument();
-    expect(screen.getByText(/A Xero refund credit note for the amount, as a bank transfer, is queued/)).toBeInTheDocument();
+    // Round 7 (SSOT): the note's wording is the one home's, never spelled here.
+    expect(
+      screen.getByText(`A Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", is queued when you close it.`),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Refunded it in the Stripe dashboard instead\? Do not close it here/)).toBeInTheDocument();
   });
 
-  it("says no Xero note is raised where there is no invoice to credit", () => {
+  it("says no Xero note is queued where the app has no invoice it can credit - without claiming none is on its way", () => {
     openDialog(row({ xeroRefundNote: "none" }));
-    expect(screen.getByText(/No Xero refund credit note is raised: there is no Xero invoice/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No Xero refund credit note is queued: the app has no Xero invoice it can credit for this money yet/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/there is no Xero invoice/)).not.toBeInTheDocument();
   });
 
   // #3924 round 6 (owner, 8 Oct 2026: "Record receipt, then credit").
@@ -96,10 +106,10 @@ describe("the Paid another way dialog", () => {
     openDialog(row({ xeroRefundNote: "after-receipt" }));
     expect(
       screen.getByText(
-        "Xero has no record of this late card charge yet. Closing it records the charge in Xero as a payment received into the Stripe account, then queues a Xero refund credit note for the amount, as a bank transfer, against it.",
+        `Xero has no record of this late card charge yet. Closing it records the charge in Xero as a payment received into the Stripe account, then queues a Xero refund credit note for the amount, worded "${BANK_NOTE_WORDING}", against it.`,
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/No Xero refund credit note is raised/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No Xero refund credit note is queued/)).not.toBeInTheDocument();
   });
 
   it("MUTATION: after a receipt-first close, the message says the note follows the receipt", async () => {
@@ -111,7 +121,7 @@ describe("the Paid another way dialog", () => {
 
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
-      "Closed. $150.00 recorded as paid back in full. The late card charge is queued to be recorded in Xero as a payment received into the Stripe account; its refund credit note, as a bank transfer, follows once it is.",
+      `Closed. $150.00 recorded as paid back in full. The late card charge is queued to be recorded in Xero as a payment received into the Stripe account; its refund credit note, worded "${BANK_NOTE_WORDING}", follows once it is.`,
     );
   });
 
@@ -172,12 +182,30 @@ describe("the Paid another way dialog", () => {
     expect(screen.getAllByText(/Part of it must be less than the \$150\.00 still owed/).length).toBeGreaterThan(0);
   });
 
-  it("closes a superseded payment's refund in full only", () => {
+  it("closes a superseded payment's refund in full only, and the disabled part choice names why", () => {
     openDialog(row({ wholeAmountOnly: true }));
     expect(fullChoice()).toBeChecked();
     expect(partChoice()).toBeDisabled();
     expect(amountBox()).toBeDisabled();
-    expect(screen.getByText(/closes for the whole amount/)).toBeInTheDocument();
+    const why = screen.getByText(/closes for the whole amount/);
+    // Round 7 (UX): linked to the disabled radio, so a screen reader hears it there.
+    expect(partChoice()).toHaveAttribute("aria-describedby", why.id);
+  });
+
+  it("MUTATION: round 7 (UX): choosing part raises no alert before the treasurer has typed or left the box", () => {
+    openDialog();
+    fireEvent.click(partChoice());
+    const amountAlerts = () =>
+      screen.queryAllByRole("alert").filter((alert) => alert.textContent?.includes("Enter the amount paid back"));
+    expect(amountAlerts()).toHaveLength(0);
+    expect(amountBox()).not.toHaveAttribute("aria-invalid");
+    // The disabled button still says why, beside it - as a hint, not an alert.
+    const hint = screen.getByText("Enter the amount paid back, in dollars and cents.");
+    expect(closeButton()).toHaveAttribute("aria-describedby", hint.id);
+
+    fireEvent.blur(amountBox());
+    expect(amountBox()).toHaveAttribute("aria-invalid", "true");
+    expect(amountAlerts()).toHaveLength(1);
   });
 
   it("flags a refund Stripe may have made after all, on its row and in its dialog", () => {
@@ -197,11 +225,17 @@ describe("the Paid another way dialog", () => {
       "/api/admin/payments/card-refunds/op-1/paid-another-way",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ amountCents: 15_000, paidBack: "full", note: "Bank transfer, ref 123", confirmed: true }),
+        body: JSON.stringify({
+          amountCents: 15_000,
+          paidBack: "full",
+          expectedOwedCents: 15_000,
+          note: "Bank transfer, ref 123",
+          confirmed: true,
+        }),
       }),
     );
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
-      "Closed. $150.00 recorded as paid back in full. Its Xero refund credit note, as a bank transfer, is queued.",
+      `Closed. $150.00 recorded as paid back in full. Its Xero refund credit note, worded "${BANK_NOTE_WORDING}", is queued.`,
     );
     expect(mocks.refresh).toHaveBeenCalledTimes(1);
   });
@@ -218,7 +252,13 @@ describe("the Paid another way dialog", () => {
     expect(mocks.fetch).toHaveBeenCalledWith(
       "/api/admin/payments/card-refunds/op-1/paid-another-way",
       expect.objectContaining({
-        body: JSON.stringify({ amountCents: 10_000, paidBack: "partial", note: "Bank transfer", confirmed: true }),
+        body: JSON.stringify({
+          amountCents: 10_000,
+          paidBack: "partial",
+          expectedOwedCents: 15_000,
+          note: "Bank transfer",
+          confirmed: true,
+        }),
       }),
     );
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
@@ -258,11 +298,16 @@ describe("#3924 round 5 (UX F1): the dialog reads its refund from the list, so a
     const { rerender } = openDialog();
     fireEvent.click(partChoice());
     fireEvent.change(amountBox(), { target: { value: "100.00" } });
+    const statusesBefore = within(screen.getByRole("dialog")).getAllByRole("status");
 
-    rerender(<DeadCardRefundsPanel rows={[row({ owedCents: 9_000 })]} />);
+    rerender(<DeadCardRefundsPanel rows={[row({ owedCents: 9_000 })]} bankNoteWording={BANK_NOTE_WORDING} />);
 
     expect(amountBox().value).toBe("");
     expect(screen.getByText("$90.00 is still owed.")).toBeInTheDocument();
+    // Round 7 (UX): the notice lands in a live region that was already there.
+    expect(statusesBefore).toContain(
+      screen.getByText("What is still owed changed to $90.00 since you opened this. Check the amount before closing it."),
+    );
     expect(
       screen.getByText("What is still owed changed to $90.00 since you opened this. Check the amount before closing it."),
     ).toHaveAttribute("role", "status");
@@ -272,7 +317,7 @@ describe("#3924 round 5 (UX F1): the dialog reads its refund from the list, so a
     const { rerender } = openDialog();
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
-    rerender(<DeadCardRefundsPanel rows={[row({ owedCents: 9_000 })]} />);
+    rerender(<DeadCardRefundsPanel rows={[row({ owedCents: 9_000 })]} bankNoteWording={BANK_NOTE_WORDING} />);
 
     expect(amountBox().value).toBe("90.00");
     respond(200, { success: true, xeroQueued: "refund-note" });
@@ -280,7 +325,10 @@ describe("#3924 round 5 (UX F1): the dialog reads its refund from the list, so a
     await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
     expect(mocks.fetch).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ body: expect.stringContaining('"amountCents":9000,"paidBack":"full"') }),
+      // Round 7 (C7): with the owed figure the dialog now shows.
+      expect.objectContaining({
+        body: expect.stringContaining('"amountCents":9000,"paidBack":"full","expectedOwedCents":9000'),
+      }),
     );
   });
 
@@ -288,7 +336,7 @@ describe("#3924 round 5 (UX F1): the dialog reads its refund from the list, so a
     const { rerender } = openDialog();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    rerender(<DeadCardRefundsPanel rows={[]} />);
+    rerender(<DeadCardRefundsPanel rows={[]} bankNoteWording={BANK_NOTE_WORDING} />);
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByText(/That card refund is no longer waiting to be closed/)).toHaveAttribute("role", "status");
@@ -317,10 +365,86 @@ describe("the closes Stripe paid as well", () => {
   });
 });
 
+// #3372 (owner, 9 Oct 2026: "Add a 'Resolved' button").
+describe("marking a paid-twice row Resolved", () => {
+  const twice = {
+    operationId: "op-2",
+    bookingId: "b-2",
+    bookingReference: "BK-0002",
+    closedAt: "2026-06-25T00:00:00.000Z",
+    paidAnotherWayCents: 9_000,
+    refundedByCardCents: 9_000,
+  };
+  const resolveButton = () => screen.getByRole("button", { name: "Mark resolved" });
+  const resolveNote = () => screen.getByLabelText("How was it sorted out? (required)") as HTMLTextAreaElement;
+
+  function openResolve(rows = [twice]) {
+    const view = render(<CardRefundsPaidTwiceList rows={rows} />);
+    fireEvent.click(screen.getByRole("button", { name: "Resolved" }));
+    return view;
+  }
+
+  it("MUTATION: requires a note on how it was sorted out, with the reason beside the disabled button", () => {
+    openResolve();
+    expect(resolveNote()).toHaveAttribute("aria-required", "true");
+    expect(resolveButton()).toBeDisabled();
+    const hint = screen.getByText("Say how it was sorted out to mark it resolved.");
+    expect(resolveButton()).toHaveAttribute("aria-describedby", hint.id);
+    expect(screen.getByText(/Nothing is refunded or charged, and nothing is sent to Xero/)).toBeInTheDocument();
+    fireEvent.change(resolveNote(), { target: { value: "Member paid the extra back" } });
+    expect(resolveButton()).toBeEnabled();
+  });
+
+  it("MUTATION: sends the note for that row, then says it left the list and refreshes", async () => {
+    openResolve();
+    fireEvent.change(resolveNote(), { target: { value: "Member paid the extra back, ref 9" } });
+    respond(200, { success: true });
+    fireEvent.click(resolveButton());
+
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      "/api/admin/payments/card-refunds/op-2/paid-twice-resolved",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ note: "Member paid the extra back, ref 9", confirmed: true }),
+      }),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "Marked resolved. Booking BK-0002 has left the list, and your note is in the audit log.",
+    );
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a 409 in the dialog as a focused alert and refreshes; the refresh dropping the row closes it and says why", async () => {
+    const { rerender } = openResolve();
+    fireEvent.change(resolveNote(), { target: { value: "Sorted" } });
+    respond(409, { error: "This card refund is no longer on the paid-twice list. The list has been refreshed." });
+    fireEvent.click(resolveButton());
+
+    const alert = await screen.findByText(/no longer on the paid-twice list/);
+    await expectRecoveryAlertToHoldFocus(alert.closest("[role=alert]"));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+
+    rerender(<CardRefundsPaidTwiceList rows={[]} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(/That card refund is no longer on this list/)).toHaveAttribute("role", "status");
+  });
+
+  it("a finance viewer without edit sees the row and the banner, and cannot open it", () => {
+    mocks.canEdit = false;
+    render(<CardRefundsPaidTwiceList rows={[twice]} />);
+    expect(screen.getByTestId("admin-view-only-banner")).toHaveTextContent(/view-only access/i);
+    const button = screen.getByRole("button", { name: "Resolved" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
 describe("view-only", () => {
   it("a finance viewer without edit sees the list and the banner, and cannot open the close", () => {
     mocks.canEdit = false;
-    render(<DeadCardRefundsPanel rows={[row()]} />);
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
 
     expect(screen.getByTestId("admin-view-only-banner")).toHaveTextContent(/view-only access/i);
     expect(screen.getByText(/\$150\.00 still owed/)).toBeInTheDocument();

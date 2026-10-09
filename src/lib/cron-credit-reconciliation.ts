@@ -9,6 +9,7 @@ import {
   getRefundsMissingXeroCreditNotes,
 } from "@/lib/xero-admin-health";
 import { findOrphanedAppliedCredits } from "@/lib/orphaned-applied-credit-backfill";
+import { readPaidAnotherWayNotesNotLandedCents } from "@/lib/card-refund-paid-another-way-cash";
 import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -61,12 +62,23 @@ export async function reconcileCreditBalances(): Promise<{
     // collapse into the existing PENDING operation. Alerting below is
     // unchanged: operators still see the divergence until the books actually
     // heal.
+    //
+    // #3924 round 7 (money M1, `INV-PAY-121`): what it asks for here is a CARD
+    // note, settled from the Stripe account. Bank cash a "Paid another way"
+    // close sent back is answered only by that close's own bank-transfer note,
+    // keyed on its record; while that note has not landed (queued, running or
+    // FAILED) its cash reads as uncovered, and is taken off the ask, never
+    // filled with card money. The close's note is retried as its own row.
     let reEnqueued = 0;
     for (const missing of refundsMissingCreditNotes.payments) {
       try {
+        const cardAskCents =
+          missing.uncoveredCents -
+          (await readPaidAnotherWayNotesNotLandedCents(prisma, missing.paymentId));
+        if (cardAskCents <= 0) continue;
         const queued = await enqueueXeroRefundCreditNoteOperation(
           missing.paymentId,
-          missing.uncoveredCents
+          cardAskCents
         );
         if (queued.queueOperationId) {
           reEnqueued += 1;

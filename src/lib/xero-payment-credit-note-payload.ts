@@ -50,6 +50,9 @@ export function parsePaymentCreditNoteRetryInput(
   refundRequestId?: string;
   /** #3935 (`INV-PAY-116`): the officer's cash answer, carried on both shapes. */
   noteWording?: RefundNoteWording;
+  /** #3924 round 7 (`INV-PAY-121`): the paid-another-way close a note answers, and the invoice it named. */
+  paidAnotherWayTaskId?: string;
+  creditsInvoiceId?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -66,6 +69,10 @@ export function parsePaymentCreditNoteRetryInput(
     ...(readString(payload.documentDate) ? { documentDate: readString(payload.documentDate)! } : {}),
     ...(readString(payload.refundRequestId) ? { refundRequestId: readString(payload.refundRequestId)! } : {}),
     ...(readRefundNoteWording(payload) ? { noteWording: readRefundNoteWording(payload)! } : {}),
+    ...(readString(payload.paidAnotherWayTaskId)
+      ? { paidAnotherWayTaskId: readString(payload.paidAnotherWayTaskId)! }
+      : {}),
+    ...(readString(payload.creditsInvoiceId) ? { creditsInvoiceId: readString(payload.creditsInvoiceId)! } : {}),
   };
   const queuedRefundAmount = readNumber(payload.refundAmountCents);
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {

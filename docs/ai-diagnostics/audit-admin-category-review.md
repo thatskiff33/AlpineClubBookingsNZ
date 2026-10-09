@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  498
+row-producing sites:  499
 uncategorised:        0
-category values: admin 107, booking 107, xero 39, family 35, payment 53,
+category values: admin 107, booking 107, xero 39, family 35, payment 54,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -774,7 +774,10 @@ promo codes (`booking` 106 -> 107, 497 -> 498), and #3492's
 `promo_code.guest_lookup`, a booker looking up their guests' promo codes for
 the chips (`privacy` 20 -> 21, 498 -> 499). #3372 then added
 `booking-payment.card-refund.paid-another-way`, the treasurer closing a card
-refund Stripe gave up on (`payment` 52 -> 53, 499 -> 500).
+refund Stripe gave up on (`payment` 52 -> 53, 499 -> 500), and
+`booking-payment.card-refund.paid-twice-resolved`, the treasurer marking a
+refund paid back twice as sorted out with the member (`payment` 53 -> 54; 498 ->
+499 on the tree composed with #52's removals below, MEASURED).
 
 #52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
 with all of the above; MEASURED with

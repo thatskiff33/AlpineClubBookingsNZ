@@ -14,19 +14,17 @@ import {
   type PaidAnotherWayXeroPlan,
   type PaidAnotherWayXeroQueued,
 } from "@/lib/card-refund-paid-another-way-xero";
+import { PAID_BACK_CHOICES, type PaidBackChoice } from "@/lib/card-refund-paid-back";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import {
-  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
   cardRefundPaidAnotherWayOccurrenceKey,
-  paymentRecoveryOperationIdOfPaidAnotherWay,
   type PaidAnotherWayXeroNote,
 } from "@/lib/manual-refund-task-settlement-rules";
 import {
   CARD_REFUND_OPERATION_WHERE,
-  cardRefundSentAfterPaidAnotherWay,
   cardRefundSlicesByOperation,
   isOwedCardRefundOperation,
   unsentSliceCents,
@@ -72,7 +70,9 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
  * - FULL OR PART, SAID EXPLICITLY (owner, 8 Oct 2026: "Difference is gone",
  *   and "need a way for Treasurer to mark a partial versus only a full
  *   payment"). The treasurer chooses `paidBack`: "full" closes for exactly what
- *   is still owed; "partial" for more than nothing and less than that. The
+ *   is still owed; "partial" for more than nothing and less than that. Never
+ *   for nothing, of any kind (#3924 round 7, M6), and only against the owed
+ *   figure the treasurer saw (`expectedOwedCents`, round 7, C7). The
  *   choice is never inferred from the amount. A part close is final: what was
  *   not paid back stops being owed anywhere - "Refunds owed", Net Collected,
  *   this list, and a later review's netting, which counts the refund at its
@@ -257,7 +257,9 @@ export function lastErrorSuggestsStripeMayHaveRefunded(lastError: string | null)
 /**
  * The dead card refunds the treasurer can close, oldest first, with what each
  * still owes. Organiser child refunds and group settlement refunds are left
- * out, as the close refuses them.
+ * out, as the close refuses them; so is one that owes nothing (#3924 round 7,
+ * M6), which no close may record - it still counts among the payment
+ * recovery operations the stuck-states page says need reconciling.
  */
 export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   const operations = await prisma.paymentRecoveryOperation.findMany({
@@ -265,16 +267,19 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
     orderBy: { createdAt: "asc" },
     select: { ...OPERATION_SELECT, payment: { select: PAYMENT_SELECT } },
   });
-  const closable = operations.filter(
-    (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
-  );
+  const closable = operations
+    .filter(
+      (operation) => isOwedCardRefundOperation(operation) && !isOrganiserChildRefundKey(operation.idempotencyKey),
+    )
+    .map((operation) => ({ operation, owedCents: stillOwed(operation.payment, operation.id).owedCents }))
+    .filter(({ owedCents }) => owedCents > 0);
   return Promise.all(
-    closable.map(async (operation) => ({
+    closable.map(async ({ operation, owedCents }) => ({
       operationId: operation.id,
       bookingId: operation.bookingId,
       bookingReference: formatBookingReference(operation.bookingId),
       raisedAt: operation.createdAt.toISOString(),
-      owedCents: stillOwed(operation.payment, operation.id).owedCents,
+      owedCents,
       wholeAmountOnly: operation.type === "REFUND_SUPERSEDED_PAYMENT",
       xeroRefundNote: (
         await paidAnotherWayXeroPlan(prisma, operation, operation.payment, { lockApprovalTask: false })
@@ -284,71 +289,18 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
   );
 }
 
-/** A card refund closed as paid another way that Stripe then paid as well. */
-export interface CardRefundPaidTwiceRow {
-  operationId: string;
-  bookingId: string;
-  bookingReference: string;
-  /** When the treasurer closed it (ISO instant). */
-  closedAt: string;
-  /** What the close recorded as paid back another way. */
-  paidAnotherWayCents: number;
-  /** What Stripe refunded to the card for it after the close. */
-  refundedByCardCents: number;
-}
-
-/**
- * #3924 round 5 (concurrency F2): the card refunds the treasurer closed as paid
- * another way that Stripe ALSO refunded - a refund Stripe made before the close
- * (its answer lost to a timeout) that reached the app after it. The member has
- * that money twice; the stuck-states page lists each so the treasurer can
- * recover it. Read from the close's record and the payment's own refund rows
- * (`cardRefundSentAfterPaidAnotherWay`), oldest close first.
- *
- * STATED LIMIT: it reads every close ever made, which stays small - a close is
- * the treasurer's hand on a refund Stripe gave up on.
- */
-export async function listCardRefundsPaidTwice(): Promise<CardRefundPaidTwiceRow[]> {
-  const records = await prisma.manualRefundTask.findMany({
-    where: CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-    orderBy: { completedAt: "asc" },
-    select: {
-      kind: true,
-      occurrenceKey: true,
-      bookingId: true,
-      amountCents: true,
-      completedAt: true,
-      payment: { select: PAYMENT_SELECT },
-    },
-  });
-  const rows: CardRefundPaidTwiceRow[] = [];
-  for (const record of records) {
-    const operationId = paymentRecoveryOperationIdOfPaidAnotherWay(record);
-    if (operationId === null || record.payment === null) continue;
-    const refundedByCardCents =
-      cardRefundSentAfterPaidAnotherWay(record.payment, new Set([operationId])).get(operationId) ?? 0;
-    if (refundedByCardCents <= 0) continue;
-    rows.push({
-      operationId,
-      bookingId: record.bookingId,
-      bookingReference: formatBookingReference(record.bookingId),
-      closedAt: (record.completedAt ?? new Date(0)).toISOString(),
-      paidAnotherWayCents: record.amountCents ?? 0,
-      refundedByCardCents,
-    });
-  }
-  return rows;
-}
-
-/** How much the treasurer says was paid back (owner, 8 Oct 2026): chosen, never inferred from the amount. */
-export type PaidBackChoice = "full" | "partial";
-
 export interface CardRefundPaidAnotherWayInput {
   operationId: string;
   /** What the treasurer paid back, in cents: exactly what is owed for "full", less than it for "partial". */
   amountCents: number;
   /** Paid back in full, or in part with the rest no longer owed - the treasurer's explicit choice. */
   paidBack: PaidBackChoice;
+  /**
+   * What the treasurer saw still owed when they chose (#3924 round 7,
+   * concurrency C7). A close against a figure that has since moved is refused
+   * with a 409, so the page refreshes and they choose again against the new one.
+   */
+  expectedOwedCents: number;
   /** How it was paid. Required. */
   note: string | null | undefined;
   actingMemberId: string;
@@ -463,11 +415,16 @@ export async function closeCardRefundPaidAnotherWay(
   if (!note) {
     throw new CardRefundPaidAnotherWayError("Say how the member was paid back - a note is required.", 400);
   }
-  if (!Number.isSafeInteger(input.amountCents) || input.amountCents < 0) {
-    throw new CardRefundPaidAnotherWayError("The amount paid back must be whole cents, not below nil.", 400);
+  // #3924 round 7 (money M6): never for nothing, whatever the kind. A close
+  // records money paid back; one for $0 would close a refund nobody paid.
+  if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0) {
+    throw new CardRefundPaidAnotherWayError("The amount paid back must be whole cents, more than nothing.", 400);
   }
-  if (input.paidBack !== "full" && input.paidBack !== "partial") {
+  if (!(PAID_BACK_CHOICES as readonly string[]).includes(input.paidBack)) {
     throw new CardRefundPaidAnotherWayError("Say whether it was paid back in full or in part.", 400);
+  }
+  if (!Number.isSafeInteger(input.expectedOwedCents) || input.expectedOwedCents < 0) {
+    throw new CardRefundPaidAnotherWayError("Say what you saw still owed, in whole cents.", 400);
   }
   // `INV-LOCK-004`: the club's zone, for a late charge's receipt date, is read
   // before the transaction.
@@ -518,6 +475,13 @@ export async function closeCardRefundPaidAnotherWay(
       );
     }
     const { ownCents, owedCents, unsentTransactionIds } = stillOwed(payment, operation.id);
+    // C7: the figure the treasurer chose against, read under the payment row.
+    if (owedCents !== input.expectedOwedCents) {
+      throw new CardRefundPaidAnotherWayError(
+        "What is still owed on this card refund changed since you opened it. The list has been refreshed: check the amount and close it again.",
+        409,
+      );
+    }
     if (input.amountCents > owedCents) {
       throw new CardRefundPaidAnotherWayError(
         "That is more than this refund still owes. Refresh and check the amount.",
@@ -544,10 +508,9 @@ export async function closeCardRefundPaidAnotherWay(
     }
     // F4 / round 6: decided before the record, whose key carries the answer;
     // a late capture's approval task row is taken before its receipt is read.
-    const xeroPlan: PaidAnotherWayXeroPlan =
-      input.amountCents > 0
-        ? await paidAnotherWayXeroPlan(tx, operation, payment, { lockApprovalTask: true })
-        : { xeroRefundNote: "none" };
+    const xeroPlan: PaidAnotherWayXeroPlan = await paidAnotherWayXeroPlan(tx, operation, payment, {
+      lockApprovalTask: true,
+    });
 
     const closedAt = new Date();
     const claimed = await tx.paymentRecoveryOperation.updateMany({
@@ -568,69 +531,65 @@ export async function closeCardRefundPaidAnotherWay(
     }
 
     // The money moves only after the claim, so a lost claim moves nothing.
-    let xeroQueued: PaidAnotherWayXeroQueued = "nothing";
-    let recordId: string | null = null;
-    if (input.amountCents > 0) {
-      try {
-        await applyLocalRefundAllocation({
-          paymentId: payment.id,
-          amountCents: input.amountCents,
-          preferTransactionIds: unsentTransactionIds,
-          store: tx,
-        });
-      } catch (error) {
-        // C3: only the allocation's two refusals are the operator's to act on;
-        // anything else is a fault, for the route's 500.
-        if (error instanceof RefundAllocationRacedError || error instanceof RefundAllocationExceedsCapturedError) {
-          logger.warn({ err: error, operationId: operation.id }, "Paid-another-way close refused by the refund allocation");
-          throw new CardRefundPaidAnotherWayError(
-            error instanceof RefundAllocationRacedError
-              ? "This payment's refunds changed while you were closing it - refresh and try again."
-              : "The payment no longer holds that much to refund. Refresh and check the amount.",
-            409,
-          );
-        }
-        throw error;
-      }
-
-      const record = await tx.manualRefundTask.create({
-        data: {
-          bookingId: booking.id,
-          paymentId: payment.id,
-          kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
-          occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(operation.id, {
-            xeroRefundNote: xeroPlan.xeroRefundNote,
-          }),
-          amountCents: input.amountCents,
-          raisedAmountCents: owedCents,
-          status: "COMPLETED",
-          completedAt: closedAt,
-          completedByMemberId: input.actingMemberId,
-          note,
-          reason: paidAnotherWayReason(booking.id, input.paidBack),
-        },
-        select: { id: true },
-      });
-      recordId = record.id;
-      await postPaidAnotherWayLine(tx, {
-        bookingId: booking.id,
-        lodgeId: booking.lodgeId,
-        taskId: record.id,
+    try {
+      await applyLocalRefundAllocation({
+        paymentId: payment.id,
         amountCents: input.amountCents,
-        officerMemberId: input.actingMemberId,
+        preferTransactionIds: unsentTransactionIds,
+        store: tx,
       });
+    } catch (error) {
+      // C3: only the allocation's two refusals are the operator's to act on;
+      // anything else is a fault, for the route's 500.
+      if (error instanceof RefundAllocationRacedError || error instanceof RefundAllocationExceedsCapturedError) {
+        logger.warn({ err: error, operationId: operation.id }, "Paid-another-way close refused by the refund allocation");
+        throw new CardRefundPaidAnotherWayError(
+          error instanceof RefundAllocationRacedError
+            ? "This payment's refunds changed while you were closing it - refresh and try again."
+            : "The payment no longer holds that much to refund. Refresh and check the amount.",
+          409,
+        );
+      }
+      throw error;
+    }
 
-      // M3 / round 5 / round 6: the note now, or the late charge's receipt first.
-      xeroQueued = await queuePaidAnotherWayXero(tx, xeroPlan, {
-        operationId: operation.id,
+    const record = await tx.manualRefundTask.create({
+      data: {
         bookingId: booking.id,
         paymentId: payment.id,
-        recordId: record.id,
+        kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+        occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(operation.id, {
+          xeroRefundNote: xeroPlan.xeroRefundNote,
+        }),
         amountCents: input.amountCents,
-        actingMemberId: input.actingMemberId,
-        clubZone,
-      });
-    }
+        raisedAmountCents: owedCents,
+        status: "COMPLETED",
+        completedAt: closedAt,
+        completedByMemberId: input.actingMemberId,
+        note,
+        reason: paidAnotherWayReason(booking.id, input.paidBack),
+      },
+      select: { id: true },
+    });
+    await postPaidAnotherWayLine(tx, {
+      bookingId: booking.id,
+      lodgeId: booking.lodgeId,
+      taskId: record.id,
+      amountCents: input.amountCents,
+      officerMemberId: input.actingMemberId,
+    });
+
+    // M3 / round 5 / round 6: the note now, or the late charge's receipt first.
+    const xeroQueued: PaidAnotherWayXeroQueued = await queuePaidAnotherWayXero(tx, xeroPlan, {
+      operationId: operation.id,
+      bookingId: booking.id,
+      paymentId: payment.id,
+      recordId: record.id,
+      amountCents: input.amountCents,
+      actingMemberId: input.actingMemberId,
+      clubZone,
+      closedAt,
+    });
 
     await createAuditLog(
       {
@@ -658,7 +617,7 @@ export async function closeCardRefundPaidAnotherWay(
           amountCents: input.amountCents,
           owedCents,
           noLongerOwedCents: owedCents - input.amountCents,
-          manualRefundTaskId: recordId,
+          manualRefundTaskId: record.id,
           xeroQueued,
         },
       },

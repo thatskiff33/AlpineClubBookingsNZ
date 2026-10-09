@@ -824,6 +824,14 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * back.
      */
     paidAnotherWayTaskId?: string;
+    /**
+     * #3924 round 7 (money M5, `INV-PAY-121`): the invoice this note credits,
+     * when the caller knows it - a paid-another-way close of a late capture's
+     * refund names that capture's receipt. Never `paymentIntentId` for that:
+     * a note recording the capture is counted as the capture's CARD refund note
+     * (`sumLateCaptureNotedCents`), and would mask a later Stripe refund of it.
+     */
+    creditsInvoiceId?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -885,7 +893,15 @@ export async function enqueueXeroRefundCreditNoteOperation(
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
 
-  const stepped = payment.source === PaymentSource.STRIPE || Boolean(options?.reviewTaskId);
+  // #3924 round 7 (concurrency C8): a paid-another-way close's note is one of
+  // several on its payment whatever the payment's source - an internet-banking
+  // payment can carry a card refund (an edit's Stripe capture). The single-note
+  // branch below would read the payment's other note as this one's and write
+  // the Payment row, which the receipt's worker must not do under the task row.
+  const stepped =
+    payment.source === PaymentSource.STRIPE ||
+    Boolean(options?.reviewTaskId) ||
+    Boolean(options?.paidAnotherWayTaskId);
   if (stepped) {
     // Stripe payments can be refunded in several steps, and each step needs
     // its own credit note for the still-uncovered delta. The cumulative total
@@ -1026,6 +1042,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
       ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
+      ...(options?.paidAnotherWayTaskId ? { paidAnotherWayTaskId: options.paidAnotherWayTaskId } : {}),
+      ...(options?.creditsInvoiceId ? { creditsInvoiceId: options.creditsInvoiceId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -3014,6 +3032,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(payload.noteWording ? { noteWording: payload.noteWording } : {}),
             ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
+            ...(payload.paidAnotherWayTaskId ? { paidAnotherWayTaskId: payload.paidAnotherWayTaskId } : {}),
+            ...(payload.creditsInvoiceId ? { creditsInvoiceId: payload.creditsInvoiceId } : {}),
             // #3827 (D-3813-8): a refund request's own note (`refund-request-credit-note.ts`).
             ...(readRefundRequestIdFromPayload(queuedOperation.requestPayload)
               ? { refundRequestId: readRefundRequestIdFromPayload(queuedOperation.requestPayload)! }

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   isXeroConnected: vi.fn(),
   getRefundsMissingXeroCreditNotes: vi.fn(),
   findOrphanedAppliedCredits: vi.fn(),
+  readPaidAnotherWayNotesNotLandedCents: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -41,6 +42,10 @@ vi.mock("@/lib/xero-admin-health", () => ({
   getRefundsMissingXeroCreditNotes: mocks.getRefundsMissingXeroCreditNotes,
 }));
 
+vi.mock("@/lib/card-refund-paid-another-way-cash", () => ({
+  readPaidAnotherWayNotesNotLandedCents: (...args: unknown[]) => mocks.readPaidAnotherWayNotesNotLandedCents(...args),
+}));
+
 vi.mock("@/lib/orphaned-applied-credit-backfill", () => ({
   findOrphanedAppliedCredits: mocks.findOrphanedAppliedCredits,
 }));
@@ -64,6 +69,7 @@ beforeEach(() => {
   mocks.memberCreditGroupBy.mockResolvedValue([]);
   mocks.memberCreditCount.mockResolvedValue(0);
   mocks.isXeroConnected.mockResolvedValue(false);
+  mocks.readPaidAnotherWayNotesNotLandedCents.mockResolvedValue(0);
   mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
     count: 0,
     payments: [],
@@ -171,6 +177,28 @@ describe("reconcileCreditBalances", () => {
     expect(JSON.stringify(vi.mocked(Sentry.captureMessage).mock.calls)).not.toContain(
       "Jane Doe"
     );
+  });
+
+  // #3924 round 7 (money M1, `INV-PAY-121`): the self-heal's note is a CARD
+  // note; a paid-another-way close's bank cash is only its own note's.
+  it("MUTATION: never fills a paid-another-way close's bank cash with a card note while that close's own note has not landed (FAILED)", async () => {
+    mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
+      count: 2,
+      payments: [
+        // Only the close's FAILED bank note is missing: nothing for a card note.
+        { paymentId: "pay_bank", bookingId: "b_1", refundedAmountCents: 9000, cashRefundedCents: 9000, uncoveredCents: 9000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+        // A card refund is missing too: the card note asks only for that.
+        { paymentId: "pay_both", bookingId: "b_2", refundedAmountCents: 12000, cashRefundedCents: 12000, uncoveredCents: 12000, refundedAt: new Date("2026-07-01T00:00:00.000Z") },
+      ],
+    });
+    mocks.readPaidAnotherWayNotesNotLandedCents.mockImplementation((_db: unknown, paymentId: string) =>
+      Promise.resolve(paymentId === "pay_bank" ? 9000 : 4000),
+    );
+
+    await reconcileCreditBalances();
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_both", 8000);
   });
 
   it("re-enqueues the CASH uncovered delta — never the refundedAmountCents mirror — for each flagged payment (#1354, #2902)", async () => {

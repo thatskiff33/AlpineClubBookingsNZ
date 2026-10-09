@@ -172,8 +172,9 @@ const lockedTask = () =>
     ),
   );
 
-function enqueue() {
+function enqueue(options: { requeueFailedUnsent?: boolean } = {}) {
   return enqueueXeroKeptLateCaptureInvoiceOperation({
+    ...options,
     manualRefundTaskId: "task_kept",
     bookingId: QUEUED.bookingId,
     paymentIntentId: "pi_kept",
@@ -244,6 +245,33 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
       queueOperationId: "op_live",
     });
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  // #3924 round 7 (money M2): a FAILED row is not live work - nothing else retries it.
+  describe("requeueFailedUnsent (the paid-another-way close and the repair tool's receipt finding)", () => {
+    const failed = { id: "op_failed", queueType: "KEPT_LATE_CAPTURE_INVOICE", status: "FAILED", manuallyResolvedAt: null };
+
+    it("MUTATION: puts a FAILED row whose invoice never reached Xero back to PENDING, status-guarded", async () => {
+      mocks.operationFindMany.mockResolvedValue([failed]);
+      mocks.linkCount.mockResolvedValue(0);
+      await expect(enqueue({ requeueFailedUnsent: true })).resolves.toMatchObject({ queueOperationId: "op_failed" });
+      expect(mocks.operationUpdateMany).toHaveBeenCalledWith({
+        where: { id: "op_failed", status: "FAILED", manuallyResolvedAt: null },
+        data: expect.objectContaining({ status: "PENDING", completedAt: null, lastErrorMessage: null }),
+      });
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["without being asked (a keep)", {}, [failed], 0],
+      ["once its invoice is linked in Xero", { requeueFailedUnsent: true }, [failed], 1],
+      ["when an officer resolved it in Xero", { requeueFailedUnsent: true }, [{ ...failed, manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") }], 0],
+    ])("leaves it as it is %s", async (_when, options, rows, linked) => {
+      mocks.operationFindMany.mockResolvedValue(rows);
+      mocks.linkCount.mockResolvedValue(linked);
+      await expect(enqueue(options)).resolves.toMatchObject({ queueOperationId: "op_failed" });
+      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -379,17 +407,20 @@ describe("createXeroKeptLateCaptureInvoice", () => {
     expect(mocks.createInvoices).toHaveBeenCalledTimes(1);
   });
 
-  // #3924 round 6: the receipt, THEN the close's note - never the other way round.
-  it("MUTATION: records the receipt's link and queues a waiting close's note in ONE transaction under the task lock, after the invoice exists and before the row completes", async () => {
+  // #3924 round 6: the receipt, THEN the close's note - never the other way
+  // round. Round 7 (C9): in two transactions, so a note failure leaves the
+  // receipt's link standing.
+  it("MUTATION: records the receipt's link under the task lock, THEN queues a waiting close's note under it again, before the row completes", async () => {
     await createXeroKeptLateCaptureInvoice({ syncOperationId: "op_kept" });
 
     const order = (mock: { mock: { invocationCallOrder: number[] } }, index = 0) =>
       mock.mock.invocationCallOrder[index];
-    // The send-time decision's lock, then this transaction's.
-    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    // The send-time decision's lock, the link's, then the note's.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(3);
     expect(order(mocks.createInvoices)).toBeLessThan(order(mocks.executeRaw, 1));
     expect(order(mocks.executeRaw, 1)).toBeLessThan(order(mocks.upsertLink));
-    expect(order(mocks.upsertLink)).toBeLessThan(order(mocks.noteClose));
+    expect(order(mocks.upsertLink)).toBeLessThan(order(mocks.executeRaw, 2));
+    expect(order(mocks.executeRaw, 2)).toBeLessThan(order(mocks.noteClose));
     expect(order(mocks.noteClose)).toBeLessThan(order(mocks.completeXeroSyncOperation));
     expect(mocks.upsertLink).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -400,17 +431,23 @@ describe("createXeroKeptLateCaptureInvoice", () => {
       }),
       { store: db },
     );
-    expect(mocks.noteClose).toHaveBeenCalledWith({ paymentIntentId: "pi_kept", clubZone: "Pacific/Auckland", store: db });
+    expect(mocks.noteClose).toHaveBeenCalledWith({
+      paymentIntentId: "pi_kept",
+      receiptInvoiceId: "inv_kept",
+      clubZone: "Pacific/Auckland",
+      store: db,
+    });
   });
 
-  it("a failed note step fails the run, so its retry writes the link and the note together", async () => {
+  it("MUTATION: C9 (round 7): a failed note step fails the run AFTER the receipt's link is written, so the link stands", async () => {
     mocks.noteClose.mockRejectedValueOnce(new Error("database blip"));
     await expect(createXeroKeptLateCaptureInvoice({ syncOperationId: "op_kept" })).rejects.toThrow("database blip");
+    expect(mocks.upsertLink).toHaveBeenCalledTimes(1);
     expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_kept", expect.any(Error));
   });
 
-  it("once its invoice exists, records the missing payment whatever the task says now", async () => {
+  it("once its invoice exists, records the missing payment whatever the task says now - and runs the note step again, which queues at most once", async () => {
     mocks.taskFindUnique.mockResolvedValue({ status: "COMPLETED" });
     mocks.linkFindFirst.mockImplementation(
       async ({ where }: { where: { role: string } }) =>
@@ -423,8 +460,9 @@ describe("createXeroKeptLateCaptureInvoice", () => {
     expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledWith(
       expect.objectContaining({ invoiceId: "inv_kept", amountCents: 24000 }),
     );
-    // The run that wrote the link queued any waiting note with it.
-    expect(mocks.noteClose).not.toHaveBeenCalled();
+    // A retry after a failed note step: the link is not written again, the note step runs.
+    expect(mocks.upsertLink).not.toHaveBeenCalled();
+    expect(mocks.noteClose).toHaveBeenCalledWith(expect.objectContaining({ receiptInvoiceId: "inv_kept" }));
   });
 
   it("is PARTIAL when the payment fails", async () => {

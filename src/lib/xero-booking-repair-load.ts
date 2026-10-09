@@ -45,7 +45,16 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { isPartPaymentReviewTask, NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
+  cardRefundPaidAnotherWayOccurrenceKey,
+  isPartPaymentReviewTask,
+  NOT_NON_CANCELLATION_HAND_BACK_WHERE,
+  paidAnotherWayCloseXeroNote,
+  paymentRecoveryOperationIdOfPaidAnotherWay,
+  type PaidAnotherWayXeroNote,
+} from "@/lib/manual-refund-task-settlement-rules";
+import { buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
@@ -525,8 +534,51 @@ export async function loadAuditData(
     editReviewChargeIntentRecoveriesByBookingId.set(recovery.bookingId, anchors);
   }
 
+  // #3924 round 7 (money M2): an APPROVED capture whose card refund was closed
+  // as paid another way owes Xero its receipt, which the close's note waits
+  // for. Joined as `findLateCaptureRefundPaidAnotherWay` joins them - the
+  // approval's card refund row by its key, the close's record by that row -
+  // only for approved tasks, which are few.
+  const paidAnotherWayCloseByIntent = new Map<string, PaidAnotherWayXeroNote>();
+  const approvedIntents = lateCaptureApprovalTasks
+    .filter((task) => task.status === ManualRefundTaskStatus.COMPLETED && task.lateCaptureApprovalIntentId)
+    .map((task) => task.lateCaptureApprovalIntentId!);
+  if (approvedIntents.length > 0) {
+    const intentByRefundKey = new Map(
+      approvedIntents.map((intent) => [buildLateCaptureApprovalRefundRecoveryIdempotencyKey(intent), intent]),
+    );
+    const refundRows = await deps.prisma.paymentRecoveryOperation.findMany({
+      where: { idempotencyKey: { in: [...intentByRefundKey.keys()] } },
+      select: { id: true, idempotencyKey: true },
+    });
+    const intentByOperationId = new Map(
+      (refundRows ?? []).map((row) => [row.id, intentByRefundKey.get(row.idempotencyKey)!]),
+    );
+    if (intentByOperationId.size > 0) {
+      const closes = await deps.prisma.manualRefundTask.findMany({
+        where: {
+          ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
+          occurrenceKey: {
+            in: [...intentByOperationId.keys()].flatMap((operationId) =>
+              (["now", "after-receipt", "none"] as const).map((xeroRefundNote) =>
+                cardRefundPaidAnotherWayOccurrenceKey(operationId, { xeroRefundNote }),
+              ),
+            ),
+          },
+        },
+        select: { kind: true, occurrenceKey: true },
+      });
+      for (const close of closes ?? []) {
+        const xeroRefundNote = paidAnotherWayCloseXeroNote(close);
+        const operationId = paymentRecoveryOperationIdOfPaidAnotherWay(close);
+        const intent = operationId === null ? undefined : intentByOperationId.get(operationId);
+        if (intent && xeroRefundNote) paidAnotherWayCloseByIntent.set(intent, xeroRefundNote);
+      }
+    }
+  }
+
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
-  const lateCaptureTasksByBookingId = new Map<string, Map<string, { id: string; status: string }>>();
+  const lateCaptureTasksByBookingId = new Map<string, Map<string, { id: string; status: string; createdAt: Date }>>();
   const keptApprovalsByBookingId = new Map<string, Map<string, { id: string; createdAt: Date }>>();
   for (const task of lateCaptureApprovalTasks) {
     if (!task.lateCaptureApprovalIntentId) continue;
@@ -534,8 +586,9 @@ export async function loadAuditData(
     ids.add(task.lateCaptureApprovalIntentId);
     approvalIntentIdsByBookingId.set(task.bookingId, ids);
     const tasks =
-      lateCaptureTasksByBookingId.get(task.bookingId) ?? new Map<string, { id: string; status: string }>();
-    tasks.set(task.lateCaptureApprovalIntentId, { id: task.id, status: task.status });
+      lateCaptureTasksByBookingId.get(task.bookingId) ??
+      new Map<string, { id: string; status: string; createdAt: Date }>();
+    tasks.set(task.lateCaptureApprovalIntentId, { id: task.id, status: task.status, createdAt: task.createdAt });
     lateCaptureTasksByBookingId.set(task.bookingId, tasks);
     if (task.status === "DISMISSED") {
       const kept =
@@ -666,16 +719,19 @@ export async function loadAuditData(
       ),
     ),
     lateCaptureTasks: new Map(
-      [...(lateCaptureTasksByBookingId.get(booking.id) ?? new Map<string, { id: string; status: string }>())].map(
-        ([paymentIntentId, task]) => [
-          paymentIntentId,
-          {
-            taskId: task.id,
-            status: task.status,
-            operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
-          },
-        ],
-      ),
+      [
+        ...(lateCaptureTasksByBookingId.get(booking.id) ??
+          new Map<string, { id: string; status: string; createdAt: Date }>()),
+      ].map(([paymentIntentId, task]) => [
+        paymentIntentId,
+        {
+          taskId: task.id,
+          status: task.status,
+          raisedAt: task.createdAt,
+          operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
+          paidAnotherWayClose: paidAnotherWayCloseByIntent.get(paymentIntentId) ?? null,
+        },
+      ]),
     ),
     cancelledBookingHandBackPaymentIds:
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
