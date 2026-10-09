@@ -69,16 +69,21 @@ import {
   ADDITIONAL_ASK_BEING_RAISED_MESSAGE,
   AdditionalAskChangedDuringReductionError,
 } from "@/lib/additional-ask-reduction-error";
+import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { ClubFormat } from "@/lib/club-format";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
 import {
+  enqueueAdditionalPaymentIntentRecovery,
   enqueuePaymentIntentCancellationRecovery,
   runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import { prisma } from "@/lib/prisma";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
+  buildAdditionalIntentRecoveryIdempotencyKey,
+  buildReissuedAskStripeIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "@/lib/payment-recovery-keys";
 import {
@@ -617,4 +622,113 @@ export async function cancelRetiredAdditionalAsksNow({
       );
     }
   }
+}
+
+/**
+ * How long the door's own after-commit mint has a re-issued ask to itself
+ * before the recovery runner may claim it (#3954 review round 4).
+ */
+export const REISSUED_ASK_INLINE_MINT_GRACE_MS = 60 * 1000;
+
+/**
+ * #3954 review round 4: THE RE-ISSUED ASK IS DURABLE FROM THE EDIT'S COMMIT.
+ *
+ * A reduction that shrinks an unpaid ask retires the old one inside its
+ * transaction and used to mint the smaller one only after commit - so a
+ * process dying in between left the member asked for nothing, with nothing to
+ * retry. The edit now writes, in its own transaction and once its
+ * `BookingModification` row exists, a PENDING `CREATE_ADDITIONAL_PAYMENT_INTENT`
+ * recovery carrying the re-issued figure under a Stripe key scoped to the edit
+ * (`buildReissuedAskStripeIdempotencyKey`), claimable only after
+ * `REISSUED_ASK_INLINE_MINT_GRACE_MS`. The door's own mint after commit reads
+ * the row and completes it (`writeReissuedAskUnderRecovery`); if that never
+ * happens, the runner replays it under the same key, so the two converge on
+ * one intent. Its edit's own net is negative, which is how the replay knows it
+ * as a re-issue (`sizeRecoveryReplayAsk`). Nothing for any other edit.
+ */
+export async function queueReissuedAskRecovery(
+  tx: Prisma.TransactionClient,
+  {
+    bookingId,
+    paymentId,
+    bookingModificationId,
+    settled,
+    now = new Date(),
+  }: {
+    bookingId: string;
+    paymentId: string | null;
+    bookingModificationId: string;
+    settled: { additionalAsk: AdditionalAsk; hasIssuedXeroInvoice: boolean };
+    now?: Date;
+  },
+): Promise<void> {
+  if (!settled.additionalAsk.reissuesUnpaidAsk || settled.additionalAsk.amountCents <= 0 || !paymentId) {
+    return;
+  }
+  await enqueueAdditionalPaymentIntentRecovery({
+    bookingId,
+    paymentId,
+    idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
+    amountCents: settled.additionalAsk.amountCents,
+    stripeIdempotencyKey: buildReissuedAskStripeIdempotencyKey(bookingModificationId),
+    hadIssuedXeroInvoice: settled.hasIssuedXeroInvoice,
+    nextRetryAt: new Date(now.getTime() + REISSUED_ASK_INLINE_MINT_GRACE_MS),
+    store: tx,
+  });
+}
+
+/** A re-issued ask's recovery, as the door's after-commit mint reads it. */
+export type ReissuedAskRecovery = {
+  id: string;
+  status: PaymentRecoveryOperationStatus;
+  attempts: number;
+  processingStartedAt: Date | null;
+  /** The Stripe key frozen in the edit's transaction. */
+  paymentIntentId: string;
+};
+
+/** The recovery `queueReissuedAskRecovery` wrote for this edit, if any. */
+export async function readReissuedAskRecovery(
+  bookingModificationId: string,
+): Promise<ReissuedAskRecovery | null> {
+  return prisma.paymentRecoveryOperation.findUnique({
+    where: { idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(bookingModificationId) },
+    select: { id: true, status: true, attempts: true, processingStartedAt: true, paymentIntentId: true },
+  });
+}
+
+/**
+ * The door's own mint of a re-issued ask, WRITTEN ONLY WHILE ITS RECOVERY IS
+ * STILL UNCLAIMED: the recovery is completed - fenced on exactly the state the
+ * mint read - in one transaction with the ask's row and its supersede's durable
+ * rows (`write`). A later reduction that netted the waiting re-issue off, or a
+ * runner that claimed it after the grace, moved that state, so this writes
+ * nothing (null) and the member is asked through whichever owns it now.
+ */
+export async function writeReissuedAskUnderRecovery<T>(
+  recovery: ReissuedAskRecovery,
+  paymentIntentId: string,
+  write: (store: Prisma.TransactionClient) => Promise<T>,
+  now: Date = new Date(),
+): Promise<T | null> {
+  return prisma.$transaction(async (tx) => {
+    const completed = await tx.paymentRecoveryOperation.updateMany({
+      where: {
+        id: recovery.id,
+        status: PaymentRecoveryOperationStatus.PENDING,
+        attempts: recovery.attempts,
+        processingStartedAt: recovery.processingStartedAt ?? null,
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        paymentIntentId,
+        nextRetryAt: null,
+        processingStartedAt: null,
+        lastError: null,
+        succeededAt: now,
+      },
+    });
+    if (completed.count !== 1) return null;
+    return write(tx);
+  });
 }

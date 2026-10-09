@@ -34,6 +34,7 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
+  queueReissuedAskRecovery,
   readReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
@@ -1229,6 +1230,14 @@ export async function removeBookingGuestInTransaction({
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest removal",
+  });
+  // #3954 review round 4: a smaller re-issued ask is durable from this
+  // commit, not from the after-commit mint.
+  await queueReissuedAskRecovery(tx, {
+    bookingId,
+    paymentId: booking.payment?.id ?? null,
+    bookingModificationId: bookingModification.id,
+    settled: paymentImpact,
   });
 
   /**

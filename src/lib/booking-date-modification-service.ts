@@ -68,7 +68,7 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
-import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { queueReissuedAskRecovery, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
@@ -1342,6 +1342,14 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       adjusted: payments,
       editLabel: "date change",
+    });
+    // #3954 review round 4: a smaller re-issued ask is durable from this
+    // commit, not from the after-commit mint.
+    await queueReissuedAskRecovery(tx, {
+      bookingId,
+      paymentId: booking.payment?.id ?? null,
+      bookingModificationId: bookingModification.id,
+      settled: payments,
     });
 
     /**

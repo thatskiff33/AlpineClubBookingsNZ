@@ -1,6 +1,7 @@
 import { Role, type Prisma } from "@prisma/client";
 
 import {
+  queueReissuedAskRecovery,
   readReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
@@ -505,6 +506,14 @@ export async function repriceBookingAfterGuestAcceptance(
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price",
+  });
+  // #3954 review round 4: a smaller re-issued ask is durable from this
+  // commit, not from the after-commit mint.
+  await queueReissuedAskRecovery(tx, {
+    bookingId,
+    paymentId: booking.payment?.id ?? null,
+    bookingModificationId: bookingModification.id,
+    settled: paymentImpact,
   });
   // #3653 (composed by #3829): an organiser-settled child's refund debt, before
   // this re-price commits, as every edit door reserves it.

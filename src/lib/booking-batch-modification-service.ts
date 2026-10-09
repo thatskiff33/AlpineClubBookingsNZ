@@ -9,7 +9,7 @@ import {
 
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
-import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { queueReissuedAskRecovery, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -1981,6 +1981,14 @@ export async function modifyBookingBatch({
       bookingModificationId: bookingModification.id,
       adjusted: payments,
       editLabel: "booking change",
+    });
+    // #3954 review round 4: a smaller re-issued ask is durable from this
+    // commit, not from the after-commit mint.
+    await queueReissuedAskRecovery(tx, {
+      bookingId,
+      paymentId: booking.payment?.id ?? null,
+      bookingModificationId: bookingModification.id,
+      settled: payments,
     });
 
     /**

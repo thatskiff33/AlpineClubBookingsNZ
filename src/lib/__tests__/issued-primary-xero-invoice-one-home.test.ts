@@ -540,6 +540,18 @@ describe("no edit door states the rule a second time", () => {
       "INV-PAY-119: read the ask through readReductionAgainstUnpaidAsk, which carries the net it was read for.",
     ).toEqual([]);
   });
+
+  it("INV-PAY-119: every door that records a reduction's unpaid-ask offset makes its re-issued ask durable in the same transaction (#3954 round 4)", () => {
+    const recorders = filesMentioning(
+      sourceFilesUnder("src").filter((file) => file !== "src/lib/unpaid-ask-offset-marker.ts"),
+      /\bunpaidAskOffsetHistory\(/,
+    );
+    expect(recorders.length).toBeGreaterThan(0);
+    expect(
+      recorders.filter((file) => (read(file).match(/\bqueueReissuedAskRecovery\(/g) ?? []).length !== 1),
+      "INV-PAY-119: call queueReissuedAskRecovery once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask.",
+    ).toEqual([]);
+  });
 });
 
 describe("why the guest-add correction changes no behaviour today", () => {

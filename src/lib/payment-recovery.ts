@@ -384,10 +384,18 @@ export async function enqueueAdditionalPaymentIntentRecovery({
   amountCents,
   stripeIdempotencyKey,
   hadIssuedXeroInvoice,
+  nextRetryAt = new Date(),
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
+  /**
+   * #3954 review round 4: when the runner may first claim it. Now, for a mint
+   * that already failed; a short grace for a price reduction's re-issue,
+   * written in the edit's transaction BEFORE the door's own mint runs, so the
+   * runner does not race a mint that is about to succeed.
+   */
+  nextRetryAt?: Date;
   /**
    * The recovery-operation dedup key. Build it with
    * `buildAdditionalIntentRecoveryIdempotencyKey` (an ordinary edit) or
@@ -419,7 +427,7 @@ export async function enqueueAdditionalPaymentIntentRecovery({
       amountCents,
       hadIssuedXeroInvoice,
       idempotencyKey,
-      nextRetryAt: new Date(),
+      nextRetryAt,
     },
     update: {
       bookingId,
