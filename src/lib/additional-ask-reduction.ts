@@ -226,7 +226,7 @@ export function assertReductionReadForNet(
 ): void {
   if (reduction.netChargeCents !== netChargeCents) {
     throw new Error(
-      `INV-PAY-120 (#3954): booking ${bookingId}'s unpaid ask was read for a net of ${reduction.netChargeCents} cents and handed to an edit whose net is ${netChargeCents}; read it once for this edit (readReductionAgainstUnpaidAsk).`,
+      `INV-PAY-120 (#3954): booking ${bookingId}'s unpaid ask was read for a different net than the edit it was handed to; read it once for this edit (readReductionAgainstUnpaidAsk).`,
     );
   }
 }
