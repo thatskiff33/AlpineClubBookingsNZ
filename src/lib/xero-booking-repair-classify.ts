@@ -73,15 +73,17 @@ import {
   ASK_RETIRED_BY_REDUCTION_SUMMARY,
   isAskRetiredByReductionOperation,
   recordedReissuedAskInvoiceCents,
-  recordedUnpaidAskBilledOffsetCents,
   recordedUnpaidAskOffsetCents,
   REISSUED_ASK_INVOICE_MISSING_SUMMARY,
   retiringReductionFor,
-  UNPAID_ASK_BILLED_OFFSET_SUMMARY,
 } from "@/lib/unpaid-ask-offset-marker";
-import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
+import {
+  addScopedSideNoteFindings,
+  scopedBilledOffsetNote,
+  scopedGiveBackNote,
+  withoutScopedSideNotes,
+} from "@/lib/xero-booking-repair-give-back";
 import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
-import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
@@ -906,20 +908,12 @@ export function classifyBookingContext(
         actionKeys: [manualAction.key],
       });
     }
-    // #3954 review round 4: the part of the offset Xero had already billed (a
-    // primary invoice raised after the increase carries the ask) is owed a
-    // credit note this edit did not raise.
-    const unpaidAskBilledOffsetCents = recordedUnpaidAskBilledOffsetCents(modification.newData);
-    if (unpaidAskBilledOffsetCents > 0 && primaryInvoice) {
-      const manualAction = addAction(actionMap, buildManualReviewAction(booking.id, UNPAID_ASK_BILLED_OFFSET_SUMMARY));
-      addFinding(findings, {
-        code: "MISSING_MODIFICATION_CREDIT_NOTE",
-        severity: "manual_review",
-        summary: UNPAID_ASK_BILLED_OFFSET_SUMMARY,
-        safeToAutoApply: false,
-        details: { modificationId: modification.id, unpaidAskBilledOffsetCents, xeroInvoiceId: primaryInvoice.objectId },
-        actionKeys: [manualAction.key],
-      });
+    // #3954 (owner decision 10 Oct 2026, "Auto credit note"): the part of the
+    // offset a primary invoice raised after the increase had already billed
+    // takes a scoped invoice-correction note, queued by the edit; verified or queued.
+    const billedOffsetNote = scopedBilledOffsetNote({ newData: modification.newData, operations: modificationOperations });
+    if (billedOffsetNote && primaryInvoice) {
+      addScopedSideNoteFindings({ bookingId: booking.id, modificationId: modification.id, note: billedOffsetNote, actionMap, findings });
     }
 
     // #3954: what an unpaid ask took of a reduction returned no money, so no note.
@@ -939,43 +933,9 @@ export function classifyBookingContext(
       // below without it, so neither hides the other or stands in for it.
       const giveBackNote = scopedGiveBackNote({ newData: modification.newData, operations: modificationOperations });
       if (giveBackNote) {
-        const blocking = getBlockingOperation(giveBackNote.operations, "CREDIT_NOTE", "CREATE");
-        if (blocking?.kind === "retryable") {
-          const action = addAction(actionMap, buildRetryAction(booking.id, blocking));
-          addFinding(findings, {
-            code: "BLOCKED_BY_XERO_OPERATION",
-            severity: "warning",
-            summary: `A failed or partial Xero give-back credit note operation is blocking modification ${modification.id}.`,
-            safeToAutoApply: true,
-            details: { modificationId: modification.id, operationId: blocking.operation.id, operationStatus: blocking.operation.status },
-            actionKeys: [action.key],
-          });
-        } else if (!blocking && !giveBackNote.operations.some(isSuccessfulXeroOperation)) {
-          const action = addAction(actionMap, {
-            key: `queue:give-back-note:${modification.id}`,
-            bookingId: booking.id,
-            type: "QUEUE_MODIFICATION_CREDIT_NOTE",
-            description: "Queue the missing Xero credit note for the applied credit a booking modification gave back.",
-            safeToAutoApply: true,
-            payload: {
-              bookingId: booking.id,
-              bookingModificationId: modification.id,
-              refundAmountCents: giveBackNote.givenBackCents,
-              refundMethod: "account-credit",
-              reviewTaskId: APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE,
-            },
-          });
-          addFinding(findings, {
-            code: "MISSING_MODIFICATION_CREDIT_NOTE",
-            severity: "critical",
-            summary: "A booking modification gave back applied credit, but no Xero credit note for it exists.",
-            safeToAutoApply: true,
-            details: { modificationId: modification.id, refundAmountCents: giveBackNote.givenBackCents, refundAmountSource: "recorded-give-back" },
-            actionKeys: [action.key],
-          });
-        }
+        addScopedSideNoteFindings({ bookingId: booking.id, modificationId: modification.id, note: giveBackNote, actionMap, findings });
       }
-      const { links: noteLinks, operations: noteOperations } = withoutGiveBackNote(modificationLinks, modificationOperations);
+      const { links: noteLinks, operations: noteOperations } = withoutScopedSideNotes(modificationLinks, modificationOperations);
       const modificationCreditNote = resolveObjectFromCandidates({
         links: noteLinks,
         operations: noteOperations,

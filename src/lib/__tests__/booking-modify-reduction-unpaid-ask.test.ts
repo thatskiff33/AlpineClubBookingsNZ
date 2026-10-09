@@ -1099,7 +1099,19 @@ describe("#3954 decision A: the smaller re-issued ask's own invoice bills what t
     expect(result.retiredAskModificationIds).toEqual(["mod_increase"]);
   });
 
-  it("MUTATION: an ask the primary invoice already billed raises no second invoice - the offset Xero billed is recorded for the repair pass instead", async () => {
+  it("MUTATION (round 5): only the offset beyond the retired invoices is the primary invoice's to credit - the two paths never double up", async () => {
+    // $50 asked: $30 billed by a primary invoice raised after the first
+    // increase, $20 on a later increase's parked invoice. A $40 reduction
+    // retires the $20 invoice and leaves $20 for the primary invoice's note.
+    state.parkedInvoices = [parkedSupplementary(2_000)];
+    const result = await adjust(grownBooking({ xeroInvoiceId: "INV-3954" }), -4_000);
+
+    expect(result.additionalAsk.amountCents).toBe(1_000);
+    expect(result.reissuedAskInvoiceCents).toBe(0);
+    expect(result.unpaidAskBilledOffsetCents).toBe(2_000);
+  });
+
+  it("MUTATION: an ask the primary invoice already billed raises no second invoice - the offset Xero billed is recorded for its own credit note instead", async () => {
     // The primary invoice was raised after the increase, so it bills the $50;
     // no supplementary invoice was ever parked.
     state.parkedInvoices = [];

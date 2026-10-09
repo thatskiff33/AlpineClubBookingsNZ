@@ -246,6 +246,51 @@ describe("#3809: a give-back's account-credit note is not a cash refund", () => 
   });
 });
 
+// #3954 (owner decision 10 Oct 2026, "Auto credit note"): a reduction's
+// invoice-correction note for the part of an unpaid ask the primary invoice had
+// billed credits money the member never paid, so it moves no cash either.
+describe("#3954: a billed-offset invoice-correction note is not a cash refund", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.paymentFindMany.mockResolvedValue([
+      payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+    ]);
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (where.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION") {
+        return [
+          { localId: "pay-1", xeroObjectId: "alloc-hand-back", metadata: { creditNoteId: "cn-hand-back", invoiceId: "inv-1", amountCents: 3000 } },
+          { localId: "pay-1", xeroObjectId: "alloc-billed-offset", metadata: { creditNoteId: "cn-billed-offset", invoiceId: "inv-1", amountCents: 2000 } },
+        ];
+      }
+      if (where.role === "MODIFICATION_CREDIT_NOTE") {
+        return [
+          { xeroObjectId: "cn-hand-back", metadata: { status: "AUTHORISED" } },
+          { xeroObjectId: "cn-billed-offset", metadata: { status: "AUTHORISED" } },
+        ];
+      }
+      return [];
+    });
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([
+      { xeroObjectId: "cn-hand-back", requestPayload: { refundMethod: "internet-banking" } },
+      { xeroObjectId: "cn-billed-offset", requestPayload: { noteWording: "invoice-correction", reviewTaskId: "unpaid-ask-billed-offset" } },
+    ]);
+  });
+
+  it("MUTATION: the bank payment's refunded total stays at the $30 actually handed back", async () => {
+    await repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-current",
+      creditNote: { status: "AUTHORISED", total: 0 } as never,
+      directPaymentIds: [],
+      modificationRefundAmountsByPaymentId: new Map([["pay-1", 0]]),
+    });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ refundedAmountCents: 5000 }) }));
+    const writes = mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
+    expect(writes.every((cents) => cents === 3000)).toBe(true);
+  });
+});
+
 describe("an organiser-settled child's mirror is raised only by Stripe evidence (#3653)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

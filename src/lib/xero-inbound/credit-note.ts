@@ -9,7 +9,7 @@ import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObj
 import { writeXeroInboundAuditLogs } from "./audit";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance, resolvePaymentIdsByInvoiceTargets } from "./credit-note-repairs";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
-import { accountCreditModificationNoteIds } from "./account-credit-modification-notes";
+import { noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { mayRecordAsCanonicalRefundNote } from "@/lib/xero-refund-note-status";
 
 export async function reconcileXeroCreditNote(creditNoteId: string) {
@@ -314,10 +314,10 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     await upsertXeroObjectLink(link);
   }
 
-  // #3809 (review M2): a modification note that gave credit back moved no cash.
+  // #3809 (review M2), #3954: a give-back or billed-offset note moved no cash.
   const modificationRefundPaymentIdsByInvoiceId = resolvedCreditNoteLinks.some(
     (link) => link.role === "MODIFICATION_CREDIT_NOTE"
-  ) && !(await accountCreditModificationNoteIds([creditNote.creditNoteID])).has(creditNote.creditNoteID)
+  ) && !(await noCashModificationNoteIds([creditNote.creditNoteID])).has(creditNote.creditNoteID)
     ? await resolvePaymentIdsByInvoiceTargets(
         creditNote.creditNoteID,
         allocationTargets

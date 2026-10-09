@@ -555,15 +555,15 @@ describe("no edit door states the rule a second time", () => {
     ).toEqual([]);
   });
 
-  it("INV-PAY-120: every door that records a reduction's unpaid-ask offset makes its re-issued ask durable in the same transaction (#3954 round 4)", () => {
+  it("INV-PAY-120: every door that records a reduction's unpaid-ask offset makes its re-issued ask and its billed offset's note durable in the same transaction (#3954 rounds 4 and 5)", () => {
     const recorders = filesMentioning(
       sourceFilesUnder("src").filter((file) => file !== "src/lib/unpaid-ask-offset-marker.ts"),
       /\bunpaidAskOffsetHistory\(/,
     );
     expect(recorders.length).toBeGreaterThan(0);
     expect(
-      recorders.filter((file) => (read(file).match(/\bqueueReissuedAskRecovery\(/g) ?? []).length !== 1),
-      "INV-PAY-120: call queueReissuedAskRecovery once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask.",
+      recorders.filter((file) => (read(file).match(/\bqueueReductionAskFollowUps\(/g) ?? []).length !== 1),
+      "INV-PAY-120: call queueReductionAskFollowUps once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask or the credit note for an offset the primary invoice had billed.",
     ).toEqual([]);
   });
 });

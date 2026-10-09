@@ -56,10 +56,6 @@ export const ASK_RETIRED_BY_REDUCTION_SUMMARY =
 export const REISSUED_ASK_INVOICE_MISSING_SUMMARY =
   "This change made the member's unpaid extra payment smaller, and the smaller request has no supplementary Xero invoice. Raise one for the amount shown, waiting on that card request, or check whether the member has already paid it.";
 
-/** The repair pass's summary for an offset Xero had already billed (amount in the details). */
-export const UNPAID_ASK_BILLED_OFFSET_SUMMARY =
-  "This change cancelled part of an unpaid extra payment that Xero had already billed on the booking's invoice (the invoice was raised after the extra was asked for), so Xero still bills the amount shown, which the member no longer owes. Raise a credit note for it against the booking's invoice.";
-
 /**
  * #3954 "retry nets it off" and review round 4: the increases whose unpaid ask
  * this reduction retired - an ask's parked supplementary invoice it cancelled,
@@ -80,9 +76,10 @@ const REISSUED_ASK_INVOICE_KEY = "reissuedAskInvoiceCents" as const;
 
 /**
  * #3954 review round 4: the part of the offset Xero had ALREADY billed - the
- * primary invoice was raised after the increase, so it carries the ask - which
- * therefore needs a credit note this edit does not raise; the repair pass
- * reports it for a person.
+ * primary invoice was raised after the increase, so it carries the ask. Owner
+ * decision 10 Oct 2026 ("Auto credit note"): the edit queues a scoped
+ * invoice-correction note for exactly this figure against the primary invoice
+ * (`queueUnpaidAskBilledOffsetNote`), and the repair pass verifies or queues it.
  */
 const BILLED_OFFSET_KEY = "unpaidAskBilledOffsetCents" as const;
 

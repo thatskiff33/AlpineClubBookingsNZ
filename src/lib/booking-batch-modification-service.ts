@@ -10,7 +10,7 @@ import {
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
-import { queueReissuedAskRecovery } from "@/lib/additional-ask-reissue";
+import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -2181,9 +2181,9 @@ export async function modifyBookingBatch({
       adjusted: payments,
       editLabel: "booking change",
     });
-    // #3954 review round 4: a smaller re-issued ask is durable from this
-    // commit, not from the after-commit mint.
-    await queueReissuedAskRecovery(tx, {
+    // #3954: a smaller re-issued ask, and the note for an offset Xero had
+    // already billed, are durable from this commit, not from after it.
+    await queueReductionAskFollowUps(tx, {
       bookingId,
       paymentId: booking.payment?.id ?? null,
       bookingModificationId: bookingModification.id,
