@@ -45,3 +45,11 @@
   again in a moment", and goes through on the next save; a retry that stalled
   longer no longer blocks it. A member-guest's decline or expiry caught in that
   moment stays pending and is retried, instead of being parked for an officer.
+
+  Where the booking's Xero invoice was raised after the price went up, that
+  invoice already billed the extra the member had not yet paid. When a later
+  reduction cancels or shrinks that extra, the app now raises a credit note
+  against the invoice for exactly the part it had billed, worded as an invoice
+  correction, so Xero matches what the booking costs and the treasurer has
+  nothing to do. A booking-vs-Xero repair run checks the note is there and
+  raises it if it is missing.

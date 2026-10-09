@@ -743,6 +743,9 @@ reduction edit, under the door's locks
   -> what is left of the reduction -> policy-tiered refund / credit / give-back
   -> ask left over -> PENDING CREATE_ADDITIONAL_PAYMENT_INTENT for it, under an
        edit-scoped Stripe key, claimable after a one-minute grace
+  -> offset beyond the retired invoices, billed by a primary invoice raised after
+       the increase -> PENDING scoped invoice-correction CREDIT_NOTE against it,
+       keyed on this edit (10 Oct 2026); the repair pass verifies or queues it
 after commit, the minter
   -> runs each retired intent's cancellation now
        Stripe already captured it -> REFUND_SUPERSEDED_PAYMENT, in full

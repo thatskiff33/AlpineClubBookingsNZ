@@ -1946,7 +1946,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 ## INV-PAY-120
 
 - **A price reduction is first set against the member's unpaid card ask**
-  (#3954, owner decisions of 8 and 9 Oct 2026), card-paid and credit-paid alike, at
+  (#3954, owner decisions of 8-10 Oct 2026), card-paid and credit-paid alike, at
   every reduction door: cancelled when covered, else re-issued smaller; only
   the rest is refunded, credited or given back by `INV-MOD-011`'s tier. The
   offset is untiered. Each door reads the ask ONCE
@@ -1955,8 +1955,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   FAILED and stamped `withdrawnAt` behind a still-unpaid fence; cancellations
   queued; parked invoices CANCELLED; mirror reconciled. A capture after the read
   rolls the edit back (409, `AdditionalAskChangedDuringReductionError`); one
-  after commit is refunded in full. The re-issue's recovery is written in the
-  same transaction (`queueReissuedAskRecovery`).
+  after commit is refunded in full. The re-issue's recovery and the billed
+  offset's note are written in the same transaction (`queueReductionAskFollowUps`).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would; the
   retire closes each under its attempts and claim time. A retry claimed within
   two minutes refuses the edit for a moment; an older claim is closed, and the
@@ -1970,9 +1970,10 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   the booking if both are then paid.
 - **Xero** (decision A). The smaller ask gets its own supplementary invoice
   for what the retired invoices left after the offset, waiting on its intent
-  (`queueReissuedAskSupplementaryInvoice`). An offset Xero had already billed
-  is recorded for a credit note by a person. The history names every retired
-  increase; the repair pass reads the reduction for them.
+  (`queueReissuedAskSupplementaryInvoice`). The offset beyond them, billed by
+  a primary invoice raised after the increase, takes a scoped
+  invoice-correction note against it; the repair pass verifies or queues it,
+  and reads the reduction for every retired increase its history names.
 
 ## INV-PAY-070
 
