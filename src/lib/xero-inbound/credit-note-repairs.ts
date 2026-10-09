@@ -324,8 +324,7 @@ export async function repairRefundedPaymentBusinessState(input: {
       },
     });
 
-    // #3809 (review M2), #3954: a note that gave credit back, or corrected a
-    // billed unpaid ask, moved no cash.
+    // #3809 (review M2), #3954: a give-back or billed-offset note moved no cash.
     const noCashNoteIds = await noCashModificationNoteIds(existingModificationCreditNoteIds);
     for (const link of modificationCreditNotes) {
       if (

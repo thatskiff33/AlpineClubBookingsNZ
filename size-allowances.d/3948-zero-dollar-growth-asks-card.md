@@ -44,11 +44,13 @@ reason: the intent-mint replay must recognise a reduction's re-issued ask where
   reaches it.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2397
+lines: 2357
 reason: the repair pass sizes a reduction's note and decides an increase's
   missing invoice inside its per-modification arms; the predicate and wording
   live in `unpaid-ask-offset-marker.ts`, and what is left is the arm itself,
   which also reads an increase whose unminted ask a reduction netted off.
+  Round 5 moved the scoped side notes' verify-or-queue arm (the give-back's
+  and the billed offset's) to `xero-booking-repair-give-back.ts`, so it shrank.
 
 file: src/lib/member-guest-consent-service.ts
 lines: 1389
