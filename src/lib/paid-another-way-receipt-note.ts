@@ -15,9 +15,10 @@ import { lockKeptLateCaptureTask } from "@/lib/xero-kept-late-capture-invoice";
  */
 
 /**
- * THE NOTE STEP, for whichever worker put the capture's receipt in Xero: this
- * one (the receipt the close queued), and - #3924 round 8 (owner, 8 Oct 2026:
- * "Raise a refund note for all") - a change's supplementary invoice released
+ * THE NOTE STEP, for whichever worker put the capture's receipt in Xero: the
+ * kept receipt's (`createXeroKeptLateCaptureInvoice`, the receipt the close
+ * queued), and - #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for
+ * all") - a change's supplementary invoice released
  * for the capture (`createXeroSupplementaryInvoice`), which a close found
  * queued, sending or FAILED and so could not credit yet. Under the approval
  * task's row lock it reads the receipt as Xero now holds it
