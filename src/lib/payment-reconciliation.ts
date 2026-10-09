@@ -65,6 +65,8 @@ import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-rep
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import {
+  bookingAmountOwedCents,
+  bookingWorthCents,
   isManualSettleFromPaymentStatus,
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
   MANUAL_SETTLE_FROM_PAYMENT_STATUS_LIST,
@@ -77,6 +79,8 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { modificationChangeFeePosting } from "@/lib/booking-ledger-modification-posting";
+import { loadFeesAddedToAmountOwed } from "@/lib/booking-finished-stay-correction";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
@@ -466,6 +470,8 @@ async function prepareManualSettlement(
       xeroRefundCreditNoteId: true,
       manuallyMarkedPaidAt: true,
       refundedAmountCents: true,
+      // #3750: a change fee recorded on the payment is owed with the rest.
+      changeFeeCents: true,
       // #2397: the upward-modification delta and its collection state, read
       // under the same locks as the amount law below.
       additionalAmountCents: true,
@@ -529,7 +535,12 @@ async function prepareManualSettlement(
     booking.id,
     tx
   );
-  const effectiveAmountCents = booking.finalPriceCents - creditAppliedCents;
+  const recordedChangeFeeCents = payment?.changeFeeCents ?? null;
+  const effectiveAmountCents = bookingAmountOwedCents({
+    finalPriceCents: booking.finalPriceCents,
+    changeFeeCents: recordedChangeFeeCents,
+    appliedCreditCents: creditAppliedCents,
+  });
 
   if (!Number.isSafeInteger(effectiveAmountCents)) {
     throw new ManualBookingPaymentError(
@@ -554,7 +565,10 @@ async function prepareManualSettlement(
   // The ledger mirror holds by construction (effective = final - credit), but
   // assert it explicitly so a future change to either derivation is caught here
   // rather than in the ledger.
-  if (effectiveAmountCents + creditAppliedCents !== booking.finalPriceCents) {
+  if (
+    effectiveAmountCents + creditAppliedCents !==
+    bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: recordedChangeFeeCents })
+  ) {
     throw new ManualBookingPaymentError(
       "This booking's payment ledger does not reconcile — refresh and try again.",
       409
@@ -866,6 +880,8 @@ async function settleBookingPaymentInTransaction(
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
+        // #3750: a change fee recorded on the payment is part of the worth.
+        payment: { select: { changeFeeCents: true } },
       },
     });
 
@@ -908,10 +924,16 @@ async function settleBookingPaymentInTransaction(
     // This is derived from the captured amount alone; the ledger is only read below
     // when the amount is NOT the full price (to admit the effective capture).
     // The manual path already derived both halves under the MEMBER-CREDIT lock.
+    // #3750: the booking's worth is its price plus a change fee recorded on the
+    // payment, read once here for the mirror and the amount check below.
+    const settleWorthCents = bookingWorthCents({
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+    });
     const mirrorCreditAppliedCents =
       manual !== null
         ? manual.creditAppliedCents
-        : Math.max(0, booking.finalPriceCents - settlementAmountCents);
+        : Math.max(0, settleWorthCents - settlementAmountCents);
 
     // #2397 — the slice of this settlement that pays off the outstanding
     // upward-modification delta, when the admin said the cash covers it. Zero
@@ -1291,13 +1313,13 @@ async function settleBookingPaymentInTransaction(
     // admin's dialog rendered.
     if (
       settlement.kind === "stripe" &&
-      settlement.amountCents !== booking.finalPriceCents
+      settlement.amountCents !== settleWorthCents
     ) {
       const appliedCreditCents = await deriveBookingAppliedCreditCents(
         booking.id,
         tx
       );
-      if (settlement.amountCents !== booking.finalPriceCents - appliedCreditCents) {
+      if (settlement.amountCents !== settleWorthCents - appliedCreditCents) {
         throw new Error("Payment amount does not match booking total");
       }
     }
@@ -1592,6 +1614,23 @@ async function settleBookingPaymentInTransaction(
     // so it cannot race; and it counts un-keyed lines too, so lines #3580
     // posted before keys existed fence this settle as well.
     const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
+    // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"): a fee a finished-stay
+    // correction added to this unpaid booking's amount owed had no confirmed
+    // ledger to post to; it posts here, beside the confirmation's nights, under
+    // its modification's own key, so the ledger's CHANGE_FEE lines equal the
+    // payment's recorded fee once the booking is paid.
+    // Read only where a fee was recorded on the payment at all.
+    const feeOwedPostings =
+      alreadyConfirmedOnLedger || !(booking.payment && booking.payment.changeFeeCents > 0)
+      ? []
+      : (await loadFeesAddedToAmountOwed(tx, booking.id)).map((fee) =>
+          modificationChangeFeePosting({
+            bookingId: booking.id,
+            lodgeId: booking.lodgeId,
+            bookingModificationId: fee.modificationId,
+            changeFeeCents: fee.changeFeeCents,
+          }),
+        );
     const ledgerRows = alreadyConfirmedOnLedger ? [] : (() => {
       try {
         const plan = planConfirmationChargeLines({
@@ -1611,7 +1650,7 @@ async function settleBookingPaymentInTransaction(
             "Booking ledger: the charge lines for a settled booking do not add up to its final price (#3580)"
           );
         }
-        return buildBookingLedgerRows(plan.postings);
+        return buildBookingLedgerRows([...plan.postings, ...feeOwedPostings]);
       } catch (error) {
         logger.error(
           { err: error, bookingId: booking.id },

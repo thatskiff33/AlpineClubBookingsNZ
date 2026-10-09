@@ -4,6 +4,7 @@ import {
   bookingStayHasStarted,
   canModifyBookingStatusForRole,
   getBookingEditPolicy,
+  isFinishedStay,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 
@@ -413,5 +414,110 @@ describe("a booking-request hold is not editable, so it cannot carry a blank nig
       expect(policy.canModify, `adminOverride: ${adminOverride}`).toBe(false);
       expect(policy.mode).toBeNull();
     }
+  });
+});
+
+describe("booking edit policy — finished-stay correction (#3750)", () => {
+  const TODAY = new Date("2026-07-01T00:00:00.000Z");
+  const pastStay = {
+    checkIn: new Date("2026-06-10T00:00:00.000Z"),
+    checkOut: new Date("2026-06-14T00:00:00.000Z"),
+    today: TODAY,
+  };
+
+  it("admits a fully-past COMPLETED stay for an officer, with check-in editable", () => {
+    const policy = getBookingEditPolicy({
+      ...pastStay,
+      status: "COMPLETED",
+      role: "ADMIN",
+      finishedStayCorrection: true,
+    });
+    expect(policy).toMatchObject({
+      canModify: true,
+      mode: "finished-stay-correction",
+      editableFrom: null,
+      checkInEditable: true,
+      reason: null,
+    });
+  });
+
+  it("admits a fully-past PAID stay the completion cron has not reached yet", () => {
+    const policy = getBookingEditPolicy({
+      ...pastStay,
+      status: "PAID",
+      role: "ADMIN",
+      finishedStayCorrection: true,
+    });
+    expect(policy.mode).toBe("finished-stay-correction");
+    expect(policy.canModify).toBe(true);
+  });
+
+  it("keeps member self-service on a finished stay refused, flag or no flag", () => {
+    for (const finishedStayCorrection of [false, true]) {
+      const policy = getBookingEditPolicy({
+        ...pastStay,
+        status: "COMPLETED",
+        role: "MEMBER",
+        finishedStayCorrection,
+      });
+      expect(policy.canModify).toBe(false);
+      expect(policy.mode).toBeNull();
+      expect(policy.reason).toBe(
+        "This booking has no future nights available for self-service changes",
+      );
+    }
+  });
+
+  it("keeps a plain officer edit of a finished stay refused without the flag", () => {
+    const policy = getBookingEditPolicy({
+      ...pastStay,
+      status: "COMPLETED",
+      role: "ADMIN",
+    });
+    expect(policy.canModify).toBe(false);
+    expect(policy.mode).toBeNull();
+  });
+
+  it("never widens a stay that has not finished: in-progress and future keep their own windows", () => {
+    const inProgress = getBookingEditPolicy({
+      checkIn: new Date("2026-06-28T00:00:00.000Z"),
+      checkOut: new Date("2026-07-01T00:00:00.000Z"),
+      today: TODAY,
+      status: "PAID",
+      role: "ADMIN",
+      finishedStayCorrection: true,
+    });
+    expect(inProgress.mode).toBe("in-progress");
+    expect(inProgress.checkInEditable).toBe(false);
+
+    const future = getBookingEditPolicy({
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      today: TODAY,
+      status: "PAID",
+      role: "ADMIN",
+      finishedStayCorrection: true,
+    });
+    expect(future.mode).toBe("future");
+  });
+
+  it("refuses a lifecycle-inert status even on a finished stay", () => {
+    for (const status of [BookingStatus.CANCELLED, BookingStatus.DRAFT, BookingStatus.WAITLISTED]) {
+      const policy = getBookingEditPolicy({
+        ...pastStay,
+        status,
+        role: "ADMIN",
+        finishedStayCorrection: true,
+      });
+      expect(policy.canModify, status).toBe(false);
+      expect(policy.mode, status).toBeNull();
+    }
+  });
+
+  it("calls a stay finished once its check-out day is behind today, or once it is COMPLETED", () => {
+    expect(isFinishedStay({ checkOut: new Date("2026-06-30T00:00:00.000Z"), status: "PAID" }, TODAY)).toBe(true);
+    // The departure day itself is still the in-progress window (#2029).
+    expect(isFinishedStay({ checkOut: TODAY, status: "PAID" }, TODAY)).toBe(false);
+    expect(isFinishedStay({ checkOut: TODAY, status: "COMPLETED" }, TODAY)).toBe(true);
   });
 });

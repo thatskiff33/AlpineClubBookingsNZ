@@ -222,7 +222,9 @@ vi.mock("@/lib/cancellation", () => ({
   loadCancellationPolicy: vi.fn(),
   getNonMemberHoldPolicy: (...args: unknown[]) => mockGetHoldPolicy(...args),
 }));
-vi.mock("@/lib/booking-payment-state", () => ({
+vi.mock("@/lib/booking-payment-state", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/booking-payment-state");
+  return {
   getRemainingRefundableCents: vi.fn(),
   hasCapturedPayment: vi.fn(),
   hasIssuedPrimaryXeroInvoice: vi.fn(),
@@ -232,8 +234,14 @@ vi.mock("@/lib/booking-payment-state", () => ({
   // status list AT IMPORT TIME. A factory missing it throws before a single test
   // runs, so the real value is handed back rather than a stub - nothing here
   // exercises it, and a wrong list would be a silently different population.
-  CAPTURED_PAYMENT_STATUS_LIST: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"],
-}));
+  CAPTURED_PAYMENT_STATUS_LIST: real.CAPTURED_PAYMENT_STATUS_LIST,
+  // #3750: the real one home of worth, amount owed and the recorded fee —
+  // pure arithmetic, so the real functions rather than copies of them.
+  bookingWorthCents: real.bookingWorthCents,
+  bookingAmountOwedCents: real.bookingAmountOwedCents,
+  recordedChangeFeeCents: real.recordedChangeFeeCents,
+  };
+});
 vi.mock("@/lib/policies/booking-route-decisions", () => ({
   calculateBookingHoldDecision: vi.fn(),
 }));
@@ -263,6 +271,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-draft",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        feeRecordedByThisEditCents: 0,
         format: CLUB_FORMAT_TEST,
         // Non-member guests would trip the hold rail on a real booking.
         guestsForPricing: [{ isMember: false }, { isMember: true }],
@@ -299,6 +308,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-draft",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        feeRecordedByThisEditCents: 0,
         format: CLUB_FORMAT_TEST,
         // Minors-only after the edit — the review rule tripped upstream.
         guestsForPricing: [{ isMember: true }],
@@ -340,6 +350,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-pp",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        feeRecordedByThisEditCents: 0,
         format: CLUB_FORMAT_TEST,
         guestsForPricing: [{ isMember: true }],
         skipBookingLifecycleRules: false,
@@ -387,6 +398,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-effective",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        feeRecordedByThisEditCents: 0,
         format: CLUB_FORMAT_TEST,
         guestsForPricing: [{ isMember: true }],
         skipBookingLifecycleRules: false,
@@ -424,6 +436,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-pending",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        feeRecordedByThisEditCents: 0,
         format: CLUB_FORMAT_TEST,
         guestsForPricing: [{ isMember: false }],
         skipBookingLifecycleRules: false,

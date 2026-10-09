@@ -81,6 +81,8 @@ function makeTx({
     status?: BookingStatus;
     finalPriceCents: number;
     creditElectionCents: number | null;
+    /** #3750: a change fee recorded on the booking's payment is owed with the price. */
+    payment?: { changeFeeCents: number } | null;
   };
   /**
    * Runs once, between this consumer's post-lock read and its guarded claim, so
@@ -247,6 +249,37 @@ describe("#2265 consumeStoredCreditElection", () => {
     expect(balance(fixture.rows)).toBe(20_000);
     // No election, no lock: a booking that never made one costs one SELECT.
     expect(fixture.tx.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("#3955 round 3 (INV-PAY-119): an election can pay a recorded change fee — it is capped at what is owed, not the bare price", async () => {
+    // A finished-stay correction recorded a $25 fee on this unpaid booking's
+    // payment: $125 is owed, and $150 of credit is elected.
+    const fixture = makeTx({
+      ledger: [creditLot(20_000)],
+      booking: { finalPriceCents: 10_000, creditElectionCents: 15_000, payment: { changeFeeCents: 2_500 } },
+    });
+
+    const outcome = await run(fixture);
+
+    expect(outcome).toMatchObject({
+      requestedCents: 15_000,
+      appliedCents: 12_500,
+      shortfallCents: 2_500,
+      shortfallReason: "price",
+      // Price and fee both covered: the pay step settles it at $0.
+      fullyCovered: true,
+    });
+    expect(appliedTotal(fixture.rows)).toBe(12_500);
+    expect(balance(fixture.rows)).toBe(7_500);
+  });
+
+  it("#3955 round 3: credit covering only the price leaves the fee owed, so the booking is not settled at $0", async () => {
+    const fixture = makeTx({
+      ledger: [creditLot(10_000)],
+      booking: { finalPriceCents: 10_000, creditElectionCents: 10_000, payment: { changeFeeCents: 2_500 } },
+    });
+
+    await expect(run(fixture)).resolves.toMatchObject({ appliedCents: 10_000, fullyCovered: false });
   });
 
   it("refuses to consume credit while the booking is still a DRAFT", async () => {

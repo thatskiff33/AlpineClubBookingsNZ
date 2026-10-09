@@ -716,6 +716,31 @@ confirmable until the five-minute cron reached it (measured at 4m05s), and the
 refund that followed a capture inside that window wrote nothing at all — Stripe's
 own receipt was the entire notice.
 
+**Locked-period requests on a finished stay (#3750).** Approving a
+`LOCKED_PERIOD` request whose booking's stay has finished (fully past, or
+`COMPLETED`) EXECUTES it, in one transaction; on any other stay approval still
+only acknowledges the review. A refusal at any step rolls the claim back, so the
+request stays `REQUESTED` at its old `version`.
+
+```text
+LOCKED_PERIOD request, stay finished -> officer approves
+  -> pg_advisory_xact_lock(1) -> lodge capacity lock -> fresh-role reauthorisation
+  -> re-read: REQUESTED, LOCKED_PERIOD, expected version   (else claim lost, no effect)
+  -> drift: booking dates + guest set still the request's original   (else stays REQUESTED)
+  -> CAS claim REQUESTED -> APPROVED, version + 1
+  -> modifyBookingBatch(finishedStayCorrection) on the same transaction
+       over-capacity past night -> refused until the officer confirms (whole-lodge hold: always refused)
+       no active season / member-night clash / a guest who cannot be booked -> refused
+       dates moved on an unpaid booking whose invoice is in a Xero-locked period -> refused
+       fee on a stay with nothing captured -> recorded on the payment, collected by the pay step
+  -> linkedModificationId written
+  -> COMMIT, then the ordinary post-commit settlement (ask, refund, Xero, email, audit)
+  (a dry run of the same sequence, rolled back before COMMIT, is the officer's quote)
+```
+
+The booking keeps its status (a `COMPLETED` stay stays `COMPLETED`); the money
+moves on the ordinary edit paths above.
+
 **Booking-policy exception requests (#2365).** A `BookingChangeRequest` now
 carries a `kind`: the original today/past-night edit is `LOCKED_PERIOD`, and a
 member request to override an eligible *soft* booking-policy failure (a

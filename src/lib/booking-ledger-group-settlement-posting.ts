@@ -86,8 +86,10 @@ export function planGroupSettlementShareLines(input: {
   settlement: GroupSettlementForPosting;
   children: readonly GroupSettlementChildShare[];
 }): GroupSettlementSharePlan {
-  // The settle's own total, never a second spelling of it (`INV-SSOT`).
-  const totalShareCents = groupSettlementTotalCents(input.children.map((child) => ({ finalPriceCents: child.shareCents })));
+  // The settle's own total, never a second spelling of it (`INV-SSOT`). A
+  // share is already the child's worth (#3750: price plus a recorded fee), so
+  // it is summed with no fee on top.
+  const totalShareCents = groupSettlementTotalCents(input.children.map((child) => ({ finalPriceCents: child.shareCents, payment: null })));
   if (totalShareCents !== input.settlement.amountCents) {
     return { postings: [], reconciles: false, totalShareCents };
   }

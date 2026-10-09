@@ -32,7 +32,14 @@ const IN_PROGRESS_EDIT_STATUSES = new Set<string>([
   BookingStatus.COMPLETED,
 ]);
 
-type BookingEditMode = "future" | "in-progress" | "admin-override";
+type BookingEditMode =
+  | "future"
+  | "in-progress"
+  | "admin-override"
+  // #3750: an officer-approved LOCKED_PERIOD change request executing on a
+  // finished stay. Reachable ONLY through `finishedStayCorrection` below, which
+  // no route reads from a request body.
+  | "finished-stay-correction";
 
 export interface BookingEditPolicy {
   canModify: boolean;
@@ -55,6 +62,16 @@ export interface BookingEditPolicyInput {
   // branches, so member/officer-without-bookings:edit output is byte-for-byte
   // unchanged whether or not this flag is set.
   adminOverride?: boolean;
+  /**
+   * #3750: the executor of an approved LOCKED_PERIOD change request
+   * (`booking-change-request-execution.ts`) is applying it to a FINISHED stay —
+   * see {@link isFinishedStay}. Ignored for non-admin roles, exactly like
+   * `adminOverride`, so a member's answer is byte-for-byte unchanged whether or
+   * not it is set. It is never a request-body field: `modifyBookingBatch` takes
+   * it as a service argument, and `finished-stay-correction-call-sites.test.ts`
+   * pins the executor as its only caller.
+   */
+  finishedStayCorrection?: boolean;
   /**
    * The club's TODAY, as the UTC-midnight instant a `@db.Date` round-trips
    * through. REQUIRED since #3123 — see {@link getBookingEditPolicy}.
@@ -130,6 +147,32 @@ export function getBookingEditPolicy(
     };
   }
 
+  // #3750: the officer-approved finished-stay correction. Only a stay that has
+  // FINISHED qualifies — every other window keeps its own branch below, so the
+  // flag can never widen what an in-progress or future booking allows. The
+  // status set is the active-lifecycle one with the finished stay admitted, the
+  // same derivation the #1668 date override uses (`INV-SSOT-001`): these edits
+  // move money and settle, so a lifecycle-inert status has no place here.
+  if (
+    input.finishedStayCorrection &&
+    isAdmin(input.role) &&
+    isFinishedStay({ checkOut: input.checkOut, status: input.status }, today)
+  ) {
+    const canModify = canModifyBookingInActiveLifecycle(input.status, input.role, {
+      includeFinishedStay: true,
+    });
+    return {
+      canModify,
+      mode: canModify ? "finished-stay-correction" : null,
+      today,
+      editableFrom: null,
+      checkInEditable: canModify,
+      reason: canModify
+        ? null
+        : "This booking cannot be modified in its current status",
+    };
+  }
+
   if (checkIn > today) {
     const canModify = isFutureEditStatusAllowed(input.status, input.role);
     return {
@@ -174,6 +217,29 @@ export function getBookingEditPolicy(
     checkInEditable: false,
     reason: "This booking has no future nights available for self-service changes",
   };
+}
+
+/**
+ * #3750: a stay has FINISHED once its check-out day is behind the club's today,
+ * or the completion cron has already marked it `COMPLETED`.
+ *
+ * ONE HOME for the question the locked-period change-request approval asks
+ * before it decides whether approving EXECUTES the request: the route asks it to
+ * choose the path, and `getBookingEditPolicy` asks it again under the locks
+ * (through `finishedStayCorrection`), so the two cannot disagree about which
+ * stays qualify. `checkOut` is a stored `@db.Date` calendar day read through
+ * `storedDateOnly` (`INV-DATE-026`); `today` is the club's day on the same
+ * UTC-midnight frame (`INV-CONFIG-002`). The departure day itself is still the
+ * in-progress window (#2029), which is why the comparison is strict.
+ */
+export function isFinishedStay(
+  booking: { checkOut: Date; status: string },
+  today: Date,
+): boolean {
+  return (
+    storedDateOnly(booking.checkOut) < today ||
+    booking.status === BookingStatus.COMPLETED
+  );
 }
 
 /**
@@ -250,14 +316,20 @@ export function usesActiveBookingEditLifecycle(status: string): boolean {
  * every role and every status, so a status added to one of the role sets shows
  * up as a diff rather than as a silently widened edit door.
  *
- * `includeFinishedStay` is the admin date override (#1668), the one caller that
- * wants `COMPLETED` in: it moves a fully-past booking's dates, and the date
- * window locks that would otherwise refuse it are lifted in
- * {@link getBookingEditPolicy}. It is the caller's flag, not a role test — the
- * override is already role-gated where it is read.
+ * `includeFinishedStay` admits `COMPLETED`, for exactly two callers that each
+ * edit a fully-past booking on purpose: the admin date override (#1668), which
+ * moves a finished stay's dates, and the officer-approved finished-stay
+ * correction (#3750), which executes an approved LOCKED_PERIOD change request
+ * through {@link getBookingEditPolicy}'s `finishedStayCorrection` mode and asks
+ * this question again before it claims the request. Both have the date-window
+ * locks lifted in {@link getBookingEditPolicy}. It is the caller's flag, not a
+ * role test — each caller is already role-gated where it is read.
  */
 export interface ActiveLifecycleEditOptions {
-  /** #1668 admin date override: admit a finished stay (`COMPLETED`). */
+  /**
+   * Admit a finished stay (`COMPLETED`): the #1668 admin date override and the
+   * #3750 finished-stay correction.
+   */
   includeFinishedStay?: boolean;
 }
 

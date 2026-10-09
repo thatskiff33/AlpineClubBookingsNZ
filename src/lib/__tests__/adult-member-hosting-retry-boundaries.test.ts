@@ -100,6 +100,9 @@ describe("adult-member hosting participant retry responses (#2597)", () => {
       "src/app/api/payments/charge-saved-method/route.ts",
       "src/app/api/payments/create-payment-intent/route.ts",
       "src/lib/adult-member-hosting-retry-response.ts",
+      // #3750: the finished-stay change-request approval, the PATCH route's
+      // response half, moved out of the route file to keep it in budget.
+      "src/lib/booking-change-request-admin-decision.ts",
     ]);
   });
 

@@ -339,7 +339,7 @@ let census: typeof import("@/lib/booking-ledger-projection-census-store");
       });
       const children = await prisma.booking.findMany({
         where: { id: { in: CARD.children } },
-        select: { id: true, lodgeId: true, finalPriceCents: true },
+        select: { id: true, lodgeId: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
       });
       const written = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;

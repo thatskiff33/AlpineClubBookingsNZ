@@ -34,6 +34,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { type CollectedCashSummary } from "@/lib/payment-net-collected";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
@@ -751,7 +752,12 @@ function summarizePayments(
       summary.outstandingAdditionalBookings += 1;
     }
     summary.creditAppliedCents += payment.creditAppliedCents;
-    summary.changeFeeCents += payment.changeFeeCents;
+    // #3955 review F9: a change fee is income once the money that pays it is
+    // in. A fee added to what an UNPAID booking owes (#3750) is recorded on
+    // its payment before anything is captured, so it counts only from capture.
+    if (isCapturedPaymentStatus(payment.status)) {
+      summary.changeFeeCents += payment.changeFeeCents;
+    }
   }
 
   if (ledgerGap.bookingIds.length > 0) {
