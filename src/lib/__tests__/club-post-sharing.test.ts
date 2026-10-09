@@ -21,17 +21,37 @@ const mocks = vi.hoisted(() => {
       this.status = status;
     }
   }
+  class FakeVersionError extends Error {
+    expected = "2.0";
+    serverVersion = "2.1";
+    constructor() {
+      super("paused");
+      this.name = "ServerNzVersionMismatchError";
+    }
+  }
   return {
     FakeApiError,
+    FakeVersionError,
     findUnique: vi.fn(),
     findMany: vi.fn(),
     withdrawClubPost: vi.fn(),
     update: vi.fn(),
     shareClubPost: vi.fn(),
     readPostImage: vi.fn(),
+    isServerSyncPaused: vi.fn(),
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   };
 });
 const FakeApiError = mocks.FakeApiError;
+const FakeVersionError = mocks.FakeVersionError;
+
+vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
+
+// #49: the pause pre-check. Not paused by default so the existing behaviour
+// is exercised unchanged; the pause block below flips it.
+vi.mock("@/lib/servernz-version-check", () => ({
+  isServerSyncPaused: mocks.isServerSyncPaused,
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -45,6 +65,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/servernz-api", () => ({
   ServerNzApiError: mocks.FakeApiError,
+  ServerNzVersionMismatchError: mocks.FakeVersionError,
   shareClubPost: mocks.shareClubPost,
   withdrawClubPost: mocks.withdrawClubPost,
 }));
@@ -78,6 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.update.mockResolvedValue({});
   mocks.readPostImage.mockResolvedValue(Buffer.from([1, 2, 3]));
+  mocks.isServerSyncPaused.mockResolvedValue(false);
 });
 
 describe("shareOnePost", () => {
@@ -224,6 +246,7 @@ describe("retryPendingShares", () => {
       attempted: 2,
       shared: 1,
       failed: 1,
+      paused: 0,
       withdrawalsAttempted: 0,
       withdrawalsConfirmed: 0,
       withdrawalsFailed: 0,
@@ -258,6 +281,65 @@ describe("retryPendingShares", () => {
         }),
       }),
     );
+  });
+
+  it("leaves a share pending and uncounted, with nothing sent, while the server version differs (#49)", async () => {
+    mocks.isServerSyncPaused.mockResolvedValue(true);
+    mocks.findUnique.mockResolvedValue(post({ shareAttempts: 7 }));
+
+    const outcome = await shareOnePost("post-1");
+
+    expect(outcome).toEqual({ status: "paused" });
+    expect(mocks.shareClubPost).not.toHaveBeenCalled();
+    // NO attempt burned and NO error written: at 7 of 8 this would otherwise
+    // retire the share for good on the first paused night.
+    expect(mocks.update).not.toHaveBeenCalled();
+    // Decided before the images were even read.
+    expect(mocks.readPostImage).not.toHaveBeenCalled();
+  });
+
+  it("treats the gate's own refusal the same way: paused, nothing counted (#49)", async () => {
+    mocks.findUnique.mockResolvedValue(post({ shareAttempts: 7 }));
+    mocks.shareClubPost.mockRejectedValue(new FakeVersionError());
+
+    const outcome = await shareOnePost("post-1");
+
+    expect(outcome).toEqual({ status: "paused" });
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.logger.info).toHaveBeenCalled();
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("counts a paused page as paused and asks the server nothing more (#49)", async () => {
+    mocks.isServerSyncPaused.mockResolvedValue(true);
+    mocks.findMany.mockResolvedValueOnce([{ id: "p1" }, { id: "p2" }]);
+    mocks.findUnique.mockResolvedValue(post({ id: "p1" }));
+
+    const result = await retryPendingShares(REQUESTED);
+
+    expect(result).toMatchObject({ attempted: 2, shared: 0, failed: 0, paused: 2 });
+    expect(mocks.shareClubPost).not.toHaveBeenCalled();
+    // The withdrawal half is paused too: no second findMany, no withdraw.
+    expect(mocks.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ withdrawalsAttempted: 0 });
+  });
+
+  it("stops the withdrawal sweep on the server's own version refusal without counting a failure (#49 review)", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "p9", serverPostId: "server-9" },
+        { id: "p10", serverPostId: "server-10" },
+      ]);
+    mocks.withdrawClubPost.mockRejectedValueOnce(new FakeVersionError());
+
+    const result = await retryPendingShares(REQUESTED);
+
+    expect(result).toMatchObject({ withdrawalsAttempted: 2, withdrawalsConfirmed: 0, withdrawalsFailed: 0 });
+    // The second row was not even asked: one refusal answers for the page.
+    expect(mocks.withdrawClubPost).toHaveBeenCalledTimes(1);
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
   });
 
   it("retries the takedown of a removed shared post and stamps the confirmation (#3091 r1)", async () => {

@@ -876,6 +876,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
 | `INV-INT-025` | Resolved in Xero means done: no automatic retry or re-mint |
 | `INV-INT-026` | Outbox workers never read a target from a redacted payload key |
+| `INV-INT-027` | Central-server syncing pauses on any API version difference, integer-compared |
 
 ## Operations
 
