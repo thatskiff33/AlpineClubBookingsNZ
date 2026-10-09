@@ -472,6 +472,7 @@ async function runRefundNoteModel(note: Row) {
     paymentIntentId?: string;
     documentDate?: string;
     refundMethod?: string;
+    creditsInvoiceId?: string;
   };
   const paymentId = note.localId as string;
   const intent = payload.paymentIntentId;
@@ -485,7 +486,9 @@ async function runRefundNoteModel(note: Row) {
     if (!receipt.invoiceId) return; // FAILED for now: the receipt is on its way
     invoiceId = receipt.invoiceId;
   } else {
+    // #3924 round 7 (M5): a caller that named the invoice is taken at its word.
     invoiceId =
+      payload.creditsInvoiceId ??
       (h.table("xeroObjectLink").find((l) => l.role === "KEPT_LATE_CAPTURE_INVOICE")?.xeroObjectId as string) ??
       (h.table("payment").find((p) => p.id === paymentId)?.xeroInvoiceId as string | null) ??
       null;

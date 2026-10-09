@@ -410,12 +410,22 @@ function dispatch(id: string) {
   // The worker's claim (`claimQueuedOutboxOperation`): RUNNING, stamped now.
   row.status = "RUNNING";
   row.startedAt = new Date();
-  const payload = row.requestPayload as { refundAmountCents: number; watermarkCents: number; refundMethod: "card" | "internet-banking"; reviewTaskId?: string };
+  const payload = row.requestPayload as {
+    refundAmountCents: number;
+    watermarkCents: number;
+    refundMethod: "card" | "internet-banking";
+    reviewTaskId?: string;
+    paidAnotherWayTaskId?: string;
+    creditsInvoiceId?: string;
+  };
+  // As the outbox's executor passes them (`xero-operation-outbox.ts`).
   return createXeroCreditNote(PAYMENT_ID, payload.refundAmountCents, {
     syncOperationId: id,
     watermarkCents: payload.watermarkCents,
     refundMethod: payload.refundMethod,
     ...(payload.reviewTaskId ? { reviewTaskId: payload.reviewTaskId } : {}),
+    ...(payload.paidAnotherWayTaskId ? { paidAnotherWayTaskId: payload.paidAnotherWayTaskId } : {}),
+    ...(payload.creditsInvoiceId ? { creditsInvoiceId: payload.creditsInvoiceId } : {}),
   });
 }
 
@@ -831,6 +841,27 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     expect(state.payment!.xeroRefundCreditNoteId).toBeNull();
     // Its payload carries the task, so a retry of the row marks its note alike.
     expect((row("op_a").requestPayload as Row).reviewTaskId).toBe("task_a");
+  });
+
+  // #3924 round 7 (C8, M5; `INV-PAY-121`): a paid-another-way close's note.
+  it("MUTATION: a paid-another-way close's note is one of several on a bank-transfer payment, credits the invoice it names, and keeps its close on the row", async () => {
+    seedPayment(PaymentSource.INTERNET_BANKING);
+    state.eligibleCents = 1000;
+    queueRefundNote("op_a", 1000, 1000, "internet-banking");
+    row("op_a").requestPayload = {
+      ...(row("op_a").requestPayload as Row),
+      paidAnotherWayTaskId: "close_1",
+      creditsInvoiceId: "inv_receipt",
+    };
+
+    await dispatch("op_a");
+
+    expect(state.links.filter((link) => link.role === "REFUND_CREDIT_NOTE").map((link) => (link.metadata as Row).perDelta)).toEqual([true]);
+    expect(state.payment!.xeroRefundCreditNoteId).toBeNull();
+    const executed = row("op_a").requestPayload as Row;
+    expect((executed.allocation as Row).invoiceId).toBe("inv_receipt");
+    expect(executed).toMatchObject({ paidAnotherWayTaskId: "close_1", creditsInvoiceId: "inv_receipt" });
+    expect(executed).not.toHaveProperty("paymentIntentId");
   });
 
   it("MUTATION: a sibling RUNNING past the stale threshold is a dead worker and does not hold the payment", async () => {

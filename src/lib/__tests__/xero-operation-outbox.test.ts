@@ -1425,6 +1425,44 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
+  // #3924 round 7 (concurrency C8, `INV-PAY-121`): a paid-another-way close's
+  // note is one of several on its payment whatever the source - never the
+  // single-note skip, which would read the payment's note as its own and write
+  // the Payment row under the receipt worker's task row.
+  it("MUTATION: a paid-another-way close's note on an internet-banking payment takes the stepped path, keyed on the close, carrying the close and the invoice it names", async () => {
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "INTERNET_BANKING",
+      refundedAmountCents: 3500,
+      xeroRefundCreditNoteId: "cn_existing",
+    });
+    mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
+        refundMethod: "internet-banking",
+        paidAnotherWayTaskId: "close_1",
+        creditsInvoiceId: "inv_receipt",
+        documentDate: "2026-07-01",
+      }),
+    ).resolves.toMatchObject({ queueOperationId: "op_credit_note_1" });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationKey: "payment:payment_1:refund-credit-note:3500:v2:paid-another-way:close_1",
+        requestPayload: expect.objectContaining({
+          refundAmountCents: 2500,
+          paidAnotherWayTaskId: "close_1",
+          creditsInvoiceId: "inv_receipt",
+          documentDate: "2026-07-01",
+        }),
+      }),
+    );
+    // The single-note branch would have written the Payment row (no mock here).
+    expect(mocks.findCanonicalPaymentRefundCreditNote).toHaveBeenCalled();
+  });
+
   // #3880: a review's refund on a CANCELLED booking - by card or handed back by
   // bank transfer - is noted per refund and keyed on its review task.
   describe("#3880 - a review's refund on a cancelled booking", () => {
