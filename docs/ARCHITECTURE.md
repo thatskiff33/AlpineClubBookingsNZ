@@ -1099,8 +1099,12 @@ page loads it only for `{ area: "finance", level: "view" }`, and the close
 (`DeadCardRefundsPanel` -> `POST /api/admin/payments/card-refunds/[id]/paid-another-way`
 -> `closeCardRefundPaidAnotherWay`) is gated `finance:edit` in the panel and the
 route, with the section's own finance banner (`INV-PAY-121`). Under the same
-finance:view gate it lists the closes Stripe paid as well, read-only
-(`listCardRefundsPaidTwice`, #3924 round 5).
+finance:view gate it lists the closes Stripe paid as well
+(`listCardRefundsPaidTwice`, #3924 round 5), each with a "Resolved" mark
+(owner, 9 Oct 2026: `CardRefundsPaidTwiceList` -> `POST
+/api/admin/payments/card-refunds/[id]/paid-twice-resolved` ->
+`resolveCardRefundPaidTwice`), gated `finance:edit` in the list, under its own
+finance banner, and in the route; it moves no money and touches no Xero.
 `src/lib/booking-provider-mismatches.ts` answers the same provider-divergence
 questions for a single booking (paid while the club's records hold no Xero invoice,
 Stripe refund with no Xero credit note, waitlist offer whose email needs

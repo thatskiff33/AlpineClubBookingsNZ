@@ -1433,6 +1433,15 @@ hand and resolved it in Xero, the app raises no refund note for it, so a refund
 of that capture raises the report-only
 `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`: record the refund by hand as well.
 
+A late capture the treasurer **approved** refunding, whose card refund Stripe
+gave up on and which was then closed as **Paid another way** before Xero had
+its receipt, owes that receipt too, and the close's bank-transfer note waits
+for it (#3372, `INV-PAY-121`). When the receipt row failed before reaching
+Xero, or none was queued, `PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`
+retries or queues it. Both are safe to auto-apply: the worker and the enqueue
+re-read the task and the close under the task's row lock before anything is
+sent, and the note follows once the receipt is in Xero.
+
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
 entirely with account credit was invoiced at its full price, but the credit was
 never allocated against the invoice, so Xero shows the whole booking owing and

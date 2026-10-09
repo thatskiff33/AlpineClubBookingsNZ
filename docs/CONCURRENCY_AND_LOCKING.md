@@ -4592,7 +4592,10 @@ every Stripe refund recorder, and a cancellation hand-back's completion - takes
 the Payment row first, so the owed figure the close checks the amount against
 cannot change between that read and the allocation. A refund recorded while the
 close waits for the row is read by the close, which then refuses an amount the
-refund already covered. The order is `lock(1)`, then the Payment row, then the
+refund already covered. Under the row the close also compares what is owed with
+the figure the treasurer chose against (`expectedOwedCents`, #3924 round 7,
+C7) and refuses a moved one with a 409, so a full or part answer is never
+applied to a figure nobody saw; the page refreshes and they choose again. The order is `lock(1)`, then the Payment row, then the
 allocation, which takes the row it already holds. The claim is a status-guarded
 `updateMany` before any money moves; a lost claim writes nothing. The close's
 hand-back task and ledger line are written in the same transaction. The worker
@@ -4600,9 +4603,14 @@ never claims a dead row, and the Xero note is an outbox row kicked after the
 commit, so no provider call runs under the key. A late capture's refund also
 takes the approval task's row (`lockKeptLateCaptureTask`, #3924 round 6) after
 the Payment row and before it reads the capture's Xero receipt, because the
-receipt's worker writes that receipt and queues a waiting close's note under
-the same row (the kept late-capture task row, above). Order: `lock(1)`, the
-Payment row, the approval task's row. A double click queues on the
+receipt's worker writes that receipt's link under the same row (the kept
+late-capture task row, above). Order: `lock(1)`, the Payment row, the approval
+task's row. The worker then queues a waiting close's note in a second
+transaction under the same row (#3924 round 7, C9), so a note failure fails the
+worker's row with the link standing and its retry runs only the note step,
+which queues a close's note at most once. Neither worker transaction writes the
+Payment row: a paid-another-way note always takes the refund-note enqueue's
+stepped path, which only reads it (C8). A double click queues on the
 key and the second reads the row closed; a refund recorded mid-close gives a
 409 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
 `closeCardRefundPaidAnotherWay#1`.
@@ -4612,7 +4620,17 @@ still be recorded after it, by the `charge.refunded` sync. No lock can stop
 that: the money already left Stripe. It is attributed by when Stripe made it, so
 it stays the closed row's own, never an older open row's same-amount slice, and
 the stuck-states page lists the close as paid twice (#3924 round 5,
-`cardRefundSentAfterPaidAnotherWay`).
+`cardRefundSentAfterPaidAnotherWay`). Both ends of the close's window read
+Stripe's clock, the raise floored to its second (round 7, M3).
+
+**Marking a paid-twice row Resolved** (owner, 9 Oct 2026;
+`resolveCardRefundPaidTwice`, `src/lib/card-refund-paid-twice.ts`) moves no
+money and touches no Xero, so it joins no lock cohort. It is one
+status-guarded `updateMany` on the close's record, guarded on the resolution
+the record carried when read, with its audit row in the same transaction; a
+second click or a second treasurer matches nothing and is refused with a 409
+(`card-refund-paid-another-way.realdb.test.ts`). Nothing else writes that
+column of a close's record.
 
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 

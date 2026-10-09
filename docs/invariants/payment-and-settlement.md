@@ -1967,31 +1967,31 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 ## INV-PAY-121
 
 - **"Paid another way" records the close as a completed hand-back and ends the
-  refund** (#3372, owner 7 Oct 2026; 8 Oct: "Keep it together").
-  `closeCardRefundPaidAnotherWay` (finance:edit) takes `lock(1)`, then the
-  payment row, then claims a dead row to `SUCCEEDED` with a status guard. It
-  records the amount with `applyLocalRefundAllocation`, on the unsent slices'
-  charges. In the same transaction it writes a COMPLETED hand-back task under
-  `card-refund-paid-another-way:<row>` and its `BANK_REFUND` line
-  (`INV-MONEY-035`). It audits under `payment`. No Stripe call.
-  - **Full or part, chosen** (8 Oct: "Difference is gone"): `paidBack` "full"
-    is exactly what is owed, "partial" strictly between nil and it; else 400.
-    Never inferred from the amount. The rest is owed nowhere, and a review's
-    netting counts the refund at its full raised amount.
-  - **Xero** (8 Oct: "Raise a refund note for all"): every kind queues a
-    bank-transfer refund note for exactly the amount, keyed on the task, where
-    there is an invoice to credit; else none (`:no-xero-note`).
-  - **A late capture: receipt, then credit** (8 Oct: "Record receipt, then
-    credit"). Its note credits the capture's recorded receipt. With none, the
-    close queues that receipt (`INV-PAY-110`) and its worker queues the note
-    with the receipt's link, under the approval task's row, which the close
-    takes before reading the receipt (`:note-after-receipt`). Never the
-    booking's invoice. Cash evidence counts a close only once noted
-    (`readPaidAnotherWayCash`).
-  - A superseded intent's row closes whole, uncapped, never at nil, only while
-    its charge holds exactly what it owes. An organiser child's is refused.
-  - A refund Stripe made before the close but recorded after it stays the
-    closed row's, and is listed as paid twice (`cardRefundSentAfterPaidAnotherWay`).
+  refund** (#3372, owner 7 Oct 2026). `closeCardRefundPaidAnotherWay`
+  (finance:edit) takes `lock(1)`, then the payment row, refuses (409) unless
+  what is owed is the figure the treasurer saw, and claims a dead row to
+  `SUCCEEDED` with a status guard. It records the amount with
+  `applyLocalRefundAllocation` on the unsent slices' charges, writes a
+  COMPLETED hand-back task under `card-refund-paid-another-way:<row>` and its
+  `BANK_REFUND` line (`INV-MONEY-035`), and audits under `payment`. No Stripe call.
+  - **Full or part, chosen** (8 Oct): "full" is exactly what is owed,
+    "partial" strictly between nil and it, never $0; else 400. The rest is owed
+    nowhere; a review's netting counts the refund at its full raised amount.
+  - **Xero** (8 Oct): every kind queues a bank-transfer note for exactly the
+    amount, keyed on the task, dated the close's day, stepped whatever the
+    payment's source, where there is an invoice to credit; else none
+    (`:no-xero-note`). The self-heal never fills that cash with a card note.
+  - **A late capture: receipt, then credit** (8 Oct). The note names the
+    capture's receipt by its invoice, never by intent. With none, the close
+    queues the receipt (`INV-PAY-110`), requeuing a failed unsent one; its
+    worker writes the receipt's link, then queues the note at most once, each
+    under the approval task's row, which the close takes before reading the
+    receipt (`:note-after-receipt`). Cash evidence counts a close only once noted.
+  - A superseded intent's row closes whole, only while its charge holds exactly
+    what it owes. An organiser child's is refused.
+  - A refund Stripe made inside a closed row's window (its clock) but recorded
+    later is listed as paid twice. The treasurer marks it Resolved with a note,
+    kept on the task and audited; no money moves (owner, 9 Oct 2026).
 
 ## INV-PAY-070
 
