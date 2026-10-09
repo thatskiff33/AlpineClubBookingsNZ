@@ -531,6 +531,8 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
           ...booking().payment,
           amountCents: 2000,
           additionalAmountCents: 1500,
+          // Paid: an unpaid ask would be netted first (#3954, INV-PAY-120).
+          additionalPaymentStatus: "SUCCEEDED",
           changeFeeCents: 1500,
           creditAppliedCents: 30000,
         },
