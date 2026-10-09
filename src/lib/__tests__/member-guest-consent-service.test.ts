@@ -40,6 +40,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NO_ADDITIONAL_ASK, reissueUnpaidAdditionalAsk } from "@/lib/additional-payment-ask";
+
 const h = vi.hoisted(() => {
   /**
    * The shared removal path's own error class, re-declared here because the whole
@@ -74,6 +76,10 @@ const h = vi.hoisted(() => {
     loggerWarn: vi.fn(),
     loggerInfo: vi.fn(),
     queueXero: vi.fn(async () => ({})),
+    mint: vi.fn(async (params: Record<string, unknown>) => {
+      void params;
+      return { additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined };
+    }),
   };
 });
 
@@ -117,6 +123,13 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({ queueXeroBookingEditSettlement: h.queueXero }));
+// #3954: the after-commit step that cancels the asks a removal retired and
+// re-issues what is left - asserted here only for being reached with the
+// removal's own result; its money is `booking-modify-reduction-unpaid-ask.test.ts`'s.
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  createModificationAdditionalPaymentIntent: h.mint,
+}));
 vi.mock("@/lib/email/member-guest", () => ({
   sendMemberGuestConsentOutcomeEmail: h.sendOutcomeEmail,
   sendMemberGuestConsentExpiredEmail: h.sendExpiredEmail,
@@ -147,6 +160,7 @@ import type { MemberGuestConsentDelegateResolver } from "@/lib/member-guest-dele
 // whole removal module is mocked, so its class is declared in the hoisted block
 // above and re-exported by the mock.
 import { ApiError } from "@/lib/api-error";
+import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { MembershipTypeBookingPolicyError } from "@/lib/membership-type-policy";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -428,6 +442,9 @@ function removalResult(overrides: Record<string, unknown> = {}) {
     appliedCreditGivenBackCents: 0,
     xeroAdditionalAmountCents: 0,
     zeroDollarAutoPaid: false,
+    retiredAdditionalAsks: [],
+    // #3954: and asks for nothing smaller in its place.
+    additionalAsk: NO_ADDITIONAL_ASK,
     ...overrides,
   };
 }
@@ -1495,5 +1512,134 @@ describe("#3809: a decline or expiry that lowers the price reaches Xero", () => 
       });
     }
     expect(h.queueXero).not.toHaveBeenCalled();
+  });
+});
+
+describe("#3954: a decline or expiry whose reduction retired an unpaid ask settles it after commit", () => {
+  it("MUTATION: hands the removal's own result to the minter, which cancels the retired ask and re-issues what is left", async () => {
+    const retired = removalResult({
+      retiredAdditionalAsks: [{ paymentTransactionId: "txn-ask", paymentIntentId: "pi-ask", cancelOperationId: "op-cancel" }],
+    });
+    h.removeGuest.mockImplementationOnce(async ({ guestId }: { guestId: string }) => {
+      world().guests.delete(guestId);
+      return retired;
+    });
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+
+    expect(h.mint).toHaveBeenCalledTimes(1);
+    expect(h.mint.mock.calls[0]?.[0]).toMatchObject({
+      bookingId: BOOKING,
+      reason: "guest_consent_removal_reissued_ask",
+      idempotencyKey: `mod_guest_consent_${BOOKING}_mod-consent-1`,
+    });
+    expect(h.mint.mock.calls[0]?.[0].result).toBe(retired);
+  });
+
+  it("MUTATION: re-issues what is left of an ask whose failed mint the removal netted off, though no row was retired (retry nets it off)", async () => {
+    const netted = removalResult({ additionalAsk: reissueUnpaidAdditionalAsk({ askLeftCents: 3_000 }) });
+    h.removeGuest.mockImplementationOnce(async ({ guestId }: { guestId: string }) => {
+      world().guests.delete(guestId);
+      return netted;
+    });
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+
+    expect(h.mint).toHaveBeenCalledTimes(1);
+    expect(h.mint.mock.calls[0]?.[0].result).toBe(netted);
+  });
+
+  it("reaches no minter for a removal that retired nothing", async () => {
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+    expect(h.mint).not.toHaveBeenCalled();
+  });
+});
+
+describe("#3954 review round 4: an unpaid ask moving under the removal is a retry, never a BLOCKED row", () => {
+  // The member paid the booking's unpaid card ask, or a retry claimed its mint,
+  // while the removal's reduction was being saved. A moment later the same
+  // removal goes through; filed as a refusal it would hold the bed for an
+  // operator for good.
+  function expectStillPending() {
+    expect(world().guests.get(GUEST)).toMatchObject({ consentStatus: "PENDING", consentRespondedAt: null });
+    expect(world().choreAssignments.get(GUEST)).toEqual(["chore-fire", "chore-dishes"]);
+  }
+
+  it("MUTATION: a decline propagates it (409), the claim rolls back to PENDING, and the member's retry removes the guest", async () => {
+    refuseAfterPartialRemoval(new AdditionalAskChangedDuringReductionError());
+    const decline = () =>
+      respondToMemberGuestConsent({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING,
+        guestId: GUEST,
+        actorMemberId: TARGET,
+        action: "DECLINE",
+        now: NOW,
+        delegateResolver: acceptDelegate,
+      });
+
+    await expect(decline()).rejects.toSatisfy(
+      (err: unknown) => err instanceof AdditionalAskChangedDuringReductionError && err.status === 409,
+    );
+    expectStillPending();
+
+    await expect(decline()).resolves.toMatchObject({ outcome: "DECLINED", removed: true });
+  });
+
+  it("MUTATION: an expiry propagates it, so the row stays PENDING for the next sweep", async () => {
+    refuseAfterPartialRemoval(new AdditionalAskChangedDuringReductionError());
+
+    await expect(
+      expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW }),
+    ).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
+    expectStillPending();
   });
 });

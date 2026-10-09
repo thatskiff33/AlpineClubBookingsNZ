@@ -40,6 +40,12 @@ const mocks = vi.hoisted(() => ({
   logAudit: vi.fn(),
   sendBookingModifiedEmail: vi.fn(),
   sendAdminMinorsOnlyReviewAlert: vi.fn(),
+  // #3502: the minter stays REAL (#3341, below); only the provider calls it
+  // makes are stubbed, so the ask a case reads is the one it WROTE.
+  stripeCreatePaymentIntent: vi.fn(),
+  stripeFindOrCreateCustomer: vi.fn(),
+  upsertPaymentIntentTransaction: vi.fn(),
+  paymentTransactionFindMany: vi.fn(),
 }));
 
 // #3582: an edit's and a review closure's ledger lines are posted by one sync,
@@ -57,6 +63,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
     member: { findUnique: mocks.memberFindUnique },
+    // The supersede the real minter runs reads the ledger for other live
+    // ADDITIONAL intents; this booking has none.
+    paymentTransaction: { findMany: mocks.paymentTransactionFindMany },
   },
 }));
 // #3245: PARTIAL, through `importOriginal`. This used to replace the whole
@@ -111,6 +120,18 @@ vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
   drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
   executeBookingModificationRefund: mocks.executeBookingModificationRefund,
+}));
+// #3502: the PROVIDER boundary of the real minter, not the minter. Stripe and the
+// ledger write are stubbed; the sizing, the carried provenance and the supersede
+// all run.
+vi.mock("@/lib/stripe", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe")),
+  createPaymentIntent: mocks.stripeCreatePaymentIntent,
+  findOrCreateCustomer: mocks.stripeFindOrCreateCustomer,
+}));
+vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
+  upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBookingWithLodgeLockHeld:
@@ -271,6 +292,9 @@ function buildTx(
   }));
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    // #3954 round 4: an increase folds in a reduction's re-issue still waiting
+    // on its mint; this booking has none.
+    paymentRecoveryOperation: { findMany: vi.fn().mockResolvedValue([]) },
     member: { findMany: fenceMemberFindMany() },
     // Per-lodge advisory capacity lock (acquireLodgeCapacityLock) uses
     // $executeRaw, not $executeRawUnsafe — pg_advisory_xact_lock returns void
@@ -408,6 +432,9 @@ beforeEach(() => {
     // #3371: the minter's own parameter, zero here - this removal asks for
     // nothing, and a zero ask never mints, so it can retire nothing.
     additionalAsk: NO_ADDITIONAL_ASK,
+    // #3954: no unpaid ask on this booking, so the removal retired none.
+    unpaidAskOffsetCents: 0,
+    retiredAdditionalAsks: [],
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,
@@ -768,6 +795,89 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(mocks.applyPaymentAdjustments).toHaveBeenCalled();
     const settled = mocks.applyPaymentAdjustments.mock.calls[0][1];
     expect(settled.priceDiffCents).not.toBe(0);
+  });
+});
+
+describe("DELETE guest removal - a credit-paid ($0) booking whose price RISES (#3502)", () => {
+  /*
+    #3502 (owner decision, 6 Oct 2026). A removal can RAISE the price - it can
+    break a group promotion the remaining party no longer qualifies for (#1042).
+    On a booking paid wholly with credit (`{ amountCents: 0, status: SUCCEEDED }`)
+    that increase used to be sent to a Xero supplementary invoice that, with Xero
+    off, does not exist. The REAL `applyPaymentAdjustments` runs here, so this
+    pins that the removal door now hands the minter a card ask.
+  */
+  const zeroDollarPayment = (xeroInvoiceId: string | null) => ({
+    id: "pay_1",
+    bookingId: "b1",
+    status: "SUCCEEDED",
+    source: "STRIPE",
+    amountCents: 0,
+    refundedAmountCents: 0,
+    creditAppliedCents: 8000,
+    stripePaymentIntentId: null,
+    stripeCustomerId: null,
+    xeroInvoiceId,
+    changeFeeCents: 0,
+    additionalPaymentIntentId: null,
+    additionalAmountCents: 0,
+    additionalPaymentStatus: null,
+  });
+
+  it.each([
+    { label: "with Xero off", xeroInvoiceId: null },
+    { label: "with an issued primary invoice", xeroInvoiceId: "INV-1" },
+  ])("hands the minter a card ask for the increase, $label", async ({ xeroInvoiceId }) => {
+    const realSettlement = (await vi.importActual(
+      "@/lib/booking-modify-settlement",
+    )) as typeof import("@/lib/booking-modify-settlement");
+    mocks.applyPaymentAdjustments.mockImplementation(realSettlement.applyPaymentAdjustments);
+    // The remaining adult, repriced without the group promotion: $100, against
+    // the $80 the booking stood at - a $20 rise.
+    mocks.priceBookingGuestsWithMembershipTypePolicy.mockResolvedValue({
+      totalPriceCents: 10000,
+      guests: [{ perNightCents: [10000], nightDates: [CHECK_IN], priceCents: 10000 }],
+    });
+    mocks.stripeFindOrCreateCustomer.mockResolvedValue({ id: "cus_removal" });
+    mocks.stripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_removal",
+      client_secret: "pi_removal_secret",
+    });
+    mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    mocks.paymentTransactionFindMany.mockResolvedValue([]);
+    const tx = {
+      ...buildTx([ADULT, CHILD], { payment: zeroDollarPayment(xeroInvoiceId) }),
+      payment: { update: vi.fn().mockResolvedValue({}) },
+    };
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb(tx));
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.applyPaymentAdjustments.mock.calls[0][1].priceDiffCents).toBe(2000);
+    // The REAL minter wrote a $20 ADDITIONAL card ask against the payment.
+    expect(mocks.stripeCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mocks.stripeCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 2000,
+        metadata: expect.objectContaining({ bookingId: "b1", type: "modification_additional" }),
+      }),
+    );
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_1",
+        kind: "ADDITIONAL",
+        paymentIntentId: "pi_removal",
+        amountCents: 2000,
+      }),
+    );
+    // With an invoice, the supplementary invoice waits for the card payment
+    // rather than billing the member a second time.
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresAdditionalStripePayment: xeroInvoiceId !== null }),
+    );
   });
 });
 

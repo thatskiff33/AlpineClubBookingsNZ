@@ -15,6 +15,16 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import {
+  assertReductionReadForNet,
+  type ReductionAgainstUnpaidAsk,
+} from "@/lib/additional-ask-reduction";
+import {
+  assertOptionsSizedAfterUnpaidAsk,
+  foldWaitingReissuedAsks,
+  settleReductionAgainstUnpaidAsk,
+  type UnpaidAskSettlement,
+} from "@/lib/additional-ask-reissue";
 import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
@@ -29,6 +39,7 @@ import {
 import {
   bookingAmountOwedCents,
   bookingWorthCents,
+  canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -92,7 +103,7 @@ export type PaymentAdjustmentResult = {
    * `BookingModification` row exists; null for every other booking.
    */
   organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
-};
+} & UnpaidAskSettlement; // #3954: what the reduction did to the unpaid ask
 
 /**
  * #3653 (`INV-PAY-114`): the refusal an edit that raises the price of a booking
@@ -107,11 +118,9 @@ export function organiserChildChargeRefusal({
   booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">;
   netChargeCents: number;
 }): string | null {
-  const hasSucceededPayment =
-    isSettledBookingStatus(booking.status) &&
-    hasCapturedPayment(booking.payment) &&
-    booking.payment?.source === PaymentSource.STRIPE;
-  return netChargeCents > 0 && hasSucceededPayment && paidByOrganiserCard(booking)
+  // #3502: the increase question, so a credit-paid ($0) child is refused here
+  // exactly as `applyPaymentAdjustments` now asks its card.
+  return netChargeCents > 0 && canAskCardForIncrease(booking) && paidByOrganiserCard(booking)
     ? ORGANISER_CHILD_CHARGE_REFUSAL
     : null;
 }
@@ -200,16 +209,20 @@ export async function applyPaymentAdjustments(
     booking,
     priceDiffCents,
     changeFeeCents,
+    reduction,
     settlementOptions,
     settlementMethod,
     todayAtClub,
     format,
     appliedCreditReturnedByCaller = false,
     reductionUntiered = false,
+    changeFeeRecordedByCaller = false,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
+    /** #3954: the caller's ONE read of the unpaid ask, which its options were sized on. */
+    reduction: ReductionAgainstUnpaidAsk;
     settlementOptions?: BookingModificationSettlementOptions | null;
     settlementMethod?: BookingModificationSettlementMethod;
     /** #3809: the club's day, the tier boundary of a credit-paid booking's give-back. */
@@ -231,18 +244,31 @@ export async function applyPaymentAdjustments(
      * a second time.
      */
     reductionUntiered?: boolean;
+    /** #3954 x #3750: the caller records the fee on the amount owed (`recordFinishedStayFeeOwed`). */
+    changeFeeRecordedByCaller?: boolean;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
+  // #3954 (`INV-PAY-120`): every branch below settles only what the unpaid ask
+  // leaves of a reduction, from the caller's one read.
+  assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
+  assertOptionsSizedAfterUnpaidAsk(settlementOptions, reduction, booking.id, format);
+  const netAmountCents = reduction.netChargeLeftCents;
+  // #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit or a
+  // 100% promotion (`{ amountCents: 0, SUCCEEDED }`, "nothing captured") is
+  // asked by card for an INCREASE, as a card-paid one is - not left to a Xero
+  // invoice that may not exist. Every REDUCTION branch reads `hasSettledPayment`.
+  const zeroDollarCardIncrease =
+    netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
   const hasSucceededPayment =
-    hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
+    (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
+    zeroDollarCardIncrease;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
-  const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
     settlementMethod,
@@ -288,8 +314,27 @@ export async function applyPaymentAdjustments(
   // every non-card ending is safe by construction rather than by remembering.
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
+  // #3954: retire the unpaid ask the reduction was set against; what it did
+  // not cover is still owed, on a fresh ask the minter mints after commit.
+  const { reissuedAsk, ...unpaidAskSettlement } = await settleReductionAgainstUnpaidAsk(tx, {
+    booking,
+    reduction,
+    changeFeeCents,
+    hasSettledPayment,
+    hasIssuedXeroInvoice,
+    changeFeeRecordedByCaller,
+  });
+  if (reissuedAsk.amountCents > 0) {
+    additionalAsk = reissuedAsk;
+    additionalAmountCents = reissuedAsk.amountCents;
+  }
 
-  if (hasSettledPayment && booking.payment) {
+  // #3502: the zero-dollar increase joins the settled arm. It is an increase by
+  // construction, so it can reach only the `netAmountCents > 0` branch: the
+  // organiser refusal, `sizeAdditionalAsk`, and the change fee recorded on the
+  // payment in this transaction, without which `INV-PAY-047` reads the fee the
+  // ask collects as money retained.
+  if ((hasSettledPayment || zeroDollarCardIncrease) && booking.payment) {
     if (settlementOptions && netAmountCents < 0) {
       if (selectedSettlement.settlementMethod === "credit") {
         accountCreditAmountCents = selectedSettlement.amountCents;
@@ -349,6 +394,9 @@ export async function applyPaymentAdjustments(
           priceDiffCents,
           changeFeeCents,
           payment: booking.payment,
+          // #3954 round 4: a reduction's re-issue still waiting on its mint is
+          // asked for on this one fresh ask, and its recovery closed.
+          waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking),
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else {
@@ -391,6 +439,7 @@ export async function applyPaymentAdjustments(
     appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
     appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
+    ...unpaidAskSettlement,
   };
 }
 

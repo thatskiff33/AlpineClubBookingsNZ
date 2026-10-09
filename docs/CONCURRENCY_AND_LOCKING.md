@@ -2958,6 +2958,37 @@ pending-refund sweep converge the child's refund lines after `lock(1)` and the
 (global, lodge, row), keyed so a replay inserts nothing; no key, order,
 participant or provider call changes.
 
+**#3954 adds the retirement of an unpaid ask to every reduction door, and no
+key** (`INV-PAY-120`). `applyPaymentAdjustments` already runs after the door's
+`lock(1)`, its lodge key and, on a credit give-back, the member's credit-ledger
+key; the retire (`retireUnpaidAskChain`) runs after the give-back, so the
+member key still precedes every `Payment` row write. It writes the ask's
+ADDITIONAL rows, queues their cancellations and retires a parked Xero operation
+in the same transaction, then reconciles the mirror; the Stripe cancel runs
+after commit. The counterpart writer is the lockless webhook capture
+(`markPaymentIntentTransactionSucceeded`, autocommitting statements), so the
+retire is a status-guarded `updateMany` re-asserting "still unpaid": a capture
+committed after the read matches nothing and the edit rolls back (409); one
+landing after the retire waits on the row, and the committed cancellation hands
+it to `REFUND_SUPERSEDED_PAYMENT`. No key, order or provider call changes.
+Its second counterpart (owner decision 9 Oct 2026) is the lockless recovery
+runner replaying a failed mint (`CREATE_ADDITIONAL_PAYMENT_INTENT`): a waiting
+recovery the reduction nets off is closed by a status-guarded `updateMany` on
+the exact status and attempts it read, and the runner's claim is itself a
+status-guarded `updateMany` that moves both. A claim first fails the close and
+the edit rolls back (409); a close first leaves the claim matching nothing,
+whether it was already waiting on the row or comes later. Review round 4: the
+door reads the ask ONCE and hands that read to the options and the save, so a
+capture between them meets only the fence. A recovery claimed within two
+minutes rolls the edit back (409, "try again in a moment"); an older claim is
+closed under its attempts and claim time, and the runner writes its row, its
+intent id and its supersede's durable rows only while it still holds that
+claim (`holdAdditionalIntentRecoveryClaim`, one transaction that re-stamps
+`processingStartedAt`), so whichever commits first wins. A re-issued ask's
+recovery is written in the edit's transaction; the door's own mint completes it
+fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
+waiting re-issue in closes it with the same fence. All proven on real Postgres.
+
 **#2700 adds one more, and it is the smallest participant in this cohort.**
 `raiseDeletedBookingModificationRefundTask`
 (`src/lib/deleted-booking-modification-payment.ts`) creates the OPEN

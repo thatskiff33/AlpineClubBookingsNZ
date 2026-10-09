@@ -13,6 +13,7 @@ import {
 import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -78,6 +79,8 @@ function txWithSettlement(settlement: Record<string, unknown> | null) {
     // #3809: no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     // #3827 (composed by #3829): no open by-hand refund task on file.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 }
@@ -93,7 +96,7 @@ const CARD_SETTLEMENT = {
 describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("returns the reduction to the organiser's card from the combined payment, with no method chosen", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
       booking: child(),
       priceDiffCents: -1500,
@@ -111,7 +114,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("refuses account credit for a booking the organiser paid for, before the edit commits", async () => {
     await expect(
-      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(-1500),
         ...SETTLEMENT_DAY,
         booking: child(),
         priceDiffCents: -1500,
@@ -125,7 +128,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("refuses the reduction when the organiser's card payment is gone or fully refunded", async () => {
     for (const settlement of [null, { ...CARD_SETTLEMENT, status: PaymentStatus.REFUNDED }]) {
       await expect(
-        applyPaymentAdjustments(txWithSettlement(settlement), {
+        applyPaymentAdjustments(txWithSettlement(settlement), { reduction: noReductionAgainstUnpaidAsk(-1500),
           ...SETTLEMENT_DAY,
           booking: child(),
           priceDiffCents: -1500,
@@ -138,7 +141,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("leaves an ordinary booking's refund on the ordinary path", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
       booking: child({ organiserSettled: false, parentBookingId: null }),
       priceDiffCents: -1500,
@@ -153,6 +156,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   /** A policy db for `calculateModificationSettlementOptions`: one 100% card, 100% credit tier. */
   const POLICY_DB = {
     // #3827 (composed by #3829): no open by-hand refund task on file.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge_1" }) },
     bookingPeriod: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
@@ -174,7 +179,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("quotes the organiser's card only for a child the organiser paid for BY CARD", async () => {
     const todayAtClub = requireCalendarDate("2026-07-01");
-    const card = await calculateModificationSettlementOptions({
+    const card = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-1500),
       booking: child(),
       netChargeCents: -1500,
       db: POLICY_DB,
@@ -185,7 +190,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // An organiser who settled by Internet Banking moved no card money: the
     // child keeps the ordinary choice it had before #3653 (#3642 owns that
     // group settlement), and is never quoted a refund to a card.
-    const ib = await calculateModificationSettlementOptions({
+    const ib = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-1500),
       booking: ibChild(),
       netChargeCents: -1500,
       db: POLICY_DB,
@@ -196,7 +201,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("leaves an Internet Banking organiser child's reduction off the organiser's card", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
       booking: ibChild(),
       priceDiffCents: -1500,
@@ -219,7 +224,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // refunded total - the 10000 paid / 4000 refunded / +1000 sequence that
     // re-promised the 4000 to a later cancellation.
     await expect(
-      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(1000),
         ...SETTLEMENT_DAY,
         booking: child(),
         priceDiffCents: 1000,
@@ -228,7 +233,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     ).rejects.toBeInstanceOf(OrganiserChildRefundRefusedError);
 
     // The Internet Banking child keeps its supplementary-invoice path.
-    const ib = await applyPaymentAdjustments(txWithSettlement(null), {
+    const ib = await applyPaymentAdjustments(txWithSettlement(null), { reduction: noReductionAgainstUnpaidAsk(1000),
       ...SETTLEMENT_DAY,
       booking: ibChild(),
       priceDiffCents: 1000,

@@ -17,6 +17,8 @@
  *  4. After the chokepoint runs, the ledger's settled total equals the mirror's
  *     own `amountCents - refundedAmountCents` — the identity C4 (#3583) checks,
  *     proved here for the rows this child posts.
+ *  5. (#3502) A credit-paid ($0) booking's card ask reconciles from $0 to
+ *     captured with `INV-PAY-047` balanced at both stages.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -270,6 +272,73 @@ async function resetPayment(): Promise<void> {
       // this difference, not assert an identity across it.
       expect(await settledCents()).toBe(10_000);
       expect(mirror?.refundedAmountCents).toBe(2_500);
+    });
+
+    it("reconciles a credit-paid ($0) booking's card ask from $0 through to captured (#3502)", async () => {
+      // #3502: an edit that grows a booking paid wholly with credit now mints an
+      // ADDITIONAL card ask against its `{ amountCents: 0, SUCCEEDED }` row. The
+      // real chokepoint must keep that row SUCCEEDED at $0 while the ask is
+      // pending, then take the captured figure, with the ledger identity
+      // (INV-PAY-047) balanced at both stages.
+      const { bookingLedgerResidualCents } = await import("@/lib/additional-payment-ask");
+      const residual = async () => {
+        const [booking, payment] = await Promise.all([
+          prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } }),
+          prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } }),
+        ]);
+        return { payment, residualCents: bookingLedgerResidualCents({ ...payment, finalPriceCents: booking.finalPriceCents }) };
+      };
+      await prisma.payment.update({
+        where: { id: PAYMENT_ID },
+        data: { status: "SUCCEEDED", amountCents: 0, creditAppliedCents: 10_000 },
+      });
+      // The edit committed: the price rose by $50 (the door's own write).
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: 15_000 } });
+      try {
+        // The mint, after commit - the minter's own writer.
+        await upsertPaymentIntentTransaction({
+          paymentId: PAYMENT_ID,
+          kind: "ADDITIONAL",
+          paymentIntentId: "pi_race_3502_zero",
+          amountCents: 5_000,
+          carriedAskCents: 0,
+          status: "PENDING",
+          store: prisma,
+        });
+        const pending = await residual();
+        expect(pending.payment).toMatchObject({
+          status: "SUCCEEDED",
+          amountCents: 0,
+          additionalAmountCents: 5_000,
+          additionalPaymentStatus: "PENDING",
+          additionalPaymentIntentId: "pi_race_3502_zero",
+        });
+        expect(pending.residualCents).toBe(0);
+        expect(await lines()).toEqual([]);
+
+        // The member pays: the webhook's upsert of the same intent.
+        await upsertPaymentIntentTransaction({
+          paymentId: PAYMENT_ID,
+          kind: "ADDITIONAL",
+          paymentIntentId: "pi_race_3502_zero",
+          amountCents: 5_000,
+          carriedAskCents: 0,
+          status: "SUCCEEDED",
+          store: prisma,
+        });
+        const captured = await residual();
+        expect(captured.payment).toMatchObject({
+          status: "SUCCEEDED",
+          amountCents: 5_000,
+          additionalPaymentStatus: "SUCCEEDED",
+        });
+        expect(captured.residualCents).toBe(0);
+        expect(await lines()).toEqual([
+          expect.objectContaining({ kind: "CARD_CAPTURE", sign: 1, amountCents: 5_000, settlementMethod: "CARD" }),
+        ]);
+      } finally {
+        await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: 10_000 } });
+      }
     });
 
     it("matches the mirror's own arithmetic where both read the same rows: captures, and refunds with a refund row", async () => {

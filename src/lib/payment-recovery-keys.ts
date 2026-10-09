@@ -159,6 +159,17 @@ export function buildAdditionalIntentRecoveryIdempotencyKey(
   return `payment_recovery_additional_intent_${bookingModificationId}`;
 }
 
+/**
+ * #3954 review round 4: the Stripe key a price reduction's RE-ISSUED ask is
+ * minted under - frozen on its recovery row inside the edit's transaction and
+ * read back by both the door's after-commit mint and the recovery runner, so
+ * the two converge on one intent whichever runs. Scoped to the reducing edit,
+ * whatever door it came through.
+ */
+export function buildReissuedAskStripeIdempotencyKey(bookingModificationId: string) {
+  return `mod_reissued_ask_${bookingModificationId}`;
+}
+
 // #3170: the recovery-operation dedup key for the additional PaymentIntent a
 // completed EDIT_FINANCIAL_REVIEW task contributes to when the officer decides
 // the MEMBER owes the club.

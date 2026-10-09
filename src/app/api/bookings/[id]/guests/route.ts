@@ -70,6 +70,7 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
@@ -118,9 +119,8 @@ import {
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
 import {
+  canAskCardForIncrease,
   hasIssuedPrimaryXeroInvoice,
-  isCapturedPaymentStatus,
-  isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -1020,28 +1020,16 @@ export async function POST(
        * count as paid, so the difference is charged instead of collected from
        * nobody — the reachable defect this issue was filed for.
        *
-       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
-       * full `hasCapturedPayment` the other three doors use. That is deliberate
-       * and it is the one place this door differs from them. The full predicate
-       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
-       * fully covered by credit or a 100% promo — carries
-       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
-       * this door stop asking that member for the added guest's price, because
-       * the Xero arm below cannot cover them at a club with the integration off.
-       * That is a NEW under-collection, at the very door this issue exists to
-       * stop under-collecting at, and it was never put to the owner.
-       *
-       * The money IS collectable: the additional-payment mint creates a FRESH
-       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
-       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
-       * is no obstacle. The other three doors share that hole; converging onto
-       * it would have been converging onto a defect. Filed separately.
+       * A guest add only ever raises the price, so this door asks the
+       * INCREASE question, `canAskCardForIncrease` — the status half of
+       * `hasCapturedPayment`, without its `amountCents > 0` clause, so a
+       * ZERO-DOLLAR booking (a stay fully covered by credit or a 100% promo,
+       * `{ amountCents: 0, status: SUCCEEDED }`) is still asked for the added
+       * guest's price whether or not Xero is connected. #3502 (owner decision,
+       * 6 Oct 2026) moved the other three doors onto the same answer through
+       * `applyPaymentAdjustments`; this door used to hold its own copy of it.
        */
-      const hasSettledPayment =
-        isSettledBookingStatus(booking.status) &&
-        isCapturedPaymentStatus(booking.payment?.status ?? "");
-      const hasSucceededPayment =
-        hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
+      const hasSucceededPayment = canAskCardForIncrease(booking);
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
       /**
@@ -1084,6 +1072,9 @@ export async function POST(
           // settlement and to the member's email for the same reason.
           changeFeeCents: 0,
           payment: booking.payment,
+          // #3954 round 4: a reduction's re-issue still waiting on its mint is
+          // asked for on this one fresh ask, and its recovery closed.
+          waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking),
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
@@ -1285,6 +1276,8 @@ export async function POST(
         priceDiffCents,
         additionalAmountCents,
         additionalAsk,
+        // An add never lowers the price (#3954 retires asks only on a reduction).
+        retiredAdditionalAsks: [],
         promoRemoved,
         promoCoverage,
         oldGuestCount: booking.guests.length,
@@ -1495,6 +1488,8 @@ export async function POST(
         refundByBankTransfer: false,
         appliedCreditGivenBackCents: 0,
         additionalAmountCents: result.additionalAmountCents,
+        // A guest add only raises a price.
+        unpaidAskCancelled: false,
         additionalPaymentMethod:
           result.additionalAmountCents > 0 &&
           result.paymentSource === PaymentSource.INTERNET_BANKING

@@ -281,6 +281,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-117` | A by-hand edit refund raises one officer refund task |
 | `INV-PAY-118` | An approved appeal's non-card part raises one officer refund task |
 | `INV-PAY-119` | Owed is worth less credit, from one home; invoice bills the fee |
+| `INV-PAY-120` | A reduction first cancels or shrinks the unpaid card ask |
 | `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |

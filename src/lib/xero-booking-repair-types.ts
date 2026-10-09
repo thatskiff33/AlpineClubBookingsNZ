@@ -538,6 +538,12 @@ export interface BookingClassificationContext {
    * repaired before this map existed.
    */
   openEditReviewChargeIntentRecoveryModificationIds: Set<string>;
+  /**
+   * #3954 review round 4: ordinary edits whose additional-intent recovery is
+   * still open - for a reduction, its smaller re-issued ask not yet minted, so
+   * the invoice that mint raises is deferred, not missing.
+   */
+  openAdditionalIntentRecoveryModificationIds: Set<string>;
 }
 
 export interface MutableFinding {

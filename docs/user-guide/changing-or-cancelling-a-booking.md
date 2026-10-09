@@ -215,7 +215,9 @@ guide.
 | Situation | What to expect |
 | --- | --- |
 | Change costs more | You settle the extra (delta) before the change is complete |
+| Change costs more on a booking you paid for entirely with account credit | You are asked to pay the extra by card, the same as any other paid booking; no more account credit is taken |
 | Change costs less | A refund or account credit for the difference |
+| Change costs less while you still have an unpaid extra payment from an earlier change | The reduction comes off that unpaid extra first: it is cancelled, or made smaller, and you are refunded or credited only for anything left over |
 | Change costs less on a booking your group organiser paid for by card | The difference goes back to the organiser's card, because they paid it; there is no account-credit choice |
 | Change costs more on a booking your group organiser paid for by card | The change cannot be paid online; contact the club |
 | The club cannot tell what those nights were sold for | Your change still saves. The amount is worked out by a person and confirmed with you; nothing is refunded or charged until then, and no figure is shown in the meantime |

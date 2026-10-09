@@ -992,6 +992,56 @@ describe("createXeroInvoiceForBooking", () => {
       expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledTimes(2);
     });
 
+    /*
+      #3502 (review, Xero lens): a credit-paid ($0) booking whose primary invoice
+      was not yet raised ($50, all credit) grows by +$50 with a $5 change fee.
+      The card ask ($55) is captured BEFORE the invoice exists, so no
+      supplementary invoice ever bills the fee. The invoice raised later must
+      bill it, or it totals $100 against $55 recorded cash and $50 of credit
+      (more than the $45 then due), and Xero refuses the
+      allocation on every replay. A card-plus-credit booking edited before its
+      invoice is the same class and takes the same line.
+    */
+    describe("#3502 a change fee taken by card before the primary invoice was raised", () => {
+      /** $100 stay now: $50 of credit, and the $55 card ask (the $50 rise plus the $5 fee). */
+      function grownCreditPaidBooking() {
+        return cardCreditBooking({
+          amountCents: 5_500,
+          creditAppliedCents: 5_000,
+          changeFeeCents: 500,
+        });
+      }
+      const feeLines = () =>
+        (mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0]![1].invoices[0]
+          .lineItems as Array<{ description?: string; unitAmount?: number }>)
+          .filter((line) => line.description === "Late notice booking change fee");
+
+      it("MUTATION: bills the fee on the primary invoice, so cash plus credit settles it", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(grownCreditPaidBooking());
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+        expect(feeLines()).toEqual([expect.objectContaining({ quantity: 1, unitAmount: 5 })]);
+        const lines = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0]![1]
+          .invoices[0].lineItems as Array<{ quantity?: number; unitAmount?: number }>;
+        const invoiceCents = Math.round(
+          lines.reduce((sum, line) => sum + (line.quantity ?? 1) * (line.unitAmount ?? 0), 0) * 100,
+        );
+        // $100 of stay plus the $5 fee = the $55 card capture + the $50 credit.
+        expect(invoiceCents).toBe(10_500);
+        expect(invoiceCents).toBe(5_500 + 5_000);
+        expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalled();
+      });
+
+      it("adds no fee line for a booking with no fee", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+        expect(feeLines()).toEqual([]);
+      });
+    });
+
     describe("#3836 a booking paid entirely by credit", () => {
       const creditOnly = { amountCents: 0, creditAppliedCents: 10000, stripePaymentIntentId: null };
 

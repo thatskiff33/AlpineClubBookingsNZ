@@ -191,6 +191,32 @@ const SCENARIOS: Scenario[] = [
     expectedResidualCents: 0,
   },
   {
+    // #3502: a booking paid wholly with account credit ($0 captured) that
+    // grows. Before the fix three edit doors asked nothing here (no invoice at
+    // a club without Xero), which left +5000 `unasked`; the door now asks the
+    // card, sized by the same rule as any other increase.
+    label: "a credit-paid ($0) booking that grows, asked by card",
+    build: () =>
+      applyPriceIncrease(
+        { ...newBooking({ finalPriceCents: 20000, paidCents: 0 }), creditAppliedCents: 20000 },
+        { priceDiffCents: 5000, changeFeeCents: 500 },
+      ),
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
+    label: "a credit-paid ($0) booking that grew, its card ask paid",
+    build: () =>
+      payOutstandingAsk(
+        applyPriceIncrease(
+          { ...newBooking({ finalPriceCents: 20000, paidCents: 0 }), creditAppliedCents: 20000 },
+          { priceDiffCents: 5000 },
+        ),
+      ),
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
     label: "two consecutive increases, the first left unpaid",
     // THE #3340 SHAPE. Before the fix the second edit asked $70 and the first
     // $70 ceased to be owed, leaving +7000 here for ever.
@@ -494,6 +520,18 @@ const ASK_MINTING_DOORS: readonly {
   },
   {
     /**
+     * #3954: a guest's acceptance re-price only ever LOWERS a settled price, so
+     * the one ask it can mint is the smaller re-issue of an unpaid ask its
+     * reduction retired - sized in the shared settlement, like the edit doors'.
+     */
+    door: "src/lib/booking-guest-acceptance-reprice.ts",
+    // #3954 round 4: the shared settlement's unpaid-ask half, split out.
+    sizedIn: "src/lib/additional-ask-reissue.ts",
+    reachedBy: "applyPaymentAdjustments",
+    builtWith: "reissueUnpaidAdditionalAsk",
+  },
+  {
+    /**
      * WAS THE ONE EXEMPTION (#3371). Its ask is the SUM of one edit's settled
      * shares rather than a price delta, so it has its own constructor - but it
      * is the same rule, and it now folds in the unpaid balance of the ask its
@@ -511,6 +549,8 @@ const ASK_CONSTRUCTORS: readonly string[] = [
   "sizeAdditionalAsk",
   "sizeReviewChargeAsk",
   "raiseReviewChargeAsk",
+  // #3954: what a reduction leaves of an unpaid ask, re-issued, all of it carried.
+  "reissueUnpaidAdditionalAsk",
 ];
 const ASK_HOME = "src/lib/additional-payment-ask.ts";
 const MINTER = "createModificationAdditionalPaymentIntent";
@@ -662,6 +702,26 @@ function sourceFiles(dir: string, found: string[] = []): string[] {
   return found;
 }
 
+describe("a reduction that retires an unpaid ask re-issues what is left through the one home (#3954, INV-PAY-047)", () => {
+  it("retires and re-issues in the one settlement every reduction door shares", () => {
+    // #3954 round 4: `applyPaymentAdjustments` delegates to the unpaid-ask half.
+    expect(read("src/lib/booking-modify-settlement.ts")).toContain("settleReductionAgainstUnpaidAsk(tx, {");
+    const settlement = read("src/lib/additional-ask-reissue.ts");
+    expect(
+      settlement.includes("retireUnpaidAskChain(tx, {"),
+      "INV-PAY-047 (#3954): `applyPaymentAdjustments` no longer retires the unpaid " +
+        "ask a reduction is set against, so a member released from it in the " +
+        "settlement can still pay it, and the club holds more than the price.",
+    ).toBe(true);
+    expect(
+      settlement.includes("reissueUnpaidAdditionalAsk({ askLeftCents: reduction.askLeftCents })"),
+      "INV-PAY-098 (#3954): what a reduction leaves of a retired ask must be " +
+        "re-issued through the one home, carrying it - otherwise the retirement " +
+        "deletes money the member still owes.",
+    ).toBe(true);
+  });
+});
+
 describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
   it("keeps the ask unconstructible outside the one home", () => {
     const home = read(ASK_HOME);
@@ -740,7 +800,8 @@ describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
     for (const file of retirers) {
       const source = read(file);
       expect(
-        source.includes(`${RETIRER}({`),
+        // #3954 round 4: or its durable half, on a store, inside a claim hold.
+        source.includes(`${RETIRER}({`) || source.includes("queueSupersededAdditionalIntentCancellationRows({"),
         `INV-PAY-098: ${file} no longer retires superseded asks. Update this ` +
           "list in the same change.",
       ).toBe(true);

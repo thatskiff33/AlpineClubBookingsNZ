@@ -48,6 +48,8 @@ vi.mock("@/lib/prisma", () => ({
     // #3032: the preview half of the pending-review fence reads this. Empty by
     // default - no financial review is open - so this suite asserts exactly what
     // it asserted before.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findFirst: vi.fn().mockResolvedValue(null) },
     booking: {
       findUnique: vi.fn(),

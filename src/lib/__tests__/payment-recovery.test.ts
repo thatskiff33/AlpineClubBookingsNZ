@@ -127,8 +127,8 @@ vi.mock("@/lib/edit-financial-review-charge", () => ({
     mockSyncEditFinancialReviewChargeRequest(...args),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
     paymentRecoveryOperation: {
       findMany: (...args: unknown[]) => mockPaymentRecoveryFindMany(...args),
       findUnique: (...args: unknown[]) => mockPaymentRecoveryFindUnique(...args),
@@ -157,8 +157,11 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...args: unknown[]) =>
         mockBookingModificationFindUnique(...args),
     },
-  },
-}));
+  };
+  // #3954 review round 4: the additional-intent replay writes its row under a
+  // claim hold, in one transaction, on these same mocks.
+  return { prisma: { ...prisma, $transaction: (fn: (tx: typeof prisma) => unknown) => fn(prisma) } };
+});
 
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellableWithResult: (...args: unknown[]) =>
@@ -2453,6 +2456,65 @@ describe("payment recovery worker", () => {
       };
     }
 
+    describe("a price reduction's re-issued ask (#3954 round 4)", () => {
+      const REISSUE_KEY = "mod_reissued_ask_mod-9";
+      beforeEach(() => {
+        // The reducing edit's own net is negative: the replay sizes a re-issue.
+        mockBookingModificationFindUnique.mockResolvedValueOnce({ priceDiffCents: -2000, changeFeeCents: 0 });
+      });
+
+      it("MUTATION: overtaken by a later ask that did not fold it in, it still mints - its own $30 plus that ask's unpaid $20, superseding it", async () => {
+        primeQueue(additionalIntentOperation({ amountCents: 3000, paymentIntentId: REISSUE_KEY }));
+        const base = paymentWithAsk(2000, PaymentStatus.PENDING);
+        const later = { ...base, transactions: [...base.transactions as Array<Record<string, unknown>>] };
+        later.transactions.push({
+          id: "txn-later",
+          kind: "ADDITIONAL",
+          stripePaymentIntentId: "pi_later_review_charge",
+          amountCents: 2000,
+          refundedAmountCents: 0,
+          status: PaymentStatus.PENDING,
+          createdAt: new Date("2026-06-02T00:00:00.000Z"),
+        });
+        mockPaymentFindUnique.mockResolvedValue(later);
+        mockPaymentTransactionFindMany.mockResolvedValueOnce([
+          { id: "txn-later", stripePaymentIntentId: "pi_later_review_charge", amountCents: 2000 },
+        ]);
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result.succeeded).toBe(1);
+        expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+          expect.objectContaining({ amountCents: 5000, idempotencyKey: `${REISSUE_KEY}_5000` }),
+        );
+        expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+          expect.objectContaining({ amountCents: 5000, carriedAskCents: 5000 }),
+        );
+      });
+
+      it("MUTATION: settled once its OWN row exists - a retry after a later failure mints nothing twice", async () => {
+        primeQueue(additionalIntentOperation({ amountCents: 3000, paymentIntentId: "pi_own_reissue" }));
+        const ownBase = paymentWithAsk(3000, PaymentStatus.PENDING);
+        const written = { ...ownBase, transactions: [...ownBase.transactions as Array<Record<string, unknown>>] };
+        written.transactions.push({
+          id: "txn-own",
+          kind: "ADDITIONAL",
+          stripePaymentIntentId: "pi_own_reissue",
+          amountCents: 3000,
+          refundedAmountCents: 0,
+          status: PaymentStatus.PENDING,
+          createdAt: new Date("2026-06-02T00:00:00.000Z"),
+        });
+        mockPaymentFindUnique.mockResolvedValue(written);
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result.succeeded).toBe(1);
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      });
+    });
+
     it("re-derives a smaller ask when the superseded one was paid in the meantime", async () => {
       primeQueue(additionalIntentOperation({ amountCents: 10000 }));
       // $70 was outstanding when edit 2 sized its $100 ask; the member has since
@@ -2532,6 +2594,26 @@ describe("payment recovery worker", () => {
       expect(
         mockUpsertPaymentIntentTransaction.mock.invocationCallOrder[0],
       ).toBeLessThan(mockPaymentTransactionFindMany.mock.invocationCallOrder[0]);
+    });
+
+    it("MUTATION (#3954 round 4): writes its row only while it still holds its claim - a reduction that closed it mid-mint gets no row, no supersede, no completion", async () => {
+      primeQueue(additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") }));
+      // The claim succeeds; the hold, re-asserting that claim before the row is
+      // written, finds the recovery closed by a price reduction.
+      mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { data?: { status?: string } }) =>
+        args.data?.status === "PROCESSING" ? { count: 1 } : { count: 0 },
+      );
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+      const hold = mockPaymentRecoveryUpdateMany.mock.calls
+        .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+        .find((args) => args.where.status === "PROCESSING" && "processingStartedAt" in args.data);
+      expect(hold?.where).toMatchObject({ id: "recovery-additional", attempts: 1 });
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionFindMany).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
     });
 
     it("completes without creating when a later edit already minted a newer additional intent", async () => {

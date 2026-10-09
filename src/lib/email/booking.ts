@@ -53,7 +53,7 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
-import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
+import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
@@ -1381,6 +1381,12 @@ export async function sendBookingModifiedEmail(params: {
    */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  /**
+   * #3954: this edit's price drop cancelled the member's unpaid extra payment
+   * outright (`unpaidAskOffsetCents > 0` and nothing re-issued). REQUIRED, as
+   * `financialReviewPending` is: every sender answers it.
+   */
+  unpaidAskCancelled: boolean;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
   xeroInvoiceNumber?: string | null;
@@ -1504,7 +1510,8 @@ export async function sendBookingModifiedEmail(params: {
   // #3809: true beside a card refund on a booking paid by card and credit, so
   // composed with the settlement note rather than one of its arms.
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
-  const paymentNote = [reviewNote, settlementNote, giveBackNote].filter(Boolean).join(" ");
+  const askCancelledNote = unpaidAskCancelledNote(params.unpaidAskCancelled);
+  const paymentNote = [reviewNote, settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
 
   await sendEmail({
     to: params.email,

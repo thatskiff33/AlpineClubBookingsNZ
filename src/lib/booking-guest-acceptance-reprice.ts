@@ -1,6 +1,11 @@
 import { Role, type Prisma } from "@prisma/client";
 
-import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
+import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import {
+  readReductionAgainstUnpaidAsk,
+  type RetiredAdditionalAsk,
+} from "@/lib/additional-ask-reduction";
+import { NO_ADDITIONAL_ASK, type AdditionalAsk } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
@@ -12,6 +17,7 @@ import {
 } from "@/lib/booking-modification-lines";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
+  createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
 } from "@/lib/booking-modification-settlement";
@@ -23,6 +29,7 @@ import {
 } from "@/lib/booking-modify";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
+  canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
 } from "@/lib/booking-payment-state";
@@ -55,6 +62,7 @@ import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 
 /**
  * #3827 (D-3813-4): A GUEST'S ACCEPTANCE RE-PRICES THE BOOKING'S CODES.
@@ -159,6 +167,11 @@ export type GuestAcceptanceReprice =
       zeroDollarAutoPaid: boolean;
       /** Primary intents a zero-dollar auto-pay superseded, to cancel after commit. */
       supersededPrimaryPaymentIntentCount: number;
+      /** #3954: the asks retired (cancelled after commit), cancelled outright, and the smaller one re-issued. */
+      retiredAdditionalAsks: RetiredAdditionalAsk[];
+      unpaidAskCancelled: boolean;
+      additionalAsk: AdditionalAsk;
+      paymentCustomerId: string | null;
       /** What the member's email and the audit row read, as an ordinary edit carries them. */
       oldFinalPriceCents: number;
       newFinalPriceCents: number;
@@ -261,8 +274,10 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   const loaded = booking as unknown as LoadedBookingForModify;
+  // #3502: a credit-paid ($0) booking too - this path never mints a card ask.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||
+    canAskCardForIncrease(booking) ||
     isPaidLikeBookingStatus(booking.status) ||
     hasIssuedPrimaryXeroInvoice(loaded);
   if (priceDiffCents > 0 && priceSettled) {
@@ -275,7 +290,9 @@ export async function repriceBookingAfterGuestAcceptance(
 
   // D-3813-5: how the whole reduction goes back, decided BEFORE anything is
   // written, so a reduction that cannot be returned in full moves no code.
-  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, todayAtClub);
+  // #3954: the unpaid ask, read ONCE, for the return route and the save.
+  const reduction = await readReductionAgainstUnpaidAsk(tx, loaded, priceDiffCents);
+  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, reduction, todayAtClub);
   if (returnRoute === null) {
     logger.warn(
       { bookingId, priceDiffCents },
@@ -339,6 +356,10 @@ export async function repriceBookingAfterGuestAcceptance(
       paymentId: booking.payment?.id ?? null,
       zeroDollarAutoPaid: false,
       supersededPrimaryPaymentIntentCount: 0,
+      retiredAdditionalAsks: [],
+      unpaidAskCancelled: false,
+      additionalAsk: NO_ADDITIONAL_ASK,
+      paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       priceLines: null,
       ...unmoved,
     };
@@ -349,6 +370,7 @@ export async function repriceBookingAfterGuestAcceptance(
     booking: loaded,
     priceDiffCents,
     changeFeeCents: 0,
+    reduction,
     ...(returnRoute.kind === "money-back"
       ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
       : {}),
@@ -467,6 +489,8 @@ export async function repriceBookingAfterGuestAcceptance(
         refundAmountCents: paymentImpact.refundAmountCents,
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
+        // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
+        ...unpaidAskOffsetHistory(adjusted),
         ...(promo.promoCoverage ? { promoCoverageNote: promo.promoCoverage.message } : {}),
       },
       priceDiffCents,
@@ -491,6 +515,8 @@ export async function repriceBookingAfterGuestAcceptance(
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price",
   });
+  // #3954: a smaller re-issued ask, and a billed offset's note, are durable from this commit.
+  await queueReductionAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, settled: paymentImpact });
   // #3653 (composed by #3829): an organiser-settled child's refund debt, before
   // this re-price commits, as every edit door reserves it.
   await reserveOrganiserChildModificationRefund(tx, {
@@ -520,6 +546,10 @@ export async function repriceBookingAfterGuestAcceptance(
     paymentId: booking.payment?.id ?? null,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntentCount: lifecycle.supersededPrimaryPaymentIntents.length,
+    retiredAdditionalAsks: adjusted.retiredAdditionalAsks,
+    unpaidAskCancelled: adjusted.unpaidAskCancelled,
+    additionalAsk: adjusted.additionalAsk,
+    paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
     priceLines: priceLines ?? null,
     ...unmoved,
   };
@@ -548,29 +578,31 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
   });
   // The card's share, through the edit's own refund helper: a key scoped to
   // this modification and durable recovery on failure (#818).
+  const { pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks, hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines } = reprice;
+  const paymentContext = {
+    pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks,
+    hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines, bookingModificationId,
+    memberEmail: reprice.owner.email,
+    memberName: reprice.owner.firstName,
+    memberFirstName: reprice.owner.firstName,
+    memberId: reprice.owner.memberId,
+  };
   const stripeRefundId = await executeBookingModificationRefund({
     format,
     bookingId,
-    result: {
-      pendingRefundAmountCents: reprice.pendingRefundAmountCents,
-      organiserChildRefund: reprice.organiserChildRefund,
-      paymentId: reprice.paymentId,
-      additionalAsk: NO_ADDITIONAL_ASK,
-      hasSucceededPayment: reprice.hasSucceededPayment,
-      hasIssuedXeroInvoice: reprice.hasIssuedXeroInvoice,
-      paymentCustomerId: null,
-      memberEmail: reprice.owner.email,
-      memberName: reprice.owner.firstName,
-      memberFirstName: reprice.owner.firstName,
-      memberId: reprice.owner.memberId,
-      bookingModificationId,
-      priceLines: reprice.priceLines,
-    },
+    result: paymentContext,
     metadataReason: "guest_accepted_promo_reprice",
     idempotencyKeyPrefix: `guest_accept_refund_${bookingId}`,
     failureMessage: "Stripe refund failed after a guest-acceptance re-price - enqueueing recovery",
     recoveryFailureMessage:
       "Failed to enqueue guest-acceptance re-price refund recovery - manual reconciliation required",
+  });
+  // #3954: the retired asks die at Stripe and the smaller one is minted - the
+  // only ask a re-price can mint, since it never raises a settled price.
+  await createModificationAdditionalPaymentIntent({
+    format, bookingId, result: paymentContext, reason: "guest_accepted_promo_reprice_reissued_ask",
+    idempotencyKey: `guest_accept_${bookingId}_${bookingModificationId}`,
+    failureMessage: "Failed to re-issue an unpaid additional PaymentIntent after a guest-acceptance re-price",
   });
   try {
     await queueXeroBookingEditSettlement({
@@ -656,7 +688,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       refundByBankTransfer: editRefundGoesBackByHand(reprice),
       refundReturnedToOrganiser: reprice.organiserChildRefund !== null,
       lodgeId: reprice.lodgeId,
-      additionalAmountCents: 0,
+      additionalAmountCents: reprice.additionalAsk.amountCents,
+      unpaidAskCancelled: reprice.unpaidAskCancelled,
     },
     format,
   ).catch((err) =>

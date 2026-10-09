@@ -159,13 +159,27 @@ class AdditionalAskValue {
    */
   readonly #carriedCents: number;
 
-  constructor(params: { ownCents: number; carriedCents: number }) {
+  /**
+   * #3954: this ask RE-ISSUES, smaller, an unpaid ask a price reduction retired
+   * (`reissueUnpaidAdditionalAsk`). The member's card was already asked for it,
+   * so the minter may mint it on a credit-paid ($0) booking whose reduction
+   * captured nothing - the one place the minter reads this.
+   */
+  readonly #reissuesUnpaidAsk: boolean;
+
+  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean }) {
     this.amountCents = params.ownCents + params.carriedCents;
     this.#carriedCents = params.carriedCents;
+    this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
   }
 
   get carriedCents(): number {
     return this.#carriedCents;
+  }
+
+  /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
+  get reissuesUnpaidAsk(): boolean {
+    return this.#reissuesUnpaidAsk;
   }
 }
 
@@ -179,6 +193,7 @@ export type AdditionalAsk = AdditionalAskValue;
 function buildAdditionalAsk(params: {
   ownCents: number;
   carriedCents: number;
+  reissuesUnpaidAsk?: boolean;
 }): AdditionalAsk {
   return new AdditionalAskValue(params);
 }
@@ -211,14 +226,23 @@ export function sizeAdditionalAsk({
   priceDiffCents,
   changeFeeCents,
   payment,
+  waitingReissuedAskCents = 0,
 }: {
   priceDiffCents: number;
   changeFeeCents: number;
   payment: AdditionalAskPayment | null | undefined;
+  /**
+   * #3954 review round 4: a reduction's smaller re-issued ask still waiting on
+   * its mint, which this increase folds in and closes
+   * (`foldWaitingReissuedAsks`) - carried like the `Payment`'s live ask, since
+   * this mint is what asks for it now. Only the edit doors pass it; the
+   * replay's own sizing never does.
+   */
+  waitingReissuedAskCents?: number;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
-    carriedCents: outstandingAdditionalAskCents(payment),
+    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
   });
 }
 
@@ -306,6 +330,59 @@ export function restateAdditionalAsk(request: {
   return buildAdditionalAsk({
     ownCents: request.amountCents - request.carriedAskCents,
     carriedCents: request.carriedAskCents,
+  });
+}
+
+/**
+ * A PRICE REDUCTION IS FIRST SET AGAINST THE UNPAID ASK (#3954, owner decision
+ * 8 Oct 2026; `INV-PAY-047`, `INV-MOD-011`).
+ *
+ * A booking that grew and has not yet paid for the growth carries an unpaid
+ * ask. When a later edit brings the price down, the member is first released
+ * from that ask - cancelled, or re-issued smaller - and only what is left of
+ * the reduction is refunded, credited or given back, by the club's policy
+ * tiers as before. The ask is money nobody has paid, so no tier applies to the
+ * part of the reduction that cancels it.
+ *
+ * `netChargeCents` is the edit's own net (price delta plus change fee), the
+ * same figure every settlement branch reads; `unpaidAskCents` is the ask a
+ * reduction may be set against (`readUnpaidPriceAsk`), never the review-raised
+ * kind. Returns the edit's net with the offset taken out - still a reduction,
+ * or zero - and what is left of the ask. An increase passes through unchanged.
+ */
+export function setReductionAgainstUnpaidAsk({
+  netChargeCents,
+  unpaidAskCents,
+}: {
+  netChargeCents: number;
+  unpaidAskCents: number;
+}): { offsetCents: number; netChargeLeftCents: number; askLeftCents: number } {
+  const offsetCents =
+    netChargeCents < 0 ? Math.min(-netChargeCents, Math.max(0, unpaidAskCents)) : 0;
+  return {
+    offsetCents,
+    netChargeLeftCents: netChargeCents + offsetCents,
+    askLeftCents: Math.max(0, unpaidAskCents) - offsetCents,
+  };
+}
+
+/**
+ * The ask a reduction leaves behind when it only SHRINKS an unpaid one (#3954).
+ * All of it is carried from the ask the reduction retired - nothing in it is
+ * this edit's own - so it records that as its carried part (`INV-PAY-098`),
+ * and it is marked a re-issue so the minter mints it on a credit-paid booking
+ * too (`reissuesUnpaidAsk`).
+ */
+export function reissueUnpaidAdditionalAsk({
+  askLeftCents,
+}: {
+  askLeftCents: number;
+}): AdditionalAsk {
+  if (askLeftCents <= 0) return NO_ADDITIONAL_ASK;
+  return buildAdditionalAsk({
+    ownCents: 0,
+    carriedCents: askLeftCents,
+    reissuesUnpaidAsk: true,
   });
 }
 

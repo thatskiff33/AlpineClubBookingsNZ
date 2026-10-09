@@ -18,11 +18,8 @@ import {
   type XeroObjectLinkRecord,
   type XeroOperationRecord,
 } from "./xero-booking-repair-types";
-import {
-  buildBookingCancellationRefundIdempotencyKey,
-  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
-  isEditFinancialReviewAdditionalIntentRecoveryKey,
-} from "./payment-recovery-keys";
+import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
+import { groupOpenIntentRecoveriesByBooking, intentRecoveryKeyMaps } from "./xero-booking-repair-intent-recoveries";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import {
   editReviewChargeShareTaskSelect,
@@ -259,20 +256,8 @@ export async function loadAuditData(
     });
   }
 
-  /**
-   * The recovery key each loaded edit would have written had its intent mint
-   * failed, so the query below matches by EXACT key and reads the anchor back
-   * out of this map rather than by slicing a prefix off a string - the mistake
-   * `bookingModificationIdForAdditionalIntentRecoveryKey` documents.
-   */
-  const modificationIdByIntentRecoveryKey = new Map<string, string>(
-    modificationIds.map((modificationId) => [
-      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-        modificationId
-      ),
-      modificationId,
-    ])
-  );
+  // #3187 / #3954: the exact recovery keys each loaded edit would have written.
+  const intentRecoveryKeys = intentRecoveryKeyMaps(modificationIds);
 
   const [
     links,
@@ -353,13 +338,13 @@ export async function loadAuditData(
     // at all - "deferred, not short". The repair tool has to be able to tell
     // that state from the internet-banking route, which looks identical from the
     // ledger (no request row) and needs the opposite answer.
-    modificationIdByIntentRecoveryKey.size > 0
+    intentRecoveryKeys.review.size > 0
       ? deps.prisma.paymentRecoveryOperation.findMany({
           where: {
             type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
             status: { in: [...OPEN_PAYMENT_RECOVERY_STATUSES] },
             idempotencyKey: {
-              in: [...modificationIdByIntentRecoveryKey.keys()],
+              in: [...intentRecoveryKeys.review.keys(), ...intentRecoveryKeys.ordinary.keys()],
             },
           },
           select: { bookingId: true, idempotencyKey: true },
@@ -496,34 +481,7 @@ export async function loadAuditData(
     editReviewChargeSharesByBookingId.set(share.bookingId, list);
   }
 
-  /**
-   * Per BOOKING again, and for the same reason as the shares above: a recovery
-   * row is joined to its edit through a key, and a key naming a modification on
-   * a DIFFERENT booking must not defer this one's repair.
-   */
-  const editReviewChargeIntentRecoveriesByBookingId = new Map<
-    string,
-    Set<string>
-  >();
-  for (const recovery of editReviewChargeIntentRecoveries) {
-    // Redundant with the exact-key `in` filter above, and deliberately kept: if
-    // that query is ever widened, an ORDINARY edit's recovery row must not be
-    // read as a review charge's. Fail closed rather than defer the wrong edit.
-    if (!isEditFinancialReviewAdditionalIntentRecoveryKey(recovery.idempotencyKey)) {
-      continue;
-    }
-    const modificationId = modificationIdByIntentRecoveryKey.get(
-      recovery.idempotencyKey
-    );
-    if (!modificationId) {
-      continue;
-    }
-    const anchors =
-      editReviewChargeIntentRecoveriesByBookingId.get(recovery.bookingId) ??
-      new Set<string>();
-    anchors.add(modificationId);
-    editReviewChargeIntentRecoveriesByBookingId.set(recovery.bookingId, anchors);
-  }
+  const openIntentRecoveries = groupOpenIntentRecoveriesByBooking(editReviewChargeIntentRecoveries, intentRecoveryKeys);
 
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
   const lateCaptureTasksByBookingId = new Map<string, Map<string, { id: string; status: string }>>();
@@ -693,7 +651,8 @@ export async function loadAuditData(
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     openEditReviewChargeIntentRecoveryModificationIds:
-      editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
-      new Set<string>(),
+      openIntentRecoveries.review.get(booking.id) ?? new Set<string>(),
+    openAdditionalIntentRecoveryModificationIds:
+      openIntentRecoveries.ordinary.get(booking.id) ?? new Set<string>(),
   }));
 }

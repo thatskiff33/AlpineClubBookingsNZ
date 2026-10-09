@@ -374,6 +374,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
 
@@ -408,6 +409,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
 
@@ -441,6 +443,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
 
@@ -472,6 +475,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
 
@@ -503,6 +507,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       financialReviewPending: false,
       refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
+      unpaidAskCancelled: false,
       refundReturnedToOrganiser: false,
     }, CLUB_FORMAT_TEST);
 

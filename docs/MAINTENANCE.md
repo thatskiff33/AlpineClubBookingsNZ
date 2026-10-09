@@ -2026,6 +2026,40 @@ asking for it on an invoice. **Before acting on any positive residual, check the
 booking's payment source and its Xero supplementary invoices.** A card booking's
 positive residual is the real thing; an IB one almost never is.
 
+**A CREDIT-PAID ($0) BOOKING THAT GREW BEFORE #3502 IS USUALLY A REAL POSITIVE.**
+A booking paid wholly with account credit has a $0 captured payment and no card
+intent. Until #3502, three of the four edit doors sent its price increase to a
+Xero supplementary invoice, which exists only when Xero is connected and the
+primary invoice had already been raised — otherwise nobody was asked for the
+money. Every door now asks the member's card instead, so new rows should not
+appear. For rows that grew earlier: at a club without Xero the residual is
+genuinely unbilled; at a Xero club, check the booking's supplementary invoices
+first, because one may already be asking for it. The owner's decision for these
+is report only — list them for the owner and do not back-bill from the census.
+
+The fix asks the card only where the $0 payment is a card-source row. A booking
+that was paid by Internet Banking and later re-priced to $0 keeps its Internet
+Banking source, so its increases still go to the Xero arm as before. To see how
+many such rows exist, run this read-only count on a copy (never production):
+
+```sql
+SELECT count(*) FROM "Payment"
+WHERE "amountCents" = 0 AND "status" = 'SUCCEEDED' AND "source" <> 'STRIPE';
+```
+
+A non-zero count is for the owner to weigh; it does not mean anything is wrong
+by itself.
+
+**A `retained` ROW CAN BE AN UP-THEN-DOWN EDIT FROM BEFORE #3954.** Until #3954 a
+reduction made while an earlier increase's card request was still unpaid left
+that request live, so a member who later paid it left the club holding more
+than the price; the census reads that as `retained`, like a policy retention.
+A reduction now cancels or shrinks the unpaid request first (`INV-PAY-120`), so
+new rows of this kind should not appear. To tell an old one from a policy
+retention, look at the booking's changes: an increase, then a reduction, with an
+ADDITIONAL card payment captured after the reduction. Report them to the owner;
+the census never repairs.
+
 That gap is not closed in the arithmetic on purpose. A term reading the Xero
 outbox would make the identity depend on an external system's queue state, and a
 queued-but-unsent invoice, a failed one and a sent one are three different

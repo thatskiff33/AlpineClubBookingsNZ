@@ -14,6 +14,7 @@ import {
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -471,13 +472,15 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
   function stubTx() {
     return {
       payment: { update: vi.fn().mockResolvedValue({}) },
+      // #3954 round 4: no reduction's re-issue is waiting on its mint.
+      paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
     } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
   }
 
   it("asks for the WHOLE outstanding balance when it supersedes an unpaid ask", async () => {
-    const result = await applyPaymentAdjustments(stubTx(), {
+    const result = await applyPaymentAdjustments(stubTx(), { reduction: noReductionAgainstUnpaidAsk(7000),
       booking: bookingWith({
         additionalAmountCents: 7000,
         additionalPaymentStatus: "PENDING",
@@ -491,7 +494,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
   });
 
   it("reproduces the live shape at $365", async () => {
-    const result = await applyPaymentAdjustments(stubTx(), {
+    const result = await applyPaymentAdjustments(stubTx(), { reduction: noReductionAgainstUnpaidAsk(30000),
       booking: bookingWith({
         amountCents: 6500,
         additionalAmountCents: 6500,
@@ -505,7 +508,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
   });
 
   it("is unchanged when there is nothing to supersede", async () => {
-    const result = await applyPaymentAdjustments(stubTx(), {
+    const result = await applyPaymentAdjustments(stubTx(), { reduction: noReductionAgainstUnpaidAsk(7000),
       booking: bookingWith({}),
       priceDiffCents: 7000,
       changeFeeCents: 0,
@@ -515,7 +518,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
   });
 
   it("does not double-ask for an extra that has already been paid", async () => {
-    const result = await applyPaymentAdjustments(stubTx(), {
+    const result = await applyPaymentAdjustments(stubTx(), { reduction: noReductionAgainstUnpaidAsk(7000),
       booking: bookingWith({
         amountCents: 20000,
         additionalAmountCents: 7000,
@@ -530,7 +533,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
 
   it("adds the change fee to the folded-in balance", async () => {
     const tx = stubTx();
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk((7000) + (1500)),
       booking: bookingWith({
         additionalAmountCents: 7000,
         additionalPaymentStatus: "PENDING",
@@ -551,7 +554,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
     // No captured Stripe payment, but a PRIMARY Xero invoice was issued: the
     // edit raises a SUPPLEMENTARY INVOICE for this edit's difference, collected
     // alongside whatever came before it rather than replacing it.
-    const result = await applyPaymentAdjustments(stubTx(), {
+    const result = await applyPaymentAdjustments(stubTx(), { reduction: noReductionAgainstUnpaidAsk(7000),
       booking: bookingWith({
         status: PaymentStatus.PENDING,
         source: PaymentSource.INTERNET_BANKING,
@@ -569,7 +572,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
   });
 
   it("leaves the captured-Internet-Banking arm on the edit's own net too", async () => {
-    const result = await applyPaymentAdjustments(stubTx(), {
+    const result = await applyPaymentAdjustments(stubTx(), { reduction: noReductionAgainstUnpaidAsk(7000),
       booking: bookingWith({
         source: PaymentSource.INTERNET_BANKING,
         xeroInvoiceId: "INV-4452",

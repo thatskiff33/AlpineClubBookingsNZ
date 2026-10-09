@@ -33,6 +33,12 @@ import {
 } from "@/lib/booking-review";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
+import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
+import {
+  readReductionAgainstUnpaidAsk,
+  type RetiredAdditionalAsk,
+} from "@/lib/additional-ask-reduction";
+import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
   hostingCoverageActorOptions,
@@ -126,6 +132,10 @@ export type RemoveBookingGuestResult = {
    * `createModificationAdditionalPaymentIntent`.
    */
   additionalAsk: AdditionalAsk;
+  /** #3954: the unpaid asks this removal's reduction retired, for the minter to cancel. */
+  retiredAdditionalAsks: readonly RetiredAdditionalAsk[];
+  /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
+  unpaidAskCancelled: boolean;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
@@ -995,11 +1005,15 @@ export async function removeBookingGuestInTransaction({
   // returns zeros for both Xero legs. The existing machinery is what proves
   // nothing moved, rather than a parallel hand-built result that could drift from
   // it.
+  // #3954: the unpaid ask, read ONCE for this removal and handed to both the
+  // options and the save, so a capture between two reads cannot split them.
+  const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents);
   const settlementOptions = parkedFinancialReview
     ? null
     : await calculateModificationSettlementOptions({
         booking: booking as unknown as LoadedBookingForModify,
         netChargeCents: priceDiffCents,
+        reduction,
         db: tx, // locked transaction; see `CancellationPolicyDb`
         // #3123 — the refund tier for this reduction, on the club's day.
         todayAtClub,
@@ -1019,6 +1033,7 @@ export async function removeBookingGuestInTransaction({
     booking: booking as unknown as LoadedBookingForModify,
     priceDiffCents,
     changeFeeCents: 0,
+    reduction,
     settlementOptions,
     settlementMethod,
     todayAtClub,
@@ -1183,6 +1198,8 @@ export async function removeBookingGuestInTransaction({
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
         ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
+        // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
+        ...unpaidAskOffsetHistory(paymentImpact),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.
@@ -1217,6 +1234,14 @@ export async function removeBookingGuestInTransaction({
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest removal",
+  });
+  // #3954: a smaller re-issued ask, and the note for an offset Xero had
+  // already billed, are durable from this commit, not from after it.
+  await queueReductionAskFollowUps(tx, {
+    bookingId,
+    paymentId: booking.payment?.id ?? null,
+    bookingModificationId: bookingModification.id,
+    settled: paymentImpact,
   });
 
   /**
@@ -1333,6 +1358,8 @@ export async function removeBookingGuestInTransaction({
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
     additionalAsk: paymentImpact.additionalAsk,
+    retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
+    unpaidAskCancelled: paymentImpact.unpaidAskCancelled,
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,

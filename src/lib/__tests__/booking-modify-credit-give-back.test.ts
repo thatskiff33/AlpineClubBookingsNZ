@@ -39,6 +39,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 
 const { applyPaymentAdjustments, calculateModificationSettlementOptions } = await import("@/lib/booking-modify-settlement");
+const { noReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
 const { calculateDualRefundAmounts } = await import("@/lib/cancellation");
 const { previewPaidReductionCreditGiveBackCents } = await import("@/lib/booking-modify-credit-give-back");
 const { calculateCancellationPreview } = await import("@/lib/policies/booking-route-decisions");
@@ -58,7 +59,11 @@ const TIERS = {
 const paymentUpdate = vi.fn();
 // #3827 (composed by #3829): no open by-hand refund task on file, so the
 // refundable cash is the payment's own.
-const NO_HAND_BACKS = { manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) } };
+const NO_HAND_BACKS = {
+  manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+  // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+  paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
+};
 const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */
@@ -87,7 +92,7 @@ function creditPaidBooking(overrides: { status?: string; payment?: Record<string
 }
 
 const reduce = (booking: LoadedBookingForModify, priceDiffCents = -5_000) =>
-  applyPaymentAdjustments(tx, {
+  applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(priceDiffCents),
     booking,
     priceDiffCents,
     changeFeeCents: 0,
@@ -153,7 +158,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
   it("a change fee folds into the reduction exactly as on the card path", async () => {
     credit.policy = TIERS["100%"];
 
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk((-5_000) + (1_000)),
       booking: creditPaidBooking(),
       priceDiffCents: -5_000,
       changeFeeCents: 1_000,
@@ -302,13 +307,13 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     credit.policy = rule;
     credit.applied = 10_000;
     const booking = creditPaidBooking({ payment: MIXED });
-    const settlementOptions = await calculateModificationSettlementOptions({
+    const settlementOptions = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-15_000),
       booking,
       netChargeCents: -15_000,
       db: NO_HAND_BACKS as never,
       todayAtClub: TODAY,
     });
-    return applyPaymentAdjustments(tx, {
+    return applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-15_000),
       booking,
       priceDiffCents: -15_000,
       changeFeeCents: 0,
@@ -360,8 +365,8 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     credit.policy = [{ daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 1_000 }];
     credit.applied = 4_500;
     const booking = creditPaidBooking({ payment: { amountCents: 500, source: PaymentSource.STRIPE, creditAppliedCents: 4_500 } });
-    const settlementOptions = await calculateModificationSettlementOptions({ booking, netChargeCents: -5_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY });
-    const result = await applyPaymentAdjustments(tx, {
+    const settlementOptions = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-5_000), booking, netChargeCents: -5_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY });
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-5_000),
       booking, priceDiffCents: -5_000, changeFeeCents: 0, settlementOptions, settlementMethod: "card", todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
     });
     expect(result.refundAmountCents).toBe(0);
@@ -537,6 +542,7 @@ describe("#3750 (F2 on #3955): a finished-stay correction's give-back is not tie
       booking: creditPaidBooking(),
       priceDiffCents: -5_000,
       changeFeeCents: 2_000,
+      reduction: noReductionAgainstUnpaidAsk(-3_000),
       todayAtClub: TODAY,
       format: CLUB_FORMAT_TEST,
       reductionUntiered: true,
@@ -556,6 +562,7 @@ describe("#3750 (F2 on #3955): a finished-stay correction's give-back is not tie
       booking: creditPaidBooking(),
       priceDiffCents: -5_000,
       changeFeeCents: 2_000,
+      reduction: noReductionAgainstUnpaidAsk(-3_000),
       todayAtClub: TODAY,
       format: CLUB_FORMAT_TEST,
     });

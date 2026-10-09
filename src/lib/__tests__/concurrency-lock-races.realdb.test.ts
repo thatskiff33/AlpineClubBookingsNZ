@@ -68,6 +68,12 @@ import "./edit-financial-review-races.realdb.test";
 // removal takes the member's credit-ledger key before any Payment row lock.
 // Its describe stays skipped unless the shared race flag is set.
 import "./credit-paid-reduction.realdb.test";
+// #3954 reuses it to prove a reduction cancels or shrinks the unpaid card ask
+// before it refunds, through the REAL guest removal on card-paid and credit-paid
+// bookings, and that a capture racing the reduction either rolls the edit back
+// or is refunded by the superseded-capture path. Its describe stays skipped
+// unless the shared race flag is set.
+import "./additional-ask-reduction.realdb.test";
 // #3836 reuses it to prove a card booking paid entirely by credit has its credit
 // allocated against its invoice by the one engine, through the invoice
 // operation's replay and the repair pass, then deallocated by #3809's reduction

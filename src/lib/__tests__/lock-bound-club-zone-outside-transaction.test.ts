@@ -485,6 +485,10 @@ const TRANSACTION_OPENERS = [
   // that composes a credential write with the token destruction it causes.
   "withCredentialTransaction(",
   "withXeroVerifyReset(",
+  // #3954 round 4: the door's re-issue mint and the recovery runner's claim
+  // hold each write their caller's rows inside their fenced transaction.
+  "writeReissuedAskUnderRecovery(",
+  "holdAdditionalIntentRecoveryClaim(",
 ] as const;
 
 /**

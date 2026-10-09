@@ -273,8 +273,20 @@ Things worth knowing:
 
 When a change increases a booking's price after the booking has been confirmed —
 adding a non-member guest to a paid booking, say — the difference becomes an
-**additional payment** the member has to make from their own booking page. It is
+**additional payment** the member has to make from their own booking page. That
+includes a booking the member paid for entirely with account credit: the extra
+is asked for by card, whether or not the club uses Xero. It is
 easy for that to be quietly forgotten by everybody.
+
+If a later change brings the price back down before the member has paid that
+extra, the reduction comes off the unpaid extra first: the card request is
+cancelled, or replaced by a smaller one, and only what is left of the reduction
+is refunded or credited under the club's policy (#3954). The member's email says
+when the extra payment was cancelled outright, and a smaller request gets its
+own Xero invoice. If the member pays the old request at the same moment, that
+payment is refunded in full automatically, or the change is refused with "try
+again in a moment" and nothing is changed. An officer's review charge is never
+reduced this way.
 
 Only confirmed, paid and completed bookings are counted and chased. A cancelled
 booking keeps the record of what it once owed, but the club never asks for it and

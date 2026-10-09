@@ -347,6 +347,7 @@ export async function DELETE(
         refundAmountCents: result.refundAmountCents,
         accountCreditAmountCents: result.accountCreditAmountCents,
         appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+        unpaidAskCancelled: result.unpaidAskCancelled,
         // #2390: same words as the edit preview and the booking history when a
         // usage cap stopped the promotion reaching somebody on this booking.
         promoCoverageNote: result.promoCoverage?.message ?? null,

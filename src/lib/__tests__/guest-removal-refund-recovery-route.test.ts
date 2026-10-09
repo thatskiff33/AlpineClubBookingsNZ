@@ -91,6 +91,9 @@ function makeResult(overrides: Record<string, unknown> = {}) {
     // #3371: the minter's own parameter. A removal asks for nothing, and a zero
     // ask never mints - so it can retire nothing and carries nothing.
     additionalAsk: NO_ADDITIONAL_ASK,
+    // #3954: this booking carries no unpaid ask, so the reduction retired none.
+    unpaidAskOffsetCents: 0,
+    retiredAdditionalAsks: [],
     settlementMethod: "card",
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,

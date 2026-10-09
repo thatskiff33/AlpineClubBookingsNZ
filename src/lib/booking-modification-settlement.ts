@@ -1,8 +1,17 @@
 import type { ModificationLine } from "@/lib/booking-modification-lines";
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentRecoveryOperationStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
+import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import {
+  cancelRetiredAdditionalAsksNow,
+  readReissuedAskRecovery,
+  writeReissuedAskUnderRecovery,
+} from "@/lib/additional-ask-reissue";
+import { queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
+import {
+  cancelSupersededAdditionalIntentsNow,
+  queueSupersededAdditionalIntentCancellationRows,
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import logger from "@/lib/logger";
@@ -58,6 +67,12 @@ export type BookingModificationPaymentContext = {
    * Xero one must NOT carry a superseded Stripe balance.
    */
   additionalAsk: AdditionalAsk;
+  /**
+   * #3954: the unpaid asks this edit's price reduction retired inside its
+   * transaction (`retireUnpaidAskChain`). The minter cancels them at Stripe
+   * after commit, before it mints any smaller ask. Empty for every other edit.
+   */
+  retiredAdditionalAsks: readonly RetiredAdditionalAsk[];
   hasSucceededPayment: boolean;
   /**
    * #3181: whether this booking's PRIMARY Xero invoice had already been issued
@@ -274,9 +289,20 @@ export async function createModificationAdditionalPaymentIntent({
   additionalPaymentClientSecret: string | undefined;
   additionalPaymentIntentId: string | undefined;
 }> {
+  // #3954: the asks this edit's reduction retired are cancelled at Stripe
+  // first, whether or not it owes a smaller one: their rows were retired, and
+  // their cancellations queued, inside the edit's transaction.
+  await cancelRetiredAdditionalAsksNow({
+    format,
+    bookingId,
+    retired: result.retiredAdditionalAsks,
+  });
+
   if (
     result.additionalAsk.amountCents <= 0 ||
-    !result.hasSucceededPayment ||
+    // #3954: a re-issued ask was already asked of this card, so a credit-paid
+    // ($0) booking whose reduction captured nothing still mints it.
+    !(result.hasSucceededPayment || result.additionalAsk.reissuesUnpaidAsk) ||
     !result.paymentId
   ) {
     return {
@@ -284,6 +310,26 @@ export async function createModificationAdditionalPaymentIntent({
       additionalPaymentIntentId: undefined,
     };
   }
+
+  // #3954 review round 4: a RE-ISSUED ask's recovery was written in the edit's
+  // own transaction (`queueReissuedAskRecovery`). This mint runs under that
+  // row's Stripe key and completes the row with its own write - unless a later
+  // reduction netted it off or the runner claimed it after its grace, in which
+  // case whoever moved it owns the ask and this mints nothing.
+  const reissueRecovery = result.additionalAsk.reissuesUnpaidAsk
+    ? await readReissuedAskRecovery(result.bookingModificationId)
+    : null;
+  if (reissueRecovery && reissueRecovery.status !== PaymentRecoveryOperationStatus.PENDING) {
+    logger.info(
+      { bookingId, bookingModificationId: result.bookingModificationId, operationId: reissueRecovery.id, status: reissueRecovery.status },
+      "A re-issued additional ask's recovery has moved on since the edit committed; the door's mint leaves it to the recovery (#3954)",
+    );
+    return {
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    };
+  }
+  const stripeIdempotencyKey = reissueRecovery?.paymentIntentId ?? idempotencyKey;
 
   // Durable retry (#1096): a price increase with no instrument to collect it
   // must never be lost. One spelling for both ways a mint can fail below.
@@ -296,7 +342,7 @@ export async function createModificationAdditionalPaymentIntent({
         recoveryIdempotencyKey ??
         buildAdditionalIntentRecoveryIdempotencyKey(result.bookingModificationId),
       amountCents: result.additionalAsk.amountCents,
-      stripeIdempotencyKey: idempotencyKey,
+      stripeIdempotencyKey,
       // #3181: the EDIT's answer, frozen here because this is the last moment it
       // is known. The replay reads it back rather than re-deriving one.
       hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
@@ -337,8 +383,53 @@ export async function createModificationAdditionalPaymentIntent({
         type: "modification_additional",
         reason,
       },
-      idempotencyKey,
+      idempotencyKey: stripeIdempotencyKey,
     });
+
+    if (reissueRecovery) {
+      // #3954: the row, the recovery's completion and the supersede's durable
+      // rows commit together, or not at all (see above).
+      const superseded = await writeReissuedAskUnderRecovery(reissueRecovery, pi.id, async (store) => {
+        await upsertPaymentIntentTransaction({
+          paymentId,
+          kind: PaymentTransactionKind.ADDITIONAL,
+          paymentIntentId: pi.id,
+          amountCents: result.additionalAsk.amountCents,
+          carriedAskCents: result.additionalAsk.carriedCents,
+          status: PaymentStatus.PENDING,
+          reason,
+          stripeCustomerId: customerId,
+          store,
+        });
+        return queueSupersededAdditionalIntentCancellationRows({
+          bookingId,
+          paymentId,
+          newPaymentIntentId: pi.id,
+          store,
+        });
+      });
+      if (superseded === null) {
+        logger.warn(
+          { bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id },
+          "A re-issued additional ask's recovery moved while the door minted it (#3954); nothing written - the recovery's owner asks the member",
+        );
+        return {
+          additionalPaymentClientSecret: undefined,
+          additionalPaymentIntentId: undefined,
+        };
+      }
+      await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded });
+      // Decision A (#3954): the smaller ask's own invoice, waiting on it.
+      await queueReissuedAskSupplementaryInvoice({
+        bookingId,
+        bookingModificationId: result.bookingModificationId,
+        paymentIntentId: pi.id,
+      });
+      return {
+        additionalPaymentClientSecret: pi.client_secret ?? undefined,
+        additionalPaymentIntentId: pi.id,
+      };
+    }
 
     // THE NEW INTENT'S OWN ROW IS WRITTEN FIRST, AND THE ORDER IS LOAD-BEARING
     // (#3340 fix round). Cancelling a superseded intent reconciles the payment

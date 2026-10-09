@@ -263,8 +263,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
     the payments board were not. `/admin/payments` rendered gross beside a
     "Partially refunded" chip, so a $130 capture with $65 refunded read as "paid
     $130" and a booking officer sized the balance at `430 - 130 = 300` when the
-    true figure was `430 - 65 = 365`. Both wrong numbers agreed with each other,
-    which is why nobody caught it.
+    true figure was `430 - 65 = 365`.
   - **`Payment.changeFeeCents` is a term.** A change fee is charged through an
     ask but is never added to `Booking.finalPriceCents`, so the mirror holds only
     as `finalPrice + changeFee = net paid + credit + uncollected ask`.
@@ -273,18 +272,23 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
     (`queueSupersededAdditionalIntentCancellations`), so an ask sized on one
     edit's own delta deletes the unpaid balance of the ask it replaces. Two
     consecutive +$70 edits on a $130 paid booking asked $70 and lost $70,
-    permanently and silently: once the mis-sized ask was paid the booking page
-    stopped rendering the payment card and the reminder cron stopped, so the
-    shortfall became unreachable from every member- and officer-facing surface.
-    The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
+    permanently and silently. The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
     supersedes, which is `sizeAdditionalAsk` in
     `src/lib/additional-payment-ask.ts` — the one home for all of this
     arithmetic, and the module the census guard and the operator SQL are both
     folded from.
+  - **A booking paid wholly with credit is asked too (#3502).** Its
+    `{ amountCents: 0, SUCCEEDED }` row fails `hasCapturedPayment`, so three
+    edit doors sent its increase to a Xero supplementary invoice that, with Xero
+    off or the primary invoice not yet raised, did not exist: an `unasked`
+    residual. Every door now asks `canAskCardForIncrease`
+    (`booking-payment-state.ts`) and asks the card, fee recorded; reductions
+    still read `hasCapturedPayment`. No further credit is drawn ([INV-PAY-002]).
+    Rows grown earlier are reported by the census, never back-billed.
 
   **WHY THE ASK IS NOT READ STRAIGHT OFF THE PRICE.** `finalPriceCents - net paid
-  - creditAppliedCents` is the same figure wherever the ledger is clean, and the
-  tests assert that agreement rather than asserting it in prose. It stops being
+  - creditAppliedCents` is the same figure wherever the ledger is clean (the
+  tests assert it). It stops being
   the same figure in exactly the cases where the club legitimately holds money
   that is NOT the booking's price, and there it gives that money back: after a
   policy-tiered reduction the retained slice ([INV-MOD-011]) is a CHARGE, not a
@@ -299,7 +303,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `reconcilePaymentAggregates` goes on writing
   `additionalAmountCents: latestAdditional?.amountCents ?? 0` — the latest
   ADDITIONAL transaction's amount — and is NOT changed to recompute an
-  outstanding from `Booking.finalPriceCents`. Three reasons, in order of weight.
+  outstanding from `Booking.finalPriceCents`.
   It is a pure ledger projection: every other column it writes derives from the
   `PaymentTransaction` rows, and giving one column a second, disagreeing source
   of truth is the defect this whole entry is about. It would collide with the
@@ -307,8 +311,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   and would find them rewritten underneath it. And post-#3267/#3268 the function
   has already learned to preserve the Payment's own intent pointer and card
   column rather than always following the latest transaction
-  ([INV-PAY-054], [INV-PAY-055]), so the direction of travel is toward respecting
-  what other writers own, not away from it. The cost of leaving it is that a
+  ([INV-PAY-054], [INV-PAY-055]). The cost of leaving it is that a
   future mis-size would still be permanent; the compensating control is the
   census below, which makes one visible instead of silent.
 
@@ -318,8 +321,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   is money the price says is owed that no ask is collecting; a NEGATIVE one is
   the club holding more than the price, which is the expected shape after a
   policy-retained or credit-settled reduction. Nothing repairs either
-  automatically — the owner's 8 Sep 2026 decision, for a population of two rows
-  already handled by hand.
+  automatically (owner, 8 Sep 2026).
 
   **An Internet Banking price increase is an EXPECTED positive**, because it is
   billed on a supplementary Xero invoice and raises no ADDITIONAL
@@ -1940,6 +1942,38 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     hand-back reads refundable again, so an appeal could re-promise it.
   - **The member is told the club WILL refund by bank transfer**
     (`refundRequestApprovedRefundSentence`); card wording is unchanged.
+
+## INV-PAY-120
+
+- **A price reduction is first set against the member's unpaid card ask**
+  (#3954, owner decisions of 8-10 Oct 2026), card-paid and credit-paid alike, at
+  every reduction door: cancelled when covered, else re-issued smaller; only
+  the rest is refunded, credited or given back by `INV-MOD-011`'s tier. The
+  offset is untiered. Each door reads the ask ONCE
+  (`readReductionAgainstUnpaidAsk`) for the options, the save and the quote.
+- **Retired in the edit's transaction** (`retireUnpaidAskChain`): unpaid rows
+  FAILED and stamped `withdrawnAt` behind a still-unpaid fence; cancellations
+  queued; parked invoices CANCELLED; mirror reconciled. A capture after the read
+  rolls the edit back (409, `AdditionalAskChangedDuringReductionError`); one
+  after commit is refunded in full. The re-issue's recovery and the billed
+  offset's note are written in the same transaction (`queueReductionAskFollowUps`).
+- **Asks awaiting a failed mint's retry** count, sized as the replay would; the
+  retire closes each under its attempts and claim time. A retry claimed within
+  two minutes refuses the edit for a moment; an older claim is closed, and the
+  runner writes only while it holds its claim. A re-issue is settled only by
+  its own row; a later increase folds a waiting one in
+  (`foldWaitingReissuedAsks`).
+- **Only the member's price asks.** An officer's review charge, minted or
+  waiting, is never set against. A financial review's settled refund share
+  (`edit-financial-review-settlement.ts`) does not net either: an officer
+  priced it from the booking's evidence (D2, #3032); the ledger census reports
+  the booking if both are then paid.
+- **Xero** (decision A). The smaller ask gets its own supplementary invoice
+  for what the retired invoices left after the offset, waiting on its intent
+  (`queueReissuedAskSupplementaryInvoice`). The offset beyond them, billed by
+  a primary invoice raised after the increase, takes a scoped
+  invoice-correction note against it; the repair pass verifies or queues it,
+  and reads the reduction for every retired increase its history names.
 
 ## INV-PAY-070
 

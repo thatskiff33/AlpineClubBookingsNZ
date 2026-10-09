@@ -359,6 +359,12 @@ cancel dialog likewise offers only the refund to the organiser's card, including
 after an earlier reduction was refunded. A child the organiser settled by
 Internet Banking keeps the ordinary choices.
 
+A booking that still owes an unpaid extra payment from an earlier change shows,
+when the edit lowers its price, how much **comes off the unpaid additional
+payment** (#3954), followed by what is then still owed or "nothing left to
+pay": that request is cancelled or replaced by a smaller one, and the **Return
+method** choice appears only for what is left, if anything.
+
 Picking one and saving again applies it. Both bookings move together or neither
 does. Choosing account credit can produce a different figure from the card
 option, so the offer is shown once more with the true numbers before it commits —

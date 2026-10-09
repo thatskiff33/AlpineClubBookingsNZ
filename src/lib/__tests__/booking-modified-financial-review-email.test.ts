@@ -70,6 +70,7 @@ function params(overrides: Record<string, unknown> = {}) {
     financialReviewPending: false,
     refundByBankTransfer: false,
     appliedCreditGivenBackCents: 0,
+    unpaidAskCancelled: false,
     refundReturnedToOrganiser: false,
     ...overrides,
   };
@@ -413,5 +414,31 @@ describe("#3916: the Booking Modified refund sentence names where the refund wen
       const source = readFileSync(resolve(repoRoot, door), "utf8");
       expect(source, door).toMatch(/refundReturnedToOrganiser: (?:result|reprice)\.organiserChildRefund !== null,/);
     }
+  });
+});
+
+/*
+  #3954 (review round 4): an edit whose price drop cancelled the member's
+  unpaid extra payment outright says so - in the HTML email and the flat body
+  alike, beside any refund for the rest of the drop. A shrunk ask keeps the
+  ordinary "an additional payment of $X is required" note at its new figure.
+*/
+describe("#3954: a cancelled unpaid extra payment is named in the Booking Modified email", () => {
+  const SENTENCE = "The extra payment we asked for has been cancelled.";
+
+  it("MUTATION: the HTML email and the flat body both say the extra payment is cancelled", async () => {
+    expect(bookingModifiedTemplate(params({ unpaidAskCancelled: true }), CLUB_FORMAT_TEST)).toContain(SENTENCE);
+    expect(await paymentNoteFromSender({ unpaidAskCancelled: true })).toBe(SENTENCE);
+  });
+
+  it("composes with a refund for the rest of the drop", async () => {
+    const note = await paymentNoteFromSender({ refundAmountCents: 1500, unpaidAskCancelled: true });
+    expect(note).toMatch(/A refund of \$15\.00 has been processed/);
+    expect(note).toContain(SENTENCE);
+  });
+
+  it("says nothing of it when no ask was cancelled", async () => {
+    expect(bookingModifiedTemplate(params(), CLUB_FORMAT_TEST)).not.toContain(SENTENCE);
+    expect(await paymentNoteFromSender({ additionalAmountCents: 3000 })).not.toContain(SENTENCE);
   });
 });

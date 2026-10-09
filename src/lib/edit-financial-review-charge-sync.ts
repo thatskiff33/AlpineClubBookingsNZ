@@ -537,7 +537,7 @@ async function syncEditReviewChargeRequestUnderClaim(
       // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
       pendingRefundAmountCents: 0, organiserChildRefund: null,
       paymentId, memberFirstName: "", // #3369: mints an ask, sends nothing.
-      additionalAsk: ask,
+      additionalAsk: ask, retiredAdditionalAsks: [], // #3954: a review charge retires nothing by reduction.
       hasSucceededPayment:
         hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE,
       paymentCustomerId: payment?.stripeCustomerId ?? null,

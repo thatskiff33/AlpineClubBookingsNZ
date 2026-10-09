@@ -18,6 +18,7 @@ import {
   applyPaymentAdjustments,
   calculateModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
@@ -33,6 +34,8 @@ const FULL_REFUND = [{ daysBeforeStay: 0, refundPercentage: 100, creditRefundPer
 function store(openCents: number | null) {
   return {
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: openCents } })) },
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     payment: { update: vi.fn() },
     // #3809 (composed by #3829): no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
@@ -108,7 +111,7 @@ describe("a later edit sizes its refund net of an open task (scenario B: $300 ->
   // taken is not already promised back.
   it("the policy-tiered options cap the basis at $100, not $200", async () => {
     policy.loadCancellationPolicy.mockResolvedValue(FULL_REFUND);
-    const options = await calculateModificationSettlementOptions({
+    const options = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-20000),
       booking: paidBooking(25000) as never,
       netChargeCents: -20000,
       db: store(20000) as never,
@@ -118,7 +121,7 @@ describe("a later edit sizes its refund net of an open task (scenario B: $300 ->
   });
 
   it("applyPaymentAdjustments' untiered arm refunds $100, not $200", async () => {
-    const result = await applyPaymentAdjustments(store(20000) as never, {
+    const result = await applyPaymentAdjustments(store(20000) as never, { reduction: noReductionAgainstUnpaidAsk(-20000),
       booking: paidBooking(25000) as never,
       priceDiffCents: -20000,
       changeFeeCents: 0,
@@ -131,7 +134,7 @@ describe("a later edit sizes its refund net of an open task (scenario B: $300 ->
 
   it("nothing is offered back once the open tasks cover all the cash", async () => {
     policy.loadCancellationPolicy.mockResolvedValue(FULL_REFUND);
-    const options = await calculateModificationSettlementOptions({
+    const options = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-20000),
       booking: paidBooking(25000) as never,
       netChargeCents: -20000,
       db: store(30000) as never,
