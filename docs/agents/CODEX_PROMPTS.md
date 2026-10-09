@@ -84,7 +84,7 @@ Merge".
 ```text
 Read AGENTS.md and docs/agents/ISSUE_WORKFLOW.md.
 
-Select at most one open issue labelled codex-ready. Skip issues labelled
+Select at most one open issue labelled agent-ready. Skip issues labelled
 codex-blocked, codex-in-progress, or codex-pr-opened. Stop if the selected
 issue is risk:high or risk:critical unless I explicitly override. Generate the
 exact prompt first, then wait for confirmation before editing code.
