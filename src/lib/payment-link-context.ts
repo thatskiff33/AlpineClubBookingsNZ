@@ -15,9 +15,11 @@ import {
   type NarrativeEvent,
   type ResolveBookingNarrativeInput,
 } from "@/lib/booking-narrative";
+import { bookingAmountOwedCents } from "@/lib/booking-payment-state";
 import { bindClubTime } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { isPaidLikeStatus, loadPaymentLinkRecord } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
@@ -145,11 +147,24 @@ export async function getPaymentLinkContext(
 
   const financialReviewPending = await readOpenFinancialReview(booking.id);
 
+  // #3955 round 3 (`INV-PAY-119`): the amount this page quotes is what the
+  // link's card intent charges — the booking's price plus a change fee
+  // recorded on its payment, less applied credit — read from the one home.
+  // At or below zero the narrative says there is nothing to pay, and the page
+  // offers neither a payment nor a fresh link.
+  const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id);
+  const owedCents = bookingAmountOwedCents({
+    finalPriceCents: booking.finalPriceCents,
+    changeFeeCents: booking.payment?.changeFeeCents ?? null,
+    appliedCreditCents,
+  });
+
   const narrativeInput = {
     club,
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
+      amountOwed: { dueCents: owedCents, appliedCreditCents },
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       firstName: bookingOwner(booking).member.firstName,
@@ -246,7 +261,7 @@ export async function getPaymentLinkContext(
           checkOut: booking.checkOut.toISOString(),
           guestCount: booking.guests.length,
           status: booking.status,
-          amountCents: booking.finalPriceCents,
+          amountCents: owedCents,
           cardPaymentAvailable: !payingByInternetBanking,
           ...(internetBankingEnabled || payingByInternetBanking
             ? {

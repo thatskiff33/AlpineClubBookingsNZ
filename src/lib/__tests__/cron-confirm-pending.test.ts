@@ -414,6 +414,8 @@ function makePendingBooking(
       stripeCustomerId?: string | null;
       stripePaymentMethodId?: string | null;
       stripeSetupIntentId?: string | null;
+      // #3955 F2: a change fee recorded on the booking's payment.
+      changeFeeCents?: number;
     };
     // #1967: a #796 group joiner's booking always carries a join row.
     groupBookingJoin?: { id: string } | null;
@@ -922,6 +924,28 @@ describe("Cron: Confirm Pending Bookings", () => {
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).
       { lodgeId: undefined }
+    );
+  });
+
+  it("#3955 F2: charges the saved card the booking's worth — its price plus a recorded change fee", async () => {
+    const booking = makePendingBooking("b1", { ownPayment: { changeFeeCents: 2500 } });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    mockChargePaymentMethod.mockResolvedValue({ id: "pi_auto_1", status: "succeeded", amount: 12500 });
+    mockPaymentUpdate.mockResolvedValue({});
+    mockBookingUpdate.mockResolvedValue({});
+
+    await confirmPendingBookings();
+
+    expect(mockChargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 12500 }));
+    expect(mockPaymentTransactionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amountCents: 12500 }) }),
+    );
+    expect(mockPaymentUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ amountCents: 12500 }),
+        update: expect.objectContaining({ amountCents: 12500 }),
+      }),
     );
   });
 

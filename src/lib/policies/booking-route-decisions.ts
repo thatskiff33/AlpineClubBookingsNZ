@@ -1,3 +1,4 @@
+import { bookingAmountOwedCents } from "@/lib/booking-payment-state";
 import { BookingStatus, type AgeTier, type SeasonType } from "@prisma/client";
 import {
   calculateBookingPrice,
@@ -479,7 +480,13 @@ export function calculateBookingCreditApplication(input: {
 
   return {
     creditAppliedCents: requestedCreditCents,
-    effectivePriceCents: finalPriceCents - requestedCreditCents,
+    // A booking being created has no payment, so no change fee is recorded
+    // on it — a fact, not a default (`INV-PAY-119`).
+    effectivePriceCents: bookingAmountOwedCents({
+      finalPriceCents,
+      changeFeeCents: null,
+      appliedCreditCents: requestedCreditCents,
+    }),
   };
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingAmountOwedCents } from "@/lib/booking-payment-state";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import {
   bookingOwner,
@@ -268,7 +269,11 @@ export async function POST(request: NextRequest) {
             // pre-transaction `booking` read held no lock at all.
             const freshBooking = await tx.booking.findUnique({
               where: { id: bookingId },
-              include: { guests: { include: { nights: true } } }, // per-night sets (issue #713)
+              include: {
+                guests: { include: { nights: true } }, // per-night sets (issue #713)
+                // #3750: a change fee recorded on the payment is owed too.
+                payment: { select: { changeFeeCents: true } },
+              },
             });
 
             if (!freshBooking) {
@@ -412,8 +417,11 @@ export async function POST(request: NextRequest) {
               bookingId,
               tx,
             );
-            const settledEffectivePriceCents =
-              freshBooking.finalPriceCents - appliedCreditCents;
+            const settledEffectivePriceCents = bookingAmountOwedCents({
+              finalPriceCents: freshBooking.finalPriceCents,
+              changeFeeCents: freshBooking.payment?.changeFeeCents ?? null,
+              appliedCreditCents,
+            });
 
             let superseded: SupersededPrimaryPaymentIntent[] = [];
             let settledAtZero = false;
@@ -546,7 +554,13 @@ export async function POST(request: NextRequest) {
     // ledger (the authoritative source; the booking row keeps the full price) and
     // mint / reconcile every intent against the effective amount.
     const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id);
-    const effectivePriceCents = booking.finalPriceCents - appliedCreditCents;
+    // #3750: through the one home, so a change fee recorded on an unpaid
+    // booking's payment is collected with the rest.
+    const effectivePriceCents = bookingAmountOwedCents({
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+      appliedCreditCents,
+    });
 
     // A fully credit-covered booking is confirmed at $0 by the booking-create
     // zero-dollar path before any intent is ever requested; it never legitimately

@@ -490,6 +490,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "approveAndExecuteLockedPeriodChangeRequest#1",
+    tier: "GLOBAL",
+    reason:
+      "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key; the tx-aware service re-enters both and takes the member keys after.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "src/lib/booking-exception-request-service.ts::acquireGlobalBookingLock#1",
     tier: "GLOBAL",
     reason:

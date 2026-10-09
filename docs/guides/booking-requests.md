@@ -63,25 +63,76 @@ are listed on the booking for you to relay.
    member in the dialog. A rejection always sends the member the standard
    cancellation notice.
 
-### Changes — acknowledge a locked-period change request
+### Changes — decide a locked-period change request
 
 1. Switch to the **Changes** tab. Filter by **Requested**, **Approved**,
    **Rejected**, or **All**.
 
    ![Booking Requests, Changes tab showing a locked-period change request with separate member explanation and internal note fields](../images/admin/admin-booking-requests-changes.png)
 
-2. Read the request summary and reason, then use **Open booking** to make the
-   actual edit on the booking page — approving here only *acknowledges* the
-   review; it does not change the booking automatically.
+2. Read the request summary and reason. What approving does depends on whether
+   the stay has finished:
+   - **The stay is still running** (or not yet started): approving only
+     *acknowledges* the review. Use **Open booking** to make the actual edit on
+     the booking page.
+   - **The stay has finished** (fully past, or completed): approving **applies**
+     the request (#3750). The button reads **Approve and apply**, and the card
+     says so before you click. Every part of the request is applied — guests
+     added, removed or swapped, and date or stay-range changes. Added guests are
+     priced at the stay's own season rates; guests already on the booking keep
+     exactly what they paid. Any extra is asked for in the usual way (card, or
+     internet banking against a supplementary invoice), and the member gets the
+     ordinary booking-change email with the amount due. A member named among
+     the added guests goes through the same rules as on the member's own edit —
+     the family boundary, bookability, and a consent request for a member
+     outside the family — and the card links to them.
+   - **The fee.** Adding guests carries no change fee. Anything the change
+     takes away — a removed guest, or nights trimmed off a guest who stays —
+     is charged what the cancellation policy's same-day tier keeps of it,
+     valued at what was actually paid for those nights after any promotion.
+     That charge is the change fee; whatever else comes off the price comes
+     back in full. It is never netted against guests added in the same request.
+     A change of dates or nights is charged the same way — only on the nights
+     it removes; nights it adds are charged normally, and there is no separate
+     late-change fee. An unpaid stay is charged it the same as a paid one: it
+     is added to what the member owes, so the payment page (which shows it as
+     its own **Change fee** row), the card, a payment link, a saved card, an
+     internet-banking payment, an officer recording cash and a group
+     organiser's combined payment all collect it with the rest, and the
+     booking's invoice bills it. Account credit already on the booking, or
+     credit the member chooses to use when paying, pays towards it like the
+     rest of the price. If the booking's invoice is raised
+     at the moment you approve, nothing is applied and you are asked to
+     approve again. The member can still ask the committee to refund a fee
+     through a refund request.
+   - **Check the figures first.** **Check the figures** works out exactly what
+     approving will do — the change fee, and the refund, credit or amount due —
+     without changing anything, and **Approve and apply** stays off until it
+     has. Under **If the change lowers the price** the default is the way the
+     booking was paid; you can choose card or account credit instead.
+   - **When nothing is applied.** If the booking has changed since the member
+     asked, the season for those nights has been switched off, a guest cannot
+     be booked, nothing
+     is applied and the request stays pending with the reason. If the change
+     moves the stay's dates on an unpaid booking whose invoice was issued in a
+     period now locked in Xero, it is refused for the same reason an ordinary
+     date change would be. If the lodge was already full on one of those
+     nights, the figures ask you to **Confirm overbooking**; a night held for a
+     whole-lodge booking is always refused. Past bed allocations are never
+     changed.
+   - If the card was loaded before the stay finished (or the other way round),
+     approving asks you to reload rather than doing something you were not told.
 3. Write **Explanation for the member**. The member reads this verbatim on their
    own booking page, the field says so above the box, and neither decision can be
    sent until it is filled in — so write it for them rather than for the file.
    Anything you would not want them to read goes in **Internal note**, which is
    optional and never leaves the admin screens (#2562). Each card keeps its own
    draft: a note you start on one request is never submitted with another.
-4. Optionally paste the **Linked booking modification id** from the booking's
-   audit trail so the request and the change are linked, then click
-   **Acknowledge as approved** or **Reject**.
+4. For a stay that is still running, optionally paste the **Linked booking
+   modification id** from the booking's audit trail so the request and the
+   change are linked, then click **Acknowledge as approved** or **Reject**. A
+   finished stay's approval links its own modification, so the field is not
+   shown; click **Approve and apply** or **Reject**.
 
 ### Public Requests — price, quote, and approve a non-member request
 
@@ -522,7 +573,7 @@ therefore keeps its **All** context rather than disappearing from view.
 | Tab | Filters | Key actions |
 | --- | --- | --- |
 | Approvals | Pending (default), Approved, Rejected, All | Approve; Reject and cancel (Admin notes required to reject) |
-| Changes | Requested (default), Approved, Rejected, All | Acknowledge as approved; Reject (both need the member-facing explanation); optional internal note the member never sees; optional linked modification id |
+| Changes | Requested (default), Approved, Rejected, All | Acknowledge as approved (stay still running) or Approve and apply (stay finished, #3750); Reject. Both need the member-facing explanation; optional internal note the member never sees; optional linked modification id (acknowledgement only) |
 | Policy Exceptions | Requested (default), Approved, Rejected, Cancelled, Superseded, All | Approve and apply (confirmation required; member-facing explanation required for an adult-member hosting override); Refuse (member-facing explanation required). Both actions also take an optional internal note the member never sees |
 | Public Requests | Queue (default), Awaiting verification, Verified, Priced, Quoted, Quote sent, Query, Modify, Accepted, Approved, Declined, Cancelled, Converted, All | Save quote; Send quote; Approve & send payment link / Approve & invoice school; Decline; Hold slots (school) |
 
@@ -639,7 +690,8 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Reject is blocked | You left **Admin notes** empty (Approvals), or **Explanation for the member** empty (Changes, where it blocks both decisions) | Add the explanation for the member, then decide |
-| A change I "approved" did not change the booking | Approving here only acknowledges the review | Open the booking and apply the change on the booking page |
+| A change I "approved" did not change the booking | For a stay that is still running, approving only acknowledges the review | Open the booking and apply the change on the booking page. A finished stay's approval applies the change itself |
+| **Approve and apply** says the request is still pending | The booking changed since the member asked, the season for those nights is switched off, a guest cannot be booked, the dates of an unpaid invoiced booking would move into a Xero-locked period, or the lodge was full | Nothing was changed. Read the reason on the card: confirm the overbooking, switch the season back on, or reject the request with a note |
 | A new public request is not on the Approvals tab | Public requests live only on the Public Requests tab | Switch to **Public Requests** and check the **Queue** filter |
 | Approve fails with a capacity message | The lodge is full for one or more nights | The dialog lists the full dates; free capacity or adjust the request |
 | Approving a policy exception says the request "stays pending" | The lodge filled up between the member asking and you deciding | Nothing was created. The queue has already refreshed, so approve it again once beds free up, or refuse it with a reason |

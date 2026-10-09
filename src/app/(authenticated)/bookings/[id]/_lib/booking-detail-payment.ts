@@ -3,7 +3,12 @@ import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  bookingAmountOwedCents,
+  bookingWorthCents,
+  hasCapturedPayment,
+  recordedChangeFeeCents,
+} from "@/lib/booking-payment-state";
 import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import {
@@ -175,10 +180,31 @@ export function resolveBookingDetailPayment({
     creditAppliedCents > 0 &&
     isPaymentOwedBookingStatus(booking.status) &&
     booking.payment?.status !== "SUCCEEDED";
+  // #3750: through the one home, so a change fee recorded on the payment is
+  // part of what the page says is due.
   const amountDueAfterCreditCents = Math.max(
-    booking.finalPriceCents - creditAppliedCents,
+    bookingAmountOwedCents({
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+      appliedCreditCents: creditAppliedCents,
+    }),
     0
   );
+  // #3955 review F8: a change fee recorded on an unpaid booking's payment is
+  // owed with the price, so the card shows it as its own row and the
+  // breakdown adds up to the amount due.
+  const changeFeeOwedCents =
+    isPaymentOwedBookingStatus(booking.status) && booking.payment?.status !== "SUCCEEDED"
+      ? recordedChangeFeeCents(booking.payment)
+      : 0;
+  const showAmountBreakdown = showCreditApplied || changeFeeOwedCents > 0;
+  // What the pay card charges: net of credit only where the card says so.
+  const cardAmountDueCents = showCreditApplied
+    ? amountDueAfterCreditCents
+    : bookingWorthCents({
+        finalPriceCents: booking.finalPriceCents,
+        changeFeeCents: booking.payment?.changeFeeCents ?? null,
+      });
 
   return {
     cancellationSettlement,
@@ -198,7 +224,10 @@ export function resolveBookingDetailPayment({
     showCompletePaymentCard,
     creditAppliedCents,
     showCreditApplied,
+    changeFeeOwedCents,
+    showAmountBreakdown,
     amountDueAfterCreditCents,
+    cardAmountDueCents,
   };
 }
 

@@ -57,7 +57,9 @@ const NAMED_READERS: Record<string, ReaderSite> = {
     resolutions: 1,
     operation: "CREDIT_ELECTION",
     historySink: /moneyBuildUp:\s*moneyBuildUpSelection\.historyMetadata/,
-    amountSink: /const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}moneyBuildUpSelection[\s\S]{0,800}verifiedFinalPriceCents - alreadyAppliedCents/,
+    // #3955 round 3 (`INV-PAY-119`): the verified price is what the election's
+    // cap — what the booking owes — is computed from.
+    amountSink: /const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}moneyBuildUpSelection[\s\S]{0,1000}bookingAmountOwedCents\(\{\s*finalPriceCents: verifiedFinalPriceCents,/,
   },
   "src/lib/xero-booking-invoices.ts": {
     reads: 1,

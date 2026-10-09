@@ -1785,6 +1785,84 @@ describe("applyGroupSettlementSucceeded", () => {
     };
   }
 
+  it("#3955 F3: a child's recorded change fee is in the organiser's total and in the child's settled payment", async () => {
+    mocks.settlementFindUnique
+      // First call: top-level lookup by intent id (with organiser + dates).
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 10000,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      // Second call: inside the lock, re-confirm still unpaid.
+      .mockResolvedValueOnce(cardLockRow("pi_1"));
+    mocks.bookingFindMany
+      // Pre-lock discovery: acquire every child lodge before any write.
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1" },
+        { id: "child-2", lodgeId: "lodge-1" },
+      ])
+      // Inside the lock: the confirmed children to settle.
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+        {
+          id: "child-2",
+          lodgeId: "lodge-1",
+          finalPriceCents: 4500,
+          // A finished-stay correction added a 1000 fee to what this joiner owes.
+          payment: { changeFeeCents: 1000 },
+          checkIn: new Date(),
+          checkOut: new Date(),
+        },
+      ])
+      // After commit: the settled bookings re-loaded for the joiner emails.
+      .mockResolvedValueOnce([
+        {
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j1@example.com", firstName: "Jo" },
+          _count: { guests: 1 },
+        },
+        {
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j2@example.com", firstName: "Sam" },
+          _count: { guests: 2 },
+        },
+      ]);
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 10000 }, CLUB_FORMAT_TEST);
+
+    expect(result.outcome).toBe("settled");
+    expect(result.settledBookingIds).toEqual(["child-1", "child-2"]);
+    expect(mocks.paymentUpsert).toHaveBeenCalledTimes(2);
+    // Each child's payment records what the organiser paid for it: its worth,
+    // on a row the fee already created as well as on a new one.
+    expect(mocks.paymentUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: "child-2" },
+        create: expect.objectContaining({ amountCents: 5500 }),
+        update: expect.objectContaining({ amountCents: 5500, status: PaymentStatus.SUCCEEDED }),
+      }),
+    );
+    expect(mocks.paymentUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: "child-1" },
+        create: expect.objectContaining({ amountCents: 4500 }),
+      }),
+    );
+  });
+
   it("switches every joiner the paid bill did not cover, never bills the organiser, and tells each the right person", async () => {
     mocks.settlementFindUnique
       .mockResolvedValueOnce(paidSettlementRow())

@@ -237,7 +237,7 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
     // Read under the member's ledger lock, then returned by the edit's own clamp.
     expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newFinalPriceCents: 26000 }),
+      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newWorthCents: 26000 }),
       expect.anything(),
     );
     // The payment's mirror follows the ledger (INV-PAY-024).
@@ -464,7 +464,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     });
     expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: "ann", newFinalPriceCents: 26000 }),
+      expect.objectContaining({ memberId: "ann", newWorthCents: 26000 }),
       expect.anything(),
     );
     expect(client.payment.update).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { creditAppliedCents: 26000 } });
@@ -493,6 +493,43 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     // $100 on the card, $80 already refunded by an earlier change: $20 left.
     const { result } = await acceptSplit({ amountCents: 10000, refundedAmountCents: 8000, creditAppliedCents: 30000 }, 30000);
     expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+  });
+
+  it("#3955 round 3: a change fee the card already paid keeps no credit back — the credit is netted to the PRICE", async () => {
+    // $20 on the card plus $300 of credit pay the $320 price; an earlier edit's
+    // $15 change fee was paid by an additional card charge and is recorded on
+    // the payment. The credit pays none of that fee, so the clamp nets it to
+    // the new price: the whole $40 credit share comes back.
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(30000);
+    h.clampAppliedCreditToBookingPrice.mockImplementation(
+      async ({ newWorthCents }: { newWorthCents: number }) => ({
+        appliedCreditCents: newWorthCents,
+        refundedExcessCents: 30000 - newWorthCents,
+      }),
+    );
+    const client = tx(
+      booking({
+        payment: {
+          ...booking().payment,
+          amountCents: 2000,
+          additionalAmountCents: 1500,
+          changeFeeCents: 1500,
+          creditAppliedCents: 30000,
+        },
+      }),
+    );
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+    expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "ann", newWorthCents: 26000 }),
+      expect.anything(),
+    );
   });
 
   it("is refused, moving no code, when the cash left and the credit do not make up the price", async () => {

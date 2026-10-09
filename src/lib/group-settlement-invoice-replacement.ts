@@ -9,6 +9,7 @@ import { GroupBookingError } from "@/lib/group-booking";
 import logger from "@/lib/logger";
 import {
   groupSettlementTotalCents,
+  type GroupSettlementChildWorth,
   isGroupSettlementBoundToInvoice,
 } from "@/lib/group-settlement-invoice-binding";
 import {
@@ -136,7 +137,7 @@ export async function clearBoundInvoiceForReplacement(
       }
     | null
     | undefined,
-  children: ReadonlyArray<{ finalPriceCents: number; status: BookingStatus }>,
+  children: ReadonlyArray<GroupSettlementChildWorth & { status: BookingStatus }>,
   format: ClubFormat
 ): Promise<ClearedReplacement | null> {
   if (!isGroupSettlementBoundToInvoice(settlement)) return null;

@@ -46,7 +46,7 @@ import {
   xeroDocumentDateFromInstant,
 } from "@/lib/xero-provider-dates";
 import {
-  CHANGE_FEE_LINE_DESCRIPTION,
+  changeFeeLineItem,
   MODIFICATION_DOCUMENT_LINES_SELECT,
   resolveModificationDocumentLineItems,
 } from "@/lib/xero-modification-line-items";
@@ -172,7 +172,6 @@ export async function createXeroSupplementaryInvoice(params: {
     repairExistingLink,
   });
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
-  const incomeCode = incomeMapping.code ?? "200";
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
   // (owner decision on #1356): clubs that prefer a single account map
@@ -238,17 +237,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   if (!itemised.lineItems && changeFeeCents > 0) {
-    const li: LineItem = {
-      description: CHANGE_FEE_LINE_DESCRIPTION,
-      quantity: 1,
-      unitAmount: changeFeeCents / 100,
-      taxType: "OUTPUT2",
-    };
-    if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
-    if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
-      li.accountCode = incomeCode;
-    }
-    lineItems.push(li);
+    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping));
   }
 
   // Both halves of this are real instants — `BookingModification.createdAt` is a

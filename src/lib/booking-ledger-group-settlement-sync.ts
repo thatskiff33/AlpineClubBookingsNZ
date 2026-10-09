@@ -52,14 +52,18 @@ import {
 } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
 import { organiserChildCommittedRefundCents } from "@/lib/organiser-child-refund";
+import {
+  groupSettlementChildWorthCents,
+  type GroupSettlementChildWorth,
+} from "@/lib/group-settlement-invoice-binding";
 
 type SettleStore = Pick<Prisma.TransactionClient, "booking" | "bookingLedgerLine">;
 
 /**
  * The settle's half: each paid child's confirmation lines (once per booking)
  * and its share of the settlement. `children` are exactly the children this
- * settle flipped to PAID, with the price the settlement's total was checked
- * against under the same lock.
+ * settle flipped to PAID, with the worth (price plus a fee recorded on its
+ * payment, #3750) the settlement's total was checked against under the same lock.
  */
 export async function postGroupSettlementLedgerLines({
   store,
@@ -68,7 +72,7 @@ export async function postGroupSettlementLedgerLines({
 }: {
   store: SettleStore;
   settlement: GroupSettlementForPosting;
-  children: ReadonlyArray<{ id: string; lodgeId: string; finalPriceCents: number }>;
+  children: ReadonlyArray<{ id: string; lodgeId: string } & GroupSettlementChildWorth>;
 }): Promise<number> {
   if (children.length === 0) return 0;
   const bookings = await store.booking.findMany({
@@ -101,7 +105,9 @@ export async function postGroupSettlementLedgerLines({
   try {
     const plan = planGroupSettlementShareLines({
       settlement,
-      children: children.map((child) => ({ bookingId: child.id, lodgeId: child.lodgeId, shareCents: child.finalPriceCents })),
+      // #3750: a child's share is its worth — what its payment records and
+      // what the settlement's total counted — so a recorded fee is in it.
+      children: children.map((child) => ({ bookingId: child.id, lodgeId: child.lodgeId, shareCents: groupSettlementChildWorthCents(child) })),
     });
     if (!plan.reconciles) {
       logger.error(

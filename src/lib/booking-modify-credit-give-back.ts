@@ -41,6 +41,16 @@ function creditGiveBack(input: {
   return { basisCents, givenBackCents: creditRestoredCents };
 }
 
+/** #3750: the same basis as {@link creditGiveBack}, all of it given back. */
+function untieredCreditGiveBack(input: {
+  reductionCents: number;
+  cardBasisCents: number;
+  appliedCreditCents: number;
+}): PaidReductionCreditGiveBack {
+  const basisCents = Math.max(0, Math.min(input.reductionCents - input.cardBasisCents, input.appliedCreditCents));
+  return { basisCents, givenBackCents: basisCents };
+}
+
 type ReductionInput = {
   /** The edit's net reduction (price and change fee), positive. */
   reductionCents: number;
@@ -77,10 +87,16 @@ export async function giveBackPaidReductionCredit(
     cardBasisCents,
     todayAtClub,
     format,
+    untiered = false,
   }: ReductionInput & {
     booking: LoadedBookingForModify;
     /** Club format resolved before the caller's transaction or ledger lock. */
     format: ClubFormat;
+    /**
+     * #3750: the tier was already charged as a change fee, so the whole basis
+     * comes back (a finished-stay correction's removal fee).
+     */
+    untiered?: boolean;
   },
 ): Promise<PaidReductionCreditGiveBack | null> {
   const memberId = bookingOwner(booking).memberId;
@@ -98,7 +114,9 @@ export async function giveBackPaidReductionCredit(
       format,
       description: `Applied credit returned after booking ${booking.id.slice(0, 8)} price reduction`,
       giveBackCentsOf: (applied) => {
-        given = creditGiveBack({ reductionCents, cardBasisCents, appliedCreditCents: applied, days, policy });
+        given = untiered
+          ? untieredCreditGiveBack({ reductionCents, cardBasisCents, appliedCreditCents: applied })
+          : creditGiveBack({ reductionCents, cardBasisCents, appliedCreditCents: applied, days, policy });
         return given.givenBackCents;
       },
     },

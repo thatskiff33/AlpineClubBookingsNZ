@@ -623,13 +623,18 @@ export const AUDIT_CENSUS_TOTALS = {
   // CREATE and DELETE handlers are removed with their `OTHER_LODGE_CREATED`
   // and `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
   // central server says it owns. RE-MEASURED with `npm run audit:census`.
-  // 497 -> 498 (#3372, composed with #52): `booking-payment.card-refund.paid-another-way`,
+  // 497 -> 498 (#3750): the executed approval of a LOCKED_PERIOD change request
+  // on a finished stay (`booking-change-request.approve`, with `executed: true`),
+  // one `logAudit` in `src/lib/booking-change-request-admin-decision.ts`,
+  // categorised `booking` like the acknowledgement it sits beside. RE-MEASURED
+  // with `pnpm run audit:census`.
+  // 498 -> 499 (#3372, composed with #52 and #3750): `booking-payment.card-refund.paid-another-way`,
   // the treasurer closing a card refund Stripe gave up on, awaited on the
   // close's own transaction under `payment`.
-  // 498 -> 499 (#3372, owner 9 Oct 2026): `booking-payment.card-refund.paid-twice-resolved`,
+  // 499 -> 500 (#3372, owner 9 Oct 2026): `booking-payment.card-refund.paid-twice-resolved`,
   // the treasurer marking a refund paid back twice as sorted out, on the
   // write's own transaction under `payment`. RE-MEASURED.
-  writeSites: 499,
+  writeSites: 500,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -651,7 +656,12 @@ export const AUDIT_CENSUS_TOTALS = {
    * anything, because there was nothing to declare with: what a member read was
    * decided by whether the `details` column happened to parse as JSON.
    */
-  memberFacingSites: 6,
+  // 6 -> 7 (#3750): the executed change-request approval, which publishes the
+  // same `adminNotes` the acknowledgement path does for the same action — the
+  // blueprint the owner approved keeps `memberDisclosure` "exactly as it is
+  // today" (INV-PRIV-018), so this is the existing disclosure at a second site,
+  // not a widening.
+  memberFacingSites: 7,
   /**
    * Of those, sites whose declaration the census cannot read, pinned per site in
    * `APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695` with the reason each is
@@ -722,7 +732,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
     // above. RE-MEASURED with `pnpm run audit:census`.
     // 271 -> 272 (#3827, composed by #3829): the guest-acceptance re-price record, above.
-    logAudit: { total: 272, uncategorised: 0 },
+    // 272 -> 273 (#3750): the executed change-request approval, above. `logAudit`
+    // because it is written after the approval has committed.
+    logAudit: { total: 273, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -942,7 +954,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `main`) and RE-MEASURED with `pnpm run audit:census`: 106.
     // 106 -> 107 (#3827, composed by #3829): the guest-acceptance re-price record — a booking's
     // money changing, read by booking officers like every `booking.modify.*`.
-    booking: 107,
+    // 107 -> 108 (#3750): the executed change-request approval, `booking` like
+    // the acknowledgement of the same action.
+    booking: 108,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -3067,6 +3081,13 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // verbatim, which is what makes an edit to either branch a visible diff here.
   "src/app/api/admin/booking-change-requests/[id]/route.ts::PATCH#0":
     "(dynamic) parsed.data.status === \"APPROVED\" ? \"booking-change-request.approve\" : \"booking-change-request.reject\"",
+  // #3750: the SAME decision when the stay has finished and approving applies
+  // the request. PUBLISHES: the officer's `adminNotes`, and nothing when there
+  // is none — the acknowledgement's disclosure for the same action, kept as it
+  // is today by the owner-approved blueprint (INV-PRIV-018). `internalNotes`
+  // never reaches the row; only `internalNoteRecorded` does.
+  "src/lib/booking-change-request-admin-decision.ts::runFinishedStayApproval#0":
+    "booking-change-request.approve",
   // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
   // refusal without one — and which `notifyMemberOfRefusal` emails as well.
   "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#0":

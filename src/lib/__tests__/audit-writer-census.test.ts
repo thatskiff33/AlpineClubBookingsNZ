@@ -1421,10 +1421,12 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 370 -> 371 (#3492, composed by #3829): the guest promo-code lookup, unpinned `privacy`.
     // 128 -> 126 pinned (#52, other-lodges central-server sync): the
     // other-lodges CREATE and DELETE writers leave the keep with their
-    // handlers; the unpinned population does not move. RE-MEASURED.
-    // 371 -> 372 (#3372): the paid-another-way close, unpinned `payment`.
-    // 372 -> 373 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved, unpinned `payment`.
-    ).toEqual({ pinned: 126, unpinned: 373 });
+    // handlers; the unpinned population does not move. 371 -> 372 unpinned
+    // (#3750): the executed change-request approval, unpinned `booking`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 372 -> 373 (#3372): the paid-another-way close, unpinned `payment`.
+    // 373 -> 374 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved, unpinned `payment`.
+    ).toEqual({ pinned: 126, unpinned: 374 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

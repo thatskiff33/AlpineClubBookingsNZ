@@ -47,7 +47,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   durable `MEMBER_PAID` / `NON_MEMBER_CONFIRMED` event. It composes a THIRD
   lock tier (global → per-lodge → MEMBER-CREDIT) and derives the settlement
   amount itself: no client-supplied amount is ever accepted, and the mirror
-  `amountCents + creditAppliedCents = finalPriceCents` is asserted explicitly.
+  `amountCents + creditAppliedCents` = the booking's worth (`INV-PAY-119`) is
+  asserted explicitly.
 
 ## INV-PAY-039
 
@@ -2975,3 +2976,37 @@ _Split from `INV-PAY-057` (#3220)._
   (`REFUND_CREDIT_NOTE_UNSETTLED`) and settled only by an operator.
 - Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by
   `xero-refund-note-crash-window.test.ts` and `xero-operation-outbox.test.ts`.
+
+## INV-PAY-119
+
+- **What a booking owes has one home: its worth less applied credit** (#3750;
+  owner decision of 7 Oct 2026, "Add fee to amount owed"). Worth is
+  `finalPriceCents` plus the change fee recorded on the payment
+  (`bookingWorthCents`, `recordedChangeFeeCents`). Every pay step reads
+  `bookingAmountOwedCents` or worth: the payment page, card intent, payment
+  link and its page (nothing to pay at or below zero), saved-card charge,
+  internet-banking switch, confirm-payment and webhook checks, settle,
+  officer's manual payment, a stored credit election's cap, a review share's
+  covered test and invoice reduction, and each joiner's group share and
+  invoice; confirmation emails quote worth. An edit's credit clamp,
+  zero-dollar decision and stale-intent comparison read worth; a guest's
+  acceptance nets credit to the price, as its return route admits only credit
+  and cash that sum to the price.
+- A fee a finished-stay correction keeps on a stay with nothing captured is
+  recorded on the payment, claimed against the invoice link the edit read, and
+  posts its `CHANGE_FEE` line under its modification's key at the settle,
+  counting as income once captured.
+- **The primary invoice bills the recorded fee in full.** Its link is saved
+  in one transaction with what it billed, the fee then recorded and its Stripe
+  cash (capped so unallocated ledger credit fits). A supplementary invoice,
+  anchored on a correction routing its fee there, bills the gap, paid from
+  cash the primary left, else unpaid; untaken cash is logged. Retries re-check
+  stored figures without re-queuing.
+- Limits: a capture recorded for its intent is not re-checked against a later
+  fee; a fee the ordinary settled edit (#3980, `applyPaymentAdjustments`)
+  records mid-create, before the link is saved, is unclaimed: logged, not
+  billed; an invoice linked without stored figures is unchecked, warning when
+  a fee is recorded.
+- Pinned by `amount-owed-one-home.test.ts`,
+  `booking-change-request-execution.realdb.test.ts` and
+  `xero-primary-invoice-fee-gap.test.ts`.
