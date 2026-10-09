@@ -14,7 +14,7 @@ reason: the two figures' fields on the page's report type, their two CSV rows
   a refactor of its own.
 
 file: src/lib/finance-booking-metrics.ts
-lines: 1360
+lines: 1366
 reason: the two fields on the payment summary type and its zero value, the
   three new Net Collected parts (card refunds not yet paid, late charges
   awaiting the treasurer, late bank credit), and the one read beside the Net
