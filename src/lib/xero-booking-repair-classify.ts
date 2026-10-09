@@ -70,6 +70,7 @@ import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled
 import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
 import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
+import { addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
@@ -2027,62 +2028,9 @@ export function classifyBookingContext(
         }
         continue;
       }
-      // #3924 round 7 (money M2, `INV-PAY-121`): an APPROVED capture whose
-      // card refund was closed as paid another way, with its note waiting for
-      // the receipt. The charge is still in the Stripe account and the close's
-      // bank-transfer note follows the receipt, so a receipt that FAILED before
-      // it reached Xero, or was never queued, leaves both undone. Retried or
-      // queued automatically: the worker and the enqueue both re-read the task
-      // and the close under the task's row lock before anything is sent.
-      const receiptCents =
-        lateTask.status === "COMPLETED" && lateTask.paidAnotherWayClose === "after-receipt"
-          ? decideLateCapture({
-              taskStatus: "COMPLETED",
-              bookingStatus: booking.status,
-              superseded: false,
-              capture: transaction,
-              refundClosedPaidAnotherWay: true,
-            }).recordCents
-          : 0;
-      if (receiptCents > 0) {
-        const failedUnsent =
-          keptInvoice?.kind === "retryable" && keptInvoice.operation.status === "FAILED" ? keptInvoice : null;
-        const missing = !keptLateCaptureInvoiceAsked(lateTask.operations);
-        if (failedUnsent || missing) {
-          const action = failedUnsent
-            ? addAction(actionMap, buildRetryAction(booking.id, failedUnsent))
-            : addAction(actionMap, {
-                key: `queue:kept-late-capture-invoice:${lateTask.taskId}`,
-                bookingId: booking.id,
-                type: "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
-                description:
-                  "Queue the Xero receipt, paid from the Stripe account on the capture day, of a late card payment whose refund was paid another way; the refund note follows it.",
-                safeToAutoApply: true,
-                payload: {
-                  manualRefundTaskId: lateTask.taskId,
-                  bookingId: booking.id,
-                  paymentIntentId: transaction.stripePaymentIntentId,
-                  capturedCents: receiptCents,
-                  capturedAt: lateTask.raisedAt.toISOString(),
-                },
-              });
-          addFinding(findings, {
-            code: "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT",
-            severity: "critical",
-            summary: failedUnsent
-              ? "A late card payment whose refund was paid another way has a Xero receipt that failed before reaching Xero; its bank-transfer refund note waits for it."
-              : "A late card payment whose refund was paid another way has no Xero receipt queued; its bank-transfer refund note waits for it.",
-            safeToAutoApply: true,
-            details: {
-              paymentId: payment.id,
-              manualRefundTaskId: lateTask.taskId,
-              paymentIntentId: transaction.stripePaymentIntentId,
-              ...(failedUnsent ? { operationId: failedUnsent.operation.id, operationStatus: "FAILED" } : {}),
-            },
-            actionKeys: [action.key],
-          });
-          continue;
-        }
+      // #3924 round 7 (money M2): the receipt a paid-another-way close waits for.
+      if (addPaidAnotherWayReceiptFinding({ findings, actionMap, booking, paymentId: payment.id, transaction, lateTask, keptInvoice })) {
+        continue;
       }
       if (
         lateTask.status !== "DISMISSED" &&

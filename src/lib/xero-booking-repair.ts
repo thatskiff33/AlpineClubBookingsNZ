@@ -38,16 +38,39 @@ import {
   buildPassReport,
 } from "./xero-booking-repair-passes";
 import { createCountMap } from "./xero-booking-repair-utils";
+import { readLateCaptureRefundsPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import type { ClubFormat } from "@/lib/club-format";
 
 const MAX_APPLY_PASSES = 3;
+
+/**
+ * #3924 round 7 (money M2, `INV-PAY-121`): each APPROVED capture's close of its
+ * card refund as paid another way, on its approval task's entry, for the
+ * receipt finding (`PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`).
+ */
+async function withPaidAnotherWayCloses(
+  contexts: Awaited<ReturnType<typeof loadAuditData>>,
+  deps: RepairDependencies,
+) {
+  const approved = contexts.flatMap((context) =>
+    [...context.lateCaptureTasks].filter(([, task]) => task.status === "COMPLETED").map(([intent]) => intent),
+  );
+  const closes = await readLateCaptureRefundsPaidAnotherWay(approved, deps.prisma);
+  for (const context of contexts) {
+    for (const [intent, task] of context.lateCaptureTasks) {
+      const close = closes.get(intent);
+      if (close) task.paidAnotherWayClose = close;
+    }
+  }
+  return contexts;
+}
 
 async function runSinglePass(
   pass: number,
   scope: BookingXeroRepairScope,
   deps: RepairDependencies
 ) {
-  const contexts = await loadAuditData(scope, deps);
+  const contexts = await withPaidAnotherWayCloses(await loadAuditData(scope, deps), deps);
   const bookings = contexts.map((context) => classifyBookingContext(context));
   return buildPassReport(pass, bookings);
 }

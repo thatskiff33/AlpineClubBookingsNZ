@@ -477,15 +477,14 @@ export interface BookingClassificationContext {
     {
       taskId: string;
       status: string;
-      /** The capture day the receipt is dated from: the task is raised by the capture. */
-      raisedAt: Date;
       operations: XeroOperationRecord[];
       /**
-       * #3924 round 7 (money M2): how the close of this capture's approved
-       * card refund as paid another way is recorded in Xero, or null when it
-       * was never closed so (`findLateCaptureRefundPaidAnotherWay`).
+       * #3924 round 7 (money M2): how the close of this APPROVED capture's card
+       * refund as paid another way is recorded in Xero, and when the task was
+       * raised (the capture day its receipt is dated from). Absent when it was
+       * never closed so. Set after the load (`withPaidAnotherWayCloses`).
        */
-      paidAnotherWayClose: PaidAnotherWayXeroNote | null;
+      paidAnotherWayClose?: { xeroRefundNote: PaidAnotherWayXeroNote; raisedAt: Date };
     }
   >;
   /**

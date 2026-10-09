@@ -105,10 +105,7 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // #3635: the late capture this note answers, and its refund's club day.
   paymentIntentId?: string;
   documentDate?: string;
-  // #3924 round 7 (`INV-PAY-121`): the "Paid another way" close this note
-  // answers, and the invoice it credits when the close named one.
-  paidAnotherWayTaskId?: string;
-  creditsInvoiceId?: string;
+  paidAnotherWayTaskId?: string; creditsInvoiceId?: string; // #3924 r7: the close it answers, the invoice it names
 }
 
 interface QueuedAccountCreditNoteOutboxPayload {

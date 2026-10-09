@@ -56,12 +56,13 @@ the list). To close one you need **Finance edit**.
 Stripe dashboard and compare its refunds with this refund's amount. A row that
 says **Stripe may have refunded: check the Stripe dashboard first** failed with
 a timeout, a network or Stripe server error, or Stripe saying the money was
-already refunded, so the refund may have gone through after all. If
-Stripe did refund it, or you refund it in the Stripe dashboard yourself, do not
-close it here. Wait until that refund shows on the payment: the amount still
-owed then drops, and a refund with nothing left owed can be closed as **Paid
-back in full** at $0.00 (except a refund that replaces a superseded payment:
-ask a developer to reconcile that one).
+already refunded, so the refund may have gone through after all. If Stripe did
+refund it, or you refund it in the Stripe dashboard yourself, do not close it
+here. Wait until that refund shows on the payment: the amount still owed then
+drops, and once nothing is left owed the refund leaves this list on its own. A
+close always records money paid back, so it can never be for $0.00. A refund
+with nothing left owed still shows in the **Exhausted recovery operations**
+count: ask a developer to reconcile it.
 
 If you pay the member back another way, for example by bank transfer, close the
 refund here:
@@ -71,13 +72,17 @@ refund here:
 2. Click **Paid another way**. With view-only access the button is disabled,
    and the banner above the list says why.
 3. The dialog says how much is still owed, and what will be recorded in Xero
-   (below).
+   (below). If the amount still owed changes while the dialog is open, the
+   dialog says so and clears what you typed. If it changes just as you close
+   it, the close is refused and the list refreshes: check the amount and close
+   it again.
 4. Choose how much you paid back. Nothing is chosen for you, and the app never
    guesses from the amount:
    - **Paid back in full**: the amount is fixed at what is still owed.
    - **Paid back part of it - the rest will no longer be owed**: type the
      amount you paid. It must be more than nil and less than what is owed. The
-     dialog then says in dollars how much will no longer be owed.
+     dialog then says in dollars how much will no longer be owed. A problem
+     with the amount is shown once you have typed it or left the box.
 
    A refund that replaces a superseded card payment closes only in full.
 5. Under **How was it paid back? (required)**, say how you paid the member
@@ -92,30 +97,36 @@ complete by hand is recorded. Stripe is not asked again.
 2026). The rest stops being owed anywhere: it leaves Refunds owed and nothing
 tracks it any more. A later refund on the same booking, for example from a
 booking change reviewed after the cancellation, pays only its own share - it
-does not pick up the difference. After a **full** close, Net
-Collected stays where it was: the money moves from "owed back" to "refunded".
+does not pick up the difference. After a **full** close, Net Collected stays
+where it was: the money moves from "owed back" to "refunded".
 After a partial close, Net Collected goes **up** by the amount given up, because
 the club is no longer treating it as owed.
 
 **Xero** (owner decisions on #3372, 8 Oct 2026). Every kind of card refund - a
 cancellation's, an approved refund request's, a booking change's, a late card
 charge's or a superseded payment's - queues a Xero refund credit note for
-exactly the amount paid back, worded as a bank transfer, as long as there is a
-Xero invoice to credit.
+exactly the amount paid back, worded as a bank transfer ("Refund requested via
+internet banking") and dated the day you closed it, as long as the app has a
+Xero invoice to credit. If the payment's invoice is still on its way to Xero,
+the app does not know of one yet: the dialog says no note is queued, and you
+check Xero and record the refund there by hand if it needs one.
 
 **A late card charge** - one taken after its booking was cancelled, which you
 chose to refund - is credited against its own record in Xero, never the
 booking's invoice. If Xero has no record of the charge yet, closing the refund
 first records it: an invoice for the whole charge, paid into the Stripe account
-on the day Stripe took it, the same record a kept late charge gets. Once that
-is in Xero, the refund credit note for the amount you paid back follows, as a
-bank transfer, dated the day you closed it. Xero then shows both movements -
-the money into the Stripe account and the money out of the bank - and the charge
-nets to nil, or to what was given up after a part payment. The note always
-waits for the record: it is not queued until the record is in Xero. If the
-record fails to send, press **Retry in background** on its failed operation in
-[Xero](xero.md), and the note follows. If an officer already recorded the charge in Xero by hand, no
-note is raised: record the refund by hand too.
+on the day Stripe took it. That is the same record the app makes when you
+choose to keep a late charge instead of refunding it. Once that record is in
+Xero, the refund credit note for the amount you paid back follows, as a bank
+transfer, dated the day you closed it, and naming that record. Xero then shows
+both movements - the money into the Stripe account and the money out of the
+bank - and the charge nets to nil, or to what was given up after a part
+payment. The note always waits for the record: it is not queued until the
+record is in Xero. If the record fails to send, press **Retry in background**
+on its failed operation in [Xero](xero.md), and the note follows; the Xero
+repair tool a developer runs retries it too. If the note itself fails, the
+record stays in Xero and only the note is retried. If an officer already recorded the charge
+in Xero by hand, no note is raised: record the refund by hand too.
 
 The dialog says before you close what will be recorded in Xero, and the
 confirmation says what was queued. When nothing is, check the refund is
@@ -125,6 +136,20 @@ recorded in Xero and raise the note by hand if it needs one.
 reaches the app after you closed it, the booking appears under **Card refunds
 paid back twice**, with both amounts. The member then has the money twice:
 contact them to recover the extra, and record what you agree in Xero.
+
+Once it is sorted out, mark the row resolved (owner decision on #3372, 9 Oct
+2026). You need **Finance edit**; with view-only access the button is disabled
+and the banner above the list says why.
+
+1. Click **Resolved** on the row.
+2. Under **How was it sorted out? (required)**, say what you agreed with the
+   member, for example that they paid the extra back by bank transfer.
+3. Click **Mark resolved**.
+
+The row leaves the list, and your note goes in the [audit log](audit-log.md)
+under **Payment**. Nothing is refunded or charged, and nothing is sent to Xero:
+record what you agreed there yourself. If Stripe later refunds the card again
+for the same refund, the row comes back with the new amount.
 
 This action does not cover two kinds of refund:
 
