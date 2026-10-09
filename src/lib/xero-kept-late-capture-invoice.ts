@@ -529,6 +529,8 @@ export async function createXeroKeptLateCaptureInvoice(
         }
       }
       const { xero, tenantId } = await providers.getAuthenticatedXeroClient();
+      // The seam's metered call, under the one name the Xero wrapper audit reads.
+      const { callXeroApi } = providers;
       const contactId = await providers.findOrCreateXeroContactForInvoicedParty(booking, {
         createdByMemberId: params.createdByMemberId,
         repairExistingLink: params.repairExistingLink,
@@ -576,7 +578,7 @@ export async function createXeroKeptLateCaptureInvoice(
         createdByMemberId: params.createdByMemberId,
         buildRequestPayload: buildStoredPayload,
         run: ({ contactId: resolvedContactId }) =>
-          providers.callXeroApi(
+          callXeroApi(
             () =>
               xero.accountingApi.createInvoices(
                 tenantId,
