@@ -22,17 +22,20 @@ reason: the quote must preview the same offset the save applies, beside the
   shared `reductionLeftAfterUnpaidAsk`.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2679
+lines: 2910
 reason: the batch door writes its own BookingModification history row and its
   own transaction result; the offset and the retired asks join them there.
+  After merging #3955 it also decides, beside #3750's finished-stay fee write,
+  whether `applyPaymentAdjustments` already recorded the fee (so it is recorded
+  once), and sizes the correction's untiered options net of the unpaid ask.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2343
+lines: 2359
 reason: the date door writes its own BookingModification history row and its
   own transaction result; the offset and the retired asks join them there.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1488
+lines: 1490
 reason: the removal door writes its own BookingModification history row and
   result type; the offset and the retired asks join them there.
 

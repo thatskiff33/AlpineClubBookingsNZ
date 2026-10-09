@@ -138,7 +138,10 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions } from "@/lib/booking-modify-settlement-options";
+import {
+  calculateFullReductionSettlementOptions,
+  reductionLeftAfterUnpaidAsk,
+} from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -1702,9 +1705,11 @@ export async function modifyBookingBatch({
     // edit's credit note or supplementary invoice carries it as well, and
     // where none was, the primary invoice raised later carries it. Decided on
     // the fee this edit CHARGES (#3955 review F10), after any waiver.
-    const feeAddedToAmountOwed =
+    // Settled below, once `applyPaymentAdjustments` has said whether a card ask
+    // (#3502, a credit-paid booking) or the shrinking of an unpaid one (#3954)
+    // already collected and recorded this fee: then it is not owed again.
+    const feeMayBeAddedToAmountOwed =
       Boolean(finishedStayCorrection) && changeFeeCents > 0 && !hasCapturedPayment(booking.payment);
-    const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
 
     // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
     // inert below rather than a second zero literal beside it: with no options
@@ -1715,12 +1720,15 @@ export async function modifyBookingBatch({
     // that could drift from it.
     // #3750: a correction already paid the tier in its fee, so what remains of a
     // reduction comes back in full — the tier applies once, to the removed portion.
+    // #3954 (`INV-PAY-120`): sized, like the tiered options, on what the
+    // reduction leaves once set against an unpaid card ask, which
+    // `applyPaymentAdjustments` retires (it refuses options sized before that).
     const settlementOptions = parked
       ? null
       : finishedStayRemovalCharged
         ? calculateFullReductionSettlementOptions({
             booking,
-            netChargeCents: priceDiffCents + changeFeeCents,
+            netChargeCents: await reductionLeftAfterUnpaidAsk(tx, booking, priceDiffCents + changeFeeCents),
             refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
             todayAtClub: moneyTierDay,
           })
@@ -1840,6 +1848,14 @@ export async function modifyBookingBatch({
       // applied-credit give-back returns the remaining reduction once, untiered.
       reductionUntiered: finishedStayRemovalCharged,
     });
+    // ONE recording of the fee (`INV-PAY-047`, `INV-PAY-119`): a $0
+    // credit-paid finished stay is card-asked for an increase (#3502), and an
+    // unpaid ask a reduction shrinks carries the fee (#3954); either way
+    // `applyPaymentAdjustments` has already put it on the payment, beside the
+    // ask that collects it, and it is not also added to what is owed.
+    const feeAddedToAmountOwed =
+      feeMayBeAddedToAmountOwed && !(payments.changeFeeRecordedCents > 0);
+    const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
     if (feeAddedToAmountOwed) {
       // Owner decision (7 Oct 2026, "Add fee to amount owed"): recorded where
       // the pay steps read it, claimed against the invoice link this edit read

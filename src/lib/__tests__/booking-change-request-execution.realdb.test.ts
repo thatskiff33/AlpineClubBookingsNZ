@@ -22,6 +22,10 @@
  *     change fee (never netted away), and a mixed request executes every part.
  *  5. Refusals roll the claim back: a switched-off season refuses, and an
  *     over-capacity past night waits for the officer's confirmation.
+ *  6. Composed with #3948 (#3502, #3954): on a card-source stay a correction's
+ *     fee is recorded on the payment once - by the card ask that collects it,
+ *     never again as "added to what is owed" - and a reduction is set against
+ *     an unpaid card ask before its untiered options are sized.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -197,6 +201,13 @@ async function seed(
     unpaid?: { invoiced: boolean };
     /** A booking-level promotion with no per-night rows (pre-#3276 shape). */
     promoAdjustmentCents?: number;
+    /**
+     * #3502/#3954 composed with #3750 (the #3948 merge): a card-source payment
+     * with no Xero invoice. `first` is how the first guest was paid - wholly
+     * by account credit (the $0 row) or by card - and `unpaidAskForSecondGuest`
+     * makes the second guest a later increase whose card ask is still unpaid.
+     */
+    cardSource?: { first: "credit" | "card"; unpaidAskForSecondGuest?: boolean };
   } = {},
 ): Promise<void> {
   const guestIds = options.secondGuest ? [GUEST_ID, GUEST_2_ID] : [GUEST_ID];
@@ -220,7 +231,9 @@ async function seed(
   });
   await storedGuest(GUEST_ID, "Original");
   if (options.secondGuest) await storedGuest(GUEST_2_ID, "Second");
-  await prisma.payment.create({
+  if (options.cardSource) {
+    await seedCardSourcePayment(options.cardSource, priceCents);
+  } else await prisma.payment.create({
     data: {
       id: PAYMENT_ID,
       bookingId: BOOKING_ID,
@@ -253,6 +266,81 @@ async function seed(
       },
     },
   });
+}
+
+const ASK_INTENT = "pi_race_3750_unpaid_ask";
+
+/** See `seed`'s `cardSource`. */
+async function seedCardSourcePayment(
+  shape: { first: "credit" | "card"; unpaidAskForSecondGuest?: boolean },
+  priceCents: number,
+): Promise<void> {
+  const askCents = shape.unpaidAskForSecondGuest ? 2 * STORED_NIGHT_CENTS : 0;
+  const paidCents = priceCents - askCents;
+  await prisma.payment.create({
+    data: {
+      id: PAYMENT_ID,
+      bookingId: BOOKING_ID,
+      status: "SUCCEEDED",
+      source: "STRIPE",
+      stripeCustomerId: "cus_race_3750",
+      amountCents: shape.first === "card" ? paidCents : 0,
+      // The mirror the credit apply below also writes to the ledger.
+      creditAppliedCents: shape.first === "card" ? 0 : paidCents,
+      ...(shape.first === "card" ? { stripePaymentIntentId: "pi_race_3750_primary" } : {}),
+    },
+  });
+  if (shape.first === "card") {
+    await prisma.paymentTransaction.create({
+      data: {
+        paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", status: "SUCCEEDED",
+        amountCents: paidCents, stripePaymentIntentId: "pi_race_3750_primary",
+      },
+    });
+  } else {
+    const credit = await import("@/lib/member-credit");
+    await prisma.memberCredit.create({
+      data: { memberId: OWNER_ID, amountCents: paidCents, type: "ADMIN_ADJUSTMENT", description: "race 3750 opening balance" },
+    });
+    await prisma.$transaction((tx) => credit.applyCreditToBooking(OWNER_ID, paidCents, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+  }
+  if (!shape.unpaidAskForSecondGuest) return;
+  // The increase that added the second guest, and its card ask, as the minter wrote it.
+  await prisma.bookingModification.create({
+    data: {
+      bookingId: BOOKING_ID, memberId: OWNER_ID, modificationType: "GUEST_ADD",
+      previousData: {}, newData: {}, priceDiffCents: askCents,
+    },
+  });
+  await prisma.paymentTransaction.create({
+    data: {
+      paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "PENDING",
+      amountCents: askCents, stripePaymentIntentId: ASK_INTENT, reason: "guest_add_price_increase",
+    },
+  });
+  const { reconcilePaymentAggregates } = await import("@/lib/payment-transactions");
+  await reconcilePaymentAggregates({ paymentId: PAYMENT_ID });
+  expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).toMatchObject({
+    additionalAmountCents: askCents,
+    additionalPaymentStatus: "PENDING",
+  });
+}
+
+/** The payment after the edit, and what it owes by the one home (`INV-PAY-119`). */
+async function paymentAndOwed() {
+  const { bookingAmountOwedCents } = await import("@/lib/booking-payment-state");
+  const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+  const payment = booking.payment!;
+  return {
+    payment,
+    // What is still owed beyond the cash already captured.
+    owedBeyondCashCents:
+      bookingAmountOwedCents({
+        finalPriceCents: booking.finalPriceCents,
+        changeFeeCents: payment.changeFeeCents,
+        appliedCreditCents: payment.creditAppliedCents,
+      }) - payment.amountCents,
+  };
 }
 
 async function approve(officerId: string, options: { confirmOverCapacity?: boolean } = {}) {
@@ -538,6 +626,89 @@ function deferred() {
       refundAmountCents: -(priceDiff + swapFee),
     });
   }, 60_000);
+
+  describe("composed with #3948: a card-source booking's fee is recorded once (#3502, #3954)", () => {
+    // A credit-paid stay defaults to the credit arm, whose same-day tier
+    // returns 80%: the fee is the 20% it keeps of the removed guest.
+    const CREDIT_ARM_FEE_CENTS = 2 * STORED_NIGHT_CENTS - Math.round(2 * STORED_NIGHT_CENTS * 0.8);
+    it("MUTATION: a swap on a credit-paid ($0) stay is asked of the card, fee included, and the fee is recorded once", async () => {
+      await seed({
+        secondGuest: true,
+        cardSource: { first: "credit" },
+        requested: { removeGuests: [{ id: GUEST_2_ID }], summary: "swap Second Guest for Late Friend" },
+      });
+      const result = await approve(OFFICER_ID);
+      const swapFee = CREDIT_ARM_FEE_CENTS;
+      const priceDiff = 2 * NIGHT_CENTS - 2 * STORED_NIGHT_CENTS;
+      expect(result, JSON.stringify(result)).toMatchObject({
+        outcome: "executed",
+        priceDiffCents: priceDiff,
+        changeFeeCents: swapFee,
+        // #3502: the card is asked for the rise and the fee.
+        additionalAmountCents: priceDiff + swapFee,
+      });
+      const { payment, owedBeyondCashCents } = await paymentAndOwed();
+      // Once, by the ask's own arm - not again as "added to what is owed".
+      expect(payment.changeFeeCents).toBe(swapFee);
+      // So what the booking owes (worth less credit) is exactly the card ask.
+      expect(owedBeyondCashCents).toBe(priceDiff + swapFee);
+      const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+      expect(modification.newData).toMatchObject({
+        finishedStayCorrection: { feeAddedToAmountOwed: false, feeOnPrimaryInvoice: false },
+      });
+    }, 60_000);
+
+    it("MUTATION: a removal on a credit-paid stay nets against its unpaid ask, the fee recorded once", async () => {
+      await seed({
+        secondGuest: true,
+        cardSource: { first: "credit", unpaidAskForSecondGuest: true },
+        requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+      });
+      const result = await approve(OFFICER_ID);
+      const fee = CREDIT_ARM_FEE_CENTS;
+      const askLeft = 2 * STORED_NIGHT_CENTS - (2 * STORED_NIGHT_CENTS - fee);
+      expect(result, JSON.stringify(result)).toMatchObject({
+        outcome: "executed",
+        priceDiffCents: -2 * STORED_NIGHT_CENTS,
+        changeFeeCents: fee,
+        refundAmountCents: 0,
+        // #3954 (`INV-PAY-120`): the reduction cancels the unpaid ask and
+        // re-issues what it leaves - the fee.
+        additionalAmountCents: askLeft,
+      });
+      const { payment, owedBeyondCashCents } = await paymentAndOwed();
+      expect(payment.changeFeeCents).toBe(fee);
+      expect(owedBeyondCashCents).toBe(askLeft);
+      const [modification] = await prisma.bookingModification.findMany({
+        where: { bookingId: BOOKING_ID, modificationType: { not: "GUEST_ADD" } },
+      });
+      expect(modification.newData).toMatchObject({
+        unpaidAskOffsetCents: 2 * STORED_NIGHT_CENTS - fee,
+        finishedStayCorrection: { feeAddedToAmountOwed: false },
+      });
+    }, 60_000);
+
+    it("MUTATION: a removal on a card-paid stay with an unpaid ask sizes its untiered options net of the ask", async () => {
+      await seed({
+        secondGuest: true,
+        cardSource: { first: "card", unpaidAskForSecondGuest: true },
+        requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+      });
+      const result = await approve(OFFICER_ID);
+      const fee = STORED_NIGHT_CENTS;
+      expect(result, JSON.stringify(result)).toMatchObject({
+        outcome: "executed",
+        changeFeeCents: fee,
+        // The reduction (less the fee) went against the unpaid ask, so none of
+        // it is refunded: the full-reduction options were sized on what was left.
+        refundAmountCents: 0,
+        additionalAmountCents: fee,
+      });
+      const { payment, owedBeyondCashCents } = await paymentAndOwed();
+      expect(payment.changeFeeCents).toBe(fee);
+      expect(owedBeyondCashCents).toBe(fee);
+    }, 60_000);
+  });
 
   it("executes every part of a mixed request: a shorter stay, a removal and an add (decision 4)", async () => {
     await seed({

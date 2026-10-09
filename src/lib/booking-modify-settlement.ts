@@ -24,7 +24,6 @@ import {
   type RetiredAdditionalAsk,
 } from "@/lib/additional-ask-reduction";
 import { bookingOwner } from "@/lib/booking-owner";
-import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
@@ -55,7 +54,6 @@ import {
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
-import { ApiError } from "@/lib/api-error";
 import { formatCents } from "@/lib/utils";
 import {
   OrganiserChildRefundRefusedError,
@@ -112,6 +110,15 @@ export type PaymentAdjustmentResult = {
   retiredAdditionalAsks: RetiredAdditionalAsk[];
   /** #3954: increases whose waiting mint recovery this reduction closed, for the history row. */
   retiredPendingAskModificationIds: string[];
+  /**
+   * The change fee this call recorded on `Payment.changeFeeCents` (0 or the
+   * whole `changeFeeCents`): collected by a card ask, its re-issue, or a card
+   * refund's netting. A caller that would otherwise record the same fee as
+   * owed (#3750's finished-stay correction on a booking with nothing
+   * captured, `recordFinishedStayFeeOwed`) records it only when this is 0, so
+   * a fee is never on the payment twice (`INV-PAY-047`, `INV-PAY-119`).
+   */
+  changeFeeRecordedCents: number;
 };
 
 /**
@@ -146,71 +153,17 @@ export {
   calculateModificationSettlementOptions,
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
-import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement-options";
+import {
+  resolveSelectedSettlementAmount,
+  type BookingModificationSettlementOptions,
+} from "@/lib/booking-modify-settlement-options";
 
-// #3232: the settlement-required refusal moved to `booking-modify-settlement-
+// #3232: the settlement-required refusal lives in `booking-modify-settlement-
 // required.ts`, whose only import is `ApiError`, so a caller that needs to
 // RECOGNISE it does not have to pull this file's pricing/cancellation/payment
-// graph in with it. It is imported above and thrown below exactly as before; the
-// `booking-modify` barrel re-exports it from its new home, so no importer moved.
-
-function resolveSelectedSettlementAmount({
-  settlementOptions,
-  settlementMethod,
-}: {
-  settlementOptions: BookingModificationSettlementOptions | null | undefined;
-  settlementMethod: BookingModificationSettlementMethod | undefined;
-}) {
-  if (!settlementOptions) {
-    return {
-      settlementMethod: null,
-      amountCents: 0,
-      policyRetainedAmountCents: 0,
-    };
-  }
-
-  if (settlementOptions.returnsToOrganiser) {
-    if (settlementMethod === "credit") {
-      throw new ApiError(
-        "This booking was paid for by the group organiser, so a reduction goes back to the organiser's card and cannot be held as account credit.",
-        400,
-      );
-    }
-    const amountCents = settlementOptions.cardRefundAmountCents;
-    return {
-      settlementMethod: amountCents > 0 ? ("card" as const) : null,
-      amountCents,
-      policyRetainedAmountCents: Math.max(0, settlementOptions.basisAmountCents - amountCents),
-    };
-  }
-
-  if (settlementOptions.requiresSettlementMethod && !settlementMethod) {
-    throw new BookingModificationSettlementMethodRequiredError();
-  }
-
-  if (!settlementOptions.requiresSettlementMethod) {
-    return {
-      settlementMethod: null,
-      amountCents: 0,
-      policyRetainedAmountCents: settlementOptions.basisAmountCents,
-    };
-  }
-
-  const resolvedMethod = settlementMethod ?? "card";
-  const amountCents =
-    resolvedMethod === "credit"
-      ? settlementOptions.accountCreditAmountCents
-      : settlementOptions.cardRefundAmountCents;
-
-  return {
-    settlementMethod: resolvedMethod,
-    amountCents,
-    policyRetainedAmountCents: Math.max(
-      0,
-      settlementOptions.basisAmountCents - amountCents,
-    ),
-  };
-}
+// graph in with it; the `booking-modify` barrel re-exports it from there. The
+// #3948 merge moved `resolveSelectedSettlementAmount`, which throws it, beside
+// the options it reads, verbatim, to keep this module inside its size budget.
 
 export async function applyPaymentAdjustments(
   tx: Prisma.TransactionClient,
@@ -339,6 +292,7 @@ export async function applyPaymentAdjustments(
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
   let retiredAdditionalAsks: RetiredAdditionalAsk[] = [];
+  let changeFeeRecordedCents = 0;
 
   if (setAgainstAsk.offsetCents > 0 && booking.payment) {
     retiredAdditionalAsks = await retireUnpaidAskChain(tx, {
@@ -358,6 +312,7 @@ export async function applyPaymentAdjustments(
         where: { id: booking.payment.id },
         data: { changeFeeCents: { increment: changeFeeCents } },
       });
+      changeFeeRecordedCents = changeFeeCents;
     }
   }
 
@@ -438,6 +393,7 @@ export async function applyPaymentAdjustments(
         where: { id: booking.payment.id },
         data: { changeFeeCents: { increment: changeFeeCents } },
       });
+      changeFeeRecordedCents = changeFeeCents;
     }
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents;
@@ -474,6 +430,7 @@ export async function applyPaymentAdjustments(
       setAgainstAsk.offsetCents > 0
         ? unpaidAsk.recoveries.map((recovery) => recovery.bookingModificationId)
         : [],
+    changeFeeRecordedCents,
   };
 }
 
