@@ -241,6 +241,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     $executeRaw: vi.fn().mockResolvedValue(undefined),
+    // #3954 round 4: a guest add folds in a reduction's re-issue still waiting
+    // on its mint; this booking has none.
+    paymentRecoveryOperation: { findMany: vi.fn().mockResolvedValue([]) },
     // #3595: the settle asks the ledger once per booking whether its
     // confirmation is already posted, then posts through the write door.
     bookingLedgerLine: {

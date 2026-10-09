@@ -61,7 +61,7 @@ import {
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
 import {
-  isRecoveryOvertakenByLaterAsk,
+  isRecoveryReplaySettled,
   recoveryAskBeyondPaymentAskCents,
   sizeRecoveryReplayAsk,
 } from "@/lib/additional-ask-recovery-replay";
@@ -125,6 +125,8 @@ export type UnpaidPriceAskRow = {
 export type PendingAskRecovery = {
   id: string;
   bookingModificationId: string;
+  /** An increase's failed mint, or a reduction's smaller re-issue (`sizeRecoveryReplayAsk`). */
+  kind: "increase" | "reissue";
   status: PaymentRecoveryOperationStatus;
   attempts: number;
   /**
@@ -375,6 +377,7 @@ async function inFlightAskRecoveries(
       nextRetryAt: true,
       processingStartedAt: true,
       idempotencyKey: true,
+      paymentIntentId: true,
       amountCents: true,
       createdAt: true,
     },
@@ -391,6 +394,8 @@ type AskRecoveryOperation = {
   nextRetryAt: Date | null;
   processingStartedAt: Date | null;
   idempotencyKey: string;
+  /** The Stripe key until its replay mints, then that intent's id. */
+  paymentIntentId: string;
   amountCents: number;
   createdAt: Date;
 };
@@ -398,10 +403,16 @@ type AskRecoveryOperation = {
 /**
  * Asks whose mint failed and that their recovery will still mint, each sized
  * exactly as that replay will size it (`sizeRecoveryReplayAsk`), less what it
- * would carry from the rows' ask, which `unpaidChain` already counts. An
- * overtaken recovery completes without minting (`isRecoveryOvertakenByLaterAsk`),
- * so it is not owed. Null - net nothing - for a review charge's recovery (an
- * officer's money, `INV-ADDPAY-040`) or one this cannot size.
+ * would carry from the rows' ask, which `unpaidChain` already counts. A
+ * recovery with nothing left to mint (`isRecoveryReplaySettled`, the replay's
+ * own rule) is not owed. Null - net nothing - for one this cannot size.
+ *
+ * ONLY THE MEMBER'S OWN PRICE ASKS (#3954, owner decision 9 Oct 2026, "Only
+ * the member's request"). A review charge's recovery is an officer's money
+ * (`INV-ADDPAY-040`): it is left exactly as set - not counted, not closed -
+ * and the reduction still nets against the price asks beside it. (It used to
+ * turn netting off for the whole booking.) When it mints, it carries what the
+ * price ask then is, the reduction's smaller re-issue included.
  */
 function pendingAskRecoveries(
   booking: UnpaidAskBooking,
@@ -412,43 +423,43 @@ function pendingAskRecoveries(
 ): PendingAskRecovery[] | null {
   const pending: PendingAskRecovery[] = [];
   for (const operation of operations) {
-    // CLAIMED FIRST, THEN OVERTAKEN (review round 4). A retry already minting
-    // may have written its own row - which is "later" than its recovery - and
-    // still be on its way to its supersede and its invoice; skipping it as
-    // overtaken would leave it free to finish beside this reduction. So a
-    // claimed retry is always carried to the retire, which refuses or fences
-    // it; it adds nothing to the ask when a later row already carries it.
-    const claimed = operation.status === PaymentRecoveryOperationStatus.PROCESSING;
-    const overtaken = isRecoveryOvertakenByLaterAsk(operation, transactions);
-    if (overtaken && !claimed) continue;
+    if (isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)) continue;
     const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(
       operation.idempotencyKey,
     );
-    const askCents =
-      bookingModificationId && !isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)
-        ? recoveryAskBeyondPaymentAskCents(
-            sizeRecoveryReplayAsk({
-              frozenAmountCents: operation.amountCents,
-              modification: modifications.find((row) => row.id === bookingModificationId) ?? null,
-              payment,
-            }),
-          )
-        : null;
-    if (!bookingModificationId || askCents === null) {
+    const replay = bookingModificationId
+      ? sizeRecoveryReplayAsk({
+          frozenAmountCents: operation.amountCents,
+          modification: modifications.find((row) => row.id === bookingModificationId) ?? null,
+          payment,
+        })
+      : null;
+    const askCents = replay ? recoveryAskBeyondPaymentAskCents(replay) : null;
+    if (!bookingModificationId || !replay || replay.kind === "frozen" || askCents === null) {
       logger.warn(
         { bookingId: booking.id, paymentId: payment.id, operationId: operation.id },
-        "An additional ask waiting on its recovery is a review charge or cannot be sized; a reduction settles without setting against it (#3954)",
+        "An additional ask waiting on its recovery cannot be sized; a reduction settles without setting against it (#3954)",
       );
       return null;
     }
+    // CLAIMED FIRST, THEN SETTLED (review round 4). A retry already minting
+    // may have written its own row and still be on its way to its supersede
+    // and its invoice; skipping it as settled would leave it free to finish
+    // beside this reduction. So a claimed retry is always carried to the
+    // retire, which refuses or fences it; it adds nothing to the ask when a
+    // row already carries it.
+    const claimed = operation.status === PaymentRecoveryOperationStatus.PROCESSING;
+    const settled = isRecoveryReplaySettled(replay, operation, transactions);
+    if (settled && !claimed) continue;
     pending.push({
       id: operation.id,
       bookingModificationId,
+      kind: replay.kind,
       status: operation.status,
       attempts: operation.attempts,
       // Never `undefined`: an undefined filter is no filter at all in Prisma.
       processingStartedAt: operation.processingStartedAt ?? null,
-      askCents: overtaken ? 0 : askCents,
+      askCents: settled ? 0 : askCents,
     });
   }
   return pending;
@@ -515,45 +526,7 @@ export async function retireUnpaidAskChain(
     });
   }
 
-  for (const recovery of ask.recoveries) {
-    // THE RETRY NETS IT OFF (#3954, owner decision 9 Oct 2026): an ask whose
-    // mint failed is closed here, under the edit's locks, and what is left of
-    // it is minted after commit with the rest (`reissueUnpaidAdditionalAsk`).
-    // A retry claimed moments ago is minting it right now and refuses the edit
-    // for a moment: closing the row under it would leave its old figure live
-    // beside the smaller ask. An older claim is a stalled or dead worker - it
-    // is closed like any other, and the fence below is what stops it writing.
-    if (
-      recovery.status === PaymentRecoveryOperationStatus.PROCESSING &&
-      (recovery.processingStartedAt === null ||
-        now.getTime() - recovery.processingStartedAt.getTime() < RECENT_RECOVERY_CLAIM_MS)
-    ) {
-      throw new AdditionalAskChangedDuringReductionError(ADDITIONAL_ASK_BEING_RAISED_MESSAGE);
-    }
-    // THE FENCE: exactly the state read. Only a claim moves `attempts`, and a
-    // claimed runner re-stamps `processingStartedAt` in the same statement that
-    // lets it write its row (`holdAdditionalIntentRecoveryClaim`). So a retry
-    // that claimed or wrote since the read rolls this edit back, and one that
-    // comes after finds nothing to claim or to write.
-    const closed = await tx.paymentRecoveryOperation.updateMany({
-      where: {
-        id: recovery.id,
-        status: recovery.status,
-        attempts: recovery.attempts,
-        processingStartedAt: recovery.processingStartedAt,
-      },
-      data: {
-        status: PaymentRecoveryOperationStatus.SUCCEEDED,
-        nextRetryAt: null,
-        processingStartedAt: null,
-        succeededAt: now,
-        lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
-      },
-    });
-    if (closed.count !== 1) {
-      throw new AdditionalAskChangedDuringReductionError();
-    }
-  }
+  await closeWaitingAskRecoveries(tx, ask.recoveries, now);
 
   const intentIds = ask.rows.flatMap((row) =>
     row.stripePaymentIntentId ? [row.stripePaymentIntentId] : [],
@@ -588,6 +561,126 @@ export async function retireUnpaidAskChain(
 
   await reconcilePaymentAggregates({ paymentId, store: tx });
   return retired;
+}
+
+/**
+ * Close asks still waiting on their failed mint's recovery, under the caller's
+ * locks, so the retry cannot mint their old figure: the reduction that nets
+ * them off (`retireUnpaidAskChain`) and the increase that folds a waiting
+ * re-issue in (`foldWaitingReissuedAsks`). Throws
+ * `AdditionalAskChangedDuringReductionError` (409) when one moved since it was
+ * read, or was claimed moments ago and is minting now.
+ */
+async function closeWaitingAskRecoveries(
+  tx: Pick<Prisma.TransactionClient, "paymentRecoveryOperation">,
+  recoveries: readonly PendingAskRecovery[],
+  now: Date,
+  note: string = PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
+): Promise<void> {
+  for (const recovery of recoveries) {
+    // THE RETRY NETS IT OFF (#3954, owner decision 9 Oct 2026): an ask whose
+    // mint failed is closed here, under the edit's locks, and what is left of
+    // it is minted after commit with the rest (`reissueUnpaidAdditionalAsk`).
+    // A retry claimed moments ago is minting it right now and refuses the edit
+    // for a moment: closing the row under it would leave its old figure live
+    // beside the smaller ask. An older claim is a stalled or dead worker - it
+    // is closed like any other, and the fence below is what stops it writing.
+    if (
+      recovery.status === PaymentRecoveryOperationStatus.PROCESSING &&
+      (recovery.processingStartedAt === null ||
+        now.getTime() - recovery.processingStartedAt.getTime() < RECENT_RECOVERY_CLAIM_MS)
+    ) {
+      throw new AdditionalAskChangedDuringReductionError(ADDITIONAL_ASK_BEING_RAISED_MESSAGE);
+    }
+    // THE FENCE: exactly the state read. Only a claim moves `attempts`, and a
+    // claimed runner re-stamps `processingStartedAt` in the same statement that
+    // lets it write its row (`holdAdditionalIntentRecoveryClaim`). So a retry
+    // that claimed or wrote since the read rolls this edit back, and one that
+    // comes after finds nothing to claim or to write.
+    const closed = await tx.paymentRecoveryOperation.updateMany({
+      where: {
+        id: recovery.id,
+        status: recovery.status,
+        attempts: recovery.attempts,
+        processingStartedAt: recovery.processingStartedAt,
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        processingStartedAt: null,
+        succeededAt: now,
+        lastError: note,
+      },
+    });
+    if (closed.count !== 1) {
+      throw new AdditionalAskChangedDuringReductionError();
+    }
+  }
+}
+
+/** What a waiting re-issue an increase folded in says about itself (#3954 round 4). */
+export const WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE =
+  "Not minted: a later price increase asked for this re-issued card request together with its own extra, on one fresh ask (#3954).";
+
+/**
+ * #3954 review round 4: A LATER INCREASE ASKS FOR A WAITING RE-ISSUE TOO.
+ *
+ * A reduction's smaller re-issue waits on its recovery until it is minted - for
+ * the door's one-minute grace, or longer when that mint failed. Nothing on the
+ * `Payment` shows it, so an increase sized off the `Payment` alone
+ * (`sizeAdditionalAsk`) asked only for its own money; its mint then overtook
+ * the re-issue and, under #3340's rule, the re-issue's whole figure was lost -
+ * or, inside the grace, the door's re-issue minted after it and superseded the
+ * increase's ask instead. The increase now folds every waiting re-issue into
+ * its own ask as carried money (`INV-PAY-098`) and closes it under its locks,
+ * fenced exactly as a reduction closes one (`closeWaitingAskRecoveries`), so
+ * one fresh ask asks for both. Returns what it folded, for `sizeAdditionalAsk`.
+ *
+ * Re-issues only. An increase's own failed mint keeps #3340's rule, under
+ * which a later ask overtakes it; that is not this change's to move.
+ */
+export async function foldWaitingReissuedAsks(
+  tx: UnpaidAskDb,
+  booking: UnpaidAskBooking,
+  now: Date = new Date(),
+): Promise<number> {
+  const payment = booking.payment;
+  if (!payment) return 0;
+  const operations = await inFlightAskRecoveries(tx, booking, payment);
+  if (operations.length === 0) return 0;
+  const [transactions, modifications] = await Promise.all([
+    tx.paymentTransaction.findMany({
+      where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
+      select: { kind: true, createdAt: true, stripePaymentIntentId: true },
+    }),
+    tx.bookingModification.findMany({
+      where: { bookingId: booking.id },
+      select: { id: true, priceDiffCents: true, changeFeeCents: true },
+    }),
+  ]);
+  const waiting: PendingAskRecovery[] = [];
+  for (const operation of operations) {
+    if (isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)) continue;
+    const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(operation.idempotencyKey);
+    if (!bookingModificationId) continue;
+    const replay = sizeRecoveryReplayAsk({
+      frozenAmountCents: operation.amountCents,
+      modification: modifications.find((row) => row.id === bookingModificationId) ?? null,
+      payment,
+    });
+    if (replay.kind !== "reissue" || isRecoveryReplaySettled(replay, operation, transactions)) continue;
+    waiting.push({
+      id: operation.id,
+      bookingModificationId,
+      kind: replay.kind,
+      status: operation.status,
+      attempts: operation.attempts,
+      processingStartedAt: operation.processingStartedAt ?? null,
+      askCents: replay.frozenCents,
+    });
+  }
+  await closeWaitingAskRecoveries(tx, waiting, now, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE);
+  return waiting.reduce((sum, recovery) => sum + recovery.askCents, 0);
 }
 
 /**

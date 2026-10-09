@@ -97,7 +97,7 @@ const {
   setReductionAgainstUnpaidAsk,
   NO_ADDITIONAL_ASK,
 } = await import("@/lib/additional-payment-ask");
-const { isRecoveryOvertakenByLaterAsk, recoveryAskBeyondPaymentAskCents, sizeRecoveryReplayAsk } = await import(
+const { isRecoveryOvertakenByLaterAsk, isRecoveryReplaySettled, recoveryAskBeyondPaymentAskCents, sizeRecoveryReplayAsk } = await import(
   "@/lib/additional-ask-recovery-replay"
 );
 const {
@@ -105,7 +105,9 @@ const {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
 } = await import("@/lib/payment-recovery-keys");
 const { ApiError } = await import("@/lib/api-error");
-const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
+const { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } = await import(
+  "@/lib/additional-ask-reduction"
+);
 const { ADDITIONAL_ASK_BEING_RAISED_MESSAGE, AdditionalAskChangedDuringReductionError } = await import(
   "@/lib/additional-ask-reduction-error"
 );
@@ -772,7 +774,6 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
   });
 
   it.each([
-    ["a review charge's recovery - an officer's money", { idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod_increase") }],
     ["a recovery whose edit cannot be read", { idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_elsewhere") }],
   ])("%s is not guessed at - the reduction settles as before", async (_label, overrides) => {
     state.recoveries = [recoveryRow(overrides)];
@@ -781,6 +782,98 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
     expect(result.unpaidAskOffsetCents).toBe(0);
     expect(result.refundAmountCents).toBe(2_000);
     expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (decision B, 9 Oct): an officer's waiting review charge is left exactly as set - the reduction nets only against the member's own price ask beside it", async () => {
+    // The member's own $50 price ask is a live row; an officer's review charge
+    // for the same booking waits on its mint's retry.
+    state.rows = [askRow()];
+    state.recoveries = [
+      recoveryRow({ id: "op_review_charge", idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod_increase") }),
+    ];
+    const result = await adjust(grownBooking(), -2_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(2_000);
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.additionalAsk.amountCents).toBe(3_000);
+    expect(transactionUpdateMany.mock.calls.map(([call]) => call.where.id)).toEqual([ASK_ROW_ID]);
+    // Not counted, not closed: the officer's charge mints as set.
+    expect(recoveryUpdateMany).not.toHaveBeenCalled();
+    expect(result.retiredPendingAskModificationIds).toEqual([]);
+  });
+
+  it("decision B: with only a review charge waiting there is no price ask to net, and the reduction settles as before", async () => {
+    state.recoveries = [
+      recoveryRow({ idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod_increase") }),
+    ];
+    const result = await adjust(awaitingRetryBooking(), -2_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(0);
+    expect(result.refundAmountCents).toBe(2_000);
+    expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (round 4): a waiting re-issue a later minter overtook without folding it in is still owed, all of it", async () => {
+    // A reduction re-issued $30 (its mint failed); a review charge later minted
+    // $20 for its own money alone. The replay will carry that $20 and ask $50.
+    state.modifications = [{ id: "mod_reduction", priceDiffCents: -2_000, changeFeeCents: 0 }];
+    state.rows = [askRow({ amountCents: 2_000, createdAt: new Date("2026-06-22T00:00:00.000Z") })];
+    state.recoveries = [
+      recoveryRow({
+        idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_reduction"),
+        amountCents: 3_000,
+        paymentIntentId: "mod_reissued_ask_mod_reduction",
+      }),
+    ];
+    const booking = grownBooking();
+    Object.assign(booking.payment!, { additionalAmountCents: 2_000 });
+    const result = await adjust(booking, -1_000);
+
+    expect(result.unpaidAskOffsetCents).toBe(1_000);
+    expect(result.additionalAsk.amountCents).toBe(4_000);
+    expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe("round 4: a later increase folds a waiting re-issue into its own ask", () => {
+    function waitingReissue(overrides: Record<string, unknown> = {}) {
+      state.rows = [];
+      state.modifications = [{ id: "mod_reduction", priceDiffCents: -2_000, changeFeeCents: 0 }];
+      state.recoveries = [
+        recoveryRow({
+          id: "op_reissue",
+          idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_reduction"),
+          amountCents: 3_000,
+          paymentIntentId: "mod_reissued_ask_mod_reduction",
+          ...overrides,
+        }),
+      ];
+    }
+
+    it("MUTATION: asks for its own $10 and the waiting $30 on one fresh ask, carried, and closes the re-issue's recovery", async () => {
+      waitingReissue();
+      const result = await adjust(awaitingRetryBooking(), 1_000);
+
+      expect(result.additionalAsk.amountCents).toBe(4_000);
+      expect(result.additionalAsk.carriedCents).toBe(3_000);
+      expect(recoveryUpdateMany).toHaveBeenCalledWith({
+        where: { id: "op_reissue", status: "FAILED", attempts: 1, processingStartedAt: null },
+        data: expect.objectContaining({ status: "SUCCEEDED", lastError: WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE }),
+      });
+    });
+
+    it("folds nothing for an increase's own failed mint - #3340's overtake rule is unchanged", async () => {
+      state.rows = [];
+      state.recoveries = [recoveryRow()];
+      const result = await adjust(awaitingRetryBooking(), 1_000);
+
+      expect(result.additionalAsk.amountCents).toBe(1_000);
+      expect(recoveryUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: a re-issue claimed moments ago refuses the increase for a moment rather than mint beside it", async () => {
+      waitingReissue({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:59:30.000Z") });
+      await expect(adjust(awaitingRetryBooking(), 1_000)).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
+    });
   });
 
   it("MUTATION: a retry that claimed the row since it was read fails the fence and rolls the whole edit back (409)", async () => {
@@ -876,10 +969,26 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
     expect(recoveryAskBeyondPaymentAskCents(replay)).toBe(7_000);
   });
 
-  it("a reduction's re-issue is its frozen figure, all of it beyond the ask it retired", () => {
+  it("MUTATION (round 4): a reduction's re-issue carries its frozen figure plus any later ask it will supersede, and only the frozen figure is beyond that ask", () => {
     const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0 }, payment: unpaid });
     expect(replay.kind).toBe("reissue");
+    expect(replay.kind !== "frozen" && [replay.ask.amountCents, replay.ask.carriedCents]).toEqual([10_000, 10_000]);
     expect(recoveryAskBeyondPaymentAskCents(replay)).toBe(3_000);
+    // With no later ask - the reduction retired every ask before it - it is the frozen figure alone.
+    const alone = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0 }, payment: null });
+    expect(alone.kind !== "frozen" && alone.ask.amountCents).toBe(3_000);
+  });
+
+  it("MUTATION (round 4): a re-issue is settled only by its own row; an increase by any later ask", () => {
+    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own" };
+    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") };
+    const reissue = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0 }, payment: null });
+    const increase = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: 3_000, changeFeeCents: 0 }, payment: null });
+    const foreign = [{ ...later, stripePaymentIntentId: "pi_later_edit" }];
+    const own = [{ ...later, stripePaymentIntentId: "pi_own" }];
+    expect(isRecoveryReplaySettled(reissue, operation, foreign)).toBe(false);
+    expect(isRecoveryReplaySettled(reissue, operation, own)).toBe(true);
+    expect(isRecoveryReplaySettled(increase, operation, foreign)).toBe(true);
   });
 
   it.each([null, { priceDiffCents: 0, changeFeeCents: 0 }])("no readable net (%o) replays the frozen figure, which nothing nets against", (modification) => {

@@ -226,14 +226,23 @@ export function sizeAdditionalAsk({
   priceDiffCents,
   changeFeeCents,
   payment,
+  waitingReissuedAskCents = 0,
 }: {
   priceDiffCents: number;
   changeFeeCents: number;
   payment: AdditionalAskPayment | null | undefined;
+  /**
+   * #3954 review round 4: a reduction's smaller re-issued ask still waiting on
+   * its mint, which this increase folds in and closes
+   * (`foldWaitingReissuedAsks`) - carried like the `Payment`'s live ask, since
+   * this mint is what asks for it now. Only the edit doors pass it; the
+   * replay's own sizing never does.
+   */
+  waitingReissuedAskCents?: number;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
-    carriedCents: outstandingAdditionalAskCents(payment),
+    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
   });
 }
 

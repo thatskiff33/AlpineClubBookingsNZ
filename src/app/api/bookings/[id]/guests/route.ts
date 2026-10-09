@@ -70,6 +70,7 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reduction";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
@@ -1071,6 +1072,9 @@ export async function POST(
           // settlement and to the member's email for the same reason.
           changeFeeCents: 0,
           payment: booking.payment,
+          // #3954 round 4: a reduction's re-issue still waiting on its mint is
+          // asked for on this one fresh ask, and its recovery closed.
+          waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking),
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {

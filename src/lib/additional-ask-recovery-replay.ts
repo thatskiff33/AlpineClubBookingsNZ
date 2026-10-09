@@ -8,6 +8,7 @@
  * client, so the replay, the reduction and the tests all import it.
  */
 import {
+  outstandingAdditionalAskCents,
   reissueUnpaidAdditionalAsk,
   sizeAdditionalAsk,
   type AdditionalAsk,
@@ -28,12 +29,17 @@ export interface RecoveryReplayModification {
  *   (`sizeAdditionalAsk`), so a frozen moment never over-asks.
  * - `reissue`: a reduction's smaller re-issued ask, frozen at that edit and all
  *   carried (`reissueUnpaidAdditionalAsk`) - the ask it replaced was retired in
- *   that edit's transaction, so nothing on the `Payment` re-derives it.
+ *   that edit's transaction, so nothing on the `Payment` re-derives it. PLUS
+ *   the unpaid balance of any later ask on the `Payment` (#3954 review round 4):
+ *   a later minter that did not fold this waiting re-issue in asked only for its
+ *   own money, and the replay supersedes that ask, so it carries it. With no
+ *   later ask the balance is 0 - the reduction retired every ask before it.
  * - `frozen`: no modification to read, or one whose own net is zero, which an
  *   ordinary edit's row never is. The frozen figure, with no provenance.
  */
 export type RecoveryReplayAsk =
-  | { kind: "increase" | "reissue"; ask: AdditionalAsk }
+  | { kind: "increase"; ask: AdditionalAsk }
+  | { kind: "reissue"; ask: AdditionalAsk; frozenCents: number }
   | { kind: "frozen"; amountCents: number };
 
 export function sizeRecoveryReplayAsk({
@@ -54,7 +60,10 @@ export function sizeRecoveryReplayAsk({
   if (ownCents < 0) {
     return {
       kind: "reissue",
-      ask: reissueUnpaidAdditionalAsk({ askLeftCents: frozenAmountCents }),
+      ask: reissueUnpaidAdditionalAsk({
+        askLeftCents: frozenAmountCents + outstandingAdditionalAskCents(payment),
+      }),
+      frozenCents: frozenAmountCents,
     };
   }
   return {
@@ -79,7 +88,7 @@ export function recoveryAskBeyondPaymentAskCents(
   if (replay.kind === "frozen") return null;
   return replay.kind === "increase"
     ? replay.ask.amountCents - replay.ask.carriedCents
-    : replay.ask.amountCents;
+    : replay.frozenCents;
 }
 
 /**
@@ -96,4 +105,35 @@ export function isRecoveryOvertakenByLaterAsk(
       transaction.kind === "ADDITIONAL" &&
       transaction.createdAt > operation.createdAt,
   );
+}
+
+/**
+ * WHETHER A RECOVERY HAS NOTHING LEFT TO MINT - the replay's rule and a price
+ * reduction's, read from one place (#3954 review round 4).
+ *
+ * An INCREASE's recovery is done once any later ask exists: that ask re-priced
+ * the booking from the `Payment` as it stood (`isRecoveryOvertakenByLaterAsk`,
+ * #3340's rule, unchanged).
+ *
+ * A RE-ISSUE's is done only once it has written ITS OWN row - the row carrying
+ * the intent its replay recorded on the recovery
+ * (`holdAdditionalIntentRecoveryClaim`, `writeReissuedAskUnderRecovery`). A
+ * later ask from a minter that did not fold the waiting re-issue in
+ * (`foldWaitingReissuedAsks`) asked only for its own money, so treating it as
+ * an overtake would drop the re-issue's whole figure; the replay instead
+ * carries that later ask and supersedes it (`sizeRecoveryReplayAsk`).
+ */
+export function isRecoveryReplaySettled(
+  replay: RecoveryReplayAsk,
+  operation: { createdAt: Date; paymentIntentId: string },
+  transactions: readonly { kind: string; createdAt: Date; stripePaymentIntentId: string | null }[],
+): boolean {
+  if (replay.kind === "reissue") {
+    return transactions.some(
+      (transaction) =>
+        transaction.kind === "ADDITIONAL" &&
+        transaction.stripePaymentIntentId === operation.paymentIntentId,
+    );
+  }
+  return isRecoveryOvertakenByLaterAsk(operation, transactions);
 }

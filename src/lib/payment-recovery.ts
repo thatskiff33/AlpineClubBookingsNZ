@@ -40,7 +40,7 @@ import {
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
-import { isRecoveryOvertakenByLaterAsk, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
@@ -2791,14 +2791,52 @@ async function processCreateAdditionalPaymentIntentOperation(
     );
   }
 
+  /**
+   * #3181: THE EDIT'S SIGNED COMPONENTS, READ BEFORE ANYTHING IS WRITTEN.
+   *
+   * They are only needed at the very bottom of this function, to bill the
+   * supplementary invoice the inline dispatch deferred - but the read has to
+   * happen HERE, and the position is the point (#3181 fix round). Below the
+   * `upsertPaymentIntentTransaction` this replay is about to perform, a transient
+   * database error on this one query throws into `failPaymentRecoveryOperation`,
+   * and the retry it buys cannot work: the ADDITIONAL transaction now exists, so
+   * the "a LATER edit superseded this one" check below would find the row THIS
+   * replay wrote, read it as a supersession, and complete the operation having
+   * done nothing at all. A $50 guest add would be collected with no invoice
+   * behind it and the recovery row would read SUCCEEDED.
+   *
+   * Read here instead and a throw costs nothing: no intent has been minted, no
+   * transaction row written, and the next attempt re-runs the whole replay -
+   * which is a real retry, not a self-supersession. Nothing between here and the
+   * bill writes these two columns, so the value is the same one the old position
+   * read. Wrapping the late read in its own `catch` was the alternative; it
+   * degrades a transient blip to a manual repair, where this recovers by itself.
+   */
+  const modificationToBill = bookingModificationId
+    ? await prisma.bookingModification.findUnique({
+        where: { id: bookingModificationId },
+        select: { priceDiffCents: true, changeFeeCents: true },
+      })
+    : null;
+
+  // #3954 review round 4: sized before the overtake check, because a
+  // re-issued ask's replay is settled by a different rule (below).
+  const replay = sizeRecoveryReplayAsk({
+    frozenAmountCents: operation.amountCents,
+    modification: modificationToBill,
+    payment,
+  });
+  const reissuesReducedAsk = replay.kind === "reissue";
+
   // A later edit already created a fresh additional intent: it superseded
   // this modification's collectable, so resurrecting ours would offer the
   // member two instruments for overlapping money. The later edit repriced
-  // from current state, so its intent is the whole truth.
-  // The rule a price reduction reads too, before it nets this recovery off
-  // (`isRecoveryOvertakenByLaterAsk`, #3954).
+  // from current state, so its intent is the whole truth. A RE-ISSUED ask is
+  // the exception: it is settled only by its own row, and a later ask that did
+  // not fold it in is carried and superseded (`isRecoveryReplaySettled`, #3954).
+  // The rule a price reduction reads too, before it nets this recovery off.
   if (
-    isRecoveryOvertakenByLaterAsk(operation, payment.transactions) ||
+    isRecoveryReplaySettled(replay, operation, payment.transactions) ||
     operation.amountCents <= 0
   ) {
     await completePaymentRecoveryOperation(operation.id);
@@ -2821,33 +2859,6 @@ async function processCreateAdditionalPaymentIntentOperation(
     return;
   }
 
-  /**
-   * #3181: THE EDIT'S SIGNED COMPONENTS, READ BEFORE ANYTHING IS WRITTEN.
-   *
-   * They are only needed at the very bottom of this function, to bill the
-   * supplementary invoice the inline dispatch deferred - but the read has to
-   * happen HERE, and the position is the point (#3181 fix round). Below the
-   * `upsertPaymentIntentTransaction` this replay is about to perform, a transient
-   * database error on this one query throws into `failPaymentRecoveryOperation`,
-   * and the retry it buys cannot work: the ADDITIONAL transaction now exists, so
-   * the "a LATER edit superseded this one" check above would find the row THIS
-   * replay wrote, read it as a supersession, and complete the operation having
-   * done nothing at all. A $50 guest add would be collected with no invoice
-   * behind it and the recovery row would read SUCCEEDED.
-   *
-   * Read here instead and a throw costs nothing: no intent has been minted, no
-   * transaction row written, and the next attempt re-runs the whole replay -
-   * which is a real retry, not a self-supersession. Nothing between here and the
-   * bill writes these two columns, so the value is the same one the old position
-   * read. Wrapping the late read in its own `catch` was the alternative; it
-   * degrades a transient blip to a manual repair, where this recovers by itself.
-   */
-  const modificationToBill = bookingModificationId
-    ? await prisma.bookingModification.findUnique({
-        where: { id: bookingModificationId },
-        select: { priceDiffCents: true, changeFeeCents: true },
-      })
-    : null;
 
   const member = bookingOwner(payment.booking).member;
   let customerId = payment.stripeCustomerId ?? undefined;
@@ -2891,12 +2902,6 @@ async function processCreateAdditionalPaymentIntentOperation(
   // this edit's own, and frozen at the edit - the ask it replaced was retired in
   // that edit's transaction, so there is nothing on the Payment to re-derive it
   // from.
-  const replay = sizeRecoveryReplayAsk({
-    frozenAmountCents: operation.amountCents,
-    modification: modificationToBill,
-    payment,
-  });
-  const reissuesReducedAsk = replay.kind === "reissue";
   if (modificationToBill && replay.kind === "frozen") {
     // Belt and braces, and deliberately NOT a completion. An ordinary edit only
     // reaches this processor because its own net was positive, so a zero net

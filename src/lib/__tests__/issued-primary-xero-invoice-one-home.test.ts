@@ -541,6 +541,20 @@ describe("no edit door states the rule a second time", () => {
     ).toEqual([]);
   });
 
+  it("INV-PAY-119: every edit door that sizes an increase's ask folds in a reduction's waiting re-issue (#3954 round 4)", () => {
+    const sizers = filesMentioning(
+      sourceFilesUnder("src").filter(
+        (file) => !["src/lib/additional-payment-ask.ts", "src/lib/additional-ask-recovery-replay.ts"].includes(file),
+      ),
+      /\bsizeAdditionalAsk\(/,
+    );
+    expect(sizers.length).toBeGreaterThan(0);
+    expect(
+      sizers.filter((file) => !/waitingReissuedAskCents:\s*await foldWaitingReissuedAsks\(/.test(read(file))),
+      "INV-PAY-119: pass waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking), or the increase's mint overtakes a waiting re-issue and its money is lost.",
+    ).toEqual([]);
+  });
+
   it("INV-PAY-119: every door that records a reduction's unpaid-ask offset makes its re-issued ask durable in the same transaction (#3954 round 4)", () => {
     const recorders = filesMentioning(
       sourceFilesUnder("src").filter((file) => file !== "src/lib/unpaid-ask-offset-marker.ts"),

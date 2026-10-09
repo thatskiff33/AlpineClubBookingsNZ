@@ -292,6 +292,9 @@ function buildTx(
   }));
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    // #3954 round 4: an increase folds in a reduction's re-issue still waiting
+    // on its mint; this booking has none.
+    paymentRecoveryOperation: { findMany: vi.fn().mockResolvedValue([]) },
     member: { findMany: fenceMemberFindMany() },
     // Per-lodge advisory capacity lock (acquireLodgeCapacityLock) uses
     // $executeRaw, not $executeRawUnsafe — pg_advisory_xact_lock returns void

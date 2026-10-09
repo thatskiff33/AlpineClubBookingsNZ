@@ -18,6 +18,7 @@ import {
 } from "@/lib/additional-payment-ask";
 import {
   assertReductionReadForNet,
+  foldWaitingReissuedAsks,
   retireUnpaidAskChain,
   type ReductionAgainstUnpaidAsk,
   type RetiredAdditionalAsk,
@@ -416,6 +417,9 @@ export async function applyPaymentAdjustments(
           priceDiffCents,
           changeFeeCents,
           payment: booking.payment,
+          // #3954 round 4: a reduction's re-issue still waiting on its mint is
+          // asked for on this one fresh ask, and its recovery closed.
+          waitingReissuedAskCents: await foldWaitingReissuedAsks(tx, booking),
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else {
