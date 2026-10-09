@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AdditionalAsk } from "@/lib/additional-payment-ask";
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 
 const h = vi.hoisted(() => ({
   calls: [] as string[],
@@ -29,7 +29,7 @@ const { queueReductionAskFollowUps, queueUnpaidAskBilledOffsetNote } = await imp
 const { UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE } = await import("@/lib/xero-review-task-key");
 
 const tx = { marker: "the edit's transaction" } as unknown as Parameters<typeof queueUnpaidAskBilledOffsetNote>[0];
-const NO_ASK = { amountCents: 0, carriedCents: 0, reissuesUnpaidAsk: false } as unknown as AdditionalAsk;
+const NO_ASK = NO_ADDITIONAL_ASK;
 
 beforeEach(() => {
   vi.clearAllMocks();
