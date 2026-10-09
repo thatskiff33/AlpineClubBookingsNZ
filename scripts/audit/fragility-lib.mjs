@@ -242,3 +242,60 @@ export function pullUrl(number) {
 export function commitUrl(sha) {
   return `https://github.com/${REPO}/commit/${sha}`;
 }
+
+/**
+ * Parse one `issues_get` reply from Sekreton's integrations endpoint (the
+ * fallback when no GITHUB_TOKEN reaches the task container). The reply is
+ * text: a header block (`Issue: <ref> — <title>`, `State:`, `Labels:`, …), a
+ * blank line, the body, then `--- Comment by @who (ROLE) at <ISO>` blocks.
+ *
+ * @returns {{ number, title, state, labels, body, comments: Array<{ author, createdAt, body }> }}
+ */
+export function parseIntegrationsIssue(text) {
+  const lines = text
+    .replace(/<\/?untrusted-issue-content>/g, "")
+    .replace(/^\n+/, "")
+    .split("\n");
+  const header = /^Issue: \S+#(\d+) — (.*)$/.exec(lines[0] ?? "");
+  if (!header) throw new Error(`unrecognised issues_get reply: ${text.slice(0, 120)}`);
+  const field = (name) => lines.find((line) => line.startsWith(`${name}: `))?.slice(name.length + 2) ?? "";
+  const labels = field("Labels");
+  const blank = lines.indexOf("");
+  const rest = blank === -1 ? [] : lines.slice(blank + 1);
+  const comments = [];
+  const bodyLines = [];
+  let current = null;
+  for (const line of rest) {
+    const comment = /^--- Comment by @(\S+) \([^)]*\) at (\S+)$/.exec(line);
+    if (comment) {
+      current = { author: comment[1], createdAt: new Date(comment[2]).toISOString(), lines: [] };
+      comments.push(current);
+    } else (current ? current.lines : bodyLines).push(line);
+  }
+  return {
+    number: Number(header[1]),
+    title: header[2],
+    state: field("State"),
+    labels: labels && labels !== "none" ? labels.split(", ") : [],
+    body: bodyLines.join("\n").trim(),
+    comments: comments.map(({ lines: body, ...comment }) => ({ ...comment, body: body.join("\n").trim() })),
+  };
+}
+
+/**
+ * Estimated creation time of issue/PR `number` when the source gives none.
+ * Numbers are handed out in creation order, so any later number's merge time
+ * is an upper bound; the earliest such bound is the estimate. A first comment
+ * is also an upper bound, and wins when it is earlier.
+ *
+ * @param {number} number
+ * @param {Array<{ number: number, date: string }>} anchors PR merges, any order
+ * @param {string | null} firstComment ISO time of the issue's first comment
+ */
+export function estimateCreatedAt(number, anchors, firstComment = null) {
+  let bound = firstComment;
+  for (const anchor of anchors) {
+    if (anchor.number >= number && (bound === null || anchor.date < bound)) bound = anchor.date;
+  }
+  return bound;
+}

@@ -5,16 +5,19 @@ import {
   changedOldRanges,
   closingReferences,
   concernDifferentIssues,
+  estimateCreatedAt,
   isBlameIgnoredPath,
   isExcludedEarlierCommit,
   isFixPr,
   isRateLimited,
   issueNumbersFromBranch,
   parseFixScope,
+  parseIntegrationsIssue,
   parseMergeSubject,
   repeatMentions,
   revertedCommit,
 } from "./fragility-lib.mjs";
+import { areasForPair } from "./fragility-areas.mjs";
 import { buildRepeats } from "./fragility-signals.mjs";
 
 /**
@@ -240,5 +243,82 @@ describe("buildRepeats", () => {
     });
     expect(repeats).toHaveLength(1);
     expect(repeats[0]).toMatchObject({ signals: ["revert"], earlier: { unit: "pr-61" }, sinceAudit: false });
+  });
+});
+
+describe("Sekreton integrations fallback", () => {
+  const reply = [
+    "<untrusted-issue-content>",
+    "Issue: github:thatskiff33/AlpineClubBookingsNZ#2400 — Cancelling one member credits the whole family",
+    "State: closed",
+    "Labels: bug, payments",
+    "Author: @thatskiff33-agents (COLLABORATOR)",
+    "Updated: 2026-07-31T22:01:20+00:00",
+    "URL: https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2400",
+    "",
+    "## What happens today",
+    "",
+    "Regressed again after #2311.",
+    "",
+    "--- Comment by @thatskiff33 (OWNER) at 2026-07-31T07:39:23Z",
+    "First reply.",
+    "--- Comment by @thatskiff33-agents (COLLABORATOR) at 2026-07-31T10:34:50Z",
+    "Second reply.",
+    "</untrusted-issue-content>",
+  ].join("\n");
+
+  it("parses the header, body and timestamped comments of an issues_get reply", () => {
+    const issue = parseIntegrationsIssue(reply);
+    expect(issue).toMatchObject({ number: 2400, title: "Cancelling one member credits the whole family", state: "closed", labels: ["bug", "payments"] });
+    expect(issue.body).toBe("## What happens today\n\nRegressed again after #2311.");
+    expect(issue.comments).toEqual([
+      { author: "thatskiff33", createdAt: "2026-07-31T07:39:23.000Z", body: "First reply." },
+      { author: "thatskiff33-agents", createdAt: "2026-07-31T10:34:50.000Z", body: "Second reply." },
+    ]);
+  });
+
+  it("reads \"Labels: none\" as no labels and rejects an unrecognised reply", () => {
+    expect(parseIntegrationsIssue(reply.replace("Labels: bug, payments", "Labels: none")).labels).toEqual([]);
+    expect(() => parseIntegrationsIssue("No issues match that search.")).toThrow(/unrecognised/);
+  });
+
+  it("estimates creation as the earliest later-numbered merge or first comment", () => {
+    const anchors = [
+      { number: 10, date: "2026-05-01T00:00:00.000Z" },
+      { number: 20, date: "2026-04-20T00:00:00.000Z" },
+      { number: 30, date: "2026-06-01T00:00:00.000Z" },
+    ];
+    expect(estimateCreatedAt(15, anchors)).toBe("2026-04-20T00:00:00.000Z");
+    expect(estimateCreatedAt(25, anchors)).toBe("2026-06-01T00:00:00.000Z");
+    expect(estimateCreatedAt(25, anchors, "2026-05-15T00:00:00.000Z")).toBe("2026-05-15T00:00:00.000Z");
+    expect(estimateCreatedAt(40, anchors)).toBeNull();
+  });
+});
+
+describe("proposed business areas", () => {
+  const side = (key, extra) => ({ key, scopes: [], issues: [], files: [], ...extra });
+  const entry = (earlier, later, evidence = []) => ({ earlier, later, evidence, signals: [] });
+
+  it("maps by scope on either side, but by label only when both sides carry it", () => {
+    const labels = new Map([
+      [10, ["payments"]],
+      [20, ["payments"]],
+      [30, ["booking"]],
+    ]);
+    const byScope = areasForPair(entry(side("pr-1", { scopes: ["xero"] }), side("pr-2")), labels);
+    expect(byScope).toEqual([{ area: "xero", via: "scope xero" }]);
+    const bothLabelled = areasForPair(entry(side("pr-1", { issues: [10] }), side("pr-2", { issues: [20] })), labels);
+    expect(bothLabelled.map((match) => match.area)).toEqual(["payments"]);
+    expect(areasForPair(entry(side("pr-1", { issues: [10] }), side("pr-2", { issues: [30] })), labels)).toEqual([]);
+  });
+
+  it("uses shared files only as a fallback, and never test files", () => {
+    const shared = { files: ["src/lib/xero-sync.ts", "src/lib/email/booking.ts"] };
+    const fallback = areasForPair(entry(side("pr-1", shared), side("pr-2", shared)), new Map());
+    expect(fallback.map((match) => match.area).sort()).toEqual(["email", "xero"]);
+    const scoped = areasForPair(entry(side("pr-1", { ...shared, scopes: ["admin"] }), side("pr-2", shared)), new Map());
+    expect(scoped.map((match) => match.area)).toEqual(["admin"]);
+    const testsOnly = { files: ["src/lib/__tests__/xero-sync.test.ts"] };
+    expect(areasForPair(entry(side("pr-1", testsOnly), side("pr-2", testsOnly)), new Map())).toEqual([]);
   });
 });

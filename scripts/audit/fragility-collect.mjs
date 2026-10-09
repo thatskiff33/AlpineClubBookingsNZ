@@ -8,12 +8,19 @@
  *
  * Writes `tmp/fragility/*.json` (git-ignored) under the checkout root, wherever
  * it is run from. Every run rebuilds every file it owns from scratch, so a
- * later task in a fresh checkout just runs it again.
+ * later task in a fresh checkout just runs it again — except the integrations
+ * fallback's `integrations-cache.json`, which a rerun resumes from (delete it
+ * to re-read every issue).
  *
  * 1. github.json  — every issue and PR, every comment, and every `reopened`
  *    event on the repository, via the REST API. Needs a read-only
  *    `GITHUB_TOKEN`; there is deliberately no anonymous fallback, because the
  *    60-requests-an-hour limit cannot finish the ~390 pages this needs.
+ *    Without a token, inside a Sekreton task (SECRETARIAT_INTEGRATIONS_URL and
+ *    _TOKEN set), it reads every issue through Sekreton's integrations
+ *    endpoint instead. That source has gaps, recorded in `github.json.gaps`:
+ *    no PR bodies or PR comments, no `reopened` events, issue creation times
+ *    estimated from PR numbering, and comments by untrusted authors left out.
  * 2. fix-units.json — one unit per merged fix PR (a `fix` title, or a `fix/…`
  *    branch when the title is not conventional), plus each `fix…` commit made
  *    straight on main, with its issue numbers, commits, `fix(<scope>)` scopes,
@@ -25,7 +32,7 @@
  *    tests, docs and lockfiles are not blamed; pairs need 5+ blamed lines.
  */
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -38,14 +45,17 @@ import {
   changedOldRanges,
   closingReferences,
   concernDifferentIssues,
+  estimateCreatedAt,
   isBlameIgnoredPath,
   isExcludedEarlierCommit,
   isFixPr,
   isFixSubject,
   isRateLimited,
   issueNumbersFromBranch,
+  issueUrl,
   pairKey,
   parseFixScope,
+  parseIntegrationsIssue,
   parseMergeSubject,
 } from "./fragility-lib.mjs";
 
@@ -132,6 +142,113 @@ async function collectGithub(token) {
   const highest = Math.max(...issues.map((issue) => issue.number));
   console.error(`GitHub: ${issues.length} issues/PRs (highest #${highest}), ${comments.length} comments, ${reopened.length} reopens`);
   return { collectedAt: new Date().toISOString(), highestNumber: highest, issues, comments, reopened };
+}
+
+/** Sekreton's integrations MCP endpoint, called as plain JSON-RPC over HTTP. */
+async function callIntegrations(name, args) {
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await fetch(process.env.SECRETARIAT_INTEGRATIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.SECRETARIAT_INTEGRATIONS_TOKEN}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: attempt, method: "tools/call", params: { name, arguments: args } }),
+    });
+    if ((response.status === 429 || response.status >= 500) && attempt < 6) {
+      await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** attempt));
+      continue;
+    }
+    if (!response.ok) throw new Error(`integrations ${response.status}: ${await response.text()}`);
+    const { result, error } = await response.json();
+    if (error) throw new Error(`integrations error: ${JSON.stringify(error)}`);
+    return { isError: Boolean(result.isError), text: result.content.map((part) => part.text).join("\n") };
+  }
+}
+
+async function collectViaIntegrations(commits) {
+  const prs = new Map(); // PR number → { date, title } from its merge commit on main
+  for (const commit of commits.values()) {
+    const merge = commit.parents.length === 2 ? parseMergeSubject(commit.subject) : null;
+    if (merge) prs.set(merge.pr, { date: commit.date, title: commit.body.split("\n")[0] ?? "" });
+  }
+  const anchors = [...prs].map(([number, pr]) => ({ number, date: pr.date }));
+  const knownHighest = Math.max(...prs.keys());
+
+  // Every reply is cached, so a run cut short (or rate limited) resumes where it stopped.
+  const cachePath = path.join(OUT_DIR, "integrations-cache.json");
+  const cache = new Map(existsSync(cachePath) ? Object.entries(JSON.parse(readFileSync(cachePath, "utf8"))).map(([key, value]) => [Number(key), value]) : []);
+  const saveCache = () => {
+    mkdirSync(OUT_DIR, { recursive: true });
+    writeFileSync(cachePath, JSON.stringify(Object.fromEntries(cache)));
+  };
+  let consecutiveMisses = 0;
+  let next = 1;
+  let fetched = 0;
+  async function read(number) {
+    for (;;) {
+      const { isError, text } = await callIntegrations("issues_get", { ref: `github:${REPO}#${number}` });
+      if (!isError) return { kind: "issue", issue: parseIntegrationsIssue(text) };
+      if (/is a pull request/.test(text)) return { kind: "pr" };
+      if (!/rate limit/i.test(text)) return { kind: "missing", reason: text.slice(0, 200) };
+      console.error(`  #${number}: GitHub rate limit behind the integrations endpoint; waiting 60s`);
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+    }
+  }
+  async function worker() {
+    // Past the highest merged PR, keep probing until 30 numbers in a row are absent.
+    while (next <= knownHighest || consecutiveMisses < 30) {
+      const number = next++;
+      if (!cache.has(number)) {
+        cache.set(number, await read(number));
+        fetched += 1;
+        if (fetched % 100 === 0) saveCache();
+        if (fetched % 250 === 0) console.error(`  fetched ${fetched} (at #${number})`);
+      }
+      if (cache.get(number).kind === "missing") {
+        if (number > knownHighest) consecutiveMisses += 1;
+      } else consecutiveMisses = 0;
+    }
+  }
+  console.error("Sekreton integrations: every issue, one by one (no GITHUB_TOKEN)");
+  await Promise.all(Array.from({ length: 4 }, worker));
+  saveCache();
+
+  const issues = [];
+  const comments = [];
+  let missing = 0;
+  for (const [number, entry] of [...cache].sort((a, b) => a[0] - b[0])) {
+    if (entry.kind === "missing") {
+      missing += 1;
+      continue;
+    }
+    if (entry.kind === "pr") {
+      const pr = prs.get(number);
+      issues.push({ number, isPr: true, title: pr?.title ?? "", body: "", labels: [], state: pr ? "closed" : "unknown", stateReason: null, createdAt: estimateCreatedAt(number, anchors) ?? new Date().toISOString(), closedAt: pr?.date ?? null, mergedAt: pr?.date ?? null });
+      continue;
+    }
+    const { issue } = entry;
+    const firstComment = issue.comments.map((comment) => comment.createdAt).sort()[0] ?? null;
+    issues.push({ number, isPr: false, title: issue.title, body: issue.body, labels: issue.labels, state: issue.state, stateReason: null, createdAt: estimateCreatedAt(number, anchors, firstComment) ?? new Date().toISOString(), closedAt: null, mergedAt: null });
+    issue.comments.forEach((comment, index) => comments.push({ issue: number, id: `${number}-${index}`, createdAt: comment.createdAt, body: comment.body, url: issueUrl(number) }));
+  }
+  const highest = Math.max(...issues.map((issue) => issue.number));
+  console.error(`integrations: ${issues.length} issues/PRs (highest #${highest}), ${comments.length} comments, ${missing} numbers unreadable`);
+  return {
+    collectedAt: new Date().toISOString(),
+    source: "sekreton-integrations",
+    gaps: [
+      "PR bodies and PR comments are not available: PR titles come from merge commits, so mentions and Fixes #N in PR text are not seen",
+      "reopened events are not available: the reopened signal is empty",
+      "issue createdAt is estimated (earliest of the next-numbered PR merge and the first comment)",
+      "comments by authors outside the project's trusted roles are left out",
+    ],
+    highestNumber: highest,
+    issues,
+    comments,
+    reopened: [],
+  };
 }
 
 async function waitForReset(response) {
@@ -313,19 +430,20 @@ async function findCodeRepeats(units, commits) {
 async function main() {
   const gitOnly = process.argv.includes("--git-only");
   const token = process.env.GITHUB_TOKEN;
-  if (!gitOnly && !token) {
+  const integrations = Boolean(process.env.SECRETARIAT_INTEGRATIONS_URL && process.env.SECRETARIAT_INTEGRATIONS_TOKEN);
+  if (!gitOnly && !token && !integrations) {
     console.error(
       "GITHUB_TOKEN is not set. The fragility review needs a read-only token (fine-grained, public repositories);\n" +
         "the anonymous 60-requests-an-hour limit cannot finish the ~390 pages this collects.\n" +
-        "Set GITHUB_TOKEN, or pass --git-only to run collectors 2 and 3 without it.",
+        "Set GITHUB_TOKEN (or run inside a Sekreton task, which reads issues through its integrations endpoint), or pass --git-only to run collectors 2 and 3 without it.",
     );
     process.exit(2);
   }
 
-  if (!gitOnly) write("github.json", await collectGithub(token));
+  const commits = readCommits();
+  if (!gitOnly) write("github.json", token ? await collectGithub(token) : await collectViaIntegrations(commits));
 
   console.error("git: fix units");
-  const commits = readCommits();
   const units = buildFixUnits(commits);
   write("fix-units.json", { collectedAt: new Date().toISOString(), head: git(["rev-parse", MAIN]).trim(), units });
   console.error(`git: ${units.length} fix units`);

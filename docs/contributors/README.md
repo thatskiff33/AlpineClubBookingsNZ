@@ -114,6 +114,9 @@ method, scope and finish line for each.
 - [`../reviews/2026-09-26-money-path-sweep-may-june-2026.md`](../reviews/2026-09-26-money-path-sweep-may-june-2026.md)
   — the #3341 sweep of the unreviewed May–June 2026 money-path pull requests:
   the defect class, a verdict per PR, and the defects it filed.
+- [`../audits/FRAGILITY_AREAS_PROPOSAL.md`](../audits/FRAGILITY_AREAS_PROPOSAL.md)
+  — the proposed business areas for the "bugs that came back" review, with
+  raw repeat counts per area and how far to trust each signal.
 
 ## Security
 
