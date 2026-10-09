@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
+import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import {
   LayoutDashboard,
   Users,
@@ -691,7 +692,7 @@ export function getVisibleAdminNavSections(
         )
         .map((item) =>
           item.href === "/admin/hut-leaders"
-            ? { ...item, label: `${hutLeaderLabel}s` }
+            ? { ...item, label: pluralHutLeaderLabel(hutLeaderLabel) }
             : item,
         ),
     }))

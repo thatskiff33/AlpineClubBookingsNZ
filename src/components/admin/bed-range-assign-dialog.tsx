@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BedDouble, CircleDashed, Lock, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
+import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -179,7 +180,7 @@ const CATEGORY_EXPLANATION: Record<
   (label: string) => string
 > = {
   CUSTODIAN_HOLD: (label) =>
-    `This bed is held for a ${label.toLowerCase()} on these nights, with no booking behind it, so no guest can be placed on it. Change the dates or the bed on the ${label} Assignments page (Admin → ${label}s), or pick a different bed here.`,
+    `This bed is held for a ${label.toLowerCase()} on these nights, with no booking behind it, so no guest can be placed on it. Change the dates or the bed on the ${label} Assignments page (Admin → ${pluralHutLeaderLabel(label)}), or pick a different bed here.`,
   BED_TAKEN: () =>
     "Someone else is in this bed on these nights. Nothing was overwritten.",
   GUEST_NOT_BOOKED: () =>

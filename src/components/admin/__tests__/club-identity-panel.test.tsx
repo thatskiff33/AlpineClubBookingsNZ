@@ -98,4 +98,17 @@ describe("ClubIdentityPanel — club-name field hint (#2257)", () => {
     );
     expect(shortName.getAttribute("aria-describedby")).toBeNull();
   });
+
+  it("tells the admin to enter the hut-leader label in the singular (#3976)", async () => {
+    render(<ClubIdentityPanel />);
+
+    // Screens build the plural themselves, so a club that typed "Hut Leaders"
+    // read "Hut Leaderss" in the sidebar. The field now says which form it wants.
+    const hutLeader = await screen.findByLabelText("Hut-leader label");
+    const describedBy = hutLeader.getAttribute("aria-describedby");
+    expect(describedBy).toBe("club-identity-hint-hutLeaderLabel");
+    expect(document.getElementById(describedBy ?? "")).toHaveTextContent(
+      /Enter the singular, for example "Hut Leader"/,
+    );
+  });
 });

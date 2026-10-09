@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { useClubTime } from "@/components/club-time-provider";
 
 type InstructionDocument = {
@@ -140,7 +141,8 @@ export default function LodgeInstructionsPage() {
             Lodge Instructions
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Opening, closing, and day-to-day instructions for {hutLeaderLower}s.
+            Opening, closing, and day-to-day instructions for{" "}
+            {pluralHutLeaderLabel(hutLeaderLabel).toLowerCase()}.
             Print a copy to pin up in the lodge.
           </p>
         </div>

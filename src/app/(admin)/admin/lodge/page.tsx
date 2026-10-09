@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeOptionsUnavailableNotice } from "@/components/admin/lodge-options-status";
@@ -443,7 +444,7 @@ export default function AdminLodgePage() {
 
       <p className="max-w-3xl text-sm text-muted-foreground">
         This is the shared sign-in used on the physical lodge kiosk screen — it is
-        not a personal admin login. Guests and {hutLeaderLabel.toLowerCase()}s use
+        not a personal admin login. Guests and {pluralHutLeaderLabel(hutLeaderLabel).toLowerCase()} use
         it on the lodge device to check in and out and view lodge information. Set
         the email and
         password below, then sign in once on the kiosk device with these details.

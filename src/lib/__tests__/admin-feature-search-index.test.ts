@@ -121,6 +121,21 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
     expect(hutLeaders?.label).toBe("Wardens");
   });
 
+  it("does not double the s on a label the club saved as a plural (#3976)", () => {
+    const index = getAdminFeatureSearchIndex(
+      CLUB_DAY,
+      allOn,
+      fullMatrix,
+      true,
+      "Hut Leaders",
+    );
+    const hutLeaders = index.find(
+      (entry) => entry.href === "/admin/hut-leaders",
+    );
+
+    expect(hutLeaders?.label).toBe("Hut Leaders");
+  });
+
   it("carries optional keywords through to the index entry", () => {
     const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
     const xero = index.find((entry) => entry.href === "/admin/xero");

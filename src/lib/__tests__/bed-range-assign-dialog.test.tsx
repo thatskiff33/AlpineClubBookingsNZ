@@ -744,7 +744,20 @@ describe("BedRangeAssignDialog refusal categories (#2286)", () => {
     const custodian = screen.getByTestId("refusal-category-CUSTODIAN_HOLD");
     expect(custodian).toHaveTextContent("Held for a warden");
     expect(custodian).toHaveTextContent("Warden Assignments page");
+    expect(custodian).toHaveTextContent("(Admin → Wardens)");
     expect(custodian).not.toHaveTextContent(/custodian/i);
+  });
+
+  it("names the sidebar entry without doubling the s on a plural label (#3976)", async () => {
+    fetchMock.mockResolvedValueOnce(refusalResponse(409, MIXED_REFUSAL));
+    renderDialog({ hutLeaderLabel: "Hut Leaders" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Assign 5 nights$/ }));
+    await screen.findByTestId("range-refusal-report");
+
+    const custodian = screen.getByTestId("refusal-category-CUSTODIAN_HOLD");
+    expect(custodian).toHaveTextContent("(Admin → Hut Leaders)");
+    expect(custodian).not.toHaveTextContent("Hut Leaderss");
   });
 
   it("RENDERS a category it has never heard of rather than dropping the nights", async () => {
