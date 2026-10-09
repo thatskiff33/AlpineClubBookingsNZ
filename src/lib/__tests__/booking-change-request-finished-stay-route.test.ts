@@ -1,0 +1,413 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+
+import { requireCalendarDate } from "@/lib/club-time";
+import { ApiError } from "@/lib/api-error";
+import {
+  OverCapacityConfirmationRequiredError,
+  WholeLodgeHoldBlockedError,
+} from "@/lib/over-capacity-confirmation";
+import { NO_SEASON_RATE_MESSAGE } from "@/lib/booking-modify-plan";
+import { BookingMemberNightConflictError } from "@/lib/booking-member-night-conflicts";
+import { BookingGuestValidationError } from "@/lib/booking-guests";
+import { MembershipTypeBookingPolicyError } from "@/lib/membership-type-policy";
+import { OwnDependantIdentityRefusedError } from "@/lib/booking-dependant-identity";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+/**
+ * #3750: `PATCH /api/admin/booking-change-requests/[id]` EXECUTES an approval
+ * when the booking's stay has finished, and only then. The executor is a double
+ * (`booking-change-request-execution.test.ts` proves the engine); this suite
+ * proves the route's half — which path it takes, what it sends the engine, how
+ * each refusal reads, and that the audit row keeps `INV-PRIV-018`'s disclosure.
+ */
+
+const mocks = vi.hoisted(() => ({
+  requireAdmin: vi.fn(),
+  requestFindUnique: vi.fn(),
+  requestUpdateMany: vi.fn(),
+  execute: vi.fn(),
+  prepare: vi.fn(),
+  logAudit: vi.fn(),
+  loggerError: vi.fn(),
+}));
+
+vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    bookingChangeRequest: {
+      findUnique: (...args: unknown[]) => mocks.requestFindUnique(...args),
+      updateMany: (...args: unknown[]) => mocks.requestUpdateMany(...args),
+    },
+    bookingModification: { findUnique: vi.fn() },
+  },
+}));
+vi.mock("@/lib/audit", () => ({ logAudit: (...args: unknown[]) => mocks.logAudit(...args) }));
+vi.mock("@/lib/logger", () => ({
+  default: { error: mocks.loggerError, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+vi.mock("@/lib/club-time/server", () => ({
+  clubTime: async () => ({ today: () => requireCalendarDate("2026-07-01") }),
+}));
+vi.mock("@/lib/club-format-server", () => ({
+  clubFormatValues: async () => CLUB_FORMAT_TEST,
+}));
+vi.mock("@/lib/booking-change-request-execution", () => ({
+  approveAndExecuteLockedPeriodChangeRequest: (...args: unknown[]) => mocks.execute(...args),
+}));
+vi.mock("@/lib/booking-batch-modification-service", () => ({
+  prepareBatchModificationForCallerTransaction: (...args: unknown[]) => mocks.prepare(...args),
+}));
+
+import { PATCH } from "@/app/api/admin/booking-change-requests/[id]/route";
+import { POST as QUOTE } from "@/app/api/admin/booking-change-requests/[id]/quote/route";
+
+function patch(body: Record<string, unknown>) {
+  return PATCH(
+    new NextRequest("http://localhost/api/admin/booking-change-requests/cr-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-forwarded-for": "10.0.0.1" },
+      body: JSON.stringify(body),
+    }),
+    { params: Promise.resolve({ id: "cr-1" }) },
+  );
+}
+
+function preRead(booking: Record<string, unknown>) {
+  return {
+    id: "cr-1",
+    kind: "LOCKED_PERIOD",
+    status: "REQUESTED",
+    version: 2,
+    booking: { id: "booking-1", memberId: "member-1", ...booking },
+  };
+}
+
+const FINISHED = { checkOut: new Date("2026-06-14T00:00:00.000Z"), status: "COMPLETED" };
+
+const EXECUTED = {
+  outcome: "executed",
+  requestId: "cr-1",
+  bookingId: "booking-1",
+  requestedByMemberId: "member-1",
+  modificationId: "mod-9",
+  addedGuestCount: 1,
+  removedGuestCount: 0,
+  priceDiffCents: 4_500,
+  changeFeeCents: 0,
+  additionalAmountCents: 4_500,
+  refundAmountCents: 0,
+  accountCreditAmountCents: 0,
+  capacityOverridden: false,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.requireAdmin.mockResolvedValue({
+    ok: true,
+    session: { user: { id: "officer-1" } },
+  });
+  mocks.prepare.mockResolvedValue({ marker: "pre" });
+  mocks.execute.mockResolvedValue(EXECUTED);
+});
+
+describe("PATCH booking change request — finished stay (#3750)", () => {
+  it("executes the approval on a finished stay, with the screen's version and the officer's answers", async () => {
+    mocks.requestFindUnique
+      .mockResolvedValueOnce(preRead(FINISHED))
+      .mockResolvedValueOnce({ id: "cr-1", status: "APPROVED", linkedModificationId: "mod-9" });
+
+    const response = await patch({
+      status: "APPROVED",
+      execute: true,
+      adminNotes: "  Added the guest who stayed.  ",
+      internalNotes: "Warden confirmed.",
+      confirmOverCapacity: true,
+      settlementMethod: "credit",
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.prepare).toHaveBeenCalledWith({ audience: "admin" });
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "cr-1",
+        expectedVersion: 2,
+        actorMemberId: "officer-1",
+        adminNotes: "Added the guest who stayed.",
+        internalNotes: "Warden confirmed.",
+        confirmOverCapacity: true,
+        settlementMethod: "credit",
+        todayAtClub: "2026-07-01",
+        preTransaction: { marker: "pre" },
+        format: CLUB_FORMAT_TEST,
+      }),
+    );
+    // The acknowledgement path's claim never ran.
+    expect(mocks.requestUpdateMany).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.execution).toMatchObject({
+      executed: true,
+      modificationId: "mod-9",
+      additionalAmountCents: 4_500,
+    });
+  });
+
+  it("also executes a PAID stay whose check-out day is behind today", async () => {
+    mocks.requestFindUnique
+      .mockResolvedValueOnce(
+        preRead({ checkOut: new Date("2026-06-30T00:00:00.000Z"), status: "PAID" }),
+      )
+      .mockResolvedValueOnce({ id: "cr-1" });
+    expect((await patch({ execute: true, status: "APPROVED", adminNotes: "ok" })).status).toBe(200);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("only acknowledges a stay that has not finished, exactly as before", async () => {
+    mocks.requestFindUnique
+      .mockResolvedValueOnce(
+        preRead({ checkOut: new Date("2026-07-01T00:00:00.000Z"), status: "PAID" }),
+      )
+      .mockResolvedValueOnce({ id: "cr-1", status: "APPROVED" });
+    mocks.requestUpdateMany.mockResolvedValue({ count: 1 });
+
+    expect((await patch({ execute: false, status: "APPROVED", adminNotes: "ok" })).status).toBe(200);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.requestUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "APPROVED", version: { increment: 1 } }),
+      }),
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ executed: false }) }),
+    );
+  });
+
+  it("never executes a rejection", async () => {
+    mocks.requestFindUnique
+      .mockResolvedValueOnce(preRead(FINISHED))
+      .mockResolvedValueOnce({ id: "cr-1", status: "REJECTED" });
+    mocks.requestUpdateMany.mockResolvedValue({ count: 1 });
+    expect((await patch({ status: "REJECTED", adminNotes: "no" })).status).toBe(200);
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pasted modification id: an executed approval links its own", async () => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    const response = await patch({
+      status: "APPROVED",
+      execute: true,
+      adminNotes: "ok",
+      linkedModificationId: "mod-1",
+    });
+    expect(response.status).toBe(400);
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("audits the executed approval with what changed, and discloses only the member-facing note", async () => {
+    mocks.requestFindUnique
+      .mockResolvedValueOnce(preRead(FINISHED))
+      .mockResolvedValueOnce({ id: "cr-1" });
+    await patch({ execute: true, status: "APPROVED", adminNotes: "Added.", internalNotes: "secret" });
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    const [row] = mocks.logAudit.mock.calls[0] as [Record<string, unknown>];
+    expect(row).toMatchObject({
+      action: "booking-change-request.approve",
+      subjectMemberId: "member-1",
+      memberDisclosure: { visibility: "member-facing", text: "Added." },
+      metadata: expect.objectContaining({
+        executed: true,
+        modificationId: "mod-9",
+        addedGuestCount: 1,
+        additionalAmountCents: 4_500,
+        capacityOverridden: false,
+        internalNoteRecorded: true,
+      }),
+    });
+    expect(JSON.stringify(row)).not.toContain("secret");
+  });
+
+  it("asks the officer to confirm an overbooking, and says the request is still pending", async () => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    mocks.execute.mockRejectedValue(
+      new OverCapacityConfirmationRequiredError([
+        { date: "2026-06-11", available: -1 },
+      ] as never),
+    );
+    const response = await patch({ execute: true, status: "APPROVED", adminNotes: "ok" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      status: "REQUESTED",
+      keptPending: true,
+      needsCapacityConfirmation: true,
+      code: "OVER_CAPACITY_CONFIRM_REQUIRED",
+    });
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a whole-lodge hold outright", async () => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    mocks.execute.mockRejectedValue(new WholeLodgeHoldBlockedError(["2026-06-11"]));
+    const response = await patch({ execute: true, status: "APPROVED", adminNotes: "ok", confirmOverCapacity: true });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "WHOLE_LODGE_HOLD_BLOCKED" });
+  });
+
+  it("explains a past season that has been switched off, and keeps the request pending", async () => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    mocks.execute.mockRejectedValue(new ApiError(NO_SEASON_RATE_MESSAGE, 400));
+    const response = await patch({ execute: true, status: "APPROVED", adminNotes: "ok" });
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "NO_ACTIVE_SEASON", keptPending: true });
+    expect(body.error).toMatch(/No active season/);
+  });
+
+  it("passes any other canonical refusal through with its own status", async () => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    mocks.execute.mockRejectedValue(new ApiError("Locked in Xero", 409));
+    const response = await patch({ execute: true, status: "APPROVED", adminNotes: "ok" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "Locked in Xero", status: "REQUESTED" });
+  });
+
+  it.each([
+    [{ outcome: "claimLost" }, 409],
+    [{ outcome: "notAuthorized" }, 403],
+    [{ outcome: "notFound" }, 404],
+    [{ outcome: "keptPending", message: "This booking has changed" }, 409],
+  ])("maps %o to %i with no audit row", async (outcome, status) => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    mocks.execute.mockResolvedValue(outcome);
+    expect((await patch({ execute: true, status: "APPROVED", adminNotes: "ok" })).status).toBe(status);
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("requires the screen's intent, and refuses one that no longer matches the stay", async () => {
+    mocks.requestFindUnique.mockResolvedValue(preRead(FINISHED));
+    const missing = await PATCH(
+      new NextRequest("http://localhost/api/admin/booking-change-requests/cr-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "APPROVED", adminNotes: "ok" }),
+      }),
+      { params: Promise.resolve({ id: "cr-1" }) },
+    );
+    expect(missing.status).toBe(400);
+
+    const stale = await patch({ execute: false, status: "APPROVED", adminNotes: "ok" });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      code: "EXECUTION_INTENT_MISMATCH",
+      executesOnApproval: true,
+    });
+
+    mocks.requestFindUnique.mockResolvedValue(
+      preRead({ checkOut: new Date("2026-07-03T00:00:00.000Z"), status: "PAID" }),
+    );
+    const other = await patch({ execute: true, status: "APPROVED", adminNotes: "ok" });
+    expect(other.status).toBe(409);
+    expect(await other.json()).toMatchObject({ executesOnApproval: false });
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.requestUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "a member-night clash",
+      () =>
+        new BookingMemberNightConflictError(
+          [
+            {
+              memberId: "m-9",
+              memberName: "Sam Member",
+              conflictingNights: ["2026-06-11"],
+              isOwnBooking: false,
+              canOpenBooking: false,
+              canSelfRemove: false,
+            } as never,
+          ],
+          CLUB_FORMAT_TEST,
+        ),
+      409,
+    ],
+    ["a guest validation refusal", () => new BookingGuestValidationError("That member cannot be booked", 403), 403],
+    [
+      "a membership-type refusal",
+      () =>
+        new MembershipTypeBookingPolicyError([
+          {
+            scope: "MEMBER_GUEST",
+            memberId: "m-9",
+            name: "Sam Member",
+            seasonYear: 2026,
+            membershipTypeKey: "SOCIAL",
+            membershipTypeName: "Social",
+            bookingBehavior: "BLOCKED",
+          } as never,
+        ]),
+      403,
+    ],
+    [
+      "an own-dependant identity refusal",
+      () =>
+        new OwnDependantIdentityRefusedError(
+          { code: "DEPENDANT_IDENTITY_UNRESOLVED", status: 409, error: "Which person is meant?", collisions: [] } as never,
+          "member-1",
+        ),
+      409,
+    ],
+  ])("explains %s, keeps the request pending, and does not log it as a fault", async (_name, make, status) => {
+    mocks.requestFindUnique.mockResolvedValueOnce(preRead(FINISHED));
+    mocks.execute.mockRejectedValue(make());
+    const response = await patch({ execute: true, status: "APPROVED", adminNotes: "ok" });
+    expect(response.status).toBe(status);
+    const body = await response.json();
+    expect(body).toMatchObject({ status: "REQUESTED", keptPending: true });
+    expect(typeof body.error).toBe("string");
+    expect(mocks.loggerError).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("quotes the figures by a dry run of the same executor, writing nothing", async () => {
+    mocks.requestFindUnique.mockResolvedValueOnce({
+      ...preRead(FINISHED),
+      kind: "LOCKED_PERIOD",
+      status: "REQUESTED",
+    });
+    mocks.execute.mockResolvedValue({
+      outcome: "quoted",
+      priceDiffCents: -8_642,
+      changeFeeCents: 4_321,
+      additionalAmountCents: 0,
+      refundAmountCents: 4_321,
+      accountCreditAmountCents: 0,
+      capacityOverridden: false,
+      settlementMethod: "card",
+    });
+    const response = await QUOTE(
+      new NextRequest("http://localhost/api/admin/booking-change-requests/cr-1/quote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settlementMethod: "card" }),
+      }),
+      { params: Promise.resolve({ id: "cr-1" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      id: "cr-1",
+      quote: {
+        priceDiffCents: -8_642,
+        changeFeeCents: 4_321,
+        additionalAmountCents: 0,
+        refundAmountCents: 4_321,
+        accountCreditAmountCents: 0,
+        capacityOverridden: false,
+        settlementMethod: "card",
+      },
+    });
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true, expectedVersion: 2, settlementMethod: "card" }),
+    );
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+});

@@ -71,7 +71,9 @@ export function BookingPaymentCards({
     showCompletePaymentCard,
     creditAppliedCents,
     showCreditApplied,
-    amountDueAfterCreditCents,
+    changeFeeOwedCents,
+    showAmountBreakdown,
+    cardAmountDueCents,
   } = payment;
   const {
     paymentRequiredDescription,
@@ -291,29 +293,35 @@ export function BookingPaymentCards({
             <p className="text-sm text-muted-foreground mb-4">
               {paymentRequiredDescription}
             </p>
-            {showCreditApplied && (
+            {showAmountBreakdown && (
               <div className="mb-4 space-y-1 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <div className="flex items-center justify-between">
                   <span>Booking total</span>
                   <span>{money.cents(booking.finalPriceCents)}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>Credit applied</span>
-                  <span>-{money.cents(creditAppliedCents)}</span>
-                </div>
+                {/* #3750 (#3955 review F8): a change fee owed with the price,
+                    so the rows add up to the amount due. */}
+                {changeFeeOwedCents > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span>Change fee</span>
+                    <span>+{money.cents(changeFeeOwedCents)}</span>
+                  </div>
+                )}
+                {showCreditApplied && (
+                  <div className="flex items-center justify-between">
+                    <span>Credit applied</span>
+                    <span>-{money.cents(creditAppliedCents)}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between font-medium">
                   <span>Amount due</span>
-                  <span>{money.cents(amountDueAfterCreditCents)}</span>
+                  <span>{money.cents(cardAmountDueCents)}</span>
                 </div>
               </div>
             )}
             <BookingPaymentSection
               bookingId={booking.id}
-              amountCents={
-                showCreditApplied
-                  ? amountDueAfterCreditCents
-                  : booking.finalPriceCents
-              }
+              amountCents={cardAmountDueCents}
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />

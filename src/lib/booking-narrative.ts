@@ -59,6 +59,7 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
 import type { ClubFormat } from "@/lib/club-format";
+import { nothingToPayNarrative } from "@/lib/booking-narrative-nothing-to-pay";
 
 export type BookingNarrativeState =
   | "payable"
@@ -69,6 +70,7 @@ export type BookingNarrativeState =
   | "cancelled_post_payment"
   | "declined"
   | "under_review"
+  | "nothing_to_pay" // #3955: the booking owes nothing (at or below zero)
   /**
    * #3033 (epic #2797): the stay change SAVED and the money for it did not.
    *
@@ -102,6 +104,8 @@ export interface NarrativeEvent {
 export interface NarrativeBooking {
   status: string;
   finalPriceCents: number;
+  /** #3955 (`INV-PAY-119`): what its pay step charges (`bookingAmountOwedCents`) and the credit applied, where read. */
+  amountOwed?: { dueCents: number; appliedCreditCents: number };
   checkIn: Date;
   checkOut: Date;
   firstName: string;
@@ -386,7 +390,9 @@ function buildPayableNarrative(
   now: Date, format: ClubFormat
 ): BookingNarrative {
   const range = dateRange(booking, format);
-  const amountDue = formatCents(booking.finalPriceCents, format);
+  const due = booking.amountOwed?.dueCents ?? booking.finalPriceCents;
+  if (booking.amountOwed && due <= 0) return nothingToPayNarrative(range, booking.amountOwed.appliedCreditCents > 0);
+  const amountDue = formatCents(due, format);
 
   const linkUnusable =
     link != null &&

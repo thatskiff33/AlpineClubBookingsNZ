@@ -681,6 +681,81 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  it("#3955 F7: names what the booking OWES — price plus a recorded fee — as the expected amount", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_stale_fee",
+      type: "payment_intent.succeeded",
+      data: { object: { id: "pi_stale_fee", amount: 15000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" } },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 15000,
+      status: "PENDING",
+    });
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      status: "PAYMENT_PENDING",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      finalPriceCents: 15000,
+      discountCents: 0,
+      guests: [{ id: "g1" }],
+      member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      payment: { status: "PENDING", stripePaymentIntentId: "pi_stale_fee", changeFeeCents: 2500 },
+      promoRedemption: null,
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(500);
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ errorMessage: expect.stringContaining("Expected $175.00") }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("#3955 F5: a redelivered capture the booking already settled with is not re-checked against a later fee", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_redelivered",
+      type: "payment_intent.succeeded",
+      data: { object: { id: "pi_settled", amount: 15000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" } },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 15000,
+      status: "SUCCEEDED",
+    });
+    // Captured at 15000; a later correction recorded a 2500 fee on the payment.
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      status: "COMPLETED",
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+      finalPriceCents: 15000,
+      discountCents: 0,
+      guests: [{ id: "g1" }],
+      member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      payment: { status: "SUCCEEDED", stripePaymentIntentId: "pi_settled", changeFeeCents: 2500 },
+      promoRedemption: null,
+    });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", booking: { id: "booking-1" } });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntentId: "pi_settled", amountCents: 15000 }),
+    );
+  });
+
   it("uses the deduplicated notifier when credit note creation fails after a refund webhook", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_refund",

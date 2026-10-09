@@ -357,8 +357,12 @@ const FIGURES = {
    * and the per-row Delete (three vouched opt-outs) and gains ONE per-row
    * Edit my Lodge, vouched the same way. Net two fewer. MEASURED by re-running
    * this census.
+   *
+   * 370 -> 371 (#3750): the change-request card's Confirm overbooking and
+   * apply, shown when an executed finished-stay approval needs the officer to
+   * confirm an over-capacity past night. MEASURED.
    */
-  callSites: 370,
+  callSites: 371,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -394,8 +398,10 @@ const FIGURES = {
    *
    * 310 -> 308 (#52): three of the panel's vouched opt-outs go (Add, Edit,
    * Delete) and one arrives (Edit my Lodge).
+   *
+   * 315 -> 316 (#3750): so does the change-request card's overbooking confirm.
    */
-  optOuts: 315,
+  optOuts: 316,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -458,8 +464,11 @@ const FIGURES = {
    *
    * 279 -> 281 (#3416): the school-teacher card's Edit and Save sit in the
    * same file as its section banner.
+   *
+   * 281 -> 282 (#3750): the overbooking confirm is rendered in the change-
+   * request panel itself, beside that panel's own banner.
    */
-  staticOptOuts: 281,
+  staticOptOuts: 282,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

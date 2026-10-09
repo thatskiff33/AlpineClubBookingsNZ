@@ -71,7 +71,9 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
+  groupSettlementChildWorthCents,
   groupSettlementTotalCents,
+  type GroupSettlementChildWorth,
   isGroupSettlementBoundToInvoice,
 } from "@/lib/group-settlement-invoice-binding";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
@@ -133,11 +135,13 @@ export interface GroupSettlementIntentResult {
   reference?: string;
 }
 
-interface SettleableChild {
+interface SettleableChild extends GroupSettlementChildWorth {
   id: string;
-  finalPriceCents: number;
   status: BookingStatus;
 }
+
+/** #3750: the fee recorded on a child's payment, read with its price. */
+const CHILD_FEE_SELECT = { select: { changeFeeCents: true } } as const;
 
 /** The settlement fields the binding rule reads, re-read under `lock(1)`. */
 const SETTLEMENT_BINDING_SELECT = {
@@ -200,7 +204,7 @@ async function loadSettleableChildren(
       deletedAt: null,
       status: { in: [...SETTLEABLE_CHILD_STATUSES] },
     },
-    select: { id: true, finalPriceCents: true, status: true },
+    select: { id: true, finalPriceCents: true, status: true, payment: CHILD_FEE_SELECT },
   });
 }
 
@@ -775,7 +779,7 @@ async function commitChildrenToConfirmed(
       // Re-read inside the lock; another path may have already moved it.
       const fresh = await tx.booking.findUnique({
         where: { id: child.id },
-        include: { guests: { include: { nights: true } } },
+        include: { guests: { include: { nights: true } }, payment: CHILD_FEE_SELECT },
       });
       if (
         !fresh ||
@@ -790,6 +794,7 @@ async function commitChildrenToConfirmed(
         committed.push({
           id: fresh.id,
           finalPriceCents: fresh.finalPriceCents ?? child.finalPriceCents,
+          payment: fresh.payment,
           status: fresh.status,
         });
         continue;
@@ -890,6 +895,7 @@ async function commitChildrenToConfirmed(
       committed.push({
         id: fresh.id,
         finalPriceCents: fresh.finalPriceCents ?? child.finalPriceCents,
+        payment: fresh.payment,
         status: BookingStatus.CONFIRMED,
       });
     }
@@ -1153,6 +1159,7 @@ async function settleConfirmedChildrenAndNotify(
       select: {
         id: true,
         finalPriceCents: true,
+        payment: CHILD_FEE_SELECT,
         checkIn: true,
         checkOut: true,
         lodgeId: true,
@@ -1174,6 +1181,7 @@ async function settleConfirmedChildrenAndNotify(
       select: {
         id: true,
         finalPriceCents: true,
+        payment: CHILD_FEE_SELECT,
         checkIn: true,
         checkOut: true,
         lodgeId: true,
@@ -1213,18 +1221,22 @@ async function settleConfirmedChildrenAndNotify(
 
     const settledIds: string[] = [];
     for (const child of children) {
+      // #3750 (#3955 review F3): the organiser paid the child's worth — its
+      // price plus a fee recorded on its payment — so that is what the child's
+      // payment records, on a row the fee already created as on a new one.
+      const childPaidCents = groupSettlementChildWorthCents(child);
       await tx.payment.upsert({
         where: { bookingId: child.id },
         create: {
           bookingId: child.id,
-          amountCents: child.finalPriceCents,
+          amountCents: childPaidCents,
           source: options.source,
           status: PaymentStatus.SUCCEEDED,
           reference: options.reference,
           stripeCustomerId: options.stripeCustomerId ?? null,
         },
         update: {
-          amountCents: child.finalPriceCents, // #3854: the share the ledger posts
+          amountCents: childPaidCents, // #3854: the share the ledger posts
           status: PaymentStatus.SUCCEEDED,
           source: options.source,
           reference: options.reference,
