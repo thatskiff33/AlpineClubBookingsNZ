@@ -8,7 +8,12 @@ import {
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
-import { ServerNzNotConfiguredError } from "@/lib/servernz-api";
+import {
+  ServerNzNotConfiguredError,
+  ServerNzVersionMismatchError,
+} from "@/lib/servernz-api";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
+import { checkServerVersion } from "@/lib/servernz-version-check";
 import logger from "@/lib/logger";
 
 /**
@@ -45,13 +50,38 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
 
   const settings = await loadServerNzSettings();
 
+  if (!settings.baseUrl) {
+    return { status: "skipped", reason: "central-server-not-configured" };
+  }
+
+  // THE VERSION CHECK RUNS FIRST (#49, `INV-INT-027`) - before the per-item
+  // enable gate, so a club that has the module on and a key stored gets a
+  // fresh answer every night whether or not the Other Clubs item is enabled
+  // (the message board rides the same version), and BEFORE the single-flight
+  // claim below, so a mismatch never takes or wedges a claim. This is also how
+  // syncing resumes by itself: once this site is upgraded, the next nightly
+  // check records a matching answer and the pass carries on. With no key
+  // stored the check makes no request and reports `no-key`, which falls
+  // through to the not-configured skip below. A check that could not reach
+  // the server keeps the last answer and does not pause anything.
+  const version = await checkServerVersion();
+  if (version.status === "mismatch") {
+    logger.info(
+      {
+        job: "alpine-server-other-lodges-sync",
+        expected: version.expected,
+        serverVersion: version.serverVersion,
+      },
+      "Alpine Central Server sync skipped: server API version differs",
+    );
+    // The same fact the Upload/Download routes answer with, under one name.
+    return { status: "skipped", reason: SERVER_VERSION_MISMATCH_CODE };
+  }
+
   // Only sync clubs that have opted in and pointed at a server. Missing API key
   // surfaces below as ServerNzNotConfiguredError and is treated the same way.
   if (!settings.otherLodgesEnabled) {
     return { status: "skipped", reason: "other-lodges-sync-disabled" };
-  }
-  if (!settings.baseUrl) {
-    return { status: "skipped", reason: "central-server-not-configured" };
   }
 
   try {
@@ -85,6 +115,13 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
   } catch (err) {
     if (err instanceof ServerNzNotConfiguredError) {
       return { status: "skipped", reason: "central-server-not-configured" };
+    }
+    // The gate inside resolveConnection can still refuse a request that the
+    // pre-check above allowed - the inline self-heal on a never-asked row, or
+    // a version recorded by another container between the two. Same answer:
+    // a skip with its reason, never a red cron run an operator cannot act on.
+    if (err instanceof ServerNzVersionMismatchError) {
+      return { status: "skipped", reason: SERVER_VERSION_MISMATCH_CODE };
     }
     throw err;
   }

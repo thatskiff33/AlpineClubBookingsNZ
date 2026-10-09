@@ -314,6 +314,19 @@ Two consequences worth knowing before you edit one:
 - **Leave a block token on a line of its own.** Do not put a label of your own in
   front of it. When there is nothing to say the token comes through empty, and a
   label you added would be left stranded above nothing.
+- **The Daily digest's `{{serverVersionNote}}` is empty on an ordinary day.** It
+  carries the whole "syncing with the Alpine Central Server is paused" sentence
+  only while the server is on a different software version from this site, and
+  nothing at all otherwise — so it is optional in a digest override: leave it
+  out and the digest simply never mentions the server. The two numbers behind
+  it are also available on their own as `{{serverVersionExpected}}` and
+  `{{serverVersionActual}}`, empty on the same days.
+- **The version-only notice is a separate message, *Admin Server Version
+  Paused*.** A Lodge Operations editor who does not receive the Daily digest is
+  sent this template instead, carrying only the three tokens above and no alert
+  counts. It has its own subject and wording, which the club edits (and can
+  mute under Delivery Rules) on its own: nothing done to the Daily digest's
+  wording changes it, and nothing done to it changes the digest.
 - **The party listing on the member-guest emails is one block, heading included.**
   `{{partyListNote}}` produces the "Everyone on this booking" heading and the list
   of names together. You can move that block or leave it out; you cannot change

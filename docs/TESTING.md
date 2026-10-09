@@ -1218,6 +1218,34 @@ So:
    raises a conflict and a human classifies both — which is exactly the review a
    bare integer skipped.
 
+### Running the fast censuses on a composed tree
+
+`pnpm run ci:fast-censuses` runs the tree-wide censuses that compositions have
+actually broken, plus `docs:indexcheck` and `quality:budget`, against whatever
+tree is checked out, in under a minute. The set and the reason for each entry
+live in one place, `scripts/ci/run-fast-censuses.mjs`. It regenerates the Prisma
+client first and supplies inert values for the variables these suites need only
+to import, so it runs in a fresh worktree with no `.env`.
+
+Run it at the moments step 2 above names: **after merging `origin/main` into
+your branch, and before you push or flip a pull request ready.** It catches the
+20 Sep 2026 shape — #3526, #3520 and #3522 each published the `stripComments`
+importer count against a base `main` had already left, and three green pull
+requests made a red `main` — while the composed tree is still on your machine.
+On a child of an epic, pass `--base origin/epic/<n>-<slug>` so the file-size
+ratchet and invariant retention judge against the branch you will merge into.
+The automated sync passes the exact pre-sync epic SHA. With an explicit base,
+the runner clears inherited GitHub event identity only for its diagnostic
+`docs:indexcheck` child; ordinary CI keeps its authoritative PR/push baseline.
+
+It is a convenience for a lane and the gate `epic-branch-sync.yml` applies
+before it lets a sync land (#3513, [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md)).
+It is **not** a required check, it does not select the censuses a particular
+diff can reach (the next subsection does), and it never replaces `verify`. Add a
+suite to its list when a composition has broken one; leave out the
+load-sensitive suites listed under "Suites that time out under load and pass
+alone", which `scripts/ci/run-fast-censuses.test.mjs` enforces.
+
 ### Selecting the censuses a change can reach
 
 A census reads source from disk, so it has no import edge to what it scans and
