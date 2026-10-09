@@ -386,6 +386,25 @@ describe("#3954: a card-paid booking's reduction is set against its unpaid ask f
     expect(bookingLedgerResidualCents(ledgerAfter(booking, -2_000, result))).toBe(0);
   });
 
+  it("MUTATION (#3954 x #3750): on a credit-paid booking the fee is recorded once - not again when the caller records it on the amount owed", async () => {
+    const booking = grownBooking({ creditPaid: true });
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, -1_500);
+    await applyPaymentAdjustments(tx, {
+      booking, priceDiffCents: -2_000, changeFeeCents: 500, reduction,
+      todayAtClub: TODAY, format: CLUB_FORMAT_TEST, changeFeeRecordedByCaller: true,
+    });
+    expect(paymentUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { changeFeeCents: { increment: 500 } } }),
+    );
+
+    paymentUpdate.mockClear();
+    await applyPaymentAdjustments(tx, {
+      booking, priceDiffCents: -2_000, changeFeeCents: 500, reduction: await readReductionAgainstUnpaidAsk(tx, booking, -1_500),
+      todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
+    });
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "payment_1" }, data: { changeFeeCents: { increment: 500 } } });
+  });
+
   it("a fully absorbed reduction needs no card-or-credit choice and raises no Xero note", async () => {
     const booking = grownBooking({ xeroInvoiceId: "INV-3954" });
     const options = await calculateModificationSettlementOptions({
