@@ -388,7 +388,16 @@ services:
       # shadow DB, probes, admin psql). The app role is a superuser, so the 3
       # superuser-reserved slots do NOT protect admin access — see the
       # connection-budget note on x-app-environment and DEPLOYMENT.md.
-      - "max_connections=40"
+      #
+      # POSTGRES_MAX_CONNECTIONS (fork booking-fixes): the ceiling is a setting
+      # because the budget above is not what a live host measures. A warm-up
+      # during a routine handover was sampled at 39 client connections, with
+      # one app container holding 18 against a connection_limit of 10 — the
+      # app opens more than one pool per container — so three app containers
+      # plus the deploy's probes hit 40 and every page render failed with
+      # "too many clients". Raise it in .env (80 is comfortable at mem_limit
+      # 768m); the default keeps upstream's figure.
+      - "max_connections=${POSTGRES_MAX_CONNECTIONS:-40}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:

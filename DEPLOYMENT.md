@@ -99,6 +99,24 @@ consumer, a much larger replica count, or enabling the audit-archive client via
 may lower both values, but keep the invariant above whenever you change a pool
 size, `max_connections`, or the replica count.
 
+**The ceiling is a setting, and the pool arithmetic above is not what a live host
+measures (fork, booking-fixes).** `POSTGRES_MAX_CONNECTIONS` in `.env` sets
+`max_connections` (default `40`, upstream's figure); it is applied when the
+`postgres` container is next created, which a blue/green deploy does at step 11
+when the compose model has changed. It became a setting because a routine
+handover on a live host was sampled, two seconds apart, at **39 client
+connections**: the serving web slot at 11, the cron leader at 18 and the
+freshly warmed target slot at 8 to 11 — against documented `connection_limit`s
+of 10, 5 and 10. One container holding 18 means the app opens **more than one
+pool per container** (each `PrismaClient` carries its own `pg` pool, and the
+production bundle evidently instantiates more than one), so the 27 budget is
+an undercount by roughly a factor of two, and the warm-up gate's page renders
+fail with `P2037: too many database connections opened` exactly when three app
+containers are live. Until that multi-pool behaviour is pinned and fixed, a
+host that sees that error should raise the ceiling — `80` is comfortable under
+the 768m `mem_limit` — rather than lower a pool, because a smaller pool just
+moves the failure to `P2024` pool timeouts under real traffic.
+
 ## App CPU sizing
 
 The app containers ship with **no CPU control at all** in `docker-compose.yml`

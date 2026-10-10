@@ -1243,6 +1243,7 @@ test/demo mode or disabled:
 | `APP_ENVIRONMENT_ROLE`  | **Required.** Whether this installation is the club's live site or a copy: exactly `production` or `non-production`. Nothing is inferred; see "Environment Role" below and [`docs/guides/environment-role.md`](docs/guides/environment-role.md). |
 | `DATABASE_URL`          | PostgreSQL connection string used by Prisma.                     |
 | `DB_PASSWORD`           | PostgreSQL password used by Docker Compose.                      |
+| `POSTGRES_MAX_CONNECTIONS` | Postgres `max_connections` for the compose `postgres` service (default `40`). Raise it, for example to `80`, when a deploy's warm-up gate blocks with "too many database connections opened": a live host was measured holding 39 client connections across three app containers during a routine handover. Applied when the `postgres` container is next created. See DEPLOYMENT.md "Connection pool sizing". |
 | `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
