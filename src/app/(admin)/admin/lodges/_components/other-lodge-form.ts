@@ -100,10 +100,11 @@ export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
 // The non-member rate grid (#61): a row per season, a column per guideline age
 // group. A `Record` over the rate field type, like every label here, so a rate
 // column the grid has no cell for is a compile error.
+export const RATE_SEASONS = ["Winter", "Summer"] as const;
 export const RATE_AGE_GROUPS = ["Under 5", "5–11", "12–17", "18+"] as const;
 export const RATE_FIELDS: Record<
   OtherLodgeRateField,
-  { season: "Winter" | "Summer"; ageGroup: (typeof RATE_AGE_GROUPS)[number] }
+  { season: (typeof RATE_SEASONS)[number]; ageGroup: (typeof RATE_AGE_GROUPS)[number] }
 > = {
   winterRateUnder5Cents: { season: "Winter", ageGroup: "Under 5" },
   winterRate5To11Cents: { season: "Winter", ageGroup: "5–11" },
@@ -183,11 +184,12 @@ export function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
 }
 
 // Blank text fields save as null; whole numbers parse to an integer or null;
-// dates travel as the `YYYY-MM-DD` string the input holds; rates parse from the
-// typed dollars to cents with the exact parser (INV-MONEY-003), blank = null.
-// A rate that does not parse also becomes null here, so `formProblem` must
-// refuse it first — it does, which is why the panel checks before it saves. The return type is
-// the API's shape, so a missing field is a compile error.
+// dates travel as the `YYYY-MM-DD` string the input holds; rates parse from
+// the typed dollars to cents with the exact parser (INV-MONEY-003), blank =
+// null. A rate that does not parse also becomes null here, so `formProblem`
+// must refuse it first — it does, which is why the panel checks before it
+// saves. The return type is the API's shape, so a missing field is a compile
+// error.
 export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
   return {
     name: form.name.trim(),
@@ -237,7 +239,7 @@ export function formProblem(form: OtherLodgeFormState): string | null {
       return `${rateFieldLabel(field)} must be dollars and cents, for example 45 or 45.50.`;
     }
     if (cents > OTHER_LODGE_BOUNDS.rateCentsMax) {
-      return `${rateFieldLabel(field)} looks too large. Enter a realistic rate.`;
+      return `${rateFieldLabel(field)} can be at most $${formatCentsPlain(OTHER_LODGE_BOUNDS.rateCentsMax)}.`;
     }
   }
   const siteUrl = form.text.siteUrl.trim();

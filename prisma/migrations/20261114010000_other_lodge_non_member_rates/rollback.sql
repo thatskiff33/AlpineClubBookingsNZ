@@ -4,11 +4,34 @@
 -- migration role, against the database being rolled back to a release that
 -- speaks Alpine Central Server API 2.1.
 --
--- The release before #61 never names these columns, so routing traffic back
--- needs no schema reverse at all; run this only to remove them. What it loses:
--- the locally held rates. They are not lost from the network - the central
--- server still holds every rate it was sent, and a release that speaks 2.2
--- re-downloads them on its next full pull.
+-- YOU PROBABLY DO NOT NEED IT. The release before #61 never names these
+-- columns, so routing traffic back needs no schema reverse at all: leave the
+-- columns in place and the rates are still there when 2.2 returns. Run this
+-- only when the columns themselves must go.
+--
+-- IT KEEPS THE RATES. The rates cannot be counted on to come back from the
+-- central server: the download is incremental from
+-- "ServerNzSettings"."otherLodgesCursor", so a lodge the server has not changed
+-- since is never sent again, and the next UPLOAD of an edited lodge would send
+-- its empty rates as null - which the server reads as "clear" - erasing them
+-- for every club. So the rates are copied to "_rollback_other_lodge_rates"
+-- first, and put back by the statement at the end of this file.
+
+BEGIN;
+
+CREATE TABLE "_rollback_other_lodge_rates" AS
+SELECT
+  "id",
+  "name",
+  "winterRateUnder5Cents",
+  "winterRate5To11Cents",
+  "winterRate12To17Cents",
+  "winterRateAdultCents",
+  "summerRateUnder5Cents",
+  "summerRate5To11Cents",
+  "summerRate12To17Cents",
+  "summerRateAdultCents"
+FROM "OtherLodge";
 
 ALTER TABLE "OtherLodge"
   DROP CONSTRAINT IF EXISTS "OtherLodge_winterRateUnder5Cents_range",
@@ -27,3 +50,27 @@ ALTER TABLE "OtherLodge"
   DROP COLUMN IF EXISTS "summerRate5To11Cents",
   DROP COLUMN IF EXISTS "summerRate12To17Cents",
   DROP COLUMN IF EXISTS "summerRateAdultCents";
+
+COMMIT;
+
+-- RE-UPGRADING. When a 2.2 release is deployed again, Prisma re-applies the
+-- migration (the columns return empty). BEFORE the first sync - before the
+-- nightly run or anyone pressing Upload - put the rates back, matching by id
+-- (the row is the same row; a lodge deleted meanwhile is simply skipped),
+-- then drop the holding table:
+--
+--   UPDATE "OtherLodge" AS l SET
+--     "winterRateUnder5Cents" = r."winterRateUnder5Cents",
+--     "winterRate5To11Cents"  = r."winterRate5To11Cents",
+--     "winterRate12To17Cents" = r."winterRate12To17Cents",
+--     "winterRateAdultCents"  = r."winterRateAdultCents",
+--     "summerRateUnder5Cents" = r."summerRateUnder5Cents",
+--     "summerRate5To11Cents"  = r."summerRate5To11Cents",
+--     "summerRate12To17Cents" = r."summerRate12To17Cents",
+--     "summerRateAdultCents"  = r."summerRateAdultCents"
+--   FROM "_rollback_other_lodge_rates" AS r
+--   WHERE r."id" = l."id";
+--   DROP TABLE "_rollback_other_lodge_rates";
+--
+-- Raw SQL does not move "updatedAt" (Prisma sets @updatedAt in its client),
+-- so the restored rows are not re-uploaded as though they had been edited.

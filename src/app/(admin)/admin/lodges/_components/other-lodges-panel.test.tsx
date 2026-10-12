@@ -515,7 +515,7 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toBe("Summer rate, 18+ looks too large. Enter a realistic rate.");
+    expect(alert.textContent).toBe("Summer rate, 18+ can be at most $99999.99.");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 

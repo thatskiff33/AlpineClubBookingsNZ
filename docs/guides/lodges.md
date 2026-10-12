@@ -19,8 +19,8 @@ The same page also carries an **Other lodges** panel — a registry of every
 club's lodges as the
 [Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
 distributes it (name, location, booking officer name and email, bed capacity,
-website and booking details, season start dates, a facilities checklist and a
-list of amenities). These are **not** the club's own lodges in the sense of the
+website and booking details, season start dates, non-member rates, a
+facilities checklist and a list of amenities). These are **not** the club's own lodges in the sense of the
 properties above: they take no bookings and have no configuration hub. The
 list arrives by download and is read-only, with one exception: **your own
 lodge**, which the central server names for your site, has an **Edit my

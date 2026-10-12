@@ -46,7 +46,7 @@ describe("other-lodge form: non-member rates", () => {
 
   it("refuses more than the central server holds", () => {
     expect(formProblem(withRate("100000"))).toBe(
-      "Winter rate, 18+ looks too large. Enter a realistic rate.",
+      "Winter rate, 18+ can be at most $99999.99.",
     );
   });
 

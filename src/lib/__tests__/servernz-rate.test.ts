@@ -6,6 +6,8 @@ import {
   ratesToServer,
   SERVER_RATE_WIRE_NAMES,
   serverRateToCents,
+  withRatesFromServer,
+  type ServerRateWireName,
 } from "@/lib/servernz-rate";
 
 // The one boundary between this site's integer-cent rates and the central
@@ -91,5 +93,27 @@ describe("the rate keys on the wire", () => {
     );
     expect(wire.winterRate5To11).toBe(20);
     expect(wire.summerRateAdult).toBeNull();
+  });
+});
+
+describe("withRatesFromServer (the pull's conversion, driven by the one list)", () => {
+  it("moves every rate the server sent to its cents column and leaves no dollar key behind", () => {
+    const wire = Object.fromEntries(
+      Object.values(SERVER_RATE_WIRE_NAMES).map((key, i) => [key, i + 0.5]),
+    ) as Record<ServerRateWireName, number>;
+    // A pulled row: other fields beside the rates, as the schema hands it on.
+    const row = { name: "Aorangi Ski Club", ...wire };
+    const out = withRatesFromServer(row);
+    expect(out).toHaveProperty("name", "Aorangi Ski Club");
+    OTHER_LODGE_RATE_FIELDS.forEach((field, i) => {
+      expect(out).toHaveProperty(field, i * 100 + 50);
+      expect(out).not.toHaveProperty(SERVER_RATE_WIRE_NAMES[field]);
+    });
+  });
+
+  it("adds no rate the server did not send", () => {
+    const row = { name: "Aorangi Ski Club", winterRateAdult: null };
+    const out = withRatesFromServer(row);
+    expect(out).toEqual({ name: "Aorangi Ski Club", winterRateAdultCents: null });
   });
 });

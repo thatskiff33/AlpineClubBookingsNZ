@@ -9,8 +9,8 @@ import {
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
 import {
-  ratesFromServer,
   serverRateWireShape,
+  withRatesFromServer,
   type ServerRates,
 } from "@/lib/servernz-rate";
 
@@ -60,12 +60,15 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
 /**
  * A lodge as the central server sends it, held to the SAME bounds the club's own
  * officer is held to in `PATCH /api/admin/other-lodges/[id]` — literally the same
- * `otherLodgeDataShape` (name 120, location 300, officer name 200, email 320,
+ * `otherLodgeCommonDataShape` (name 120, location 300, officer name 200, email 320,
  * phone 50, bed capacity, double and single beds and minutes' walk each
  * 0..100000, room type `ROOM` or `DORMITORY`, booking page URL 500 and
  * `http(s)` only, cancellation period 200, season starts a real `YYYY-MM-DD`
  * calendar date, at most 50 amenities of name 120 / description 1000 with names
- * unique ignoring case).
+ * unique ignoring case). The rates (#61) are the one difference in FORM, not in
+ * bound: the admin route takes them as integer cents, the server sends dollars,
+ * so they are checked against the same 0..99999.99 here and converted to cents
+ * by `@/lib/servernz-rate` before the row leaves this schema.
  *
  * Matching those bounds is the point. `getPublicOtherLodges()` serves `id + name`
  * on the UNAUTHENTICATED booking-request settings endpoint, which renders on the
@@ -103,31 +106,7 @@ export const distributedLodgeSchema = z
     amenities: amenitiesInputSchema.optional(),
     updatedAt: z.string().max(64),
   })
-  .transform(
-    ({
-      winterRateUnder5,
-      winterRate5To11,
-      winterRate12To17,
-      winterRateAdult,
-      summerRateUnder5,
-      summerRate5To11,
-      summerRate12To17,
-      summerRateAdult,
-      ...rest
-    }) => ({
-      ...rest,
-      ...ratesFromServer({
-        winterRateUnder5,
-        winterRate5To11,
-        winterRate12To17,
-        winterRateAdult,
-        summerRateUnder5,
-        summerRate5To11,
-        summerRate12To17,
-        summerRateAdult,
-      }),
-    }),
-  );
+  .transform(withRatesFromServer);
 
 /** Upper bound on one pull, so a hostile or broken server cannot stream forever. */
 const MAX_LODGES_PER_PULL = 5_000;

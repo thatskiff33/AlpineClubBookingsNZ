@@ -1,23 +1,24 @@
 "use client";
 
 import { MoneyInput } from "@/components/ui/money-input";
-import type { OtherLodgeRateField } from "@/lib/other-lodges";
+import { OTHER_LODGE_BOUNDS, type OtherLodgeRateField } from "@/lib/other-lodges";
 import {
   RATE_AGE_GROUPS,
   RATE_FIELD_NAMES,
   RATE_FIELDS,
+  RATE_SEASONS,
   rateFieldLabel,
 } from "./other-lodge-form";
 
-// The non-member rate grid in the other-lodge editor (#61): Winter and Summer
-// rows by the four guideline age groups. Split out of `other-lodges-panel.tsx`
-// to keep that component inside its size budget. Each cell is a `MoneyInput`
-// holding the typed dollars; the form model parses them to cents on save.
-
-const SEASONS = ["Winter", "Summer"] as const;
+// The non-member rates in the other-lodge editor (#61): a block per season, a
+// cell per guideline age group. Split out of `other-lodges-panel.tsx` to keep
+// that component inside its size budget. Each cell is a `MoneyInput` holding
+// the typed dollars; the form model parses them to cents on save. The cells
+// wrap two to a row on a phone and sit four across from `sm`, so the dialog
+// never scrolls sideways (a fixed four-column table did, on a 375px screen).
 
 function fieldFor(
-  season: (typeof SEASONS)[number],
+  season: (typeof RATE_SEASONS)[number],
   ageGroup: (typeof RATE_AGE_GROUPS)[number],
 ): OtherLodgeRateField {
   const field = RATE_FIELD_NAMES.find(
@@ -37,7 +38,7 @@ export function OtherLodgeRateGrid({
   onRateChange: (field: OtherLodgeRateField, value: string) => void;
 }) {
   return (
-    <fieldset className="space-y-2">
+    <fieldset className="space-y-3">
       <legend className="text-sm font-medium">
         Non-member rates per person per night (NZD, incl. GST)
       </legend>
@@ -45,48 +46,39 @@ export function OtherLodgeRateGrid({
         Shown on the Alpine Central Server&apos;s public lodge search. Leave a
         rate blank if it is not known.
       </p>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[28rem] text-sm">
-          <thead>
-            <tr>
-              <th scope="col" className="sr-only">
-                Season
-              </th>
-              {RATE_AGE_GROUPS.map((ageGroup) => (
-                <th
-                  key={ageGroup}
-                  scope="col"
-                  className="px-1 pb-1 text-left font-normal text-muted-foreground"
-                >
-                  {ageGroup}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {SEASONS.map((season) => (
-              <tr key={season}>
-                <th scope="row" className="pr-2 text-left font-normal">
-                  {season}
-                </th>
-                {RATE_AGE_GROUPS.map((ageGroup) => {
-                  const field = fieldFor(season, ageGroup);
-                  return (
-                    <td key={field} className="px-1 py-1">
-                      <MoneyInput
-                        id={`other-lodge-${field}`}
-                        aria-label={rateFieldLabel(field)}
-                        value={rates[field]}
-                        onValueChange={(value) => onRateChange(field, value)}
-                      />
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {RATE_SEASONS.map((season) => (
+        <div key={season} role="group" aria-label={`${season} rates`} className="space-y-1">
+          <p aria-hidden="true" className="text-sm">
+            {season}
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {RATE_AGE_GROUPS.map((ageGroup) => {
+              const field = fieldFor(season, ageGroup);
+              return (
+                <div key={field} className="space-y-1">
+                  {/* The visible label is the age group; the accessible name
+                      also carries the season, since "18+" alone is ambiguous
+                      twice over in this dialog. */}
+                  <label
+                    htmlFor={`other-lodge-${field}`}
+                    className="block text-xs text-muted-foreground"
+                  >
+                    {ageGroup}
+                  </label>
+                  <MoneyInput
+                    id={`other-lodge-${field}`}
+                    aria-label={rateFieldLabel(field)}
+                    minCents={0}
+                    maxCents={OTHER_LODGE_BOUNDS.rateCentsMax}
+                    value={rates[field]}
+                    onValueChange={(value) => onRateChange(field, value)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </fieldset>
   );
 }

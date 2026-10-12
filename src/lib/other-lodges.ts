@@ -263,7 +263,10 @@ export function normalizeOtherLodgeText(value: string | null | undefined) {
 //
 // One shape for the admin create and PATCH routes AND for the rows the central
 // server sends: the remote is held to exactly the bounds the club's own officer
-// is held to, no looser and no tighter (see `servernz-api.ts` for why).
+// is held to, no looser and no tighter (see `servernz-api.ts` for why). The
+// rates differ only in form (#61): cents here and on the admin route, dollars
+// on the wire, so the pull takes `otherLodgeCommonDataShape` and adds the
+// server's dollar rates from `@/lib/servernz-rate`, held to the same bound.
 
 const blankToNull = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? null : value;

@@ -99,6 +99,25 @@ export function ratesFromServer(
   return out;
 }
 
+/**
+ * A pulled row with its rates moved from the server's dollar keys to this
+ * site's cents columns: every wire key is removed, and only the rates the
+ * server SENT reappear (absent stays absent). Driven by `SERVER_RATE_WIRE_NAMES`
+ * so a rate added to the field list is converted here with no second list.
+ */
+export function withRatesFromServer<T extends Partial<Record<ServerRateWireName, number | null>>>(
+  row: T,
+): Omit<T, ServerRateWireName> & Partial<Record<OtherLodgeRateField, number | null>> {
+  const rest: Record<string, unknown> = { ...row };
+  const wire: Partial<Record<ServerRateWireName, number | null>> = {};
+  for (const field of OTHER_LODGE_RATE_FIELDS) {
+    const key = SERVER_RATE_WIRE_NAMES[field];
+    wire[key] = row[key];
+    delete rest[key];
+  }
+  return { ...(rest as Omit<T, ServerRateWireName>), ...ratesFromServer(wire) };
+}
+
 /** This site's cents columns as the server's dollar keys, every one present. */
 export function ratesToServer(
   record: Record<OtherLodgeRateField, number | null>,

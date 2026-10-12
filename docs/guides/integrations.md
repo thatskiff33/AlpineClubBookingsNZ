@@ -140,11 +140,14 @@ own lodge's** entry in the **Other lodges** panel is uploaded to the central
 server and redistributed to every other connected club, where it appears on
 those clubs' pages. That is the lodge's name, location and bed count; its
 **booking officer's name, email and phone**; and the lodge details added
-alongside them — website, how to book, cancellation period, the winter and
-summer season start dates, the nine yes/no facilities (requires a lodge
-custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair
-accessible, breakfast / lunch / dinner included) and the list of amenities with
-their descriptions. The booking-officer email is the committee **role's** shared
+alongside them — the non-member booking page URL, double and single beds, the
+minutes' walk in, room or dormitory, cancellation period, the winter and summer
+season start dates, the eleven yes/no facilities (requires a lodge custodian,
+free wifi, quiet room, drying room, shared kitchen, wheelchair accessible,
+breakfast / lunch / dinner included, ski workshop area, games room), the eight
+**non-member rates** (winter and summer, per person per night, for under 5,
+5–11, 12–17 and 18+), which also appear on the central server's public lodge
+search, and the list of amenities with their descriptions. The booking-officer email is the committee **role's** shared
 address (for example `bookings@yourclub.nz`), never a member's personal one,
 and a member's phone number is shared **only** if your club already publishes it
 on your own committee page. Once the central server is on a release that
