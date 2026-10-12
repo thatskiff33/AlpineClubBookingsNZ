@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadPrBody } from "./pr-body.mjs";
 import { REQUIRED_FIELDS } from "./check-pr-concurrency-declaration.mjs";
+import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Real shell syntax remains inert body data, including quotes, backticks and Unicode.
@@ -14,6 +15,23 @@ const declaration = "## Concurrency And Lock Impact\n\n" +
 const largeBody = `${padding}\n${declaration}\n\nchangelog: none — fixture needs no release entry\n`;
 let root;
 let eventPath;
+
+// Inspect executable workflow values through the canonical parser; YAML comments
+// can discuss the old transport without defining an environment entry or script.
+function usesBodyTransport(source) {
+  const workflow = parseWorkflowYaml(source);
+  const bodyExpression = /\$\{\{[^}]*github\.event\.pull_request\.body/;
+  const bodyEnv = (env) => Object.entries(env ?? {}).some(([key, value]) =>
+    key === "PR_BODY" || (typeof value === "string" && bodyExpression.test(value)));
+  if (bodyEnv(workflow.env)) return true;
+  for (const job of Object.values(workflow.jobs ?? {})) {
+    if (bodyEnv(job.env)) return true;
+    for (const step of job.steps ?? []) {
+      if (bodyEnv(step.env) || bodyExpression.test(step.run ?? "")) return true;
+    }
+  }
+  return false;
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "pr-event-body-"));
@@ -110,11 +128,26 @@ describe("shared PR body event-file transport", () => {
       expect(failed.status).toBe(1);
       expect(failed.stderr).toContain("failed");
     },
+    // Each case starts nine Git and two Node processes; the five-suite run
+    // including both cases took 1.29s locally. 15s gives contention headroom
+    // per #3083 without raising the ordinary in-process test budget.
+    15_000,
   );
 
   it("keeps the verify workflow free of body-sized environment entries and inline body expressions", () => {
     const workflow = readFileSync(join(here, "../../.github/workflows/ci.yml"), "utf8");
-    expect(workflow).not.toMatch(/\bPR_BODY\s*:/);
-    expect(workflow).not.toMatch(/\$\{\{[^}]*github\.event\.pull_request\.body/);
+    expect(usesBodyTransport(workflow)).toBe(false);
+    const commented = "# PR_BODY: ${{ github.event.pull_request.body }} was retired.\n" + workflow;
+    expect(parseWorkflowYaml(commented)).toEqual(parseWorkflowYaml(workflow));
+    expect(usesBodyTransport(commented)).toBe(false);
+  });
+
+  it.each([
+    "env:\n  PR_BODY: unused\njobs:\n  verify:\n    steps: []\n",
+    "jobs:\n  verify:\n    env:\n      DESCRIPTION: ${{ github.event.pull_request.body }}\n    steps: []\n",
+    "jobs:\n  verify:\n    steps:\n      - env:\n          PR_BODY: unused\n        run: echo safe\n",
+    "jobs:\n  verify:\n    steps:\n      - run: echo '${{ github.event.pull_request.body }}'\n",
+  ])("detects body transport in effective workflow environment or scripts", (workflow) => {
+    expect(usesBodyTransport(workflow)).toBe(true);
   });
 });
