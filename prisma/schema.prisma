@@ -5273,6 +5273,19 @@ model OtherLodge {
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
+  // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
+  // GST, a winter and a summer rate for each guideline age group. INTEGER
+  // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
+  // set; the central server carries dollars and `@/lib/servernz-rate` is the
+  // one conversion. Display only: nothing is charged from them.
+  winterRateUnder5Cents  Int?
+  winterRate5To11Cents   Int?
+  winterRate12To17Cents  Int?
+  winterRateAdultCents   Int?
+  summerRateUnder5Cents  Int?
+  summerRate5To11Cents   Int?
+  summerRate12To17Cents  Int?
+  summerRateAdultCents   Int?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

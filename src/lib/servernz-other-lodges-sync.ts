@@ -1,6 +1,7 @@
 import "server-only";
 import {
   OTHER_LODGE_DATA_SELECT,
+  omitRateFields,
   otherLodgeAmenitiesDiffer,
   otherLodgeAmenitiesSelect,
   otherLodgeDataColumns,
@@ -17,6 +18,7 @@ import {
   pullOtherLodges,
   type OtherLodgesUploadResult,
 } from "@/lib/servernz-api";
+import { ratesToServer } from "@/lib/servernz-rate";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
@@ -101,12 +103,19 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // Every data column (dates as `YYYY-MM-DD`) and the WHOLE amenity list: the
   // server replaces its set for the lodge with what is sent, so a partial list
   // would delete the rest.
+  // The rates leave as the server's dollar keys, never as the `…Cents`
+  // columns (#61): the server's item schema is strict and would refuse them.
   const result = await uploadOtherLodges(
-    lodges.map((l) => ({
-      name: l.name,
-      ...serializeOtherLodgeData(l),
-      amenities: serializeOtherLodgeAmenities(l.amenities),
-    })),
+    lodges.map((l) => {
+      const data = serializeOtherLodgeData(l);
+      const commonData = omitRateFields(data);
+      return {
+        name: l.name,
+        ...commonData,
+        ...ratesToServer(data),
+        amenities: serializeOtherLodgeAmenities(l.amenities),
+      };
+    }),
   );
 
   // Advance the watermark to the newest `updatedAt` the server ACCEPTED. Any row

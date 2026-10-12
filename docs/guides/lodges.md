@@ -116,8 +116,10 @@ same **lodge edit** permission as the properties above.
    the **Non-member booking page URL**, the **Bed capacity**, **Double beds**,
    **Single beds** and **Minutes' walk to the lodge**, whether guests sleep in
    a **Room** or a **Dormitory** (or **Not stated**), the **Cancellation
-   period** and the dates its **winter** and **summer seasons start**, then
-   **Save**.
+   period**, the dates its **winter** and **summer seasons start**, and its
+   **Non-member rates** — what a non-member pays per person per night, in
+   dollars and cents, for each season and age group (under 5, 5–11, 12–17,
+   18+) — then **Save**.
 3. Tick whatever applies under **Facilities** (an unticked box means *no*, not
    *unknown*), and add anything else the lodge offers under **Amenities** — one
    row per amenity, a name plus an optional description, up to fifty per lodge
@@ -195,6 +197,7 @@ answer; the panel is read-only again until the next download.
 | Non-member booking page URL | Where a non-member books the other lodge (the list's **Booking page** column) | — | Optional; up to 500 characters; must start with `http://` or `https://` because it is shown as a link (anything else is refused). Server API 2.1 replaced the old free-text **How to book** field with this one link |
 | Cancellation period | Free text, e.g. "14 days" | — | Optional; up to 200 characters |
 | Winter season starts / Summer season starts | The calendar date each season opens | — | Optional; a real date, stored and shared as a date with no time, so it is never shifted by time zone |
+| Non-member rates | What a non-member pays per person per night, NZD incl. GST: a **Winter** and a **Summer** rate for each guideline age group (Under 5, 5–11, 12–17, 18+). Shown on the central server's public lodge search; nothing is charged from them here | blank | Optional; dollars and cents, 0 to 99,999.99, at most two decimal places (blank means not set, which is different from $0.00). Stored as whole cents and sent to the central server as dollars. Added with server API 2.2 |
 | Facilities | Requires a lodge custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included, ski workshop area, games room | all off | Yes/no each; *off* means **no**, and existing lodges start with every box off |
 | Amenities | Anything else the lodge offers | none | Up to 50 per lodge; each has a name (up to 120 characters, unique within the lodge ignoring case) and an optional description (up to 1000 characters). Saving replaces the whole list |
 

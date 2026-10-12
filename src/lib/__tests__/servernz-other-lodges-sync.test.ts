@@ -102,9 +102,37 @@ const WIRE_DETAILS = {
   summerSeasonStart: "2026-11-15",
 };
 
+/**
+ * The rates (#61) as this site holds them — integer cents under the `…Cents`
+ * columns — which is also what the pull hands the merge, because the wire
+ * schema converts at the boundary. `RATES_DOLLARS` is the same set as the
+ * upload sends it: the server's keys, in dollars.
+ */
+const RATES_CENTS = {
+  winterRateUnder5Cents: null,
+  winterRate5To11Cents: 2000,
+  winterRate12To17Cents: 3010,
+  winterRateAdultCents: 4550,
+  summerRateUnder5Cents: null,
+  summerRate5To11Cents: null,
+  summerRate12To17Cents: null,
+  summerRateAdultCents: 0,
+};
+const RATES_DOLLARS = {
+  winterRateUnder5: null,
+  winterRate5To11: 20,
+  winterRate12To17: 30.1,
+  winterRateAdult: 45.5,
+  summerRateUnder5: null,
+  summerRate5To11: null,
+  summerRate12To17: null,
+  summerRateAdult: 0,
+};
+
 /** The same details as Prisma reads them: `@db.Date` columns as UTC midnight. */
 const LOCAL_DETAILS = {
   ...WIRE_DETAILS,
+  ...RATES_CENTS,
   winterSeasonStart: new Date("2026-06-01T00:00:00.000Z"),
   summerSeasonStart: new Date("2026-11-15T00:00:00.000Z"),
 };
@@ -139,6 +167,7 @@ function remoteLodge(name: string, over: Record<string, unknown> = {}) {
     bookingOfficerPhone: "+64 27 422 4115",
     bedCapacity: 24,
     ...WIRE_DETAILS,
+    ...RATES_CENTS,
     amenities: AMENITIES,
     ...over,
   };
@@ -325,6 +354,8 @@ describe("lodge details and amenities round trip", () => {
         bookingOfficerPhone: "+64 27 422 4115",
         bedCapacity: 24,
         ...WIRE_DETAILS,
+        // The rates leave as the server's dollar keys; no `…Cents` key goes up.
+        ...RATES_DOLLARS,
         amenities: AMENITIES,
       },
     ]);
@@ -549,6 +580,39 @@ describe("lodge details and amenities round trip", () => {
 
     expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ unchanged: 1 });
+  });
+
+  it("writes a changed rate in cents (#61)", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { winterRateAdultCents: 4800, summerRateAdultCents: null })],
+      count: 1,
+      cursor: "c-406",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ winterRateAdultCents: 4800, summerRateAdultCents: null }),
+      }),
+    );
+    expect(result).toMatchObject({ updated: 1 });
+  });
+
+  it("leaves the stored rates alone when the server sent none (#61)", async () => {
+    // A 2.1-shaped row as the wire schema hands it on: no rate keys at all.
+    const noRates: Record<string, unknown> = remoteLodge("Aorangi Ski Club", { bedCapacity: 30 });
+    for (const key of Object.keys(RATES_CENTS)) delete noRates[key];
+    mockPullOtherLodges.mockResolvedValue({ lodges: [noRates], count: 1, cursor: "c-407", dropped: 0 });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    await downloadOtherClubsFromServer();
+
+    const [{ data }] = mockUpdateMany.mock.calls[0];
+    for (const key of Object.keys(RATES_CENTS)) expect(data).not.toHaveProperty(key);
+    expect(data).toMatchObject({ bedCapacity: 30 });
   });
 });
 

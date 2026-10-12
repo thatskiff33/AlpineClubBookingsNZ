@@ -61,6 +61,7 @@ import {
   type OtherLodgeFormState,
   type OtherLodgeRecord,
 } from "./other-lodge-form";
+import { OtherLodgeRateGrid } from "./other-lodge-rate-grid";
 
 export function OtherLodgesPanel({
   // #2160/#2168 vouch: the Lodges page renders one lodge-area
@@ -392,6 +393,16 @@ export function OtherLodgesPanel({
                 </div>
               ))}
             </div>
+
+            <OtherLodgeRateGrid
+              rates={form.rates}
+              onRateChange={(field, value) =>
+                setForm((prev) => ({
+                  ...prev,
+                  rates: { ...prev.rates, [field]: value },
+                }))
+              }
+            />
 
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">Facilities</legend>

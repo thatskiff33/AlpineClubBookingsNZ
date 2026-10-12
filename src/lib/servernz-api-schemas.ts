@@ -2,11 +2,17 @@ import "server-only";
 import { z } from "zod";
 import {
   amenitiesInputSchema,
-  otherLodgeDataShape,
+  otherLodgeCommonDataShape,
   otherLodgeNameSchema,
   type OtherLodgeAmenity,
+  type OtherLodgeRateField,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
+import {
+  ratesFromServer,
+  serverRateWireShape,
+  type ServerRates,
+} from "@/lib/servernz-rate";
 
 /**
  * The Alpine Central Server's WIRE SHAPES, as `servernz-api.ts` validates them
@@ -21,13 +27,16 @@ import {
  * A lodge entry pushed up to the server: every data column (dates as
  * `YYYY-MM-DD`) and the lodge's WHOLE amenity list, which replaces the server's
  * set for that lodge. The server's item schema is `.strict()`, so this must
- * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list.
+ * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list,
+ * except the rates: those leave as the server's dollar keys (`ServerRates`,
+ * from `ratesToServer`), never as this site's `…Cents` columns (#61).
  * `distribute` and provenance are never sent by clients.
  */
-export type OtherLodgeUploadItem = SerializedOtherLodgeData & {
-  name: string;
-  amenities: OtherLodgeAmenity[];
-};
+export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField> &
+  ServerRates & {
+    name: string;
+    amenities: OtherLodgeAmenity[];
+  };
 
 export const uploadResultSchema = z.object({
   created: z.number(),
@@ -81,14 +90,44 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * mid-merge, leave the cursor unmoved and re-fail on the same row every pull.
  * Refused here it costs one row, counted in `dropped`, like every other bound.
  */
-export const distributedLodgeSchema = z.object({
-  id: z.string().max(64),
-  name: otherLodgeNameSchema,
-  ...otherLodgeDataShape,
-  /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
-  amenities: amenitiesInputSchema.optional(),
-  updatedAt: z.string().max(64),
-});
+export const distributedLodgeSchema = z
+  .object({
+    id: z.string().max(64),
+    name: otherLodgeNameSchema,
+    ...otherLodgeCommonDataShape,
+    // The rates arrive as dollars under the server's names (#61) and leave this
+    // schema as cents under this site's column names: the conversion happens
+    // HERE, at the wire, so nothing downstream ever holds dollars.
+    ...serverRateWireShape,
+    /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
+    amenities: amenitiesInputSchema.optional(),
+    updatedAt: z.string().max(64),
+  })
+  .transform(
+    ({
+      winterRateUnder5,
+      winterRate5To11,
+      winterRate12To17,
+      winterRateAdult,
+      summerRateUnder5,
+      summerRate5To11,
+      summerRate12To17,
+      summerRateAdult,
+      ...rest
+    }) => ({
+      ...rest,
+      ...ratesFromServer({
+        winterRateUnder5,
+        winterRate5To11,
+        winterRate12To17,
+        winterRateAdult,
+        summerRateUnder5,
+        summerRate5To11,
+        summerRate12To17,
+        summerRateAdult,
+      }),
+    }),
+  );
 
 /** Upper bound on one pull, so a hostile or broken server cannot stream forever. */
 const MAX_LODGES_PER_PULL = 5_000;

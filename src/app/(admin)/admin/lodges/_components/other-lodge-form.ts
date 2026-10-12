@@ -1,4 +1,6 @@
 import { isHttpUrl } from "@/lib/http-url";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { formatCentsPlain } from "@/lib/utils";
 import {
   OTHER_LODGE_BOUNDS,
   OTHER_LODGE_ROOM_TYPES,
@@ -6,6 +8,7 @@ import {
   type AdminOtherLodge,
   type OtherLodgeBooleanField,
   type OtherLodgeDateField,
+  type OtherLodgeRateField,
   type OtherLodgeTextField,
   type OtherLodgeWholeNumberField,
   type SerializedOtherLodge,
@@ -94,6 +97,31 @@ export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   skiWorkshopArea: "Ski workshop area",
   gamesRoom: "Games room",
 };
+// The non-member rate grid (#61): a row per season, a column per guideline age
+// group. A `Record` over the rate field type, like every label here, so a rate
+// column the grid has no cell for is a compile error.
+export const RATE_AGE_GROUPS = ["Under 5", "5–11", "12–17", "18+"] as const;
+export const RATE_FIELDS: Record<
+  OtherLodgeRateField,
+  { season: "Winter" | "Summer"; ageGroup: (typeof RATE_AGE_GROUPS)[number] }
+> = {
+  winterRateUnder5Cents: { season: "Winter", ageGroup: "Under 5" },
+  winterRate5To11Cents: { season: "Winter", ageGroup: "5–11" },
+  winterRate12To17Cents: { season: "Winter", ageGroup: "12–17" },
+  winterRateAdultCents: { season: "Winter", ageGroup: "18+" },
+  summerRateUnder5Cents: { season: "Summer", ageGroup: "Under 5" },
+  summerRate5To11Cents: { season: "Summer", ageGroup: "5–11" },
+  summerRate12To17Cents: { season: "Summer", ageGroup: "12–17" },
+  summerRateAdultCents: { season: "Summer", ageGroup: "18+" },
+};
+export const RATE_FIELD_NAMES = Object.keys(RATE_FIELDS) as OtherLodgeRateField[];
+
+/** "Winter rate, 18+": the accessible name of one grid cell. */
+export function rateFieldLabel(field: OtherLodgeRateField): string {
+  const { season, ageGroup } = RATE_FIELDS[field];
+  return `${season} rate, ${ageGroup}`;
+}
+
 export const TEXT_FIELD_NAMES = Object.keys(TEXT_FIELDS) as OtherLodgeTextField[];
 export const WHOLE_NUMBER_FIELD_NAMES = Object.keys(
   WHOLE_NUMBER_FIELDS,
@@ -112,6 +140,8 @@ export type OtherLodgeFormState = {
   /** `YYYY-MM-DD` from a date input, or "" — never a `Date`. */
   dates: Record<OtherLodgeDateField, string>;
   facilities: Record<OtherLodgeBooleanField, boolean>;
+  /** Dollars as typed (`MoneyInput`), or "" for not set. Parsed to cents on save. */
+  rates: Record<OtherLodgeRateField, string>;
   amenities: AmenityFormRow[];
 };
 
@@ -127,6 +157,7 @@ export const emptyForm: OtherLodgeFormState = {
   text: recordOf(TEXT_FIELD_NAMES, () => ""),
   dates: recordOf(DATE_FIELD_NAMES, () => ""),
   facilities: recordOf(FACILITY_FIELDS, () => false),
+  rates: recordOf(RATE_FIELD_NAMES, () => ""),
   amenities: [],
 };
 
@@ -140,6 +171,10 @@ export function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
     text: recordOf(TEXT_FIELD_NAMES, (field) => lodge[field] ?? ""),
     dates: recordOf(DATE_FIELD_NAMES, (field) => lodge[field] ?? ""),
     facilities: recordOf(FACILITY_FIELDS, (field) => lodge[field]),
+    rates: recordOf(RATE_FIELD_NAMES, (field) => {
+      const cents = lodge[field];
+      return cents === null ? "" : formatCentsPlain(cents);
+    }),
     amenities: lodge.amenities.map((a) => ({
       name: a.name,
       description: a.description ?? "",
@@ -148,7 +183,10 @@ export function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
 }
 
 // Blank text fields save as null; whole numbers parse to an integer or null;
-// dates travel as the `YYYY-MM-DD` string the input holds. The return type is
+// dates travel as the `YYYY-MM-DD` string the input holds; rates parse from the
+// typed dollars to cents with the exact parser (INV-MONEY-003), blank = null.
+// A rate that does not parse also becomes null here, so `formProblem` must
+// refuse it first — it does, which is why the panel checks before it saves. The return type is
 // the API's shape, so a missing field is a compile error.
 export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
   return {
@@ -161,6 +199,10 @@ export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
     ...recordOf(TEXT_FIELD_NAMES, (field) => form.text[field].trim() || null),
     ...recordOf(DATE_FIELD_NAMES, (field) => form.dates[field].trim() || null),
     ...form.facilities,
+    ...recordOf(RATE_FIELD_NAMES, (field) => {
+      const value = form.rates[field].trim();
+      return value === "" ? null : parseDecimalDollarsToCents(value);
+    }),
     amenities: form.amenities.map((a) => ({
       name: a.name.trim(),
       description: a.description.trim() || null,
@@ -185,6 +227,17 @@ export function formProblem(form: OtherLodgeFormState): string | null {
     // inline message instead of a generic "Invalid input" from the API.
     if (value !== "" && Number(value) > OTHER_LODGE_BOUNDS.wholeNumberMax) {
       return `${WHOLE_NUMBER_FIELDS[field]} looks too large. Enter a realistic number.`;
+    }
+  }
+  for (const field of RATE_FIELD_NAMES) {
+    const value = form.rates[field].trim();
+    if (value === "") continue;
+    const cents = parseDecimalDollarsToCents(value);
+    if (cents === null) {
+      return `${rateFieldLabel(field)} must be dollars and cents, for example 45 or 45.50.`;
+    }
+    if (cents > OTHER_LODGE_BOUNDS.rateCentsMax) {
+      return `${rateFieldLabel(field)} looks too large. Enter a realistic rate.`;
     }
   }
   const siteUrl = form.text.siteUrl.trim();

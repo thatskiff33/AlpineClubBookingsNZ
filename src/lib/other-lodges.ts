@@ -66,6 +66,24 @@ export const OTHER_LODGE_DATE_FIELDS = [
   "summerSeasonStart",
 ] as const;
 
+/**
+ * The non-member rates (server API 2.2, #61): per person per night, NZD incl.
+ * GST, a winter and a summer rate for each guideline age group. Stored and
+ * handled here as INTEGER CENTS (INV-MONEY-001); the central server carries
+ * dollars, and `@/lib/servernz-rate` is the only place the two meet. Display
+ * only — nothing is charged from them.
+ */
+export const OTHER_LODGE_RATE_FIELDS = [
+  "winterRateUnder5Cents",
+  "winterRate5To11Cents",
+  "winterRate12To17Cents",
+  "winterRateAdultCents",
+  "summerRateUnder5Cents",
+  "summerRate5To11Cents",
+  "summerRate12To17Cents",
+  "summerRateAdultCents",
+] as const;
+
 /** Every data column a lodge carries besides its id, name and timestamps. */
 export const OTHER_LODGE_DATA_FIELDS = [
   ...OTHER_LODGE_TEXT_FIELDS,
@@ -73,12 +91,14 @@ export const OTHER_LODGE_DATA_FIELDS = [
   "roomType",
   ...OTHER_LODGE_BOOLEAN_FIELDS,
   ...OTHER_LODGE_DATE_FIELDS,
+  ...OTHER_LODGE_RATE_FIELDS,
 ] as const;
 
 export type OtherLodgeTextField = (typeof OTHER_LODGE_TEXT_FIELDS)[number];
 export type OtherLodgeBooleanField = (typeof OTHER_LODGE_BOOLEAN_FIELDS)[number];
 export type OtherLodgeWholeNumberField = (typeof OTHER_LODGE_WHOLE_NUMBER_FIELDS)[number];
 export type OtherLodgeDateField = (typeof OTHER_LODGE_DATE_FIELDS)[number];
+export type OtherLodgeRateField = (typeof OTHER_LODGE_RATE_FIELDS)[number];
 export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
 
 /**
@@ -118,6 +138,8 @@ export const OTHER_LODGE_BOUNDS = {
   cancellationPeriod: 200,
   amenityName: 120,
   amenityDescription: 1000,
+  /** Every rate, in cents: the server's 99999.99 dollars, and the column CHECK. */
+  rateCentsMax: 9_999_999,
 } as const;
 
 export const AMENITIES_PER_LODGE_MAX = 50;
@@ -166,6 +188,8 @@ export type SerializedOtherLodgeData = { [K in OtherLodgeTextField]: string | nu
   [K in OtherLodgeBooleanField]: boolean;
 } & {
   [K in OtherLodgeDateField]: string | null;
+} & {
+  [K in OtherLodgeRateField]: number | null;
 };
 
 export interface SerializedOtherLodge extends SerializedOtherLodgeData {
@@ -190,7 +214,17 @@ export function serializeOtherLodgeData(
     const value = lodge[field];
     data[field] = value ? formatDateOnly(value) : null;
   }
+  for (const field of OTHER_LODGE_RATE_FIELDS) data[field] = lodge[field];
   return data as SerializedOtherLodgeData;
+}
+
+/** The serialized data without the rates, for a wire that names them differently. */
+export function omitRateFields(
+  data: SerializedOtherLodgeData,
+): Omit<SerializedOtherLodgeData, OtherLodgeRateField> {
+  const rest: Record<string, unknown> = { ...data };
+  for (const field of OTHER_LODGE_RATE_FIELDS) delete rest[field];
+  return rest as Omit<SerializedOtherLodgeData, OtherLodgeRateField>;
 }
 
 export function serializeOtherLodgeAmenities(
@@ -310,12 +344,25 @@ const booleanShape = Object.fromEntries(
   OTHER_LODGE_BOOLEAN_FIELDS.map((field) => [field, z.boolean().optional()]),
 ) as { [K in OtherLodgeBooleanField]: z.ZodOptional<z.ZodBoolean> };
 
+// The rates as the ADMIN route takes them: integer cents, already converted
+// from what the officer typed by `parseDecimalDollarsToCents` in the panel.
+// The pull does not use this: the server sends dollars, which
+// `@/lib/servernz-rate` checks and converts at the wire (INV-MONEY-003).
+const rateCentsShape = Object.fromEntries(
+  OTHER_LODGE_RATE_FIELDS.map((field) => [
+    field,
+    z.number().int().min(0).max(OTHER_LODGE_BOUNDS.rateCentsMax).nullable().optional(),
+  ]),
+) as { [K in OtherLodgeRateField]: z.ZodOptional<z.ZodNullable<z.ZodNumber>> };
+
 /**
- * Every data column, each OPTIONAL: a key left out means "leave the stored
- * value alone" — on a PATCH, and on a pull from a central server that does not
- * yet send that field. It never means "set to null/false".
+ * Every data column EXCEPT the rates, each OPTIONAL: a key left out means
+ * "leave the stored value alone" — on a PATCH, and on a pull from a central
+ * server that does not yet send that field. It never means "set to null/false".
+ * Shared by the admin route and the pull; the rates differ between the two
+ * (cents here, dollars on the wire), so each adds its own.
  */
-export const otherLodgeDataShape = {
+export const otherLodgeCommonDataShape = {
   location: boundedText(OTHER_LODGE_BOUNDS.location).nullable().optional(),
   bookingOfficerName: boundedText(OTHER_LODGE_BOUNDS.bookingOfficerName)
     .nullable()
@@ -339,6 +386,12 @@ export const otherLodgeDataShape = {
   ...booleanShape,
   winterSeasonStart: dateOnlyField,
   summerSeasonStart: dateOnlyField,
+};
+
+/** Every data column as the admin route takes it: the common shape plus rates in cents. */
+export const otherLodgeDataShape = {
+  ...otherLodgeCommonDataShape,
+  ...rateCentsShape,
 };
 
 export type OtherLodgeDataInput = z.infer<z.ZodObject<typeof otherLodgeDataShape>>;
@@ -369,6 +422,9 @@ export function otherLodgeDataColumns(
   for (const field of OTHER_LODGE_DATE_FIELDS) {
     const value = input[field];
     if (value !== undefined) data[field] = value ? parseDateOnly(value) : null;
+  }
+  for (const field of OTHER_LODGE_RATE_FIELDS) {
+    if (input[field] !== undefined) data[field] = input[field];
   }
   return data as OtherLodgeDataColumns;
 }

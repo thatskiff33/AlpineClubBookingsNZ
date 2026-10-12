@@ -83,6 +83,14 @@ function lodge(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
     dinnerIncluded: false,
     winterSeasonStart: null,
     summerSeasonStart: null,
+    winterRateUnder5Cents: null,
+    winterRate5To11Cents: null,
+    winterRate12To17Cents: null,
+    winterRateAdultCents: null,
+    summerRateUnder5Cents: null,
+    summerRate5To11Cents: null,
+    summerRate12To17Cents: null,
+    summerRateAdultCents: null,
     amenities: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -460,6 +468,55 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
       gamesRoom: true,
     });
     expect(body).not.toHaveProperty("bookingPath");
+  });
+
+  it("edits the non-member rates (#61): a stored rate loads as dollars, typed dollars save as cents, blank clears", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [lodge({ winterRateAdultCents: 4550, summerRateUnder5Cents: 0 }), theirs()],
+    });
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    // Stored cents load as the dollars an officer would type; zero is a rate,
+    // not "not set".
+    const winterAdult = within(dialog).getByLabelText("Winter rate, 18+") as HTMLInputElement;
+    expect(winterAdult.value).toBe("45.50");
+    expect((within(dialog).getByLabelText("Summer rate, Under 5") as HTMLInputElement).value).toBe("0.00");
+    expect((within(dialog).getByLabelText("Winter rate, 5–11") as HTMLInputElement).value).toBe("");
+
+    fireEvent.change(within(dialog).getByLabelText("Winter rate, 5–11"), { target: { value: "20" } });
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, 12–17"), { target: { value: "30.1" } });
+    fireEvent.change(winterAdult, { target: { value: "" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).toMatchObject({
+      winterRateUnder5Cents: null,
+      winterRate5To11Cents: 2000,
+      winterRate12To17Cents: null,
+      winterRateAdultCents: null,
+      summerRateUnder5Cents: 0,
+      summerRate5To11Cents: null,
+      summerRate12To17Cents: 3010,
+      summerRateAdultCents: null,
+    });
+  });
+
+  it("refuses an unrealistic rate inside the dialog and sends nothing", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, 18+"), {
+      target: { value: "100000" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toBe("Summer rate, 18+ looks too large. Enter a realistic rate.");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 
   it("clears a stored room type with 'Not stated' and refuses a fractional bed count", async () => {

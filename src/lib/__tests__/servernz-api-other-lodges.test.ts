@@ -11,7 +11,8 @@ vi.mock("@/lib/servernz-settings", () => ({
   validateCentralServerBaseUrl: (value: string) => ({ ok: true, value }),
 }));
 
-import { OTHER_LODGE_DATA_FIELDS } from "@/lib/other-lodges";
+import { OTHER_LODGE_DATA_FIELDS, OTHER_LODGE_RATE_FIELDS } from "@/lib/other-lodges";
+import { SERVER_RATE_WIRE_NAMES } from "@/lib/servernz-rate";
 import {
   pullOtherLodges,
   uploadOtherLodges,
@@ -256,6 +257,15 @@ const SERVER_UPLOAD_ITEM_KEYS = [
   "cancellationPeriod",
   "winterSeasonStart",
   "summerSeasonStart",
+  // Server API 2.2 (#61): the rates, under the SERVER's names, in dollars.
+  "winterRateUnder5",
+  "winterRate5To11",
+  "winterRate12To17",
+  "winterRateAdult",
+  "summerRateUnder5",
+  "summerRate5To11",
+  "summerRate12To17",
+  "summerRateAdult",
   "amenities",
 ].sort();
 
@@ -291,14 +301,30 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       cancellationPeriod: null,
       winterSeasonStart: null,
       summerSeasonStart: null,
+      winterRateUnder5: null,
+      winterRate5To11: null,
+      winterRate12To17: null,
+      winterRateAdult: 45.5,
+      summerRateUnder5: null,
+      summerRate5To11: null,
+      summerRate12To17: null,
+      summerRateAdult: null,
       amenities: [],
     };
     expect(Object.keys(item).sort()).toEqual(SERVER_UPLOAD_ITEM_KEYS);
-    // And the sync builds its items from the same list, so it cannot add a key
-    // this pin does not know.
-    expect([...OTHER_LODGE_DATA_FIELDS, "name", "amenities"].sort()).toEqual(
-      SERVER_UPLOAD_ITEM_KEYS,
-    );
+    // And the sync builds its items from the same list — every data column,
+    // with each `…Cents` rate column renamed to the server's key — so it
+    // cannot add a key this pin does not know, nor send a `…Cents` key the
+    // server's strict schema would refuse.
+    const rateFields: ReadonlyArray<string> = OTHER_LODGE_RATE_FIELDS;
+    expect(
+      [
+        ...OTHER_LODGE_DATA_FIELDS.filter((f) => !rateFields.includes(f)),
+        ...OTHER_LODGE_RATE_FIELDS.map((f) => SERVER_RATE_WIRE_NAMES[f]),
+        "name",
+        "amenities",
+      ].sort(),
+    ).toEqual(SERVER_UPLOAD_ITEM_KEYS);
   });
 
   it("posts the lodges as given, under `lodges`, to the other-lodges endpoint", async () => {
@@ -329,6 +355,14 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       cancellationPeriod: "14 days",
       winterSeasonStart: "2026-06-01",
       summerSeasonStart: null,
+      winterRateUnder5: null,
+      winterRate5To11: 20,
+      winterRate12To17: null,
+      winterRateAdult: 45.5,
+      summerRateUnder5: null,
+      summerRate5To11: null,
+      summerRate12To17: null,
+      summerRateAdult: null,
       amenities: [{ name: "Sauna", description: null }],
     };
 
@@ -338,6 +372,68 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
     expect(String(url)).toBe("https://central.test/api/v1/other-lodges");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({ lodges: [item] });
+  });
+});
+
+// ── Pull: the non-member rates (#61) ───────────────────────────────────────
+
+describe("pullOtherLodges — non-member rates (#61, server API 2.2)", () => {
+  it("takes the server's dollars and hands the merge cents under this site's column names", async () => {
+    respondWith({
+      lodges: [remoteRow({ winterRateAdult: 45.5, winterRate5To11: 20, summerRateUnder5: 0, summerRateAdult: null })],
+      cursor: "c-1",
+      count: 1,
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.dropped).toBe(0);
+    const [row] = result.lodges;
+    expect(row).toMatchObject({
+      winterRateAdultCents: 4550,
+      winterRate5To11Cents: 2000,
+      summerRateUnder5Cents: 0,
+      summerRateAdultCents: null,
+    });
+    // No dollar value survives the boundary, under either name.
+    expect(row).not.toHaveProperty("winterRateAdult");
+    expect(row).not.toHaveProperty("summerRateAdult");
+  });
+
+  it("leaves a rate the server did not send ABSENT, so the merge keeps the stored one", async () => {
+    respondWith({ lodges: [remoteRow({ winterRateAdult: 45.5 })], cursor: "c-1", count: 1 });
+
+    const [row] = (await pullOtherLodges(null)).lodges;
+
+    expect(row).toHaveProperty("winterRateAdultCents", 4550);
+    expect(row).not.toHaveProperty("summerRateAdultCents");
+    expect(row).not.toHaveProperty("winterRateUnder5Cents");
+  });
+
+  it("does not take a cents key from the server: only this site writes those", async () => {
+    respondWith({ lodges: [remoteRow({ winterRateAdultCents: 1 })], cursor: "c-1", count: 1 });
+
+    const [row] = (await pullOtherLodges(null)).lodges;
+
+    expect(row).not.toHaveProperty("winterRateAdultCents");
+  });
+
+  it.each([
+    ["three decimal places", { winterRateAdult: 45.555 }],
+    ["a negative rate", { summerRate5To11: -1 }],
+    ["a rate over 99999.99", { winterRate12To17: 100000 }],
+    ["a rate sent as a string", { summerRateAdult: "45.50" }],
+  ])("drops a row with %s and keeps the others, never aborting the pull", async (_label, bad) => {
+    respondWith({
+      lodges: [remoteRow(bad), remoteRow({ id: "srv_2", name: "Ruapehu Hut", winterRateAdult: 30 })],
+      cursor: "c-1",
+      count: 2,
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.dropped).toBe(1);
+    expect(result.lodges.map((l) => l.name)).toEqual(["Ruapehu Hut"]);
   });
 });
 

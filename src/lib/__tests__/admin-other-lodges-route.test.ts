@@ -100,6 +100,14 @@ function record(overrides: Record<string, unknown> = {}) {
     // `@db.Date` columns read back as UTC midnight.
     winterSeasonStart: new Date("2026-06-01T00:00:00.000Z"),
     summerSeasonStart: null,
+    winterRateUnder5Cents: null,
+    winterRate5To11Cents: null,
+    winterRate12To17Cents: null,
+    winterRateAdultCents: null,
+    summerRateUnder5Cents: null,
+    summerRate5To11Cents: null,
+    summerRate12To17Cents: null,
+    summerRateAdultCents: null,
     amenities: [{ name: "Sauna", description: null }],
     createdAt: now,
     updatedAt: now,
@@ -439,6 +447,19 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 
+  it("writes the rates it was sent, in cents, and only those (#61)", async () => {
+    mocks.findUnique.mockResolvedValue(record());
+    mocks.update.mockResolvedValue(record({ winterRateAdultCents: 4550, summerRateUnder5Cents: null }));
+    const response = await PATCH(
+      jsonRequest("PATCH", { winterRateAdultCents: 4550, summerRateUnder5Cents: null, winterRate5To11Cents: 0 }),
+      params("ol-1"),
+    );
+    expect(response.status).toBe(200);
+    const [{ data }] = mocks.update.mock.calls[0];
+    expect(data).toEqual({ winterRateAdultCents: 4550, summerRateUnder5Cents: null, winterRate5To11Cents: 0 });
+    expect((await response.json()).otherLodge).toMatchObject({ winterRateAdultCents: 4550 });
+  });
+
   it("clears a season start and a facility without touching fields it was not sent", async () => {
     mocks.findUnique.mockResolvedValue(record());
     mocks.update.mockResolvedValue(record({ winterSeasonStart: null, freeWifi: false }));
@@ -480,6 +501,12 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
       { amenities: Array.from({ length: 51 }, (_, i) => ({ name: `A${i}` })) },
     ],
     ["malformed JSON", "{not json"],
+    // #61: rates arrive as integer cents, 0..9999999.
+    ["a rate in dollars rather than cents", { winterRateAdultCents: 45.5 }],
+    ["a negative rate", { summerRate5To11Cents: -1 }],
+    ["a rate over the server's bound", { winterRate12To17Cents: 10_000_000 }],
+    ["a rate sent as text", { summerRateAdultCents: "4550" }],
+    ["a rate under the server's dollar key", { winterRateAdult: 45.5 }],
   ])("returns 400 for %s", async (_label, body) => {
     // The schema is `.strict()`, so this is also the proof that every key is
     // NAMED in the shared shape: one missing from it would be a 400 too.
