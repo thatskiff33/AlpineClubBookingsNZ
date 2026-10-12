@@ -23,16 +23,19 @@ const gateScript = join(repoRoot, "scripts", "ci", "check-pr-concurrency-declara
  * and that is exactly where the rename blindness below lived.
  *
  * The GitHub API inputs are blanked so `fetchLivePrBody` returns null and the
- * gate reads `PR_BODY`; otherwise a run inside Actions would try to fetch a live
- * body for whatever PR happened to be in the environment.
+ * gate reads `GITHUB_EVENT_PATH`; otherwise a run inside Actions would try to
+ * fetch a live body for whatever PR happened to be in the environment.
  */
 function runGateEntrypoint(root, { body, base, head }) {
+  const eventPath = join(root, "event.json");
+  writeFileSync(eventPath, JSON.stringify({ pull_request: { body } }));
   const result = spawnSync(process.execPath, [gateScript], {
     cwd: root,
     encoding: "utf8",
     env: {
-      ...process.env,
-      PR_BODY: body,
+      PATH: process.env.PATH,
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      GITHUB_EVENT_PATH: eventPath,
       PR_BASE_SHA: base,
       PR_HEAD_SHA: head,
       PR_NUMBER: "",

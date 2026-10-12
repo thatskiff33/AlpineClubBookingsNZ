@@ -361,6 +361,12 @@ code-owner requirement was removed on 7 Oct 2026 (#3959); who may merge what is
 `AGENTS.md` → "Completion and Merge". What is applied today is below, followed by
 the owner's checklist for rebuilding it.
 
+The two PR-body gates prefer the current description from GitHub so a body edit
+can pass on a rerun. When that fetch is unavailable, they read the fallback from
+`GITHUB_EVENT_PATH` through `scripts/ci/pr-body.mjs`; the workflow never puts the
+description in a process environment entry. This also supports descriptions
+above the roughly 128 KB limit for a single Linux environment string.
+
 #### Required checks applied today
 
 | Required check | Status | Job | What it gates |

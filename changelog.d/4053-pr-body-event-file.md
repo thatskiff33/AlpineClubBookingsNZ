@@ -1,0 +1,1 @@
+- **Long pull request descriptions no longer prevent CI validation from starting (#4053).** Both description checks read their fallback from the Actions event file, so descriptions above 128 KB no longer exceed the process environment limit. Editing a description and rerunning CI still uses its current text when GitHub can supply it.

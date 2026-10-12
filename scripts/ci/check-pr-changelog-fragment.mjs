@@ -22,10 +22,9 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import {
-  fetchLivePrBody,
+  loadPrBody,
   gitDiffChangedFiles,
   parseNameStatus,
-  selectPrBody,
 } from "./pr-body.mjs";
 
 const GATE_LABEL = "PR changelog fragment check";
@@ -118,8 +117,7 @@ if (invokedPath === import.meta.url) {
       );
     }
     const changes = parseNameStatus(gitDiffChangedFiles(base, head));
-    const fetchedBody = await fetchLivePrBody(GATE_LABEL);
-    const body = selectPrBody({ fetchedBody, eventBody: process.env.PR_BODY });
+    const body = await loadPrBody(GATE_LABEL);
     const { outcome } = validateChangelogFragment(body, changes);
     console.log(`Changelog entry check passed: ${OUTCOME_MESSAGES[outcome]}`);
   } catch (error) {

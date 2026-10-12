@@ -1,10 +1,9 @@
 import { pathToFileURL } from "node:url";
 
 import {
-  fetchLivePrBody,
+  loadPrBody,
   gitDiffChangedFiles,
   parseNameStatus,
-  selectPrBody,
 } from "./pr-body.mjs";
 
 const HEADING = "## Concurrency And Lock Impact";
@@ -210,8 +209,7 @@ if (invokedPath === import.meta.url) {
             ),
           ]
         : null;
-    const fetchedBody = await fetchLivePrBody(GATE_LABEL);
-    const body = selectPrBody({ fetchedBody, eventBody: process.env.PR_BODY });
+    const body = await loadPrBody(GATE_LABEL);
     const { outcome } = validateConcurrencyDeclaration(body, changedFiles);
     console.log(`PR concurrency declaration check passed: ${OUTCOME_MESSAGES[outcome]}`);
   } catch (error) {

@@ -12,6 +12,7 @@
  * unavailable.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 /**
  * Body-source selection, factored pure so it can be unit tested without network
@@ -24,6 +25,21 @@ export function selectPrBody({ fetchedBody, eventBody }) {
     return fetchedBody;
   }
   return typeof eventBody === "string" ? eventBody : "";
+}
+
+/**
+ * Read the fallback directly from Actions' event file, never from a body-sized
+ * environment entry or shell interpolation. Missing body data stays empty for
+ * the existing validators; an unreadable or malformed file is an error.
+ * Keep this read lazy: even an empty live body wins over a broken event file.
+ */
+export async function loadPrBody(label) {
+  const fetchedBody = await fetchLivePrBody(label);
+  if (typeof fetchedBody === "string") return fetchedBody;
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath) return "";
+  const event = JSON.parse(readFileSync(eventPath, "utf8"));
+  return selectPrBody({ fetchedBody, eventBody: event?.pull_request?.body });
 }
 
 /**
