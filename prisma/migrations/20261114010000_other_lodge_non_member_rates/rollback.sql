@@ -53,11 +53,20 @@ ALTER TABLE "OtherLodge"
 
 COMMIT;
 
--- RE-UPGRADING. When a 2.2 release is deployed again, Prisma re-applies the
--- migration (the columns return empty). BEFORE the first sync - before the
--- nightly run or anyone pressing Upload - put the rates back, matching by id
--- (the row is the same row; a lodge deleted meanwhile is simply skipped),
--- then drop the holding table:
+-- RE-UPGRADING. Prisma will NOT put the columns back: this script does not
+-- touch `_prisma_migrations`, which still records 20261114010000 as APPLIED,
+-- so `prisma migrate deploy` answers "No pending migrations to apply." and a
+-- 2.2 release would fail every OtherLodge read on the missing columns. So,
+-- with the 2.2 release deployed but BEFORE it serves traffic or syncs (the
+-- nightly run, or anyone pressing Upload):
+--
+--   1. RE-APPLY migration.sql BY HAND as the migration role. The history row
+--      is already correct, so history, schema and database then agree
+--      (`prisma migrate diff --exit-code --from-config-datasource --to-schema
+--      prisma/schema.prisma` confirms it). Deleting the history row and
+--      migrating again is equivalent but edits migration history for no gain.
+--   2. Put the rates back, matching by id (the row is the same row; a lodge
+--      deleted meanwhile is simply skipped), then drop the holding table:
 --
 --   UPDATE "OtherLodge" AS l SET
 --     "winterRateUnder5Cents" = r."winterRateUnder5Cents",

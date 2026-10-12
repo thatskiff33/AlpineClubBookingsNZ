@@ -504,6 +504,26 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     });
   });
 
+  it("names every rate cell and its step buttons by season AND age group (#61)", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    for (const season of ["Winter", "Summer"]) {
+      for (const ageGroup of ["Under 5", "5–11", "12–17", "18+"]) {
+        const name = `${season} rate, ${ageGroup}`;
+        expect(within(dialog).getByLabelText(name)).toBeTruthy();
+        // MoneyInput names its buttons from the field's <label>: without the
+        // season in it, "Increase 18+ by one dollar" would appear twice.
+        await waitFor(() =>
+          expect(
+            within(dialog).getByRole("button", { name: `Increase ${name} by one dollar` }),
+          ).toBeTruthy(),
+        );
+      }
+    }
+  });
+
   it("refuses an unrealistic rate inside the dialog and sends nothing", async () => {
     stubFetch(oneOwned());
     await renderPanel();

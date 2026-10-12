@@ -7,7 +7,6 @@ import {
   RATE_FIELD_NAMES,
   RATE_FIELDS,
   RATE_SEASONS,
-  rateFieldLabel,
 } from "./other-lodge-form";
 
 // The non-member rates in the other-lodge editor (#61): a block per season, a
@@ -56,18 +55,21 @@ export function OtherLodgeRateGrid({
               const field = fieldFor(season, ageGroup);
               return (
                 <div key={field} className="space-y-1">
-                  {/* The visible label is the age group; the accessible name
-                      also carries the season, since "18+" alone is ambiguous
-                      twice over in this dialog. */}
+                  {/* The visible label is the age group; the season is in it
+                      for screen readers only, since "18+" alone is ambiguous
+                      twice over in this dialog. It must be IN the label, not
+                      an aria-label: `MoneyInput` names its step buttons from
+                      the field's <label>, so this is what makes them read
+                      "Increase Winter rate, 18+ by one dollar". */}
                   <label
                     htmlFor={`other-lodge-${field}`}
                     className="block text-xs text-muted-foreground"
                   >
+                    <span className="sr-only">{RATE_FIELDS[field].season} rate, </span>
                     {ageGroup}
                   </label>
                   <MoneyInput
                     id={`other-lodge-${field}`}
-                    aria-label={rateFieldLabel(field)}
                     minCents={0}
                     maxCents={OTHER_LODGE_BOUNDS.rateCentsMax}
                     value={rates[field]}

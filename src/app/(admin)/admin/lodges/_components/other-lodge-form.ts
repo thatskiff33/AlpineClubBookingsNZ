@@ -97,7 +97,7 @@ export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   skiWorkshopArea: "Ski workshop area",
   gamesRoom: "Games room",
 };
-// The non-member rate grid (#61): a row per season, a column per guideline age
+// The non-member rate grid (#61): a block per season, a cell per guideline age
 // group. A `Record` over the rate field type, like every label here, so a rate
 // column the grid has no cell for is a compile error.
 export const RATE_SEASONS = ["Winter", "Summer"] as const;
