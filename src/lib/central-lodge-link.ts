@@ -24,6 +24,15 @@ import { prisma } from "@/lib/prisma";
  */
 
 /** The one-lodge default's rule, on values already read (pure, for the admin page too). */
+/** The active lodges, two at most: enough to know "exactly one" or not. */
+function readActiveLodges() {
+  return prisma.lodge.findMany({
+    where: { active: true },
+    select: { id: true, centralLodgeId: true },
+    take: 2,
+  });
+}
+
 export function defaultCentralLodgeId(
   owned: ReadonlyArray<OwnedCentralLodge> | null,
   activeLodges: ReadonlyArray<{ centralLodgeId: string | null }>,
@@ -38,6 +47,8 @@ export function defaultCentralLodgeId(
 export async function resolveLocalLodgeForCentralId(
   centralLodgeId: string,
   owned: ReadonlyArray<OwnedCentralLodge> | null,
+  /** The active lodges (at least two, if there are), when the caller already has them. */
+  activeLodges?: ReadonlyArray<{ id: string; centralLodgeId: string | null }>,
 ): Promise<string | null> {
   if (!owned?.some((l) => l.id === centralLodgeId)) return null;
 
@@ -48,11 +59,7 @@ export async function resolveLocalLodgeForCentralId(
   if (linked) return linked.active ? linked.id : null;
 
   // Two rows is enough to know "not exactly one".
-  const active = await prisma.lodge.findMany({
-    where: { active: true },
-    select: { id: true, centralLodgeId: true },
-    take: 2,
-  });
+  const active = activeLodges ?? (await readActiveLodges());
   const [only] = active;
   return only && defaultCentralLodgeId(owned, active) === centralLodgeId ? only.id : null;
 }
@@ -73,8 +80,9 @@ export async function centralLinkStatus(
   owned: ReadonlyArray<OwnedCentralLodge> | null,
 ): Promise<{ answersFor: string | null; heldBy: string | null }> {
   if (!owned) return { answersFor: null, heldBy: null };
+  const active = await readActiveLodges();
   for (const lodge of owned) {
-    if ((await resolveLocalLodgeForCentralId(lodge.id, owned)) === localLodgeId) {
+    if ((await resolveLocalLodgeForCentralId(lodge.id, owned, active)) === localLodgeId) {
       return { answersFor: lodge.id, heldBy: null };
     }
   }
