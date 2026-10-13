@@ -439,6 +439,54 @@ describe("pullOtherLodges — non-member rates (#61, server API 2.2)", () => {
 
 // ── Pull: the owned list (#52) ─────────────────────────────────────────────
 
+describe("pullOtherLodges — ownLodges, the owned lodges' ids (#62)", () => {
+  it("carries the owned lodges with their permanent ids", async () => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+      ownLodges: [{ id: "ol_a", name: "Aorangi Ski Club" }],
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodges).toEqual([{ id: "ol_a", name: "Aorangi Ski Club" }]);
+    expect(result.ownLodgesRefused).toBe(false);
+  });
+
+  it("leaves ownLodges `undefined` when an older server does not send it", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodges).toBeUndefined();
+    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club"]);
+  });
+
+  it.each([
+    ["an empty id", [{ id: "", name: "Aorangi Ski Club" }]],
+    ["an id over 64 characters", [{ id: "x".repeat(65), name: "Aorangi Ski Club" }]],
+    ["the same id twice", [{ id: "ol_a", name: "A" }, { id: "ol_a", name: "B" }]],
+    ["a list that is not a list", "ol_a"],
+  ])("refuses %s on its own, without failing the pull or the names", async (_label, ownLodges) => {
+    respondWith({
+      lodges: [remoteRow()],
+      cursor: "c-1",
+      count: 1,
+      ownLodgeNames: ["Aorangi Ski Club"],
+      ownLodges,
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodges).toBeUndefined();
+    expect(result.ownLodgesRefused).toBe(true);
+    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club"]);
+    expect(result.lodges).toHaveLength(1);
+  });
+});
+
 describe("pullOtherLodges — ownLodgeNames (#52)", () => {
   it("carries the owned list the server sent", async () => {
     respondWith({

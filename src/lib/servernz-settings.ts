@@ -1,7 +1,9 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import {
+  ownedCentralLodgesSchema,
   ownedOtherLodgeNamesSchema,
+  type OwnedCentralLodge,
   type OwnedOtherLodgeNames,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
@@ -39,6 +41,14 @@ export interface ServerNzSettingsValues {
    */
   otherLodgesOwnedNamesUnreadable: boolean;
   /**
+   * The same owned lodges with their permanent central ids (#62): `null` when
+   * never told, or when the stored value does not parse (read-only, like
+   * never-told: nothing links to a lodge this site cannot read), `[]` when the
+   * server said none. Read by the "Central lodge" setting and the availability
+   * endpoint.
+   */
+  otherLodgesOwnedLodges: OwnedCentralLodge[] | null;
+  /**
    * The central server's API version as it last reported it (#49): `null`
    * until asked, `"unknown"` when the server answered 404 (it predates
    * versioning, a mismatch), otherwise a canonical `major.minor`. The mismatch
@@ -57,6 +67,7 @@ const DEFAULTS: ServerNzSettingsValues = {
   otherLodgesOwnedNames: null,
   otherLodgesOwnedNamesAt: null,
   otherLodgesOwnedNamesUnreadable: false,
+  otherLodgesOwnedLodges: null,
   serverVersion: null,
   serverVersionCheckedAt: null,
 };
@@ -83,6 +94,13 @@ export function readOwnedOtherLodgeNames(stored: unknown): StoredOwnedOtherLodge
   return parsed.success
     ? { names: parsed.data, unreadable: false }
     : { names: null, unreadable: true };
+}
+
+/** The stored owned lodges with ids (#62); anything that does not parse reads as never told. */
+export function readOwnedCentralLodges(stored: unknown): OwnedCentralLodge[] | null {
+  if (stored === null || stored === undefined) return null;
+  const parsed = ownedCentralLodgesSchema.safeParse(stored);
+  return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -121,6 +139,7 @@ export async function loadServerNzSettings(): Promise<ServerNzSettingsValues> {
       otherLodgesOwnedNames: owned.names,
       otherLodgesOwnedNamesAt: row.otherLodgesOwnedNamesAt?.toISOString() ?? null,
       otherLodgesOwnedNamesUnreadable: owned.unreadable,
+      otherLodgesOwnedLodges: readOwnedCentralLodges(row.otherLodgesOwnedLodges),
       serverVersion: row.serverVersion,
       serverVersionCheckedAt: row.serverVersionCheckedAt?.toISOString() ?? null,
     };
@@ -251,12 +270,17 @@ export async function recordOtherLodgesUpload(at: Date = new Date()): Promise<vo
 export async function recordOtherLodgesDownload(
   cursor: string | null,
   ownLodgeNames?: string[],
+  ownLodges?: OwnedCentralLodge[],
 ): Promise<void> {
   const now = new Date();
-  const owned =
-    ownLodgeNames === undefined
+  // Each list is written only when the server sent it: absent leaves the
+  // stored value alone (an older server sends names but no ids).
+  const owned = {
+    ...(ownLodgeNames === undefined
       ? {}
-      : { otherLodgesOwnedNames: ownLodgeNames, otherLodgesOwnedNamesAt: now };
+      : { otherLodgesOwnedNames: ownLodgeNames, otherLodgesOwnedNamesAt: now }),
+    ...(ownLodges === undefined ? {} : { otherLodgesOwnedLodges: ownLodges }),
+  };
   await prisma.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: {
@@ -290,6 +314,8 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
     update: {
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
+      // The ids belong to the same connection's answer (#62).
+      otherLodgesOwnedLodges: Prisma.DbNull,
     },
   });
 }
@@ -348,6 +374,8 @@ export async function forgetServerConnectionAnswers(): Promise<void> {
     update: {
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
+      // The owned ids are the same connection's answer (#62).
+      otherLodgesOwnedLodges: Prisma.DbNull,
       serverVersion: null,
       serverVersionCheckedAt: null,
     },

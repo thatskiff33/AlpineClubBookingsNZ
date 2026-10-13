@@ -479,6 +479,27 @@ export const ownedOtherLodgeNamesSchema = z
   .max(OWNED_OTHER_LODGE_NAMES_MAX);
 
 /**
+ * The owned lodges WITH their permanent central ids (server API 2.2 `ownLodges`,
+ * #62), bounded like the names. The id is the central server's lodge id: the
+ * stable key this site links its own lodges by ("Central lodge"), because a
+ * name can be changed centrally. Same three states as the names below.
+ */
+export const OWNED_CENTRAL_LODGE_ID_MAX = 64;
+export const ownedCentralLodgesSchema = z
+  .array(
+    z.object({
+      id: z.string().min(1).max(OWNED_CENTRAL_LODGE_ID_MAX).refine(hasNoNul, NO_NUL_MESSAGE),
+      name: otherLodgeNameSchema,
+    }),
+  )
+  .max(OWNED_OTHER_LODGE_NAMES_MAX)
+  .refine(
+    (list) => new Set(list.map((l) => l.id)).size === list.length,
+    "Each owned lodge id appears once",
+  );
+export type OwnedCentralLodge = { id: string; name: string };
+
+/**
  * The owned list in its three states: `null` when the server has never said
  * (not connected, never downloaded, or an older server that does not send it),
  * `[]` when it said the club owns nothing, otherwise the editable names.

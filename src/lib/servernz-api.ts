@@ -1,5 +1,9 @@
 import "server-only";
-import { ownedOtherLodgeNamesSchema } from "@/lib/other-lodges";
+import {
+  ownedCentralLodgesSchema,
+  ownedOtherLodgeNamesSchema,
+  type OwnedCentralLodge,
+} from "@/lib/other-lodges";
 import logger from "@/lib/logger";
 import {
   MAX_SERVER_VERSION_CHARS,
@@ -570,6 +574,15 @@ export async function pullOtherLodges(
     else ownLodgeNamesRefused = true;
   }
 
+  // The owned lodges with their ids (#62): the same rule, on its own.
+  let ownLodges: OwnedCentralLodge[] | undefined;
+  let ownLodgesRefused = false;
+  if (envelope.ownLodges !== undefined) {
+    const owned = ownedCentralLodgesSchema.safeParse(envelope.ownLodges);
+    if (owned.success) ownLodges = owned.data;
+    else ownLodgesRefused = true;
+  }
+
   return {
     lodges,
     cursor: envelope.cursor,
@@ -577,5 +590,7 @@ export async function pullOtherLodges(
     dropped,
     ownLodgeNames,
     ownLodgeNamesRefused,
+    ownLodges,
+    ownLodgesRefused,
   };
 }

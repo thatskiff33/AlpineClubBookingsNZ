@@ -6,6 +6,7 @@ import {
   otherLodgeNameSchema,
   type OtherLodgeAmenity,
   type OtherLodgeRateField,
+  type OwnedCentralLodge,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
 import {
@@ -135,6 +136,9 @@ export const pullEnvelopeSchema = z.object({
   cursor: z.string().max(64).nullable(),
   count: z.number(),
   ownLodgeNames: z.unknown().optional(),
+  // The same lodges with their permanent ids (server API 2.2, #62), validated
+  // on its own like the names, for the same reason.
+  ownLodges: z.unknown().optional(),
 });
 
 export interface OtherLodgesPullResult {
@@ -151,6 +155,13 @@ export interface OtherLodgesPullResult {
   ownLodgeNames: string[] | undefined;
   /** True when the server sent an owned list that failed its bounds and was discarded. */
   ownLodgeNamesRefused: boolean;
+  /**
+   * The owned lodges with their central ids (#62), or `undefined` when the
+   * server did not send them (an older release). Never defaulted to `[]`.
+   */
+  ownLodges: OwnedCentralLodge[] | undefined;
+  /** True when the server sent `ownLodges` and it failed its bounds. */
+  ownLodgesRefused: boolean;
 }
 
 /** The column's VarChar(16): the bound on any version string taken off the wire. */

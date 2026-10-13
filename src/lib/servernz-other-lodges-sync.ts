@@ -230,6 +230,11 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       "The central server sent an owned-lodge list that failed its bounds; it was ignored and the stored list left as it was",
     );
   }
+  if (pull.ownLodgesRefused) {
+    logger.warn(
+      "The central server sent owned-lodge ids that failed their bounds; they were ignored and the stored ids left as they were",
+    );
+  }
   // Which lodges are OURS for this merge: the list this pull carried, else the
   // stored one; `null` when neither is known. Decides two things per row below.
   const owned = pull.ownLodgeNames ?? settings.otherLodgesOwnedNames;
@@ -366,6 +371,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   await recordOtherLodgesDownload(
     advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
     pull.ownLodgeNames,
+    pull.ownLodges,
   );
   return {
     fetched: pull.count,

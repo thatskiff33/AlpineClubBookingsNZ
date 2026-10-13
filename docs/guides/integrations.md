@@ -178,6 +178,26 @@ treating every entry as yours. The list is forgotten when you disconnect,
 replace the API key or change the server address, because it belonged to that
 connection.
 
+**The central server can ask how many beds are free at your own lodge.** Its
+public lodge search lets non-members choose dates and a party size, see which
+lodges have room, and come to your site to book. For a lodge your club owns it
+asks this site directly, at search time, and is told **one number**: the fewest
+free beds on any night of the stay, exactly as the member calendar counts them
+(a night the whole lodge is booked or held reads as full). Nothing else is
+sent: no guest, member, booking or hold, and no night-by-night detail. The
+server proves each question is genuine with the same signing secret it uses
+for the message board, so this only works once this site has registered for
+the message board's pushes: the **Message board** module is on (see
+[Modules](modules.md#settings-reference)) and the site's own address is
+`https://`, then the next sync registers it. Until then the search shows "beds
+available unknown". It also answers nothing while **Other
+lodges** sharing is off. The server names the lodge by its **permanent central
+id**, and your site answers for the local lodge linked to it under **Admin →
+Lodges → Configure → Central lodge** (see [Lodges](lodges.md#configure-a-lodge)).
+A club with one active lodge that owns one central lodge needs no setting: the
+two are linked automatically. Since server API 2.2 each download also records
+the owned lodges' ids beside their names, and they are forgotten with the list.
+
 The same list decides which entries your **Booking Officer** committee role is
 written into: when a member takes or leaves that role, the officer's name,
 role email and (if published) phone are written into the lodge entries the

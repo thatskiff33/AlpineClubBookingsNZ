@@ -95,6 +95,17 @@ same **lodge edit** permission as the properties above.
    leader is a ticked kind; ticking teachers also makes approving a school
    booking at this lodge give its teachers hut-leader assignments and PIN
    emails. See [Hut Leaders](hut-leaders.md#school-groups).
+4. The **Central lodge** card opens `/admin/lodges/[id]/central-lodge`, where you
+   say which lodge in the Alpine Central Server's registry this one is. The
+   central server's public lodge search then asks this site how many beds are
+   free there (one number, never a guest or a booking — see
+   [Connect to the Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)).
+   Only the lodges the central server says your club owns are offered, and one
+   central lodge can be linked to one of your lodges. A club with **one** active
+   lodge that owns **one** central lodge is linked automatically and needs no
+   setting; the card says so. The link is by the central lodge's permanent id,
+   so it survives the lodge being renamed on the central server. It is specific
+   to this site, so it is not part of a configuration export.
 
 ### Deactivate a lodge
 

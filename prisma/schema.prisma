@@ -5188,6 +5188,16 @@ model Lodge {
   // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
   // and an adults-only rule, enforced in the serving serialisers.
   showGuestPhonesOnScreens Boolean @default(false)
+  // Which lodge in the Alpine Central Server's registry THIS lodge is (#62):
+  // the central lodge's permanent id, chosen by an administrator from the
+  // lodges the server says this club owns (`ServerNzSettings
+  // .otherLodgesOwnedLodges`). By id, never by name, because a lodge can be
+  // renamed centrally. Null = not linked; a club with exactly one active lodge
+  // that owns exactly one central lodge is linked by default IN CODE
+  // (`@/lib/central-lodge-link`), never by writing this column. Unique: one
+  // central lodge is one local lodge. Install-specific, so deliberately not in
+  // the config transfer.
+  centralLodgeId String? @unique @db.VarChar(64)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -5357,6 +5367,12 @@ model ServerNzSettings {
   // last received, so an operator can see how stale it is.
   otherLodgesOwnedNames   Json?
   otherLodgesOwnedNamesAt DateTime?
+  // The same owned lodges with their PERMANENT central ids, `[{ id, name }]`
+  // (server API 2.2 `ownLodges`, #62). Same three states as the names and
+  // written in the same download: NULL = never told (or an older server that
+  // does not send it), [] = owns none. Read by the "Central lodge" setting and
+  // the availability endpoint, which link by id because a name can change.
+  otherLodgesOwnedLodges  Json?
 
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus

@@ -243,7 +243,7 @@ describe("downloadOtherClubsFromServer", () => {
     const result = await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith("c-100");
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined, undefined);
     expect(result).toEqual({
       fetched: 0,
       created: 0,
@@ -498,7 +498,7 @@ describe("lodge details and amenities round trip", () => {
     expect(mockAmenityUpsert).not.toHaveBeenCalled();
     expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
     // The cursor still advances: the row was handled, not failed.
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-406", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-406", undefined, undefined);
   });
 
   it("writes the lodge row before its amenities, so the row lock orders concurrent replacements", async () => {
@@ -789,7 +789,7 @@ describe("download cursor overlap", () => {
 
     // The overlap widens the QUESTION; it must never move the stored ANSWER
     // backwards, which is what would turn a bounded re-ask into a slow rewind.
-    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T09:00:00.000Z", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T09:00:00.000Z", undefined, undefined);
     expect(mockRecordDownload).not.toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
     expect(mockRecordDownload).not.toHaveBeenCalledWith(stored);
   });
@@ -877,7 +877,7 @@ describe("download cursor overlap", () => {
     // for unchanged, rather than for a window before an instant that has no
     // meaning yet.
     expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
-    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T00:00:00.000Z", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T00:00:00.000Z", undefined, undefined);
   });
 
   it("does not advance the durable cursor when the pull or the merge fails", async () => {
@@ -928,7 +928,7 @@ describe("download cursor overlap", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
-    expect(mockRecordDownload).toHaveBeenCalledWith(stored, undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith(stored, undefined, undefined);
   });
 
   it("still advances to a server watermark that is genuinely later", async () => {
@@ -947,7 +947,7 @@ describe("download cursor overlap", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-20T10:05:30.001Z", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-20T10:05:30.001Z", undefined, undefined);
   });
 
   it("passes a cursor it cannot read as an instant through untouched, and says so", async () => {
@@ -984,7 +984,7 @@ describe("download cursor overlap", () => {
       expect(mockPullOtherLodges).toHaveBeenCalledWith(stored);
       // Unreadable on both sides, so the server's answer still stands: the
       // monotonic guard narrows nothing it cannot order.
-      expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined);
+      expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined, undefined);
       expect(mockLoggerWarn).toHaveBeenCalledTimes(1);
       expect(mockLoggerWarn).toHaveBeenCalledWith(
         { cursor: stored },
@@ -1017,7 +1017,43 @@ describe("own lodges only (#52)", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-500", ["Aorangi Ski Club"]);
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-500", ["Aorangi Ski Club"], undefined);
+  });
+
+  it("records the owned lodges' ids the pull carried, beside the names (#62)", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "c-510",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+      ownLodges: [{ id: "ol_a", name: "Aorangi Ski Club" }],
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith(
+      "c-510",
+      ["Aorangi Ski Club"],
+      [{ id: "ol_a", name: "Aorangi Ski Club" }],
+    );
+  });
+
+  it("warns when the server's owned ids were refused, and records none (#62)", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "c-511",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+      ownLodges: undefined,
+      ownLodgesRefused: true,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringContaining("owned-lodge ids"));
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-511", ["Aorangi Ski Club"], undefined);
   });
 
   it("records an EMPTY owned list as an answer, not as an omission", async () => {
@@ -1031,7 +1067,7 @@ describe("own lodges only (#52)", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-501", []);
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-501", [], undefined);
   });
 
   it("passes `undefined` when the server did not send the list, so a stored list is left alone", async () => {
@@ -1046,7 +1082,7 @@ describe("own lodges only (#52)", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-502", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-502", undefined, undefined);
   });
 
   it("does not record the owned list when the merge throws part-way", async () => {
@@ -1316,6 +1352,6 @@ describe("own lodges only: the review fixes (#52)", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/failed its bounds/i));
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-608", undefined);
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-608", undefined, undefined);
   });
 });

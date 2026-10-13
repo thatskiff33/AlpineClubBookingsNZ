@@ -19,6 +19,7 @@ import {
   forgetServerConnectionAnswers,
   loadServerNzSettings,
   normalizeBaseUrl,
+  readOwnedCentralLodges,
   recordOtherLodgesDownload,
   recordServerVersionCheck,
   validateCentralServerBaseUrl,
@@ -41,6 +42,7 @@ describe("loadServerNzSettings", () => {
       otherLodgesOwnedNames: null,
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedNamesUnreadable: false,
+      otherLodgesOwnedLodges: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
@@ -183,6 +185,7 @@ describe("the server's reported API version (#49)", () => {
     expect(args.update).toEqual({
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
+      otherLodgesOwnedLodges: Prisma.DbNull,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
@@ -241,11 +244,35 @@ describe("the owned lodge list (#52)", () => {
     // DbNull reads back as "never told"; a JSON null would read as unreadable.
     expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
     expect(args.update.otherLodgesOwnedNamesAt).toBeNull();
+    // The owned ids (#62) are the same answer, so they go with it.
+    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
     // Nothing else on the row is touched.
     expect(Object.keys(args.update).sort()).toEqual([
+      "otherLodgesOwnedLodges",
       "otherLodgesOwnedNames",
       "otherLodgesOwnedNamesAt",
     ]);
+  });
+
+  it("stores the owned ids when the download carried them, and leaves them alone when it did not (#62)", async () => {
+    await recordOtherLodgesDownload("c-901", ["Aorangi Ski Club"], [{ id: "ol_a", name: "Aorangi Ski Club" }]);
+    let [args] = mocks.upsert.mock.calls[0];
+    expect(args.update.otherLodgesOwnedLodges).toEqual([{ id: "ol_a", name: "Aorangi Ski Club" }]);
+
+    mocks.upsert.mockClear();
+    await recordOtherLodgesDownload("c-902", ["Aorangi Ski Club"]);
+    [args] = mocks.upsert.mock.calls[0];
+    expect(args.update).not.toHaveProperty("otherLodgesOwnedLodges");
+  });
+
+  it("reads stored owned ids back, and treats an unreadable value as never told (#62)", () => {
+    expect(readOwnedCentralLodges([{ id: "ol_a", name: "Aorangi Ski Club" }])).toEqual([
+      { id: "ol_a", name: "Aorangi Ski Club" },
+    ]);
+    expect(readOwnedCentralLodges(null)).toBeNull();
+    expect(readOwnedCentralLodges([{ id: "", name: "x" }])).toBeNull();
+    expect(readOwnedCentralLodges([{ id: "a", name: "x" }, { id: "a", name: "y" }])).toBeNull();
+    expect(readOwnedCentralLodges("junk")).toBeNull();
   });
 
   it("stores the list and its timestamp when the download carried one", async () => {
