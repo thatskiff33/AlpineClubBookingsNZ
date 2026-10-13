@@ -23,7 +23,6 @@ import { prisma } from "@/lib/prisma";
  * An inactive lodge never answers: it takes no bookings, so it has no beds.
  */
 
-/** The one-lodge default's rule, on values already read (pure, for the admin page too). */
 /** The active lodges, two at most: enough to know "exactly one" or not. */
 function readActiveLodges() {
   return prisma.lodge.findMany({
@@ -33,6 +32,7 @@ function readActiveLodges() {
   });
 }
 
+/** The one-lodge default's rule, on values already read (pure, for the admin page too). */
 export function defaultCentralLodgeId(
   owned: ReadonlyArray<OwnedCentralLodge> | null,
   activeLodges: ReadonlyArray<{ centralLodgeId: string | null }>,
