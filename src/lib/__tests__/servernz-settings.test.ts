@@ -254,15 +254,24 @@ describe("the owned lodge list (#52)", () => {
     ]);
   });
 
-  it("stores the owned ids when the download carried them, and leaves them alone when it did not (#62)", async () => {
+  it("stores the owned ids with the names, and CLEARS them when names come without ids (#62)", async () => {
     await recordOtherLodgesDownload("c-901", ["Aorangi Ski Club"], [{ id: "ol_a", name: "Aorangi Ski Club" }]);
     let [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesOwnedLodges).toEqual([{ id: "ol_a", name: "Aorangi Ski Club" }]);
 
     mocks.upsert.mockClear();
+    // Names without usable ids (an older server, or ids refused): the stored
+    // ids must not outlive the list they came with (#62 review).
     await recordOtherLodgesDownload("c-902", ["Aorangi Ski Club"]);
     [args] = mocks.upsert.mock.calls[0];
+    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
+
+    // Neither sent: both left alone.
+    mocks.upsert.mockClear();
+    await recordOtherLodgesDownload("c-903");
+    [args] = mocks.upsert.mock.calls[0];
     expect(args.update).not.toHaveProperty("otherLodgesOwnedLodges");
+    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
   });
 
   it("reads stored owned ids back, and treats an unreadable value as never told (#62)", () => {

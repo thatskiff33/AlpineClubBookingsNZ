@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * one-lodge default for THIS lodge only.
  */
 
-const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings } = vi.hoisted(() => ({
+const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings, mockSecret } = vi.hoisted(() => ({
   mockPrisma: (() => {
     const client = {
       lodge: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
@@ -23,6 +23,7 @@ const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings } = vi.ho
   mockRequireAdmin: vi.fn(),
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockSettings: vi.fn(),
+  mockSecret: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -36,6 +37,10 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/servernz-settings", () => ({
   loadServerNzSettings: (...args: unknown[]) => mockSettings(...args),
 }));
+vi.mock("@/lib/integration-credentials", () => ({
+  getIntegrationCredentialValue: (...args: unknown[]) => mockSecret(...args),
+}));
+vi.mock("@/lib/club-post-mirror", () => ({ SERVERNZ_PUSH_SECRET_KEY: "push_secret" }));
 
 import { GET, PUT } from "@/app/api/admin/lodges/[id]/central-lodge/route";
 
@@ -54,10 +59,15 @@ const put = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
-  mockPrisma.lodge.findUnique.mockResolvedValue({ ...LODGE });
+  // A lookup BY ID is the page's own lodge; a lookup by central id is the
+  // resolver asking who holds a link (nobody, unless a test says so).
+  mockPrisma.lodge.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+    where.id ? { ...LODGE } : null,
+  );
   mockPrisma.lodge.findMany.mockResolvedValue([{ id: "lodge_1", centralLodgeId: null }]);
   mockPrisma.lodge.update.mockResolvedValue({});
   mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A, B] });
+  mockSecret.mockResolvedValue("secret");
 });
 
 describe("GET /api/admin/lodges/[id]/central-lodge", () => {
@@ -70,22 +80,30 @@ describe("GET /api/admin/lodges/[id]/central-lodge", () => {
       lodgeActive: true,
       centralLodgeId: null,
       ownedLodges: [A, B],
-      defaultCentralLodgeId: null,
+      answersForCentralLodgeId: null,
+      linkHeldBy: null,
       otherLodgesEnabled: true,
+      registeredWithCentralServer: true,
     });
   });
 
-  it("reports the one-lodge default for the club's only active lodge", async () => {
+  // Which lodge answers is decided by the endpoint's own resolver
+  // (central-lodge-link.test.ts pins it, including a link held by an inactive
+  // lodge); here only that the page reports the resolver's verdict.
+  it("reports what the endpoint's resolver answers for", async () => {
     mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A] });
+    // The page's own lodge read, then the resolver's explicit-link lookup
+    // (none); the one-lodge default then applies to lodge_1.
+    mockPrisma.lodge.findUnique.mockResolvedValueOnce({ ...LODGE }).mockResolvedValueOnce(null);
     const body = await (await GET(new Request("http://localhost"), params())).json();
-    expect(body.defaultCentralLodgeId).toBe("ol_a");
+    expect(body.answersForCentralLodgeId).toBe("ol_a");
+    expect(body.linkHeldBy).toBeNull();
   });
 
-  it("does not report a default on a lodge that is not the only active one", async () => {
-    mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A] });
-    mockPrisma.lodge.findUnique.mockResolvedValue({ ...LODGE, id: "lodge_2", active: false });
-    const body = await (await GET(new Request("http://localhost"), params("lodge_2"))).json();
-    expect(body.defaultCentralLodgeId).toBeNull();
+  it("reports whether this site holds the push secret", async () => {
+    mockSecret.mockResolvedValue(null);
+    const body = await (await GET(new Request("http://localhost"), params())).json();
+    expect(body.registeredWithCentralServer).toBe(false);
   });
 });
 

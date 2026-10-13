@@ -154,6 +154,7 @@ describe("GET /api/webhooks/servernz-availability (#62)", () => {
       ["check-out on the check-in day", { from: "2026-07-10", to: "2026-07-10" }],
       ["check-out before check-in", { from: "2026-07-10", to: "2026-07-09" }],
       ["31 nights", { from: "2026-07-01", to: "2026-08-01" }],
+      ["a check-out thousands of years away", { from: "2026-07-01", to: "9999-12-31" }],
       ["a check-in in the past", { from: "2026-06-30", to: "2026-07-02" }],
       ["a check-in more than 730 days ahead", { from: "2028-07-01", to: "2028-07-02" }],
     ])("is 400 for %s (signed correctly)", async (_label, query) => {

@@ -804,6 +804,12 @@ together). The later sync of `main` 0ff7e6d46 into the epic (#3821) composed
 `payment` 54, 501 row-producing sites (RE-MEASURED the same way). The hand sync of `main`
 f3b6c008b (epic #3789) brought the same two `payment` additions in again from
 the other side and measured the same figures on the merged tree.
+#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
+`pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
+administrator linked a local lodge to its lodge on the Alpine Central Server.
+`admin` under INV-PRIV-013's rule, like every writer in the lodge-records
+subsystem, so the lodge-gated keep grows from seventeen pinned sites to
+eighteen; the row names two central lodge ids and the administrator, no member.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
-import { defaultCentralLodgeId } from "@/lib/central-lodge-link";
+import { centralLinkStatus } from "@/lib/central-lodge-link";
+import { SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror";
+import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
@@ -44,16 +46,13 @@ async function readSettings(lodgeId: string) {
     select: { id: true, name: true, active: true, centralLodgeId: true },
   });
   if (!lodge) return null;
-  const [settings, activeLodges] = await Promise.all([
+  const [settings, pushSecret] = await Promise.all([
     loadServerNzSettings(),
-    prisma.lodge.findMany({
-      where: { active: true },
-      select: { id: true, centralLodgeId: true },
-      take: 2,
-    }),
+    getIntegrationCredentialValue("servernz", SERVERNZ_PUSH_SECRET_KEY),
   ]);
   const owned = settings.otherLodgesOwnedLodges;
-  const defaultId = defaultCentralLodgeId(owned, activeLodges);
+  // The endpoint's own resolver decides, so this page and the endpoint agree.
+  const status = await centralLinkStatus(lodge.id, owned);
   return {
     lodgeId: lodge.id,
     lodgeName: lodge.name,
@@ -65,14 +64,19 @@ async function readSettings(lodgeId: string) {
      */
     ownedLodges: owned,
     /**
-     * The id this lodge answers for WITHOUT a link, under the one-lodge
-     * default, or null. Reported so the card can say "linked automatically"
-     * rather than restating the rule.
+     * The owned central lodge this lodge actually answers for — by its link or
+     * by the one-lodge default — decided by the endpoint's resolver; or null.
      */
-    defaultCentralLodgeId:
-      defaultId !== null && activeLodges[0]?.id === lodge.id ? defaultId : null,
+    answersForCentralLodgeId: status.answersFor,
+    /** The other local lodge holding the only owned central lodge's link, if any. */
+    linkHeldBy: status.heldBy,
     /** Whether Other lodges sharing is on; the endpoint answers nothing while it is off. */
     otherLodgesEnabled: settings.otherLodgesEnabled,
+    /**
+     * Whether this site holds the push secret the central server signs its
+     * questions with; without it every question is refused (401).
+     */
+    registeredWithCentralServer: Boolean(pushSecret),
   };
 }
 

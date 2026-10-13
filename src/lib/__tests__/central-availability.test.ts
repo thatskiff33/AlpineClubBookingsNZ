@@ -48,7 +48,10 @@ describe("freeBedsForStay", () => {
     expect(mocks.getMonthAvailability.mock.calls.map(([, y, m]) => `${y}-${m}`)).toEqual(["2026-6", "2026-7"]);
   });
 
-  it("is 0 on a whole-lodge-held night, which the calendar reports as full", async () => {
+  // A whole-lodge-held night arrives from the calendar ALREADY pinned to full
+  // (getMonthAvailability's own tests cover that pin); this pins only that a
+  // full night gives 0 here.
+  it("is 0 on a night the calendar reports as full, as it does a whole-lodge-held one", async () => {
     occupancy({ "2026-07-10": 2, "2026-07-11": 20 });
     expect(await stay("2026-07-10", "2026-07-12")).toBe(0);
   });

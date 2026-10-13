@@ -105,7 +105,12 @@ export async function GET(request: NextRequest) {
   const first = parseDateOnly(from);
   const checkOut = parseDateOnly(to);
   const today = await clubTodayDateOnlyInstant();
-  const nights = checkOut > first ? eachDateOnlyInRange(first, checkOut).length : 0;
+  // The cap is checked BEFORE the nights are listed, so an absurd check-out
+  // costs nothing to refuse.
+  const nights =
+    checkOut > first && checkOut <= addDaysDateOnly(first, CENTRAL_AVAILABILITY_MAX_NIGHTS)
+      ? eachDateOnlyInRange(first, checkOut).length
+      : CENTRAL_AVAILABILITY_MAX_NIGHTS + 1;
   if (
     nights < 1 ||
     nights > CENTRAL_AVAILABILITY_MAX_NIGHTS ||

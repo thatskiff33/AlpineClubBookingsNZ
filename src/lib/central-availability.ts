@@ -33,8 +33,8 @@ export async function freeBedsForStay(
   const nights = eachDateOnlyInRange(from, toExclusive);
   const capacity = await getLodgeCapacity(lodgeId);
 
-  // The (year, month) of every month the stay touches: at most two for the
-  // route's 30-night cap, three at most for any stay under a month and a bit.
+  // The (year, month) of every month the stay touches: up to three for the
+  // route's 30-night cap (31 January to 1 March in a non-leap year).
   const months = new Map<string, { year: number; month: number }>();
   for (const night of nights) {
     const year = night.getUTCFullYear();

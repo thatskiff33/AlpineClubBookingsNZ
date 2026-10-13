@@ -273,13 +273,21 @@ export async function recordOtherLodgesDownload(
   ownLodges?: OwnedCentralLodge[],
 ): Promise<void> {
   const now = new Date();
-  // Each list is written only when the server sent it: absent leaves the
-  // stored value alone (an older server sends names but no ids).
+  // The names are written only when the server sent them: absent leaves the
+  // stored list alone. The ids follow the names, never outlive them: when this
+  // download records names but carried no usable ids (an older server, or ids
+  // that failed their bounds), the stored ids are CLEARED rather than kept, so
+  // the availability endpoint can never answer for a lodge the club no longer
+  // owns on the strength of an older list (fail closed: "never told").
   const owned = {
     ...(ownLodgeNames === undefined
       ? {}
       : { otherLodgesOwnedNames: ownLodgeNames, otherLodgesOwnedNamesAt: now }),
-    ...(ownLodges === undefined ? {} : { otherLodgesOwnedLodges: ownLodges }),
+    ...(ownLodges !== undefined
+      ? { otherLodgesOwnedLodges: ownLodges }
+      : ownLodgeNames !== undefined
+        ? { otherLodgesOwnedLodges: Prisma.DbNull }
+        : {}),
   };
   await prisma.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },

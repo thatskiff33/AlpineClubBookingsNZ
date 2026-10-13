@@ -41,8 +41,10 @@ type GetBody = {
   lodgeActive: boolean;
   centralLodgeId: string | null;
   ownedLodges: Array<{ id: string; name: string }> | null;
-  defaultCentralLodgeId: string | null;
+  answersForCentralLodgeId: string | null;
+  linkHeldBy: string | null;
   otherLodgesEnabled: boolean;
+  registeredWithCentralServer: boolean;
 };
 
 function body(over: Partial<GetBody> = {}): GetBody {
@@ -52,8 +54,10 @@ function body(over: Partial<GetBody> = {}): GetBody {
     lodgeActive: true,
     centralLodgeId: null,
     ownedLodges: [A, B],
-    defaultCentralLodgeId: null,
+    answersForCentralLodgeId: null,
+    linkHeldBy: null,
     otherLodgesEnabled: true,
+    registeredWithCentralServer: true,
     ...over,
   };
 }
@@ -79,7 +83,7 @@ afterEach(() => {
 
 describe("LodgeCentralLodgeCard", () => {
   it("says it is linked automatically under the one-lodge default", async () => {
-    serve(body({ ownedLodges: [A], defaultCentralLodgeId: "ol_a" }));
+    serve(body({ ownedLodges: [A], answersForCentralLodgeId: "ol_a" }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     expect(await screen.findByText(/Linked automatically to Aorangi Ski Club/)).toBeTruthy();
   });
@@ -89,6 +93,18 @@ describe("LodgeCentralLodgeCard", () => {
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     expect(await screen.findByText(/has not yet said which lodges this club owns/)).toBeTruthy();
     expect(screen.queryByLabelText("Central lodge")).toBeNull();
+  });
+
+  it("says why nothing is answered when another lodge holds the link", async () => {
+    serve(body({ ownedLodges: [A], linkHeldBy: "Old Hut" }));
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    expect(await screen.findByText(/linked to Old Hut\. Unlink it there/)).toBeTruthy();
+  });
+
+  it("says when this site has not registered with the central server", async () => {
+    serve(body({ registeredWithCentralServer: false, centralLodgeId: "ol_a" }));
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    expect(await screen.findByText(/has not registered with the central server/)).toBeTruthy();
   });
 
   it("says when sharing is off", async () => {
@@ -105,7 +121,7 @@ describe("LodgeCentralLodgeCard", () => {
   });
 
   it("saves only the link, for THIS lodge, after Edit and Save — not on change", async () => {
-    serve(body(), body({ centralLodgeId: "ol_b" }));
+    serve(body(), body({ centralLodgeId: "ol_b", answersForCentralLodgeId: "ol_b" }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(screen.getByLabelText("Central lodge"), { target: { value: "ol_b" } });

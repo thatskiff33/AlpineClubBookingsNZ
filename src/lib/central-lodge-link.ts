@@ -56,3 +56,36 @@ export async function resolveLocalLodgeForCentralId(
   const [only] = active;
   return only && defaultCentralLodgeId(owned, active) === centralLodgeId ? only.id : null;
 }
+
+/**
+ * What the admin page shows for one local lodge, decided by the SAME resolver
+ * the endpoint uses, so the page can never say "linked" for a lodge the
+ * endpoint refuses (or the reverse):
+ *
+ *  - `answersFor`: the owned central lodge this local lodge actually answers
+ *    for — by its own link or by the one-lodge default — or null;
+ *  - `heldBy`: when this would be the one-lodge default but ANOTHER local lodge
+ *    (typically an inactive one) holds the only owned central lodge's link,
+ *    that lodge's name, so the page can say why nothing is answered.
+ */
+export async function centralLinkStatus(
+  localLodgeId: string,
+  owned: ReadonlyArray<OwnedCentralLodge> | null,
+): Promise<{ answersFor: string | null; heldBy: string | null }> {
+  if (!owned) return { answersFor: null, heldBy: null };
+  for (const lodge of owned) {
+    if ((await resolveLocalLodgeForCentralId(lodge.id, owned)) === localLodgeId) {
+      return { answersFor: lodge.id, heldBy: null };
+    }
+  }
+  const [only] = owned;
+  if (owned.length !== 1 || !only) return { answersFor: null, heldBy: null };
+  const holder = await prisma.lodge.findUnique({
+    where: { centralLodgeId: only.id },
+    select: { id: true, name: true },
+  });
+  return {
+    answersFor: null,
+    heldBy: holder && holder.id !== localLodgeId ? holder.name : null,
+  };
+}

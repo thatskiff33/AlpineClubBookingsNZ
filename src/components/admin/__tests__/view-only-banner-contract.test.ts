@@ -361,6 +361,9 @@ const FIGURES = {
    * Edit my Lodge, vouched the same way. Net two fewer. MEASURED by re-running
    * this census.
    *
+   * 370 -> 372 (#62): the Central lodge card's Edit and Save, both
+   * `describeReason={false}` under the card's own section banner. MEASURED by
+   * re-running this census.
    * 370 -> 371 (#3750): the change-request card's Confirm overbooking and
    * apply, shown when an executed finished-stay approval needs the officer to
    * confirm an over-capacity past night. MEASURED.
@@ -443,6 +446,7 @@ const FIGURES = {
    * 321 -> 322 (#4098): "Close: already paid", under the billing panel's banner.
    * 322 -> 323 (#4162): "Record the answer", under the voided bank refund notes panel's banner.
    */
+  // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   optOuts: 323,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
@@ -509,6 +513,8 @@ const FIGURES = {
    * 280 -> 282 (#3416): the school-teacher card's Edit and Save sit in the
    * same file as its section banner.
    *
+   * 281 -> 283 (#62): the Central lodge card's Edit and Save sit in the same
+   * file as its section banner.
    * 281 -> 282 (#3750): the overbooking confirm is rendered in the change-
    * request panel itself, beside that panel's own banner.
    * 282 -> 284 (#3372): the dead card refunds panel's "Paid another way" and
@@ -617,6 +623,8 @@ const FIGURES = {
    * without one because every visitor was a Full Admin. #3596 gave it a view
    * tier. Mounted in all three of its branches (load failed, loading, loaded).
    *
+   * 98 -> 99 (#62): the Central lodge card, which keeps its own banner like
+   * the roster card beside it. Mounted in both of its branches.
    * 98 -> 99 (#3372): the stuck-states page's dead card refunds panel, gated on
    * finance inside a support page, so it states its own area's reason.
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,

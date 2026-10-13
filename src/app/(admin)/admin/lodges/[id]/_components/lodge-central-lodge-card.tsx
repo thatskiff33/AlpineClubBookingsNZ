@@ -47,17 +47,13 @@ interface CentralLodgeResponse {
   lodgeActive: boolean;
   centralLodgeId: string | null;
   ownedLodges: OwnedLodge[] | null;
-  defaultCentralLodgeId: string | null;
+  answersForCentralLodgeId: string | null;
+  linkHeldBy: string | null;
   otherLodgesEnabled: boolean;
+  registeredWithCentralServer: boolean;
 }
 
-interface CentralLodgeDraft {
-  centralLodgeId: string | null;
-  ownedLodges: OwnedLodge[] | null;
-  defaultCentralLodgeId: string | null;
-  otherLodgesEnabled: boolean;
-  lodgeActive: boolean;
-}
+type CentralLodgeDraft = Omit<CentralLodgeResponse, "lodgeId" | "lodgeName">;
 
 function endpoint(lodgeId: string) {
   return `/api/admin/lodges/${encodeURIComponent(lodgeId)}/central-lodge`;
@@ -65,11 +61,13 @@ function endpoint(lodgeId: string) {
 
 function toDraft(body: CentralLodgeResponse): CentralLodgeDraft {
   return {
+    lodgeActive: body.lodgeActive,
     centralLodgeId: body.centralLodgeId,
     ownedLodges: body.ownedLodges,
-    defaultCentralLodgeId: body.defaultCentralLodgeId,
+    answersForCentralLodgeId: body.answersForCentralLodgeId,
+    linkHeldBy: body.linkHeldBy,
     otherLodgesEnabled: body.otherLodgesEnabled,
-    lodgeActive: body.lodgeActive,
+    registeredWithCentralServer: body.registeredWithCentralServer,
   };
 }
 
@@ -144,7 +142,10 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
 
   const owned = draft.ownedLodges;
   const linkedName = nameOf(owned, draft.centralLodgeId);
-  const defaultName = nameOf(owned, draft.defaultCentralLodgeId);
+  // What the endpoint actually answers for, from the server's resolver: the
+  // card never re-derives the one-lodge rule.
+  const answersName = nameOf(owned, draft.answersForCentralLodgeId);
+  const defaultName = draft.centralLodgeId === null ? answersName : null;
   // A stored link to a lodge the club no longer owns stays visible, so an
   // administrator can see why the lodge is not answering and clear it.
   const staleLink = draft.centralLodgeId !== null && linkedName === null;
@@ -156,6 +157,9 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
   } else if (owned === null) {
     state =
       "The central server has not yet said which lodges this club owns. Download from the central server first.";
+  } else if (!draft.registeredWithCentralServer) {
+    state =
+      "This site has not registered with the central server, so it cannot check that a question really came from it and answers none. Turn on the Message board module; the site's address must start with https://. The next sync registers it.";
   } else if (!draft.lodgeActive) {
     state = "This lodge is inactive, so it never answers.";
   } else if (draft.centralLodgeId !== null && !staleLink) {
@@ -165,6 +169,8 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
       "Linked to a lodge the central server no longer says this club owns, so nothing is answered. Choose again or clear it.";
   } else if (defaultName) {
     state = `Linked automatically to ${defaultName}, because this club has one lodge and owns one central lodge.`;
+  } else if (draft.linkHeldBy) {
+    state = `Not linked: the club's central lodge is linked to ${draft.linkHeldBy}. Unlink it there to use it here.`;
   } else {
     state = "Not linked, so the central server's lodge search shows its free beds as unknown.";
   }
