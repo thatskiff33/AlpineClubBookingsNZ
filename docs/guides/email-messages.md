@@ -471,6 +471,20 @@ Two consequences worth knowing before you edit one:
   "Whole-lodge booking needs a manual invoice" alert quotes the netted amount
   the member was asked for — invoice that, not the booking's price.
 
+### Booking-policy exception approval
+
+The **Your Request Was Approved** email is sent when an approved exception
+creates a new booking. Changes to an existing booking use **Booking Modified**.
+
+Its `{{paymentNote}}` quotes the amount still owed, including a recorded change
+fee and subtracting applied account credit. A successful payment or nothing left
+to pay makes the note empty. A booking marked **Confirmed** may still owe a bank
+transfer: the note gives the amount and directs the member to their booking's
+bank-transfer instructions. It also says whether beds are currently held. An
+ordinary unpaid card booking directs the member to pay and explains that beds
+are not held; a bank-transfer or admin hold is described as held while it exists.
+Keep `{{paymentNote}}` on a line of its own so the current facts reach the member.
+
 ### Consent emails ignore a member's notification preferences
 
 The six member-guest emails — the consent request, the "you have been added"

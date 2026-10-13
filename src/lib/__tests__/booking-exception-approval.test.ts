@@ -670,7 +670,7 @@ describe("executeApprovedProposal — modification", () => {
       snapshot,
       override,
     });
-    return { result, outcome, tx };
+    return { result, outcome, tx, hooks };
   }
 
   it("runs the canonical service on the approval transaction with a HARD capacity refusal", async () => {
@@ -684,6 +684,16 @@ describe("executeApprovedProposal — modification", () => {
     expect(call.input.adminOverride).toBeUndefined();
     // It runs INSIDE the approval transaction — no mark-approved-then-call gap.
     expect(call.tx).toBeDefined();
+  });
+
+  it("does not send a new-booking approval notice after executing a modification", async () => {
+    const { hooks, outcome } = await runExecution(MIN_STAY_OVERRIDE);
+    expect(outcome.createdBookingId).toBeNull();
+    bookingFindUnique.mockClear();
+    sendBookingPolicyExceptionApprovedEmail.mockClear();
+    await hooks.notifyApproved?.(loadedRequest());
+    expect(bookingFindUnique).not.toHaveBeenCalled();
+    expect(sendBookingPolicyExceptionApprovedEmail).not.toHaveBeenCalled();
   });
 
   it("replays exactly the verified delta", async () => {
@@ -1371,6 +1381,8 @@ describe("notifyApproved quotes the amount owed (#4058)", () => {
     organisation: null,
     guests: [{ id: "g-1" }],
     payment: null,
+    adminCapacityHoldAt: null,
+    originBookingRequest: null,
     ...over,
   });
 
@@ -1390,7 +1402,7 @@ describe("notifyApproved quotes the amount owed (#4058)", () => {
     return sendBookingPolicyExceptionApprovedEmail.mock.calls[0] as unknown as [
       unknown,
       string,
-      { amountDueCents: number },
+      { amountDueCents: number; paymentSource: string | null; bedsHeld: boolean },
     ];
   }
 
@@ -1418,8 +1430,13 @@ describe("notifyApproved quotes the amount owed (#4058)", () => {
   });
 
   it("owes nothing when the booking was already settled at create", async () => {
-    const [, , args] = await notify(approvedBooking({ status: "PAID" }), 0);
+    const [, , args] = await notify(approvedBooking({ status: "PAID", payment: { status: "SUCCEEDED", changeFeeCents: null } }), 0);
     expect(args.amountDueCents).toBe(0);
+  });
+
+  it("does not infer settlement from PAID without a succeeded payment", async () => {
+    const [, , args] = await notify(approvedBooking({ status: "PAID" }), 0);
+    expect(args.amountDueCents).toBe(30_000);
   });
 
   it("never goes negative if credit exceeds the worth", async () => {

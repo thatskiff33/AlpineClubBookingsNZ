@@ -1,3 +1,4 @@
+import type { PaymentSource } from "@prisma/client";
 import { loadBookingAppliedCredit } from "@/lib/booking-confirmation-credit";
 import {
   bookingCancelledRefundSentence,
@@ -594,6 +595,10 @@ export async function sendBookingPolicyExceptionApprovedEmail(
     guestCount: number;
     /** Integer cents still owed on the created booking; 0 owes nothing. */
     amountDueCents: number;
+    /** Current payment instrument; null before a payment row exists. */
+    paymentSource: PaymentSource | null;
+    /** Current capacity holding, resolved by the canonical booking predicate. */
+    bedsHeld: boolean;
     /** The officer's decision note, when they left one. */
     adminNotes?: string | null;
     // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
@@ -605,10 +610,15 @@ export async function sendBookingPolicyExceptionApprovedEmail(
   // Composed by the sender, never conditionally in the body: the render path has
   // no conditional syntax, so a token that is sometimes empty must arrive as a
   // whole line or as nothing (see composeOptionalEmailLine).
-  const paymentNote =
-    args.amountDueCents > 0
-      ? `There is ${amountDue} to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.`
-      : "";
+  const paymentAction = args.paymentSource === "INTERNET_BANKING"
+    ? "Open your booking for the bank-transfer instructions."
+    : "Open it from your account to pay now.";
+  const capacityNote = args.bedsHeld
+    ? "Your beds are currently held."
+    : "The beds are not held until it is paid.";
+  const paymentNote = args.amountDueCents > 0
+    ? `There is ${amountDue} to pay on this booking. ${paymentAction} ${capacityNote}`
+    : "";
   const adminNotesLine = composeOptionalEmailLine(
     "Note from the club",
     args.adminNotes,

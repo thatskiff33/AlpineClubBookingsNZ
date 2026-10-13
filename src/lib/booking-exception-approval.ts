@@ -11,6 +11,7 @@ import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-cove
 import { recordAdultMemberHostingReviewDecision } from "@/lib/adult-member-hosting-review";
 import { createConfirmedBooking } from "@/lib/booking-create";
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
+import { bookingHoldsCapacity } from "@/lib/booking-status";
 import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
@@ -678,11 +679,13 @@ export function buildPolicyExceptionApprovalHooks(
           finalPriceCents: true,
           lodgeId: true,
           status: true,
+          adminCapacityHoldAt: true,
+          originBookingRequest: { select: { id: true } },
           member: { select: { id: true, email: true, firstName: true } },
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
           guests: { select: { id: true } },
-          payment: { select: { status: true, changeFeeCents: true } },
+          payment: { select: { status: true, source: true, changeFeeCents: true } },
         },
       });
       // #3369: ONE home for "is there an address to send to?".
@@ -691,12 +694,10 @@ export function buildPolicyExceptionApprovalHooks(
       // the hand-written chain here used to spell for itself.
       const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
       if (!booking || !ownerEmail) return;
-      // What is still owed (#4058, `INV-PAY-119`): nothing once the create
-      // settled it; else what the pay step asks, through the one home.
-      const settled =
-        booking.status === "PAID" ||
-        booking.status === "CONFIRMED" ||
-        booking.payment?.status === "SUCCEEDED";
+      // CONFIRMED reserves beds but can still owe an Internet Banking payment
+      // (#4069). Settlement is payment success, or nothing owed through the
+      // canonical reader (#4058, INV-PAY-119), never booking status alone.
+      const settled = booking.payment?.status === "SUCCEEDED";
       await sendBookingPolicyExceptionApprovedEmail(
         {
           bookingId: booking.id,
@@ -711,6 +712,12 @@ export function buildPolicyExceptionApprovalHooks(
           checkOut: booking.checkOut,
           guestCount: booking.guests.length,
           amountDueCents: settled ? 0 : (await readBookingAmountOwed(booking)).dueCents,
+          paymentSource: booking.payment?.source ?? null,
+          bedsHeld: bookingHoldsCapacity({
+            status: booking.status,
+            isRequestConverted: booking.originBookingRequest !== null,
+            hasAdminCapacityHold: booking.adminCapacityHoldAt !== null,
+          }),
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },

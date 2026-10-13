@@ -723,6 +723,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     bookingPendingTemplate("firstName-1", new Date("2026-03-03T00:00:00.000Z"), new Date("2026-03-04T00:00:00.000Z"), 104, new Date("2026-03-06T00:00:00.000Z")) },
   { id: "bookingPolicyExceptionApprovedTemplate:minimal", fn: "bookingPolicyExceptionApprovedTemplate", render: () =>
     bookingPolicyExceptionApprovedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, paymentNote: "paymentNote-5", adminNotesLine: "adminNotesLine-6" }) },
+  { id: "bookingPolicyExceptionApprovedTemplate:pending-bank-held", fn: "bookingPolicyExceptionApprovedTemplate", render: () =>
+    bookingPolicyExceptionApprovedTemplate({ firstName: "Mia", checkIn: new Date("2026-08-01T00:00:00.000Z"), checkOut: new Date("2026-08-02T00:00:00.000Z"), guestCount: 1, paymentNote: "There is $50.00 to pay on this booking. Open your booking for the bank-transfer instructions. Your beds are currently held.", adminNotesLine: "" }) },
   { id: "bookingPolicyExceptionRefusedTemplate:minimal", fn: "bookingPolicyExceptionRefusedTemplate", render: () =>
     bookingPolicyExceptionRefusedTemplate({ firstName: "firstName-1", lodgeName: "lodgeName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), reasonLine: "reasonLine-5", askDescription: "askDescription-6" }) },
   { id: "bookingBumpedTemplate:minimal", fn: "bookingBumpedTemplate", render: () =>

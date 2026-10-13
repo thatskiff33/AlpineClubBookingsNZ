@@ -1,0 +1,1 @@
+- **Exception approval emails show unpaid bank transfers even when beds are held (#4069).** Members are told what they still owe and where to find the bank-transfer instructions. The message describes the current bed hold accurately; successful payments and bookings covered by credit show no amount to pay.
