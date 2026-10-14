@@ -8,6 +8,7 @@ import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { downloadOtherClubsFromServer } from "@/lib/servernz-other-lodges-sync";
 import { respondSyncRunning, respondToSyncError } from "@/lib/servernz-sync-response";
 import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
+import { assertStoredServerVersionMatches } from "@/lib/servernz-api";
 
 // POST /api/admin/alpine-server/other-lodges/download — pull the distributed
 // Other Clubs set from the central server and merge it into the local registry.
@@ -26,6 +27,9 @@ export async function POST() {
   }
 
   try {
+    // The recorded version FIRST (#66), as the nightly pass does: a pause is
+    // answered as a pause, and never takes the claim.
+    assertStoredServerVersionMatches(settings.serverVersion);
     // Single-flight with the nightly pass and any other press (#66): a held
     // claim is refused with nothing sent, rather than run alongside it.
     const result = await withOtherLodgesSyncClaim(() => downloadOtherClubsFromServer());

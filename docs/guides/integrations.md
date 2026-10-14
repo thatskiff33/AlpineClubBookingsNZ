@@ -208,9 +208,11 @@ Only one sync with the central server runs at a time, across every copy of
 the site: the nightly job, the **Upload** button and the **Download** button
 share one claim. Pressing a button while another sync is running sends nothing
 and says "Another sync with the Alpine Central Server is running … Try again in
-a few minutes"; nothing is lost, and the running sync carries on. If a sync was
-cut off part-way (a restart), the buttons may say so for up to 15 minutes, until
-the claim is released as stale. Likewise, an edit
+a minute"; nothing is lost, and the running sync carries on. If a sync was cut
+off part-way (a restart), the buttons may say so for up to 15 minutes, until
+the claim is released as stale.
+
+An edit
 saved in the Other lodges popup is checked against the list recorded at that
 moment, so a download that changes the list while the popup is open can turn a
 Save into a refusal; reloading the page shows the current state.

@@ -7,15 +7,15 @@ import {
 } from "@/lib/servernz-other-lodges-sync";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import {
-  OTHER_LODGES_SYNC_RUNNING_CODE,
-  withOtherLodgesSyncClaim,
-} from "@/lib/servernz-sync-claim";
+import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
 import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
-import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
+import {
+  OTHER_LODGES_SYNC_RUNNING_CODE,
+  SERVER_VERSION_MISMATCH_CODE,
+} from "@/lib/servernz-api-version";
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import logger from "@/lib/logger";
 

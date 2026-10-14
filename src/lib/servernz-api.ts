@@ -148,13 +148,25 @@ async function resolveConnection(
     // failure on a server-bound path.
     stored = await refreshStoredServerVersion(connection);
   }
+  assertStoredServerVersionMatches(stored);
+  return connection;
+}
+
+/**
+ * Throw the version pause (#49) when the RECORDED server version differs from
+ * the one this site is built for; a version never recorded passes (the gate in
+ * `resolveConnection` asks the server then). The one throw site, used by that
+ * gate and by the Upload and Download buttons BEFORE they take the sync claim
+ * (#66), so a pause neither takes the claim nor is answered as "a sync is
+ * running".
+ */
+export function assertStoredServerVersionMatches(stored: string | null): void {
   if (isStoredServerVersionMismatch(stored)) {
     throw new ServerNzVersionMismatchError(
       SERVERNZ_EXPECTED_SERVER_VERSION,
       stored as string,
     );
   }
-  return connection;
 }
 
 /**

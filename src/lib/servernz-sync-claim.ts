@@ -1,4 +1,5 @@
 import "server-only";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { SERVERNZ_SETTINGS_ID } from "@/lib/servernz-settings";
 
@@ -39,13 +40,6 @@ import { SERVERNZ_SETTINGS_ID } from "@/lib/servernz-settings";
 const STALE_CLAIM_AFTER_MS = 15 * 60 * 1000;
 
 /**
- * The one word for "another pass holds the claim" (#66): the nightly job's
- * skip reason and the code on the Upload/Download buttons' 409, so a reader
- * finding either finds the same fact.
- */
-export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
-
-/**
  * Run `fn` while holding the sync claim, or return `null` when another process
  * already holds it.
  */
@@ -76,10 +70,19 @@ export async function withOtherLodgesSyncClaim<T>(
   } finally {
     // Release regardless of outcome: a failed pass must not wedge the next one.
     // Scoped to OUR claim instant so a later run that reaped this one as stale is
-    // not released out from under itself.
-    await prisma.serverNzSettings.updateMany({
-      where: { id: SERVERNZ_SETTINGS_ID, otherLodgesSyncStartedAt: now },
-      data: { otherLodgesSyncStartedAt: null },
-    });
+    // not released out from under itself. A release that FAILS is logged and
+    // swallowed: it must not turn a pass that succeeded into a reported failure,
+    // nor replace a pass's own error (#66) — the stale reaper frees the claim.
+    try {
+      await prisma.serverNzSettings.updateMany({
+        where: { id: SERVERNZ_SETTINGS_ID, otherLodgesSyncStartedAt: now },
+        data: { otherLodgesSyncStartedAt: null },
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Could not release the Other lodges sync claim; it is freed as stale after 15 minutes",
+      );
+    }
   }
 }

@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
 import {
   NO_KEY_SERVER_VERSION,
+  OTHER_LODGES_SYNC_RUNNING_CODE,
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_MISMATCH_CODE,
   computeServerVersionStatus,
@@ -270,6 +271,12 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           throw new Error(
             `${direction === "upload" ? "Upload" : "Download"} paused: the server is on a different software version - see Server software version above.`,
           );
+        }
+        // Another sync holds the claim (#66): nothing failed and nothing was
+        // sent, so it is a notice, not an error.
+        if (data?.code === OTHER_LODGES_SYNC_RUNNING_CODE && typeof data.error === "string") {
+          setMessage({ kind: "warn", text: data.error });
+          return;
         }
         throw new Error(data?.error ?? `Failed to ${direction}`);
       }

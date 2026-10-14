@@ -6,8 +6,10 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
-import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
-import { OTHER_LODGES_SYNC_RUNNING_CODE } from "@/lib/servernz-sync-claim";
+import {
+  OTHER_LODGES_SYNC_RUNNING_CODE,
+  SERVER_VERSION_MISMATCH_CODE,
+} from "@/lib/servernz-api-version";
 
 /**
  * The answer to an Upload or Download press while another pass — the nightly
@@ -15,13 +17,13 @@ import { OTHER_LODGES_SYNC_RUNNING_CODE } from "@/lib/servernz-sync-claim";
  * was attempted, so nothing is audited: the press is refused before any
  * request is built, and the administrator is told to try again. A container
  * killed mid-pass leaves the claim until it is reaped as stale (15 minutes),
- * hence "a few minutes".
+ * which the message says.
  */
 export function respondSyncRunning(): NextResponse {
   return NextResponse.json(
     {
       error:
-        "Another sync with the Alpine Central Server is running (the nightly sync, or another administrator). Try again in a few minutes.",
+        "Another sync with the Alpine Central Server is running (the nightly sync, or a press in another window). Try again in a minute; if it was cut off by a restart, it clears within 15 minutes.",
       code: OTHER_LODGES_SYNC_RUNNING_CODE,
     },
     { status: 409 },

@@ -226,7 +226,7 @@ describe("AlpineServerSetup when another sync is running (#66)", () => {
           ok: false,
           status: 409,
           json: async () => ({
-            error: "Another sync with the Alpine Central Server is running (the nightly sync, or another administrator). Try again in a few minutes.",
+            error: "Another sync with the Alpine Central Server is running (the nightly sync, or a press in another window). Try again in a minute; if it was cut off by a restart, it clears within 15 minutes.",
             code: "sync-already-running",
           }),
         };
@@ -237,7 +237,10 @@ describe("AlpineServerSetup when another sync is running (#66)", () => {
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${direction}$`, "i") }));
 
     const message = await screen.findByText(/another sync with the alpine central server is running/i);
-    expect(message.textContent).toMatch(/try again in a few minutes/i);
+    expect(message.textContent).toMatch(/try again in a minute/i);
+    // A notice, not an error: nothing failed.
+    expect(message.className).toMatch(/text-warning-11/);
+    expect(message.className).not.toMatch(/text-destructive/);
     // Not mistaken for the version pause.
     expect(screen.queryByTestId("server-version-mismatch")).toBeNull();
   });

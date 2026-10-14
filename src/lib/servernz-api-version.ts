@@ -41,6 +41,15 @@ export const NO_KEY_SERVER_VERSION = "0";
 export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
 
 /**
+ * The one word for "another Other lodges sync holds the claim" (#66): the
+ * nightly job's skip reason and the code on the Upload/Download buttons' 409,
+ * which the setup page reads to show it as a notice rather than an error. Here,
+ * beside the version code, because the setup page (a client module) reads it
+ * and the claim module is server-only.
+ */
+export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
+
+/**
  * How long a recorded answer is trusted before the setup page's version route
  * asks the server again (#49 review). The page asks once on entry and after a
  * save; this is what keeps a second tab, a reload or a quick re-save from

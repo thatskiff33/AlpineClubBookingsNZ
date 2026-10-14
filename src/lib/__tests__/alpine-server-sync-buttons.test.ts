@@ -35,6 +35,7 @@ vi.mock("@/lib/servernz-other-lodges-sync", () => ({
   downloadOtherClubsFromServer: mocks.download,
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
+vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { POST as uploadPOST } from "@/app/api/admin/alpine-server/other-lodges/upload/route";
 import { POST as downloadPOST } from "@/app/api/admin/alpine-server/other-lodges/download/route";
@@ -100,7 +101,8 @@ describe.each(buttons)("the %s button and the sync claim (#66)", (_label, POST, 
     const body = await response.json();
     expect(body.code).toBe("sync-already-running");
     expect(body.error).toMatch(/another sync with the alpine central server is running/i);
-    expect(body.error).toMatch(/try again in a few minutes/i);
+    expect(body.error).toMatch(/try again in a minute/i);
+    expect(body.error).toMatch(/clears within 15 minutes/i);
     expect(sync).not.toHaveBeenCalled();
     // Nothing was attempted, so nothing is audited and nothing is released.
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
@@ -117,6 +119,23 @@ describe.each(buttons)("the %s button and the sync claim (#66)", (_label, POST, 
     expect(mocks.claimUpdateMany.mock.calls[1][0].data).toEqual({ otherLodgesSyncStartedAt: null });
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "failure" }),
+    );
+  });
+
+  it("answers a recorded version pause as a pause, BEFORE taking the claim", async () => {
+    mocks.loadServerNzSettings.mockResolvedValue({ otherLodgesEnabled: true, serverVersion: "9.9" });
+
+    const response = await POST();
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.code).toBe("server-version-mismatch");
+    expect(body.serverVersion).toBe("9.9");
+    expect(mocks.claimUpdateMany).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+    // Audited as a paused press, as before #66.
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failure", summary: expect.stringMatching(/paused/) }),
     );
   });
 
