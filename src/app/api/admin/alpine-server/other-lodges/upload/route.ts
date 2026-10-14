@@ -28,8 +28,10 @@ export async function POST() {
 
   try {
     // The recorded version FIRST (#66), as the nightly pass does: a pause is
-    // answered as a pause, and never takes the claim.
-    assertStoredServerVersionMatches(settings.serverVersion);
+    // answered as a pause, and never takes the claim. Only once a server
+    // address is set, also as the nightly pass does, so a site with no usable
+    // connection still hears "not configured" from the sync below.
+    if (settings.baseUrl) assertStoredServerVersionMatches(settings.serverVersion);
     // Single-flight with the nightly pass and any other press (#66): a held
     // claim is refused with nothing sent, rather than run alongside it.
     const result = await withOtherLodgesSyncClaim(() => uploadOtherClubsToServer());

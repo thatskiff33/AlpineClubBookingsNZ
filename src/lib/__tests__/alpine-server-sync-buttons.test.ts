@@ -123,7 +123,11 @@ describe.each(buttons)("the %s button and the sync claim (#66)", (_label, POST, 
   });
 
   it("answers a recorded version pause as a pause, BEFORE taking the claim", async () => {
-    mocks.loadServerNzSettings.mockResolvedValue({ otherLodgesEnabled: true, serverVersion: "9.9" });
+    mocks.loadServerNzSettings.mockResolvedValue({
+      otherLodgesEnabled: true,
+      baseUrl: "https://central.test",
+      serverVersion: "9.9",
+    });
 
     const response = await POST();
 
@@ -137,6 +141,15 @@ describe.each(buttons)("the %s button and the sync claim (#66)", (_label, POST, 
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "failure", summary: expect.stringMatching(/paused/) }),
     );
+  });
+
+  it("leaves a site with no server address to the sync's own 'not configured' answer", async () => {
+    mocks.loadServerNzSettings.mockResolvedValue({ otherLodgesEnabled: true, baseUrl: null, serverVersion: "9.9" });
+
+    await POST();
+
+    // Not refused as a version pause: the sync ran (and would say "not configured").
+    expect(sync).toHaveBeenCalledTimes(1);
   });
 
   it("does not take the claim at all while sharing is switched off", async () => {
