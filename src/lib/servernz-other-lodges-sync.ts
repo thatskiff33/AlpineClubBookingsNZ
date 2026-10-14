@@ -367,10 +367,11 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     });
     if ((current?.baseUrl ?? null) !== settings.baseUrl) return false;
     if ((await readServerNzApiKeyStamp(tx)) !== connection) return false;
-    // Another download recorded since this one started (the button and the
-    // nightly pass can overlap until #66): its answer is newer, so this one
-    // records nothing rather than write an older cursor back or forget ids
-    // that download has just keyed.
+    // Another download recorded since this one started: its answer is newer,
+    // so this one records nothing rather than write an older cursor back or
+    // forget ids that download has just keyed. Since #66 the buttons and the
+    // nightly pass share the sync claim, so this guards the rarer case of a
+    // claim reaped as stale under a pass still running.
     if (
       (current?.otherLodgesCursor ?? null) !== settings.otherLodgesCursor ||
       (current?.otherLodgesKeyedAt?.toISOString() ?? null) !== settings.otherLodgesKeyedAt

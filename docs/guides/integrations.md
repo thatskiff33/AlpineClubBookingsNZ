@@ -204,9 +204,13 @@ role email and (if published) phone are written into the lodge entries the
 central server names as yours — and, until it has named any, into entries whose
 name exactly matches one of your own lodges.
 
-Two downloads can run at once (the nightly job and the **Download** button); if
-the one that finishes last carried an older list, the panel may briefly show the
-older answer until the next download records the current one. Likewise, an edit
+Only one sync with the central server runs at a time, across every copy of
+the site: the nightly job, the **Upload** button and the **Download** button
+share one claim. Pressing a button while another sync is running sends nothing
+and says "Another sync with the Alpine Central Server is running … Try again in
+a few minutes"; nothing is lost, and the running sync carries on. If a sync was
+cut off part-way (a restart), the buttons may say so for up to 15 minutes, until
+the claim is released as stale. Likewise, an edit
 saved in the Other lodges popup is checked against the list recorded at that
 moment, so a download that changes the list while the popup is open can turn a
 Save into a refusal; reloading the page shows the current state.

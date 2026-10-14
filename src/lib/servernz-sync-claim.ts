@@ -39,6 +39,13 @@ import { SERVERNZ_SETTINGS_ID } from "@/lib/servernz-settings";
 const STALE_CLAIM_AFTER_MS = 15 * 60 * 1000;
 
 /**
+ * The one word for "another pass holds the claim" (#66): the nightly job's
+ * skip reason and the code on the Upload/Download buttons' 409, so a reader
+ * finding either finds the same fact.
+ */
+export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
+
+/**
  * Run `fn` while holding the sync claim, or return `null` when another process
  * already holds it.
  */

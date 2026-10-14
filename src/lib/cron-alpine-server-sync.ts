@@ -7,7 +7,10 @@ import {
 } from "@/lib/servernz-other-lodges-sync";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
+import {
+  OTHER_LODGES_SYNC_RUNNING_CODE,
+  withOtherLodgesSyncClaim,
+} from "@/lib/servernz-sync-claim";
 import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
@@ -96,7 +99,7 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
     });
 
     if (!pass) {
-      return { status: "skipped", reason: "sync-already-running" };
+      return { status: "skipped", reason: OTHER_LODGES_SYNC_RUNNING_CODE };
     }
     const { upload, download } = pass;
     logger.info(

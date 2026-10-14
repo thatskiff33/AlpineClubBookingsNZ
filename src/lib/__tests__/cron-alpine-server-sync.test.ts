@@ -29,6 +29,9 @@ vi.mock("@/lib/servernz-settings", () => ({
 // pass-through so these tests stay about the cron's own decisions. `withClaim`
 // records that the pass ran INSIDE it.
 vi.mock("@/lib/servernz-sync-claim", () => ({
+  // The literal on purpose: the skip reason is the wire word the buttons'
+  // 409 shares (#66), and this pins it.
+  OTHER_LODGES_SYNC_RUNNING_CODE: "sync-already-running",
   withOtherLodgesSyncClaim: mocks.withClaim,
 }));
 
