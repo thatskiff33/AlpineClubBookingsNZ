@@ -18,7 +18,6 @@ import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
   clearServerVersionCheck,
-  forgetOtherLodgeCentralIds,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
   normalizeBaseUrl,
@@ -379,12 +378,3 @@ describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
   });
 });
 
-describe("forgetOtherLodgeCentralIds (#64)", () => {
-  it("clears every row's central id in one raw statement, leaving updatedAt alone", async () => {
-    await forgetOtherLodgeCentralIds();
-    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
-    const sql = (mocks.executeRaw.mock.calls[0][0] as string[]).join("?");
-    expect(sql).toMatch(/UPDATE "OtherLodge" SET "centralId" = NULL/);
-    expect(sql).not.toMatch(/updatedAt/);
-  });
-});

@@ -78,6 +78,8 @@ export type MergeOutcome =
       renamed?: boolean;
       /** Everything else was applied; the name was not. */
       nameConflict?: NameConflict;
+      /** The row could not be keyed on the final pass (a concurrent edit). */
+      notKeyed?: boolean;
     }
   /** Not final: retry after the rest of the pull. */
   | { kind: "deferred" }
@@ -92,11 +94,18 @@ function isUniqueViolation(error: unknown): boolean {
  * Merge one pulled lodge. `owned` is the owned list for this merge (the pull's,
  * else the stored one; `null` when neither is known). `final` is the retry pass,
  * which reports a collision instead of deferring it.
+ *
+ * `knownIds` is set only for a WHOLE-registry download: every id the server
+ * has. A local row keyed by an id NOT among them carries a stale id — from a
+ * different central server this site was pointed at, or a lodge since deleted
+ * there — and may be matched by name and re-keyed, rather than treated as a
+ * different central lodge holding the name.
  */
 export async function mergeDistributedLodge(
   lodge: PulledLodge,
   owned: ReadonlyArray<string> | null,
   final: boolean,
+  knownIds: ReadonlySet<string> | null = null,
 ): Promise<MergeOutcome> {
   const centralId = usableCentralId(lodge.id);
   const byId = centralId
@@ -110,8 +119,11 @@ export async function mergeDistributedLodge(
     });
     // The name is held here by a DIFFERENT central lodge: one renamed away on
     // the server that this pull has not (yet) renamed here. Never merged into
-    // it, which would weld two lodges into one row.
-    if (byName && centralId !== null && byName.centralId !== null) {
+    // it, which would weld two lodges into one row — unless a whole download
+    // shows that row's id is not the server's at all (stale, see above).
+    const staleId =
+      byName?.centralId != null && knownIds !== null && !knownIds.has(byName.centralId);
+    if (byName && centralId !== null && byName.centralId !== null && !staleId) {
       return final
         ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
         : { kind: "deferred" };
@@ -176,12 +188,14 @@ export async function mergeDistributedLodge(
   // old value back would rewind their edit below the upload watermark and let
   // the guarded write further down overwrite it. A miss retries the lodge
   // after the rest of the pull, on a fresh read.
-  if (centralId !== null && row.centralId === null) {
+  let notKeyed = false;
+  if (centralId !== null && row.centralId !== centralId) {
     let keyed = 0;
     try {
       keyed = (
         await prisma.otherLodge.updateMany({
-          where: { id: row.id, centralId: null, updatedAt: row.updatedAt },
+          // `row.centralId` is null, or a stale id a whole download disowned.
+          where: { id: row.id, centralId: row.centralId, updatedAt: row.updatedAt },
           data: { centralId, updatedAt: row.updatedAt },
         })
       ).count;
@@ -189,6 +203,7 @@ export async function mergeDistributedLodge(
       if (!isUniqueViolation(error)) throw error;
     }
     if (keyed !== 1 && !final) return { kind: "deferred" };
+    notKeyed = keyed !== 1;
   }
 
   // A rename: only another club's lodge, only one matched by id.
@@ -211,13 +226,13 @@ export async function mergeDistributedLodge(
   const amenitiesChanged =
     amenities !== undefined && otherLodgeAmenitiesDiffer(row.amenities, amenities);
   if (renameTo === null && !otherLodgeDataDiffers(data, row) && !amenitiesChanged) {
-    return { kind: "unchanged", nameConflict };
+    return { kind: "unchanged", nameConflict, notKeyed };
   }
 
   // Rule 2, for a lodge this club may edit. Equal timestamps apply the remote,
   // so a server correction issued in the same instant is not dropped.
   if (!theirs && remoteUpdatedAt && row.updatedAt > remoteUpdatedAt) {
-    return { kind: "keptLocal", nameConflict };
+    return { kind: "keptLocal", nameConflict, notKeyed };
   }
 
   // One transaction for the lodge row and its amenities. The row write comes
@@ -247,8 +262,8 @@ export async function mergeDistributedLodge(
       ? { kind: "conflict", nameConflict: { lodge: row.name, wanted: renameTo } }
       : { kind: "deferred" };
   }
-  if (!applied) return { kind: "keptLocal", nameConflict };
-  return { kind: "updated", renamed: renameTo !== null, nameConflict };
+  if (!applied) return { kind: "keptLocal", nameConflict, notKeyed };
+  return { kind: "updated", renamed: renameTo !== null, nameConflict, notKeyed };
 }
 
 /** Local names of the rows keyed by these central ids, read through `db`. */

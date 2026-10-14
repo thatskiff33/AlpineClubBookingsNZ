@@ -1,5 +1,5 @@
 import "server-only";
-import { ownedNamesAsLocal } from "@/lib/other-lodge-central-id";
+import { ownedNamesAsLocal, usableCentralId } from "@/lib/other-lodge-central-id";
 import {
   OTHER_LODGE_DATA_SELECT,
   omitRateFields,
@@ -27,6 +27,7 @@ import {
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
 import {
+  SERVERNZ_SETTINGS_ID,
   loadServerNzSettings,
   lockServerNzSettings,
   recordOtherLodgesUpload,
@@ -256,9 +257,15 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   let keptLocal = 0;
   let renamed = 0;
   const nameConflicts: NameConflict[] = [];
+  // Whether every pulled lodge ended keyed: the marker is set only then.
+  let everyLodgeKeyed = pull.dropped === 0;
   const count = (outcome: Exclude<MergeOutcome, { kind: "deferred" }>) => {
     if (outcome.nameConflict) nameConflicts.push(outcome.nameConflict);
-    if (outcome.kind === "conflict") return;
+    if (outcome.kind === "conflict") {
+      everyLodgeKeyed = false;
+      return;
+    }
+    if (outcome.notKeyed) everyLodgeKeyed = false;
     if (outcome.kind === "created") created++;
     else if (outcome.kind === "updated") updated++;
     else if (outcome.kind === "unchanged") unchanged++;
@@ -272,11 +279,17 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // a chain of renames of any length, whatever order the pull sent them in —
   // and then once more as the FINAL pass, which reports what still collides
   // rather than losing it silently.
+  // A whole download names every id the server has, which is what lets the
+  // merge tell a stale id (another server's, or a deleted lodge's) from a
+  // different lodge holding a name.
+  const knownIds = wholeRegistry
+    ? new Set(pull.lodges.flatMap((l) => usableCentralId(l.id) ?? []))
+    : null;
   let pending = pull.lodges;
   for (;;) {
     const next: typeof pull.lodges = [];
     for (const lodge of pending) {
-      const outcome = await mergeDistributedLodge(lodge, owned, false);
+      const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds);
       if (outcome.kind === "deferred") next.push(lodge);
       else count(outcome);
     }
@@ -287,7 +300,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     pending = next;
   }
   for (const lodge of pending) {
-    const outcome = await mergeDistributedLodge(lodge, owned, true);
+    const outcome = await mergeDistributedLodge(lodge, owned, true, knownIds);
     if (outcome.kind !== "deferred") count(outcome);
   }
   if (nameConflicts.length > 0) {
@@ -321,10 +334,22 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // admin's rename also takes: neither can write back a list computed before the
   // other committed.
   //
-  // A whole-registry download that got this far merged every row: the marker
-  // is set, and later downloads are incremental again.
-  await prisma.$transaction(async (tx) => {
+  // A whole-registry download that got this far, with no row dropped by the
+  // pull's bounds and none left unkeyed, keyed the registry: the marker is set
+  // and later downloads are incremental again. Otherwise the next download is
+  // a whole one again.
+  //
+  // Under the lock the server ADDRESS is read again: a download that started
+  // before an administrator pointed this site at a different server (which
+  // forgets the connection's answers, the marker included) records NOTHING, so
+  // it cannot write the old server's cursor, owned list or marker back.
+  const recorded = await prisma.$transaction(async (tx) => {
     await lockServerNzSettings(tx);
+    const current = await tx.serverNzSettings.findUnique({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      select: { baseUrl: true },
+    });
+    if ((current?.baseUrl ?? null) !== settings.baseUrl) return false;
     const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
     const ownLodgeNames =
       pull.ownLodgeNames === undefined
@@ -341,9 +366,15 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
       ownLodgeNames,
       pull.ownLodges,
-      { keyed: wholeRegistry, db: tx },
+      { keyed: wholeRegistry && everyLodgeKeyed, db: tx },
     );
+    return true;
   });
+  if (!recorded) {
+    logger.warn(
+      "The Alpine Central Server address changed during an Other lodges download; nothing from it was recorded",
+    );
+  }
   return {
     fetched: pull.count,
     created,

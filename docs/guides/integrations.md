@@ -238,9 +238,10 @@ by name, which fills in the ids; after that downloads are incremental again.
   found on the Alpine Central Server**, with how many bookings and booking
   requests still refer to it, so you can decide what to do. Nothing removes it
   automatically.
-- **A new central server address** makes every lodge forget its id, and the
-  next download matches them all by name again. A new API key for the same
-  server repeats the full download but keeps the ids.
+- **A new central server address or API key** makes the next download fetch
+  the whole registry again. A lodge whose id that server does not list is
+  matched by name and takes the id it does list; the ids it does list are
+  kept.
 - **Your lodge's name is yours.** If the central server's administrator renames
   your own lodge, this site keeps the name you gave it, and your next upload
   of that lodge sets it back on the server.

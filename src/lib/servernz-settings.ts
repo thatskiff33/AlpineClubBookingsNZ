@@ -445,13 +445,3 @@ export async function forgetServerConnectionAnswers(): Promise<void> {
   });
 }
 
-/**
- * The central server's ADDRESS moved (#64): its lodge ids mean nothing to a
- * different server, so every Other lodges row forgets its central id, and the
- * next download (a whole one: `forgetServerConnectionAnswers` cleared the
- * marker) matches each lodge by name again. Raw, so `updatedAt` stays put: a
- * forgotten id is not an edit, and must not send every row up again.
- */
-export async function forgetOtherLodgeCentralIds(): Promise<void> {
-  await prisma.$executeRaw`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL`;
-}

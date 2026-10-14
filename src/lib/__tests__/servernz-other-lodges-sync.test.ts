@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
 const mockExecuteRaw = vi.fn();
+const mockSettingsRow = vi.fn();
 const mockUpsert = vi.fn();
 const mockUpdateMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
@@ -27,6 +28,8 @@ vi.mock("@/lib/prisma", () => {
     },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
+    // The record step re-reads the address under the settings lock (#64).
+    serverNzSettings: { findUnique: (...args: unknown[]) => mockSettingsRow(...args) },
   };
   return { prisma };
 });
@@ -59,6 +62,7 @@ const mockRecordOptions = vi.fn();
 const mockLockSettings = vi.fn();
 
 vi.mock("@/lib/servernz-settings", () => ({
+  SERVERNZ_SETTINGS_ID: "default",
   loadServerNzSettings: (...args: unknown[]) => mockLoadSettings(...args),
   recordOtherLodgesUpload: (...args: unknown[]) => mockRecordUpload(...args),
   recordOtherLodgesDownload: (
@@ -197,6 +201,7 @@ beforeEach(() => {
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
   mockUpsert.mockResolvedValue({ id: "ol_new" });
   mockLockSettings.mockResolvedValue(undefined);
+  mockSettingsRow.mockResolvedValue({ baseUrl: SETTINGS.baseUrl });
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
   mockAmenityUpsert.mockResolvedValue({});
@@ -1694,6 +1699,66 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockLockSettings.mock.invocationCallOrder[0]).toBeLessThan(
       mockRecordDownload.mock.invocationCallOrder[0],
     );
+  });
+
+  it("re-keys a row whose id a WHOLE download shows is stale, instead of refusing the name", async () => {
+    // Keyed by another server's id, which this server's whole registry lacks.
+    const rows = registry([row("ol_1", "Aorangi Ski Club", "old-server-7")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].centralId).toBe("c-1");
+    expect(result.nameConflicts).toEqual([]);
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
+  });
+
+  it("still refuses a name held by a row whose id the whole download DOES list", async () => {
+    // A brand-new lodge c-2 wants the name of ol_1, which the server lists as c-1.
+    const rows = registry([row("ol_1", "Shared Name", "c-1")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Shared Name", { id: "c-2" }), remoteLodge("Shared Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toEqual([expect.objectContaining({ id: "ol_1", centralId: "c-1" })]);
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(result.nameConflicts).toEqual([{ lodge: null, wanted: "Shared Name" }]);
+  });
+
+  it("does not mark the registry keyed when the whole download dropped a row", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([], { dropped: 1 });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("does not mark the registry keyed when a lodge could not be keyed or was refused", async () => {
+    // A NEW lodge refused because a listed lodge holds its name stays unkeyed,
+    // so the registry is not marked keyed and the next download is whole again.
+    registry([row("ol_1", "Shared Name", "c-1")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Shared Name", { id: "c-2" }), remoteLodge("Shared Name", { id: "c-1" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("records NOTHING when the server address changed while the download ran", async () => {
+    registry([]);
+    mockSettingsRow.mockResolvedValue({ baseUrl: "https://other-central.test" });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/address changed/i));
   });
 
   it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {
