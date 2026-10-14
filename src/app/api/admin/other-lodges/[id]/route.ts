@@ -13,6 +13,7 @@ import {
   otherLodgeDataShape,
   otherLodgeNameSchema,
   otherLodgeSelect,
+  canRenameOtherLodge,
   ownsOtherLodge,
   replaceOtherLodgeAmenities,
   serializeOtherLodge,
@@ -24,6 +25,9 @@ import { loadServerNzSettings, renameOwnedOtherLodgeName } from "@/lib/servernz-
 import { requireAdmin } from "@/lib/session-guards";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
+
+/** A rename whose row changed name between our read and our write. */
+class RenameRaced extends Error {}
 
 // Strict: an unknown key is a 400, so every data column has to be named in the
 // shared `otherLodgeDataShape` (the one field list) to be accepted here. A key
@@ -111,17 +115,17 @@ export async function PATCH(
   }
   const newName = parsed.data.name?.trim();
   const renameTo = newName !== undefined && newName !== existing.name ? newName : null;
-  if (renameTo !== null && !existing.centralId) {
+  if (renameTo !== null && !canRenameOtherLodge(owned, existing)) {
     return NextResponse.json(
       {
         error:
-          "This lodge can be renamed once it has been downloaded from the Alpine Central Server. Run Download, then try again.",
+          "This lodge can be renamed after the next Download from the Alpine Central Server. Run Download, then try again.",
       },
       { status: 400 },
     );
   }
 
-  const data: Prisma.OtherLodgeUpdateInput = {
+  const data: Prisma.OtherLodgeUpdateManyMutationInput = {
     ...otherLodgeDataColumns(parsed.data),
     ...(renameTo !== null ? { name: renameTo } : {}),
   };
@@ -155,7 +159,17 @@ export async function PATCH(
     updated =
       amenitiesChanged || renameTo !== null
         ? await prisma.$transaction(async (tx) => {
-            await tx.otherLodge.update({ where: { id: existing.id }, data, select: { id: true } });
+            if (renameTo !== null) {
+              // Guarded on the name read above: two renames at once must not
+              // both pass, or the owned list would follow the wrong one.
+              const claimed = await tx.otherLodge.updateMany({
+                where: { id: existing.id, name: existing.name },
+                data,
+              });
+              if (claimed.count !== 1) throw new RenameRaced();
+            } else {
+              await tx.otherLodge.update({ where: { id: existing.id }, data, select: { id: true } });
+            }
             if (amenitiesChanged && amenities) {
               await replaceOtherLodgeAmenities(tx, existing.id, amenities);
             }
@@ -171,6 +185,12 @@ export async function PATCH(
             select: otherLodgeSelect,
           });
   } catch (error) {
+    if (error instanceof RenameRaced) {
+      return NextResponse.json(
+        { error: "This lodge was changed by someone else just now. Reload and try again." },
+        { status: 409 },
+      );
+    }
     if (
       renameTo !== null &&
       error instanceof PrismaErrors.PrismaClientKnownRequestError &&

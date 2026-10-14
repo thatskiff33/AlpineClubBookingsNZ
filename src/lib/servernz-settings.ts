@@ -50,6 +50,13 @@ export interface ServerNzSettingsValues {
    */
   otherLodgesOwnedLodges: OwnedCentralLodge[] | null;
   /**
+   * When a whole-registry download last merged to the end (#64), or `null`:
+   * until it is set every download asks for the whole registry, so each Other
+   * lodges row is matched once and keyed by its central id, and only after it
+   * is a row still unkeyed marked as one the server does not list.
+   */
+  otherLodgesKeyedAt: string | null;
+  /**
    * The central server's API version as it last reported it (#49): `null`
    * until asked, `"unknown"` when the server answered 404 (it predates
    * versioning, a mismatch), otherwise a canonical `major.minor`. The mismatch
@@ -69,6 +76,7 @@ const DEFAULTS: ServerNzSettingsValues = {
   otherLodgesOwnedNamesAt: null,
   otherLodgesOwnedNamesUnreadable: false,
   otherLodgesOwnedLodges: null,
+  otherLodgesKeyedAt: null,
   serverVersion: null,
   serverVersionCheckedAt: null,
 };
@@ -120,16 +128,33 @@ export async function loadOwnedOtherLodgeNames(
 }
 
 /**
+ * Lock the settings row for the rest of the caller's transaction (#64). Taken by
+ * the two writers of the owned list that derive it from other rows — the
+ * download's record step (owned ids mapped to local names) and an admin's
+ * rename — so neither can write back a list computed before the other
+ * committed. A row lock on a singleton, not an advisory key: nothing else
+ * orders against it. A missing row (never configured) locks nothing.
+ */
+export async function lockServerNzSettings(
+  db: Pick<Prisma.TransactionClient, "$executeRaw">,
+): Promise<void> {
+  await db.$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = ${SERVERNZ_SETTINGS_ID} FOR UPDATE`;
+}
+
+/**
  * This site renamed one of its own lodges (#64): the stored owned list follows
  * the new name, inside the caller's transaction, so the lodge stays editable and
  * keeps uploading. A list that is unknown or unreadable is left alone (there is
  * then nothing this site owns to rename).
  */
 export async function renameOwnedOtherLodgeName(
-  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
+  db: Pick<Prisma.TransactionClient, "serverNzSettings" | "$executeRaw">,
   from: string,
   to: string,
 ): Promise<void> {
+  // Locked BEFORE the read, as the download's record step does, so a download
+  // finishing at the same moment cannot write back the old name after us.
+  await lockServerNzSettings(db);
   const owned = await loadOwnedOtherLodgeNames(db);
   if (owned.names === null) return;
   await db.serverNzSettings.update({
@@ -160,6 +185,7 @@ export async function loadServerNzSettings(): Promise<ServerNzSettingsValues> {
       otherLodgesOwnedNamesAt: row.otherLodgesOwnedNamesAt?.toISOString() ?? null,
       otherLodgesOwnedNamesUnreadable: owned.unreadable,
       otherLodgesOwnedLodges: readOwnedCentralLodges(row.otherLodgesOwnedLodges),
+      otherLodgesKeyedAt: row.otherLodgesKeyedAt?.toISOString() ?? null,
       serverVersion: row.serverVersion,
       serverVersionCheckedAt: row.serverVersionCheckedAt?.toISOString() ?? null,
     };
@@ -291,7 +317,13 @@ export async function recordOtherLodgesDownload(
   cursor: string | null,
   ownLodgeNames?: string[],
   ownLodges?: OwnedCentralLodge[],
+  options: {
+    /** This download asked for the whole registry and merged all of it (#64). */
+    keyed?: boolean;
+    db?: Pick<Prisma.TransactionClient, "serverNzSettings">;
+  } = {},
 ): Promise<void> {
+  const db = options.db ?? prisma;
   const now = new Date();
   // The names are written only when the server sent them: absent leaves the
   // stored list alone. The ids follow the names, never outlive them: when this
@@ -308,8 +340,9 @@ export async function recordOtherLodgesDownload(
       : ownLodgeNames !== undefined
         ? { otherLodgesOwnedLodges: Prisma.DbNull }
         : {}),
+    ...(options.keyed ? { otherLodgesKeyedAt: now } : {}),
   };
-  await prisma.serverNzSettings.upsert({
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: {
       id: SERVERNZ_SETTINGS_ID,
@@ -404,8 +437,21 @@ export async function forgetServerConnectionAnswers(): Promise<void> {
       otherLodgesOwnedNamesAt: null,
       // The owned ids are the same connection's answer (#62).
       otherLodgesOwnedLodges: Prisma.DbNull,
+      // A new connection keys the registry again with a whole download (#64).
+      otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     },
   });
+}
+
+/**
+ * The central server's ADDRESS moved (#64): its lodge ids mean nothing to a
+ * different server, so every Other lodges row forgets its central id, and the
+ * next download (a whole one: `forgetServerConnectionAnswers` cleared the
+ * marker) matches each lodge by name again. Raw, so `updatedAt` stays put: a
+ * forgotten id is not an edit, and must not send every row up again.
+ */
+export async function forgetOtherLodgeCentralIds(): Promise<void> {
+  await prisma.$executeRaw`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL`;
 }

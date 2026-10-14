@@ -184,16 +184,25 @@ describe("AlpineServerSetup Download summary (#64)", () => {
     });
   }
 
-  it("counts renames and names a lodge that could not take its new name", async () => {
-    downloadAnswers({ fetched: 3, created: 0, updated: 2, unchanged: 1, renamed: 1, nameConflicts: ["Iwikau Lodge"] });
+  it("counts renames and names each lodge that could not take its new name, as a warning", async () => {
+    downloadAnswers({
+      fetched: 3,
+      created: 0,
+      updated: 2,
+      unchanged: 1,
+      renamed: 1,
+      nameConflicts: [
+        { lodge: "Ruapehu Hut", wanted: "Iwikau Lodge" },
+        { lodge: null, wanted: "Tasman Lodge" },
+      ],
+    });
     render(<AlpineServerSetup initialState={initial()} />);
     fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
 
-    expect(
-      await screen.findByText(
-        "Downloaded 3 entries: 0 added, 2 updated (1 renamed), 1 unchanged. Could not take the central server's new name, which another lodge here already has: Iwikau Lodge.",
-      ),
-    ).toBeTruthy();
+    const message = await screen.findByText(
+      `Downloaded 3 entries: 0 added, 2 updated (1 renamed), 1 unchanged. The central server's name is already used by another lodge here, so these kept their name: "Ruapehu Hut" (should be "Iwikau Lodge"), "Tasman Lodge" (a new lodge, not added).`,
+    );
+    expect(message.className).toMatch(/text-warning-11/);
   });
 
   it("reads as before when nothing was renamed", async () => {
@@ -201,6 +210,7 @@ describe("AlpineServerSetup Download summary (#64)", () => {
     render(<AlpineServerSetup initialState={initial()} />);
     fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
 
-    expect(await screen.findByText("Downloaded 1 entries: 1 added, 0 updated, 0 unchanged.")).toBeTruthy();
+    const message = await screen.findByText("Downloaded 1 entry: 1 added, 0 updated, 0 unchanged.");
+    expect(message.className).toMatch(/text-success-11/);
   });
 });

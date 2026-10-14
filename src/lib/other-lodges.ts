@@ -464,8 +464,10 @@ export function otherLodgeDataDiffers(
 // The site stores that list on `ServerNzSettings.otherLodgesOwnedNames` and
 // everything that asks "may this lodge be changed here?" asks `ownsOtherLodge`
 // below — the admin PATCH route, the upload projection and the panel's buttons
-// — so there is one answer (INV-SSOT-001). By NAME, exactly as stored: the
-// server keys lodges by name and so does this registry (`name` is unique).
+// — so there is one answer (INV-SSOT-001). By the LOCAL name, exactly as
+// stored: the download stores the list under this site's names, mapping each
+// owned central id to its local row (#64, `@/lib/other-lodge-central-id`),
+// while the rows themselves are matched to the server by central id.
 
 /** Upper bound on the owned list, so a hostile server cannot stream forever. */
 export const OWNED_OTHER_LODGE_NAMES_MAX = 100;
@@ -488,10 +490,23 @@ export const ownedOtherLodgeNamesSchema = z
  * name can be changed centrally. Same three states as the names below.
  */
 export const OWNED_CENTRAL_LODGE_ID_MAX = 64;
+
+/**
+ * A central server lodge id as this site accepts one, wherever it arrives: in
+ * the pull's `ownLodges` (#62) and on each pulled lodge, where it keys the
+ * local row (#64). Non-empty, within the columns' bound, no padding, no NUL.
+ */
+export const centralLodgeIdSchema = z
+  .string()
+  .min(1)
+  .max(OWNED_CENTRAL_LODGE_ID_MAX)
+  .refine((value) => value.trim() === value, "A central lodge id has no surrounding spaces")
+  .refine(hasNoNul, NO_NUL_MESSAGE);
+
 export const ownedCentralLodgesSchema = z
   .array(
     z.object({
-      id: z.string().min(1).max(OWNED_CENTRAL_LODGE_ID_MAX).refine(hasNoNul, NO_NUL_MESSAGE),
+      id: centralLodgeIdSchema,
       name: otherLodgeNameSchema,
     }),
   )
@@ -508,6 +523,19 @@ export type OwnedCentralLodge = { id: string; name: string };
  * `[]` when it said the club owns nothing, otherwise the editable names.
  */
 export type OwnedOtherLodgeNames = string[] | null;
+
+/**
+ * True when this lodge's name may be changed here (#64): it is the club's own
+ * AND keyed by its central id, so the upload can send the id and the server
+ * renames its lodge rather than creating a second one. The one rule, read by
+ * the admin serializer (the panel's field) and the PATCH route.
+ */
+export function canRenameOtherLodge(
+  owned: ReadonlyArray<string> | null,
+  lodge: { name: string; centralId: string | null },
+): boolean {
+  return ownsOtherLodge(owned, lodge.name) && Boolean(lodge.centralId);
+}
 
 /** True when the central server has said this lodge is the club's own. */
 export function ownsOtherLodge(
@@ -580,7 +608,7 @@ export function serializeOtherLodgeForAdmin(
   const { bookingOfficerPhone, ...rest } = serializeOtherLodge(lodge);
   const extra = notOnCentralServer ? { notOnCentralServer } : {};
   return ownsOtherLodge(owned, lodge.name)
-    ? { ...rest, bookingOfficerPhone, owned: true, renamable: Boolean(lodge.centralId), ...extra }
+    ? { ...rest, bookingOfficerPhone, owned: true, renamable: canRenameOtherLodge(owned, lodge), ...extra }
     : { ...rest, owned: false, renamable: false, ...extra };
 }
 

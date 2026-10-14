@@ -8,6 +8,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
 import { createAuditLog } from "@/lib/audit";
 import {
+  forgetOtherLodgeCentralIds,
   loadServerNzSettings,
   updateServerNzSettings,
   validateCentralServerBaseUrl,
@@ -100,6 +101,8 @@ export async function POST(request: Request) {
       kind: "admin",
       memberId: guard.session.user.id,
     });
+    // A different server's lodge ids mean nothing here (#64).
+    await forgetOtherLodgeCentralIds();
     apiKeyCleared = true;
   }
 

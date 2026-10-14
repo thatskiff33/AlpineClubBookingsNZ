@@ -393,7 +393,9 @@ providers, and fell four behind as the rest landed. Anything that turns on
   since the fourteen detail columns were added, that includes a site URL, a
   booking path, a cancellation period, two season dates and nine yes/no
   facilities alongside the booking officer's contact details, and nothing about
-  members. Which rows are the club's own is the server's answer
+  members. Since #64 (server API 2.3) each such row also carries its central
+  lodge `id`, and a changed name RENAMES that lodge on the central server and so
+  at every other club — limited, by the server, to lodges this club owns. Which rows are the club's own is the server's answer
   (`ownLodgeNames` on every pull), stored on the settings row and applied by
   the one `ownsOtherLodge` rule to the upload, the admin edit route and the
   panel; until that answer has been received the upload sends every changed row

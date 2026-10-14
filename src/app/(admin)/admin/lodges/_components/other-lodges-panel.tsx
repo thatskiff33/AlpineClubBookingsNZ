@@ -292,8 +292,9 @@ export function OtherLodgesPanel({
           <DialogHeader>
             <DialogTitle>{editLabel(form.name)}</DialogTitle>
             <DialogDescription>
-              Everything here is optional detail that is shared with other clubs
-              through the Alpine Central Server when that connection is on.
+              Apart from the name, everything here is optional detail that is
+              shared with other clubs through the Alpine Central Server when
+              that connection is on.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6">

@@ -4,6 +4,7 @@ import {
   renameInOwnedNames,
   usableCentralId,
 } from "@/lib/other-lodge-central-id";
+import { canRenameOtherLodge, ownedCentralLodgesSchema } from "@/lib/other-lodges";
 
 describe("usableCentralId (#64)", () => {
   it("keeps an id that could key a row", () => {
@@ -62,5 +63,22 @@ describe("renameInOwnedNames (#64)", () => {
 
   it("leaves a list without the old name as it was", () => {
     expect(renameInOwnedNames(["A"], "B", "Bee")).toEqual(["A"]);
+  });
+});
+
+describe("canRenameOtherLodge (#64)", () => {
+  it("is true only for an owned lodge that is keyed", () => {
+    expect(canRenameOtherLodge(["Mine"], { name: "Mine", centralId: "c-1" })).toBe(true);
+    expect(canRenameOtherLodge(["Mine"], { name: "Mine", centralId: null })).toBe(false);
+    expect(canRenameOtherLodge(["Mine"], { name: "Theirs", centralId: "c-2" })).toBe(false);
+    expect(canRenameOtherLodge(null, { name: "Mine", centralId: "c-1" })).toBe(false);
+  });
+});
+
+describe("one central lodge id rule for the pull's lodges and its ownLodges (#64)", () => {
+  it("refuses a padded owned id exactly as it refuses a padded lodge id", () => {
+    expect(ownedCentralLodgesSchema.safeParse([{ id: " c-1", name: "Mine" }]).success).toBe(false);
+    expect(usableCentralId(" c-1")).toBeNull();
+    expect(ownedCentralLodgesSchema.safeParse([{ id: "c-1", name: "Mine" }]).success).toBe(true);
   });
 });

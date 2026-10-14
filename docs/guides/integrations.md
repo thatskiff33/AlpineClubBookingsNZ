@@ -227,13 +227,23 @@ by name, which fills in the ids; after that downloads are incremental again.
 
 - **A new name another lodge here already has.** The rest of the lodge's
   details are applied, it keeps its old name, and the **Download** message names
-  it. It takes the new name on a later download once the clash is gone.
-- **A lodge the central server no longer has.** After that first full download,
-  a lodge that never got an id is one the server no longer lists, usually a
-  duplicate left behind by a rename before this change, or a lodge deleted
-  there. The Other lodges panel marks it **Not on the Alpine Central Server**,
-  with how many bookings and booking requests still refer to it, so you can
-  decide what to do. Nothing removes it automatically.
+  it, with the name it should have. A lodge new to this site whose name is
+  already used here is not added, and is named the same way. Either is tried
+  again when the central server next sends a change to that lodge.
+- **A lodge the central server does not list.** Until a full download has
+  finished, every download asks for the whole registry (so one that fails
+  part-way is simply repeated). After it, a lodge that never got an id is one
+  the server did not list, usually a duplicate left behind by a rename before
+  this change, or a lodge deleted there. The Other lodges panel marks it **Not
+  found on the Alpine Central Server**, with how many bookings and booking
+  requests still refer to it, so you can decide what to do. Nothing removes it
+  automatically.
+- **A new central server address** makes every lodge forget its id, and the
+  next download matches them all by name again. A new API key for the same
+  server repeats the full download but keeps the ids.
+- **Your lodge's name is yours.** If the central server's administrator renames
+  your own lodge, this site keeps the name you gave it, and your next upload
+  of that lodge sets it back on the server.
 
 1. Enable the **Alpine Central Server** module on [Modules](modules.md). With the
    module off the setup page is not reachable and the nightly sync does not run,

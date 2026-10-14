@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
-const mockFindFirst = vi.fn();
+const mockExecuteRaw = vi.fn();
 const mockUpsert = vi.fn();
 const mockUpdateMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
@@ -18,7 +18,6 @@ vi.mock("@/lib/prisma", () => {
     otherLodge: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
-      findFirst: (...args: unknown[]) => mockFindFirst(...args),
       upsert: (...args: unknown[]) => mockUpsert(...args),
       updateMany: (...args: unknown[]) => mockUpdateMany(...args),
     },
@@ -27,6 +26,7 @@ vi.mock("@/lib/prisma", () => {
       upsert: (...args: unknown[]) => mockAmenityUpsert(...args),
     },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
   };
   return { prisma };
 });
@@ -53,11 +53,24 @@ vi.mock("@/lib/logger", () => ({
 const mockLoadSettings = vi.fn();
 const mockRecordUpload = vi.fn();
 const mockRecordDownload = vi.fn();
+// The record step's options (#64: the keyed marker and the transaction client)
+// land here, so the cursor-and-owned-list assertions above them stay exact.
+const mockRecordOptions = vi.fn();
+const mockLockSettings = vi.fn();
 
 vi.mock("@/lib/servernz-settings", () => ({
   loadServerNzSettings: (...args: unknown[]) => mockLoadSettings(...args),
   recordOtherLodgesUpload: (...args: unknown[]) => mockRecordUpload(...args),
-  recordOtherLodgesDownload: (...args: unknown[]) => mockRecordDownload(...args),
+  recordOtherLodgesDownload: (
+    cursor: unknown,
+    names: unknown,
+    lodges: unknown,
+    options: unknown,
+  ) => {
+    mockRecordOptions(options);
+    return mockRecordDownload(cursor, names, lodges);
+  },
+  lockServerNzSettings: (...args: unknown[]) => mockLockSettings(...args),
 }));
 
 import {
@@ -77,6 +90,9 @@ const SETTINGS = {
   otherLodgesOwnedNames: null as string[] | null,
   otherLodgesOwnedNamesAt: null as string | null,
   otherLodgesOwnedNamesUnreadable: false,
+  otherLodgesOwnedLodges: null as Array<{ id: string; name: string }> | null,
+  // Keyed already (#64), so downloads are incremental unless a test says not.
+  otherLodgesKeyedAt: "2026-08-01T00:00:00.000Z" as string | null,
 };
 
 /** A row as the central server sends it. */
@@ -180,8 +196,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
   mockUpsert.mockResolvedValue({ id: "ol_new" });
-  // No row is keyed and the registry is empty: an ordinary incremental pull.
-  mockFindFirst.mockResolvedValue(null);
+  mockLockSettings.mockResolvedValue(undefined);
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
   mockAmenityUpsert.mockResolvedValue({});
@@ -1514,9 +1529,9 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     const result = await downloadOtherClubsFromServer();
 
     expect(rows[0]).toMatchObject({ name: "Old Name", bedCapacity: 40 });
-    expect(result).toMatchObject({ updated: 1, renamed: 0, nameConflicts: ["New Name"] });
+    expect(result).toMatchObject({ updated: 1, renamed: 0, nameConflicts: [{ lodge: "Old Name", wanted: "New Name" }] });
     expect(mockLoggerWarn).toHaveBeenCalledWith(
-      { lodges: ["New Name"] },
+      { lodges: [{ lodge: "Old Name", wanted: "New Name" }] },
       expect.stringMatching(/could not take their new name/i),
     );
   });
@@ -1529,7 +1544,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(rows).toEqual([expect.objectContaining({ id: "ol_1", centralId: "c-1" })]);
-    expect(result).toMatchObject({ created: 0, updated: 0, nameConflicts: ["Shared Name"] });
+    expect(result).toMatchObject({ created: 0, updated: 0, nameConflicts: [{ lodge: null, wanted: "Shared Name" }] });
   });
 
   it("reports a rename that loses a race for the name (P2002) instead of failing the pull", async () => {
@@ -1546,7 +1561,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(result.nameConflicts).toEqual(["New Name"]);
+    expect(result.nameConflicts).toEqual([{ lodge: "Old Name", wanted: "New Name" }]);
     expect(mockRecordDownload).toHaveBeenCalled();
   });
 
@@ -1577,26 +1592,117 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockFindUnique.mock.calls.every(([a]) => a.where.centralId === undefined)).toBe(true);
   });
 
-  it("asks for the WHOLE registry while no row is keyed yet", async () => {
-    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: "2026-08-14T00:00:00.000Z" });
-    mockFindFirst.mockImplementation(async ({ where }: { where?: unknown }) =>
-      where ? null : { id: "ol_1" },
-    );
+  it("asks for the WHOLE registry until a whole download has merged, then marks it keyed", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesCursor: "2026-08-14T00:00:00.000Z",
+      otherLodgesKeyedAt: null,
+    });
     pull([]);
 
     await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
   });
 
-  it("pulls incrementally once any row is keyed", async () => {
+  it("does NOT mark the registry keyed when the whole download fails part-way, so the next one repeats it", async () => {
+    registry([row("ol_1", "Aorangi Ski Club", null)]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    mockUpdateMany.mockRejectedValueOnce(new Error("connection lost"));
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow("connection lost");
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockRecordOptions).not.toHaveBeenCalled();
+  });
+
+  it("pulls incrementally once keyed, and does not re-mark it", async () => {
+    registry([]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: "c-opaque" });
-    mockFindFirst.mockResolvedValue({ id: "ol_1" });
     pull([]);
 
     await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith("c-opaque");
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("settles a THREE-step chain whatever order the pull sends it in", async () => {
+    const rows = registry([
+      row("ol_1", "A Lodge", "c-1"),
+      row("ol_2", "B Lodge", "c-2"),
+      row("ol_3", "C Lodge", "c-3"),
+    ]);
+    // Sorted by the new name, as the server sends it: each blocks the one before.
+    pull([
+      remoteLodge("B Lodge", { id: "c-1" }),
+      remoteLodge("C Lodge", { id: "c-2" }),
+      remoteLodge("D Lodge", { id: "c-3" }),
+    ]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows.map((r) => r.name)).toEqual(["B Lodge", "C Lodge", "D Lodge"]);
+    expect(result).toMatchObject({ renamed: 3, nameConflicts: [] });
+  });
+
+  it("does not key a row an admin saved since the read, and keeps their edit", async () => {
+    const rows = registry([row("ol_9", "Our Lodge", null)]);
+    const realFind = mockFindUnique.getMockImplementation()!;
+    let reads = 0;
+    mockFindUnique.mockImplementation(async (args: { where: Record<string, string> }) => {
+      const found = await realFind(args);
+      // The admin's save lands right after every read of the row.
+      if (found && found.id === "ol_9" && reads++ < 10) {
+        rows[0].updatedAt = new Date(rows[0].updatedAt.getTime() + 60_000);
+        rows[0].bedCapacity = 99;
+      }
+      return found;
+    });
+    pull([remoteLodge("Our Lodge", { id: "c-ours" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0].bedCapacity).toBe(99);
+    // Never rewound below the admin's stamp.
+    expect(rows[0].updatedAt.getTime()).toBeGreaterThan(new Date("2026-08-01T00:00:00.000Z").getTime());
+  });
+
+  it("maps owned names by the STORED ids when this pull's ids were refused", async () => {
+    registry([row("ol_9", "Our New Name", "c-ours")]);
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesOwnedLodges: [{ id: "c-ours", name: "Our Lodge" }],
+    });
+    pull([], { ownLodges: undefined, ownLodgesRefused: true });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-640", ["Our New Name"], undefined);
+  });
+
+  it("records the owned list under the settings lock, inside one transaction", async () => {
+    registry([]);
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockLockSettings).toHaveBeenCalledTimes(1);
+    expect(mockLockSettings.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRecordDownload.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {
+    registry([row("ol_1", "Old Name", "c-1"), row("ol_x", "New Name", null)]);
+    pull([remoteLodge("New Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(result.nameConflicts).toEqual([{ lodge: "Old Name", wanted: "New Name" }]);
   });
 });
 

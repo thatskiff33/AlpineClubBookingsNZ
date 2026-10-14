@@ -1359,6 +1359,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
+  // Alpine Central Server owned-lodge list (#64): `lockServerNzSettings` locks
+  // the singleton settings row (`SELECT 1 … FOR UPDATE`) for the download's
+  // record step and an admin's Other lodges rename, the two writers that derive
+  // the stored owned names from OtherLodge rows. No advisory key; disjoint from
+  // booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge
+  // list writers".
+  "src/lib/servernz-settings.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
   // every planned ancillary owner, plus the shared standing-subject barrier

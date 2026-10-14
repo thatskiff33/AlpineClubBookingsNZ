@@ -18,8 +18,8 @@ import {
 import {
   localNamesByCentralId,
   mergeDistributedLodge,
-  registryNeedsKeying,
   type MergeOutcome,
+  type NameConflict,
 } from "@/lib/servernz-other-lodges-merge";
 import { ratesToServer } from "@/lib/servernz-rate";
 import {
@@ -28,6 +28,7 @@ import {
 } from "@/lib/servernz-cursor-overlap";
 import {
   loadServerNzSettings,
+  lockServerNzSettings,
   recordOtherLodgesUpload,
   recordOtherLodgesDownload,
 } from "@/lib/servernz-settings";
@@ -191,10 +192,12 @@ export interface DownloadSummary {
   /** Of `updated`, rows renamed in place to the server's new name (#64). */
   renamed: number;
   /**
-   * Lodges renamed on the server whose new name another local lodge holds:
-   * everything else was applied, the old name kept (#64). The server's names.
+   * Lodges renamed on the server whose new name another local lodge holds
+   * (#64): `lodge` is the local name — everything else was applied and the old
+   * name kept — or `null` for a lodge new here, which was not added. `wanted`
+   * is the server's name.
    */
-  nameConflicts: string[];
+  nameConflicts: NameConflict[];
   /** Rows the server sent that failed validation and were discarded. */
   dropped: number;
 }
@@ -222,10 +225,13 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // why removing it re-opens a permanent skip, and what an opaque cursor means.
   // The stored cursor itself is untouched here.
   //
-  // A registry not yet keyed by central id (#64: just upgraded) asks for the
-  // WHOLE registry once instead, so every row is matched and keyed.
+  // Until a whole-registry download has merged to the end (#64: a site just
+  // upgraded, a new connection, or a keying download that failed part-way),
+  // every download asks for the WHOLE registry instead, so every row is
+  // matched by name once and keyed — not only the lodges that happen to change.
+  const wholeRegistry = settings.otherLodgesKeyedAt === null;
   const pull = await pullOtherLodges(
-    (await registryNeedsKeying())
+    wholeRegistry
       ? null
       : overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
   );
@@ -249,31 +255,40 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   let unchanged = 0;
   let keptLocal = 0;
   let renamed = 0;
-  const nameConflicts: string[] = [];
-  const count = (outcome: MergeOutcome, lodge: { name: string }) => {
-    if (outcome.kind === "deferred") return;
-    if (outcome.kind === "conflict" || ("nameConflict" in outcome && outcome.nameConflict)) {
-      nameConflicts.push(lodge.name);
-    }
+  const nameConflicts: NameConflict[] = [];
+  const count = (outcome: Exclude<MergeOutcome, { kind: "deferred" }>) => {
+    if (outcome.nameConflict) nameConflicts.push(outcome.nameConflict);
+    if (outcome.kind === "conflict") return;
     if (outcome.kind === "created") created++;
     else if (outcome.kind === "updated") updated++;
     else if (outcome.kind === "unchanged") unchanged++;
-    else if (outcome.kind === "keptLocal") keptLocal++;
-    if ("renamed" in outcome && outcome.renamed) renamed++;
+    else keptLocal++;
+    if (outcome.renamed) renamed++;
   };
   // The pull has COMPLETED before this loop starts, so no transaction below is
   // ever held open across the central server's HTTP call. A lodge whose name
-  // is held here by another row is DEFERRED and retried once after the rest
-  // (#64): that settles a chain of renames within one pull, and what still
-  // collides is reported in the summary rather than lost silently.
-  const deferred: typeof pull.lodges = [];
-  for (const lodge of pull.lodges) {
-    const outcome = await mergeDistributedLodge(lodge, owned, false);
-    if (outcome.kind === "deferred") deferred.push(lodge);
-    else count(outcome, lodge);
+  // is held here by another row is DEFERRED (#64). The deferred lodges are
+  // retried for as long as a pass settles at least one of them — which settles
+  // a chain of renames of any length, whatever order the pull sent them in —
+  // and then once more as the FINAL pass, which reports what still collides
+  // rather than losing it silently.
+  let pending = pull.lodges;
+  for (;;) {
+    const next: typeof pull.lodges = [];
+    for (const lodge of pending) {
+      const outcome = await mergeDistributedLodge(lodge, owned, false);
+      if (outcome.kind === "deferred") next.push(lodge);
+      else count(outcome);
+    }
+    if (next.length === 0 || next.length === pending.length) {
+      pending = next;
+      break;
+    }
+    pending = next;
   }
-  for (const lodge of deferred) {
-    count(await mergeDistributedLodge(lodge, owned, true), lodge);
+  for (const lodge of pending) {
+    const outcome = await mergeDistributedLodge(lodge, owned, true);
+    if (outcome.kind !== "deferred") count(outcome);
   }
   if (nameConflicts.length > 0) {
     logger.warn(
@@ -281,19 +296,6 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       "Lodges renamed on the central server could not take their new name here: another local lodge holds it",
     );
   }
-
-  // The owned list is STORED under this site's names (#64): a lodge renamed
-  // here keeps its local name until the server accepts the rename, and every
-  // "may this lodge be changed here?" check reads the list by local name.
-  // Mapped AFTER the merge, which may just have keyed the rows.
-  const ownLodgeNames =
-    pull.ownLodgeNames === undefined
-      ? undefined
-      : ownedNamesAsLocal(
-          pull.ownLodgeNames,
-          pull.ownLodges,
-          await localNamesByCentralId((pull.ownLodges ?? []).map((l) => l.id)),
-        );
 
   // The durable watermark is the SERVER's returned cursor, never the overlapped
   // value we requested with: the overlap exists to widen the question, not to
@@ -310,11 +312,38 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // owned IDS (#62) follow the names: names recorded without usable ids (an
   // older server, or ids refused above) CLEAR the stored ids, so the
   // availability endpoint never answers on an older list than the names.
-  await recordOtherLodgesDownload(
-    advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
-    ownLodgeNames,
-    pull.ownLodges,
-  );
+  //
+  // The NAMES are stored as this site names them (#64): a lodge renamed here
+  // keeps its local name until the server accepts the rename, and every "may
+  // this lodge be changed here?" check reads the list by local name. Each owned
+  // id — this pull's, else the stored ones when this pull's were refused — is
+  // mapped to its local row's name, read under the settings row's lock, which an
+  // admin's rename also takes: neither can write back a list computed before the
+  // other committed.
+  //
+  // A whole-registry download that got this far merged every row: the marker
+  // is set, and later downloads are incremental again.
+  await prisma.$transaction(async (tx) => {
+    await lockServerNzSettings(tx);
+    const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
+    const ownLodgeNames =
+      pull.ownLodgeNames === undefined
+        ? undefined
+        : ownedNamesAsLocal(
+            pull.ownLodgeNames,
+            ownedIds,
+            await localNamesByCentralId(
+              ownedIds.map((l) => l.id),
+              tx,
+            ),
+          );
+    await recordOtherLodgesDownload(
+      advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
+      ownLodgeNames,
+      pull.ownLodges,
+      { keyed: wholeRegistry, db: tx },
+    );
+  });
   return {
     fetched: pull.count,
     created,

@@ -5379,6 +5379,12 @@ model ServerNzSettings {
   // does not send it), [] = owns none. Read by the "Central lodge" setting and
   // the availability endpoint, which link by id because a name can change.
   otherLodgesOwnedLodges  Json?
+  // When a WHOLE-registry download last merged to the end (#64): until then
+  // every download asks for the whole registry, so every Other lodges row is
+  // matched by name once and keyed by its central id, and a row still unkeyed
+  // after it is one the server does not list. NULL = not yet (a site just
+  // upgraded, or a connection forgotten); a failed download leaves it NULL.
+  otherLodgesKeyedAt      DateTime?
 
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus

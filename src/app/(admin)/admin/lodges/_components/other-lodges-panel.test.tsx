@@ -208,7 +208,7 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     // Not keyed by the central server yet: a new name would reach it as a
     // second lodge. The route refuses it too — this is the UI half.
     expect(name.readOnly).toBe(true);
-    expect(within(dialog).getByText(/can be renamed once it has been downloaded/i)).toBeTruthy();
+    expect(within(dialog).getByText(/can be renamed after the next Download/i)).toBeTruthy();
     // The rest of the form is still editable, including the phone.
     expect((within(dialog).getByLabelText("Booking officer's phone") as HTMLInputElement).readOnly).toBe(false);
     expect((within(dialog).getByLabelText("Booking officer's phone") as HTMLInputElement).value).toBe("021 555 0000");
@@ -821,11 +821,11 @@ describe("Other lodges: renaming our own lodge and lodges the server no longer h
     });
     await renderPanel();
     const row = screen.getByText("Ruapehu Hut").closest("tr") as HTMLElement;
-    expect(within(row).getByText(/not on the alpine central server/i).textContent).toMatch(
+    expect(within(row).getByText(/not found on the alpine central server/i).textContent).toMatch(
       /referred to by 1 booking and 3 booking requests/i,
     );
     const ours = screen.getByText("Tararua Lodge").closest("tr") as HTMLElement;
-    expect(within(ours).queryByText(/not on the alpine central server/i)).toBeNull();
+    expect(within(ours).queryByText(/not found on the alpine central server/i)).toBeNull();
   });
 
   it("says when nothing refers to a lodge the central server no longer has", async () => {

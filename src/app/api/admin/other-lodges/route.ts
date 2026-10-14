@@ -20,15 +20,18 @@ import { requireAdmin } from "@/lib/session-guards";
 // row's `owned` flag is the route's own `ownsOtherLodge` answer. Another club's
 // booking officer PHONE is not sent at all (`serializeOtherLodgeForAdmin`).
 //
-// A row with no central id once the registry IS keyed (#64) is one the central
-// server no longer has — a duplicate left by a rename before #64, or a lodge
-// deleted there. It is marked, with what still cites it, so an administrator
-// can assess it; nothing removes it here (deletion is #58). Before any row is
-// keyed (a site that has not downloaded since upgrading) nothing is marked.
+// A row with no central id after a whole-registry download has merged to the
+// end (#64, `otherLodgesKeyedAt`) is one that download did not match: usually a
+// duplicate left by a rename before #64, or a lodge deleted on the server
+// before then. It is marked, with what still cites it, so an administrator can
+// assess it; nothing removes it here (deletion is #58). A lodge deleted on the
+// server AFTER keying keeps its id and is #58's to find. Before that download
+// (a site not yet downloaded since upgrading) nothing is marked.
 async function unkeyedLodgeReferences(
   lodges: ReadonlyArray<{ id: string; centralId: string | null }>,
+  keyedAt: string | null,
 ): Promise<Map<string, OtherLodgeReferences>> {
-  if (!lodges.some((l) => l.centralId)) return new Map();
+  if (!keyedAt) return new Map();
   const unkeyed = lodges.filter((l) => !l.centralId).map((l) => l.id);
   if (unkeyed.length === 0) return new Map();
   const rows = await prisma.otherLodge.findMany({
@@ -59,7 +62,10 @@ export async function GET() {
     readStoredServerVersion(),
   ]);
   const owned = settings.otherLodgesOwnedNames;
-  const notOnCentralServer = await unkeyedLodgeReferences(otherLodges);
+  const notOnCentralServer = await unkeyedLodgeReferences(
+    otherLodges,
+    settings.otherLodgesKeyedAt,
+  );
 
   const body: AdminOtherLodgesResponse = {
     otherLodges: otherLodges.map((lodge) =>

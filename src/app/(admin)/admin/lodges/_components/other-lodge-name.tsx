@@ -33,7 +33,7 @@ export function OtherLodgeNameField({
       <p id="other-lodge-name-note" className="text-xs text-muted-foreground">
         {renamable
           ? "A new name is sent to the Alpine Central Server and reaches every other club on their next download."
-          : "This lodge can be renamed once it has been downloaded from the Alpine Central Server."}
+          : "This lodge can be renamed after the next Download from the Alpine Central Server."}
       </p>
     </div>
   );
@@ -43,9 +43,10 @@ const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
 /**
- * The note under a lodge the central server no longer has (#64): a duplicate
- * left by a rename before #64, or a lodge deleted there. Says what still cites
- * it, so an administrator can assess it; nothing removes it here.
+ * The note under a lodge the last whole-registry download did not match (#64):
+ * usually a duplicate left by a rename before #64, or a lodge deleted there.
+ * Says what still cites it, so an administrator can assess it; nothing removes
+ * it here.
  */
 export function NotOnCentralServerNote({ references }: { references: OtherLodgeReferences }) {
   const cited =
@@ -58,7 +59,7 @@ export function NotOnCentralServerNote({ references }: { references: OtherLodgeR
         )}.`;
   return (
     <div className="text-xs text-warning-11">
-      Not on the Alpine Central Server. {cited}
+      Not found on the Alpine Central Server. {cited}
     </div>
   );
 }

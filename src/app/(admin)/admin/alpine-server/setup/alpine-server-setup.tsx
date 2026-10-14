@@ -77,9 +77,10 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
 }
 
 /**
- * The Download result in one line. Renames (#64) are counted, and a lodge
- * renamed on the central server whose new name another local lodge holds is
- * named, because it keeps its old name here until that is resolved.
+ * The Download result in one line. Renames (#64) are counted, and a lodge the
+ * central server renamed to a name another lodge here already has is named —
+ * by its name HERE, with the name it should have — because it keeps its old
+ * name (or, for a lodge new to this site, is not added) until that is resolved.
  */
 function downloadSummaryText(data: {
   fetched: number;
@@ -87,13 +88,17 @@ function downloadSummaryText(data: {
   updated: number;
   unchanged?: number;
   renamed?: number;
-  nameConflicts?: string[];
+  nameConflicts?: Array<{ lodge: string | null; wanted: string }>;
 }): string {
+  const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
-  const conflicts = data.nameConflicts?.length
-    ? ` Could not take the central server's new name, which another lodge here already has: ${data.nameConflicts.join(", ")}.`
+  const conflicts = (data.nameConflicts ?? []).map((c) =>
+    c.lodge === null ? `"${c.wanted}" (a new lodge, not added)` : `"${c.lodge}" (should be "${c.wanted}")`,
+  );
+  const conflictText = conflicts.length
+    ? ` The central server's name is already used by another lodge here, so these kept their name: ${conflicts.join(", ")}.`
     : "";
-  return `Downloaded ${data.fetched} entries: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflicts}`;
+  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}`;
 }
 
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
@@ -121,7 +126,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   );
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(
+  const [message, setMessage] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(
     null,
   );
 
@@ -277,7 +282,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       } else {
         setLastDownload(new Date().toISOString());
         setMessage({
-          kind: "ok",
+          kind: data.nameConflicts?.length ? "warn" : "ok",
           text: downloadSummaryText(data),
         });
       }
@@ -294,7 +299,13 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     <div className="space-y-6">
       {message ? (
         <p
-          className={`text-sm ${message.kind === "ok" ? "text-success-11" : "text-destructive"}`}
+          className={`text-sm ${
+            message.kind === "ok"
+              ? "text-success-11"
+              : message.kind === "warn"
+                ? "text-warning-11"
+                : "text-destructive"
+          }`}
           role="status"
         >
           {message.text}

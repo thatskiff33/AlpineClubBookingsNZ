@@ -1,5 +1,4 @@
-import { z } from "zod";
-import { OWNED_CENTRAL_LODGE_ID_MAX, type OwnedCentralLodge } from "@/lib/other-lodges";
+import { centralLodgeIdSchema, type OwnedCentralLodge } from "@/lib/other-lodges";
 
 /**
  * The Alpine Central Server's PERMANENT lodge id on the Other lodges registry
@@ -12,20 +11,13 @@ import { OWNED_CENTRAL_LODGE_ID_MAX, type OwnedCentralLodge } from "@/lib/other-
  * held to the same bound.
  */
 
-/** A usable central id: non-empty, within the column's bound, no NUL. */
-const centralIdSchema = z
-  .string()
-  .min(1)
-  .max(OWNED_CENTRAL_LODGE_ID_MAX)
-  .refine((value) => value.trim() === value && !value.includes("\u0000"));
-
 /**
  * The central id a pulled lodge carries, or `null` when it carries none that
  * could key a row (absent, empty, over-long, padded). `null` means "match this
  * lodge by name, as before #64" — never "a lodge with no id".
  */
 export function usableCentralId(raw: unknown): string | null {
-  const parsed = centralIdSchema.safeParse(raw);
+  const parsed = centralLodgeIdSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
 

@@ -29,11 +29,11 @@ import type { OtherLodgesPullResult } from "@/lib/servernz-api";
  *
  * COLLISIONS. A name the server gives a lodge may be held here by another row
  * — a chain of renames arriving in one pull (A becomes B while B becomes C), or
- * a stale row. The first pass DEFERS such a lodge; the caller retries the
- * deferred lodges once at the end, after the rest of the pull has moved names
- * out of the way. On that final pass a rename that still collides applies
- * everything but the name and is reported; a NEW lodge whose name is held by
- * a different central lodge is reported and not created.
+ * a stale row. A first pass DEFERS such a lodge; the caller retries the
+ * deferred lodges for as long as a pass makes progress, which settles a chain
+ * of any length, then runs one FINAL pass. There a rename that still collides
+ * applies everything but the name and is reported; a NEW lodge whose name is
+ * held by a different central lodge is reported and not created.
  *
  * TWO RULES keep `updatedAt` honest as a sync signal, because the upload
  * watermark is derived from it:
@@ -62,12 +62,27 @@ const MERGE_SELECT = {
   amenities: otherLodgeAmenitiesSelect,
 } as const;
 
+/**
+ * A lodge the server renamed whose new name another local row holds:
+ * `lodge` is THIS row's local name (what an administrator sees), `wanted` the
+ * server's. `lodge` is `null` for a lodge new to this site, which was not added.
+ */
+export interface NameConflict {
+  lodge: string | null;
+  wanted: string;
+}
+
 export type MergeOutcome =
-  | { kind: "created" | "updated" | "unchanged" | "keptLocal"; renamed?: boolean; nameConflict?: boolean }
-  /** First pass only: retry at the end of the pull. */
+  | {
+      kind: "created" | "updated" | "unchanged" | "keptLocal";
+      renamed?: boolean;
+      /** Everything else was applied; the name was not. */
+      nameConflict?: NameConflict;
+    }
+  /** Not final: retry after the rest of the pull. */
   | { kind: "deferred" }
-  /** Final pass: nothing written, and reported. */
-  | { kind: "conflict" };
+  /** Final pass: NOTHING written, and reported. */
+  | { kind: "conflict"; nameConflict: NameConflict };
 
 function isUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
@@ -97,7 +112,9 @@ export async function mergeDistributedLodge(
     // the server that this pull has not (yet) renamed here. Never merged into
     // it, which would weld two lodges into one row.
     if (byName && centralId !== null && byName.centralId !== null) {
-      return final ? { kind: "conflict" } : { kind: "deferred" };
+      return final
+        ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
+        : { kind: "deferred" };
     }
     existing = byName;
   }
@@ -142,7 +159,9 @@ export async function mergeDistributedLodge(
     } catch (error) {
       // The id is held by a row a concurrent download just wrote.
       if (!isUniqueViolation(error)) throw error;
-      return final ? { kind: "conflict" } : { kind: "deferred" };
+      return final
+        ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
+        : { kind: "deferred" };
     }
     return { kind: "created" };
   }
@@ -152,21 +171,29 @@ export async function mergeDistributedLodge(
   // The backfill: the row matched by name gets its central id. Written on its
   // own and WITHOUT moving `updatedAt` (it is set to the value read), so it is
   // never re-presented as a local edit, and it lands even when the data below
-  // is unchanged or loses to a newer local edit.
+  // is unchanged or loses to a newer local edit. GUARDED on that `updatedAt`:
+  // an admin saving the row since our read stamped it newer, and writing the
+  // old value back would rewind their edit below the upload watermark and let
+  // the guarded write further down overwrite it. A miss retries the lodge
+  // after the rest of the pull, on a fresh read.
   if (centralId !== null && row.centralId === null) {
+    let keyed = 0;
     try {
-      await prisma.otherLodge.updateMany({
-        where: { id: row.id, centralId: null },
-        data: { centralId, updatedAt: row.updatedAt },
-      });
+      keyed = (
+        await prisma.otherLodge.updateMany({
+          where: { id: row.id, centralId: null, updatedAt: row.updatedAt },
+          data: { centralId, updatedAt: row.updatedAt },
+        })
+      ).count;
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
     }
+    if (keyed !== 1 && !final) return { kind: "deferred" };
   }
 
   // A rename: only another club's lodge, only one matched by id.
   let renameTo = theirs && byId !== null && row.name !== lodge.name ? lodge.name : null;
-  let nameConflict = false;
+  let nameConflict: NameConflict | undefined;
   if (renameTo !== null) {
     const holder = await prisma.otherLodge.findUnique({
       where: { name: renameTo },
@@ -174,8 +201,8 @@ export async function mergeDistributedLodge(
     });
     if (holder) {
       if (!final) return { kind: "deferred" };
+      nameConflict = { lodge: row.name, wanted: renameTo };
       renameTo = null;
-      nameConflict = true;
     }
   }
 
@@ -216,34 +243,21 @@ export async function mergeDistributedLodge(
   } catch (error) {
     // A rename onto a name another writer took since the check above.
     if (renameTo === null || !isUniqueViolation(error)) throw error;
-    return final ? { kind: "conflict" } : { kind: "deferred" };
+    return final
+      ? { kind: "conflict", nameConflict: { lodge: row.name, wanted: renameTo } }
+      : { kind: "deferred" };
   }
   if (!applied) return { kind: "keptLocal", nameConflict };
   return { kind: "updated", renamed: renameTo !== null, nameConflict };
 }
 
-/**
- * True when the registry has rows but none is keyed by a central id yet: the
- * site has just upgraded to #64 (or rolled its column back and re-upgraded).
- * The download then asks for the WHOLE registry once, so every row is matched
- * by name and keyed, rather than only the lodges that happen to change.
- */
-export async function registryNeedsKeying(): Promise<boolean> {
-  const keyed = await prisma.otherLodge.findFirst({
-    where: { centralId: { not: null } },
-    select: { id: true },
-  });
-  if (keyed) return false;
-  const any = await prisma.otherLodge.findFirst({ select: { id: true } });
-  return any !== null;
-}
-
-/** Local names of the rows keyed by these central ids. */
+/** Local names of the rows keyed by these central ids, read through `db`. */
 export async function localNamesByCentralId(
   ids: ReadonlyArray<string>,
+  db: Pick<Prisma.TransactionClient, "otherLodge"> = prisma,
 ): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
-  const rows = await prisma.otherLodge.findMany({
+  const rows = await db.otherLodge.findMany({
     where: { centralId: { in: [...ids] } },
     select: { centralId: true, name: true },
   });

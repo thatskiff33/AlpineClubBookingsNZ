@@ -121,9 +121,10 @@ same **lodge edit** permission as the properties above.
    given your site more than one lodge, each of those rows has its own button,
    named **Edit ‹lodge name›**). Click it. The form opens in a **popup over
    the page**, so the list stays where it is.
-2. The **Name** can be changed once your lodge has been downloaded from the
-   central server at least once (before that it is shown read-only, because a
-   new name would reach the server as a second lodge). A new name is uploaded
+2. The **Name** can be changed after the first **Download** from the central
+   server since this site was upgraded to match lodges by their central id
+   (until then it is shown read-only, because a new name would reach the server
+   as a second lodge). A new name is uploaded
    with the lodge's permanent central id, so the server renames its lodge, and
    every other club's site renames its copy on its next download. Fill in or
    change the **Location**, the **booking officer's** name, email and phone,
@@ -199,7 +200,7 @@ answer; the panel is read-only again until the next download.
 
 | Field | What it controls | Default | Notes / constraints |
 | --- | --- | --- | --- |
-| Name | The lodge's display name | — | Your own lodge's name can be changed once the lodge has been downloaded from the central server; it then renames the lodge there and at every other club |
+| Name | The lodge's display name | Required; up to 120 characters; no other lodge here may have it | Your own lodge's name can be changed after a **Download** has matched it to the central server; it then renames the lodge there and at every other club |
 | Location | Where the other lodge is | — | Optional; up to 300 characters |
 | Booking officer's name | Contact person at the other lodge | — | Optional; up to 200 characters |
 | Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |
@@ -238,6 +239,9 @@ Lodges are never deleted here: the list is the central server's.
 | Everything is read-only ("… can view the lodge properties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | Deactivate warns about dependencies | The lodge still has future bookings, waitlist, hut-leader, or kiosk ties | Review the list; confirm to deactivate anyway (they stay in place) or resolve them first |
 | "At least one lodge must stay active" | You tried to deactivate the only active lodge | Keep one active, or activate another first |
+| The Other lodges **Name** is read-only, or Save says "This lodge can be renamed after the next Download…" | Your lodge has not yet been matched to the central server by its id | Press **Download** under Integrations → Alpine Central Server, then edit again |
+| Save says "Another lodge is already named …" | A lodge in the Other lodges list already has that name | Choose a different name |
+| A lodge shows **Not found on the Alpine Central Server** | The central server did not list it in the last full download: usually a duplicate left by an earlier rename, or a lodge deleted there | Check the bookings and requests it shows; it is not removed automatically |
 | Member screens don't show a lodge picker | The club has only one active lodge | Expected — pickers appear once a second active lodge exists |
 | Door code/travel note isn't in an email | The lodge's field is blank, or the email template omits the token | Fill the field here; check the [Booking Messages](booking-messages.md)/email template |
 | The Other lodges panel has no **Edit my Lodge** button and says which lodge is yours is set on the central server | The site has not yet downloaded from a central server that names its lodge (not connected, never downloaded, or an older server) | Connect on **Integrations → Alpine Central Server** and press **Download**; the button appears for the lodge the server names |
