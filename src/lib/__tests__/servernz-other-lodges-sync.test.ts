@@ -210,7 +210,16 @@ beforeEach(() => {
     centralId: args.create.centralId ?? null,
   }));
   mockLockSettings.mockResolvedValue(undefined);
-  mockSettingsRow.mockResolvedValue({ baseUrl: SETTINGS.baseUrl });
+  // Under the lock, the row reads back as this download loaded it, unless a
+  // test says another writer got there first.
+  mockSettingsRow.mockImplementation(async () => {
+    const loaded = await mockLoadSettings();
+    return {
+      baseUrl: loaded.baseUrl,
+      otherLodgesCursor: loaded.otherLodgesCursor,
+      otherLodgesKeyedAt: loaded.otherLodgesKeyedAt ? new Date(loaded.otherLodgesKeyedAt) : null,
+    };
+  });
   mockKeyStamp.mockResolvedValue("2026-10-01T00:00:00.000Z");
   mockExecuteRaw.mockResolvedValue(0);
   mockUpdateMany.mockResolvedValue({ count: 1 });
@@ -1791,10 +1800,39 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
-    const [sql, listed] = mockExecuteRaw.mock.calls[0];
-    expect((sql as string[]).join("?")).toMatch(/UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND NOT \("centralId" = ANY/);
-    expect((sql as string[]).join("?")).not.toMatch(/updatedAt/);
-    expect(listed).toEqual(["c-1"]);
+    const [query] = mockExecuteRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.sql).toBe(
+      'UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "centralId" NOT IN (?)',
+    );
+    expect(query.values).toEqual(["c-1"]);
+  });
+
+  it("forgets every id when a clean whole download lists no lodge at all", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    const [query] = mockExecuteRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.sql).toBe('UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL');
+    expect(query.values).toEqual([]);
+  });
+
+  it("records NOTHING when another download recorded first (its answer is newer)", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null, otherLodgesCursor: "c-1" });
+    mockSettingsRow.mockResolvedValue({
+      baseUrl: SETTINGS.baseUrl,
+      otherLodgesCursor: "c-2",
+      otherLodgesKeyedAt: new Date("2026-10-14T00:00:00.000Z"),
+    });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
   });
 
   it("forgets nothing on an incremental download", async () => {
@@ -1816,7 +1854,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
-    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection .*changed/i));
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
   });
 
   it("does not count a create that landed on a row inserted in the gap as keyed", async () => {
@@ -1838,7 +1876,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
-    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection .*changed/i));
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
   });
 
   it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {

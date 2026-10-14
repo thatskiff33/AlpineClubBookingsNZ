@@ -1,4 +1,5 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { ownedNamesAsLocal, usableCentralId } from "@/lib/other-lodge-central-id";
 import {
   OTHER_LODGE_DATA_SELECT,
@@ -362,14 +363,29 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     await lockServerNzSettings(tx);
     const current = await tx.serverNzSettings.findUnique({
       where: { id: SERVERNZ_SETTINGS_ID },
-      select: { baseUrl: true },
+      select: { baseUrl: true, otherLodgesCursor: true, otherLodgesKeyedAt: true },
     });
     if ((current?.baseUrl ?? null) !== settings.baseUrl) return false;
     if ((await readServerNzApiKeyStamp(tx)) !== connection) return false;
+    // Another download recorded since this one started (the button and the
+    // nightly pass can overlap until #66): its answer is newer, so this one
+    // records nothing rather than write an older cursor back or forget ids
+    // that download has just keyed.
+    if (
+      (current?.otherLodgesCursor ?? null) !== settings.otherLodgesCursor ||
+      (current?.otherLodgesKeyedAt?.toISOString() ?? null) !== settings.otherLodgesKeyedAt
+    ) {
+      return false;
+    }
     const keyed = wholeRegistry && everyLodgeKeyed;
     if (keyed && knownIds !== null) {
-      const listed = [...knownIds];
-      await tx.$executeRaw`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND NOT ("centralId" = ANY(${listed}::text[]))`;
+      // One bound parameter per id (`Prisma.join`), as the rest of the code
+      // base binds lists; an empty registry lists none, so every id goes.
+      await tx.$executeRaw(
+        knownIds.size === 0
+          ? Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL`
+          : Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "centralId" NOT IN (${Prisma.join([...knownIds])})`,
+      );
     }
     const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
     const ownLodgeNames =
@@ -393,7 +409,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   });
   if (!recorded) {
     logger.warn(
-      "The Alpine Central Server connection (address or API key) changed during an Other lodges download; nothing from it was recorded",
+      "The Alpine Central Server connection changed, or another Other lodges download recorded first, while this one ran; nothing from it was recorded",
     );
   }
   return {
