@@ -61,6 +61,7 @@ import {
   type OtherLodgeFormState,
   type OtherLodgeRecord,
 } from "./other-lodge-form";
+import { NotOnCentralServerNote, OtherLodgeNameField } from "./other-lodge-name";
 import { OtherLodgeRateGrid } from "./other-lodge-rate-grid";
 
 export function OtherLodgesPanel({
@@ -224,6 +225,7 @@ export function OtherLodgesPanel({
   }
 
   const showForm = editingId !== null;
+  const editingLodge = lodges.find((l) => l.id === editingId);
   // The owned rows actually ON SCREEN. A name the server lists that has no
   // local row yet (not downloaded) has no button, so the label counts what the
   // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
@@ -296,25 +298,11 @@ export function OtherLodgesPanel({
           </DialogHeader>
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-name">Name</Label>
-                {/* READ-ONLY: the central server matches lodges by name, so a
-                    new name here would create a second lodge there and strand
-                    this one. The route refuses a change as well. */}
-                <Input
-                  id="other-lodge-name"
-                  value={form.name}
-                  readOnly
-                  aria-describedby="other-lodge-name-note"
-                />
-                <p
-                  id="other-lodge-name-note"
-                  className="text-xs text-muted-foreground"
-                >
-                  The name is set on the central server and cannot be changed
-                  here.
-                </p>
-              </div>
+              <OtherLodgeNameField
+                value={form.name}
+                renamable={editingLodge?.renamable ?? false}
+                onChange={(name) => setForm((prev) => ({ ...prev, name }))}
+              />
               {TEXT_FIELD_NAMES.map((field) => (
                 <div key={field} className="space-y-2">
                   <Label htmlFor={`other-lodge-${field}`}>
@@ -616,6 +604,9 @@ export function OtherLodgesPanel({
                     <TableRow key={lodge.id}>
                       <TableCell>
                         <div className="font-medium">{lodge.name}</div>
+                        {lodge.notOnCentralServer ? (
+                          <NotOnCentralServerNote references={lodge.notOnCentralServer} />
+                        ) : null}
                         {lodge.amenities.length > 0 ? (
                           <div className="text-xs text-muted-foreground">
                             {lodge.amenities.length}{" "}

@@ -31,10 +31,13 @@ import {
  * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list,
  * except the rates: those leave as the server's dollar keys (`ServerRates`,
  * from `ratesToServer`), never as this site's `…Cents` columns (#61).
- * `distribute` and provenance are never sent by clients.
+ * `distribute` and provenance are never sent by clients. `id` (API 2.3, #64)
+ * is the lodge's central id, once known: the server matches the item by it, so
+ * a changed `name` renames the lodge there rather than creating a second one.
  */
 export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField> &
   ServerRates & {
+    id?: string;
     name: string;
     amenities: OtherLodgeAmenity[];
   };

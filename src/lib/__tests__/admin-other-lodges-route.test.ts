@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   amenityUpsert: vi.fn(),
   auditLogCreate: vi.fn(),
   loadServerNzSettings: vi.fn(),
+  renameOwnedOtherLodgeName: vi.fn(),
   readStoredServerVersion: vi.fn(),
 }));
 
@@ -31,6 +33,7 @@ vi.mock("@/lib/session-guards", async () => ({
 
 vi.mock("@/lib/servernz-settings", () => ({
   loadServerNzSettings: mocks.loadServerNzSettings,
+  renameOwnedOtherLodgeName: mocks.renameOwnedOtherLodgeName,
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -180,6 +183,37 @@ describe("the create and delete handlers are gone (#52)", () => {
     expect("DELETE" in itemRoute).toBe(false);
     expect(Object.keys(listRoute).sort()).toEqual(["GET"]);
     expect(Object.keys(itemRoute).sort()).toEqual(["PATCH"]);
+  });
+});
+
+describe("GET /api/admin/other-lodges marks lodges the central server no longer has (#64)", () => {
+  it("marks an unkeyed row, with what cites it, once the registry is keyed", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([
+        record({ id: "ol-1", centralId: "c-1" }),
+        record({ id: "ol-old", name: "Ruapehu Lodge (old)", centralId: null }),
+      ])
+      .mockResolvedValueOnce([{ id: "ol-old", _count: { bookings: 2, bookingRequests: 1 } }]);
+    const data = await (await GET()).json();
+    expect(data.otherLodges[0]).not.toHaveProperty("notOnCentralServer");
+    expect(data.otherLodges[1].notOnCentralServer).toEqual({ bookings: 2, bookingRequests: 1 });
+    expect(mocks.findMany.mock.calls[1][0].where).toEqual({ id: { in: ["ol-old"] } });
+  });
+
+  it("marks nothing before any row is keyed (not downloaded since upgrading)", async () => {
+    mocks.findMany.mockResolvedValueOnce([record({ centralId: null })]);
+    const data = await (await GET()).json();
+    expect(data.otherLodges[0]).not.toHaveProperty("notOnCentralServer");
+    expect(mocks.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("says an owned lodge is renamable only once it is keyed", async () => {
+    mocks.findMany.mockResolvedValueOnce([
+      record({ id: "ol-1", centralId: "c-1" }),
+    ]);
+    expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: true });
+    mocks.findMany.mockResolvedValueOnce([record({ id: "ol-1", centralId: null })]);
+    expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: false });
   });
 });
 
@@ -371,15 +405,61 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("refuses a name change on an owned lodge: the central server matches by name", async () => {
-    mocks.findUnique.mockResolvedValue(record());
+  it("refuses a rename of an owned lodge not yet keyed by the central server (#64)", async () => {
+    mocks.findUnique.mockResolvedValue(record({ centralId: null }));
     const response = await PATCH(
       jsonRequest("PATCH", { name: "Ruapehu Ski Club (renamed)", bedCapacity: 12 }),
       params("ol-1"),
     );
     expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/name cannot be changed/i);
+    expect((await response.json()).error).toMatch(/renamed once it has been downloaded/i);
     expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.renameOwnedOtherLodgeName).not.toHaveBeenCalled();
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("renames a keyed owned lodge and moves the stored owned name with it, in one transaction (#64)", async () => {
+    mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
+    mocks.update.mockResolvedValue({ id: "ol-1" });
+    mocks.findUniqueOrThrow.mockResolvedValue(
+      record({ centralId: "c-1", name: "Ruapehu Alpine Lodge" }),
+    );
+    const response = await PATCH(
+      jsonRequest("PATCH", { name: "  Ruapehu Alpine Lodge ", bedCapacity: 12 }),
+      params("ol-1"),
+    );
+    expect(response.status).toBe(200);
+    const [{ data }] = mocks.update.mock.calls[0];
+    expect(data).toEqual({ bedCapacity: 12, name: "Ruapehu Alpine Lodge" });
+    expect(mocks.renameOwnedOtherLodgeName).toHaveBeenCalledWith(
+      expect.anything(),
+      "Ruapehu Ski Club",
+      "Ruapehu Alpine Lodge",
+    );
+    // Still ours in the answer, under the new name.
+    expect((await response.json()).otherLodge).toMatchObject({
+      name: "Ruapehu Alpine Lodge",
+      owned: true,
+      renamable: true,
+    });
+    const [{ data: audit }] = mocks.auditLogCreate.mock.calls[0];
+    expect(audit.metadata.changedFields).toContain("name");
+  });
+
+  it("answers 409 when another lodge already has the new name (#64)", async () => {
+    mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
+    mocks.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    const response = await PATCH(
+      jsonRequest("PATCH", { name: "Tasman Lodge" }),
+      params("ol-1"),
+    );
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/already named "Tasman Lodge"/);
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 

@@ -219,7 +219,13 @@ export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
  * cap can only ever disagree with the server by not being run.
  */
 export function formProblem(form: OtherLodgeFormState): string | null {
-  // No name check: the name is read-only and always the stored one (#52).
+  // The name is editable for a lodge that can be renamed (#64) and read-only,
+  // so always the stored one, otherwise; either way it must be there and fit.
+  const name = form.name.trim();
+  if (name === "") return "The lodge needs a name.";
+  if (name.length > OTHER_LODGE_BOUNDS.name) {
+    return `The lodge name can be at most ${OTHER_LODGE_BOUNDS.name} characters.`;
+  }
   for (const field of WHOLE_NUMBER_FIELD_NAMES) {
     const value = form.numbers[field].trim();
     if (value !== "" && !/^\d+$/.test(value)) {

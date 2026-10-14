@@ -107,12 +107,14 @@ export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
  * direction — a column added to the Prisma model and NOT to the lists above
  * would be stored and uploaded by nothing and editable nowhere, silently. The
  * generated `OtherLodge` type is scalar-only (relations such as `amenities` are
- * not on it), so the only columns excused are the identity and timestamp ones.
+ * not on it), so the only columns excused are the identity and timestamp ones
+ * — `centralId` (#64) is identity too: the central server's key for the row,
+ * written by the download merge, never edited or uploaded as data.
  * When the check fails, the annotation names the unlisted column.
  */
 type UnlistedOtherLodgeColumn = Exclude<
   keyof OtherLodge,
-  "id" | "name" | "createdAt" | "updatedAt" | OtherLodgeDataField
+  "id" | "name" | "centralId" | "createdAt" | "updatedAt" | OtherLodgeDataField
 >;
 const EVERY_OTHER_LODGE_COLUMN_IS_LISTED: [UnlistedOtherLodgeColumn] extends [never]
   ? true
@@ -158,6 +160,7 @@ export const otherLodgeAmenitiesSelect = {
 export const otherLodgeSelect = {
   id: true,
   name: true,
+  centralId: true,
   ...OTHER_LODGE_DATA_SELECT,
   amenities: otherLodgeAmenitiesSelect,
   createdAt: true,
@@ -174,7 +177,7 @@ export type OtherLodgeDataRecord = Pick<OtherLodge, OtherLodgeDataField>;
 
 export type OtherLodgeRecord = Pick<
   OtherLodge,
-  "id" | "name" | OtherLodgeDataField | "createdAt" | "updatedAt"
+  "id" | "name" | "centralId" | OtherLodgeDataField | "createdAt" | "updatedAt"
 > & { amenities: OtherLodgeAmenity[] };
 
 /**
@@ -542,7 +545,20 @@ export const OTHER_LODGE_NOT_OWNED_CODE = "OTHER_LODGE_NOT_OWNED";
 export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> & {
   bookingOfficerPhone?: string | null;
   owned: boolean;
+  /** Owned AND keyed by a central id, so a new name renames it there (#64). */
+  renamable: boolean;
+  /**
+   * Set only for a row the central server no longer has (#64): unkeyed after
+   * the registry was keyed. What still cites it, for the owner to assess.
+   */
+  notOnCentralServer?: OtherLodgeReferences;
 };
+
+/** How many bookings and booking requests cite a lodge. */
+export interface OtherLodgeReferences {
+  bookings: number;
+  bookingRequests: number;
+}
 
 /**
  * The admin list response: the rows, the owned list in its three states, and
@@ -559,11 +575,13 @@ export interface AdminOtherLodgesResponse {
 export function serializeOtherLodgeForAdmin(
   lodge: OtherLodgeRecord,
   owned: ReadonlyArray<string> | null,
+  notOnCentralServer?: OtherLodgeReferences,
 ): AdminOtherLodge {
   const { bookingOfficerPhone, ...rest } = serializeOtherLodge(lodge);
+  const extra = notOnCentralServer ? { notOnCentralServer } : {};
   return ownsOtherLodge(owned, lodge.name)
-    ? { ...rest, bookingOfficerPhone, owned: true }
-    : { ...rest, owned: false };
+    ? { ...rest, bookingOfficerPhone, owned: true, renamable: Boolean(lodge.centralId), ...extra }
+    : { ...rest, owned: false, renamable: false, ...extra };
 }
 
 // ── Amenities ──────────────────────────────────────────────────────────────

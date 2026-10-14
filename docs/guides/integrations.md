@@ -217,6 +217,24 @@ your own copy was edited more recently — then yours is kept and sent up on the
 next upload. A field the server does not send is left exactly as you had it.
 Season start dates travel as calendar dates and are never shifted by time zone.
 
+**Lodges are matched by the central server's permanent lodge id**, not by
+name, so a lodge renamed there is renamed here in place: its bookings and
+booking requests stay attached to it. Your own lodge keeps the name you give it
+here; a download never renames it, and an upload sends your new name with the
+id so the server renames its lodge (server API 2.3). The first download after
+this site is upgraded asks for the whole registry once and matches every lodge
+by name, which fills in the ids; after that downloads are incremental again.
+
+- **A new name another lodge here already has.** The rest of the lodge's
+  details are applied, it keeps its old name, and the **Download** message names
+  it. It takes the new name on a later download once the clash is gone.
+- **A lodge the central server no longer has.** After that first full download,
+  a lodge that never got an id is one the server no longer lists, usually a
+  duplicate left behind by a rename before this change, or a lodge deleted
+  there. The Other lodges panel marks it **Not on the Alpine Central Server**,
+  with how many bookings and booking requests still refer to it, so you can
+  decide what to do. Nothing removes it automatically.
+
 1. Enable the **Alpine Central Server** module on [Modules](modules.md). With the
    module off the setup page is not reachable and the nightly sync does not run,
    so this is your off switch as well as your on switch.
@@ -242,8 +260,8 @@ whether they are.** The central server publishes one version number for
 everything it shares — the Other Clubs registry, the message board and the
 push registration — and this site is built for one particular number. The
 setup page shows both, beside the address and the key, under **Server
-software version** ("This site is built for server version 2.2 · Server:
-2.2"): it asks the server once each time you open the page, and again after
+software version** ("This site is built for server version 2.3 · Server:
+2.3"): it asks the server once each time you open the page, and again after
 you save a key or an address. With no API key stored nothing is asked and the
 server's number reads **0**, which is not a mismatch.
 

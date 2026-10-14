@@ -65,34 +65,34 @@ afterEach(() => {
 
 describe("AlpineServerSetup version display (#49)", () => {
   it("asks the version route exactly once on entry and shows both numbers", async () => {
-    versionRouteAnswers({ status: "match", serverVersion: "2.2", expected: "2.2", checkedAt: "2026-07-01T00:00:00.000Z", couldNotCheck: false, missingBaseUrl: false });
+    versionRouteAnswers({ status: "match", serverVersion: "2.3", expected: "2.3", checkedAt: "2026-07-01T00:00:00.000Z", couldNotCheck: false, missingBaseUrl: false });
     render(<AlpineServerSetup initialState={initial()} />);
 
-    expect(screen.getByTestId("server-version-expected").textContent).toBe("2.2");
-    await waitFor(() => expect(screen.getByTestId("server-version-actual").textContent).toBe("2.2"));
+    expect(screen.getByTestId("server-version-expected").textContent).toBe("2.3");
+    await waitFor(() => expect(screen.getByTestId("server-version-actual").textContent).toBe("2.3"));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("server-version-mismatch")).toBeNull();
     expect(screen.queryByTestId("server-version-unchecked")).toBeNull();
   });
 
   it("shows the mismatch message with both numbers when the server differs", async () => {
-    versionRouteAnswers({ status: "mismatch", serverVersion: "2.3", expected: "2.2", checkedAt: "2026-07-01T00:00:00.000Z", couldNotCheck: false, missingBaseUrl: false });
+    versionRouteAnswers({ status: "mismatch", serverVersion: "2.4", expected: "2.3", checkedAt: "2026-07-01T00:00:00.000Z", couldNotCheck: false, missingBaseUrl: false });
     render(<AlpineServerSetup initialState={initial()} />);
 
     const message = await screen.findByTestId("server-version-mismatch");
-    expect(message.textContent).toMatch(/built for server version 2.2 and the server reports 2.3/);
-    expect(screen.getByTestId("server-version-actual").textContent).toBe("2.3");
+    expect(message.textContent).toMatch(/built for server version 2.3 and the server reports 2.4/);
+    expect(screen.getByTestId("server-version-actual").textContent).toBe("2.4");
   });
 
   it("explains a 404 answer rather than printing 'unknown' as a number", async () => {
-    versionRouteAnswers({ status: "mismatch", serverVersion: "unknown", expected: "2.2", checkedAt: null, couldNotCheck: false, missingBaseUrl: false });
+    versionRouteAnswers({ status: "mismatch", serverVersion: "unknown", expected: "2.3", checkedAt: null, couldNotCheck: false, missingBaseUrl: false });
     render(<AlpineServerSetup initialState={initial()} />);
     const message = await screen.findByTestId("server-version-mismatch");
     expect(message.textContent).toMatch(/does not report a version/);
   });
 
   it("shows 0 and no message while no API key is stored", async () => {
-    versionRouteAnswers({ status: "no-key", serverVersion: "0", expected: "2.2", checkedAt: null, couldNotCheck: false, missingBaseUrl: false });
+    versionRouteAnswers({ status: "no-key", serverVersion: "0", expected: "2.3", checkedAt: null, couldNotCheck: false, missingBaseUrl: false });
     render(<AlpineServerSetup initialState={initial({ apiKeySet: false, apiKeyUpdatedAt: null })} />);
 
     expect(screen.getByTestId("server-version-actual").textContent).toBe("0");
@@ -102,12 +102,12 @@ describe("AlpineServerSetup version display (#49)", () => {
   });
 
   it("says could-not-check with the last known answer, and does NOT call it a mismatch", async () => {
-    versionRouteAnswers({ status: "match", serverVersion: "2.2", expected: "2.2", checkedAt: "2026-06-30T03:00:00.000Z", couldNotCheck: true, missingBaseUrl: false });
-    render(<AlpineServerSetup initialState={initial({ serverVersion: "2.2", serverVersionCheckedAt: "2026-06-30T03:00:00.000Z" })} />);
+    versionRouteAnswers({ status: "match", serverVersion: "2.3", expected: "2.3", checkedAt: "2026-06-30T03:00:00.000Z", couldNotCheck: true, missingBaseUrl: false });
+    render(<AlpineServerSetup initialState={initial({ serverVersion: "2.3", serverVersionCheckedAt: "2026-06-30T03:00:00.000Z" })} />);
 
     const note = await screen.findByTestId("server-version-unchecked");
     expect(note.textContent).toMatch(/Could not check just now/);
-    expect(note.textContent).toMatch(/last known 2.2/);
+    expect(note.textContent).toMatch(/last known 2.3/);
     expect(screen.queryByTestId("server-version-mismatch")).toBeNull();
   });
 
@@ -120,7 +120,7 @@ describe("AlpineServerSetup version display (#49)", () => {
   });
 
   it("says the server address is missing, not could-not-check, for a key with no address (item 9)", async () => {
-    versionRouteAnswers({ status: "unchecked", serverVersion: "0", expected: "2.2", checkedAt: null, couldNotCheck: false, missingBaseUrl: true });
+    versionRouteAnswers({ status: "unchecked", serverVersion: "0", expected: "2.3", checkedAt: null, couldNotCheck: false, missingBaseUrl: true });
     render(<AlpineServerSetup initialState={initial({ baseUrl: null })} />);
     const note = await screen.findByTestId("server-version-no-address");
     expect(note.textContent).toMatch(/server address is missing/);
@@ -130,43 +130,77 @@ describe("AlpineServerSetup version display (#49)", () => {
   it("refreshes the numbers from a refused Upload and does not say the pause sentence twice (items 6 and 7)", async () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/api/admin/alpine-server/version")) {
-        return { ok: true, status: 200, json: async () => ({ status: "match", serverVersion: "2.2", expected: "2.2", checkedAt: null, couldNotCheck: false, missingBaseUrl: false }) };
+        return { ok: true, status: 200, json: async () => ({ status: "match", serverVersion: "2.3", expected: "2.3", checkedAt: null, couldNotCheck: false, missingBaseUrl: false }) };
       }
       if (String(url).includes("/other-lodges/upload") && init?.method === "POST") {
         return {
           ok: false,
           status: 409,
           json: async () => ({
-            error: "Syncing with the Alpine Central Server is paused: this site is built for server version 2.2 and the server reports 2.3. Nothing is sent or received until the two match.",
+            error: "Syncing with the Alpine Central Server is paused: this site is built for server version 2.3 and the server reports 2.4. Nothing is sent or received until the two match.",
             code: "server-version-mismatch",
-            expected: "2.2",
-            serverVersion: "2.3",
+            expected: "2.3",
+            serverVersion: "2.4",
           }),
         };
       }
       throw new Error(`unexpected fetch ${url}`);
     });
     render(<AlpineServerSetup initialState={initial()} />);
-    await waitFor(() => expect(screen.getByTestId("server-version-actual").textContent).toBe("2.2"));
+    await waitFor(() => expect(screen.getByTestId("server-version-actual").textContent).toBe("2.3"));
 
     fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
 
     await screen.findByTestId("server-version-mismatch");
-    expect(screen.getByTestId("server-version-actual").textContent).toBe("2.3");
+    expect(screen.getByTestId("server-version-actual").textContent).toBe("2.4");
     // No second version call: the 409 carried the numbers.
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/version"))).toHaveLength(1);
     // The pause sentence appears ONCE, in the status block; the message points at it.
-    expect(screen.getAllByText(/built for server version 2.2 and the server reports 2.3/)).toHaveLength(1);
+    expect(screen.getAllByText(/built for server version 2.3 and the server reports 2.4/)).toHaveLength(1);
     expect(screen.getByText(/Upload paused: the server is on a different software version/)).toBeTruthy();
   });
 
   it("keeps the stored answer when the route itself cannot be reached", async () => {
     fetchMock.mockRejectedValue(new Error("offline"));
-    render(<AlpineServerSetup initialState={initial({ serverVersion: "2.3", serverVersionCheckedAt: "2026-06-30T03:00:00.000Z" })} />);
+    render(<AlpineServerSetup initialState={initial({ serverVersion: "2.4", serverVersionCheckedAt: "2026-06-30T03:00:00.000Z" })} />);
 
     await screen.findByTestId("server-version-unchecked");
     // The stored mismatch is still a mismatch: a failed CHECK is not a match.
-    expect(screen.getByTestId("server-version-actual").textContent).toBe("2.3");
+    expect(screen.getByTestId("server-version-actual").textContent).toBe("2.4");
     expect(screen.getByTestId("server-version-mismatch")).toBeTruthy();
+  });
+});
+
+describe("AlpineServerSetup Download summary (#64)", () => {
+  function downloadAnswers(body: unknown) {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/admin/alpine-server/version")) {
+        return { ok: true, status: 200, json: async () => ({ status: "match", serverVersion: "2.3", expected: "2.3", checkedAt: null, couldNotCheck: false, missingBaseUrl: false }) };
+      }
+      if (String(url).includes("/other-lodges/download") && init?.method === "POST") {
+        return { ok: true, status: 200, json: async () => body };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  it("counts renames and names a lodge that could not take its new name", async () => {
+    downloadAnswers({ fetched: 3, created: 0, updated: 2, unchanged: 1, renamed: 1, nameConflicts: ["Iwikau Lodge"] });
+    render(<AlpineServerSetup initialState={initial()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
+
+    expect(
+      await screen.findByText(
+        "Downloaded 3 entries: 0 added, 2 updated (1 renamed), 1 unchanged. Could not take the central server's new name, which another lodge here already has: Iwikau Lodge.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("reads as before when nothing was renamed", async () => {
+    downloadAnswers({ fetched: 1, created: 1, updated: 0, unchanged: 0, renamed: 0, nameConflicts: [] });
+    render(<AlpineServerSetup initialState={initial()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
+
+    expect(await screen.findByText("Downloaded 1 entries: 1 added, 0 updated, 0 unchanged.")).toBeTruthy();
   });
 });

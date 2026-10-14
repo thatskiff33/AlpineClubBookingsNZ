@@ -22,6 +22,7 @@ import {
   readOwnedCentralLodges,
   recordOtherLodgesDownload,
   recordServerVersionCheck,
+  renameOwnedOtherLodgeName,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
 
@@ -306,5 +307,37 @@ describe("the owned lodge list (#52)", () => {
     expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
     expect(args.update).not.toHaveProperty("otherLodgesOwnedNamesAt");
     expect(args.create).not.toHaveProperty("otherLodgesOwnedNames");
+  });
+});
+
+describe("renameOwnedOtherLodgeName (#64)", () => {
+  function tx(stored: unknown) {
+    const update = vi.fn().mockResolvedValue({});
+    const db = {
+      serverNzSettings: {
+        findUnique: vi.fn().mockResolvedValue({ otherLodgesOwnedNames: stored }),
+        update,
+      },
+    };
+    return { db: db as never, update };
+  }
+
+  it("moves the renamed lodge's name in the stored owned list, through the caller's client", async () => {
+    const { db, update } = tx(["Tararua Lodge", "Annex"]);
+    await renameOwnedOtherLodgeName(db, "Tararua Lodge", "Tararua Alpine Lodge");
+    expect(update).toHaveBeenCalledWith({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      data: { otherLodgesOwnedNames: ["Tararua Alpine Lodge", "Annex"] },
+    });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["never told", null],
+    ["unreadable", "not a list"],
+  ])("leaves a list that is %s alone", async (_label, stored) => {
+    const { db, update } = tx(stored);
+    await renameOwnedOtherLodgeName(db, "A", "B");
+    expect(update).not.toHaveBeenCalled();
   });
 });

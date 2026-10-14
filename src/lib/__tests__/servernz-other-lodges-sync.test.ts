@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
+const mockFindFirst = vi.fn();
 const mockUpsert = vi.fn();
 const mockUpdateMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
@@ -16,6 +18,7 @@ vi.mock("@/lib/prisma", () => {
     otherLodge: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
+      findFirst: (...args: unknown[]) => mockFindFirst(...args),
       upsert: (...args: unknown[]) => mockUpsert(...args),
       updateMany: (...args: unknown[]) => mockUpdateMany(...args),
     },
@@ -177,6 +180,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
   mockUpsert.mockResolvedValue({ id: "ol_new" });
+  // No row is keyed and the registry is empty: an ordinary incremental pull.
+  mockFindFirst.mockResolvedValue(null);
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
   mockAmenityUpsert.mockResolvedValue({});
@@ -250,6 +255,8 @@ describe("downloadOtherClubsFromServer", () => {
       updated: 0,
       unchanged: 0,
       keptLocal: 0,
+      renamed: 0,
+      nameConflicts: [],
       dropped: 0,
     });
   });
@@ -1353,5 +1360,267 @@ describe("own lodges only: the review fixes (#52)", () => {
 
     expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/failed its bounds/i));
     expect(mockRecordDownload).toHaveBeenCalledWith("c-608", undefined, undefined);
+  });
+});
+
+// ── Central id (#64) ───────────────────────────────────────────────────────
+
+describe("download keyed by the central server's lodge id (#64)", () => {
+  type Row = Omit<ReturnType<typeof localCopyOf>, "bookingOfficerPhone"> & {
+    bookingOfficerPhone: string | null;
+    name: string;
+    centralId: string | null;
+  };
+
+  /**
+   * A tiny registry the merge reads and writes through the mocks, so renames,
+   * chains and collisions behave as the unique indexes make them behave.
+   */
+  function registry(initial: Row[]) {
+    const rows = initial.map((r) => ({ ...r }));
+    const unique = () =>
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+      });
+    mockFindUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => {
+      const found = rows.find((r) =>
+        where.centralId !== undefined ? r.centralId === where.centralId : r.name === where.name,
+      );
+      return found ? { ...found } : null;
+    });
+    mockUpdateMany.mockImplementation(
+      async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const target = rows.find(
+          (r) =>
+            r.id === where.id &&
+            (where.updatedAt === undefined ||
+              r.updatedAt.getTime() === (where.updatedAt as Date).getTime()) &&
+            (where.centralId === undefined || r.centralId === where.centralId),
+        );
+        if (!target) return { count: 0 };
+        if (typeof data.name === "string" && rows.some((r) => r !== target && r.name === data.name)) {
+          throw unique();
+        }
+        Object.assign(target, data);
+        return { count: 1 };
+      },
+    );
+    mockFindMany.mockImplementation(async ({ where }: { where?: { centralId?: { in: string[] } } }) =>
+      rows.filter((r) => r.centralId !== null && (where?.centralId?.in ?? []).includes(r.centralId)),
+    );
+    return rows;
+  }
+
+  const row = (id: string, name: string, centralId: string | null): Row => ({
+    ...localCopyOf(id, "2026-08-01T00:00:00.000Z"),
+    name,
+    centralId,
+  });
+
+  function pull(lodges: unknown[], over: Record<string, unknown> = {}) {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges,
+      count: lodges.length,
+      cursor: "c-640",
+      dropped: 0,
+      ownLodgeNames: ["Our Lodge"],
+      ownLodges: [{ id: "c-ours", name: "Our Lodge" }],
+      ...over,
+    });
+  }
+
+  it("renames another club's lodge IN PLACE when the server renamed it, keeping the row", async () => {
+    const rows = registry([row("ol_1", "Old Name", "c-1")]);
+    pull([remoteLodge("New Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "ol_1", name: "New Name", centralId: "c-1" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 1, renamed: 1, created: 0, nameConflicts: [] });
+  });
+
+  it("never renames THIS club's own lodge from a download", async () => {
+    const rows = registry([row("ol_9", "Our New Name", "c-ours")]);
+    pull([remoteLodge("Our Lodge", { id: "c-ours", bedCapacity: 30 })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ name: "Our New Name", bedCapacity: 30 });
+  });
+
+  it("stores the owned list under this site's names, mapped by id after the merge", async () => {
+    registry([row("ol_9", "Our New Name", "c-ours")]);
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith(
+      "c-640",
+      ["Our New Name"],
+      [{ id: "c-ours", name: "Our Lodge" }],
+    );
+  });
+
+  it("keys a row matched by name once (the backfill), without moving its updatedAt", async () => {
+    // Another club's lodge, so its phone is never stored: none here either.
+    const rows = registry([{ ...row("ol_1", "Aorangi Ski Club", null), bookingOfficerPhone: null }]);
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0].centralId).toBe("c-1");
+    expect(rows[0].updatedAt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+    // Identical data otherwise: keyed, and still counted unchanged.
+    expect(result).toMatchObject({ unchanged: 1, updated: 0 });
+  });
+
+  it("keys our own row even when a newer local edit keeps its data", async () => {
+    const rows = registry([
+      {
+        ...row("ol_9", "Our Lodge", null),
+        updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+        bedCapacity: 2,
+      },
+    ]);
+    pull([remoteLodge("Our Lodge", { id: "c-ours" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ centralId: "c-ours", bedCapacity: 2 });
+    expect(result.keptLocal).toBe(1);
+  });
+
+  it("settles a chain of renames in one pull (A becomes B while B becomes C)", async () => {
+    const rows = registry([row("ol_a", "Alpha", "c-a"), row("ol_b", "Beta", "c-b")]);
+    pull([remoteLodge("Beta", { id: "c-a" }), remoteLodge("Gamma", { id: "c-b" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows.map((r) => [r.id, r.name])).toEqual([
+      ["ol_a", "Beta"],
+      ["ol_b", "Gamma"],
+    ]);
+    expect(result).toMatchObject({ renamed: 2, nameConflicts: [] });
+  });
+
+  it("applies everything but the name when the new name is still held, and reports it", async () => {
+    // A stale local row (no central id) still holds the name.
+    const rows = registry([row("ol_1", "Old Name", "c-1"), row("ol_x", "New Name", null)]);
+    pull([remoteLodge("New Name", { id: "c-1", bedCapacity: 40 })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ name: "Old Name", bedCapacity: 40 });
+    expect(result).toMatchObject({ updated: 1, renamed: 0, nameConflicts: ["New Name"] });
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      { lodges: ["New Name"] },
+      expect.stringMatching(/could not take their new name/i),
+    );
+  });
+
+  it("does not weld a NEW lodge onto a row another central lodge holds by name", async () => {
+    const rows = registry([row("ol_1", "Shared Name", "c-1")]);
+    pull([remoteLodge("Shared Name", { id: "c-2" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(rows).toEqual([expect.objectContaining({ id: "ol_1", centralId: "c-1" })]);
+    expect(result).toMatchObject({ created: 0, updated: 0, nameConflicts: ["Shared Name"] });
+  });
+
+  it("reports a rename that loses a race for the name (P2002) instead of failing the pull", async () => {
+    const rows = registry([row("ol_1", "Old Name", "c-1")]);
+    const realUpdate = mockUpdateMany.getMockImplementation()!;
+    mockUpdateMany.mockImplementation(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const name = args.data.name;
+      if (typeof name === "string" && !rows.some((r) => r.name === name)) {
+        rows.push(row("ol_late", name, null)); // another writer got there first
+      }
+      return realUpdate(args);
+    });
+    pull([remoteLodge("New Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(result.nameConflicts).toEqual(["New Name"]);
+    expect(mockRecordDownload).toHaveBeenCalled();
+  });
+
+  it("creates a new lodge WITH its central id", async () => {
+    registry([]);
+    pull([remoteLodge("Brand New Lodge", { id: "c-new" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ name: "Brand New Lodge", centralId: "c-new" }),
+      }),
+    );
+  });
+
+  it.each([
+    ["no id", {}],
+    ["an empty id", { id: "" }],
+    ["a padded id", { id: " c-1 " }],
+  ])("matches a lodge with %s by name, as before #64", async (_l, over) => {
+    const rows = registry([row("ol_1", "Aorangi Ski Club", null)]);
+    pull([remoteLodge("Aorangi Ski Club", { ...over, bedCapacity: 50 })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ centralId: null, bedCapacity: 50 });
+    expect(mockFindUnique.mock.calls.every(([a]) => a.where.centralId === undefined)).toBe(true);
+  });
+
+  it("asks for the WHOLE registry while no row is keyed yet", async () => {
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: "2026-08-14T00:00:00.000Z" });
+    mockFindFirst.mockImplementation(async ({ where }: { where?: unknown }) =>
+      where ? null : { id: "ol_1" },
+    );
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
+  });
+
+  it("pulls incrementally once any row is keyed", async () => {
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: "c-opaque" });
+    mockFindFirst.mockResolvedValue({ id: "ol_1" });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("c-opaque");
+  });
+});
+
+describe("upload carries the central id (#64, API 2.3)", () => {
+  it("sends `id` for a keyed row and leaves it out for an unkeyed one", async () => {
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"), name: "Keyed", centralId: "c-1" },
+      { ...localCopyOf("ol_2", "2026-08-01T00:00:00.000Z"), name: "Unkeyed", centralId: null },
+    ]);
+    mockUploadOtherLodges.mockResolvedValue({
+      created: 0,
+      updated: 2,
+      unchanged: 0,
+      skipped: 0,
+      results: [],
+    });
+
+    await uploadOtherClubsToServer();
+
+    const [[items]] = mockUploadOtherLodges.mock.calls;
+    expect(items[0]).toMatchObject({ id: "c-1", name: "Keyed" });
+    expect(items[1]).not.toHaveProperty("id");
+    expect(mockFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ centralId: true }) }),
+    );
   });
 });

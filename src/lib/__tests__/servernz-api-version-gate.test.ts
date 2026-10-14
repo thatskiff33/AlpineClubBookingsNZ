@@ -99,7 +99,7 @@ const SERVER_BOUND: Array<[string, () => Promise<unknown>]> = [
 
 describe("the gate refuses every server-bound call on a stored mismatch", () => {
   it.each(SERVER_BOUND)("%s throws ServerNzVersionMismatchError and sends NOTHING", async (_name, call) => {
-    settings("2.3");
+    settings("2.4");
     await expect(call()).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -121,8 +121,8 @@ describe("the gate refuses every server-bound call on a stored mismatch", () => 
     expect(error.message).toContain("1.10");
   });
 
-  it("refuses a stored 1.10 against this 2.2 site through the real comparison, not a string or float read", async () => {
-    // Float-equal to 1.1 and string-unequal to 2.2 either way; what this pins
+  it("refuses a stored 1.10 against this 2.3 site through the real comparison, not a string or float read", async () => {
+    // Float-equal to 1.1 and string-unequal to 2.3 either way; what this pins
     // is that the GATE goes through compareServerVersions (the version module's
     // own suite pins the 1.10-vs-1.1 case) and reports the stored spelling.
     settings("1.10");
@@ -135,10 +135,10 @@ describe("the gate refuses every server-bound call on a stored mismatch", () => 
 
 describe("the one opt-out is the version call", () => {
   it("fetchServerVersion goes through under a stored mismatch, with this site's version in the header", async () => {
-    settings("2.3");
-    fetchMock.mockResolvedValue(respond(200, { version: "2.3", match: false }));
+    settings("2.4");
+    fetchMock.mockResolvedValue(respond(200, { version: "2.4", match: false }));
 
-    await expect(fetchServerVersion()).resolves.toBe("2.3");
+    await expect(fetchServerVersion()).resolves.toBe("2.4");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -165,16 +165,16 @@ describe("the server's own 409 refusal (review item 1)", () => {
   const MISMATCH_409 = {
     error: "This server is on a different API version, so nothing is transferred until your site is upgraded.",
     code: "API_VERSION_MISMATCH",
-    serverVersion: "2.3",
-    clientVersion: "2.2",
+    serverVersion: "2.4",
+    clientVersion: "2.3",
   };
 
   it.each(SERVER_BOUND)("%s turns a 409 API_VERSION_MISMATCH into the version error and records the server's number", async (_name, call) => {
     fetchMock.mockResolvedValue(respond(409, MISMATCH_409));
     const error = await call().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
-    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.3");
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith("2.3");
+    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.4");
+    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith("2.4");
   });
 
   it("leaves a plain 409 (no code) as the ServerNzApiError it always was, recording nothing", async () => {
@@ -188,7 +188,7 @@ describe("the server's own 409 refusal (review item 1)", () => {
   it("is decided by the CODE, not by a serverVersion field happening to be present", async () => {
     // A 409 for some other reason that also names a version (a future server
     // echoing versions on every refusal) must not be read as the pause.
-    fetchMock.mockResolvedValue(respond(409, { error: "Conflict", code: "SOME_OTHER_CONFLICT", serverVersion: "2.3" }));
+    fetchMock.mockResolvedValue(respond(409, { error: "Conflict", code: "SOME_OTHER_CONFLICT", serverVersion: "2.4" }));
     const error = await uploadOtherLodges([]).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzApiError);
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
@@ -203,7 +203,7 @@ describe("the server's own 409 refusal (review item 1)", () => {
   });
 
   it("stores a malformed serverVersion as the unknown marker, still a pause (item 3)", async () => {
-    fetchMock.mockResolvedValue(respond(409, { ...MISMATCH_409, serverVersion: "2.2.1" }));
+    fetchMock.mockResolvedValue(respond(409, { ...MISMATCH_409, serverVersion: "2.3.1" }));
     const error = await withdrawClubPost("srv-1").catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
     expect((error as ServerNzVersionMismatchError).serverVersion).toBe(SERVER_VERSION_UNKNOWN);
@@ -235,7 +235,7 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
   });
 
   it("throws when a RECEIVED answer cannot be recorded, never reading it as could-not-check (item 2)", async () => {
-    fetchMock.mockResolvedValue(respond(200, { version: "2.3", match: false }));
+    fetchMock.mockResolvedValue(respond(200, { version: "2.4", match: false }));
     mocks.recordServerVersionCheck.mockRejectedValue(new Error("database unavailable"));
     await expect(refreshStoredServerVersion()).rejects.toThrow(/database unavailable/);
     expect(mocks.logger.warn).not.toHaveBeenCalled();
@@ -251,7 +251,7 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
     mocks.getOperationalServerNzApiKey
       .mockResolvedValueOnce("acs_key")
       .mockResolvedValueOnce(undefined); // key removed meanwhile
-    fetchMock.mockResolvedValue(respond(200, { version: "2.3", match: false }));
+    fetchMock.mockResolvedValue(respond(200, { version: "2.4", match: false }));
     await expect(refreshStoredServerVersion()).resolves.toBeNull();
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
   });
@@ -264,10 +264,10 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
   });
 
   it("logs only the two numbers on a mismatch (INV-INT-005)", async () => {
-    fetchMock.mockResolvedValue(respond(200, { version: "2.3", match: false }));
+    fetchMock.mockResolvedValue(respond(200, { version: "2.4", match: false }));
     await refreshStoredServerVersion();
     const [fields] = mocks.logger.info.mock.calls[0];
-    expect(fields).toEqual({ expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: "2.3" });
+    expect(fields).toEqual({ expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: "2.4" });
   });
 });
 

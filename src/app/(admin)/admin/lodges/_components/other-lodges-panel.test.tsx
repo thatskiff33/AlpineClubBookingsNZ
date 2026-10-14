@@ -95,6 +95,7 @@ function lodge(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     owned: true,
+    renamable: false,
     ...over,
   };
 }
@@ -108,6 +109,7 @@ function theirs(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
     bookingOfficerName: "Sam Officer",
     bookingOfficerEmail: "bookings@ruapehu.test",
     owned: false,
+    renamable: false,
     ...over,
   });
   void _dropped;
@@ -192,7 +194,7 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(2);
   });
 
-  it("opens the popup for the owned lodge with its name READ-ONLY", async () => {
+  it("opens the popup for the owned lodge with its name READ-ONLY until it is keyed (#64)", async () => {
     stubFetch(oneOwned());
     await renderPanel();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -203,10 +205,10 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     expect(within(dialog).getByText("Edit my Lodge")).toBeTruthy();
     const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
     expect(name.value).toBe("Tararua Lodge");
-    // The central server matches lodges by name; a rename here would create a
-    // second lodge there. The route refuses it too — this is the UI half.
+    // Not keyed by the central server yet: a new name would reach it as a
+    // second lodge. The route refuses it too — this is the UI half.
     expect(name.readOnly).toBe(true);
-    expect(within(dialog).getByText(/cannot be changed here/i)).toBeTruthy();
+    expect(within(dialog).getByText(/can be renamed once it has been downloaded/i)).toBeTruthy();
     // The rest of the form is still editable, including the phone.
     expect((within(dialog).getByLabelText("Booking officer's phone") as HTMLInputElement).readOnly).toBe(false);
     expect((within(dialog).getByLabelText("Booking officer's phone") as HTMLInputElement).value).toBe("021 555 0000");
@@ -773,5 +775,65 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
 
     expect(screen.getByText("Final")).toBeTruthy();
     expect(screen.queryByText("Otaki Forks")).toBeNull();
+  });
+});
+
+describe("Other lodges: renaming our own lodge and lodges the server no longer has (#64)", () => {
+  it("lets a keyed owned lodge be renamed, and sends the new name", async () => {
+    stubFetch(
+      { ...oneOwned(), otherLodges: [lodge({ renamable: true }), theirs()] },
+      () => ({ ok: true, status: 200, json: async () => ({}) }),
+    );
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
+    expect(name.readOnly).toBe(false);
+    expect(within(dialog).getByText(/reaches every other club on their next download/i)).toBeTruthy();
+
+    fireEvent.change(name, { target: { value: "Tararua Alpine Lodge" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body).name).toBe("Tararua Alpine Lodge");
+  });
+
+  it("refuses an empty name inline, sending nothing", async () => {
+    stubFetch({ ...oneOwned(), otherLodges: [lodge({ renamable: true }), theirs()] });
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "   " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    expect(await within(dialog).findByText("The lodge needs a name.")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("marks a lodge the central server no longer has, with what still cites it", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [
+        lodge(),
+        theirs({ notOnCentralServer: { bookings: 1, bookingRequests: 3 } }),
+      ],
+    });
+    await renderPanel();
+    const row = screen.getByText("Ruapehu Hut").closest("tr") as HTMLElement;
+    expect(within(row).getByText(/not on the alpine central server/i).textContent).toMatch(
+      /referred to by 1 booking and 3 booking requests/i,
+    );
+    const ours = screen.getByText("Tararua Lodge").closest("tr") as HTMLElement;
+    expect(within(ours).queryByText(/not on the alpine central server/i)).toBeNull();
+  });
+
+  it("says when nothing refers to a lodge the central server no longer has", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })],
+    });
+    await renderPanel();
+    expect(screen.getByText(/nothing here refers to it/i)).toBeTruthy();
   });
 });

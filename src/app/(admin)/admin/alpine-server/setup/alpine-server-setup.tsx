@@ -76,6 +76,26 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
   return stored ?? "not checked yet";
 }
 
+/**
+ * The Download result in one line. Renames (#64) are counted, and a lodge
+ * renamed on the central server whose new name another local lodge holds is
+ * named, because it keeps its old name here until that is resolved.
+ */
+function downloadSummaryText(data: {
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged?: number;
+  renamed?: number;
+  nameConflicts?: string[];
+}): string {
+  const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
+  const conflicts = data.nameConflicts?.length
+    ? ` Could not take the central server's new name, which another lodge here already has: ${data.nameConflicts.join(", ")}.`
+    : "";
+  return `Downloaded ${data.fetched} entries: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflicts}`;
+}
+
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
   const clubTime = useClubTime();
   // Two different permissions, and the page says which is which rather than
@@ -258,7 +278,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         setLastDownload(new Date().toISOString());
         setMessage({
           kind: "ok",
-          text: `Downloaded ${data.fetched} entries: ${data.created} added, ${data.updated} updated, ${data.unchanged ?? 0} unchanged.`,
+          text: downloadSummaryText(data),
         });
       }
     } catch (e) {

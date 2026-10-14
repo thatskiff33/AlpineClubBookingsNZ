@@ -6,6 +6,7 @@ import {
   type OwnedCentralLodge,
   type OwnedOtherLodgeNames,
 } from "@/lib/other-lodges";
+import { renameInOwnedNames } from "@/lib/other-lodge-central-id";
 import { prisma } from "@/lib/prisma";
 import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
 
@@ -116,6 +117,25 @@ export async function loadOwnedOtherLodgeNames(
     select: { otherLodgesOwnedNames: true },
   });
   return readOwnedOtherLodgeNames(row?.otherLodgesOwnedNames);
+}
+
+/**
+ * This site renamed one of its own lodges (#64): the stored owned list follows
+ * the new name, inside the caller's transaction, so the lodge stays editable and
+ * keeps uploading. A list that is unknown or unreadable is left alone (there is
+ * then nothing this site owns to rename).
+ */
+export async function renameOwnedOtherLodgeName(
+  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
+  from: string,
+  to: string,
+): Promise<void> {
+  const owned = await loadOwnedOtherLodgeNames(db);
+  if (owned.names === null) return;
+  await db.serverNzSettings.update({
+    where: { id: SERVERNZ_SETTINGS_ID },
+    data: { otherLodgesOwnedNames: renameInOwnedNames(owned.names, from, to) },
+  });
 }
 
 /**

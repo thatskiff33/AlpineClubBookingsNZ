@@ -121,8 +121,11 @@ same **lodge edit** permission as the properties above.
    given your site more than one lodge, each of those rows has its own button,
    named **Edit ‹lodge name›**). Click it. The form opens in a **popup over
    the page**, so the list stays where it is.
-2. The **Name** is shown but cannot be changed: the central server matches
-   lodges by name, so a new name would create a second lodge there. Fill in or
+2. The **Name** can be changed once your lodge has been downloaded from the
+   central server at least once (before that it is shown read-only, because a
+   new name would reach the server as a second lodge). A new name is uploaded
+   with the lodge's permanent central id, so the server renames its lodge, and
+   every other club's site renames its copy on its next download. Fill in or
    change the **Location**, the **booking officer's** name, email and phone,
    the **Non-member booking page URL**, the **Bed capacity**, **Double beds**,
    **Single beds** and **Minutes' walk to the lodge**, whether guests sleep in
@@ -196,7 +199,7 @@ answer; the panel is read-only again until the next download.
 
 | Field | What it controls | Default | Notes / constraints |
 | --- | --- | --- | --- |
-| Name | The lodge's display name | — | Set on the central server; shown read-only, because the server matches lodges by name |
+| Name | The lodge's display name | — | Your own lodge's name can be changed once the lodge has been downloaded from the central server; it then renames the lodge there and at every other club |
 | Location | Where the other lodge is | — | Optional; up to 300 characters |
 | Booking officer's name | Contact person at the other lodge | — | Optional; up to 200 characters |
 | Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |

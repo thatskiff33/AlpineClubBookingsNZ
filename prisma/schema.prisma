@@ -5253,6 +5253,12 @@ model Lodge {
 model OtherLodge {
   id                  String   @id @default(cuid())
   name                String   @unique
+  // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
+  // download merges by, so a lodge renamed there is renamed here in place, and
+  // the id an owned lodge is uploaded under (server API 2.3). Null until a
+  // download has matched the row by name once; a row still null after a whole
+  // registry download is one the central server no longer has.
+  centralId           String?  @unique @db.VarChar(64)
   location            String?  @db.VarChar(300)
   bookingOfficerName  String?  @db.VarChar(200)
   bookingOfficerEmail String?  @db.VarChar(320)
