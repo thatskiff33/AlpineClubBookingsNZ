@@ -803,6 +803,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
     // name-detail writer, classified the same way for the same reason; minus
     // the two other-lodges writers #52 removed with their handlers; plus #62's
+    // Central lodge link writer, classified the same way; plus #58's Other
+    // lodges removal, beside the registry's update.
     // Central lodge link writer, classified the same way.
     // name-detail writer, classified the same way for the same reason, plus
     // #3819's school hut-leader kinds writer, likewise; minus the two
@@ -1006,6 +1008,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ]);
     // Eight files from #2765's fifteen sites, plus #2749's other-lodges item
     // route file (its list route lost its only writer in #52), plus #2942's
+    // roster-settings route file, plus #62's central-lodge route file and #58's
+    // other-lodges remove route file.
     // roster-settings route file, plus #62's central-lodge route file.
     // roster-settings route file, plus #3819's school hut-leaders route file.
     expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
@@ -1431,6 +1435,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // handlers; the unpinned population does not move. RE-MEASURED.
     // 126 -> 127 pinned (#62): the Central lodge link writer joins the
     // lodge-gated keep; the unpinned population does not move. RE-MEASURED.
+    // 127 -> 128 pinned (#58): the Other lodges removal joins the keep; the
+    // unpinned population does not move. RE-MEASURED.
     // handlers; the unpinned population does not move. 371 -> 372 unpinned
     // (#3750): the executed change-request approval, unpinned `booking`.
     // RE-MEASURED with `pnpm run audit:census`.

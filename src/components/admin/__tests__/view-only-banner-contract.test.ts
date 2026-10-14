@@ -364,6 +364,9 @@ const FIGURES = {
    * 370 -> 372 (#62): the Central lodge card's Edit and Save, both
    * `describeReason={false}` under the card's own section banner. MEASURED by
    * re-running this census.
+   *
+   * 372 -> 373 (#58): the Other lodges panel's Remove, render-site vouched by
+   * the Lodges page like the panel's Edit my Lodge. MEASURED by re-running.
    * 370 -> 371 (#3750): the change-request card's Confirm overbooking and
    * apply, shown when an executed finished-stay approval needs the officer to
    * confirm an over-capacity past night. MEASURED.
@@ -447,6 +450,7 @@ const FIGURES = {
    * 322 -> 323 (#4162): "Record the answer", under the voided bank refund notes panel's banner.
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
+  // 317 -> 318 (#58): the Other lodges panel's Remove, a vouched opt-out.
   optOuts: 323,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
@@ -558,7 +562,10 @@ const FIGURES = {
    *
    * 36 -> 34 (#52): the Other lodges panel's Add/Edit/Delete go and Edit my
    * Lodge arrives, all render-site vouched by the Lodges page; 31 -> 29 there.
+   *
+   * 34 -> 35 (#58): the panel's Remove, render-site vouched; 29 -> 30 there.
    */
+  /** …of the vouched: proved at a parent's own JSX render site (#2168). */
   vouchedOptOuts: 36,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
   renderSiteVouchedOptOuts: 31,

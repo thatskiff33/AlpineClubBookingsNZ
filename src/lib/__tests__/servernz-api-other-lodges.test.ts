@@ -548,3 +548,52 @@ describe("pullOtherLodges — ownLodgeNames (#52)", () => {
     expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
   });
 });
+
+describe("pullOtherLodges — deletedLodges, lodges deleted on the server (#58, API 2.4)", () => {
+  it("carries the deleted lodges' central ids, in the order sent", async () => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      deletedLodges: [
+        { id: "gone_a", deletedAt: "2026-10-01T00:00:00.000Z" },
+        { id: "gone_b", deletedAt: "2026-10-02T00:00:00.000Z" },
+      ],
+    });
+
+    expect((await pullOtherLodges(null)).deletedLodgeIds).toEqual(["gone_a", "gone_b"]);
+  });
+
+  it("leaves deletedLodgeIds `undefined` when an older server does not send the list", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0 });
+
+    expect((await pullOtherLodges(null)).deletedLodgeIds).toBeUndefined();
+  });
+
+  it.each([
+    ["an empty id", { id: "", deletedAt: "2026-10-01T00:00:00.000Z" }],
+    ["a padded id", { id: " gone_a", deletedAt: "2026-10-01T00:00:00.000Z" }],
+    ["an over-long id", { id: "x".repeat(65), deletedAt: "2026-10-01T00:00:00.000Z" }],
+    ["no id", { deletedAt: "2026-10-01T00:00:00.000Z" }],
+  ])("drops one entry with %s and keeps the rest", async (_label, bad) => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      deletedLodges: [bad, { id: "gone_b", deletedAt: "2026-10-02T00:00:00.000Z" }],
+    });
+
+    expect((await pullOtherLodges(null)).deletedLodgeIds).toEqual(["gone_b"]);
+  });
+
+  it("fails the whole pull on an over-long list, so the cursor does not move past deletions it never applied", async () => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      deletedLodges: Array.from({ length: 5001 }, (_, i) => ({ id: `g${i}`, deletedAt: "2026-10-01T00:00:00.000Z" })),
+    });
+
+    await expect(pullOtherLodges(null)).rejects.toThrow();
+  });
+});

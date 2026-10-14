@@ -7,6 +7,7 @@ import {
 import logger from "@/lib/logger";
 import {
   MAX_SERVER_VERSION_CHARS,
+  deletedLodgeSchema,
   distributedLodgeSchema,
   pullEnvelopeSchema,
   pushTargetResultSchema,
@@ -595,6 +596,13 @@ export async function pullOtherLodges(
     else ownLodgesRefused = true;
   }
 
+  // Deletions (#58): each entry on its own, like the rows; one malformed entry
+  // costs that deletion, not the rest.
+  const deletedLodgeIds = envelope.deletedLodges?.flatMap((raw) => {
+    const entry = deletedLodgeSchema.safeParse(raw);
+    return entry.success ? [entry.data.id] : [];
+  });
+
   return {
     lodges,
     cursor: envelope.cursor,
@@ -604,5 +612,6 @@ export async function pullOtherLodges(
     ownLodgeNamesRefused,
     ownLodges,
     ownLodgesRefused,
+    deletedLodgeIds,
   };
 }

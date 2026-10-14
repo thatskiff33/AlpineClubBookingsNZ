@@ -837,3 +837,67 @@ describe("Other lodges: renaming our own lodge and lodges the server no longer h
     expect(screen.getByText(/nothing here refers to it/i)).toBeTruthy();
   });
 });
+
+describe("Other lodges: removing a lodge the central server does not list (#58)", () => {
+  it("offers Remove only on a not-found lodge nothing refers to", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [
+        lodge(),
+        theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } }),
+        theirs({ id: "ol-3", name: "Cited Hut", notOnCentralServer: { bookings: 1, bookingRequests: 0 } }),
+      ],
+    });
+    await renderPanel();
+    expect(screen.getByRole("button", { name: "Remove Ruapehu Hut" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove Cited Hut" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove Tararua Lodge" })).toBeNull();
+  });
+
+  it("asks first, then removes through the route and reloads the list", async () => {
+    stubFetch(
+      { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] },
+      () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    );
+    await renderPanel();
+    const getsBefore = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Ruapehu Hut" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/cannot be undone/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^remove$/i }));
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+      expect(posts.map(([url]) => url)).toEqual(["/api/admin/other-lodges/ol-2/remove"]);
+    });
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore),
+    );
+  });
+
+  it("sends nothing when the administrator cancels", async () => {
+    stubFetch({ ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] });
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Ruapehu Hut" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("shows the route's refusal", async () => {
+    stubFetch(
+      { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] },
+      () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: "This lodge cannot be removed: bookings or booking requests still refer to it." }),
+      }),
+    );
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Ruapehu Hut" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /^remove$/i }));
+    expect(await screen.findByText(/still refer to it/i)).toBeTruthy();
+  });
+});

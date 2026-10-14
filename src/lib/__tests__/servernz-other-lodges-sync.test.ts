@@ -9,6 +9,7 @@ const mockExecuteRaw = vi.fn();
 const mockSettingsRow = vi.fn();
 const mockUpsert = vi.fn();
 const mockUpdateMany = vi.fn();
+const mockDeleteMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
 const mockAmenityUpsert = vi.fn();
 
@@ -21,6 +22,7 @@ vi.mock("@/lib/prisma", () => {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       upsert: (...args: unknown[]) => mockUpsert(...args),
       updateMany: (...args: unknown[]) => mockUpdateMany(...args),
+      deleteMany: (...args: unknown[]) => mockDeleteMany(...args),
     },
     amenity: {
       deleteMany: (...args: unknown[]) => mockAmenityDeleteMany(...args),
@@ -297,6 +299,8 @@ describe("downloadOtherClubsFromServer", () => {
       keptLocal: 0,
       renamed: 0,
       nameConflicts: [],
+      removed: 0,
+      keptReferenced: [],
       dropped: 0,
     });
   });
@@ -1416,8 +1420,32 @@ describe("download keyed by the central server's lodge id (#64)", () => {
    * A tiny registry the merge reads and writes through the mocks, so renames,
    * chains and collisions behave as the unique indexes make them behave.
    */
+  /** Bookings and booking requests citing a row, by row id (#58). */
+  const refs = new Map<string, [number, number]>();
   function registry(initial: Row[]) {
+    refs.clear();
     const rows = initial.map((r) => ({ ...r }));
+    mockDeleteMany.mockImplementation(async ({ where }: { where: { id: string; centralId: string } }) => {
+      const at = rows.findIndex((r) => r.id === where.id && r.centralId === where.centralId);
+      if (at < 0) return { count: 0 };
+      const [b, q] = refs.get(where.id) ?? [0, 0];
+      if (b + q > 0) {
+        throw new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
+          code: "P2003",
+          clientVersion: "test",
+        });
+      }
+      rows.splice(at, 1);
+      return { count: 1 };
+    });
+    // The raw "forget this id" of a kept deleted lodge: (strings, rowId, centralId).
+    mockExecuteRaw.mockImplementation(async (strings: TemplateStringsArray | { sql: string }, ...values: unknown[]) => {
+      if ("sql" in strings) return 0; // Prisma.sql (the whole-download forget)
+      const [rowId, centralId] = values as [string, string];
+      const target = rows.find((r) => r.id === rowId && r.centralId === centralId);
+      if (target) target.centralId = null;
+      return target ? 1 : 0;
+    });
     const unique = () =>
       new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
         code: "P2002",
@@ -1427,7 +1455,12 @@ describe("download keyed by the central server's lodge id (#64)", () => {
       const found = rows.find((r) =>
         where.centralId !== undefined ? r.centralId === where.centralId : r.name === where.name,
       );
-      return found ? { ...found } : null;
+      return found
+        ? {
+            ...found,
+            _count: { bookings: refs.get(found.id)?.[0] ?? 0, bookingRequests: refs.get(found.id)?.[1] ?? 0 },
+          }
+        : null;
     });
     mockUpdateMany.mockImplementation(
       async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
@@ -1877,6 +1910,85 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
     expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
+  });
+
+  it("removes a lodge the server deleted when nothing here refers to it (#58)", async () => {
+    const rows = registry([row("ol_1", "Gone Lodge", "c-gone"), row("ol_2", "Kept Lodge", "c-2")]);
+    pull([], { deletedLodgeIds: ["c-gone"] });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows.map((r) => r.id)).toEqual(["ol_2"]);
+    expect(result).toMatchObject({ removed: 1, keptReferenced: [] });
+  });
+
+  it("KEEPS a deleted lodge that bookings or requests cite, forgets its id, and reports it (#58)", async () => {
+    const rows = registry([row("ol_1", "Cited Lodge", "c-gone")]);
+    refs.set("ol_1", [2, 1]);
+    pull([], { deletedLodgeIds: ["c-gone"] });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].centralId).toBeNull();
+    // Counted first: a cited lodge is never even attempted.
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      removed: 0,
+      keptReferenced: [{ lodge: "Cited Lodge", bookings: 2, bookingRequests: 1 }],
+    });
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      { lodges: [{ lodge: "Cited Lodge", bookings: 2, bookingRequests: 1 }] },
+      expect.stringMatching(/kept here/i),
+    );
+  });
+
+  it("keeps a lodge cited between the count and the delete (the foreign key refuses it)", async () => {
+    const rows = registry([row("ol_1", "Raced Lodge", "c-gone")]);
+    const realFind = mockFindUnique.getMockImplementation()!;
+    mockFindUnique.mockImplementation(async (args: { where: Record<string, string> }) => {
+      const found = await realFind(args);
+      refs.set("ol_1", [1, 0]); // a booking cites it right after the count
+      return found ? { ...found, _count: { bookings: 0, bookingRequests: 0 } } : found;
+    });
+    pull([], { deletedLodgeIds: ["c-gone"] });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].centralId).toBeNull();
+    expect(result.keptReferenced).toHaveLength(1);
+  });
+
+  it("does nothing for a deleted lodge this site never had, or already removed", async () => {
+    registry([row("ol_1", "Other Lodge", "c-1")]);
+    pull([], { deletedLodgeIds: ["c-never"] });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ removed: 0, keptReferenced: [] });
+  });
+
+  it("deletes NOTHING when the server sends no deletion list (an older server)", async () => {
+    registry([row("ol_1", "Other Lodge", "c-1")]);
+    pull([], { deletedLodgeIds: undefined });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("applies a deletion AFTER the merge, so a lodge changed and deleted in one pull ends deleted", async () => {
+    const rows = registry([row("ol_1", "Busy Lodge", "c-1")]);
+    pull([remoteLodge("Busy Lodge", { id: "c-1", bedCapacity: 99 })], { deletedLodgeIds: ["c-1"] });
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(0);
+    expect(mockDeleteMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockUpdateMany.mock.invocationCallOrder.at(-1) ?? 0,
+    );
   });
 
   it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {

@@ -811,6 +811,13 @@ administrator linked a local lodge to its lodge on the Alpine Central Server.
 subsystem, so the lodge-gated keep grows from seventeen pinned sites to
 eighteen; the row names two central lodge ids and the administrator, no member.
 
+#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
+`pnpm run audit:census`): `OTHER_LODGE_REMOVED`, the record that an
+administrator removed an Other lodges row the Alpine Central Server does not
+list. `admin` under INV-PRIV-013's rule, beside the registry's update, so the
+lodge-gated keep grows from eighteen pinned sites to nineteen; the row is the
+removed lodge entry, no member.
+
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
 `booking-payment.manual-refund-task.reopen`, the record that an officer put a

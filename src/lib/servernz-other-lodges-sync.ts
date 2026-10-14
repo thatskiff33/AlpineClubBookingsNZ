@@ -19,6 +19,8 @@ import {
 import {
   localNamesByCentralId,
   mergeDistributedLodge,
+  removeDeletedLodge,
+  type KeptDeletedLodge,
   type MergeOutcome,
   type NameConflict,
 } from "@/lib/servernz-other-lodges-merge";
@@ -201,6 +203,13 @@ export interface DownloadSummary {
    * is the server's name.
    */
   nameConflicts: NameConflict[];
+  /** Lodges the server deleted that were removed here (#58). */
+  removed: number;
+  /**
+   * Lodges the server deleted that were KEPT here because bookings or booking
+   * requests still cite them (#58); now marked "Not found" in the panel.
+   */
+  keptReferenced: KeptDeletedLodge[];
   /** Rows the server sent that failed validation and were discarded. */
   dropped: number;
 }
@@ -320,6 +329,24 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     );
   }
 
+  // Lodges the server DELETED (#58, API 2.4), after the merge, so a lodge both
+  // changed and deleted in one pull ends deleted. Removed here unless a booking
+  // or booking request cites it, in which case it is kept and reported. A
+  // server that sends no list deletes nothing.
+  let removed = 0;
+  const keptReferenced: KeptDeletedLodge[] = [];
+  for (const centralId of pull.deletedLodgeIds ?? []) {
+    const outcome = await removeDeletedLodge(centralId);
+    if (outcome.kind === "removed") removed++;
+    else if (outcome.kind === "kept") keptReferenced.push(outcome.kept);
+  }
+  if (keptReferenced.length > 0) {
+    logger.warn(
+      { lodges: keptReferenced },
+      "Lodges deleted on the central server were kept here: bookings or booking requests still refer to them",
+    );
+  }
+
   // The durable watermark is the SERVER's returned cursor, never the overlapped
   // value we requested with: the overlap exists to widen the question, not to
   // move the answer backwards — and `advancedDownloadCursor` is what enforces
@@ -421,6 +448,8 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     keptLocal,
     renamed,
     nameConflicts,
+    removed,
+    keptReferenced,
     dropped: pull.dropped,
   };
 }

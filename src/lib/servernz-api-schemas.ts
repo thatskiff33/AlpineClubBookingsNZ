@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import {
+  centralLodgeIdSchema,
   amenitiesInputSchema,
   otherLodgeCommonDataShape,
   otherLodgeNameSchema,
@@ -142,6 +143,16 @@ export const pullEnvelopeSchema = z.object({
   // The same lodges with their permanent ids (server API 2.2, #62), validated
   // on its own like the names, for the same reason.
   ownLodges: z.unknown().optional(),
+  // Lodges deleted on the server since `since` (API 2.4, #58). Bounded like the
+  // lodges, so an over-long list fails the pull (and the cursor stays) rather
+  // than being cut short; each entry is validated on its own below.
+  deletedLodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL).optional(),
+});
+
+/** One deletion as the server sends it (API 2.4): the lodge's central id. */
+export const deletedLodgeSchema = z.object({
+  id: centralLodgeIdSchema,
+  deletedAt: z.string().max(64),
 });
 
 export interface OtherLodgesPullResult {
@@ -165,6 +176,12 @@ export interface OtherLodgesPullResult {
   ownLodges: OwnedCentralLodge[] | undefined;
   /** True when the server sent `ownLodges` and it failed its bounds. */
   ownLodgesRefused: boolean;
+  /**
+   * The central ids of lodges deleted on the server (#58, API 2.4), or
+   * `undefined` when the server did not send the list (an older release),
+   * which deletes nothing here. An entry that failed its bounds is left out.
+   */
+  deletedLodgeIds: string[] | undefined;
 }
 
 /** The column's VarChar(16): the bound on any version string taken off the wire. */

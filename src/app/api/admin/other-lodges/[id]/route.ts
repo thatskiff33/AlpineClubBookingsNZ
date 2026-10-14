@@ -47,7 +47,9 @@ const patchSchema = z
 
 // The delete handler that lived here was removed by #52 along with create: a
 // site changes only the lodge(s) the central server says it owns, and it never
-// removes an entry from the shared registry. A DELETE now answers 405.
+// removes an entry from the shared registry. A DELETE now answers 405. The one
+// removal left is `./remove` (#58): a row the server does NOT list and nothing
+// here refers to.
 
 export async function PATCH(
   request: Request,

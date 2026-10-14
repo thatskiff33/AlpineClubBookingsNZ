@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, Pencil, Plus, X } from "lucide-react";
+import { Building, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -61,7 +61,8 @@ import {
   type OtherLodgeFormState,
   type OtherLodgeRecord,
 } from "./other-lodge-form";
-import { NotOnCentralServerNote, OtherLodgeNameField } from "./other-lodge-name";
+import { OtherLodgeNameCell, OtherLodgeNameField, isUnreferenced } from "./other-lodge-name";
+import { useRemoveUnlistedLodge } from "./other-lodge-remove";
 import { OtherLodgeRateGrid } from "./other-lodge-rate-grid";
 
 export function OtherLodgesPanel({
@@ -224,6 +225,7 @@ export function OtherLodgesPanel({
     }
   }
 
+  const removal = useRemoveUnlistedLodge({ onRemoved: () => loadLodges(), onError: setError });
   const showForm = editingId !== null;
   const editingLodge = lodges.find((l) => l.id === editingId);
   // The owned rows actually ON SCREEN. A name the server lists that has no
@@ -238,6 +240,7 @@ export function OtherLodgesPanel({
 
   return (
     <div className="space-y-4">
+      {removal.confirmDialog}
       <div>
         <h2 className="text-xl font-semibold">Other lodges</h2>
         <p className="text-sm text-muted-foreground">
@@ -604,17 +607,12 @@ export function OtherLodgesPanel({
                   {lodges.map((lodge) => (
                     <TableRow key={lodge.id}>
                       <TableCell>
-                        <div className="font-medium">{lodge.name}</div>
-                        {lodge.notOnCentralServer ? (
-                          <NotOnCentralServerNote references={lodge.notOnCentralServer} />
-                        ) : null}
-                        {lodge.amenities.length > 0 ? (
-                          <div className="text-xs text-muted-foreground">
-                            {lodge.amenities.length}{" "}
-                            {lodge.amenities.length === 1
-                              ? "amenity"
-                              : "amenities"}
-                          </div>
+                        <OtherLodgeNameCell lodge={lodge} />
+                        {lodge.notOnCentralServer && isUnreferenced(lodge.notOnCentralServer) ? (
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void removal.remove(lodge)} disabled={removal.removingId === lodge.id} aria-label={`Remove ${lodge.name}`}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Remove
+                          </ViewOnlyActionButton>
                         ) : null}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
