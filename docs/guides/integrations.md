@@ -240,8 +240,10 @@ by name, which fills in the ids; after that downloads are incremental again.
   automatically.
 - **A new central server address or API key** makes the next download fetch
   the whole registry again. A lodge whose id that server does not list is
-  matched by name and takes the id it does list; the ids it does list are
-  kept.
+  matched by name and takes the id it does list. An id still not listed after
+  that download is forgotten, so your own lodge is uploaded by name again and
+  another club's is marked **Not found**. A download that was running while
+  the address or key changed records nothing.
 - **Your lodge's name is yours.** If the central server's administrator renames
   your own lodge, this site keeps the name you gave it, and your next upload
   of that lodge sets it back on the server.

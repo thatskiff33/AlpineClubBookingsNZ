@@ -21,6 +21,7 @@ import {
   type MergeOutcome,
   type NameConflict,
 } from "@/lib/servernz-other-lodges-merge";
+import { readServerNzApiKeyStamp } from "@/lib/servernz-config";
 import { ratesToServer } from "@/lib/servernz-rate";
 import {
   advancedDownloadCursor,
@@ -221,6 +222,9 @@ export interface DownloadSummary {
  */
 export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   const settings = await loadServerNzSettings();
+  // The connection this download is for (#64): checked again under the lock
+  // before anything is recorded.
+  const connection = await readServerNzApiKeyStamp();
   // Ask from one overlap BEFORE the stored cursor, where the stored cursor is
   // an instant — see `@/lib/servernz-cursor-overlap` for why the repeat is deliberate,
   // why removing it re-opens a permanent skip, and what an opaque cursor means.
@@ -257,14 +261,16 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   let keptLocal = 0;
   let renamed = 0;
   const nameConflicts: NameConflict[] = [];
-  // Whether every pulled lodge ended keyed: the marker is set only then.
-  let everyLodgeKeyed = pull.dropped === 0;
+  // Whether every local row this download touched ended keyed: the marker is
+  // set only then. A dropped row or a pulled lodge with no usable id could
+  // leave a row the server DOES list unkeyed, and so wrongly marked "not
+  // found". A name conflict does not block it: a renamed row is already keyed,
+  // and a refused new lodge has no local row to mark.
+  let everyLodgeKeyed =
+    pull.dropped === 0 && pull.lodges.every((l) => usableCentralId(l.id) !== null);
   const count = (outcome: Exclude<MergeOutcome, { kind: "deferred" }>) => {
     if (outcome.nameConflict) nameConflicts.push(outcome.nameConflict);
-    if (outcome.kind === "conflict") {
-      everyLodgeKeyed = false;
-      return;
-    }
+    if (outcome.kind === "conflict") return;
     if (outcome.notKeyed) everyLodgeKeyed = false;
     if (outcome.kind === "created") created++;
     else if (outcome.kind === "updated") updated++;
@@ -281,10 +287,13 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // rather than losing it silently.
   // A whole download names every id the server has, which is what lets the
   // merge tell a stale id (another server's, or a deleted lodge's) from a
-  // different lodge holding a name.
-  const knownIds = wholeRegistry
-    ? new Set(pull.lodges.flatMap((l) => usableCentralId(l.id) ?? []))
-    : null;
+  // different lodge holding a name — but only when the pull dropped nothing: a
+  // dropped row's id is the server's yet absent here, and its local row must
+  // not be taken over by another lodge with its old name.
+  const knownIds =
+    wholeRegistry && pull.dropped === 0
+      ? new Set(pull.lodges.flatMap((l) => usableCentralId(l.id) ?? []))
+      : null;
   let pending = pull.lodges;
   for (;;) {
     const next: typeof pull.lodges = [];
@@ -339,10 +348,16 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // and later downloads are incremental again. Otherwise the next download is
   // a whole one again.
   //
-  // Under the lock the server ADDRESS is read again: a download that started
-  // before an administrator pointed this site at a different server (which
-  // forgets the connection's answers, the marker included) records NOTHING, so
-  // it cannot write the old server's cursor, owned list or marker back.
+  // Under the lock the CONNECTION is read again — the server address and the
+  // API key's stamp: a download that started before an administrator pointed
+  // this site at a different server or replaced its key (which forgets the
+  // connection's answers, the marker included) records NOTHING, so it cannot
+  // write the old connection's cursor, owned list or marker back.
+  //
+  // A clean whole download also FORGETS every central id the server no longer
+  // lists (another server's after an address change, or a lodge deleted
+  // there), so such a row uploads by name again and is marked "not found".
+  // Raw, so `updatedAt` stays put: a forgotten id is not an edit.
   const recorded = await prisma.$transaction(async (tx) => {
     await lockServerNzSettings(tx);
     const current = await tx.serverNzSettings.findUnique({
@@ -350,6 +365,12 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       select: { baseUrl: true },
     });
     if ((current?.baseUrl ?? null) !== settings.baseUrl) return false;
+    if ((await readServerNzApiKeyStamp(tx)) !== connection) return false;
+    const keyed = wholeRegistry && everyLodgeKeyed;
+    if (keyed && knownIds !== null) {
+      const listed = [...knownIds];
+      await tx.$executeRaw`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND NOT ("centralId" = ANY(${listed}::text[]))`;
+    }
     const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
     const ownLodgeNames =
       pull.ownLodgeNames === undefined
@@ -366,13 +387,13 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
       ownLodgeNames,
       pull.ownLodges,
-      { keyed: wholeRegistry && everyLodgeKeyed, db: tx },
+      { keyed, db: tx },
     );
     return true;
   });
   if (!recorded) {
     logger.warn(
-      "The Alpine Central Server address changed during an Other lodges download; nothing from it was recorded",
+      "The Alpine Central Server connection (address or API key) changed during an Other lodges download; nothing from it was recorded",
     );
   }
   return {

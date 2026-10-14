@@ -158,15 +158,17 @@ export async function mergeDistributedLodge(
     // 03:00 cron runs) can insert the same name in the gap; the upsert lets the
     // loser fall through to the same update. The amenity replacement rides in
     // the same transaction, keyed on the unique (lodge, name).
+    let keyedAs: string | null = centralId;
     try {
-      await prisma.$transaction(async (tx) => {
+      keyedAs = await prisma.$transaction(async (tx) => {
         const row = await tx.otherLodge.upsert({
           where: { name: lodge.name },
           create: { name: lodge.name, centralId, ...data, ...stamp },
           update: { ...data, ...stamp },
-          select: { id: true },
+          select: { id: true, centralId: true },
         });
         if (amenities) await replaceOtherLodgeAmenities(tx, row.id, amenities);
+        return row.centralId;
       });
     } catch (error) {
       // The id is held by a row a concurrent download just wrote.
@@ -175,7 +177,10 @@ export async function mergeDistributedLodge(
         ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
         : { kind: "deferred" };
     }
-    return { kind: "created" };
+    // The upsert took its update arm (a concurrent writer inserted the name in
+    // the gap): that row is not keyed by this lodge's id. Reported, so the
+    // registry is not marked keyed and the next whole download keys it.
+    return { kind: "created", notKeyed: centralId !== null && keyedAs !== centralId };
   }
 
   const row = existing;

@@ -42,6 +42,11 @@ vi.mock("@/lib/servernz-api", () => ({
   pullOtherLodges: (...args: unknown[]) => mockPullOtherLodges(...args),
 }));
 
+const mockKeyStamp = vi.fn();
+vi.mock("@/lib/servernz-config", () => ({
+  readServerNzApiKeyStamp: (...args: unknown[]) => mockKeyStamp(...args),
+}));
+
 const mockLoggerWarn = vi.fn();
 
 vi.mock("@/lib/logger", () => ({
@@ -199,9 +204,15 @@ function remoteLodge(name: string, over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
-  mockUpsert.mockResolvedValue({ id: "ol_new" });
+  // The create arm: the row comes back keyed by whatever id it was created with.
+  mockUpsert.mockImplementation(async (args: { create: { centralId?: string | null } }) => ({
+    id: "ol_new",
+    centralId: args.create.centralId ?? null,
+  }));
   mockLockSettings.mockResolvedValue(undefined);
   mockSettingsRow.mockResolvedValue({ baseUrl: SETTINGS.baseUrl });
+  mockKeyStamp.mockResolvedValue("2026-10-01T00:00:00.000Z");
+  mockExecuteRaw.mockResolvedValue(0);
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
   mockAmenityUpsert.mockResolvedValue({});
@@ -1738,12 +1749,81 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
   });
 
-  it("does not mark the registry keyed when a lodge could not be keyed or was refused", async () => {
-    // A NEW lodge refused because a listed lodge holds its name stays unkeyed,
-    // so the registry is not marked keyed and the next download is whole again.
+  it("still marks the registry keyed when the only problem is a refused NEW lodge (no local row to mislabel)", async () => {
     registry([row("ol_1", "Shared Name", "c-1")]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
     pull([remoteLodge("Shared Name", { id: "c-2" }), remoteLodge("Shared Name", { id: "c-1" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
+  });
+
+  it("does not mark the registry keyed when a pulled lodge carried no usable id", async () => {
+    registry([row("ol_1", "Aorangi Ski Club", null)]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Aorangi Ski Club", { id: "" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("never treats an id as stale when the whole download DROPPED a row (it may be that row's)", async () => {
+    // ol_X is keyed c-9; c-9's row failed the bounds and was dropped, and a
+    // different lodge c-10 now has its old name. Not welded.
+    const rows = registry([row("ol_X", "Ruapehu Lodge", "c-9")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Ruapehu Lodge", { id: "c-10" })], { dropped: 1 });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0].centralId).toBe("c-9");
+    expect(result.nameConflicts).toEqual([{ lodge: null, wanted: "Ruapehu Lodge" }]);
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+  });
+
+  it("forgets, on a clean whole download, every central id the server no longer lists", async () => {
+    registry([row("ol_1", "Aorangi Ski Club", "c-1")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    const [sql, listed] = mockExecuteRaw.mock.calls[0];
+    expect((sql as string[]).join("?")).toMatch(/UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND NOT \("centralId" = ANY/);
+    expect((sql as string[]).join("?")).not.toMatch(/updatedAt/);
+    expect(listed).toEqual(["c-1"]);
+  });
+
+  it("forgets nothing on an incremental download", async () => {
+    registry([]);
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+  });
+
+  it("records NOTHING when the API key was replaced while the download ran", async () => {
+    registry([]);
+    mockKeyStamp
+      .mockResolvedValueOnce("2026-10-01T00:00:00.000Z")
+      .mockResolvedValueOnce("2026-10-14T09:00:00.000Z");
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection .*changed/i));
+  });
+
+  it("does not count a create that landed on a row inserted in the gap as keyed", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    mockUpsert.mockResolvedValue({ id: "ol_gap", centralId: null });
+    pull([remoteLodge("Brand New Lodge", { id: "c-new" })]);
 
     await downloadOtherClubsFromServer();
 
@@ -1758,7 +1838,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
-    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/address changed/i));
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection .*changed/i));
   });
 
   it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {
