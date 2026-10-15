@@ -101,18 +101,21 @@ export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
 // group. A `Record` over the rate field type, like every label here, so a rate
 // column the grid has no cell for is a compile error.
 export const RATE_SEASONS = ["Winter", "Summer"] as const;
-export const RATE_AGE_GROUPS = ["Under 5", "5–11", "12–17", "18+"] as const;
+// The owner's groups since 16 Oct 2026 (#73). The `5To11` and `12To17` field
+// names predate the change and are kept, so the stored data and the central
+// server's API stay as they were: only the labels moved.
+export const RATE_AGE_GROUPS = ["Under 5", "5–12", "13–17", "18+"] as const;
 export const RATE_FIELDS: Record<
   OtherLodgeRateField,
   { season: (typeof RATE_SEASONS)[number]; ageGroup: (typeof RATE_AGE_GROUPS)[number] }
 > = {
   winterRateUnder5Cents: { season: "Winter", ageGroup: "Under 5" },
-  winterRate5To11Cents: { season: "Winter", ageGroup: "5–11" },
-  winterRate12To17Cents: { season: "Winter", ageGroup: "12–17" },
+  winterRate5To11Cents: { season: "Winter", ageGroup: "5–12" },
+  winterRate12To17Cents: { season: "Winter", ageGroup: "13–17" },
   winterRateAdultCents: { season: "Winter", ageGroup: "18+" },
   summerRateUnder5Cents: { season: "Summer", ageGroup: "Under 5" },
-  summerRate5To11Cents: { season: "Summer", ageGroup: "5–11" },
-  summerRate12To17Cents: { season: "Summer", ageGroup: "12–17" },
+  summerRate5To11Cents: { season: "Summer", ageGroup: "5–12" },
+  summerRate12To17Cents: { season: "Summer", ageGroup: "13–17" },
   summerRateAdultCents: { season: "Summer", ageGroup: "18+" },
 };
 export const RATE_FIELD_NAMES = Object.keys(RATE_FIELDS) as OtherLodgeRateField[];

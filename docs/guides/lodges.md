@@ -133,7 +133,7 @@ same **lodge edit** permission as the properties above.
    a **Room** or a **Dormitory** (or **Not stated**), the **Cancellation
    period**, the dates its **winter** and **summer seasons start**, and its
    **Non-member rates** — what a non-member pays per person per night, in
-   dollars and cents, for each season and age group (under 5, 5–11, 12–17,
+   dollars and cents, for each season and age group (under 5, 5–12, 13–17,
    18+) — then **Save**.
 3. Tick whatever applies under **Facilities** (an unticked box means *no*, not
    *unknown*), and add anything else the lodge offers under **Amenities** — one

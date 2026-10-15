@@ -485,10 +485,10 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     const winterAdult = within(dialog).getByLabelText("Winter rate, 18+") as HTMLInputElement;
     expect(winterAdult.value).toBe("45.50");
     expect((within(dialog).getByLabelText("Summer rate, Under 5") as HTMLInputElement).value).toBe("0.00");
-    expect((within(dialog).getByLabelText("Winter rate, 5–11") as HTMLInputElement).value).toBe("");
+    expect((within(dialog).getByLabelText("Winter rate, 5–12") as HTMLInputElement).value).toBe("");
 
-    fireEvent.change(within(dialog).getByLabelText("Winter rate, 5–11"), { target: { value: "20" } });
-    fireEvent.change(within(dialog).getByLabelText("Summer rate, 12–17"), { target: { value: "30.1" } });
+    fireEvent.change(within(dialog).getByLabelText("Winter rate, 5–12"), { target: { value: "20" } });
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, 13–17"), { target: { value: "30.1" } });
     fireEvent.change(winterAdult, { target: { value: "" } });
     fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
@@ -512,7 +512,7 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     fireEvent.click(editMyLodge());
     const dialog = await screen.findByRole("dialog");
     for (const season of ["Winter", "Summer"]) {
-      for (const ageGroup of ["Under 5", "5–11", "12–17", "18+"]) {
+      for (const ageGroup of ["Under 5", "5–12", "13–17", "18+"]) {
         const name = `${season} rate, ${ageGroup}`;
         expect(within(dialog).getByLabelText(name)).toBeTruthy();
         // MoneyInput names its buttons from the field's <label>: without the
