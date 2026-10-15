@@ -577,10 +577,10 @@ export function OtherLodgesPanel({
               ) : (
                 "your lodges"
               )}{" "}
-              as yours, but {ownedNames?.length === 1 ? "it has" : "they have"}{" "}
-              not been downloaded to this site yet. Press <strong>Download</strong>{" "}
+              as yours, but {ownedNames?.length === 1 ? "it is" : "they are"}{" "}
+              not linked to this site yet. Press <strong>Download</strong>{" "}
               on the Alpine Central Server setup page; the Edit button appears
-              once the entry is here.
+              once it is.
             </p>
           ) : null}
           {loading ? (
@@ -613,7 +613,7 @@ export function OtherLodgesPanel({
                       <TableCell>
                         <OtherLodgeNameCell lodge={lodge} />
                         {lodge.notOnCentralServer ? (
-                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide(lodge)} disabled={hiding.hidingId !== null} aria-label={`${hiding.hidingId === lodge.id ? "Hiding" : "Hide"} ${otherLodgeChoiceLabel(lodge, lodges)}`}>
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide({ id: lodge.id, name: otherLodgeChoiceLabel(lodge, lodges) })} disabled={hiding.hidingId !== null} aria-label={`${hiding.hidingId === lodge.id ? "Hiding" : "Hide"} ${otherLodgeChoiceLabel(lodge, lodges)}`}>
                             <EyeOff className="mr-2 h-4 w-4" />
                             {hiding.hidingId === lodge.id ? "Hiding…" : "Hide"}
                           </ViewOnlyActionButton>

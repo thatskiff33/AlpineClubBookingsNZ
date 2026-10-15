@@ -405,9 +405,10 @@ providers, and fell four behind as the rest landed. Anything that turns on
   (`ownLodges` on every pull, by central id since #69: two lodges may share a
   name), stored on the settings row and applied by the one `ownsOtherLodge`
   rule to the upload, the admin edit route, the committee officer sync and the
-  panel. A row not yet keyed by a central id falls back to its name, and an
-  upload answer keys it only while no other row holds that id; until that answer has been received the upload sends every changed row
-  as before, and the admin edit route refuses everything. In the other
+  panel. A row not yet keyed by a central id is never owned (two lodges may
+  share a name). Until that answer has been received the upload sends
+  nothing, the admin edit route refuses everything, and the committee sync
+  keeps its pre-#52 rule of matching the club's building names. In the other
   direction the pull is held to the same `otherLodgeDataShape` the local admin
   is validated with (`src/lib/other-lodges.ts`), so the remote cannot place an
   over-long value, a non-`http(s)` site URL or an unbounded amenity list into

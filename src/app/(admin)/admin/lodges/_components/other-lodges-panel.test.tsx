@@ -302,7 +302,7 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
     const note = screen.getByTestId("owned-not-downloaded");
     expect(note.textContent).toMatch(/Tararua Lodge/);
-    expect(note.textContent).toMatch(/not been downloaded/i);
+    expect(note.textContent).toMatch(/not linked to this site yet/i);
     expect(note.textContent).toMatch(/download/i);
     expect(screen.queryByTestId("owned-unknown")).toBeNull();
     expect(screen.queryByTestId("owned-none")).toBeNull();

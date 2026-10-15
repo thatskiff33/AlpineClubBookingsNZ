@@ -165,9 +165,8 @@ what to check before you enable the item.
 operator maps one or more lodge names to the connection your site uses. The
 server sends that list with every download, this site records it, and from then
 on only those lodges are uploaded and only those can be edited in the Other
-lodges panel. Until the first download from a server that sends the list, the
-panel is read-only and the upload keeps its older behaviour of sending every
-changed entry (so a club on an older central server loses nothing). A server
+lodges panel. Until the first download records the list, the panel is
+read-only and nothing is uploaded. A server
 that does not send the list leaves the recorded one as it was, and so does a
 server that sends a list this site cannot accept (too many names, or a name
 longer than a lodge name may be): the lodges still download and the sync
@@ -269,8 +268,9 @@ by name, which fills in the ids; after that downloads are incremental again.
 - **A new central server address or API key** makes the next download fetch
   the whole registry again. A lodge whose id that server does not list is
   matched by name and takes the id it does list. An id still not listed after
-  that download is forgotten, so your own lodge is uploaded by name again and
-  another club's is marked **Not found**. A download that was running while
+  that download is forgotten, so your own lodge is neither uploaded nor
+  editable until a later download links it again, and another club's is
+  marked **Not found**. A download that was running while
   the address or key changed records nothing.
 - **Your lodge's name is yours.** If the central server's administrator renames
   your own lodge, this site keeps the name you gave it, and your next upload

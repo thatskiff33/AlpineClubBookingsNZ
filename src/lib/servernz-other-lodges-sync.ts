@@ -50,6 +50,8 @@ import {
 export interface UploadSummary extends OtherLodgesUploadResult {
   /** Local rows considered for upload (changed since the last upload). */
   sent: number;
+  /** Nothing was sent: the central server has not yet said which lodges are ours (#69). */
+  ownedUnknown?: true;
 }
 
 const NOTHING_UPLOADED: UploadSummary = {
@@ -107,7 +109,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   const owned = settings.otherLodgesOwnedLodges;
   if (owned === null) {
     logger.info("The central server has not said which Other lodges are this club's yet; uploading nothing until a download records it");
-    return { ...NOTHING_UPLOADED };
+    return { ...NOTHING_UPLOADED, ownedUnknown: true };
   }
 
   // A hidden lodge (#58) is never uploaded: it is a deleted lodge kept here.
@@ -363,8 +365,11 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // a row that may be another lodge of the same name.
   const namesInPull = new Map<string, number>();
   for (const l of lodges) namesInPull.set(l.name, (namesInPull.get(l.name) ?? 0) + 1);
+  // On `wholeRegistry`, not on `knownIds`: a whole download that dropped a row
+  // still keys by name (else every unkeyed row would gain a twin); the dropped
+  // row only stops ids from being treated as stale.
   const byNameAllowed = (lodge: (typeof lodges)[number]) =>
-    knownIds !== null &&
+    wholeRegistry &&
     (namesInPull.get(lodge.name) === 1 || ownsOtherLodge(owned, { centralId: usableCentralId(lodge.id) }));
   let pending = lodges;
   for (;;) {

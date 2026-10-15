@@ -1240,6 +1240,7 @@ describe("own lodges only (#52)", () => {
     expect(mockUploadOtherLodges).not.toHaveBeenCalled();
     expect(mockRecordUpload).not.toHaveBeenCalled();
     expect(result.sent).toBe(0);
+    expect(result.ownedUnknown).toBe(true);
   });
 
   it("matches ownership by central id, never by name (#69)", async () => {
@@ -1666,6 +1667,19 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ name: "Shared Name", centralId: "c-2" }) }),
     );
+  });
+
+  it("still keys by name on a whole download that dropped a row, never twinning unkeyed rows (#69)", async () => {
+    const rows = registry([row("ol_1", "Kea Lodge", null)]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Kea Lodge", { id: "c-1" })], { dropped: 1 });
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0].centralId).toBe("c-1");
+    expect(mockCreate).not.toHaveBeenCalled();
+    // Not marked keyed: the dropped row is retried by the next whole download.
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
   });
 
   it("on a whole download sharing a name, keys our unkeyed row only to OUR lodge (#69)", async () => {

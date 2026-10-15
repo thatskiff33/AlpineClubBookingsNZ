@@ -200,7 +200,26 @@ describe("AlpineServerSetup Download summary (#64)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
 
     const message = await screen.findByText(
-      `Downloaded 3 entries: 0 added, 2 updated (1 renamed), 1 unchanged. Not added, because several lodges here share the name and the central server sent no id: "Iwikau Lodge", "Tasman Lodge".`,
+      `Downloaded 3 entries: 0 added, 2 updated (1 renamed), 1 unchanged. Not added, because they could not be matched to one lodge here (the next Download tries again): "Iwikau Lodge", "Tasman Lodge".`,
+    );
+    expect(message.className).toMatch(/text-warning-11/);
+  });
+
+  it("says nothing was uploaded, and keeps the last-upload time, while the owned list is unknown (#69)", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/admin/alpine-server/version")) {
+        return { ok: true, status: 200, json: async () => ({ status: "match", serverVersion: "2.5", expected: "2.5", checkedAt: null, couldNotCheck: false, missingBaseUrl: false }) };
+      }
+      if (String(url).includes("/other-lodges/upload") && init?.method === "POST") {
+        return { ok: true, status: 200, json: async () => ({ created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0, ownedUnknown: true }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    render(<AlpineServerSetup initialState={initial()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+
+    const message = await screen.findByText(
+      "Nothing uploaded: press Download first, so this site knows which lodge is yours.",
     );
     expect(message.className).toMatch(/text-warning-11/);
   });

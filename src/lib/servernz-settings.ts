@@ -30,10 +30,10 @@ export interface ServerNzSettingsValues {
   /**
    * True when the column HOLDS a value that does not parse as the owned list.
    * `otherLodgesOwnedLodges` is then `null` — read-only everywhere, like
-   * never-told — but the upload and the committee sync, which would otherwise
-   * fall back to their pre-#52 "send/write every row" behaviour on `null`,
-   * read this flag and send or write NOTHING instead (fail closed): a column
-   * that was written and is now unreadable is a defect, not a fresh install.
+   * never-told. The upload sends nothing on `null` either way; the committee
+   * sync, which on never-told falls back to its pre-#52 building-name rule,
+   * reads this flag and writes NOTHING instead (fail closed): a column that
+   * was written and is now unreadable is a defect, not a fresh install.
    */
   otherLodgesOwnedLodgesUnreadable: boolean;
   /**
@@ -308,8 +308,8 @@ export async function recordOtherLodgesDownload(
 
 /**
  * Forget which lodges the central server said this club owns (#52): back to
- * "never told", which makes the panel read-only and the upload permissive
- * again until the next download records a fresh answer. Called when the
+ * "never told", which makes the panel read-only and stops the upload (#69)
+ * until the next download records a fresh answer. Called when the
  * connection the list was issued for ends — the API key is removed or
  * replaced, or the server address moves (which removes the key) — because the
  * list is the OLD connection's answer and a different key or server may own

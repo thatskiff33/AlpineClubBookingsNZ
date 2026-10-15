@@ -80,7 +80,7 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
 /**
  * The Download result in one line. Renames (#64) are counted, and a lodge the
  * download could not place is named (#69): one sent without an id whose name
- * several lodges here share, so it is not added until the server sends its id.
+ * several lodges here share, or a new one whose id a concurrent download held.
  */
 function downloadSummaryText(data: {
   fetched: number;
@@ -95,7 +95,7 @@ function downloadSummaryText(data: {
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
   const conflicts = (data.nameConflicts ?? []).map((c) => `"${c.wanted}"`);
   const conflictText = conflicts.length
-    ? ` Not added, because several lodges here share the name and the central server sent no id: ${conflicts.join(", ")}.`
+    ? ` Not added, because they could not be matched to one lodge here (the next Download tries again): ${conflicts.join(", ")}.`
     : "";
   // Lodges the central server deleted (#58): hidden here, kept for the
   // bookings and requests that name them.
@@ -284,7 +284,13 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         }
         throw new Error(data?.error ?? `Failed to ${direction}`);
       }
-      if (direction === "upload") {
+      if (direction === "upload" && data.ownedUnknown) {
+        // Nothing was sent or recorded (#69): the last-upload time stays.
+        setMessage({
+          kind: "warn",
+          text: "Nothing uploaded: press Download first, so this site knows which lodge is yours.",
+        });
+      } else if (direction === "upload") {
         setLastUpload(new Date().toISOString());
         setMessage({
           kind: "ok",

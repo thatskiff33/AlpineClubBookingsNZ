@@ -40,7 +40,7 @@ interface OwnedLodge {
   id: string;
   name: string;
   /** The option's text: the name, with the location when names repeat (#69). */
-  label?: string;
+  label: string;
 }
 
 interface CentralLodgeResponse {
@@ -232,7 +232,7 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
                 </option>
                 {owned.map((lodge) => (
                   <option key={lodge.id} value={lodge.id}>
-                    {lodge.label ?? lodge.name}
+                    {lodge.label}
                   </option>
                 ))}
                 {staleLink && draft.centralLodgeId !== null && (

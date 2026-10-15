@@ -121,10 +121,10 @@ same **lodge edit** permission as the properties above.
    given your site more than one lodge, each of those rows has its own button,
    named **Edit ‹lodge name›**). Click it. The form opens in a **popup over
    the page**, so the list stays where it is.
-2. The **Name** can be changed after the first **Download** from the central
-   server since this site was upgraded to match lodges by their central id
-   (until then it is shown read-only, because a new name would reach the server
-   as a second lodge). A new name is uploaded
+2. The **Name** can be changed. Your lodge only gets its **Edit** button once a
+   **Download** from the central server has linked it to this site by its
+   central id, so a new name always reaches the server as the same lodge. A new
+   name is uploaded
    with the lodge's permanent central id, so the server renames its lodge, and
    every other club's site renames its copy on its next download. Fill in or
    change the **Location**, the **booking officer's** name, email and phone,
@@ -171,10 +171,10 @@ each stored one as its lodge is next downloaded.
 - *"The central server has no lodge assigned to this site…"* — the server has
   answered, and the answer is none. Ask the central server's operator to assign
   your lodge to your site's connection.
-- *"The central server names … as yours, but it has not been downloaded…"* —
-  the server has named your lodge, but no entry of that name has arrived yet.
-  Press **Download**; the **Edit my Lodge** button appears once the entry is
-  here.
+- *"The central server names … as yours, but it is not linked to this site
+  yet…"* — the server has named your lodge, but no lodge here is linked to it
+  by its central id yet (it has not arrived, or it is here but not yet linked).
+  Press **Download**; the **Edit my Lodge** button appears once it is linked.
 
 The list of which lodges are yours is forgotten when the site disconnects from
 the central server, when its API key is replaced, or when the server address is
@@ -200,7 +200,7 @@ answer; the panel is read-only again until the next download.
 
 | Field | What it controls | Default | Notes / constraints |
 | --- | --- | --- | --- |
-| Name | The lodge's display name | Required; up to 120 characters; no other lodge here may have it | Your own lodge's name can be changed after a **Download** has matched it to the central server; it then renames the lodge there and at every other club |
+| Name | The lodge's display name | Required; up to 120 characters | Two lodges may share a name; lists then show the location beside it. Your own lodge's name can be changed; it then renames the lodge on the central server and at every other club |
 | Location | Where the other lodge is | — | Optional; up to 300 characters |
 | Booking officer's name | Contact person at the other lodge | — | Optional; up to 200 characters |
 | Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |
@@ -242,7 +242,7 @@ list can be hidden by hand (see Troubleshooting).
 | Everything is read-only ("… can view the lodge properties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | Deactivate warns about dependencies | The lodge still has future bookings, waitlist, hut-leader, or kiosk ties | Review the list; confirm to deactivate anyway (they stay in place) or resolve them first |
 | "At least one lodge must stay active" | You tried to deactivate the only active lodge | Keep one active, or activate another first |
-| The Other lodges **Name** is read-only, or Save says "This lodge can be renamed after the next Download…" | Your lodge has not yet been matched to the central server by its id | Press **Download** under Integrations → Alpine Central Server, then edit again |
+| Your lodge has no **Edit** button | Your lodge is not yet linked to the central server by its id | Press **Download** under Integrations → Alpine Central Server; the button appears once it is linked |
 | A lodge shows **Not found on the Alpine Central Server** | The central server did not list it in the last full download: usually a duplicate left by an earlier rename, or a lodge deleted there before it told clubs about deletions | Check the bookings and requests it shows, then **Hide** takes it off this list and every drop-down (after a confirmation). Those bookings and requests keep it |
 | **Hide** says "Only a lodge marked “Not found on the Alpine Central Server” can be hidden here" | A download matched the lodge to the central server since the page loaded | The list reloads: the lodge is listed again, and nothing was hidden |
 | The Download message says a lodge was "Deleted on the central server, so hidden here" | The central server's administrator deleted it | Nothing to do: it is hidden from lists and drop-downs and kept on the bookings and requests that name it |
