@@ -49,7 +49,9 @@ export function useHideUnlistedLodge({
           : { kind: "err", text: data?.error ?? "Failed to hide the lodge" },
       );
       await reload();
-      if (response.ok) afterHide();
+      // The row's button is gone on success, and usually on a refusal too (the
+      // reload shows the list as it is now): focus goes to the list's heading.
+      afterHide();
     } catch {
       setMessage({ kind: "err", text: "Failed to hide the lodge" });
     } finally {
@@ -57,5 +59,5 @@ export function useHideUnlistedLodge({
     }
   }
 
-  return { hide, hidingId, message, confirmDialog };
+  return { hide, hidingId, message, clearMessage: () => setMessage(null), confirmDialog };
 }

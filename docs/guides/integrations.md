@@ -251,8 +251,15 @@ by name, which fills in the ids; after that downloads are incremental again.
   the booking-request form and the visiting-club rate picker, and stays on
   every booking and booking request that already names it, so they read as
   they did. The **Download** message names it. Any of your lodges linked to it
-  under **Central lodge** is unlinked. A server that sends no deletions hides
-  nothing here. Hiding is not undone.
+  under **Central lodge** is unlinked, and the download writes one audit record
+  naming what it hid. A server that sends no deletions hides nothing here.
+  Hiding is not undone.
+- **Two lodges may share a name.** The central id is what tells them apart. A
+  hidden lodge keeps its name for the bookings that name it, and never stops a
+  live lodge of the same name from arriving or being renamed to it. On a site
+  upgrading straight to this release, a lodge the server deleted before this
+  site was matched to its ids shows as **Not found on the Alpine Central
+  Server** rather than being hidden automatically; **Hide** it by hand.
 - **A new central server address or API key** makes the next download fetch
   the whole registry again. A lodge whose id that server does not list is
   matched by name and takes the id it does list. An id still not listed after

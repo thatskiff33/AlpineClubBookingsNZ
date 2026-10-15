@@ -18,6 +18,7 @@ import {
   replaceOtherLodgeAmenities,
   serializeOtherLodge,
   serializeOtherLodgeForAdmin,
+  visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { renameInOwnedNames } from "@/lib/other-lodge-central-id";
@@ -47,9 +48,8 @@ const patchSchema = z
 
 // The delete handler that lived here was removed by #52 along with create: a
 // site changes only the lodge(s) the central server says it owns, and it never
-// removes an entry from the shared registry. A DELETE now answers 405. The one
-// removal left is `./remove` (#58): a row the server does NOT list and nothing
-// here refers to.
+// removes an entry from the shared registry. A DELETE now answers 405. Nothing
+// removes a row: `./hide` (#58) hides one the server does NOT list.
 
 export async function PATCH(
   request: Request,
@@ -81,8 +81,9 @@ export async function PATCH(
     );
   }
 
-  const existing = await prisma.otherLodge.findUnique({
-    where: { id: parsedParams.data.id },
+  // A hidden lodge (#58) is kept only for the bookings that name it: not edited.
+  const existing = await prisma.otherLodge.findFirst({
+    where: { id: parsedParams.data.id, ...visibleOtherLodgeWhere },
     select: otherLodgeSelect,
   });
   if (!existing) {

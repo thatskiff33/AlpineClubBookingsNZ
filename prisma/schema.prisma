@@ -5252,7 +5252,12 @@ model Lodge {
 // it (there is no active/inactive state — that was dropped as unneeded).
 model OtherLodge {
   id                  String   @id @default(cuid())
-  name                String   @unique
+  // Unique among VISIBLE lodges only (#58): two lodges may share a name, and the
+  // id is what makes them distinct — a hidden lodge keeps its name for the
+  // bookings that name it without blocking a live lodge of the same name. The
+  // partial unique index `OtherLodge_name_visible_key` (raw SQL, manifested in
+  // prisma/partial-unique-indexes.tsv) enforces it.
+  name                String
   // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
   // download merges by, so a lodge renamed there is renamed here in place, and
   // the id an owned lodge is uploaded under (server API 2.3). Null until a

@@ -46,6 +46,8 @@ vi.mock("@/lib/prisma", () => {
     otherLodge: {
       findMany: mocks.findMany,
       findUnique: mocks.findUnique,
+      // The PATCH reads a VISIBLE lodge by id (#58), with findFirst.
+      findFirst: mocks.findUnique,
       findUniqueOrThrow: mocks.findUniqueOrThrow,
       update: mocks.update,
       updateMany: mocks.updateMany,
@@ -421,6 +423,14 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
       params("ol-1"),
     );
     expect(response.status).toBe(403);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("will not edit a HIDDEN lodge (#58): it reads only visible lodges", async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
+    expect(response.status).toBe(404);
+    expect(mocks.findUnique.mock.calls[0][0].where).toEqual({ id: "ol-1", hiddenAt: null });
     expect(mocks.update).not.toHaveBeenCalled();
   });
 

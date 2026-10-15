@@ -768,7 +768,7 @@ export async function POST(
       eligibleGuestIds: otherLodgeEligibleGuestIds,
       linkedGuestIds: new Set(linkByGuestId.keys()),
     });
-    await assertOtherLodgeExists(prisma, otherLodgeElection.otherLodgeId);
+    if (otherLodgeElection.otherLodgeIdChanged) await assertOtherLodgeExists(prisma, otherLodgeElection.otherLodgeId); // #58: a booking keeps a hidden lodge
   } catch (error) {
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

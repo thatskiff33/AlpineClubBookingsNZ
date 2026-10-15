@@ -187,7 +187,7 @@ export interface OtherLodgesPullResult {
   /**
    * The central ids of lodges deleted on the server (#58, API 2.4), or
    * `undefined` when the server did not send the list (an older release),
-   * which deletes nothing here. An entry that failed its bounds is left out.
+   * which hides nothing here. An entry that failed its bounds is left out.
    */
   deletedLodgeIds: string[] | undefined;
 }

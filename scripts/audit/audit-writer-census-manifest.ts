@@ -637,6 +637,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // `/api/admin/other-lodges/[id]/hide` POST with the lodge's id and name. Categorised
   // `admin` at the site and pinned in the lodge-gated keep beside the registry's
   // update. RE-MEASURED with `pnpm run audit:census`.
+  // 499 -> 500 (#58): `alpine_server.other_lodges.hidden`, the download's one
+  // record of the lodges it hid because the central server deleted them, and
+  // the club lodges it unlinked from them; written inside the download so the
+  // nightly pass and the Download button share it. `lodge`, like the Download
+  // record beside it. RE-MEASURED with `pnpm run audit:census`.
   // 497 -> 498 (#3750): the executed approval of a LOCKED_PERIOD change request
   // on a finished stay (`booking-change-request.approve`, with `executed: true`),
   // one `logAudit` in `src/lib/booking-change-request-admin-decision.ts`,
@@ -872,6 +877,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited on the transaction that changes the second factor.
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
     // 139 -> 140 (#62): the Central lodge link record.
+    // 140 -> 141 (#58): the download's record of the lodges it hid.
     // 139 -> 140 (#3372): the paid-another-way close of a dead card refund,
     // awaited on the close's transaction so the row commits with the money.
     // 140 -> 141 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved,
@@ -922,7 +928,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
     // transaction beside the writer above, in the same form.
     // 77 -> 75 (#52): the two removed other-lodges writers above.
-    // 75 -> 76 (#58): the Other lodges removal of a row the central server does
+    // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
     "auditLog.create": { total: 76, uncategorised: 0 },
   },
@@ -1333,7 +1339,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // recorded nothing at all before. `lodge` is the audit guide's roster row,
     // and these are the lodge roster; the officers who can write them already
     // hold lodge access, so nobody gains a read.
-    lodge: 66,
+    // 66 -> 67 (#58): the download's record of the lodges it hid (lodge names
+    // and a count, no member), `lodge` like the Download record it sits beside.
+    lodge: 67,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
     //

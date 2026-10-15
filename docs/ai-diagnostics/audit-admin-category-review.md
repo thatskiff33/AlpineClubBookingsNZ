@@ -818,6 +818,11 @@ administrator hid an Other lodges row the Alpine Central Server does not list.
 lodge-gated keep grows from eighteen pinned sites to nineteen; the row names
 the lodge by id and name only, no member.
 
+#58 also added the download's own record of the lodges it hid because the
+central server deleted them (`alpine_server.other_lodges.hidden`, `lodge`
+66 -> 67, 499 -> 500, MEASURED): lodge names and a count of unlinked club
+lodges, no member. A library writer, so it joins no keep.
+
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
 `booking-payment.manual-refund-task.reopen`, the record that an officer put a

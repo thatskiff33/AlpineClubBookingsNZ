@@ -1438,6 +1438,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // lodge-gated keep; the unpinned population does not move. RE-MEASURED.
     // 127 -> 128 pinned (#58): the Other lodges removal joins the keep; the
     // unpinned population does not move. RE-MEASURED.
+    // 371 -> 372 unpinned (#58): the download's hidden-lodges record, a library
+    // writer outside every keep. RE-MEASURED.
     // handlers; the unpinned population does not move. 371 -> 372 unpinned
     // (#3750): the executed change-request approval, unpinned `booking`.
     // RE-MEASURED with `pnpm run audit:census`.

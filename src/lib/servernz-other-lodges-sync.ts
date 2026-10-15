@@ -10,6 +10,7 @@ import {
   serializeOtherLodgeData,
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
+import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -272,9 +273,24 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // name it. A server that sends no list hides nothing.
   const deletedIds = new Set(pull.deletedLodgeIds ?? []);
   const hiddenLodges: string[] = [];
+  let unlinkedLodges = 0;
   for (const centralId of deletedIds) {
-    const name = await hideDeletedLodge(centralId);
-    if (name !== null) hiddenLodges.push(name);
+    const outcome = await hideDeletedLodge(centralId);
+    if (outcome.hidden !== null) hiddenLodges.push(outcome.hidden);
+    unlinkedLodges += outcome.unlinked;
+  }
+  // One record of what the download hid and unlinked, written HERE so the
+  // nightly pass and the Download button leave the same trail (an
+  // administrator's own Central lodge change is audited too).
+  if (hiddenLodges.length > 0 || unlinkedLodges > 0) {
+    await createAuditLog({
+      action: "alpine_server.other_lodges.hidden",
+      category: "lodge",
+      severity: "info",
+      outcome: "success",
+      summary: "Lodges deleted on the Alpine Central Server were hidden",
+      details: `hidden ${hiddenLodges.length}${hiddenLodges.length ? ` (${hiddenLodges.join(", ")})` : ""}; club lodges unlinked from them ${unlinkedLodges}`,
+    });
   }
   const lodges = pull.lodges.filter((l) => {
     const id = usableCentralId(l.id);
@@ -404,6 +420,14 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       return false;
     }
     const keyed = wholeRegistry && everyLodgeKeyed;
+    // A club lodge linked to a deleted central lodge in the moments since the
+    // hide above (an administrator's Central lodge save) is unlinked again, now
+    // that the owned list recorded below no longer names it (#58).
+    if (deletedIds.size > 0) {
+      await tx.$executeRaw(
+        Prisma.sql`UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" IN (${Prisma.join([...deletedIds])})`,
+      );
+    }
     if (keyed && knownIds !== null) {
       // One bound parameter per id (`Prisma.join`), as the rest of the code
       // base binds lists; an empty registry lists none, so every id goes.
