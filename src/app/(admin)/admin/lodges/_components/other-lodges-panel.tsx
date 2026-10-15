@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Building, EyeOff, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -61,8 +61,8 @@ import {
   type OtherLodgeFormState,
   type OtherLodgeRecord,
 } from "./other-lodge-form";
-import { OtherLodgeNameCell, OtherLodgeNameField, isUnreferenced } from "./other-lodge-name";
-import { useRemoveUnlistedLodge } from "./other-lodge-remove";
+import { OtherLodgeNameCell, OtherLodgeNameField } from "./other-lodge-name";
+import { useHideUnlistedLodge } from "./other-lodge-hide";
 import { OtherLodgeRateGrid } from "./other-lodge-rate-grid";
 
 export function OtherLodgesPanel({
@@ -225,7 +225,8 @@ export function OtherLodgesPanel({
     }
   }
 
-  const removal = useRemoveUnlistedLodge({ onRemoved: () => loadLodges(), onError: setError });
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const hiding = useHideUnlistedLodge({ reload: () => loadLodges(), afterHide: () => headingRef.current?.focus() });
   const showForm = editingId !== null;
   const editingLodge = lodges.find((l) => l.id === editingId);
   // The owned rows actually ON SCREEN. A name the server lists that has no
@@ -240,9 +241,9 @@ export function OtherLodgesPanel({
 
   return (
     <div className="space-y-4">
-      {removal.confirmDialog}
+      {hiding.confirmDialog}
       <div>
-        <h2 className="text-xl font-semibold">Other lodges</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">Other lodges</h2>
         <p className="text-sm text-muted-foreground">
           Details of other clubs&apos; lodges the club recognises. Their names
           will be offered to non-members when they indicate they are a member
@@ -255,7 +256,10 @@ export function OtherLodgesPanel({
           error is shown inside it, directly above Save and Cancel (the form is
           long, and Save is where the administrator's attention is when it
           fails). This one is for everything outside it: a list that could not
-          load. */}
+          load. A Hide reports in its own line, announced, below it (#58). */}
+      {hiding.message ? (
+        <p role="status" className={`text-sm ${hiding.message.kind === "ok" ? "text-success-11" : "text-destructive"}`}>{hiding.message.text}</p>
+      ) : null}
       {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -608,10 +612,10 @@ export function OtherLodgesPanel({
                     <TableRow key={lodge.id}>
                       <TableCell>
                         <OtherLodgeNameCell lodge={lodge} />
-                        {lodge.notOnCentralServer && isUnreferenced(lodge.notOnCentralServer) ? (
-                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void removal.remove(lodge)} disabled={removal.removingId === lodge.id} aria-label={`Remove ${lodge.name}`}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Remove
+                        {lodge.notOnCentralServer ? (
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide(lodge)} disabled={hiding.hidingId !== null} aria-label={`Hide ${lodge.name}`}>
+                            <EyeOff className="mr-2 h-4 w-4" />
+                            {hiding.hidingId === lodge.id ? "Hiding…" : "Hide"}
                           </ViewOnlyActionButton>
                         ) : null}
                       </TableCell>

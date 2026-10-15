@@ -242,14 +242,17 @@ by name, which fills in the ids; after that downloads are incremental again.
   the server did not list, usually a duplicate left behind by a rename before
   this change, or a lodge deleted there. The Other lodges panel marks it **Not
   found on the Alpine Central Server**, with how many bookings and booking
-  requests still refer to it, so you can decide what to do. When nothing
-  refers to it, the row has a **Remove** button (lodge edit rights; audited,
-  after a confirmation). A lodge the server still lists cannot be removed here.
-- **A lodge deleted on the central server** (server API 2.4) is removed here
-  on the next download, its amenities with it, unless a booking or booking
-  request here still refers to it. Then it is kept, marked **Not found on the
-  Alpine Central Server**, and named in the **Download** message with its
-  counts. A server that sends no deletions deletes nothing here.
+  requests still refer to it, so you can decide what to do. Its **Hide**
+  button (lodge edit rights; audited, after a confirmation) hides it the same
+  way a deleted lodge is hidden (below). A lodge the server still lists cannot
+  be hidden here.
+- **A lodge deleted on the central server** (server API 2.4) is **hidden**
+  here on the next download, never removed: it leaves the Other lodges list,
+  the booking-request form and the visiting-club rate picker, and stays on
+  every booking and booking request that already names it, so they read as
+  they did. The **Download** message names it. Any of your lodges linked to it
+  under **Central lodge** is unlinked. A server that sends no deletions hides
+  nothing here. Hiding is not undone.
 - **A new central server address or API key** makes the next download fetch
   the whole registry again. A lodge whose id that server does not list is
   matched by name and takes the id it does list. An id still not listed after

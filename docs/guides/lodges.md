@@ -230,7 +230,10 @@ The names recorded here are what the public booking-request form offers under
 *"Are you a member of another lodge?"*, and what a booking officer picks from
 when charging a visiting club's members at your member rate — see
 [Bookings → Charge a visiting club's members at your member rate](bookings.md#charge-a-visiting-clubs-members-at-your-member-rate).
-Lodges are never deleted here: the list is the central server's.
+The list is the central server's. A lodge it deletes is **hidden** here on the
+next download: it leaves this list and every drop-down, and stays on the
+bookings and booking requests that already name it. A lodge the server does not
+list can be hidden by hand (see Troubleshooting).
 
 ## Troubleshooting
 
@@ -241,8 +244,9 @@ Lodges are never deleted here: the list is the central server's.
 | "At least one lodge must stay active" | You tried to deactivate the only active lodge | Keep one active, or activate another first |
 | The Other lodges **Name** is read-only, or Save says "This lodge can be renamed after the next Download…" | Your lodge has not yet been matched to the central server by its id | Press **Download** under Integrations → Alpine Central Server, then edit again |
 | Save says "Another lodge is already named …" | A lodge in the Other lodges list already has that name | Choose a different name |
-| A lodge shows **Not found on the Alpine Central Server** | The central server did not list it in the last full download, or deleted it while bookings or requests here still refer to it: usually a duplicate left by an earlier rename, or a lodge deleted there | Check the bookings and requests it shows. When it shows none, **Remove** takes it off the list (after a confirmation); otherwise it stays |
-| **Remove** says "cannot be removed: bookings or booking requests still refer to it" | A booking or request cites the lodge | It stays; those records keep their lodge |
+| A lodge shows **Not found on the Alpine Central Server** | The central server did not list it in the last full download: usually a duplicate left by an earlier rename, or a lodge deleted there before it told clubs about deletions | Check the bookings and requests it shows, then **Hide** takes it off this list and every drop-down (after a confirmation). Those bookings and requests keep it |
+| **Hide** says "Only a lodge marked “Not found on the Alpine Central Server” can be hidden here" | A download matched the lodge to the central server since the page loaded | The list reloads: the lodge is listed again, and nothing was hidden |
+| The Download message says a lodge was "Deleted on the central server, so hidden here" | The central server's administrator deleted it | Nothing to do: it is hidden from lists and drop-downs and kept on the bookings and requests that name it |
 | Member screens don't show a lodge picker | The club has only one active lodge | Expected — pickers appear once a second active lodge exists |
 | Door code/travel note isn't in an email | The lodge's field is blank, or the email template omits the token | Fill the field here; check the [Booking Messages](booking-messages.md)/email template |
 | The Other lodges panel has no **Edit my Lodge** button and says which lodge is yours is set on the central server | The site has not yet downloaded from a central server that names its lodge (not connected, never downloaded, or an older server) | Connect on **Integrations → Alpine Central Server** and press **Download**; the button appears for the lodge the server names |

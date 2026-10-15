@@ -357,7 +357,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/maintenance-reports/tokens": "lodge",
   "/api/admin/other-lodges": "lodge",
   "/api/admin/other-lodges/[id]": "lodge",
-  "/api/admin/other-lodges/[id]/remove": "lodge",
+  "/api/admin/other-lodges/[id]/hide": "lodge",
   "/api/admin/member-applications": "membership",
   "/api/admin/member-applications/[id]": "membership",
   "/api/admin/member-applications/[id]/approval-preview": "membership",

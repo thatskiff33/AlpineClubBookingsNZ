@@ -90,8 +90,7 @@ function downloadSummaryText(data: {
   unchanged?: number;
   renamed?: number;
   nameConflicts?: Array<{ lodge: string | null; wanted: string }>;
-  removed?: number;
-  keptReferenced?: Array<{ lodge: string; bookings: number; bookingRequests: number }>;
+  hiddenLodges?: string[];
 }): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
@@ -101,16 +100,13 @@ function downloadSummaryText(data: {
   const conflictText = conflicts.length
     ? ` The central server's name is already used by another lodge here, so these kept their name: ${conflicts.join(", ")}.`
     : "";
-  // Lodges the central server deleted (#58): removed here, or kept because
-  // bookings or requests here still cite them.
-  const removed = data.removed ? `, ${data.removed} removed` : "";
-  const kept = (data.keptReferenced ?? []).map(
-    (k) => `"${k.lodge}" (${k.bookings} ${k.bookings === 1 ? "booking" : "bookings"}, ${k.bookingRequests} ${k.bookingRequests === 1 ? "request" : "requests"})`,
-  );
-  const keptText = kept.length
-    ? ` Deleted on the central server but kept here, because bookings or booking requests still refer to them: ${kept.join(", ")}.`
+  // Lodges the central server deleted (#58): hidden here, kept for the
+  // bookings and requests that name them.
+  const hidden = data.hiddenLodges ?? [];
+  const hiddenText = hidden.length
+    ? ` Deleted on the central server, so hidden here: ${hidden.map((n) => `"${n}"`).join(", ")}.`
     : "";
-  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged${removed}.${conflictText}${keptText}`;
+  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}`;
 }
 
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
@@ -300,7 +296,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       } else {
         setLastDownload(new Date().toISOString());
         setMessage({
-          kind: data.nameConflicts?.length || data.keptReferenced?.length ? "warn" : "ok",
+          kind: data.nameConflicts?.length ? "warn" : "ok",
           text: downloadSummaryText(data),
         });
       }

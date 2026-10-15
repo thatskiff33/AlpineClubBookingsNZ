@@ -314,6 +314,7 @@ describe("writes only the rows the central server says are ours (#52)", () => {
     expect(db.lodge.findMany).not.toHaveBeenCalled();
     expect(db.otherLodge.findMany.mock.calls[0][0].where).toEqual({
       name: { in: ["Aorangi Ski Club"] },
+      hiddenAt: null,
     });
   });
 

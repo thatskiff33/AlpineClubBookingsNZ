@@ -591,7 +591,7 @@ describe("pullOtherLodges — deletedLodges, lodges deleted on the server (#58, 
       lodges: [],
       cursor: "c-1",
       count: 0,
-      deletedLodges: Array.from({ length: 5001 }, (_, i) => ({ id: `g${i}`, deletedAt: "2026-10-01T00:00:00.000Z" })),
+      deletedLodges: Array.from({ length: 100_001 }, (_, i) => ({ id: `g${i}`, deletedAt: "2026-10-01T00:00:00.000Z" })),
     });
 
     await expect(pullOtherLodges(null)).rejects.toThrow();

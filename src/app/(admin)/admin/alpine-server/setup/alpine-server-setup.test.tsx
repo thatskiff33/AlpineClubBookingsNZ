@@ -259,21 +259,21 @@ describe("AlpineServerSetup Download summary: deletions (#58)", () => {
     });
   }
 
-  it("counts removed lodges and names each one kept because it is still referred to, as a warning", async () => {
+  it("names the lodges hidden because the central server deleted them", async () => {
     downloadAnswers({
       fetched: 2,
       created: 0,
       updated: 0,
       unchanged: 2,
-      removed: 1,
-      keptReferenced: [{ lodge: "Ruapehu Hut", bookings: 1, bookingRequests: 2 }],
+      hiddenLodges: ["Ruapehu Hut"],
     });
     render(<AlpineServerSetup initialState={initial()} />);
     fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
 
-    const message = await screen.findByText(
-      `Downloaded 2 entries: 0 added, 0 updated, 2 unchanged, 1 removed. Deleted on the central server but kept here, because bookings or booking requests still refer to them: "Ruapehu Hut" (1 booking, 2 requests).`,
-    );
-    expect(message.className).toMatch(/text-warning-11/);
+    expect(
+      await screen.findByText(
+        `Downloaded 2 entries: 0 added, 0 updated, 2 unchanged. Deleted on the central server, so hidden here: "Ruapehu Hut".`,
+      ),
+    ).toBeTruthy();
   });
 });

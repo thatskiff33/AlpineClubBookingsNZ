@@ -57,6 +57,7 @@ const MERGE_SELECT = {
   id: true,
   name: true,
   centralId: true,
+  hiddenAt: true,
   updatedAt: true,
   ...OTHER_LODGE_DATA_SELECT,
   amenities: otherLodgeAmenitiesSelect,
@@ -123,6 +124,14 @@ export async function mergeDistributedLodge(
     // shows that row's id is not the server's at all (stale, see above).
     const staleId =
       byName?.centralId != null && knownIds !== null && !knownIds.has(byName.centralId);
+    // A HIDDEN row (#58) is never matched to another lodge by name: it is a
+    // deleted lodge kept for the bookings that name it, and keying it to a new
+    // lodge would hand that lodge its bookings.
+    if (byName?.hiddenAt) {
+      return final
+        ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
+        : { kind: "deferred" };
+    }
     if (byName && centralId !== null && byName.centralId !== null && !staleId) {
       return final
         ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
@@ -286,56 +295,25 @@ export async function localNamesByCentralId(
   );
 }
 
-/** A lodge the server deleted that this site keeps: something here cites it. */
-export interface KeptDeletedLodge {
-  lodge: string;
-  bookings: number;
-  bookingRequests: number;
-}
-
-export type DeletionOutcome =
-  | { kind: "absent" }
-  | { kind: "removed" }
-  | { kind: "kept"; kept: KeptDeletedLodge };
-
-function isForeignKeyViolation(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003";
-}
-
 /**
- * The central server deleted the lodge with this central id (#58, API 2.4).
- * The local row is REMOVED — its amenities with it — unless a booking or a
- * booking request here still cites it: those references are protected (the
- * foreign keys are Restrict), so the row is KEPT, its central id cleared so the
- * Other lodges panel marks it "Not found on the Alpine Central Server" with
- * what cites it, and it is reported. No local row: nothing to do (it never
- * arrived, or was already removed — a repeated deletion is a no-op).
- *
- * Both writes are guarded on the central id read, so a row re-keyed meanwhile
- * is left alone; a booking that cites the row between the count and the delete
- * makes the delete fail on its foreign key, and the row is kept instead. The
- * id is cleared raw, so `updatedAt` stays put: a forgotten id is not an edit.
+ * The central server deleted the lodge with this central id (#58, API 2.4,
+ * owner decision): the local row is HIDDEN, never removed. It keeps its data
+ * and its central id, so every booking and booking request that names it keeps
+ * it, and it leaves the Other lodges list and every drop-down. Any club lodge
+ * linked to it (#62) is unlinked. Returns the lodge's name when this call hid it; `null` when there is no such row, or it
+ * was already hidden (a repeated deletion is a no-op). Raw, so `updatedAt`
+ * stays put: hiding is not an edit to upload.
  */
-export async function removeDeletedLodge(centralId: string): Promise<DeletionOutcome> {
+export async function hideDeletedLodge(centralId: string): Promise<string | null> {
+  // A club lodge LINKED to the deleted central lodge (#62's "Central lodge")
+  // points at nothing now: the link is cleared, so the one-lodge default can
+  // link it to a successor. Raw, like the hide: not an administrator's edit.
+  await prisma.$executeRaw`UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" = ${centralId}`;
   const row = await prisma.otherLodge.findUnique({
     where: { centralId },
-    select: {
-      id: true,
-      name: true,
-      _count: { select: { bookings: true, bookingRequests: true } },
-    },
+    select: { id: true, name: true, hiddenAt: true },
   });
-  if (!row) return { kind: "absent" };
-  const { bookings, bookingRequests } = row._count;
-  if (bookings + bookingRequests === 0) {
-    try {
-      const gone = await prisma.otherLodge.deleteMany({ where: { id: row.id, centralId } });
-      return gone.count === 1 ? { kind: "removed" } : { kind: "absent" };
-    } catch (error) {
-      if (!isForeignKeyViolation(error)) throw error;
-      // Cited since the count: kept, below.
-    }
-  }
-  await prisma.$executeRaw`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "id" = ${row.id} AND "centralId" = ${centralId}`;
-  return { kind: "kept", kept: { lodge: row.name, bookings, bookingRequests } };
+  if (!row || row.hiddenAt) return null;
+  const hidden = await prisma.$executeRaw`UPDATE "OtherLodge" SET "hiddenAt" = NOW() WHERE "id" = ${row.id} AND "centralId" = ${centralId} AND "hiddenAt" IS NULL`;
+  return hidden === 1 ? row.name : null;
 }

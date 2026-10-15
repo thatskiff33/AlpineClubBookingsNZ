@@ -1,7 +1,7 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { formatCommitteeMemberPhone } from "@/lib/committee";
-import { ownsOtherLodge } from "@/lib/other-lodges";
+import { ownsOtherLodge, visibleOtherLodgeWhere } from "@/lib/other-lodges";
 import { loadOwnedOtherLodgeNames } from "@/lib/servernz-settings";
 
 /**
@@ -169,8 +169,9 @@ async function applyBookingOfficerContact(
     return { updated: 0, holderMemberId: holder?.memberId ?? null };
   }
 
+  // Hidden lodges (#58) are not written into: they are deleted lodges kept.
   const rows = await db.otherLodge.findMany({
-    where: { name: { in: candidateNames } },
+    where: { name: { in: candidateNames }, ...visibleOtherLodgeWhere },
     select: {
       id: true,
       name: true,

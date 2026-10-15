@@ -4,16 +4,16 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { removeUnlistedOtherLodge } from "@/lib/other-lodge-removal";
-import { serializeOtherLodge } from "@/lib/other-lodges";
+import { hideUnlistedOtherLodge } from "@/lib/other-lodge-hide";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
 
-// POST /api/admin/other-lodges/:id/remove — remove an Other lodges row the
-// central server does not list and nothing here refers to (#58). The rules are
-// `removeUnlistedOtherLodge`'s; this route guards, audits and answers.
+// POST /api/admin/other-lodges/:id/hide — hide an Other lodges row the central
+// server does not list (#58). The rules are `hideUnlistedOtherLodge`'s; this
+// route guards, audits and answers. The audit row names the lodge by id and
+// name only: a booking officer's contact is never copied into it.
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -28,21 +28,21 @@ export async function POST(
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
 
-  const result = await removeUnlistedOtherLodge(parsedParams.data.id);
+  const result = await hideUnlistedOtherLodge(parsedParams.data.id);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
   await prisma.auditLog.create(
     buildStructuredAuditLogCreateArgs({
-      action: "OTHER_LODGE_REMOVED",
+      action: "OTHER_LODGE_HIDDEN",
       actor: { memberId: guard.session.user.id },
-      entity: { type: "OtherLodge", id: result.removed.id },
+      entity: { type: "OtherLodge", id: result.hidden.id },
       category: "admin",
       severity: "info",
       outcome: "success",
-      summary: "Other lodge not found on the Alpine Central Server removed",
-      metadata: { removedOtherLodge: serializeOtherLodge(result.removed) },
+      summary: "Other lodge not found on the Alpine Central Server hidden",
+      metadata: { hiddenOtherLodge: result.hidden },
       request: getAuditRequestContext(request),
     }),
   );

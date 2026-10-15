@@ -210,6 +210,12 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
     expect(mocks.findMany.mock.calls[1][0].where).toEqual({ id: { in: ["ol-old"] } });
   });
 
+  it("never lists a HIDDEN lodge (#58): it is kept only for the bookings that name it", async () => {
+    mocks.findMany.mockResolvedValueOnce([record()]);
+    await GET();
+    expect(mocks.findMany.mock.calls[0][0].where).toEqual({ hiddenAt: null });
+  });
+
   it("marks nothing until a whole download has keyed the registry, even with keyed rows", async () => {
     mocks.findMany.mockResolvedValueOnce([
       record({ id: "ol-1", centralId: "c-1" }),

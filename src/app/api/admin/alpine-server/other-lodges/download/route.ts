@@ -43,7 +43,9 @@ export async function POST() {
       outcome: "success",
       memberId: guard.session.user.id,
       summary: "Downloaded Other Clubs from Alpine Central Server",
-      details: `fetched ${result.fetched}, added ${result.created}, updated ${result.updated}`,
+      // Hidden (#58): lodges the central server deleted, now kept only for
+      // the bookings and requests that name them.
+      details: `fetched ${result.fetched}, added ${result.created}, updated ${result.updated}, hidden ${result.hiddenLodges.length}${result.hiddenLodges.length ? ` (${result.hiddenLodges.join(", ")})` : ""}`,
     });
     return NextResponse.json(result);
   } catch (error) {

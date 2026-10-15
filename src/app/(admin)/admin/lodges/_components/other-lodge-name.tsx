@@ -39,18 +39,18 @@ export function OtherLodgeNameField({
   );
 }
 
-/** Nothing here refers to the lodge, so it may be removed (#58). */
-export const isUnreferenced = (references: OtherLodgeReferences) =>
+/** Nothing here refers to the lodge. */
+const isUnreferenced = (references: OtherLodgeReferences) =>
   references.bookings + references.bookingRequests === 0;
 
 const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
 /**
- * The note under a lodge the last whole-registry download did not match (#64):
- * usually a duplicate left by a rename before #64, or a lodge deleted there.
- * Says what still cites it, so an administrator can assess it; nothing removes
- * it here.
+ * The note under a lodge the central server does not list (#64): usually a
+ * duplicate left by a rename before #64, or a lodge deleted there before it
+ * told clubs about deletions. Says what still cites it, so an administrator can
+ * assess it and Hide it (#58); hiding keeps it for those bookings and requests.
  */
 export function NotOnCentralServerNote({ references }: { references: OtherLodgeReferences }) {
   const cited = isUnreferenced(references)

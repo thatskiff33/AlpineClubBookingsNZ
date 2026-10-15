@@ -52,6 +52,7 @@ const DOWNLOADED = {
   keptLocal: 0,
   renamed: 0,
   nameConflicts: [],
+  hiddenLodges: [],
   dropped: 0,
 };
 

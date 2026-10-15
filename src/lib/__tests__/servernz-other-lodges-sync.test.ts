@@ -270,7 +270,7 @@ describe("uploadOtherClubsToServer", () => {
     // Incremental: the query is bounded by the stored watermark, not the whole table.
     expect(mockFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { updatedAt: { gt: new Date("2026-07-01T00:00:00.000Z") } },
+        where: { hiddenAt: null, updatedAt: { gt: new Date("2026-07-01T00:00:00.000Z") } },
       }),
     );
     expect(result.sent).toBe(2);
@@ -299,8 +299,7 @@ describe("downloadOtherClubsFromServer", () => {
       keptLocal: 0,
       renamed: 0,
       nameConflicts: [],
-      removed: 0,
-      keptReferenced: [],
+      hiddenLodges: [],
       dropped: 0,
     });
   });
@@ -1414,6 +1413,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     bookingOfficerPhone: string | null;
     name: string;
     centralId: string | null;
+    hiddenAt?: Date | null;
   };
 
   /**
@@ -1425,25 +1425,16 @@ describe("download keyed by the central server's lodge id (#64)", () => {
   function registry(initial: Row[]) {
     refs.clear();
     const rows = initial.map((r) => ({ ...r }));
-    mockDeleteMany.mockImplementation(async ({ where }: { where: { id: string; centralId: string } }) => {
-      const at = rows.findIndex((r) => r.id === where.id && r.centralId === where.centralId);
-      if (at < 0) return { count: 0 };
-      const [b, q] = refs.get(where.id) ?? [0, 0];
-      if (b + q > 0) {
-        throw new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
-          code: "P2003",
-          clientVersion: "test",
-        });
-      }
-      rows.splice(at, 1);
-      return { count: 1 };
-    });
-    // The raw "forget this id" of a kept deleted lodge: (strings, rowId, centralId).
+    // The download's raw writes (#58): hiding a deleted lodge, and unlinking a
+    // club lodge linked to it. Prisma.sql objects (the whole-download forget)
+    // are answered 0.
     mockExecuteRaw.mockImplementation(async (strings: TemplateStringsArray | { sql: string }, ...values: unknown[]) => {
-      if ("sql" in strings) return 0; // Prisma.sql (the whole-download forget)
+      if ("sql" in strings) return 0;
+      const sql = strings.join("?");
+      if (sql.startsWith('UPDATE "Lodge"')) return 0;
       const [rowId, centralId] = values as [string, string];
-      const target = rows.find((r) => r.id === rowId && r.centralId === centralId);
-      if (target) target.centralId = null;
+      const target = rows.find((r) => r.id === rowId && r.centralId === centralId && !r.hiddenAt);
+      if (target) target.hiddenAt = new Date("2026-10-15T00:00:00.000Z");
       return target ? 1 : 0;
     });
     const unique = () =>
@@ -1835,7 +1826,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
     const [query] = mockExecuteRaw.mock.calls[0] as [Prisma.Sql];
     expect(query.sql).toBe(
-      'UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "centralId" NOT IN (?)',
+      'UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "hiddenAt" IS NULL AND "centralId" NOT IN (?)',
     );
     expect(query.values).toEqual(["c-1"]);
   });
@@ -1848,7 +1839,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     await downloadOtherClubsFromServer();
 
     const [query] = mockExecuteRaw.mock.calls[0] as [Prisma.Sql];
-    expect(query.sql).toBe('UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL');
+    expect(query.sql).toBe('UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "hiddenAt" IS NULL');
     expect(query.values).toEqual([]);
   });
 
@@ -1912,83 +1903,83 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
   });
 
-  it("removes a lodge the server deleted when nothing here refers to it (#58)", async () => {
+  it("HIDES a lodge the server deleted, keeping the row, its data and its central id (#58)", async () => {
     const rows = registry([row("ol_1", "Gone Lodge", "c-gone"), row("ol_2", "Kept Lodge", "c-2")]);
     pull([], { deletedLodgeIds: ["c-gone"] });
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(rows.map((r) => r.id)).toEqual(["ol_2"]);
-    expect(result).toMatchObject({ removed: 1, keptReferenced: [] });
+    expect(rows.map((r) => [r.id, r.centralId, Boolean(r.hiddenAt)])).toEqual([
+      ["ol_1", "c-gone", true],
+      ["ol_2", "c-2", false],
+    ]);
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+    expect(result.hiddenLodges).toEqual(["Gone Lodge"]);
   });
 
-  it("KEEPS a deleted lodge that bookings or requests cite, forgets its id, and reports it (#58)", async () => {
-    const rows = registry([row("ol_1", "Cited Lodge", "c-gone")]);
-    refs.set("ol_1", [2, 1]);
+  it("unlinks a club lodge linked to the deleted central lodge (#62)", async () => {
+    registry([row("ol_1", "Gone Lodge", "c-gone")]);
     pull([], { deletedLodgeIds: ["c-gone"] });
 
-    const result = await downloadOtherClubsFromServer();
+    await downloadOtherClubsFromServer();
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0].centralId).toBeNull();
-    // Counted first: a cited lodge is never even attempted.
-    expect(mockDeleteMany).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      removed: 0,
-      keptReferenced: [{ lodge: "Cited Lodge", bookings: 2, bookingRequests: 1 }],
-    });
-    expect(mockLoggerWarn).toHaveBeenCalledWith(
-      { lodges: [{ lodge: "Cited Lodge", bookings: 2, bookingRequests: 1 }] },
-      expect.stringMatching(/kept here/i),
+    const unlink = mockExecuteRaw.mock.calls.find(
+      ([strings]) => Array.isArray(strings) && (strings as string[]).join("?").startsWith('UPDATE "Lodge"'),
     );
+    expect((unlink![0] as string[]).join("?")).toBe(
+      'UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" = ?',
+    );
+    expect(unlink![1]).toBe("c-gone");
   });
 
-  it("keeps a lodge cited between the count and the delete (the foreign key refuses it)", async () => {
-    const rows = registry([row("ol_1", "Raced Lodge", "c-gone")]);
-    const realFind = mockFindUnique.getMockImplementation()!;
-    mockFindUnique.mockImplementation(async (args: { where: Record<string, string> }) => {
-      const found = await realFind(args);
-      refs.set("ol_1", [1, 0]); // a booking cites it right after the count
-      return found ? { ...found, _count: { bookings: 0, bookingRequests: 0 } } : found;
-    });
-    pull([], { deletedLodgeIds: ["c-gone"] });
+  it("does nothing for a deleted lodge this site never had, or already hid", async () => {
+    const rows = registry([{ ...row("ol_1", "Old Lodge", "c-1"), hiddenAt: new Date("2026-01-01T00:00:00.000Z") }]);
+    pull([], { deletedLodgeIds: ["c-never", "c-1"] });
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0].centralId).toBeNull();
-    expect(result.keptReferenced).toHaveLength(1);
+    expect(result.hiddenLodges).toEqual([]);
+    expect(rows[0].hiddenAt).toEqual(new Date("2026-01-01T00:00:00.000Z"));
   });
 
-  it("does nothing for a deleted lodge this site never had, or already removed", async () => {
-    registry([row("ol_1", "Other Lodge", "c-1")]);
-    pull([], { deletedLodgeIds: ["c-never"] });
-
-    const result = await downloadOtherClubsFromServer();
-
-    expect(mockDeleteMany).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ removed: 0, keptReferenced: [] });
-  });
-
-  it("deletes NOTHING when the server sends no deletion list (an older server)", async () => {
-    registry([row("ol_1", "Other Lodge", "c-1")]);
+  it("hides NOTHING when the server sends no deletion list (an older server)", async () => {
+    const rows = registry([row("ol_1", "Other Lodge", "c-1")]);
     pull([], { deletedLodgeIds: undefined });
 
     await downloadOtherClubsFromServer();
 
-    expect(mockDeleteMany).not.toHaveBeenCalled();
+    expect(rows[0].hiddenAt ?? null).toBeNull();
   });
 
-  it("applies a deletion AFTER the merge, so a lodge changed and deleted in one pull ends deleted", async () => {
+  it("hides a lodge both changed and deleted in one pull, without merging the change", async () => {
     const rows = registry([row("ol_1", "Busy Lodge", "c-1")]);
     pull([remoteLodge("Busy Lodge", { id: "c-1", bedCapacity: 99 })], { deletedLodgeIds: ["c-1"] });
 
     await downloadOtherClubsFromServer();
 
-    expect(rows).toHaveLength(0);
-    expect(mockDeleteMany.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mockUpdateMany.mock.invocationCallOrder.at(-1) ?? 0,
-    );
+    expect(rows[0]).toMatchObject({ hiddenAt: expect.any(Date), bedCapacity: 24 });
+  });
+
+  it("never matches a HIDDEN row to another lodge by name (its bookings stay its own)", async () => {
+    const rows = registry([{ ...row("ol_old", "Ruapehu Lodge", null), hiddenAt: new Date("2026-01-01T00:00:00.000Z") }]);
+    pull([remoteLodge("Ruapehu Lodge", { id: "c-new" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toEqual([expect.objectContaining({ id: "ol_old", centralId: null })]);
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(result.nameConflicts).toEqual([{ lodge: null, wanted: "Ruapehu Lodge" }]);
+  });
+
+  it("leaves a hidden row's central id alone when a clean whole download forgets unlisted ids", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    const [query] = mockExecuteRaw.mock.calls.at(-1) as [Prisma.Sql];
+    expect(query.sql).toContain('"hiddenAt" IS NULL');
   });
 
   it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {

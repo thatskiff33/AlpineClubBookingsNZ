@@ -274,7 +274,8 @@ export async function buildBookingDetailEditorData({
     otherLodgeId: booking.otherLodgeId,
     ...(viewerAuthorizationRole === "ADMIN"
       ? {
-          otherLodges: await getPublicOtherLodges(prisma),
+          // The lodge this booking already names stays offered even when hidden (#58).
+          otherLodges: await getPublicOtherLodges(prisma, booking.otherLodgeId),
           // #2978: which guests may be ticked. Resolved server-side because the
           // answer needs membership types and the unpaid-subscription set, and
           // shipped in the SAME admin-only spread as the registry above for a

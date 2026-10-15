@@ -58,7 +58,8 @@ vi.mock("@/lib/prisma", () => ({
     // it asserted before.
     manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: h.bookingFindUnique },
-    otherLodge: { findUnique: h.otherLodgeFindUnique },
+    // `findFirst` (#58): a newly chosen lodge must also be visible.
+    otherLodge: { findUnique: h.otherLodgeFindUnique, findFirst: h.otherLodgeFindUnique },
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },

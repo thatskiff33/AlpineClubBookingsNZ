@@ -4790,7 +4790,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // no query and the election reaches the fence on this harness.
       const tx = Object.assign(makeTx(twoGuestBooking({ memberGuest: false })), {
         otherLodge: {
-          findUnique: vi.fn().mockResolvedValue({ id: "lodge-other" }),
+          // `findFirst` (#58): a newly chosen lodge must also be visible.
+          findFirst: vi.fn().mockResolvedValue({ id: "lodge-other" }),
         },
       });
       tx.manualRefundTask.findFirst.mockResolvedValue(openReview);

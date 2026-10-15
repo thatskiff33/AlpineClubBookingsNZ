@@ -109,12 +109,13 @@ export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
  * generated `OtherLodge` type is scalar-only (relations such as `amenities` are
  * not on it), so the only columns excused are the identity and timestamp ones
  * — `centralId` (#64) is identity too: the central server's key for the row,
- * written by the download merge, never edited or uploaded as data.
+ * written by the download merge, never edited or uploaded as data — and
+ * `hiddenAt` (#58) is lifecycle, set by the download or an admin's Hide.
  * When the check fails, the annotation names the unlisted column.
  */
 type UnlistedOtherLodgeColumn = Exclude<
   keyof OtherLodge,
-  "id" | "name" | "centralId" | "createdAt" | "updatedAt" | OtherLodgeDataField
+  "id" | "name" | "centralId" | "hiddenAt" | "createdAt" | "updatedAt" | OtherLodgeDataField
 >;
 const EVERY_OTHER_LODGE_COLUMN_IS_LISTED: [UnlistedOtherLodgeColumn] extends [never]
   ? true
@@ -156,6 +157,31 @@ export const otherLodgeAmenitiesSelect = {
   select: { name: true, description: true },
   orderBy: { name: "asc" },
 } as const;
+
+/**
+ * The lodges this site offers (#58): not hidden. A hidden lodge — deleted on
+ * the central server, or hidden by an administrator — keeps its row for the
+ * bookings and requests that name it, and is left out of every list and
+ * drop-down that offers a lodge to choose.
+ */
+export const visibleOtherLodgeWhere = { hiddenAt: null } satisfies Prisma.OtherLodgeWhereInput;
+/** Which lodges a drop-down offers: the visible ones, plus `keepId` (the one a
+ * record being edited already names, even hidden), never offered to anything new. */
+export const otherLodgeChoicesWhere = (keepId: string | null): Prisma.OtherLodgeWhereInput =>
+  keepId ? { OR: [visibleOtherLodgeWhere, { id: keepId }] } : visibleOtherLodgeWhere;
+
+/**
+ * The ONE rule for "the central server does not list this lodge" (#64): once
+ * a whole-registry download has keyed the registry (`otherLodgesKeyedAt`), a
+ * row still without a central id. Read by the admin list (the panel's mark)
+ * and by the Hide route (#58), so the two cannot disagree.
+ */
+export function isNotOnCentralServer(
+  lodge: { centralId: string | null },
+  keyedAt: string | null,
+): boolean {
+  return Boolean(keyedAt) && !lodge.centralId;
+}
 
 export const otherLodgeSelect = {
   id: true,

@@ -838,8 +838,8 @@ describe("Other lodges: renaming our own lodge and lodges the server no longer h
   });
 });
 
-describe("Other lodges: removing a lodge the central server does not list (#58)", () => {
-  it("offers Remove only on a not-found lodge nothing refers to", async () => {
+describe("Other lodges: hiding a lodge the central server does not list (#58)", () => {
+  it("offers Hide on every not-found lodge, cited or not, and never on a listed one", async () => {
     stubFetch({
       ...oneOwned(),
       otherLodges: [
@@ -849,55 +849,56 @@ describe("Other lodges: removing a lodge the central server does not list (#58)"
       ],
     });
     await renderPanel();
-    expect(screen.getByRole("button", { name: "Remove Ruapehu Hut" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Remove Cited Hut" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove Tararua Lodge" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Hide Ruapehu Hut" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide Cited Hut" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Hide Tararua Lodge" })).toBeNull();
   });
 
-  it("asks first, then removes through the route and reloads the list", async () => {
+  it("asks first, hides through the route, reloads, announces it and moves focus to the list's heading", async () => {
     stubFetch(
-      { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] },
+      { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 2, bookingRequests: 0 } })] },
       () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
     );
     await renderPanel();
     const getsBefore = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length;
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove Ruapehu Hut" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide Ruapehu Hut" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/cannot be undone/i)).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole("button", { name: /^remove$/i }));
+    expect(within(dialog).getByText(/bookings and booking requests that already name it keep it/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^hide$/i }));
 
-    await waitFor(() => {
-      const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
-      expect(posts.map(([url]) => url)).toEqual(["/api/admin/other-lodges/ol-2/remove"]);
-    });
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore),
-    );
+    expect(await screen.findByText("Ruapehu Hut is hidden.")).toBeTruthy();
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts.map(([url]) => url)).toEqual(["/api/admin/other-lodges/ol-2/hide"]);
+    expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore);
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Other lodges"));
   });
 
   it("sends nothing when the administrator cancels", async () => {
     stubFetch({ ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] });
     await renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Remove Ruapehu Hut" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide Ruapehu Hut" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
-  it("shows the route's refusal", async () => {
+  it("shows the route's refusal by the list and reloads it, since the list is out of date", async () => {
     stubFetch(
       { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] },
       () => ({
         ok: false,
         status: 409,
-        json: async () => ({ error: "This lodge cannot be removed: bookings or booking requests still refer to it." }),
+        json: async () => ({ error: "Only a lodge marked “Not found on the Alpine Central Server” can be hidden here." }),
       }),
     );
     await renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Remove Ruapehu Hut" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /^remove$/i }));
-    expect(await screen.findByText(/still refer to it/i)).toBeTruthy();
+    const getsBefore = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length;
+    fireEvent.click(screen.getByRole("button", { name: "Hide Ruapehu Hut" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /^hide$/i }));
+    const status = await screen.findByText(/can be hidden here/i);
+    expect(status.getAttribute("role")).toBe("status");
+    expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore);
   });
 });

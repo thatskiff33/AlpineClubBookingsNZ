@@ -95,7 +95,7 @@ import {
   lodgeNullTolerantScope,
   lodgeOrderBy,
 } from "@/lib/lodges";
-import { otherLodgeOrderBy } from "@/lib/other-lodges";
+import { otherLodgeChoicesWhere, otherLodgeOrderBy, visibleOtherLodgeWhere } from "@/lib/other-lodges";
 // ONE definition of the open-status list, shared with the member DTO so the
 // Withdraw affordance is derived from the same list this file's WHERE clauses
 // name rather than restating it (#2263 review finding M3).
@@ -414,16 +414,16 @@ export async function getPublicBookingRequestLodges(
 
 /**
  * The external / partner lodges a requester may say they belong to (#2749).
- * id + name only — this backs a public form drop-down. Unlike the own-lodge
- * list this is always returned (even for one entry); the form shows a "No"
- * default and treats a blank selection as "not a member of another lodge".
+ * id + name only — this backs a public form drop-down. Always returned (even
+ * for one entry); a blank selection means "not a member of another lodge".
+ * Hidden lodges are not offered, bar the `keepId` a record already names (#58).
  */
 export async function getPublicOtherLodges(
-  db: Pick<typeof prisma, "otherLodge"> = prisma
+  db: Pick<typeof prisma, "otherLodge"> = prisma, keepId: string | null = null
 ): Promise<Array<{ id: string; name: string }>> {
   return db.otherLodge.findMany({
-    orderBy: otherLodgeOrderBy(),
-    select: { id: true, name: true },
+    where: otherLodgeChoicesWhere(keepId),
+    orderBy: otherLodgeOrderBy(), select: { id: true, name: true },
   });
 }
 
@@ -437,8 +437,8 @@ export async function assertRequestedOtherLodgeExists(
   db: Pick<typeof prisma, "otherLodge"> = prisma
 ): Promise<string | null> {
   if (!otherLodgeId) return null;
-  const otherLodge = await db.otherLodge.findUnique({
-    where: { id: otherLodgeId },
+  const otherLodge = await db.otherLodge.findFirst({
+    where: { id: otherLodgeId, ...visibleOtherLodgeWhere },
     select: { id: true },
   });
   if (!otherLodge) {

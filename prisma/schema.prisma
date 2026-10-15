@@ -5259,6 +5259,12 @@ model OtherLodge {
   // download has matched the row by name once; a row still null after a whole
   // registry download is one the central server no longer has.
   centralId           String?  @unique @db.VarChar(64)
+  // Hidden here (#58): set when the central server reports the lodge deleted,
+  // or when an administrator hides a lodge the server does not list. The row
+  // and its data stay, so every booking and booking request that names it
+  // keeps it; it is left out of the Other lodges list and every drop-down.
+  // Never cleared.
+  hiddenAt            DateTime?
   location            String?  @db.VarChar(300)
   bookingOfficerName  String?  @db.VarChar(200)
   bookingOfficerEmail String?  @db.VarChar(320)

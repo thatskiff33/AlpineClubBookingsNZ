@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import {
+  isNotOnCentralServer,
   otherLodgeOrderBy,
   otherLodgeSelect,
   serializeOtherLodgeForAdmin,
   type AdminOtherLodgesResponse,
   type OtherLodgeReferences,
+  visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
@@ -20,19 +22,21 @@ import { requireAdmin } from "@/lib/session-guards";
 // row's `owned` flag is the route's own `ownsOtherLodge` answer. Another club's
 // booking officer PHONE is not sent at all (`serializeOtherLodgeForAdmin`).
 //
-// A row with no central id after a whole-registry download has merged to the
-// end (#64, `otherLodgesKeyedAt`) is one that download did not match: usually a
-// duplicate left by a rename before #64, or a lodge deleted on the server
-// before then. It is marked, with what still cites it, so an administrator can
-// assess it; nothing removes it here (deletion is #58). A lodge deleted on the
-// server AFTER keying keeps its id and is #58's to find. Before that download
-// (a site not yet downloaded since upgrading) nothing is marked.
+// A HIDDEN lodge (#58) is not listed at all: deleted on the central server, or
+// hidden by an administrator, it is kept only for the bookings and requests
+// that name it, where it still shows.
+//
+// A row the central server does not list (`isNotOnCentralServer`, #64) is
+// marked, with what still cites it, so an administrator can assess it and hide
+// it (#58): usually a duplicate left by a rename before #64, or a lodge deleted
+// there before it told clubs about deletions. Before a whole-registry download
+// has keyed the registry (a site not yet downloaded since upgrading) nothing is
+// marked.
 async function unkeyedLodgeReferences(
   lodges: ReadonlyArray<{ id: string; centralId: string | null }>,
   keyedAt: string | null,
 ): Promise<Map<string, OtherLodgeReferences>> {
-  if (!keyedAt) return new Map();
-  const unkeyed = lodges.filter((l) => !l.centralId).map((l) => l.id);
+  const unkeyed = lodges.filter((l) => isNotOnCentralServer(l, keyedAt)).map((l) => l.id);
   if (unkeyed.length === 0) return new Map();
   const rows = await prisma.otherLodge.findMany({
     where: { id: { in: unkeyed } },
@@ -54,6 +58,7 @@ export async function GET() {
 
   const [otherLodges, settings, version] = await Promise.all([
     prisma.otherLodge.findMany({
+      where: visibleOtherLodgeWhere,
       orderBy: otherLodgeOrderBy(),
       select: otherLodgeSelect,
     }),
