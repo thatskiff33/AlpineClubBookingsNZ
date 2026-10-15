@@ -34,7 +34,8 @@ import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { isHttpUrl } from "@/lib/http-url";
+import { isSafeHttpUrl } from "@/lib/http-url";
+import { OtherLodgeSiteUrlNote, SITE_URL_NOTE_ID } from "./other-lodge-site-url-note";
 import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
@@ -321,6 +322,7 @@ export function OtherLodgesPanel({
                     type={TEXT_FIELDS[field].type}
                     placeholder={TEXT_FIELDS[field].placeholder}
                     maxLength={TEXT_FIELDS[field].maxLength}
+                    aria-describedby={field === "siteUrl" ? SITE_URL_NOTE_ID : undefined}
                     value={form.text[field]}
                     onChange={(event) =>
                       setForm((prev) => ({
@@ -329,6 +331,7 @@ export function OtherLodgesPanel({
                       }))
                     }
                   />
+                  {field === "siteUrl" ? <OtherLodgeSiteUrlNote value={form.text.siteUrl} /> : null}
                 </div>
               ))}
               {WHOLE_NUMBER_FIELD_NAMES.map((field) => (
@@ -640,9 +643,9 @@ export function OtherLodgesPanel({
                         )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {/* A link only for an http(s) address, which is all the
-                            API accepts; anything else is shown as plain text. */}
-                        {lodge.siteUrl && isHttpUrl(lodge.siteUrl) ? (
+                        {/* A link only for an address that passes the central
+                            server's stricter rule (#55); anything else is text. */}
+                        {lodge.siteUrl && isSafeHttpUrl(lodge.siteUrl) ? (
                           <a
                             href={lodge.siteUrl}
                             target="_blank"

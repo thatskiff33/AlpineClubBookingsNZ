@@ -2265,3 +2265,58 @@ describe("upload answers are matched by position and id, never by name (#69, API
     expect(items[0]).toMatchObject({ id: "c-2", name: "Kea Lodge" });
   });
 });
+
+describe("upload leaves out a booking page address the server would refuse (#55)", () => {
+  it("sends the lodge without that address, keeps a good one, and names the lodge in a warning", async () => {
+    mockFindMany.mockResolvedValue(
+      ownAll([
+        { ...localCopyOf("ol_1", "2026-08-10T00:00:00.000Z"), name: "Odd Lodge", siteUrl: "https://club.test@evil.test" },
+        { ...localCopyOf("ol_2", "2026-08-11T00:00:00.000Z"), name: "Fine Lodge", siteUrl: "https://fine.test/book" },
+        { ...localCopyOf("ol_3", "2026-08-12T00:00:00.000Z"), name: "No Page Lodge", siteUrl: null },
+      ]),
+    );
+    mockUploadOtherLodges.mockResolvedValue({
+      created: 0,
+      updated: 3,
+      unchanged: 0,
+      skipped: 0,
+      results: [
+        { name: "Odd Lodge", status: "updated" },
+        { name: "Fine Lodge", status: "updated" },
+        { name: "No Page Lodge", status: "updated" },
+      ],
+    });
+
+    await uploadOtherClubsToServer();
+
+    const [[items]] = mockUploadOtherLodges.mock.calls;
+    expect(items[0]).not.toHaveProperty("siteUrl");
+    expect(items[0]).toMatchObject({ name: "Odd Lodge", bedCapacity: 24 });
+    expect(items[1].siteUrl).toBe("https://fine.test/book");
+    // A cleared address still goes up as null: the server clears its copy.
+    expect(items[2]).toHaveProperty("siteUrl", null);
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      { lodges: ["Odd Lodge"] },
+      expect.stringMatching(/without their booking page address/i),
+    );
+    // The lodge was accepted, so the watermark moves past it.
+    expect(mockRecordUpload).toHaveBeenCalledWith(new Date("2026-08-12T00:00:00.000Z"));
+  });
+
+  it("warns about nothing when every address is fine", async () => {
+    mockFindMany.mockResolvedValue(
+      ownAll([{ ...localCopyOf("ol_1", "2026-08-10T00:00:00.000Z"), name: "Fine Lodge", siteUrl: "https://fine.test" }]),
+    );
+    mockUploadOtherLodges.mockResolvedValue({
+      created: 0,
+      updated: 1,
+      unchanged: 0,
+      skipped: 0,
+      results: [{ name: "Fine Lodge", status: "updated" }],
+    });
+
+    await uploadOtherClubsToServer();
+
+    expect(mockLoggerWarn).not.toHaveBeenCalled();
+  });
+});

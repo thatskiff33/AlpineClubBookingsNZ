@@ -11,6 +11,7 @@ import {
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
 import { createAuditLog } from "@/lib/audit";
+import { isSafeHttpUrl } from "@/lib/http-url";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -130,10 +131,19 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // would delete the rest.
   // The rates leave as the server's dollar keys, never as the `…Cents`
   // columns (#61): the server's item schema is strict and would refuse them.
+  // A booking page address the central server would refuse (#55: saved here
+  // before this site held it to the server's stricter rule) is LEFT OUT of
+  // that lodge's item (owner decision), so the server keeps what it had and
+  // the rest of the lodge, and every other lodge, still goes up. A refused
+  // item would fail the whole upload. One warning names the lodges.
+  const oddSiteUrls: string[] = [];
   const result = await uploadOtherLodges(
     lodges.map((l) => {
       const data = serializeOtherLodgeData(l);
-      const commonData = omitRateFields(data);
+      const { siteUrl, ...rest } = omitRateFields(data);
+      const keepSiteUrl = siteUrl == null || isSafeHttpUrl(siteUrl);
+      if (!keepSiteUrl) oddSiteUrls.push(l.name);
+      const commonData = keepSiteUrl ? { ...rest, siteUrl } : rest;
       return {
         // The central id, once known (#64, API 2.3): the server matches the
         // item by it, so a name changed here renames the lodge there.
@@ -145,6 +155,13 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
       };
     }),
   );
+
+  if (oddSiteUrls.length > 0) {
+    logger.warn(
+      { lodges: oddSiteUrls },
+      "Other lodges uploaded without their booking page address, which the central server would refuse; fix it on the Lodges page",
+    );
+  }
 
   // Advance the watermark to the newest `updatedAt` the server ACCEPTED. Any row
   // edited after this read has a larger `updatedAt` and is caught next time.

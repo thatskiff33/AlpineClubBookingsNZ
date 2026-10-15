@@ -596,6 +596,10 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     ["an unknown key", { distribute: true }],
     ["a site URL that is not http(s)", { siteUrl: "javascript:alert(1)" }],
     ["a site URL with no scheme", { siteUrl: "lodge.test" }],
+    // #55: the central server's stricter rule.
+    ["a site URL with a login before the host", { siteUrl: "https://ruapehu.test@evil.test" }],
+    ["a site URL with a backslash", { siteUrl: "http:\\\\evil.test" }],
+    ["a site URL with a tab", { siteUrl: "https:/\t/evil.test" }],
     ["a season start that is not a real date", { winterSeasonStart: "2026-02-30" }],
     ["a season start that is not YYYY-MM-DD", { summerSeasonStart: "01/06/2026" }],
     ["a non-boolean facility", { freeWifi: "yes" }],

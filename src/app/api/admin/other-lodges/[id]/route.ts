@@ -13,6 +13,7 @@ import {
   otherLodgeDataShape,
   otherLodgeNameSchema,
   otherLodgeSelect,
+  otherLodgeSiteUrlInputSchema,
   canRenameOtherLodge,
   ownsOtherLodge,
   replaceOtherLodgeAmenities,
@@ -38,6 +39,9 @@ const patchSchema = z
   .object({
     name: otherLodgeNameSchema.optional(),
     ...otherLodgeDataShape,
+    // Stricter than the pull's: the address must be one the central server
+    // accepts, or the next upload would be refused (#55).
+    siteUrl: otherLodgeSiteUrlInputSchema,
     amenities: amenitiesInputSchema.optional(),
   })
   .strict();

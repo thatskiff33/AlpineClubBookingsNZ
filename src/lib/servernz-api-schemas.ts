@@ -35,9 +35,12 @@ import {
  * `distribute` and provenance are never sent by clients. `id` (API 2.3, #64)
  * is the lodge's central id, once known: the server matches the item by it, so
  * a changed `name` renames the lodge there rather than creating a second one.
+ * `siteUrl` may be left out (#55): the server leaves a field it is not sent
+ * alone, and an address it would refuse is not sent.
  */
-export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField> &
+export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField | "siteUrl"> &
   ServerRates & {
+    siteUrl?: SerializedOtherLodgeData["siteUrl"];
     id?: string;
     name: string;
     amenities: OtherLodgeAmenity[];
