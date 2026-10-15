@@ -48,6 +48,7 @@ import {
 import {
   DATE_FIELDS,
   DATE_FIELD_NAMES,
+  SEASON_DATES_HINT,
   FACILITY_FIELDS,
   FACILITY_LABELS,
   ROOM_TYPE_CHOICES,
@@ -385,16 +386,13 @@ export function OtherLodgesPanel({
                   <Input
                     id={`other-lodge-${field}`}
                     type="date"
+                    aria-describedby="other-lodge-season-hint"
                     value={form.dates[field]}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        dates: { ...prev.dates, [field]: event.target.value },
-                      }))
-                    }
+                    onChange={(event) => setForm((prev) => ({ ...prev, dates: { ...prev.dates, [field]: event.target.value } }))}
                   />
                 </div>
               ))}
+              <p id="other-lodge-season-hint" className="text-xs text-muted-foreground sm:col-span-2">{SEASON_DATES_HINT}</p>
             </div>
 
             <OtherLodgeRateGrid

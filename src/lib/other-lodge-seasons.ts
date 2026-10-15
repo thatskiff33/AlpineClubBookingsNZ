@@ -49,20 +49,26 @@ function inRange(day: string, range: Range): boolean {
 }
 
 function ranges(dates: SeasonDates): { winter: Range | null; summer: Range | null } {
-  return {
-    winter: rangeOf(dates.winterSeasonStart, dates.winterSeasonEnd, dates.summerSeasonStart),
-    summer: rangeOf(dates.summerSeasonStart, dates.summerSeasonEnd, dates.winterSeasonStart),
-  };
+  const winter = rangeOf(dates.winterSeasonStart, dates.winterSeasonEnd, dates.summerSeasonStart);
+  const summer = rangeOf(dates.summerSeasonStart, dates.summerSeasonEnd, dates.winterSeasonStart);
+  return { winter: leapDayCovered(winter, summer), summer: leapDayCovered(summer, winter) };
 }
 
-/** Every `MM-DD` of a leap year, 29 February included. */
-const DAYS_OF_YEAR: string[] = (() => {
-  const days: string[] = [];
-  for (let d = new Date(Date.UTC(2024, 0, 1)); d.getUTCFullYear() === 2024; d.setUTCDate(d.getUTCDate() + 1)) {
-    days.push(d.toISOString().slice(5, 10));
-  }
-  return days;
-})();
+/**
+ * A season ending on 28 February also takes 29 February in a leap year, unless
+ * the other season starts that day: a date picker set to a common year cannot
+ * offer the 29th, and a summer ending 28 February with a winter starting
+ * 1 March must not leave the leap day in neither season.
+ */
+function leapDayCovered(range: Range | null, other: Range | null): Range | null {
+  if (!range || !range.inclusive || range.end !== "02-28" || other?.start === "02-29") return range;
+  return { ...range, end: "02-29" };
+}
+
+/** Every `MM-DD` of a leap year, 29 February included, built from month lengths. */
+const DAYS_OF_YEAR: string[] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31].flatMap((length, month) =>
+  Array.from({ length }, (_, day) => `${String(month + 1).padStart(2, "0")}-${String(day + 1).padStart(2, "0")}`),
+);
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -71,11 +77,6 @@ function spoken(day: string): string {
   return `${Number(date)} ${MONTHS[Number(month) - 1]}`;
 }
 
-/**
- * Why these season dates cannot be saved, in words an administrator can act
- * on, or null when they are fine. Checks the seasons as they will be used,
- * the fallback for a missing end included.
- */
 /**
  * Why these season dates cannot be saved, in words an administrator can act
  * on, or null when they are fine. Checks the seasons as they will be used,
@@ -92,6 +93,16 @@ export function seasonDatesProblem(dates: SeasonDates): string | null {
     }
   }
   const { winter, summer } = ranges(dates);
+  if (dates.winterSeasonStart && dates.summerSeasonStart && !dates.winterSeasonEnd && !dates.summerSeasonEnd
+    && monthDay(dates.winterSeasonStart) === monthDay(dates.summerSeasonStart)) {
+    return "The winter and summer seasons cannot start on the same day.";
+  }
+  for (const [label, range] of [["winter", winter], ["summer", summer]] as const) {
+    // A season with no end running to the other's start, which is its own.
+    if (range && !range.inclusive && range.start === range.end) {
+      return `The ${label} season has no end date and starts the same day as the other season. Give it an end date.`;
+    }
+  }
   if (!winter || !summer) return null;
   const shared = DAYS_OF_YEAR.find((day) => inRange(day, winter) && inRange(day, summer));
   return shared

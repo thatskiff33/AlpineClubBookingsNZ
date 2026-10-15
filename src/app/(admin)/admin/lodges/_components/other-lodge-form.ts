@@ -81,6 +81,10 @@ export const ROOM_TYPE_CHOICES: ReadonlyArray<readonly [RoomTypeChoice, string]>
   ...OTHER_LODGE_ROOM_TYPES.map((value) => [value, ROOM_TYPE_LABELS[value]] as const),
   ["", "Not stated"],
 ];
+/** Said under the season dates (#75): what the dates mean. */
+export const SEASON_DATES_HINT =
+  "Seasons repeat every year: only the day and month are used. The end date is the season's last day. Leave an end blank to run the season until the other one starts.";
+
 // Each season's start and end (#75), shown two to a row.
 export const DATE_FIELDS: Record<OtherLodgeDateField, string> = {
   winterSeasonStart: "Winter season start date",

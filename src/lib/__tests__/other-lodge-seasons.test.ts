@@ -15,6 +15,8 @@ describe("seasonDatesProblem (#75, the central server's rule)", () => {
     expect(seasonDatesProblem({ ...BOTH, winterSeasonEnd: null, summerSeasonEnd: null })).toBeNull();
     expect(seasonDatesProblem({ ...BOTH, winterSeasonEnd: "2026-11-30" })).toBeNull();
     expect(seasonDatesProblem({})).toBeNull();
+    // A summer ending 28 February and a winter from 1 March leave no gap.
+    expect(seasonDatesProblem({ summerSeasonStart: "2026-11-01", summerSeasonEnd: "2027-02-28", winterSeasonStart: "2026-03-01", winterSeasonEnd: "2026-10-31" })).toBeNull();
   });
 
   it.each([
@@ -23,6 +25,8 @@ describe("seasonDatesProblem (#75, the central server's rule)", () => {
     ["an overlap through a season with no end", { winterSeasonStart: "2026-06-01", summerSeasonStart: "2026-08-01", summerSeasonEnd: "2026-07-01" }, /overlap/],
     ["an end with no start", { winterSeasonEnd: "2026-09-30" }, /winter season has an end date but no start date/],
     ["a start and end on the same day of the year", { summerSeasonStart: "2026-12-01", summerSeasonEnd: "2027-12-01" }, /must be different days/],
+    ["two seasons starting the same day with no ends", { winterSeasonStart: "2026-06-01", summerSeasonStart: "2027-06-01" }, /cannot start on the same day/],
+    ["a no-end season starting with the other", { winterSeasonStart: "2026-06-01", summerSeasonStart: "2026-06-01", summerSeasonEnd: "2026-09-30" }, /starts the same day as the other season/],
   ] as const)("refuses %s", (_label, dates, message) => {
     expect(seasonDatesProblem(dates)).toMatch(message);
   });

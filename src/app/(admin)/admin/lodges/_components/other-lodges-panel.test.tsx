@@ -974,8 +974,9 @@ describe("Other lodges: season start and end dates (#75)", () => {
       "Summer season start date",
       "Summer season end date",
     ]) {
-      expect(within(dialog).getByLabelText(label)).toBeTruthy();
+      expect(within(dialog).getByLabelText(label).getAttribute("aria-describedby")).toBe("other-lodge-season-hint");
     }
+    expect(within(dialog).getByText(/only the day and month are used/)).toBeTruthy();
   });
 });
 
