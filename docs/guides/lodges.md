@@ -19,7 +19,7 @@ The same page also carries an **Other lodges** panel — a registry of every
 club's lodges as the
 [Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
 distributes it (name, location, booking officer name and email, bed capacity,
-website and booking details, season start dates, non-member rates, a
+website and booking details, season start and end dates, non-member rates, a
 facilities checklist and a list of amenities). These are **not** the club's own lodges in the sense of the
 properties above: they take no bookings and have no configuration hub. The
 list arrives by download and is read-only, with one exception: **your own
@@ -131,7 +131,7 @@ same **lodge edit** permission as the properties above.
    the **Non-member booking page URL**, the **Bed capacity**, **Double beds**,
    **Single beds** and **Minutes' walk to the lodge**, whether guests sleep in
    a **Room** or a **Dormitory** (or **Not stated**), the **Cancellation
-   period**, the dates its **winter** and **summer seasons start**, and its
+   period**, the dates its **winter** and **summer seasons start** and **end**, and its
    **Non-member rates** — what a non-member pays per person per night, in
    dollars and cents, for each season and age group (under 5, 5–12, 13–17,
    18+) — then **Save**.
@@ -211,7 +211,7 @@ answer; the panel is read-only again until the next download.
 | Room or dormitory | Whether guests sleep in private rooms or a dormitory | Not stated | A choice of **Room**, **Dormitory** or **Not stated** |
 | Non-member booking page URL | Where a non-member books the other lodge (the list's **Booking page** column) | — | Optional; up to 500 characters; must start with `http://` or `https://` as typed, with no spaces, backslashes, or user name and password in it (such as `https://club.nz@other.site`), because it is shown to every club as a link and the Alpine Central Server refuses anything else. An address saved before this rule is flagged when the form opens and must be corrected before the lodge can be saved again; until then it is shown as plain text and left out of the upload, so the central server keeps the address it had. Server API 2.1 replaced the old free-text **How to book** field with this one link |
 | Cancellation period | Free text, e.g. "14 days" | — | Optional; up to 200 characters |
-| Winter season starts / Summer season starts | The calendar date each season opens | — | Optional; a real date, stored and shared as a date with no time, so it is never shifted by time zone |
+| Winter season start date / end date, Summer season start date / end date | The first and last day of each season | — | Optional; a real date, stored and shared as a date with no time, so it is never shifted by time zone. Seasons repeat every year (only the day and month count) and may cross New Year, e.g. summer 1 December to 31 March. A season with no end date runs until the other season starts. The two seasons may not share a day, and a season's start and end must be different days: **Save** says what to change. The Alpine Central Server prices each night of a stay at its season's rates, and shows no price for nights outside both seasons |
 | Non-member rates | What a non-member pays per person per night, NZD incl. GST: a **Winter** and a **Summer** rate for each guideline age group (Under 5, 5–11, 12–17, 18+). Shown on the central server's public lodge search; nothing is charged from them here | blank | Optional; dollars and cents, 0 to 99,999.99, at most two decimal places (blank means not set, which is different from $0.00). Stored as whole cents and sent to the central server as dollars. Added with server API 2.2 |
 | Facilities | Requires a lodge custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included, ski workshop area, games room | all off | Yes/no each; *off* means **no**, and existing lodges start with every box off |
 | Amenities | Anything else the lodge offers | none | Up to 50 per lodge; each has a name (up to 120 characters, unique within the lodge ignoring case) and an optional description (up to 1000 characters). Saving replaces the whole list |

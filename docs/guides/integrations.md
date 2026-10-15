@@ -142,7 +142,7 @@ those clubs' pages. That is the lodge's name, location and bed count; its
 **booking officer's name, email and phone**; and the lodge details added
 alongside them — the non-member booking page URL, double and single beds, the
 minutes' walk in, room or dormitory, cancellation period, the winter and summer
-season start dates, the eleven yes/no facilities (requires a lodge custodian,
+season start and end dates, the eleven yes/no facilities (requires a lodge custodian,
 free wifi, quiet room, drying room, shared kitchen, wheelchair accessible,
 breakfast / lunch / dinner included, ski workshop area, games room), the eight
 **non-member rates** (winter and summer, per person per night, for under 5,
@@ -220,7 +220,7 @@ Downloading works the other way round: the central server's copy of every
 club's entry replaces yours, field by field and amenity list as a whole, unless
 your own copy was edited more recently — then yours is kept and sent up on the
 next upload. A field the server does not send is left exactly as you had it.
-Season start dates travel as calendar dates and are never shifted by time zone.
+Season start and end dates travel as calendar dates and are never shifted by time zone. The central server (API 2.6) skips an upload whose winter and summer seasons would share a day; this site refuses such dates at **Save** first.
 
 **Lodges are matched by the central server's permanent lodge id**, not by
 name, so a lodge renamed there is renamed here in place: its bookings and

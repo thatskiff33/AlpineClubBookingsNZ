@@ -594,6 +594,9 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
 
   it.each([
     ["an unknown key", { distribute: true }],
+    // #75: seasons that would share a day.
+    ["overlapping seasons", { winterSeasonStart: "2026-06-01", winterSeasonEnd: "2026-12-15", summerSeasonStart: "2026-12-01" }],
+    ["a season end with no start", { summerSeasonEnd: "2027-03-31" }],
     ["a site URL that is not http(s)", { siteUrl: "javascript:alert(1)" }],
     ["a site URL with no scheme", { siteUrl: "lodge.test" }],
     // #55: the central server's stricter rule.
@@ -634,3 +637,21 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(await response.json()).not.toHaveProperty("code");
   });
 });
+
+describe("PATCH /api/admin/other-lodges/[id]: season end dates (#75)", () => {
+  it("checks the seasons as the save would leave them: the sent end over the stored starts", async () => {
+    mocks.findUnique.mockResolvedValue(
+      record({ winterSeasonStart: new Date("2026-06-01T00:00:00.000Z"), summerSeasonStart: new Date("2026-12-01T00:00:00.000Z") }),
+    );
+    const refused = await PATCH(jsonRequest("PATCH", { winterSeasonEnd: "2026-12-10" }), params("ol-1"));
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).error).toMatch(/overlap/);
+    expect(mocks.update).not.toHaveBeenCalled();
+
+    mocks.update.mockResolvedValue(record());
+    const saved = await PATCH(jsonRequest("PATCH", { winterSeasonEnd: "2026-09-30" }), params("ol-1"));
+    expect(saved.status).toBe(200);
+    expect(mocks.update.mock.calls[0][0].data.winterSeasonEnd).toEqual(new Date("2026-09-30T00:00:00.000Z"));
+  });
+});
+

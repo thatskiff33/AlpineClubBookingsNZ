@@ -74,3 +74,29 @@ describe("other-lodge form: the booking page address (#55)", () => {
     },
   );
 });
+
+describe("other-lodge form: season start and end dates (#75)", () => {
+  const withDates = (dates: Partial<OtherLodgeFormState["dates"]>): OtherLodgeFormState => ({
+    ...emptyForm,
+    name: "Tararua Lodge",
+    dates: { ...emptyForm.dates, ...dates },
+  });
+
+  it("accepts seasons with a gap, and sends both end dates", () => {
+    const form = withDates({
+      winterSeasonStart: "2026-06-01",
+      winterSeasonEnd: "2026-09-30",
+      summerSeasonStart: "2026-12-01",
+      summerSeasonEnd: "2027-03-31",
+    });
+    expect(formProblem(form)).toBeNull();
+    expect(formPayload(form)).toMatchObject({ winterSeasonEnd: "2026-09-30", summerSeasonEnd: "2027-03-31" });
+  });
+
+  it("refuses overlapping seasons before any request", () => {
+    expect(
+      formProblem(withDates({ winterSeasonStart: "2026-06-01", winterSeasonEnd: "2026-12-15", summerSeasonStart: "2026-12-01" })),
+    ).toMatch(/overlap: both include 1 December/);
+  });
+});
+

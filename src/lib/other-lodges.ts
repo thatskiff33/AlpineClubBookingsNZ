@@ -60,10 +60,12 @@ export const OTHER_LODGE_ROOM_TYPES = [
   "DORMITORY",
 ] as const satisfies readonly OtherLodgeRoomType[];
 
-/** The `@db.Date` season starts: calendar dates, never instants (`INV-DATE-026`). */
+/** The `@db.Date` season starts and ends (#75): calendar dates, never instants (`INV-DATE-026`). */
 export const OTHER_LODGE_DATE_FIELDS = [
   "winterSeasonStart",
+  "winterSeasonEnd",
   "summerSeasonStart",
+  "summerSeasonEnd",
 ] as const;
 
 /**
@@ -422,8 +424,7 @@ export const otherLodgeCommonDataShape = {
     .nullable()
     .optional(),
   ...booleanShape,
-  winterSeasonStart: dateOnlyField,
-  summerSeasonStart: dateOnlyField,
+  ...(Object.fromEntries(OTHER_LODGE_DATE_FIELDS.map((f) => [f, dateOnlyField])) as Record<OtherLodgeDateField, typeof dateOnlyField>),
 };
 
 /** Every data column as the admin route takes it: the common shape plus rates in cents. */

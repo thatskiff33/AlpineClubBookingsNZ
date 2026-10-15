@@ -6,6 +6,7 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
+  OTHER_LODGE_DATE_FIELDS,
   OTHER_LODGE_NOT_OWNED_CODE,
   amenitiesInputSchema,
   otherLodgeAmenitiesDiffer,
@@ -21,6 +22,7 @@ import {
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
 import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
+import { seasonDatesProblem } from "@/lib/other-lodge-seasons";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
@@ -119,6 +121,15 @@ export async function PATCH(
       { status: 403 },
     );
   }
+  // The seasons as this save would leave them (#75): the dates it sends over
+  // the stored ones. The central server applies the same rule to the upload.
+  const stored = serializeOtherLodge(existing);
+  const seasons = Object.fromEntries(
+    OTHER_LODGE_DATE_FIELDS.map((f) => [f, parsed.data[f] !== undefined ? parsed.data[f] : stored[f]]),
+  );
+  const seasonProblem = seasonDatesProblem(seasons);
+  if (seasonProblem) return NextResponse.json({ error: seasonProblem }, { status: 400 });
+
   const newName = parsed.data.name?.trim();
   const renameTo = newName !== undefined && newName !== existing.name ? newName : null;
   if (renameTo !== null && !canRenameOtherLodge(owned, existing)) {

@@ -5297,7 +5297,11 @@ model OtherLodge {
   dinnerIncluded         Boolean   @default(false)
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
+  // A season's LAST day (#75, server API 2.6). Seasons recur: only day and
+  // month count. Unset, the season runs up to the other season's start.
+  winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
+  summerSeasonEnd        DateTime? @db.Date
   // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
   // GST, a winter and a summer rate for each guideline age group. INTEGER
   // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not

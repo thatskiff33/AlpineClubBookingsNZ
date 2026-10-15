@@ -163,7 +163,9 @@ const WIRE_DETAILS = {
   dinnerIncluded: true,
   cancellationPeriod: "14 days",
   winterSeasonStart: "2026-06-01",
+  winterSeasonEnd: null,
   summerSeasonStart: "2026-11-15",
+  summerSeasonEnd: null,
 };
 
 /**
@@ -198,7 +200,9 @@ const LOCAL_DETAILS = {
   ...WIRE_DETAILS,
   ...RATES_CENTS,
   winterSeasonStart: new Date("2026-06-01T00:00:00.000Z"),
+  winterSeasonEnd: null,
   summerSeasonStart: new Date("2026-11-15T00:00:00.000Z"),
+  summerSeasonEnd: null,
 };
 
 const AMENITIES = [
@@ -451,6 +455,7 @@ describe("lodge details and amenities round trip", () => {
         select: expect.objectContaining({
           siteUrl: true,
           winterSeasonStart: true,
+          winterSeasonEnd: true,
           amenities: expect.objectContaining({ select: { name: true, description: true } }),
         }),
       }),
@@ -480,7 +485,9 @@ describe("lodge details and amenities round trip", () => {
       dinnerIncluded: false,
       cancellationPeriod: null,
       winterSeasonStart: null,
+      winterSeasonEnd: null,
       summerSeasonStart: null,
+      summerSeasonEnd: null,
       amenities: [],
     });
 

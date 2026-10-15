@@ -1,4 +1,5 @@
 import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
+import { seasonDatesProblem } from "@/lib/other-lodge-seasons";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCentsPlain } from "@/lib/utils";
 import {
@@ -80,9 +81,12 @@ export const ROOM_TYPE_CHOICES: ReadonlyArray<readonly [RoomTypeChoice, string]>
   ...OTHER_LODGE_ROOM_TYPES.map((value) => [value, ROOM_TYPE_LABELS[value]] as const),
   ["", "Not stated"],
 ];
+// Each season's start and end (#75), shown two to a row.
 export const DATE_FIELDS: Record<OtherLodgeDateField, string> = {
-  winterSeasonStart: "Winter season starts",
-  summerSeasonStart: "Summer season starts",
+  winterSeasonStart: "Winter season start date",
+  winterSeasonEnd: "Winter season end date",
+  summerSeasonStart: "Summer season start date",
+  summerSeasonEnd: "Summer season end date",
 };
 export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   requiresLodgeCustodian: "Requires a lodge custodian",
@@ -257,6 +261,11 @@ export function formProblem(form: OtherLodgeFormState): string | null {
       return `${rateFieldLabel(field)} can be at most $${formatCentsPlain(OTHER_LODGE_BOUNDS.rateCentsMax)}.`;
     }
   }
+  // The season rules the save and the central server apply (#75).
+  const seasonProblem = seasonDatesProblem(
+    recordOf(DATE_FIELD_NAMES, (field) => form.dates[field].trim() || null),
+  );
+  if (seasonProblem) return seasonProblem;
   const siteUrl = form.text.siteUrl.trim();
   // The central server's stricter rule (#55): an address it would refuse is
   // refused here, at the form, rather than failing the next upload.

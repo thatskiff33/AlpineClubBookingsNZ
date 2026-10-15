@@ -82,7 +82,9 @@ function lodge(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
     lunchIncluded: false,
     dinnerIncluded: false,
     winterSeasonStart: null,
+    winterSeasonEnd: null,
     summerSeasonStart: null,
+    summerSeasonEnd: null,
     winterRateUnder5Cents: null,
     winterRate5To11Cents: null,
     winterRate12To17Cents: null,
@@ -959,3 +961,21 @@ describe("Other lodges: the booking page address (#55)", () => {
     expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
   });
 });
+
+describe("Other lodges: season start and end dates (#75)", () => {
+  it("offers each season's start and end date in the editor", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    for (const label of [
+      "Winter season start date",
+      "Winter season end date",
+      "Summer season start date",
+      "Summer season end date",
+    ]) {
+      expect(within(dialog).getByLabelText(label)).toBeTruthy();
+    }
+  });
+});
+
