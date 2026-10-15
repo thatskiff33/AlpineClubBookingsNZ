@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  ownedNamesAsLocal,
-  renameInOwnedNames,
-  usableCentralId,
-} from "@/lib/other-lodge-central-id";
-import { canRenameOtherLodge, ownedCentralLodgesSchema } from "@/lib/other-lodges";
+import { usableCentralId } from "@/lib/other-lodge-central-id";
+import { canRenameOtherLodge, ownedCentralLodgesSchema, ownsOtherLodge } from "@/lib/other-lodges";
 
 describe("usableCentralId (#64)", () => {
   it("keeps an id that could key a row", () => {
@@ -25,53 +21,35 @@ describe("usableCentralId (#64)", () => {
   });
 });
 
-describe("ownedNamesAsLocal (#64)", () => {
-  const own = [
-    { id: "c-1", name: "Server Name" },
-    { id: "c-2", name: "Second Lodge" },
-  ];
+describe("ownsOtherLodge: by central id only (#69)", () => {
+  const owned = [{ id: "c-1", name: "Ruapehu Lodge" }];
 
-  it("names an owned lodge by its LOCAL row's name when that row is keyed", () => {
-    const local = new Map([["c-1", "Our New Name"]]);
-    expect(ownedNamesAsLocal(["Server Name", "Second Lodge"], own, local)).toEqual([
-      "Our New Name",
-      "Second Lodge",
-    ]);
+  it("owns a keyed row by its id, whatever it is called here", () => {
+    expect(ownsOtherLodge(owned, { centralId: "c-1" })).toBe(true);
   });
 
-  it("keeps the server's names when it sent no ids (an older server)", () => {
-    const local = new Map([["c-1", "Our New Name"]]);
-    expect(ownedNamesAsLocal(["Server Name"], undefined, local)).toEqual(["Server Name"]);
+  it("never owns another lodge of the same name: its id says it is not ours", () => {
+    expect(ownsOtherLodge(owned, { centralId: "c-2" })).toBe(false);
   });
 
-  it("keeps an empty list as an answer", () => {
-    expect(ownedNamesAsLocal([], own, new Map())).toEqual([]);
+  it("never owns a row not keyed yet, even one with an owned lodge's name", () => {
+    // Another row of that name may be ours; the download keys it first.
+    expect(ownsOtherLodge(owned, { centralId: null })).toBe(false);
   });
 
-  it("never lists one name twice", () => {
-    const local = new Map([["c-1", "Second Lodge"]]);
-    expect(ownedNamesAsLocal(["Server Name", "Second Lodge"], own, local)).toEqual([
-      "Second Lodge",
-    ]);
-  });
-});
-
-describe("renameInOwnedNames (#64)", () => {
-  it("moves the one name and leaves the rest in order", () => {
-    expect(renameInOwnedNames(["A", "B", "C"], "B", "Bee")).toEqual(["A", "Bee", "C"]);
-  });
-
-  it("leaves a list without the old name as it was", () => {
-    expect(renameInOwnedNames(["A"], "B", "Bee")).toEqual(["A"]);
+  it("owns nothing while the list is unknown, or empty", () => {
+    expect(ownsOtherLodge(null, { centralId: "c-1" })).toBe(false);
+    expect(ownsOtherLodge([], { centralId: "c-1" })).toBe(false);
   });
 });
 
 describe("canRenameOtherLodge (#64)", () => {
   it("is true only for an owned lodge that is keyed", () => {
-    expect(canRenameOtherLodge(["Mine"], { name: "Mine", centralId: "c-1" })).toBe(true);
-    expect(canRenameOtherLodge(["Mine"], { name: "Mine", centralId: null })).toBe(false);
-    expect(canRenameOtherLodge(["Mine"], { name: "Theirs", centralId: "c-2" })).toBe(false);
-    expect(canRenameOtherLodge(null, { name: "Mine", centralId: "c-1" })).toBe(false);
+    const mine = [{ id: "c-1", name: "Mine" }];
+    expect(canRenameOtherLodge(mine, { centralId: "c-1" })).toBe(true);
+    expect(canRenameOtherLodge(mine, { centralId: null })).toBe(false);
+    expect(canRenameOtherLodge(mine, { centralId: "c-2" })).toBe(false);
+    expect(canRenameOtherLodge(null, { centralId: "c-1" })).toBe(false);
   });
 });
 

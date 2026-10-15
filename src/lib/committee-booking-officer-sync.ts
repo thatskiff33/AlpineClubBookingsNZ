@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { formatCommitteeMemberPhone } from "@/lib/committee";
 import { ownsOtherLodge, visibleOtherLodgeWhere } from "@/lib/other-lodges";
-import { loadOwnedOtherLodgeNames } from "@/lib/servernz-settings";
+import { loadOwnedOtherLodges } from "@/lib/servernz-settings";
 
 /**
  * Keep the "Other Clubs" registry's booking-officer contact in step with whoever
@@ -140,7 +140,8 @@ async function applyBookingOfficerContact(
 
   // WHICH ROWS ARE OURS. The central server's answer, when it has given one
   // (#52): the owned list on `ServerNzSettings`, read through the same rule the
-  // admin edit route, the upload and the panel apply (`ownsOtherLodge`). That
+  // admin edit route, the upload and the panel apply (`ownsOtherLodge`, by
+  // central id since #69: two lodges may share a name). That
   // closes the collision this block used to carry as a known limitation: a
   // `Lodge` is a BUILDING while an `OtherLodge` is a CLUB, so a club that named
   // one of its buildings exactly as another club's registry row had its booking
@@ -154,27 +155,34 @@ async function applyBookingOfficerContact(
   // folding — so the exposure above is bounded to a deliberate collision. A
   // stored list that is present but UNREADABLE writes nothing (fail closed, the
   // same answer the upload gives): the column is wrong, not the install new.
-  const owned = await loadOwnedOtherLodgeNames(db);
+  const owned = await loadOwnedOtherLodges(db);
   if (owned.unreadable) {
     return { updated: 0, holderMemberId: holder?.memberId ?? null };
   }
-  let candidateNames: string[];
-  if (owned.names !== null) {
-    candidateNames = owned.names;
+  let candidates: Prisma.OtherLodgeWhereInput;
+  if (owned.lodges !== null) {
+    if (owned.lodges.length === 0) {
+      return { updated: 0, holderMemberId: holder?.memberId ?? null };
+    }
+    // The owned rows, by central id only (#69): a row not keyed yet may be
+    // another club's lodge of the same name.
+    candidates = { centralId: { in: owned.lodges.map((l) => l.id) } };
   } else {
     const lodges = await db.lodge.findMany({ select: { name: true } });
-    candidateNames = [...new Set(lodges.map((lodge) => lodge.name))];
-  }
-  if (candidateNames.length === 0) {
-    return { updated: 0, holderMemberId: holder?.memberId ?? null };
+    const names = [...new Set(lodges.map((lodge) => lodge.name))];
+    if (names.length === 0) {
+      return { updated: 0, holderMemberId: holder?.memberId ?? null };
+    }
+    candidates = { name: { in: names } };
   }
 
   // Hidden lodges (#58) are not written into: they are deleted lodges kept.
   const rows = await db.otherLodge.findMany({
-    where: { name: { in: candidateNames }, ...visibleOtherLodgeWhere },
+    where: { ...candidates, ...visibleOtherLodgeWhere },
     select: {
       id: true,
       name: true,
+      centralId: true,
       bookingOfficerName: true,
       bookingOfficerEmail: true,
       bookingOfficerPhone: true,
@@ -183,9 +191,9 @@ async function applyBookingOfficerContact(
 
   let updated = 0;
   for (const row of rows) {
-    // The query above already selects by name; this is the ONE rule applied at
-    // the write, so the decision is `ownsOtherLodge`'s and not the query's.
-    if (owned.names !== null && !ownsOtherLodge(owned.names, row.name)) continue;
+    // The query above already selects the owned rows; this is the ONE rule
+    // applied at the write, so the decision is `ownsOtherLodge`'s, not the query's.
+    if (owned.lodges !== null && !ownsOtherLodge(owned.lodges, row)) continue;
     if (
       row.bookingOfficerName === contact.bookingOfficerName &&
       row.bookingOfficerEmail === contact.bookingOfficerEmail &&

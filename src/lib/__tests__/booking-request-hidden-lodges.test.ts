@@ -24,6 +24,21 @@ describe("getPublicOtherLodges (#58)", () => {
       OR: [{ hiddenAt: null }, { id: "ol-hidden" }],
     });
   });
+
+  it("labels two lodges of the same name with their locations, and sends no location (#69)", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      { id: "a", name: "Ruapehu Lodge", location: "Whakapapa" },
+      { id: "b", name: "Ruapehu Lodge", location: "Turoa" },
+      { id: "c", name: "Tasman Lodge", location: "Mt Cook" },
+    ]);
+    const choices = await getPublicOtherLodges({ otherLodge: { findMany } } as never);
+    expect(findMany.mock.calls[0][0].select).toEqual({ id: true, name: true, location: true });
+    expect(choices).toEqual([
+      { id: "a", name: "Ruapehu Lodge", label: "Ruapehu Lodge (Whakapapa)" },
+      { id: "b", name: "Ruapehu Lodge", label: "Ruapehu Lodge (Turoa)" },
+      { id: "c", name: "Tasman Lodge", label: "Tasman Lodge" },
+    ]);
+  });
 });
 
 describe("assertRequestedOtherLodgeExists (#58)", () => {

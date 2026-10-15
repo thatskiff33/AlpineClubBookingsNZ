@@ -402,9 +402,11 @@ providers, and fell four behind as the rest landed. Anything that turns on
   row stays on the bookings and requests that name it. The list is bounded
   (100,000) and each entry validated, and a download that hides anything
   writes one audit row naming the lodges. Which rows are the club's own is the server's answer
-  (`ownLodgeNames` on every pull), stored on the settings row and applied by
-  the one `ownsOtherLodge` rule to the upload, the admin edit route and the
-  panel; until that answer has been received the upload sends every changed row
+  (`ownLodges` on every pull, by central id since #69: two lodges may share a
+  name), stored on the settings row and applied by the one `ownsOtherLodge`
+  rule to the upload, the admin edit route, the committee officer sync and the
+  panel. A row not yet keyed by a central id falls back to its name, and an
+  upload answer keys it only while no other row holds that id; until that answer has been received the upload sends every changed row
   as before, and the admin edit route refuses everything. In the other
   direction the pull is held to the same `otherLodgeDataShape` the local admin
   is validated with (`src/lib/other-lodges.ts`), so the remote cannot place an

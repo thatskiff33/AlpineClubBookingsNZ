@@ -1,12 +1,6 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import {
-  ownedCentralLodgesSchema,
-  ownedOtherLodgeNamesSchema,
-  type OwnedCentralLodge,
-  type OwnedOtherLodgeNames,
-} from "@/lib/other-lodges";
-import { renameInOwnedNames } from "@/lib/other-lodge-central-id";
+import { ownedCentralLodgesSchema, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
 
@@ -26,29 +20,22 @@ export interface ServerNzSettingsValues {
   otherLodgesLastDownloadAt: string | null;
   otherLodgesCursor: string | null;
   /**
-   * The lodges the central server says this club owns (#52): `null` until a
-   * download from a server that sends the list has recorded it, `[]` when the
-   * server said the club owns none. See `ownsOtherLodge` in `@/lib/other-lodges`.
+   * The lodges the central server says this club owns (#52), with their
+   * permanent central ids (#62), which is how every "is this ours?" check
+   * matches them (#69, `ownsOtherLodge` in `@/lib/other-lodges`): `null` until
+   * a download has recorded the list, or when the stored value does not parse
+   * (read-only, like never-told), `[]` when the server said none.
    */
-  otherLodgesOwnedNames: OwnedOtherLodgeNames;
-  otherLodgesOwnedNamesAt: string | null;
+  otherLodgesOwnedLodges: OwnedCentralLodge[] | null;
   /**
-   * True when the column HOLDS a value that does not parse as a list of lodge
-   * names. `otherLodgesOwnedNames` is then `null` — read-only everywhere, like
+   * True when the column HOLDS a value that does not parse as the owned list.
+   * `otherLodgesOwnedLodges` is then `null` — read-only everywhere, like
    * never-told — but the upload and the committee sync, which would otherwise
    * fall back to their pre-#52 "send/write every row" behaviour on `null`,
    * read this flag and send or write NOTHING instead (fail closed): a column
    * that was written and is now unreadable is a defect, not a fresh install.
    */
-  otherLodgesOwnedNamesUnreadable: boolean;
-  /**
-   * The same owned lodges with their permanent central ids (#62): `null` when
-   * never told, or when the stored value does not parse (read-only, like
-   * never-told: nothing links to a lodge this site cannot read), `[]` when the
-   * server said none. Read by the "Central lodge" setting and the availability
-   * endpoint.
-   */
-  otherLodgesOwnedLodges: OwnedCentralLodge[] | null;
+  otherLodgesOwnedLodgesUnreadable: boolean;
   /**
    * When a whole-registry download last merged to the end (#64), or `null`:
    * until it is set every download asks for the whole registry, so each Other
@@ -72,44 +59,35 @@ const DEFAULTS: ServerNzSettingsValues = {
   otherLodgesLastUploadAt: null,
   otherLodgesLastDownloadAt: null,
   otherLodgesCursor: null,
-  otherLodgesOwnedNames: null,
-  otherLodgesOwnedNamesAt: null,
-  otherLodgesOwnedNamesUnreadable: false,
   otherLodgesOwnedLodges: null,
+  otherLodgesOwnedLodgesUnreadable: false,
   otherLodgesKeyedAt: null,
   serverVersion: null,
   serverVersionCheckedAt: null,
 };
 
 /** The stored owned list as read back: its three states, plus "present but unreadable". */
-export interface StoredOwnedOtherLodgeNames {
-  names: OwnedOtherLodgeNames;
+export interface StoredOwnedOtherLodges {
+  lodges: OwnedCentralLodge[] | null;
   unreadable: boolean;
 }
 
 /**
  * The stored owned list, read back through the same schema it was validated
- * with on the way in. A value that does not parse — anything but a bounded
- * array of lodge names — reads as UNKNOWN (`names: null`) so that nothing
- * treats junk as a lodge name or as "owns nothing", AND is flagged
- * `unreadable` so the writers that have a permissive fallback on `null` (the
- * upload, the committee officer sync) can fail closed instead. Exported so the
- * committee sync, which runs inside a caller's transaction and cannot use
- * `loadServerNzSettings`, reads the column through the same rule.
+ * with on the way in. A value that does not parse reads as UNKNOWN
+ * (`lodges: null`) so that nothing treats junk as a lodge or as "owns
+ * nothing", AND is flagged `unreadable` so the writers that have a permissive
+ * fallback on `null` (the upload, the committee officer sync) can fail closed
+ * instead. Exported so the committee sync, which runs inside a caller's
+ * transaction and cannot use `loadServerNzSettings`, reads the column through
+ * the same rule.
  */
-export function readOwnedOtherLodgeNames(stored: unknown): StoredOwnedOtherLodgeNames {
-  if (stored === null || stored === undefined) return { names: null, unreadable: false };
-  const parsed = ownedOtherLodgeNamesSchema.safeParse(stored);
-  return parsed.success
-    ? { names: parsed.data, unreadable: false }
-    : { names: null, unreadable: true };
-}
-
-/** The stored owned lodges with ids (#62); anything that does not parse reads as never told. */
-export function readOwnedCentralLodges(stored: unknown): OwnedCentralLodge[] | null {
-  if (stored === null || stored === undefined) return null;
+export function readOwnedOtherLodges(stored: unknown): StoredOwnedOtherLodges {
+  if (stored === null || stored === undefined) return { lodges: null, unreadable: false };
   const parsed = ownedCentralLodgesSchema.safeParse(stored);
-  return parsed.success ? parsed.data : null;
+  return parsed.success
+    ? { lodges: parsed.data, unreadable: false }
+    : { lodges: null, unreadable: true };
 }
 
 /**
@@ -117,50 +95,27 @@ export function readOwnedCentralLodges(stored: unknown): OwnedCentralLodge[] | n
  * one — for a writer that runs inside somebody else's transaction. Same rule as
  * `loadServerNzSettings`; a missing row is "never told".
  */
-export async function loadOwnedOtherLodgeNames(
+export async function loadOwnedOtherLodges(
   db: Pick<Prisma.TransactionClient, "serverNzSettings">,
-): Promise<StoredOwnedOtherLodgeNames> {
+): Promise<StoredOwnedOtherLodges> {
   const row = await db.serverNzSettings.findUnique({
     where: { id: SERVERNZ_SETTINGS_ID },
-    select: { otherLodgesOwnedNames: true },
+    select: { otherLodgesOwnedLodges: true },
   });
-  return readOwnedOtherLodgeNames(row?.otherLodgesOwnedNames);
+  return readOwnedOtherLodges(row?.otherLodgesOwnedLodges);
 }
 
 /**
  * Lock the settings row for the rest of the caller's transaction (#64). Taken by
- * the two writers of the owned list that derive it from other rows — the
- * download's record step (owned ids mapped to local names) and an admin's
- * rename — so neither can write back a list computed before the other
- * committed. A row lock on a singleton, not an advisory key: nothing else
- * orders against it. A missing row (never configured) locks nothing.
+ * the download's record step, which re-reads the connection and the cursor
+ * under it before recording, so a change made meanwhile is never overwritten
+ * by an older answer. A row lock on a singleton, not an advisory key: nothing
+ * else orders against it. A missing row (never configured) locks nothing.
  */
 export async function lockServerNzSettings(
   db: Pick<Prisma.TransactionClient, "$executeRaw">,
 ): Promise<void> {
   await db.$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = ${SERVERNZ_SETTINGS_ID} FOR UPDATE`;
-}
-
-/**
- * This site renamed one of its own lodges (#64): the stored owned list follows
- * the new name, inside the caller's transaction, so the lodge stays editable and
- * keeps uploading. A list that is unknown or unreadable is left alone (there is
- * then nothing this site owns to rename).
- */
-export async function renameOwnedOtherLodgeName(
-  db: Pick<Prisma.TransactionClient, "serverNzSettings" | "$executeRaw">,
-  from: string,
-  to: string,
-): Promise<void> {
-  // Locked BEFORE the read, as the download's record step does, so a download
-  // finishing at the same moment cannot write back the old name after us.
-  await lockServerNzSettings(db);
-  const owned = await loadOwnedOtherLodgeNames(db);
-  if (owned.names === null) return;
-  await db.serverNzSettings.update({
-    where: { id: SERVERNZ_SETTINGS_ID },
-    data: { otherLodgesOwnedNames: renameInOwnedNames(owned.names, from, to) },
-  });
 }
 
 /**
@@ -173,7 +128,7 @@ export async function loadServerNzSettings(): Promise<ServerNzSettingsValues> {
       where: { id: SERVERNZ_SETTINGS_ID },
     });
     if (!row) return { ...DEFAULTS };
-    const owned = readOwnedOtherLodgeNames(row.otherLodgesOwnedNames);
+    const owned = readOwnedOtherLodges(row.otherLodgesOwnedLodges);
     return {
       baseUrl: row.baseUrl,
       otherLodgesEnabled: row.otherLodgesEnabled,
@@ -181,10 +136,8 @@ export async function loadServerNzSettings(): Promise<ServerNzSettingsValues> {
       otherLodgesLastDownloadAt:
         row.otherLodgesLastDownloadAt?.toISOString() ?? null,
       otherLodgesCursor: row.otherLodgesCursor,
-      otherLodgesOwnedNames: owned.names,
-      otherLodgesOwnedNamesAt: row.otherLodgesOwnedNamesAt?.toISOString() ?? null,
-      otherLodgesOwnedNamesUnreadable: owned.unreadable,
-      otherLodgesOwnedLodges: readOwnedCentralLodges(row.otherLodgesOwnedLodges),
+      otherLodgesOwnedLodges: owned.lodges,
+      otherLodgesOwnedLodgesUnreadable: owned.unreadable,
       otherLodgesKeyedAt: row.otherLodgesKeyedAt?.toISOString() ?? null,
       serverVersion: row.serverVersion,
       serverVersionCheckedAt: row.serverVersionCheckedAt?.toISOString() ?? null,
@@ -308,14 +261,13 @@ export async function recordOtherLodgesUpload(at: Date = new Date()): Promise<vo
  * this writer does not — and it is the reason nothing here needs to re-read the
  * row. Do not "tidy up" either rule by storing whatever the caller had in hand.
  *
- * `ownLodgeNames` (#52) is the owned list the pull carried, recorded ONLY when
- * the server sent one: `undefined` means it did not (an older server) and the
- * stored list — and its timestamp — are left exactly as they were. An EMPTY
- * array is a real answer ("you own nothing") and IS stored.
+ * `ownLodges` (#52, #62) is the owned list the pull carried, recorded ONLY when
+ * the server sent a valid one: `undefined` means it did not, and the stored
+ * list — and its timestamp — are left exactly as they were. An EMPTY array is
+ * a real answer ("you own nothing") and IS stored.
  */
 export async function recordOtherLodgesDownload(
   cursor: string | null,
-  ownLodgeNames?: string[],
   ownLodges?: OwnedCentralLodge[],
   options: {
     /** This download asked for the whole registry and merged all of it (#64). */
@@ -325,21 +277,17 @@ export async function recordOtherLodgesDownload(
 ): Promise<void> {
   const db = options.db ?? prisma;
   const now = new Date();
-  // The names are written only when the server sent them: absent leaves the
-  // stored list alone. The ids follow the names, never outlive them: when this
-  // download records names but carried no usable ids (an older server, or ids
-  // that failed their bounds), the stored ids are CLEARED rather than kept, so
-  // the availability endpoint can never answer for a lodge the club no longer
-  // owns on the strength of an older list (fail closed: "never told").
+  // Written only when the server sent a valid list: absent leaves the stored
+  // one alone. `otherLodgesOwnedNamesAt` (named for the list it first timed)
+  // records when. The name-only list of API 2.4 and earlier
+  // (`otherLodgesOwnedNames`) is no longer read here (#69) and is LEFT AS IT
+  // WAS: the draining colour of a blue/green deploy still reads it, and
+  // clearing it would read there as "never told" (every edit refused, and the
+  // committee sync falling back to matching lodges by building name).
   const owned = {
-    ...(ownLodgeNames === undefined
+    ...(ownLodges === undefined
       ? {}
-      : { otherLodgesOwnedNames: ownLodgeNames, otherLodgesOwnedNamesAt: now }),
-    ...(ownLodges !== undefined
-      ? { otherLodgesOwnedLodges: ownLodges }
-      : ownLodgeNames !== undefined
-        ? { otherLodgesOwnedLodges: Prisma.DbNull }
-        : {}),
+      : { otherLodgesOwnedLodges: ownLodges, otherLodgesOwnedNamesAt: now }),
     ...(options.keyed ? { otherLodgesKeyedAt: now } : {}),
   };
   await db.serverNzSettings.upsert({

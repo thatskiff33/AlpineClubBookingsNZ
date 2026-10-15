@@ -79,9 +79,8 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
 
 /**
  * The Download result in one line. Renames (#64) are counted, and a lodge the
- * central server renamed to a name another lodge here already has is named —
- * by its name HERE, with the name it should have — because it keeps its old
- * name (or, for a lodge new to this site, is not added) until that is resolved.
+ * download could not place is named (#69): one sent without an id whose name
+ * several lodges here share, so it is not added until the server sends its id.
  */
 function downloadSummaryText(data: {
   fetched: number;
@@ -94,11 +93,9 @@ function downloadSummaryText(data: {
 }): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
-  const conflicts = (data.nameConflicts ?? []).map((c) =>
-    c.lodge === null ? `"${c.wanted}" (a new lodge, not added)` : `"${c.lodge}" (should be "${c.wanted}")`,
-  );
+  const conflicts = (data.nameConflicts ?? []).map((c) => `"${c.wanted}"`);
   const conflictText = conflicts.length
-    ? ` The central server's name is already used by another lodge here, so these kept their name: ${conflicts.join(", ")}.`
+    ? ` Not added, because several lodges here share the name and the central server sent no id: ${conflicts.join(", ")}.`
     : "";
   // Lodges the central server deleted (#58): hidden here, kept for the
   // bookings and requests that name them.

@@ -21,10 +21,10 @@ import {
   forgetServerConnectionAnswers,
   loadServerNzSettings,
   normalizeBaseUrl,
-  readOwnedCentralLodges,
+  loadOwnedOtherLodges,
+  readOwnedOtherLodges,
   recordOtherLodgesDownload,
   recordServerVersionCheck,
-  renameOwnedOtherLodgeName,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
 
@@ -42,10 +42,8 @@ describe("loadServerNzSettings", () => {
       otherLodgesLastUploadAt: null,
       otherLodgesLastDownloadAt: null,
       otherLodgesCursor: null,
-      otherLodgesOwnedNames: null,
-      otherLodgesOwnedNamesAt: null,
-      otherLodgesOwnedNamesUnreadable: false,
       otherLodgesOwnedLodges: null,
+      otherLodgesOwnedLodgesUnreadable: false,
       otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
@@ -198,49 +196,68 @@ describe("the server's reported API version (#49)", () => {
   });
 });
 
-describe("the owned lodge list (#52)", () => {
-  it("reads a stored list back, and its timestamp", async () => {
+describe("the owned lodge list, by central id (#52, #62, #69)", () => {
+  const AORANGI = [{ id: "ol_a", name: "Aorangi Ski Club" }];
+
+  it("reads a stored list back", async () => {
     mocks.findUnique.mockResolvedValue({
       id: SERVERNZ_SETTINGS_ID,
       baseUrl: "https://central.test",
       otherLodgesEnabled: true,
-      otherLodgesLastUploadAt: null,
-      otherLodgesLastDownloadAt: null,
-      otherLodgesCursor: null,
-      otherLodgesOwnedNames: ["Aorangi Ski Club"],
-      otherLodgesOwnedNamesAt: new Date("2026-06-20T10:00:00.000Z"),
+      otherLodgesOwnedLodges: AORANGI,
     });
     const settings = await loadServerNzSettings();
-    expect(settings.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
-    expect(settings.otherLodgesOwnedNamesAt).toBe("2026-06-20T10:00:00.000Z");
+    expect(settings.otherLodgesOwnedLodges).toEqual(AORANGI);
+    expect(settings.otherLodgesOwnedLodgesUnreadable).toBe(false);
   });
 
   it("reads an empty stored list as empty, not as unknown", async () => {
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: [], otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNames).toEqual([]);
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedLodges: [], otherLodgesEnabled: false });
+    expect((await loadServerNzSettings()).otherLodgesOwnedLodges).toEqual([]);
+  });
+
+  it("ignores the name-only list stored by API 2.4 and earlier (#69)", async () => {
+    mocks.findUnique.mockResolvedValue({
+      otherLodgesOwnedNames: ["Aorangi Ski Club"],
+      otherLodgesEnabled: false,
+    });
+    const settings = await loadServerNzSettings();
+    expect(settings.otherLodgesOwnedLodges).toBeNull();
+    expect(settings.otherLodgesOwnedLodgesUnreadable).toBe(false);
   });
 
   it.each([
     ["a string", "Aorangi Ski Club"],
-    ["an object", { name: "Aorangi Ski Club" }],
-    ["a list with a non-string", ["Aorangi Ski Club", 7]],
-    ["a list with an over-long name", ["x".repeat(121)]],
+    ["a list of names", ["Aorangi Ski Club"]],
+    ["an empty id", [{ id: "", name: "x" }]],
+    ["the same id twice", [{ id: "a", name: "x" }, { id: "a", name: "y" }]],
+    ["an over-long name", [{ id: "a", name: "x".repeat(121) }]],
   ])("reads a stored value that is %s as UNKNOWN, the fail-closed state", async (_label, stored) => {
-    // Junk in the column must not become a lodge name (editable, uploaded) and
-    // must not read as "owns nothing" either: both would be the column lying.
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: stored, otherLodgesEnabled: false });
+    // Junk in the column must not become a lodge (editable, uploaded) and must
+    // not read as "owns nothing" either: both would be the column lying.
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedLodges: stored, otherLodgesEnabled: false });
     const settings = await loadServerNzSettings();
-    expect(settings.otherLodgesOwnedNames).toBeNull();
+    expect(settings.otherLodgesOwnedLodges).toBeNull();
     // ...and FLAGGED, so the writers with a permissive fallback on null (the
     // upload, the committee sync) can fail closed instead.
-    expect(settings.otherLodgesOwnedNamesUnreadable).toBe(true);
+    expect(settings.otherLodgesOwnedLodgesUnreadable).toBe(true);
+    expect(readOwnedOtherLodges(stored)).toEqual({ lodges: null, unreadable: true });
   });
 
-  it("does not flag a never-told (NULL) or a well-formed stored list as unreadable", async () => {
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: null, otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNamesUnreadable).toBe(false);
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: ["A"], otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNamesUnreadable).toBe(false);
+  it("does not flag a never-told (NULL) list as unreadable", () => {
+    expect(readOwnedOtherLodges(null)).toEqual({ lodges: null, unreadable: false });
+    expect(readOwnedOtherLodges(undefined)).toEqual({ lodges: null, unreadable: false });
+  });
+
+  it("reads the list through the caller's client for a writer inside a transaction", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ otherLodgesOwnedLodges: AORANGI });
+    const owned = await loadOwnedOtherLodges({ serverNzSettings: { findUnique } } as never);
+    expect(owned).toEqual({ lodges: AORANGI, unreadable: false });
+    expect(findUnique.mock.calls[0][0]).toEqual({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      select: { otherLodgesOwnedLodges: true },
+    });
+    expect(mocks.findUnique).not.toHaveBeenCalled();
   });
 
   it("forgets the list with a database NULL, never a JSON null, and clears its timestamp", async () => {
@@ -248,10 +265,9 @@ describe("the owned lodge list (#52)", () => {
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     // DbNull reads back as "never told"; a JSON null would read as unreadable.
+    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
     expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
     expect(args.update.otherLodgesOwnedNamesAt).toBeNull();
-    // The owned ids (#62) are the same answer, so they go with it.
-    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
     // Nothing else on the row is touched.
     expect(Object.keys(args.update).sort()).toEqual([
       "otherLodgesOwnedLodges",
@@ -260,101 +276,35 @@ describe("the owned lodge list (#52)", () => {
     ]);
   });
 
-  it("stores the owned ids with the names, and CLEARS them when names come without ids (#62)", async () => {
-    await recordOtherLodgesDownload("c-901", ["Aorangi Ski Club"], [{ id: "ol_a", name: "Aorangi Ski Club" }]);
-    let [args] = mocks.upsert.mock.calls[0];
-    expect(args.update.otherLodgesOwnedLodges).toEqual([{ id: "ol_a", name: "Aorangi Ski Club" }]);
-
-    mocks.upsert.mockClear();
-    // Names without usable ids (an older server, or ids refused): the stored
-    // ids must not outlive the list they came with (#62 review).
-    await recordOtherLodgesDownload("c-902", ["Aorangi Ski Club"]);
-    [args] = mocks.upsert.mock.calls[0];
-    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
-
-    // Neither sent: both left alone.
-    mocks.upsert.mockClear();
-    await recordOtherLodgesDownload("c-903");
-    [args] = mocks.upsert.mock.calls[0];
-    expect(args.update).not.toHaveProperty("otherLodgesOwnedLodges");
-    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
-  });
-
-  it("reads stored owned ids back, and treats an unreadable value as never told (#62)", () => {
-    expect(readOwnedCentralLodges([{ id: "ol_a", name: "Aorangi Ski Club" }])).toEqual([
-      { id: "ol_a", name: "Aorangi Ski Club" },
-    ]);
-    expect(readOwnedCentralLodges(null)).toBeNull();
-    expect(readOwnedCentralLodges([{ id: "", name: "x" }])).toBeNull();
-    expect(readOwnedCentralLodges([{ id: "a", name: "x" }, { id: "a", name: "y" }])).toBeNull();
-    expect(readOwnedCentralLodges("junk")).toBeNull();
-  });
-
-  it("stores the list and its timestamp when the download carried one", async () => {
-    await recordOtherLodgesDownload("c-900", ["Aorangi Ski Club"]);
+  it("stores the list the download carried with its timestamp, and leaves the old name-only list alone", async () => {
+    await recordOtherLodgesDownload("c-900", AORANGI);
     const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+    expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
-    expect(args.create.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+    // The draining colour of a blue/green deploy still reads it (#69).
+    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
+    expect(args.create.otherLodgesOwnedLodges).toEqual(AORANGI);
   });
 
   it("stores an empty list, the server's answer that the club owns nothing", async () => {
     await recordOtherLodgesDownload("c-900", []);
-    const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update.otherLodgesOwnedNames).toEqual([]);
+    expect(mocks.upsert.mock.calls[0][0].update.otherLodgesOwnedLodges).toEqual([]);
   });
 
   it("leaves the stored list and its timestamp untouched when the download carried none", async () => {
-    // An older server that does not send the list must not clear what a newer
-    // one recorded.
+    // A list refused for its bounds, or not sent, must not clear what is stored.
     await recordOtherLodgesDownload("c-900");
     const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
-    expect(args.update).not.toHaveProperty("otherLodgesOwnedNamesAt");
-    expect(args.create).not.toHaveProperty("otherLodgesOwnedNames");
-  });
-});
-
-describe("renameOwnedOtherLodgeName (#64)", () => {
-  function tx(stored: unknown) {
-    const update = vi.fn().mockResolvedValue({});
-    const findUnique = vi.fn().mockResolvedValue({ otherLodgesOwnedNames: stored });
-    const executeRaw = vi.fn().mockResolvedValue(1);
-    const db = { serverNzSettings: { findUnique, update }, $executeRaw: executeRaw };
-    return { db: db as never, update, findUnique, executeRaw };
-  }
-
-  it("locks the settings row BEFORE reading the list it rewrites", async () => {
-    const { db, findUnique, executeRaw } = tx(["A"]);
-    await renameOwnedOtherLodgeName(db, "A", "B");
-    expect(executeRaw).toHaveBeenCalledTimes(1);
-    expect(String(executeRaw.mock.calls[0][0].join("?"))).toMatch(/FOR UPDATE/);
-    expect(executeRaw.mock.invocationCallOrder[0]).toBeLessThan(findUnique.mock.invocationCallOrder[0]);
-  });
-
-  it("moves the renamed lodge's name in the stored owned list, through the caller's client", async () => {
-    const { db, update } = tx(["Tararua Lodge", "Annex"]);
-    await renameOwnedOtherLodgeName(db, "Tararua Lodge", "Tararua Alpine Lodge");
-    expect(update).toHaveBeenCalledWith({
-      where: { id: SERVERNZ_SETTINGS_ID },
-      data: { otherLodgesOwnedNames: ["Tararua Alpine Lodge", "Annex"] },
-    });
-    expect(mocks.upsert).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["never told", null],
-    ["unreadable", "not a list"],
-  ])("leaves a list that is %s alone", async (_label, stored) => {
-    const { db, update } = tx(stored);
-    await renameOwnedOtherLodgeName(db, "A", "B");
-    expect(update).not.toHaveBeenCalled();
+    for (const key of ["otherLodgesOwnedLodges", "otherLodgesOwnedNames", "otherLodgesOwnedNamesAt"]) {
+      expect(args.update).not.toHaveProperty(key);
+      expect(args.create).not.toHaveProperty(key);
+    }
   });
 });
 
 describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
-    await recordOtherLodgesDownload("c-1", undefined, undefined, { keyed: true });
+    await recordOtherLodgesDownload("c-1", undefined, { keyed: true });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);
     await recordOtherLodgesDownload("c-2");
     expect(mocks.upsert.mock.calls[1][0].update).not.toHaveProperty("otherLodgesKeyedAt");
@@ -362,7 +312,7 @@ describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
 
   it("writes through the caller's transaction client when given one", async () => {
     const upsert = vi.fn().mockResolvedValue({});
-    await recordOtherLodgesDownload("c-3", undefined, undefined, {
+    await recordOtherLodgesDownload("c-3", undefined, {
       db: { serverNzSettings: { upsert } } as never,
     });
     expect(upsert).toHaveBeenCalledTimes(1);

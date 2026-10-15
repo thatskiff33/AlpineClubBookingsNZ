@@ -6,7 +6,8 @@ import { createAuditLog } from "@/lib/audit";
 import { centralLinkStatus } from "@/lib/central-lodge-link";
 import { SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
-import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
+import { otherLodgeChoiceLabel } from "@/lib/other-lodge-choice-label";
+import { OWNED_CENTRAL_LODGE_ID_MAX, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
@@ -40,6 +41,22 @@ const putSchema = z
   })
   .strict();
 
+/**
+ * Each owned lodge with the label its option shows (#69): two may share a
+ * name, so such a pair also shows the location their local copies hold.
+ */
+async function labelOwnedLodges(owned: ReadonlyArray<OwnedCentralLodge>) {
+  const rows = await prisma.otherLodge.findMany({
+    where: { centralId: { in: owned.map((l) => l.id) } },
+    select: { centralId: true, location: true },
+  });
+  const location = new Map(rows.map((r) => [r.centralId, r.location]));
+  return owned.map((l) => ({
+    ...l,
+    label: otherLodgeChoiceLabel({ name: l.name, location: location.get(l.id) ?? null }, owned),
+  }));
+}
+
 async function readSettings(lodgeId: string) {
   const lodge = await prisma.lodge.findUnique({
     where: { id: lodgeId },
@@ -62,7 +79,7 @@ async function readSettings(lodgeId: string) {
      * The central lodges this club owns, as the central server last said:
      * `null` until a download from a 2.2 server has recorded them.
      */
-    ownedLodges: owned,
+    ownedLodges: owned === null ? null : await labelOwnedLodges(owned),
     /**
      * The owned central lodge this lodge actually answers for — by its link or
      * by the one-lodge default — decided by the endpoint's resolver; or null.

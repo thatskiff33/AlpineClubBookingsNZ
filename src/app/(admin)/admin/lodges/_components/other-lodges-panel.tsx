@@ -39,6 +39,7 @@ import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
   OTHER_LODGE_NOT_OWNED_CODE,
+  otherLodgeChoiceLabel,
   ownedOtherLodgeEditLabel,
   type AdminOtherLodgesResponse,
   type OwnedOtherLodgeNames,
@@ -234,9 +235,9 @@ export function OtherLodgesPanel({
   // local row yet (not downloaded) has no button, so the label counts what the
   // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
   // name on each when several are, and a note below when none is yet.
-  const localOwnedNames = lodges.filter((l) => l.owned).map((l) => l.name);
-  const editLabel = (name: string) => ownedOtherLodgeEditLabel(localOwnedNames, name);
-  const anyOwnedRow = localOwnedNames.length > 0;
+  const localOwned = lodges.filter((l) => l.owned);
+  const editLabel = (lodge: { name: string; location: string | null }) => ownedOtherLodgeEditLabel(localOwned, lodge);
+  const anyOwnedRow = localOwned.length > 0;
   const ownedButNotDownloaded =
     !loading && ownedNames !== null && ownedNames.length > 0 && !anyOwnedRow;
 
@@ -296,7 +297,7 @@ export function OtherLodgesPanel({
           }}
         >
           <DialogHeader>
-            <DialogTitle>{editLabel(form.name)}</DialogTitle>
+            <DialogTitle>{editLabel(editingLodge ?? { name: form.name, location: null })}</DialogTitle>
             <DialogDescription>
               Apart from the name, everything here is optional detail that is
               shared with other clubs through the Alpine Central Server when
@@ -612,7 +613,7 @@ export function OtherLodgesPanel({
                       <TableCell>
                         <OtherLodgeNameCell lodge={lodge} />
                         {lodge.notOnCentralServer ? (
-                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide(lodge)} disabled={hiding.hidingId !== null} aria-label={`${hiding.hidingId === lodge.id ? "Hiding" : "Hide"} ${lodge.name}`}>
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide(lodge)} disabled={hiding.hidingId !== null} aria-label={`${hiding.hidingId === lodge.id ? "Hiding" : "Hide"} ${otherLodgeChoiceLabel(lodge, lodges)}`}>
                             <EyeOff className="mr-2 h-4 w-4" />
                             {hiding.hidingId === lodge.id ? "Hiding…" : "Hide"}
                           </ViewOnlyActionButton>
@@ -672,7 +673,7 @@ export function OtherLodgesPanel({
                                 disabled={saving}
                               >
                                 <Pencil className="mr-2 h-4 w-4" />
-                                {editLabel(lodge.name)}
+                                {editLabel(lodge)}
                               </ViewOnlyActionButton>
                             </div>
                           ) : null}

@@ -165,6 +165,9 @@ export const otherLodgeAmenitiesSelect = {
  * drop-down that offers a lodge to choose.
  */
 export const visibleOtherLodgeWhere = { hiddenAt: null } satisfies Prisma.OtherLodgeWhereInput;
+// Where a lodge is chosen from a list, its label (#69: names may repeat).
+import { otherLodgeChoiceLabel } from "@/lib/other-lodge-choice-label";
+export { otherLodgeChoiceLabel, otherLodgeNameWithLocation, withOtherLodgeChoiceLabels } from "@/lib/other-lodge-choice-label";
 /** Which lodges a drop-down offers: the visible ones, plus `keepId` (the one a
  * record being edited already names, even hidden), never offered to anything new. */
 export const otherLodgeChoicesWhere = (keepId: string | null): Prisma.OtherLodgeWhereInput =>
@@ -486,34 +489,22 @@ export function otherLodgeDataDiffers(
 // ── Ownership (#52) ────────────────────────────────────────────────────────
 //
 // Which lodges are THIS club's own is decided on the central server, mapped to
-// the API key this site uses, and handed back on every pull as `ownLodgeNames`.
-// The site stores that list on `ServerNzSettings.otherLodgesOwnedNames` and
-// everything that asks "may this lodge be changed here?" asks `ownsOtherLodge`
-// below — the admin PATCH route, the upload projection and the panel's buttons
-// — so there is one answer (INV-SSOT-001). By the LOCAL name, exactly as
-// stored: the download stores the list under this site's names, mapping each
-// owned central id to its local row (#64, `@/lib/other-lodge-central-id`),
-// while the rows themselves are matched to the server by central id.
+// the API key this site uses, and handed back on every pull as `ownLodges`
+// (`{ id, name }`). The site stores that list on
+// `ServerNzSettings.otherLodgesOwnedLodges` and everything that asks "may this
+// lodge be changed here?" asks `ownsOtherLodge` below — the admin PATCH route,
+// the upload projection, the committee officer sync and the panel's buttons —
+// so there is one answer (INV-SSOT-001). BY CENTRAL ID (#69): two lodges may
+// share a name, so a name cannot say which one is ours.
 
 /** Upper bound on the owned list, so a hostile server cannot stream forever. */
 export const OWNED_OTHER_LODGE_NAMES_MAX = 100;
 
 /**
- * The owned list as it travels and as it is stored: bounded in count, each name
- * held to the lodge-name bound (a longer or NUL-bearing name could never match
- * a local row anyway). Used by the pull envelope AND by the settings loader, so
- * a stored value that no longer parses reads back as unknown rather than as a
- * list of something else.
- */
-export const ownedOtherLodgeNamesSchema = z
-  .array(otherLodgeNameSchema)
-  .max(OWNED_OTHER_LODGE_NAMES_MAX);
-
-/**
- * The owned lodges WITH their permanent central ids (server API 2.2 `ownLodges`,
- * #62), bounded like the names. The id is the central server's lodge id: the
- * stable key this site links its own lodges by ("Central lodge"), because a
- * name can be changed centrally. Same three states as the names below.
+ * The owned lodges with their permanent central ids (server API 2.2 `ownLodges`,
+ * #62), bounded in count. The id is the central server's lodge id: the stable
+ * key this site matches its own lodges by, because a name can be changed and
+ * two lodges may share one (#69). Three states, see `OwnedOtherLodges`.
  */
 export const OWNED_CENTRAL_LODGE_ID_MAX = 64;
 
@@ -545,10 +536,16 @@ export type OwnedCentralLodge = { id: string; name: string };
 
 /**
  * The owned list in its three states: `null` when the server has never said
- * (not connected, never downloaded, or an older server that does not send it),
- * `[]` when it said the club owns nothing, otherwise the editable names.
+ * (not connected, or never downloaded), `[]` when it said the club owns
+ * nothing, otherwise the owned lodges.
  */
+export type OwnedOtherLodges = ReadonlyArray<OwnedCentralLodge> | null;
+
+/** The owned lodges' names, for the panel's notes (the admin list response). */
 export type OwnedOtherLodgeNames = string[] | null;
+
+/** The fields `ownsOtherLodge` decides on. */
+type OwnershipKey = { centralId: string | null };
 
 /**
  * True when this lodge's name may be changed here (#64): it is the club's own
@@ -556,19 +553,19 @@ export type OwnedOtherLodgeNames = string[] | null;
  * renames its lodge rather than creating a second one. The one rule, read by
  * the admin serializer (the panel's field) and the PATCH route.
  */
-export function canRenameOtherLodge(
-  owned: ReadonlyArray<string> | null,
-  lodge: { name: string; centralId: string | null },
-): boolean {
-  return ownsOtherLodge(owned, lodge.name) && Boolean(lodge.centralId);
+export function canRenameOtherLodge(owned: OwnedOtherLodges, lodge: OwnershipKey): boolean {
+  return ownsOtherLodge(owned, lodge) && Boolean(lodge.centralId);
 }
 
-/** True when the central server has said this lodge is the club's own. */
-export function ownsOtherLodge(
-  owned: ReadonlyArray<string> | null,
-  name: string,
-): boolean {
-  return owned !== null && owned.includes(name);
+/**
+ * True when the central server has said this lodge is the club's own: its
+ * central id is in the owned list. BY ID ONLY (#69): a row not yet keyed by a
+ * central id is never ours, because another row of the same name may be — the
+ * download keys it first. A name is never consulted.
+ */
+export function ownsOtherLodge(owned: OwnedOtherLodges, lodge: OwnershipKey): boolean {
+  const { centralId } = lodge;
+  return owned !== null && Boolean(centralId) && owned.some((o) => o.id === centralId);
 }
 
 /**
@@ -577,10 +574,11 @@ export function ownsOtherLodge(
  * buttons can be told apart.
  */
 export function ownedOtherLodgeEditLabel(
-  owned: ReadonlyArray<string>,
-  name: string,
+  owned: ReadonlyArray<{ name: string; location: string | null }>,
+  lodge: { name: string; location: string | null },
 ): string {
-  return owned.length === 1 ? "Edit my Lodge" : `Edit ${name}`;
+  // Two of ours may share a name (#69): the location tells the buttons apart.
+  return owned.length === 1 ? "Edit my Lodge" : `Edit ${otherLodgeChoiceLabel(lodge, owned)}`;
 }
 
 /**
@@ -628,12 +626,12 @@ export interface AdminOtherLodgesResponse {
 
 export function serializeOtherLodgeForAdmin(
   lodge: OtherLodgeRecord,
-  owned: ReadonlyArray<string> | null,
+  owned: OwnedOtherLodges,
   notOnCentralServer?: OtherLodgeReferences,
 ): AdminOtherLodge {
   const { bookingOfficerPhone, ...rest } = serializeOtherLodge(lodge);
   const extra = notOnCentralServer ? { notOnCentralServer } : {};
-  return ownsOtherLodge(owned, lodge.name)
+  return ownsOtherLodge(owned, lodge)
     ? { ...rest, bookingOfficerPhone, owned: true, renamable: canRenameOtherLodge(owned, lodge), ...extra }
     : { ...rest, owned: false, renamable: false, ...extra };
 }

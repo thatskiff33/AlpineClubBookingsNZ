@@ -15,6 +15,8 @@ const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings, mockSecr
   mockPrisma: (() => {
     const client = {
       lodge: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
+      // The owned lodges' local copies, for the options' labels (#69).
+      otherLodge: { findMany: vi.fn() },
       $transaction: vi.fn(),
     };
     client.$transaction.mockImplementation(async (fn: (tx: typeof client) => unknown) => fn(client));
@@ -66,11 +68,31 @@ beforeEach(() => {
   );
   mockPrisma.lodge.findMany.mockResolvedValue([{ id: "lodge_1", centralLodgeId: null }]);
   mockPrisma.lodge.update.mockResolvedValue({});
+  mockPrisma.otherLodge.findMany.mockResolvedValue([]);
   mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A, B] });
   mockSecret.mockResolvedValue("secret");
 });
 
 describe("GET /api/admin/lodges/[id]/central-lodge", () => {
+  it("labels two owned lodges of the same name with their locations (#69)", async () => {
+    const twin = { id: "ol_c", name: A.name };
+    mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A, twin, B] });
+    mockPrisma.otherLodge.findMany.mockResolvedValue([
+      { centralId: "ol_a", location: "Whakapapa" },
+      { centralId: "ol_c", location: "Turoa" },
+      { centralId: "ol_b", location: "Mt Hutt" },
+    ]);
+    const body = await (await GET(new Request("http://localhost"), params())).json();
+    expect(body.ownedLodges.map((l: { label: string }) => l.label)).toEqual([
+      "Aorangi Ski Club (Whakapapa)",
+      "Aorangi Ski Club (Turoa)",
+      "Boomerang Ski Club",
+    ]);
+    expect(mockPrisma.otherLodge.findMany.mock.calls[0][0].where).toEqual({
+      centralId: { in: ["ol_a", "ol_c", "ol_b"] },
+    });
+  });
+
   it("needs lodge:view and reports the link, the owned lodges and whether sharing is on", async () => {
     const res = await GET(new Request("http://localhost"), params());
     expect(mockRequireAdmin).toHaveBeenCalledWith({ permission: { area: "lodge", level: "view" } });
@@ -79,7 +101,10 @@ describe("GET /api/admin/lodges/[id]/central-lodge", () => {
       lodgeName: "Whakapapa",
       lodgeActive: true,
       centralLodgeId: null,
-      ownedLodges: [A, B],
+      ownedLodges: [
+        { ...A, label: A.name },
+        { ...B, label: B.name },
+      ],
       answersForCentralLodgeId: null,
       linkHeldBy: null,
       otherLodgesEnabled: true,

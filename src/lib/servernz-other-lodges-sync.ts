@@ -1,6 +1,6 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { ownedNamesAsLocal, usableCentralId } from "@/lib/other-lodge-central-id";
+import { usableCentralId } from "@/lib/other-lodge-central-id";
 import {
   OTHER_LODGE_DATA_SELECT,
   omitRateFields,
@@ -19,7 +19,6 @@ import {
   type OtherLodgesUploadResult,
 } from "@/lib/servernz-api";
 import {
-  localNamesByCentralId,
   hideDeletedLodge,
   mergeDistributedLodge,
   type MergeOutcome,
@@ -44,13 +43,23 @@ import {
  * the Alpine Central Server. Upload pushes this club's entries up; download
  * pulls the centrally-distributed set down and merges it into the local
  * registry, keyed by the central server's permanent lodge id once known and by
- * the unique lodge name before that (#64, `@/lib/servernz-other-lodges-merge`).
+ * the lodge name, once, before that (#64, `@/lib/servernz-other-lodges-merge`).
+ * Names are not unique (#69): the id is what tells two lodges apart.
  */
 
 export interface UploadSummary extends OtherLodgesUploadResult {
   /** Local rows considered for upload (changed since the last upload). */
   sent: number;
 }
+
+const NOTHING_UPLOADED: UploadSummary = {
+  created: 0,
+  updated: 0,
+  unchanged: 0,
+  skipped: 0,
+  results: [],
+  sent: 0,
+};
 
 // The columns that carry a lodge's data, plus its amenity list. The list itself
 // lives in `@/lib/other-lodges` (`OTHER_LODGE_DATA_FIELDS`), shared with the
@@ -71,14 +80,13 @@ const LODGE_DATA_SELECT = {
  *
  * ONLY THE CLUB'S OWN LODGES ARE SENT once the central server has said which
  * those are (#52): the stored owned list, through the one `ownsOtherLodge`
- * rule the admin PATCH route and the panel also apply. Before #52 every changed
- * row went up — including other clubs' lodges this site had just DOWNLOADED,
- * whose server-stamped `updatedAt` sat above the watermark — so each night
- * re-sent the whole registry for the server to refuse (#53). While the list is
- * UNKNOWN (never received: not connected, or an older server) the upload keeps
- * its pre-#52 behaviour and sends every changed row, so a club on an older
- * central server loses nothing. A row the server then reports as `skipped` is
- * still held below the watermark exactly as before (INV-INT-004).
+ * rule (by central id, #69) the admin PATCH route and the panel also apply.
+ * Every row sent is therefore keyed and goes up under its id. While the list
+ * is UNKNOWN (never received: a new connection, or one just forgotten) NOTHING
+ * is sent (#69): names may repeat, so an unkeyed copy of another club's lodge
+ * sent without an id would be CREATED on the server as this club's. The
+ * nightly pass's download records the list, and the next upload sends. A row
+ * the server reports as `skipped` is held below the watermark (INV-INT-004).
  *
  * A stored list that is PRESENT BUT UNREADABLE is neither: it is a defect in
  * the column, and the honest answer is to send nothing until a download
@@ -87,29 +95,32 @@ const LODGE_DATA_SELECT = {
  */
 export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   const settings = await loadServerNzSettings();
-  if (settings.otherLodgesOwnedNamesUnreadable) {
+  if (settings.otherLodgesOwnedLodgesUnreadable) {
     logger.warn(
       "The stored owned-lodge list cannot be read; uploading nothing until the next download rewrites it",
     );
-    return { created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0 };
+    return { ...NOTHING_UPLOADED };
   }
   const since = settings.otherLodgesLastUploadAt
     ? new Date(settings.otherLodgesLastUploadAt)
     : null;
-  const owned = settings.otherLodgesOwnedNames;
+  const owned = settings.otherLodgesOwnedLodges;
+  if (owned === null) {
+    logger.info("The central server has not said which Other lodges are this club's yet; uploading nothing until a download records it");
+    return { ...NOTHING_UPLOADED };
+  }
 
   // A hidden lodge (#58) is never uploaded: it is a deleted lodge kept here.
   const changed = await prisma.otherLodge.findMany({
     where: { ...visibleOtherLodgeWhere, ...(since ? { updatedAt: { gt: since } } : {}) },
-    select: { name: true, centralId: true, updatedAt: true, ...LODGE_DATA_SELECT },
-    orderBy: { name: "asc" },
+    select: { id: true, name: true, centralId: true, updatedAt: true, ...LODGE_DATA_SELECT },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
   });
-  const lodges =
-    owned === null ? changed : changed.filter((l) => ownsOtherLodge(owned, l.name));
+  const lodges = changed.filter((l) => ownsOtherLodge(owned, l));
 
   if (lodges.length === 0) {
     // Nothing changed since the last upload — skip the round-trip entirely.
-    return { created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0 };
+    return { ...NOTHING_UPLOADED };
   }
 
   // Every data column (dates as `YYYY-MM-DD`) and the WHOLE amenity list: the
@@ -142,16 +153,33 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // holding the watermark below the oldest skipped row, every subsequent run
   // retries it — and `skipped` is surfaced in the summary so an operator can see
   // a row that keeps bouncing.
-  const skippedNames = new Set(
-    result.results.filter((r) => r.status === "skipped").map((r) => r.name),
-  );
-  const accepted = lodges.filter((l) => !skippedNames.has(l.name));
+  //
+  // Each result answers the item AT ITS POSITION (#69): names may repeat, so a
+  // name cannot say which row a result is for, and an item sent without an id
+  // only learns its id from the answer. A result whose name, or (for an item
+  // that quoted one) id, is not its item's means the answer does not line up:
+  // nothing is accepted, and the next run sends the rows again. (The server
+  // answers one result per item, in order: its 2.5 contract.)
+  const answers = lodges.map((l, i) => {
+    const r = result.results[i];
+    const id = r ? usableCentralId(r.id) : null;
+    const lines =
+      r !== undefined && r.name === l.name.trim() && (!l.centralId || id === l.centralId);
+    return { lodge: l, lines, ok: lines && r?.status !== "skipped", id };
+  });
+  const aligned = result.results.length === lodges.length && answers.every((a) => a.lines);
+  if (!aligned) {
+    logger.warn("The central server's upload answer did not line up with the lodges sent; the upload watermark was left as it was");
+  }
+  const accepted = aligned ? answers.filter((a) => a.ok).map((a) => a.lodge) : [];
+  const rejected = aligned ? answers.filter((a) => !a.ok).map((a) => a.lodge) : lodges;
 
   const [firstAccepted] = accepted;
   if (accepted.length > 0 && firstAccepted) {
-    const oldestSkipped = lodges
-      .filter((l) => skippedNames.has(l.name))
-      .reduce<Date | null>((min, l) => (!min || l.updatedAt < min ? l.updatedAt : min), null);
+    const oldestSkipped = rejected.reduce<Date | null>(
+      (min, l) => (!min || l.updatedAt < min ? l.updatedAt : min),
+      null,
+    );
 
     let watermark = accepted.reduce(
       (max, l) => (l.updatedAt > max ? l.updatedAt : max),
@@ -199,10 +227,10 @@ export interface DownloadSummary {
   /** Of `updated`, rows renamed in place to the server's new name (#64). */
   renamed: number;
   /**
-   * Lodges renamed on the server whose new name another local lodge holds
-   * (#64): `lodge` is the local name — everything else was applied and the old
-   * name kept — or `null` for a lodge new here, which was not added. `wanted`
-   * is the server's name.
+   * Lodges this download could not place (#69): one sent without a usable id
+   * whose name several local lodges share, or a new one whose central id a
+   * concurrent writer held on the final pass. `lodge` is `null` (not added);
+   * `wanted` is the server's name.
    */
   nameConflicts: NameConflict[];
   /**
@@ -252,19 +280,14 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       : overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
   );
 
-  if (pull.ownLodgeNamesRefused) {
+  if (pull.ownLodgesRefused) {
     logger.warn(
       "The central server sent an owned-lodge list that failed its bounds; it was ignored and the stored list left as it was",
     );
   }
-  if (pull.ownLodgesRefused) {
-    logger.warn(
-      "The central server sent owned-lodge ids that failed their bounds; they were ignored and the stored ids cleared, so no lodge is answered for until a download carries valid ids",
-    );
-  }
   // Which lodges are OURS for this merge: the list this pull carried, else the
   // stored one; `null` when neither is known. Decides two things per row below.
-  const owned = pull.ownLodgeNames ?? settings.otherLodgesOwnedNames;
+  const owned = pull.ownLodges ?? settings.otherLodgesOwnedLodges;
 
   // Lodges the server DELETED (#58, API 2.4) are hidden here FIRST, and a
   // pulled lodge the server also reports deleted (its reads are not one
@@ -306,8 +329,8 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // Whether every local row this download touched ended keyed: the marker is
   // set only then. A dropped row or a pulled lodge with no usable id could
   // leave a row the server DOES list unkeyed, and so wrongly marked "not
-  // found". A name conflict does not block it: a renamed row is already keyed,
-  // and a refused new lodge has no local row to mark.
+  // found". A lodge reported as not placed does not block it: it has no local
+  // row to mark.
   let everyLodgeKeyed =
     pull.dropped === 0 && lodges.every((l) => usableCentralId(l.id) !== null);
   const count = (outcome: Exclude<MergeOutcome, { kind: "deferred" }>) => {
@@ -321,26 +344,33 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     if (outcome.renamed) renamed++;
   };
   // The pull has COMPLETED before this loop starts, so no transaction below is
-  // ever held open across the central server's HTTP call. A lodge whose name
-  // is held here by another row is DEFERRED (#64). The deferred lodges are
-  // retried for as long as a pass settles at least one of them — which settles
-  // a chain of renames of any length, whatever order the pull sent them in —
-  // and then once more as the FINAL pass, which reports what still collides
-  // rather than losing it silently.
+  // ever held open across the central server's HTTP call. A lodge that lost a
+  // race with a concurrent writer is DEFERRED; the deferred lodges are retried
+  // for as long as a pass settles at least one of them, and then once more as
+  // the FINAL pass, which reports what still misses rather than losing it.
   // A whole download names every id the server has, which is what lets the
   // merge tell a stale id (another server's, or a deleted lodge's) from a
-  // different lodge holding a name — but only when the pull dropped nothing: a
+  // different lodge of the same name — but only when the pull dropped nothing: a
   // dropped row's id is the server's yet absent here, and its local row must
   // not be taken over by another lodge with its old name.
   const knownIds =
     wholeRegistry && pull.dropped === 0
       ? new Set(lodges.flatMap((l) => usableCentralId(l.id) ?? []))
       : null;
+  // Keying by name (#69: names may repeat) only on a whole download, which
+  // sees every lodge of the name: when the name is one lodge's alone, or for
+  // our own lodge. Otherwise a lodge with an id is new here, never welded onto
+  // a row that may be another lodge of the same name.
+  const namesInPull = new Map<string, number>();
+  for (const l of lodges) namesInPull.set(l.name, (namesInPull.get(l.name) ?? 0) + 1);
+  const byNameAllowed = (lodge: (typeof lodges)[number]) =>
+    knownIds !== null &&
+    (namesInPull.get(lodge.name) === 1 || ownsOtherLodge(owned, { centralId: usableCentralId(lodge.id) }));
   let pending = lodges;
   for (;;) {
     const next: typeof lodges = [];
     for (const lodge of pending) {
-      const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds);
+      const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds, byNameAllowed(lodge));
       if (outcome.kind === "deferred") next.push(lodge);
       else count(outcome);
     }
@@ -351,13 +381,13 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     pending = next;
   }
   for (const lodge of pending) {
-    const outcome = await mergeDistributedLodge(lodge, owned, true, knownIds);
+    const outcome = await mergeDistributedLodge(lodge, owned, true, knownIds, byNameAllowed(lodge));
     if (outcome.kind !== "deferred") count(outcome);
   }
   if (nameConflicts.length > 0) {
     logger.warn(
       { lodges: nameConflicts },
-      "Lodges renamed on the central server could not take their new name here: another local lodge holds it",
+      "Lodges on the central server could not be placed here: a concurrent change held their id, or several local lodges share the name of one sent without an id",
     );
   }
 
@@ -370,20 +400,10 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // next run re-fetches.
   //
   // The owned list rides in the same write (#52), and only when the server sent
-  // one: `undefined` leaves the stored list alone, so an older server that does
-  // not send it cannot clear what a newer one recorded. A name in the list with
-  // no local row is simply absent locally until a download creates it. The
-  // owned IDS (#62) follow the names: names recorded without usable ids (an
-  // older server, or ids refused above) CLEAR the stored ids, so the
-  // availability endpoint never answers on an older list than the names.
-  //
-  // The NAMES are stored as this site names them (#64): a lodge renamed here
-  // keeps its local name until the server accepts the rename, and every "may
-  // this lodge be changed here?" check reads the list by local name. Each owned
-  // id — this pull's, else the stored ones when this pull's were refused — is
-  // mapped to its local row's name, read under the settings row's lock, which an
-  // admin's rename also takes: neither can write back a list computed before the
-  // other committed.
+  // a valid one: `undefined` leaves the stored list alone. A lodge in the list
+  // with no local row is simply absent locally until a download creates it. It
+  // is stored by central id (#62, #69), so a lodge renamed here stays ours
+  // whatever it is called.
   //
   // A whole-registry download that got this far, with no row dropped by the
   // pull's bounds and none left unkeyed, keyed the registry: the marker is set
@@ -437,21 +457,8 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
           : Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "hiddenAt" IS NULL AND "centralId" NOT IN (${Prisma.join([...knownIds])})`,
       );
     }
-    const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
-    const ownLodgeNames =
-      pull.ownLodgeNames === undefined
-        ? undefined
-        : ownedNamesAsLocal(
-            pull.ownLodgeNames,
-            ownedIds,
-            await localNamesByCentralId(
-              ownedIds.map((l) => l.id),
-              tx,
-            ),
-          );
     await recordOtherLodgesDownload(
       advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
-      ownLodgeNames,
       pull.ownLodges,
       { keyed, db: tx },
     );

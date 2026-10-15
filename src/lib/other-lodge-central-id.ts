@@ -1,4 +1,4 @@
-import { centralLodgeIdSchema, type OwnedCentralLodge } from "@/lib/other-lodges";
+import { centralLodgeIdSchema } from "@/lib/other-lodges";
 
 /**
  * The Alpine Central Server's PERMANENT lodge id on the Other lodges registry
@@ -19,34 +19,4 @@ import { centralLodgeIdSchema, type OwnedCentralLodge } from "@/lib/other-lodges
 export function usableCentralId(raw: unknown): string | null {
   const parsed = centralLodgeIdSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
-}
-
-/**
- * The owned-lodge NAMES to store, as this site names them. The central server
- * lists the club's own lodges under ITS names; a lodge this site renamed keeps
- * the local name until the server accepts the rename, so the stored list (which
- * every "may this be changed here?" check reads by local name) maps each owned
- * id back to the local row's name. A name without an id, or an id no local row
- * holds yet, is kept as the server sent it. Order is kept; duplicates dropped.
- */
-export function ownedNamesAsLocal(
-  ownLodgeNames: ReadonlyArray<string>,
-  ownLodges: ReadonlyArray<OwnedCentralLodge> | undefined,
-  localNameByCentralId: ReadonlyMap<string, string>,
-): string[] {
-  const idByName = new Map((ownLodges ?? []).map((l) => [l.name, l.id]));
-  const names = ownLodgeNames.map((name) => {
-    const id = idByName.get(name);
-    return (id !== undefined && localNameByCentralId.get(id)) || name;
-  });
-  return [...new Set(names)];
-}
-
-/** The stored owned list after this site renamed one of its own lodges. */
-export function renameInOwnedNames(
-  owned: ReadonlyArray<string>,
-  from: string,
-  to: string,
-): string[] {
-  return [...new Set(owned.map((name) => (name === from ? to : name)))];
 }

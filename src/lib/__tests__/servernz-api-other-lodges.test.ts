@@ -204,13 +204,14 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
   });
 
   it("accepts an envelope that also carries keys this client does not read yet", async () => {
-    // A later server release adds to the envelope (the owned-lodge list, #52);
-    // a pull must not reject the whole page for a key it has no opinion on.
+    // A later server release adds to the envelope (as the owned-lodge list,
+    // #52, once did); a pull must not reject the whole page for a key it has no
+    // opinion on.
     respondWith({
       lodges: [remoteRow()],
       cursor: "c-3",
       count: 1,
-      ownLodgeNames: ["Aorangi Ski Club"],
+      aFieldFromALaterRelease: ["Aorangi Ski Club"],
     });
 
     const result = await pullOtherLodges(null);
@@ -439,13 +440,12 @@ describe("pullOtherLodges — non-member rates (#61, server API 2.2)", () => {
 
 // ── Pull: the owned list (#52) ─────────────────────────────────────────────
 
-describe("pullOtherLodges — ownLodges, the owned lodges' ids (#62)", () => {
+describe("pullOtherLodges — ownLodges, the owned lodges with their ids (#52, #62, #69)", () => {
   it("carries the owned lodges with their permanent ids", async () => {
     respondWith({
       lodges: [],
       cursor: "c-1",
       count: 0,
-      ownLodgeNames: ["Aorangi Ski Club"],
       ownLodges: [{ id: "ol_a", name: "Aorangi Ski Club" }],
     });
 
@@ -455,97 +455,63 @@ describe("pullOtherLodges — ownLodges, the owned lodges' ids (#62)", () => {
     expect(result.ownLodgesRefused).toBe(false);
   });
 
-  it("leaves ownLodges `undefined` when an older server does not send it", async () => {
+  it("carries two owned lodges of the same name: the ids tell them apart (#69)", async () => {
+    const ownLodges = [
+      { id: "ol_a", name: "Ruapehu Lodge" },
+      { id: "ol_b", name: "Ruapehu Lodge" },
+    ];
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodges });
+
+    expect((await pullOtherLodges(null)).ownLodges).toEqual(ownLodges);
+  });
+
+  it("carries an empty list as an empty list: owning nothing is an answer", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodges: [] });
+
+    expect((await pullOtherLodges(null)).ownLodges).toEqual([]);
+  });
+
+  it("leaves ownLodges `undefined` when the server does not send it, never defaulting to []", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0 });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodges).toBeUndefined();
+    expect(result).toHaveProperty("ownLodges");
+    expect(result.ownLodgesRefused).toBe(false);
+  });
+
+  it("no longer reads the name-only list a 2.4 server sent (#69)", async () => {
     respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
 
     const result = await pullOtherLodges(null);
 
     expect(result.ownLodges).toBeUndefined();
-    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club"]);
+    expect(result).not.toHaveProperty("ownLodgeNames");
   });
 
   it.each([
     ["an empty id", [{ id: "", name: "Aorangi Ski Club" }]],
     ["an id over 64 characters", [{ id: "x".repeat(65), name: "Aorangi Ski Club" }]],
     ["the same id twice", [{ id: "ol_a", name: "A" }, { id: "ol_a", name: "B" }]],
+    ["a name over the lodge-name bound", [{ id: "ol_a", name: "x".repeat(121) }]],
+    ["a name carrying NUL", [{ id: "ol_a", name: "Aorangi\u0000Ski Club" }]],
+    ["more lodges than the bound", Array.from({ length: 101 }, (_, i) => ({ id: `ol_${i}`, name: `Lodge ${i}` }))],
     ["a list that is not a list", "ol_a"],
-  ])("refuses %s on its own, without failing the pull or the names", async (_label, ownLodges) => {
-    respondWith({
-      lodges: [remoteRow()],
-      cursor: "c-1",
-      count: 1,
-      ownLodgeNames: ["Aorangi Ski Club"],
-      ownLodges,
-    });
-
-    const result = await pullOtherLodges(null);
-
-    expect(result.ownLodges).toBeUndefined();
-    expect(result.ownLodgesRefused).toBe(true);
-    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club"]);
-    expect(result.lodges).toHaveLength(1);
-  });
-});
-
-describe("pullOtherLodges — ownLodgeNames (#52)", () => {
-  it("carries the owned list the server sent", async () => {
-    respondWith({
-      lodges: [remoteRow()],
-      cursor: "c-1",
-      count: 1,
-      ownLodgeNames: ["Aorangi Ski Club", "Aorangi Ski Club (annex)"],
-    });
-
-    const result = await pullOtherLodges(null);
-
-    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club", "Aorangi Ski Club (annex)"]);
-  });
-
-  it("carries an empty list as an empty list: owning nothing is an answer", async () => {
-    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: [] });
-
-    const result = await pullOtherLodges(null);
-
-    expect(result.ownLodgeNames).toEqual([]);
-  });
-
-  it("leaves the list `undefined` when the server does not send it, never defaulting to []", async () => {
-    // An older server. The sync must be able to tell "not sent" from "none".
-    respondWith({ lodges: [], cursor: "c-1", count: 0 });
-
-    const result = await pullOtherLodges(null);
-
-    expect(result.ownLodgeNames).toBeUndefined();
-    expect(result).toHaveProperty("ownLodgeNames");
-  });
-
-  it.each([
-    ["a name over the lodge-name bound", ["x".repeat(121)]],
-    ["a name carrying NUL", ["Aorangi\u0000Ski Club"]],
-    ["a non-string entry", [42]],
-    ["not a list at all", "Aorangi Ski Club"],
-    ["more names than the bound", Array.from({ length: 101 }, (_, i) => `Lodge ${i}`)],
-  ])("discards an owned list with %s as not sent, and still delivers the rows and the cursor", async (_label, ownLodgeNames) => {
+  ])("refuses %s on its own, and still delivers the rows and the cursor", async (_label, ownLodges) => {
     // The list decides what may be edited and uploaded, so one that breaks its
     // bounds is refused whole — but on its own. Failing the pull for it would
     // stop every club's details merging and leave the cursor behind because of
     // one bad field, so the rows land, the cursor advances, and the sync is
     // told the list was refused and leaves the stored one alone.
-    respondWith({ lodges: [remoteRow()], cursor: "c-9", count: 1, ownLodgeNames });
+    respondWith({ lodges: [remoteRow()], cursor: "c-9", count: 1, ownLodges });
 
     const result = await pullOtherLodges(null);
 
+    expect(result.ownLodges).toBeUndefined();
+    expect(result.ownLodgesRefused).toBe(true);
     expect(result.lodges).toHaveLength(1);
     expect(result.cursor).toBe("c-9");
-    expect(result.ownLodgeNames).toBeUndefined();
-    expect(result.ownLodgeNamesRefused).toBe(true);
-  });
-
-  it("reports a well-formed or absent list as not refused", async () => {
-    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
-    expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
-    respondWith({ lodges: [], cursor: "c-1", count: 0 });
-    expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
   });
 });
 

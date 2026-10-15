@@ -8,6 +8,7 @@ import {
   otherLodgeDataColumns,
   otherLodgeDataDiffers,
   ownsOtherLodge,
+  type OwnedOtherLodges,
   replaceOtherLodgeAmenities,
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
@@ -21,20 +22,19 @@ import type { OtherLodgesPullResult } from "@/lib/servernz-api";
  * WHICH ROW (#64). By the central server's permanent id (`centralId`) first,
  * so a lodge renamed there is the same row here. A lodge whose row has no id
  * yet is matched by NAME once, and that match fills the id in (the backfill).
- * A pulled lodge with no usable id is matched by name, exactly as before #64.
+ * Two lodges may share a name (#69), so the name is only a fallback, and only
+ * when exactly ONE row could be the lodge; otherwise the lodge is new here.
  *
  * NAMES. Another club's lodge takes the server's name: a rename there renames
  * this row in place, so its bookings, requests and amenities follow it. This
  * club's OWN lodge never takes its name from a download: the name is this
  * site's to change, and an upload carries it to the server (API 2.3).
  *
- * COLLISIONS. A name the server gives a lodge may be held here by another row
- * — a chain of renames arriving in one pull (A becomes B while B becomes C), or
- * a stale row. A first pass DEFERS such a lodge; the caller retries the
- * deferred lodges for as long as a pass makes progress, which settles a chain
- * of any length, then runs one FINAL pass. There a rename that still collides
- * applies everything but the name and is reported; a NEW lodge whose name is
- * held by a different central lodge is reported and not created.
+ * RETRIES. A write that loses a race with a concurrent writer (an admin's
+ * save, or a second download creating the same central id) is DEFERRED; the
+ * caller retries the deferred lodges after the rest of the pull, then runs one
+ * FINAL pass, where what still misses is reported. A name never collides: it
+ * is not unique (#69).
  *
  * TWO RULES keep `updatedAt` honest as a sync signal, because the upload
  * watermark is derived from it:
@@ -65,9 +65,11 @@ const MERGE_SELECT = {
 } as const;
 
 /**
- * A lodge the server renamed whose new name another local row holds:
- * `lodge` is THIS row's local name (what an administrator sees), `wanted` the
- * server's. `lodge` is `null` for a lodge new to this site, which was not added.
+ * A lodge this download could not place: `lodge` is the local row's name, or
+ * `null` for a lodge new to this site, which was not added; `wanted` is the
+ * server's name. Since #69 only a lodge that could not be created (a
+ * concurrent writer holding its central id on the final pass), or one the
+ * server sent without an id whose name several local lodges share.
  */
 export interface NameConflict {
   lodge: string | null;
@@ -97,6 +99,12 @@ function isUniqueViolation(error: unknown): boolean {
  * else the stored one; `null` when neither is known). `final` is the retry pass,
  * which reports a collision instead of deferring it.
  *
+ * `byNameAllowed` says whether a lodge WITH a usable id may key an unkeyed row
+ * by its name (#69): the caller allows it only on a whole-registry download,
+ * and only when the name is the registry's alone or the lodge is ours, so a
+ * row is never keyed to another club's lodge of the same name. A lodge
+ * without a usable id is always matched by name.
+ *
  * `knownIds` is set only for a WHOLE-registry download: every id the server
  * has. A local row keyed by an id NOT among them carries a stale id — from a
  * different central server this site was pointed at, or a lodge since deleted
@@ -105,48 +113,55 @@ function isUniqueViolation(error: unknown): boolean {
  */
 export async function mergeDistributedLodge(
   lodge: PulledLodge,
-  owned: ReadonlyArray<string> | null,
+  owned: OwnedOtherLodges,
   final: boolean,
   knownIds: ReadonlySet<string> | null = null,
+  byNameAllowed = true,
 ): Promise<MergeOutcome> {
   const centralId = usableCentralId(lodge.id);
   const byId = centralId
     ? await prisma.otherLodge.findUnique({ where: { centralId }, select: MERGE_SELECT })
     : null;
   let existing = byId;
-  if (!existing) {
-    // Among VISIBLE lodges only (#58): a hidden lodge is a deleted one kept for
-    // the bookings that name it, never matched to another lodge — names are
-    // unique among visible lodges alone, so a live lodge may share its name.
-    const byName = await prisma.otherLodge.findFirst({
-      where: { name: lodge.name, ...visibleOtherLodgeWhere },
-      select: MERGE_SELECT,
-    });
-    // The name is held here by a DIFFERENT central lodge: one renamed away on
-    // the server that this pull has not (yet) renamed here. Never merged into
-    // it, which would weld two lodges into one row — unless a whole download
-    // shows that row's id is not the server's at all (stale, see above).
-    const staleId =
-      byName?.centralId != null && knownIds !== null && !knownIds.has(byName.centralId);
-    if (byName && centralId !== null && byName.centralId !== null && !staleId) {
-      return final
-        ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
-        : { kind: "deferred" };
+  if (!existing && (centralId === null || byNameAllowed)) {
+    // By NAME, among VISIBLE lodges only (#58: a hidden lodge is a deleted one
+    // kept for the bookings that name it, never matched to another lodge). A
+    // row keyed to a DIFFERENT central lodge is another lodge of the same name
+    // (#69) and never merged into — unless a whole download shows that its id
+    // is not the server's at all (stale, see above). A pulled lodge with no
+    // usable id may match any row of its name.
+    const candidates = (
+      await prisma.otherLodge.findMany({
+        where: { name: lodge.name, ...visibleOtherLodgeWhere },
+        select: MERGE_SELECT,
+        orderBy: { createdAt: "asc" },
+      })
+    ).filter(
+      (row) =>
+        centralId === null ||
+        !row.centralId ||
+        (knownIds !== null && !knownIds.has(row.centralId)),
+    );
+    // Exactly one, or none. Several rows of the name: for a lodge with an id
+    // that is a new lodge here; for one without, there is no telling which, and
+    // creating one would add another copy on every pull, so it is reported.
+    if (candidates.length > 1 && centralId === null) {
+      return { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } };
     }
-    existing = byName;
+    existing = candidates.length === 1 ? (candidates[0] ?? null) : null;
   }
 
   // Only the fields the server SENT: a field it omitted is absent here, so a
   // server that does not yet carry it leaves the local value alone.
   const data = otherLodgeDataColumns(lodge);
-  // Another club's lodge, once the owned list is known — by the server's name
-  // or by this row's own (a lodge this site renamed is still ours). Its booking
-  // officer's PHONE is never stored here (#52): overridden to null, the one
-  // deliberate exception to "a field the server did not send is left alone".
+  // Another club's lodge, once the owned list is known — by the pulled
+  // lodge's central id, or by this row's own key (#69). Its booking officer's
+  // PHONE is never stored here (#52): overridden to null, the one deliberate
+  // exception to "a field the server did not send is left alone".
   const theirs =
     owned !== null &&
-    !ownsOtherLodge(owned, lodge.name) &&
-    !(existing !== null && ownsOtherLodge(owned, existing.name));
+    !ownsOtherLodge(owned, { centralId }) &&
+    !(existing !== null && ownsOtherLodge(owned, existing));
   if (theirs) data.bookingOfficerPhone = null;
   // `undefined` when the server sent no amenity list at all — also "leave ours
   // alone", never "the lodge has none".
@@ -160,10 +175,10 @@ export async function mergeDistributedLodge(
   if (!existing) {
     // A plain create; the amenity set rides in the same transaction. This
     // read-then-write is not atomic, so a concurrent writer (an admin pressing
-    // Download while the 03:00 cron runs) can create the same visible name or
-    // central id in the gap: the unique index refuses this one, and the lodge
-    // is retried after the rest of the pull, when the lookups above find the
-    // row that writer made and merge into it.
+    // Download while the 03:00 cron runs) can create the same central id in
+    // the gap: the unique index refuses this one, and the lodge is retried
+    // after the rest of the pull, when the lookups above find the row that
+    // writer made and merge into it.
     try {
       await prisma.$transaction(async (tx) => {
         const row = await tx.otherLodge.create({
@@ -209,34 +224,22 @@ export async function mergeDistributedLodge(
     notKeyed = keyed !== 1;
   }
 
-  // A rename: only another club's lodge, only one matched by id.
-  let renameTo = theirs && byId !== null && row.name !== lodge.name ? lodge.name : null;
-  let nameConflict: NameConflict | undefined;
-  if (renameTo !== null) {
-    // Held only by a VISIBLE lodge (#58): a hidden one may share the name.
-    const holder = await prisma.otherLodge.findFirst({
-      where: { name: renameTo, ...visibleOtherLodgeWhere },
-      select: { id: true },
-    });
-    if (holder) {
-      if (!final) return { kind: "deferred" };
-      nameConflict = { lodge: row.name, wanted: renameTo };
-      renameTo = null;
-    }
-  }
+  // A rename: only another club's lodge, only one matched by id. The new
+  // name may be one another lodge has (#69).
+  const renameTo = theirs && byId !== null && row.name !== lodge.name ? lodge.name : null;
 
   // Amenities are part of "differs": a lodge whose only change is its amenity
   // list is still a changed lodge, and still carries the server's timestamp.
   const amenitiesChanged =
     amenities !== undefined && otherLodgeAmenitiesDiffer(row.amenities, amenities);
   if (renameTo === null && !otherLodgeDataDiffers(data, row) && !amenitiesChanged) {
-    return { kind: "unchanged", nameConflict, notKeyed };
+    return { kind: "unchanged", notKeyed };
   }
 
   // Rule 2, for a lodge this club may edit. Equal timestamps apply the remote,
   // so a server correction issued in the same instant is not dropped.
   if (!theirs && remoteUpdatedAt && row.updatedAt > remoteUpdatedAt) {
-    return { kind: "keptLocal", nameConflict, notKeyed };
+    return { kind: "keptLocal", notKeyed };
   }
 
   // One transaction for the lodge row and its amenities. The row write comes
@@ -246,43 +249,19 @@ export async function mergeDistributedLodge(
   // the upload watermark, so the edit would never be sent. A miss is the local
   // edit winning after all (keptLocal). The same write takes the row's lock, so
   // a concurrent amenity replacement on this lodge queues behind it.
-  let applied: boolean;
-  try {
-    applied = await prisma.$transaction(async (tx) => {
-      const claimed = await tx.otherLodge.updateMany({
-        where: { id: row.id, updatedAt: row.updatedAt, hiddenAt: null },
-        data: { ...data, ...stamp, ...(renameTo !== null ? { name: renameTo } : {}) },
-      });
-      if (claimed.count !== 1) return false;
-      if (amenitiesChanged && amenities) {
-        await replaceOtherLodgeAmenities(tx, row.id, amenities);
-      }
-      return true;
+  const applied = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.otherLodge.updateMany({
+      where: { id: row.id, updatedAt: row.updatedAt, hiddenAt: null },
+      data: { ...data, ...stamp, ...(renameTo !== null ? { name: renameTo } : {}) },
     });
-  } catch (error) {
-    // A rename onto a name another writer took since the check above.
-    if (renameTo === null || !isUniqueViolation(error)) throw error;
-    return final
-      ? { kind: "conflict", nameConflict: { lodge: row.name, wanted: renameTo } }
-      : { kind: "deferred" };
-  }
-  if (!applied) return { kind: "keptLocal", nameConflict, notKeyed };
-  return { kind: "updated", renamed: renameTo !== null, nameConflict, notKeyed };
-}
-
-/** Local names of the rows keyed by these central ids, read through `db`. */
-export async function localNamesByCentralId(
-  ids: ReadonlyArray<string>,
-  db: Pick<Prisma.TransactionClient, "otherLodge"> = prisma,
-): Promise<Map<string, string>> {
-  if (ids.length === 0) return new Map();
-  const rows = await db.otherLodge.findMany({
-    where: { centralId: { in: [...ids] } },
-    select: { centralId: true, name: true },
+    if (claimed.count !== 1) return false;
+    if (amenitiesChanged && amenities) {
+      await replaceOtherLodgeAmenities(tx, row.id, amenities);
+    }
+    return true;
   });
-  return new Map(
-    rows.flatMap((row) => (row.centralId ? [[row.centralId, row.name] as const] : [])),
-  );
+  if (!applied) return { kind: "keptLocal", notKeyed };
+  return { kind: "updated", renamed: renameTo !== null, notKeyed };
 }
 
 /**

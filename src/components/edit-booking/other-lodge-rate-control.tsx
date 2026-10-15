@@ -46,7 +46,7 @@ export function OtherLodgeRateControl({
             <option value="">Select a lodge</option>
             {otherLodge.lodges.map((lodge) => (
               <option key={lodge.id} value={lodge.id}>
-                {lodge.name}
+                {lodge.label}
               </option>
             ))}
           </select>

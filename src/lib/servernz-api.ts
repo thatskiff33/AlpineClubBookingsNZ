@@ -1,7 +1,6 @@
 import "server-only";
 import {
   ownedCentralLodgesSchema,
-  ownedOtherLodgeNamesSchema,
   type OwnedCentralLodge,
 } from "@/lib/other-lodges";
 import logger from "@/lib/logger";
@@ -576,18 +575,9 @@ export async function pullOtherLodges(
   }
 
   // The owned list, validated apart from the rows and the cursor: refused
-  // whole when it breaks its bounds (one name over the bound could never match
-  // a local row, but a list that is wrong in one place is not a list to edit
-  // and upload by), and then reported as not sent rather than failing the pull.
-  let ownLodgeNames: string[] | undefined;
-  let ownLodgeNamesRefused = false;
-  if (envelope.ownLodgeNames !== undefined) {
-    const owned = ownedOtherLodgeNamesSchema.safeParse(envelope.ownLodgeNames);
-    if (owned.success) ownLodgeNames = owned.data;
-    else ownLodgeNamesRefused = true;
-  }
-
-  // The owned lodges with their ids (#62): the same rule, on its own.
+  // whole when it breaks its bounds (a list that is wrong in one place is not
+  // a list to edit and upload by), and then reported as not sent rather than
+  // failing the pull.
   let ownLodges: OwnedCentralLodge[] | undefined;
   let ownLodgesRefused = false;
   if (envelope.ownLodges !== undefined) {
@@ -608,8 +598,6 @@ export async function pullOtherLodges(
     cursor: envelope.cursor,
     count: envelope.count,
     dropped,
-    ownLodgeNames,
-    ownLodgeNamesRefused,
     ownLodges,
     ownLodgesRefused,
     deletedLodgeIds,

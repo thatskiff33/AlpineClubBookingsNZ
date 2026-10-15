@@ -95,7 +95,7 @@ import {
   lodgeNullTolerantScope,
   lodgeOrderBy,
 } from "@/lib/lodges";
-import { otherLodgeChoicesWhere, otherLodgeOrderBy, visibleOtherLodgeWhere } from "@/lib/other-lodges";
+import { otherLodgeChoicesWhere, otherLodgeNameWithLocation, otherLodgeOrderBy, visibleOtherLodgeWhere, withOtherLodgeChoiceLabels } from "@/lib/other-lodges";
 // ONE definition of the open-status list, shared with the member DTO so the
 // Withdraw affordance is derived from the same list this file's WHERE clauses
 // name rather than restating it (#2263 review finding M3).
@@ -414,17 +414,17 @@ export async function getPublicBookingRequestLodges(
 
 /**
  * The external / partner lodges a requester may say they belong to (#2749).
- * id + name only — this backs a public form drop-down. Always returned (even
- * for one entry); a blank selection means "not a member of another lodge".
+ * id, name and the label to show (#69: with the location when names repeat). It backs a public form
+ * drop-down. Always returned (even for one entry); a blank selection means "not a member of another lodge".
  * Hidden lodges are not offered, bar the `keepId` a record already names (#58).
  */
 export async function getPublicOtherLodges(
   db: Pick<typeof prisma, "otherLodge"> = prisma, keepId: string | null = null
-): Promise<Array<{ id: string; name: string }>> {
-  return db.otherLodge.findMany({
+): Promise<Array<{ id: string; name: string; label: string }>> {
+  return withOtherLodgeChoiceLabels(await db.otherLodge.findMany({
     where: otherLodgeChoicesWhere(keepId),
-    orderBy: otherLodgeOrderBy(), select: { id: true, name: true },
-  });
+    orderBy: otherLodgeOrderBy(), select: { id: true, name: true, location: true },
+  }));
 }
 
 /**
@@ -2957,7 +2957,7 @@ function readAdminTeachersForDisplay(raw: unknown) {
 export function serializeBookingRequestForAdmin(
   request: BookingRequest & {
     lodge?: { name: string } | null;
-    otherLodge?: { name: string } | null;
+    otherLodge?: { name: string; location?: string | null } | null;
   },
   /*
     #2887 review (F2): how many lodges the club actually has, so the ADR-002
@@ -3011,9 +3011,9 @@ export function serializeBookingRequestForAdmin(
         : (request.lodge?.name ?? null),
     // Other/partner lodge the requester said they belong to (#2749). Null
     // otherLodgeId means "No"; otherLodgeName is present only when the caller
-    // included the otherLodge relation.
+    // included the otherLodge relation, with its location when that was read (#69: names may repeat).
     otherLodgeId: request.otherLodgeId,
-    otherLodgeName: request.otherLodge?.name ?? null,
+    otherLodgeName: request.otherLodge ? otherLodgeNameWithLocation(request.otherLodge) : null,
     // Whole-lodge exclusivity (ADR-001). Emitted so the admin queue can badge
     // it — for SCHOOL rows too, closing a display gap that predates #2263 — and
     // so the member-origin approval branch can be selected at all.

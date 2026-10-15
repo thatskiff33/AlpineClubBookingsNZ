@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -14,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   amenityUpsert: vi.fn(),
   auditLogCreate: vi.fn(),
   loadServerNzSettings: vi.fn(),
-  renameOwnedOtherLodgeName: vi.fn(),
   readStoredServerVersion: vi.fn(),
 }));
 
@@ -34,7 +32,6 @@ vi.mock("@/lib/session-guards", async () => ({
 
 vi.mock("@/lib/servernz-settings", () => ({
   loadServerNzSettings: mocks.loadServerNzSettings,
-  renameOwnedOtherLodgeName: mocks.renameOwnedOtherLodgeName,
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -82,6 +79,9 @@ function record(overrides: Record<string, unknown> = {}) {
   return {
     id: "ol-1",
     name: "Ruapehu Ski Club",
+    // Keyed to the owned lodge (`owning` gives the first name "c-1") unless a
+    // test says otherwise: ownership is by central id (#69).
+    centralId: "c-1",
     location: "Whakapapa",
     bookingOfficerName: "Jo Officer",
     bookingOfficerEmail: "jo@example.com",
@@ -127,6 +127,7 @@ function theirs() {
   return record({
     id: "ol-2",
     name: "Tongariro Lodge",
+    centralId: "c-theirs",
     bookingOfficerName: "Sam Officer",
     bookingOfficerEmail: "sam@example.com",
     bookingOfficerPhone: "021 555 9999",
@@ -150,7 +151,10 @@ function params(id: string) {
   return { params: Promise.resolve({ id }) };
 }
 
-/** The central server has said: this club owns Ruapehu Ski Club. */
+/**
+ * The central server has said: this club owns these lodges, the first under
+ * central id `c-1`, the next `c-2` and so on (#69: owned by id).
+ */
 function owning(names: string[] | null) {
   mocks.loadServerNzSettings.mockResolvedValue({
     baseUrl: "https://central.test",
@@ -158,8 +162,7 @@ function owning(names: string[] | null) {
     otherLodgesLastUploadAt: null,
     otherLodgesLastDownloadAt: null,
     otherLodgesCursor: null,
-    otherLodgesOwnedNames: names,
-    otherLodgesOwnedNamesAt: names === null ? null : now.toISOString(),
+    otherLodgesOwnedLodges: names === null ? null : names.map((name, i) => ({ id: `c-${i + 1}`, name })),
   });
 }
 
@@ -193,7 +196,7 @@ describe("the create and delete handlers are gone (#52)", () => {
 describe("GET /api/admin/other-lodges marks lodges the central server no longer has (#64)", () => {
   function keyed() {
     mocks.loadServerNzSettings.mockResolvedValue({
-      otherLodgesOwnedNames: ["Ruapehu Ski Club"],
+      otherLodgesOwnedLodges: [{ id: "c-1", name: "Ruapehu Ski Club" }],
       otherLodgesKeyedAt: "2026-10-14T00:00:00.000Z",
     });
   }
@@ -233,8 +236,9 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
       record({ id: "ol-1", centralId: "c-1" }),
     ]);
     expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: true });
+    // Not keyed yet: never ours, even under the owned lodge's name (#69).
     mocks.findMany.mockResolvedValueOnce([record({ id: "ol-1", centralId: null })]);
-    expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: false });
+    expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: false, renamable: false });
   });
 });
 
@@ -434,40 +438,32 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("refuses a rename of an owned lodge not yet keyed by the central server (#64)", async () => {
+  it("refuses any edit of a row not yet keyed, even one with the owned lodge's name (#69)", async () => {
+    // Another row of that name may be ours: the download keys it first.
     mocks.findUnique.mockResolvedValue(record({ centralId: null }));
     const response = await PATCH(
       jsonRequest("PATCH", { name: "Ruapehu Ski Club (renamed)", bedCapacity: 12 }),
       params("ol-1"),
     );
-    expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/renamed after the next Download/i);
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("OTHER_LODGE_NOT_OWNED");
     expect(mocks.update).not.toHaveBeenCalled();
-    expect(mocks.renameOwnedOtherLodgeName).not.toHaveBeenCalled();
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 
-  it("renames a keyed owned lodge and moves the stored owned name with it, in one transaction (#64)", async () => {
+  it("renames a keyed owned lodge in one write; it stays ours by its id (#64, #69)", async () => {
     mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
-    mocks.updateMany.mockResolvedValue({ count: 1 });
-    mocks.findUniqueOrThrow.mockResolvedValue(
-      record({ centralId: "c-1", name: "Ruapehu Alpine Lodge" }),
-    );
+    mocks.update.mockResolvedValue(record({ centralId: "c-1", name: "Ruapehu Alpine Lodge" }));
     const response = await PATCH(
       jsonRequest("PATCH", { name: "  Ruapehu Alpine Lodge ", bedCapacity: 12 }),
       params("ol-1"),
     );
     expect(response.status).toBe(200);
-    // Guarded on the name it read, so a concurrent rename cannot also pass.
-    const [{ where, data }] = mocks.updateMany.mock.calls[0];
-    expect(where).toEqual({ id: "ol-1", name: "Ruapehu Ski Club" });
+    const [{ where, data }] = mocks.update.mock.calls[0];
+    expect(where).toEqual({ id: "ol-1" });
     expect(data).toEqual({ bedCapacity: 12, name: "Ruapehu Alpine Lodge" });
-    expect(mocks.renameOwnedOtherLodgeName).toHaveBeenCalledWith(
-      expect.anything(),
-      "Ruapehu Ski Club",
-      "Ruapehu Alpine Lodge",
-    );
-    // Still ours in the answer, under the new name.
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    // Still ours in the answer, under the new name: the owned list is by id.
     expect((await response.json()).otherLodge).toMatchObject({
       name: "Ruapehu Alpine Lodge",
       owned: true,
@@ -477,31 +473,20 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(audit.metadata.changedFields).toContain("name");
   });
 
-  it("answers 409 when the lodge was renamed by someone else since it was read (#64)", async () => {
+  it("renames onto a name another lodge already has: names may repeat (#69)", async () => {
     mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
-    mocks.updateMany.mockResolvedValue({ count: 0 });
-    const response = await PATCH(jsonRequest("PATCH", { name: "Ruapehu Alpine Lodge" }), params("ol-1"));
-    expect(response.status).toBe(409);
-    expect((await response.json()).error).toMatch(/changed by someone else/i);
-    expect(mocks.renameOwnedOtherLodgeName).not.toHaveBeenCalled();
-    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+    mocks.update.mockResolvedValue(record({ centralId: "c-1", name: "Tongariro Lodge" }));
+    const response = await PATCH(jsonRequest("PATCH", { name: "Tongariro Lodge" }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update.mock.calls[0][0].data).toEqual({ name: "Tongariro Lodge" });
   });
 
-  it("answers 409 when another lodge already has the new name (#64)", async () => {
-    mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
-    mocks.updateMany.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
-        code: "P2002",
-        clientVersion: "test",
-      }),
-    );
-    const response = await PATCH(
-      jsonRequest("PATCH", { name: "Tasman Lodge" }),
-      params("ol-1"),
-    );
-    expect(response.status).toBe(409);
-    expect((await response.json()).error).toMatch(/already named "Tasman Lodge"/);
-    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+  it("refuses a lodge that shares the owned lodge's name but is keyed to another central lodge (#69)", async () => {
+    mocks.findUnique.mockResolvedValue(record({ centralId: "c-other" }));
+    const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("OTHER_LODGE_NOT_OWNED");
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("replaces the amenity set in one transaction and moves updatedAt explicitly for an amenity-only edit", async () => {

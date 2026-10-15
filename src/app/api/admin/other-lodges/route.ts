@@ -66,7 +66,7 @@ export async function GET() {
     // The STORED answer (#49): no network call from a list read.
     readStoredServerVersion(),
   ]);
-  const owned = settings.otherLodgesOwnedNames;
+  const owned = settings.otherLodgesOwnedLodges;
   const notOnCentralServer = await unkeyedLodgeReferences(
     otherLodges,
     settings.otherLodgesKeyedAt,
@@ -76,7 +76,8 @@ export async function GET() {
     otherLodges: otherLodges.map((lodge) =>
       serializeOtherLodgeForAdmin(lodge, owned, notOnCentralServer.get(lodge.id)),
     ),
-    ownedLodgeNames: owned,
+    // The panel's notes name the owned lodges; the rows carry `owned` (#69).
+    ownedLodgeNames: owned === null ? null : owned.map((l) => l.name),
     serverVersionStatus: version.status,
   };
   return NextResponse.json(body);

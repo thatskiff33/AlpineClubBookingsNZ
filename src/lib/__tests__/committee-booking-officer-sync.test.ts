@@ -26,11 +26,12 @@ function makeDb(opts: {
     committeeRole: { contactEmail: string | null };
   } | null;
   lodges?: Array<{ name: string }>;
-  /** The stored owned list (#52): absent = no settings row = never told. */
-  ownedNames?: unknown;
+  /** The stored owned list (#52, by id #69): absent = no settings row = never told. */
+  owned?: unknown;
   otherLodges?: Array<{
     id: string;
     name?: string;
+    centralId?: string | null;
     bookingOfficerName: string | null;
     bookingOfficerEmail: string | null;
     bookingOfficerPhone: string | null;
@@ -52,7 +53,7 @@ function makeDb(opts: {
       findMany: vi.fn().mockResolvedValue(opts.lodges ?? []),
     },
     otherLodge: {
-      // Deliberately NOT filtered by the `name: { in }` the sync asks with: the
+      // Deliberately NOT filtered by the `where` the sync asks with: the
       // write-time `ownsOtherLodge` check is the rule, and this fake hands every
       // row back so that check is what the owned-list cases prove, not the query.
       findMany: vi.fn().mockResolvedValue(opts.otherLodges ?? []),
@@ -60,7 +61,7 @@ function makeDb(opts: {
     },
     serverNzSettings: {
       findUnique: vi.fn().mockResolvedValue(
-        opts.ownedNames === undefined ? null : { otherLodgesOwnedNames: opts.ownedNames },
+        opts.owned === undefined ? null : { otherLodgesOwnedLodges: opts.owned },
       ),
     },
   };
@@ -282,7 +283,7 @@ describe("syncBookingOfficerForRole", () => {
 // `ownsOtherLodge` rule as the admin edit route and the upload — and the
 // building-name match is only the fallback for a site the server has not told.
 
-describe("writes only the rows the central server says are ours (#52)", () => {
+describe("writes only the rows the central server says are ours (#52, by central id #69)", () => {
   const holder = {
     memberId: "m1",
     member: MEMBER,
@@ -298,10 +299,10 @@ describe("writes only the rows the central server says are ours (#52)", () => {
       roles: [{ id: "role_bo" }],
       holder,
       lodges: [{ name: "Whakapapa Lodge" }],
-      ownedNames: ["Aorangi Ski Club"],
+      owned: [{ id: "c-ours", name: "Aorangi Ski Club" }],
       otherLodges: [
-        { id: "theirs", name: "Whakapapa Lodge", ...blank },
-        { id: "ours", name: "Aorangi Ski Club", ...blank },
+        { id: "theirs", name: "Whakapapa Lodge", centralId: "c-theirs", ...blank },
+        { id: "ours", name: "Aorangi Ski Club", centralId: "c-ours", ...blank },
       ],
     });
 
@@ -312,10 +313,54 @@ describe("writes only the rows the central server says are ours (#52)", () => {
     expect(update.mock.calls[0][0].where).toEqual({ id: "ours" });
     // The building names were not even consulted.
     expect(db.lodge.findMany).not.toHaveBeenCalled();
+    // By central id only (#69): an unkeyed row of an owned name is not ours.
     expect(db.otherLodge.findMany.mock.calls[0][0].where).toEqual({
-      name: { in: ["Aorangi Ski Club"] },
+      centralId: { in: ["c-ours"] },
       hiddenAt: null,
     });
+  });
+
+  it("never writes another club's lodge that shares the owned lodge's name (#69)", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      owned: [{ id: "c-ours", name: "Ruapehu Lodge" }],
+      otherLodges: [
+        { id: "theirs", name: "Ruapehu Lodge", centralId: "c-theirs", ...blank },
+        { id: "ours", name: "Ruapehu Lodge", centralId: "c-ours", ...blank },
+      ],
+    });
+
+    await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0].where).toEqual({ id: "ours" });
+  });
+
+  it("never writes a row not keyed yet, even under the owned lodge's name (#69)", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      owned: [{ id: "c-ours", name: "Ruapehu Lodge" }],
+      otherLodges: [{ id: "unkeyed", name: "Ruapehu Lodge", centralId: null, ...blank }],
+    });
+
+    await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("writes the owned lodge renamed here: it is matched by its id, not its name", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      owned: [{ id: "c-ours", name: "Aorangi Ski Club" }],
+      otherLodges: [{ id: "ours", name: "Aorangi Lodge", centralId: "c-ours", ...blank }],
+    });
+
+    await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(update.mock.calls[0][0].where).toEqual({ id: "ours" });
   });
 
   it("writes nothing when the server said the club owns no lodge", async () => {
@@ -323,7 +368,7 @@ describe("writes only the rows the central server says are ours (#52)", () => {
       roles: [{ id: "role_bo" }],
       holder,
       lodges: [{ name: "Whakapapa Lodge" }],
-      ownedNames: [],
+      owned: [],
       otherLodges: [{ id: "theirs", name: "Whakapapa Lodge", ...blank }],
     });
 
@@ -338,7 +383,7 @@ describe("writes only the rows the central server says are ours (#52)", () => {
       roles: [{ id: "role_bo" }],
       holder,
       lodges: [{ name: "Whakapapa Lodge" }],
-      // No ownedNames: no settings row, never told.
+      // No owned list: no settings row, never told.
       otherLodges: [{ id: "ol1", name: "Whakapapa Lodge", ...blank }],
     });
 
@@ -353,7 +398,7 @@ describe("writes only the rows the central server says are ours (#52)", () => {
       roles: [{ id: "role_bo" }],
       holder,
       lodges: [{ name: "Whakapapa Lodge" }],
-      ownedNames: "Aorangi Ski Club",
+      owned: "Aorangi Ski Club",
       otherLodges: [{ id: "ol1", name: "Whakapapa Lodge", ...blank }],
     });
 

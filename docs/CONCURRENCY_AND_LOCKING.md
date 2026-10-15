@@ -1985,21 +1985,17 @@ mispricing a booking.
   deliberately **not** taken — the master stays unlocked until step 5, and the
   family-link drift re-check above is what closes that window.
 
-- **Owned-lodge list writers** — `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64):
-  the Other lodges download's record step (`downloadOtherClubsFromServer`) and
-  an admin's rename of the club's own lodge (`PATCH /api/admin/other-lodges/[id]`
-  via `renameOwnedOtherLodgeName`) each take
-  `$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE`` on
-  the singleton settings row before reading what they write back: the download
-  maps each owned central id to its local `OtherLodge` name, the rename moves
-  one name in the stored list. Locked first, so neither can write back a list
-  computed before the other committed (a lost rename would leave the lodge not
-  owned until the next download). The rename's row write comes first in its
-  transaction (guarded on the name it read), then the settings lock; the
-  download holds no `OtherLodge` row lock while it waits, so the two orders
-  cannot deadlock. Singleton-keyed; no advisory lock; disjoint from the
-  booking/capacity/credit and money clusters. A missing row (never configured)
-  locks nothing, and its first upsert is the only writer then.
+- **Owned-lodge list writer** — `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64):
+  the Other lodges download's record step (`downloadOtherClubsFromServer`)
+  takes `$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE``
+  on the singleton settings row, then re-reads the connection (address and API
+  key stamp) and the cursor and keyed marker under it, so a download that ran
+  while the connection changed, or while another download recorded, writes
+  nothing back. Since #69 the owned list is stored by central id as the server
+  sent it, so an admin's rename of the club's own lodge no longer rewrites it
+  and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
+  from the booking/capacity/credit and money clusters. A missing row (never
+  configured) locks nothing, and its first upsert is the only writer then.
 
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes

@@ -53,6 +53,11 @@ export const uploadResultSchema = z.object({
   results: z
     .array(
       z.object({
+        // The lodge's central id (API 2.5, #69), whenever the item reached
+        // one: how a lodge this site uploaded without an id learns it. Taken
+        // as `unknown` and checked where it is used, so one malformed id
+        // costs that link, not the whole upload's answer.
+        id: z.unknown().optional(),
         name: z.string(),
         status: z.enum(["created", "updated", "unchanged", "skipped"]),
         reason: z.string().optional(),
@@ -133,22 +138,19 @@ const MAX_DELETED_LODGES_PER_PULL = 100_000;
 // cursor advanced, so every subsequent run would re-fetch and re-fail,
 // permanently.
 //
-// `ownLodgeNames` (#52) is the names of the lodges the AUTHENTICATED club owns,
-// which the server sends on EVERY pull, incremental or not, because it is the
-// club's whole current list rather than a delta. OPTIONAL: an older server does
-// not send it, and absent must survive as `undefined` so the sync leaves the
-// stored list alone rather than reading "not sent" as "owns nothing". It is
-// taken as `unknown` here and validated on its own by the pull: a list that
-// breaks its bounds (count, or a name over the lodge-name bound) must not fail
-// the WHOLE pull — the lodges still merge and the cursor still advances — it is
-// treated as not sent, and reported so the sync can say so.
+// `ownLodges` (#52, #62) is the lodges the AUTHENTICATED club owns, each as
+// its permanent id and name, which the server sends on EVERY pull, incremental
+// or not, because it is the club's whole current list rather than a delta.
+// OPTIONAL: absent must survive as `undefined` so the sync leaves the stored
+// list alone rather than reading "not sent" as "owns nothing". It is taken as
+// `unknown` here and validated on its own by the pull: a list that breaks its
+// bounds must not fail the WHOLE pull — the lodges still merge and the cursor
+// still advances — it is treated as not sent, and reported so the sync can say
+// so. (API 2.5 dropped the name-only `ownLodgeNames`, #69: names may repeat.)
 export const pullEnvelopeSchema = z.object({
   lodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL),
   cursor: z.string().max(64).nullable(),
   count: z.number(),
-  ownLodgeNames: z.unknown().optional(),
-  // The same lodges with their permanent ids (server API 2.2, #62), validated
-  // on its own like the names, for the same reason.
   ownLodges: z.unknown().optional(),
   // Lodges deleted on the server since `since` (API 2.4, #58), or every one on
   // a whole-registry pull, so its bound is its own and far above the registry's:
@@ -170,16 +172,9 @@ export interface OtherLodgesPullResult {
   /** Rows the server sent that failed the bounds above and were discarded. */
   dropped: number;
   /**
-   * The lodges the server says this club owns, or `undefined` when the server
-   * did not send the list (an older release). Never defaulted to `[]`: absent
-   * and "owns nothing" are different answers.
-   */
-  ownLodgeNames: string[] | undefined;
-  /** True when the server sent an owned list that failed its bounds and was discarded. */
-  ownLodgeNamesRefused: boolean;
-  /**
-   * The owned lodges with their central ids (#62), or `undefined` when the
-   * server did not send them (an older release). Never defaulted to `[]`.
+   * The lodges the server says this club owns, with their central ids (#62),
+   * or `undefined` when the server did not send a valid list. Never defaulted
+   * to `[]`: absent and "owns nothing" are different answers.
    */
   ownLodges: OwnedCentralLodge[] | undefined;
   /** True when the server sent `ownLodges` and it failed its bounds. */
