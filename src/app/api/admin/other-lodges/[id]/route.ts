@@ -13,7 +13,6 @@ import {
   otherLodgeDataShape,
   otherLodgeNameSchema,
   otherLodgeSelect,
-  otherLodgeSiteUrlInputSchema,
   canRenameOtherLodge,
   ownsOtherLodge,
   replaceOtherLodgeAmenities,
@@ -21,6 +20,7 @@ import {
   serializeOtherLodgeForAdmin,
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
+import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
@@ -40,8 +40,11 @@ const patchSchema = z
     name: otherLodgeNameSchema.optional(),
     ...otherLodgeDataShape,
     // Stricter than the pull's: the address must be one the central server
-    // accepts, or the next upload would be refused (#55).
-    siteUrl: otherLodgeSiteUrlInputSchema,
+    // accepts (#55). A request that leaves it out leaves the stored one alone.
+    siteUrl: otherLodgeDataShape.siteUrl.refine(
+      (v) => v == null || isSafeHttpUrl(v),
+      SAFE_HTTP_URL_MESSAGE,
+    ),
     amenities: amenitiesInputSchema.optional(),
   })
   .strict();

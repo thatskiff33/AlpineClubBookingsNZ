@@ -70,7 +70,7 @@ describe("other-lodge form: the booking page address (#55)", () => {
   it.each(["https://tararua.test@evil.test", "http:\\\\evil.test", "https://tararua.test/a b", "tararua.test"])(
     "refuses %j with the stricter rule's message",
     (value) => {
-      expect(formProblem(withSiteUrl(value))).toMatch(/no spaces, backslashes, or user name and password/);
+      expect(formProblem(withSiteUrl(value))).toMatch(/no spaces, no backslashes, and no @ before the site.s name/);
     },
   );
 });

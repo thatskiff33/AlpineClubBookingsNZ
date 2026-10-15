@@ -31,8 +31,9 @@ export function isHttpUrl(value: string | null | undefined): boolean {
 /**
  * The STRICTER rule for an address shown to other people as a link (#55): an
  * Other lodge's booking page, which the Alpine Central Server hands to every
- * club. The same rule as the server's `isSafeHttpUrl`, which refuses anything
- * else in an upload. The URL parser alone is too forgiving: it reads
+ * club. A copy (another repository) of the central server's `isSafeHttpUrl`
+ * in AlpineClubServerNZ `src/lib/other-lodges.ts`, which refuses anything else
+ * in an upload: change the two together. The URL parser alone is too forgiving: it reads
  * `http:\\evil.com` and `https:/\t/evil.com` as `https://evil.com`, and
  * accepts `https://club.nz@evil.com`, whose "club.nz" is a user name a reader
  * takes for the site. So the text AS TYPED is checked:
@@ -61,4 +62,4 @@ export function isSafeHttpUrl(value: string | null | undefined): boolean {
 
 /** What an administrator is told when a booking page address breaks `isSafeHttpUrl`. */
 export const SAFE_HTTP_URL_MESSAGE =
-  "The non-member booking page URL must start with http:// or https://, with no spaces, backslashes, or user name and password in it.";
+  "The non-member booking page URL must start with http:// or https://, with no spaces, no backslashes, and no @ before the site's name (such as https://club.nz@other.site).";

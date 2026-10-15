@@ -1,7 +1,7 @@
 import type { OtherLodge, OtherLodgeRoomType, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-import { isHttpUrl, isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
+import { isHttpUrl } from "@/lib/http-url";
 import type { ServerVersionStatus } from "@/lib/servernz-api-version";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 
@@ -410,7 +410,7 @@ export const otherLodgeCommonDataShape = {
   roomType: z.enum(OTHER_LODGE_ROOM_TYPES).nullable().optional(),
   // Held to http(s) only, because the PULL shares this shape: a lodge the
   // server already holds with an odd address still arrives (shown as text).
-  // The admin edit is held to the stricter rule (#55, below).
+  // The admin edit is held to the stricter rule (#55, its PATCH route).
   siteUrl: z.preprocess(
     blankToNull,
     boundedText(OTHER_LODGE_BOUNDS.siteUrl)
@@ -433,8 +433,6 @@ export const otherLodgeDataShape = {
 };
 
 export type OtherLodgeDataInput = z.infer<z.ZodObject<typeof otherLodgeDataShape>>;
-/** The booking page address an ADMINISTRATOR saves (#55): the central server's stricter rule. */
-export const otherLodgeSiteUrlInputSchema = otherLodgeDataShape.siteUrl.refine((v) => v == null || isSafeHttpUrl(v), SAFE_HTTP_URL_MESSAGE);
 
 /** The Prisma column values for whichever data fields were PROVIDED. */
 export type OtherLodgeDataColumns = Partial<OtherLodgeDataRecord>;

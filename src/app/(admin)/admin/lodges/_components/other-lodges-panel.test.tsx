@@ -931,14 +931,31 @@ describe("Other lodges: the booking page address (#55)", () => {
     const field = within(dialog).getByLabelText("Non-member booking page URL");
     const note = within(dialog).getByTestId("site-url-note");
     expect(field.getAttribute("aria-describedby")).toBe(note.id);
-    expect(note.textContent).toMatch(/no spaces, backslashes, or user name and password/);
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(note.textContent).toMatch(/no spaces, no backslashes, and no @ before the site.s name/);
 
     fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
-    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/user name and password/);
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 
     // Fixed: the note clears.
     fireEvent.change(field, { target: { value: "https://tararua.test/book" } });
     expect(within(dialog).getByTestId("site-url-note").textContent).toBe("");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("does not judge a NEW address while it is typed; Save says what is wrong", async () => {
+    stubFetch(withSiteUrl(""));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByLabelText("Non-member booking page URL");
+    fireEvent.change(field, { target: { value: "https://tara" } });
+    fireEvent.change(field, { target: { value: "https://tararua.test@evil.test" } });
+    expect(within(dialog).getByTestId("site-url-note").textContent).toBe("");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
   });
 });

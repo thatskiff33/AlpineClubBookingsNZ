@@ -52,6 +52,7 @@ import {
   FACILITY_LABELS,
   ROOM_TYPE_CHOICES,
   TEXT_FIELDS,
+  siteUrlBroken,
   TEXT_FIELD_NAMES,
   WHOLE_NUMBER_FIELDS,
   WHOLE_NUMBER_FIELD_NAMES,
@@ -232,6 +233,8 @@ export function OtherLodgesPanel({
   const hiding = useHideUnlistedLodge({ reload: () => loadLodges(), afterHide: () => headingRef.current?.focus() });
   const showForm = editingId !== null;
   const editingLodge = lodges.find((l) => l.id === editingId);
+  // An odd address the lodge was SAVED with (#55), flagged as the form opens.
+  const siteUrlFlagged = siteUrlBroken(form.text.siteUrl) && form.text.siteUrl.trim() === (editingLodge?.siteUrl ?? "").trim();
   // The owned rows actually ON SCREEN. A name the server lists that has no
   // local row yet (not downloaded) has no button, so the label counts what the
   // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
@@ -323,6 +326,7 @@ export function OtherLodgesPanel({
                     placeholder={TEXT_FIELDS[field].placeholder}
                     maxLength={TEXT_FIELDS[field].maxLength}
                     aria-describedby={field === "siteUrl" ? SITE_URL_NOTE_ID : undefined}
+                    aria-invalid={field === "siteUrl" && siteUrlFlagged ? true : undefined}
                     value={form.text[field]}
                     onChange={(event) =>
                       setForm((prev) => ({
@@ -331,7 +335,7 @@ export function OtherLodgesPanel({
                       }))
                     }
                   />
-                  {field === "siteUrl" ? <OtherLodgeSiteUrlNote value={form.text.siteUrl} /> : null}
+                  {field === "siteUrl" ? <OtherLodgeSiteUrlNote flagged={siteUrlFlagged} /> : null}
                 </div>
               ))}
               {WHOLE_NUMBER_FIELD_NAMES.map((field) => (
