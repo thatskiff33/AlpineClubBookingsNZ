@@ -13,6 +13,7 @@ import {
 import { createAuditLog } from "@/lib/audit";
 import { isSafeHttpUrl } from "@/lib/http-url";
 import logger from "@/lib/logger";
+import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
 import { prisma } from "@/lib/prisma";
 import {
   uploadOtherLodges,
@@ -112,6 +113,11 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
     logger.info("The central server has not said which Other lodges are this club's yet; uploading nothing until a download records it");
     return { ...NOTHING_UPLOADED, ownedUnknown: true };
   }
+
+  // First bring this club's own lodge up to date with its Fees page (#77): a
+  // season that has rolled over, or a configuration import, moves its rates
+  // here, and the row it rewrites is newer than the watermark, so it goes now.
+  await syncOwnOtherLodgesFromFees("upload");
 
   // A hidden lodge (#58) is never uploaded: it is a deleted lodge kept here.
   const changed = await prisma.otherLodge.findMany({

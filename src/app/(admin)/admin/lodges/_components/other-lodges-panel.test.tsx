@@ -484,13 +484,13 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     const dialog = await screen.findByRole("dialog");
     // Stored cents load as the dollars an officer would type; zero is a rate,
     // not "not set".
-    const winterAdult = within(dialog).getByLabelText("Winter rate, 18+") as HTMLInputElement;
+    const winterAdult = within(dialog).getByLabelText("Winter rate, Adult") as HTMLInputElement;
     expect(winterAdult.value).toBe("45.50");
-    expect((within(dialog).getByLabelText("Summer rate, Under 5") as HTMLInputElement).value).toBe("0.00");
-    expect((within(dialog).getByLabelText("Winter rate, 5–12") as HTMLInputElement).value).toBe("");
+    expect((within(dialog).getByLabelText("Summer rate, Infant") as HTMLInputElement).value).toBe("0.00");
+    expect((within(dialog).getByLabelText("Winter rate, Child") as HTMLInputElement).value).toBe("");
 
-    fireEvent.change(within(dialog).getByLabelText("Winter rate, 5–12"), { target: { value: "20" } });
-    fireEvent.change(within(dialog).getByLabelText("Summer rate, 13–17"), { target: { value: "30.1" } });
+    fireEvent.change(within(dialog).getByLabelText("Winter rate, Child"), { target: { value: "20" } });
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, Youth"), { target: { value: "30.1" } });
     fireEvent.change(winterAdult, { target: { value: "" } });
     fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
@@ -514,11 +514,11 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     fireEvent.click(editMyLodge());
     const dialog = await screen.findByRole("dialog");
     for (const season of ["Winter", "Summer"]) {
-      for (const ageGroup of ["Under 5", "5–12", "13–17", "18+"]) {
+      for (const ageGroup of ["Infant", "Child", "Youth", "Adult"]) {
         const name = `${season} rate, ${ageGroup}`;
         expect(within(dialog).getByLabelText(name)).toBeTruthy();
         // MoneyInput names its buttons from the field's <label>: without the
-        // season in it, "Increase 18+ by one dollar" would appear twice.
+        // season in it, "Increase Adult by one dollar" would appear twice.
         await waitFor(() =>
           expect(
             within(dialog).getByRole("button", { name: `Increase ${name} by one dollar` }),
@@ -533,13 +533,13 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     await renderPanel();
     fireEvent.click(editMyLodge());
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText("Summer rate, 18+"), {
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, Adult"), {
       target: { value: "100000" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toBe("Summer rate, 18+ can be at most $99999.99.");
+    expect(alert.textContent).toBe("Summer rate, Adult can be at most $99999.99.");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 
@@ -980,3 +980,73 @@ describe("Other lodges: season start and end dates (#75)", () => {
   });
 });
 
+describe("rates and season dates from the Fees page (#77)", () => {
+  function fromFees(on: boolean): AdminOtherLodgesResponse {
+    return { ...oneOwned(), otherLodges: [lodge({ ratesFromFees: on, winterRateAdultCents: 4500 }), theirs()] };
+  }
+  const feesSwitch = (dialog: HTMLElement) =>
+    within(dialog).getByRole("checkbox", { name: "Rates and season dates from the Fees page" }) as HTMLInputElement;
+
+  it("while on, shows the rates and dates read-only, links to Fees, and saves the switch", async () => {
+    stubFetch(fromFees(true));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    expect(feesSwitch(dialog).checked).toBe(true);
+    expect(within(dialog).getByRole("link", { name: /Fees/ }).getAttribute("href")).toBe("/admin/fees");
+    const winterAdult = within(dialog).getByLabelText("Winter rate, Adult") as HTMLInputElement;
+    expect(winterAdult.value).toBe("45.00");
+    expect(winterAdult.readOnly).toBe(true);
+    expect((within(dialog).getByLabelText("Winter season end date") as HTMLInputElement).readOnly).toBe(true);
+    // A screen reader is told why: each locked field points at the switch's note.
+    expect(winterAdult.getAttribute("aria-describedby")).toContain("other-lodge-ratesFromFees-hint");
+    expect(within(dialog).getByLabelText("Winter season end date").getAttribute("aria-describedby")).toContain(
+      "other-lodge-ratesFromFees-hint",
+    );
+    expect(within(dialog).getByRole("link", { name: /Fees/ }).getAttribute("target")).toBe("_blank");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    const sent = JSON.parse(write[1].body);
+    expect(sent).toMatchObject({ ratesFromFees: true, bedCapacity: expect.anything() });
+    // The rates and dates are the Fees page's: not sent at all.
+    expect(sent).not.toHaveProperty("winterRateAdultCents");
+    expect(sent).not.toHaveProperty("winterSeasonStart");
+  });
+
+  it("says in the popup why the Fees page cannot fill the lodge", async () => {
+    stubFetch({ ...fromFees(true), otherLodges: [lodge({ ratesFromFees: true, feesProblem: "Not filled: not linked." }), theirs()] });
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Not filled: not linked.")).toBeTruthy();
+  });
+
+  it("turned off, lets the rates and dates be typed and saves them with the switch off", async () => {
+    stubFetch(fromFees(true));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(feesSwitch(dialog));
+    const winterAdult = within(dialog).getByLabelText("Winter rate, Adult") as HTMLInputElement;
+    expect(winterAdult.readOnly).toBe(false);
+    fireEvent.change(winterAdult, { target: { value: "50" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).toMatchObject({ ratesFromFees: false, winterRateAdultCents: 5000 });
+  });
+
+  it("shows no switch, and sends none, for a lodge the list carries no switch for", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("checkbox", { name: "Rates and season dates from the Fees page" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).not.toHaveProperty("ratesFromFees");
+  });
+});

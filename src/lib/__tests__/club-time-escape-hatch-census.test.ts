@@ -670,6 +670,11 @@ const CENSUS_CEILING = {
   // stay (`addDaysDateOnly`). Neither takes a `timeZone`; the club's today comes
   // from `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
   // Re-measured by RUNNING this suite on this tree.
+  // 231 -> 232 (#77): `other-lodge-fees-sync.ts`, the zone-free direction:
+  // it formats stored `@db.Date` season days as `yyyy-MM-dd` (`formatDateOnly`)
+  // for the season check and the audit text; the club's today comes from
+  // `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
+  // Re-measured by RUNNING this suite on this tree.
   dateOnlyImporters: 228,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.

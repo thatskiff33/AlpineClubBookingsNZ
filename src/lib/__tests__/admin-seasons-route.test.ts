@@ -16,6 +16,14 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   logAudit: vi.fn(),
   revalidatePublicPageContent: vi.fn(),
+  seasonDelete: vi.fn(),
+  syncOwnOtherLodgesFromFees: vi.fn(),
+}));
+
+// #77: a saved season refills this club's own Other lodge; its own tests
+// cover the fill, so here only that each successful save runs it.
+vi.mock("@/lib/other-lodge-fees-sync", () => ({
+  syncOwnOtherLodgesFromFees: mocks.syncOwnOtherLodgesFromFees,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -45,6 +53,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.seasonFindUnique,
       create: mocks.seasonCreate,
       update: mocks.seasonUpdate,
+      delete: mocks.seasonDelete,
     },
     membershipType: { findMany: mocks.membershipTypeFindMany },
     lodge: {
@@ -56,7 +65,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { GET, POST } from "@/app/api/admin/seasons/route";
-import { PUT } from "@/app/api/admin/seasons/[id]/route";
+import { DELETE, PUT } from "@/app/api/admin/seasons/[id]/route";
 import {
   buildCopiedSeasonPayload,
   membershipTypeSeasonRateInputSchema,
@@ -175,6 +184,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
       }),
     );
     expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("fees season created");
   });
 
   it("persists the flat whole-lodge night rate on create when supplied (#2338)", async () => {
@@ -238,6 +248,24 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         data: expect.objectContaining({ flatWholeLodgeNightCents: null }),
       }),
     );
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("fees season updated");
+  });
+
+  it("refills this club's own Other lodge after a season is deleted, and not for an unknown one (#77)", async () => {
+    mocks.seasonFindUnique.mockResolvedValue(null);
+    const missing = await DELETE(new NextRequest("http://localhost/api/admin/seasons/nope", { method: "DELETE" }), {
+      params: Promise.resolve({ id: "nope" }),
+    });
+    expect(missing.status).toBe(404);
+    expect(mocks.syncOwnOtherLodgesFromFees).not.toHaveBeenCalled();
+
+    mocks.seasonFindUnique.mockResolvedValue({ id: "season-1", name: "Winter 2026" });
+    mocks.seasonDelete.mockResolvedValue({ id: "season-1" });
+    const res = await DELETE(new NextRequest("http://localhost/api/admin/seasons/season-1", { method: "DELETE" }), {
+      params: Promise.resolve({ id: "season-1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("fees season deleted");
   });
 
   it("leaves the flat whole-lodge night rate untouched on a windows-only PUT (#2338)", async () => {
@@ -323,6 +351,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
     expect(res.status).toBe(400);
     expect(body.error).toContain("Existing Winter");
     expect(mocks.seasonCreate).not.toHaveBeenCalled();
+    expect(mocks.syncOwnOtherLodgesFromFees).not.toHaveBeenCalled();
   });
 
   it("scopes the update overlap check to the season's own lodge", async () => {

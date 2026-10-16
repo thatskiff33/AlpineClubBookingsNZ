@@ -8,6 +8,7 @@ import {
   type OtherLodgeReferences,
   visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
+import { otherLodgeFeesProblem } from "@/lib/other-lodge-fees-sync";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { readStoredServerVersion } from "@/lib/servernz-version-check";
@@ -73,8 +74,13 @@ export async function GET() {
   );
 
   const body: AdminOtherLodgesResponse = {
-    otherLodges: otherLodges.map((lodge) =>
-      serializeOtherLodgeForAdmin(lodge, owned, notOnCentralServer.get(lodge.id)),
+    otherLodges: await Promise.all(
+      otherLodges.map(async (lodge) => {
+        const row = serializeOtherLodgeForAdmin(lodge, owned, notOnCentralServer.get(lodge.id));
+        // Why the Fees page cannot fill our own lodge now (#77), for its editor.
+        const feesProblem = row.owned ? await otherLodgeFeesProblem(lodge, owned) : null;
+        return feesProblem ? { ...row, feesProblem } : row;
+      }),
     ),
     // The panel's notes name the owned lodges; the rows carry `owned` (#69).
     ownedLodgeNames: owned === null ? null : owned.map((l) => l.name),

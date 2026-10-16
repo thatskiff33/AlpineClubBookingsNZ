@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyForm,
   formPayload,
+  formRequestBody,
   formProblem,
   RATE_FIELD_NAMES,
   type OtherLodgeFormState,
@@ -40,13 +41,13 @@ describe("other-lodge form: non-member rates", () => {
 
   it.each(["45.555", "-1", "abc", "4,5", "$45"])("refuses %s before saving", (typed) => {
     expect(formProblem(withRate(typed))).toBe(
-      "Winter rate, 18+ must be dollars and cents, for example 45 or 45.50.",
+      "Winter rate, Adult must be dollars and cents, for example 45 or 45.50.",
     );
   });
 
   it("refuses more than the central server holds", () => {
     expect(formProblem(withRate("100000"))).toBe(
-      "Winter rate, 18+ can be at most $99999.99.",
+      "Winter rate, Adult can be at most $99999.99.",
     );
   });
 
@@ -100,3 +101,30 @@ describe("other-lodge form: season start and end dates (#75)", () => {
   });
 });
 
+
+describe("other-lodge form: rates from the Fees page (#77)", () => {
+  it("does not check rates or dates the Fees page fills, and sends the switch", () => {
+    const form: OtherLodgeFormState = {
+      ...withRate("not money"),
+      dates: { ...emptyForm.dates, winterSeasonEnd: "2026-09-30" },
+      ratesFromFees: true,
+    };
+    expect(formProblem(form)).toBeNull();
+    expect(formPayload(form).ratesFromFees).toBe(true);
+    // Off, the same form is refused as before.
+    expect(formProblem({ ...form, ratesFromFees: false })).toMatch(/must be dollars and cents/);
+  });
+
+  it("sends no rates or dates while the switch is on, so a stale typed value cannot fail the save", () => {
+    const form: OtherLodgeFormState = { ...withRate("150000"), ratesFromFees: true };
+    const body = formRequestBody(form);
+    expect(body).not.toHaveProperty("winterRateAdultCents");
+    expect(body).not.toHaveProperty("summerSeasonEnd");
+    expect(body).toMatchObject({ name: "Tararua Lodge", ratesFromFees: true });
+    expect(formRequestBody({ ...form, ratesFromFees: false }).winterRateAdultCents).toBe(15_000_000);
+  });
+
+  it("sends no switch for a form that has none (another club's lodge)", () => {
+    expect(formPayload(withRate("45"))).not.toHaveProperty("ratesFromFees");
+  });
+});

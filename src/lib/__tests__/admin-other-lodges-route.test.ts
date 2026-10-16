@@ -14,6 +14,15 @@ const mocks = vi.hoisted(() => ({
   auditLogCreate: vi.fn(),
   loadServerNzSettings: vi.fn(),
   readStoredServerVersion: vi.fn(),
+  syncOwnOtherLodgesFromFees: vi.fn(),
+  otherLodgeFeesProblem: vi.fn(),
+}));
+
+// #77: the Fees-page fill has its own tests; here only that the save runs it.
+vi.mock("@/lib/other-lodge-fees-sync", () => ({
+  syncOwnOtherLodgesFromFees: mocks.syncOwnOtherLodgesFromFees,
+  otherLodgeFeesProblem: mocks.otherLodgeFeesProblem,
+  FEES_FILL_PROBLEM_TEXT: { "no-local-lodge": "Not filled: not linked." },
 }));
 
 // #49: the list read reports the STORED version status; the check itself
@@ -179,6 +188,7 @@ beforeEach(() => {
     couldNotCheck: false,
   });
   owning(["Ruapehu Ski Club"]);
+  mocks.otherLodgeFeesProblem.mockResolvedValue(null);
 });
 
 describe("the create and delete handlers are gone (#52)", () => {
@@ -655,3 +665,102 @@ describe("PATCH /api/admin/other-lodges/[id]: season end dates (#75)", () => {
   });
 });
 
+describe("PATCH /api/admin/other-lodges/[id]: rates and dates from the Fees page (#77)", () => {
+  const sentRatesAndDates = { winterRateAdultCents: 9900, summerSeasonStart: "2026-12-01", winterSeasonEnd: "2026-09-30" };
+
+  beforeEach(() => {
+    mocks.syncOwnOtherLodgesFromFees.mockResolvedValue([]);
+    mocks.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => record({ ratesFromFees: true, ...data }));
+    mocks.findUniqueOrThrow.mockResolvedValue(record({ ratesFromFees: true, winterRateAdultCents: 5000 }));
+  });
+
+  it("while the switch is on, drops the rates and dates sent, saves the rest, then fills from the Fees page", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: true }));
+    const response = await PATCH(jsonRequest("PATCH", { ...sentRatesAndDates, bedCapacity: 12 }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update.mock.calls[0][0].data).toEqual({ bedCapacity: 12 });
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("lodge saved", "admin-1");
+    // The answer is the row as the fill left it, re-read after it.
+    const body = await response.json();
+    expect(body.otherLodge.winterRateAdultCents).toBe(5000);
+    expect(body.otherLodge.ratesFromFees).toBe(true);
+  });
+
+  it("does not refuse overlapping dates it is going to ignore", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: true, summerSeasonStart: new Date("2026-12-01T00:00:00.000Z") }));
+    const response = await PATCH(jsonRequest("PATCH", { winterSeasonEnd: "2026-12-10" }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("lodge saved", "admin-1");
+  });
+
+  it("passes the administrator to the fill, and says when it could not fill the lodge", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: true }));
+    mocks.syncOwnOtherLodgesFromFees.mockResolvedValue([
+      { otherLodgeId: "ol-1", name: "Ruapehu Ski Club", problem: "no-local-lodge", changed: false },
+    ]);
+    const body = await (await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"))).json();
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("lodge saved", "admin-1");
+    expect(body.otherLodge.feesProblem).toBe("Not filled: not linked.");
+  });
+
+  it("records which way the switch went in the edit's audit row", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: true }));
+    mocks.update.mockResolvedValue(record({ ratesFromFees: false }));
+    await PATCH(jsonRequest("PATCH", { ratesFromFees: false }), params("ol-1"));
+    const metadata = JSON.parse(JSON.stringify(mocks.auditLogCreate.mock.calls[0][0]));
+    expect(JSON.stringify(metadata)).toContain('"ratesFromFees":{"previous":true,"next":false}');
+  });
+
+  it("turning the switch on stores it, ignores the typed rates, and fills from the Fees page", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: false }));
+    const response = await PATCH(jsonRequest("PATCH", { ...sentRatesAndDates, ratesFromFees: true }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update.mock.calls[0][0].data).toEqual({ ratesFromFees: true });
+    expect(mocks.syncOwnOtherLodgesFromFees).toHaveBeenCalledWith("lodge saved", "admin-1");
+  });
+
+  it("turning the switch off stores it and saves the typed rates and dates, with no fill", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: true }));
+    const response = await PATCH(jsonRequest("PATCH", { ...sentRatesAndDates, ratesFromFees: false }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update.mock.calls[0][0].data).toMatchObject({
+      ratesFromFees: false,
+      winterRateAdultCents: 9900,
+      summerSeasonStart: new Date("2026-12-01T00:00:00.000Z"),
+      winterSeasonEnd: new Date("2026-09-30T00:00:00.000Z"),
+    });
+    expect(mocks.syncOwnOtherLodgesFromFees).not.toHaveBeenCalled();
+  });
+
+  it("with the switch off and left off, saves typed rates as before and runs no fill", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: false }));
+    const response = await PATCH(jsonRequest("PATCH", { winterRateAdultCents: 9900 }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update.mock.calls[0][0].data).toEqual({ winterRateAdultCents: 9900 });
+    expect(mocks.syncOwnOtherLodgesFromFees).not.toHaveBeenCalled();
+  });
+
+  it("refuses a switch that is not true or false", async () => {
+    mocks.findUnique.mockResolvedValue(record({ ratesFromFees: true }));
+    expect((await PATCH(jsonRequest("PATCH", { ratesFromFees: "yes" }), params("ol-1"))).status).toBe(400);
+    expect(mocks.syncOwnOtherLodgesFromFees).not.toHaveBeenCalled();
+  });
+
+  it("sends the switch for this club's own lodge only, never another club's", async () => {
+    mocks.findMany.mockResolvedValue([record({ ratesFromFees: true }), { ...theirs(), ratesFromFees: true }]);
+    const body = await (await GET()).json();
+    const [ours, other] = body.otherLodges;
+    expect(ours.ratesFromFees).toBe(true);
+    expect(other).not.toHaveProperty("ratesFromFees");
+  });
+
+  it("tells the editor why the Fees page cannot fill our lodge, and asks about no other", async () => {
+    mocks.findMany.mockResolvedValue([record({ ratesFromFees: true }), { ...theirs(), ratesFromFees: true }]);
+    mocks.otherLodgeFeesProblem.mockResolvedValue("Not filled: not linked.");
+    const [ours, other] = (await (await GET()).json()).otherLodges;
+    expect(ours.feesProblem).toBe("Not filled: not linked.");
+    expect(other).not.toHaveProperty("feesProblem");
+    expect(mocks.otherLodgeFeesProblem).toHaveBeenCalledTimes(1);
+  });
+});

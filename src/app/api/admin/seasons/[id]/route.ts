@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
+import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
@@ -153,6 +154,8 @@ export async function PUT(
     details: `Updated season: ${existing.name}`,
   })
 
+  // This club's own Other lodge follows the Fees page (#77).
+  await syncOwnOtherLodgesFromFees("fees season updated")
   revalidatePublicPageContent()
   return NextResponse.json(season)
 }
@@ -183,6 +186,7 @@ export async function DELETE(
     details: `Deleted season: ${existing.name}`,
   })
 
+  await syncOwnOtherLodgesFromFees("fees season deleted")
   revalidatePublicPageContent()
   return NextResponse.json({ success: true })
 }

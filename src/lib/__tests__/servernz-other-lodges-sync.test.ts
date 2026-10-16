@@ -17,6 +17,12 @@ const mockDeleteMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
 const mockAmenityUpsert = vi.fn();
 
+// #77: the upload first refills this club's own lodge from its Fees page.
+const mockFeesSync = vi.fn();
+vi.mock("@/lib/other-lodge-fees-sync", () => ({
+  syncOwnOtherLodgesFromFees: (...args: unknown[]) => mockFeesSync(...args),
+}));
+
 vi.mock("@/lib/prisma", () => {
   // The interactive transaction hands the same fake back as `tx`, so a write
   // made inside one is observable through the same mocks as one made outside.
@@ -322,6 +328,33 @@ describe("uploadOtherClubsToServer", () => {
     // The watermark advances to the newest row actually sent, on the database's
     // own clock — never to wall-clock now(), which could outrun an uncommitted edit.
     expect(mockRecordUpload).toHaveBeenCalledWith(newer);
+  });
+
+  it("refills this club's own lodge from its Fees page BEFORE reading the changed rows (#77)", async () => {
+    const order: string[] = [];
+    mockFeesSync.mockImplementation(async () => {
+      order.push("fees");
+      return [];
+    });
+    mockFindMany.mockImplementation(async () => {
+      order.push("read");
+      return [];
+    });
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: owns("Aorangi Ski Club") });
+
+    await uploadOtherClubsToServer();
+
+    expect(mockFeesSync).toHaveBeenCalledWith("upload");
+    // So a row the refill rewrites is newer than the watermark and goes now.
+    expect(order).toEqual(["fees", "read"]);
+  });
+
+  it("runs no refill while the owned list is unknown or unreadable (#77)", async () => {
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: null });
+    await uploadOtherClubsToServer();
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodgesUnreadable: true });
+    await uploadOtherClubsToServer();
+    expect(mockFeesSync).not.toHaveBeenCalled();
   });
 });
 

@@ -1,4 +1,11 @@
 import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
+import {
+  OTHER_LODGE_RATE_TIERS,
+  OTHER_LODGE_SEASON_LABELS,
+  OTHER_LODGE_TIER_LABELS,
+  otherLodgeDateLabel,
+  otherLodgeRateLabel,
+} from "@/lib/other-lodge-rate-tiers";
 import { seasonDatesProblem } from "@/lib/other-lodge-seasons";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCentsPlain } from "@/lib/utils";
@@ -26,7 +33,9 @@ import {
 // list row is the ADMIN shape (#52): another club's officer phone is not in
 // it, and `owned` is the route's answer to whether this site may edit it.
 export type OtherLodgeRecord = AdminOtherLodge;
-type OtherLodgePayload = Omit<SerializedOtherLodge, "id" | "createdAt" | "updatedAt">;
+type OtherLodgePayload = Omit<SerializedOtherLodge, "id" | "createdAt" | "updatedAt"> & {
+  ratesFromFees?: boolean;
+};
 
 // EVERY EDITOR LABEL IS A `Record` OVER THE SHARED FIELD TYPE, so a field that
 // is stored, serialized and uploaded but missing here is a compile error — the
@@ -81,16 +90,18 @@ export const ROOM_TYPE_CHOICES: ReadonlyArray<readonly [RoomTypeChoice, string]>
   ...OTHER_LODGE_ROOM_TYPES.map((value) => [value, ROOM_TYPE_LABELS[value]] as const),
   ["", "Not stated"],
 ];
+/** A field the Fees page fills (#77): visibly not for typing in. */
+export const READ_ONLY_FIELD_CLASS = "read-only:cursor-default read-only:bg-muted read-only:text-muted-foreground";
 /** Said under the season dates (#75): what the dates mean. */
 export const SEASON_DATES_HINT =
   "Seasons repeat every year: only the day and month are used. The end date is the season's last day. Leave an end blank to run the season until the other one starts.";
 
 // Each season's start and end (#75), shown two to a row.
 export const DATE_FIELDS: Record<OtherLodgeDateField, string> = {
-  winterSeasonStart: "Winter season start date",
-  winterSeasonEnd: "Winter season end date",
-  summerSeasonStart: "Summer season start date",
-  summerSeasonEnd: "Summer season end date",
+  winterSeasonStart: otherLodgeDateLabel("winterSeasonStart"),
+  winterSeasonEnd: otherLodgeDateLabel("winterSeasonEnd"),
+  summerSeasonStart: otherLodgeDateLabel("summerSeasonStart"),
+  summerSeasonEnd: otherLodgeDateLabel("summerSeasonEnd"),
 };
 export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   requiresLodgeCustodian: "Requires a lodge custodian",
@@ -105,34 +116,21 @@ export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   skiWorkshopArea: "Ski workshop area",
   gamesRoom: "Games room",
 };
-// The non-member rate grid (#61): a block per season, a cell per guideline age
-// group. A `Record` over the rate field type, like every label here, so a rate
-// column the grid has no cell for is a compile error.
+// The non-member rate grid (#61): a block per season, a cell per age group,
+// both read from the one column map in `@/lib/other-lodge-rate-tiers` (#77),
+// which the Fees-page fill uses too.
 export const RATE_SEASONS = ["Winter", "Summer"] as const;
-// The owner's groups since 16 Oct 2026 (#73). The `5To11` and `12To17` field
-// names predate the change and are kept, so the stored data and the central
-// server's API stay as they were: only the labels moved.
-export const RATE_AGE_GROUPS = ["Under 5", "5–12", "13–17", "18+"] as const;
-export const RATE_FIELDS: Record<
-  OtherLodgeRateField,
-  { season: (typeof RATE_SEASONS)[number]; ageGroup: (typeof RATE_AGE_GROUPS)[number] }
-> = {
-  winterRateUnder5Cents: { season: "Winter", ageGroup: "Under 5" },
-  winterRate5To11Cents: { season: "Winter", ageGroup: "5–12" },
-  winterRate12To17Cents: { season: "Winter", ageGroup: "13–17" },
-  winterRateAdultCents: { season: "Winter", ageGroup: "18+" },
-  summerRateUnder5Cents: { season: "Summer", ageGroup: "Under 5" },
-  summerRate5To11Cents: { season: "Summer", ageGroup: "5–12" },
-  summerRate12To17Cents: { season: "Summer", ageGroup: "13–17" },
-  summerRateAdultCents: { season: "Summer", ageGroup: "18+" },
-};
+export const RATE_AGE_GROUPS = Object.values(OTHER_LODGE_TIER_LABELS);
+export const RATE_FIELDS = Object.fromEntries(
+  Object.entries(OTHER_LODGE_RATE_TIERS).map(([field, { season, tier }]) => [
+    field,
+    { season: OTHER_LODGE_SEASON_LABELS[season], ageGroup: OTHER_LODGE_TIER_LABELS[tier] },
+  ]),
+) as Record<OtherLodgeRateField, { season: (typeof RATE_SEASONS)[number]; ageGroup: (typeof RATE_AGE_GROUPS)[number] }>;
 export const RATE_FIELD_NAMES = Object.keys(RATE_FIELDS) as OtherLodgeRateField[];
 
-/** "Winter rate, 18+": the accessible name of one grid cell. */
-export function rateFieldLabel(field: OtherLodgeRateField): string {
-  const { season, ageGroup } = RATE_FIELDS[field];
-  return `${season} rate, ${ageGroup}`;
-}
+/** "Winter rate, Adult": the accessible name of one grid cell. */
+export const rateFieldLabel = otherLodgeRateLabel;
 
 export const TEXT_FIELD_NAMES = Object.keys(TEXT_FIELDS) as OtherLodgeTextField[];
 export const WHOLE_NUMBER_FIELD_NAMES = Object.keys(
@@ -155,6 +153,8 @@ export type OtherLodgeFormState = {
   /** Dollars as typed (`MoneyInput`), or "" for not set. Parsed to cents on save. */
   rates: Record<OtherLodgeRateField, string>;
   amenities: AmenityFormRow[];
+  /** This club's own lodge only (#77): rates and dates come from the Fees page. */
+  ratesFromFees?: boolean;
 };
 
 /** `{ [field]: value(field) }` typed over the field union, for the records above. */
@@ -191,6 +191,7 @@ export function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
       name: a.name,
       description: a.description ?? "",
     })),
+    ...(lodge.ratesFromFees !== undefined ? { ratesFromFees: lodge.ratesFromFees } : {}),
   };
 }
 
@@ -220,7 +221,21 @@ export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
       name: a.name.trim(),
       description: a.description.trim() || null,
     })),
+    ...(form.ratesFromFees !== undefined ? { ratesFromFees: form.ratesFromFees } : {}),
   };
+}
+
+/**
+ * What the panel sends: `formPayload`, less the rates and dates while the
+ * Fees page fills them (#77). The route ignores them then anyway; leaving them
+ * out means a value typed before the switch went on cannot fail the save.
+ */
+export function formRequestBody(form: OtherLodgeFormState): Partial<OtherLodgePayload> {
+  const payload: Partial<OtherLodgePayload> = formPayload(form);
+  if (form.ratesFromFees) {
+    for (const field of [...RATE_FIELD_NAMES, ...DATE_FIELD_NAMES]) delete payload[field];
+  }
+  return payload;
 }
 
 /**
@@ -254,7 +269,8 @@ export function formProblem(form: OtherLodgeFormState): string | null {
       return `${WHOLE_NUMBER_FIELDS[field]} looks too large. Enter a realistic number.`;
     }
   }
-  for (const field of RATE_FIELD_NAMES) {
+  // From the Fees page (#77), the rates and dates are not this form's to check.
+  for (const field of form.ratesFromFees ? [] : RATE_FIELD_NAMES) {
     const value = form.rates[field].trim();
     if (value === "") continue;
     const cents = parseDecimalDollarsToCents(value);
@@ -266,7 +282,7 @@ export function formProblem(form: OtherLodgeFormState): string | null {
     }
   }
   // The season rules the save and the central server apply (#75).
-  const seasonProblem = seasonDatesProblem(
+  const seasonProblem = form.ratesFromFees ? null : seasonDatesProblem(
     recordOf(DATE_FIELD_NAMES, (field) => form.dates[field].trim() || null),
   );
   if (seasonProblem) return seasonProblem;

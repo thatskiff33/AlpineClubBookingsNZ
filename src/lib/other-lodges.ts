@@ -70,7 +70,7 @@ export const OTHER_LODGE_DATE_FIELDS = [
 
 /**
  * The non-member rates (server API 2.2, #61): per person per night, NZD incl.
- * GST, a winter and a summer rate for each guideline age group. Stored and
+ * GST, a winter and a summer rate for each age group (#77). Stored and
  * handled here as INTEGER CENTS (INV-MONEY-001); the central server carries
  * dollars, and `@/lib/servernz-rate` is the only place the two meet. Display
  * only — nothing is charged from them.
@@ -112,12 +112,12 @@ export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
  * not on it), so the only columns excused are the identity and timestamp ones
  * — `centralId` (#64) is identity too: the central server's key for the row,
  * written by the download merge, never edited or uploaded as data — and
- * `hiddenAt` (#58) is lifecycle, set by the download or an admin's Hide.
+ * `hiddenAt` (#58) is lifecycle, and `ratesFromFees` (#77) a local setting.
  * When the check fails, the annotation names the unlisted column.
  */
 type UnlistedOtherLodgeColumn = Exclude<
   keyof OtherLodge,
-  "id" | "name" | "centralId" | "hiddenAt" | "createdAt" | "updatedAt" | OtherLodgeDataField
+  "id" | "name" | "centralId" | "hiddenAt" | "ratesFromFees" | "createdAt" | "updatedAt" | OtherLodgeDataField
 >;
 const EVERY_OTHER_LODGE_COLUMN_IS_LISTED: [UnlistedOtherLodgeColumn] extends [never]
   ? true
@@ -192,6 +192,7 @@ export const otherLodgeSelect = {
   id: true,
   name: true,
   centralId: true,
+  ratesFromFees: true,
   ...OTHER_LODGE_DATA_SELECT,
   amenities: otherLodgeAmenitiesSelect,
   createdAt: true,
@@ -208,7 +209,7 @@ export type OtherLodgeDataRecord = Pick<OtherLodge, OtherLodgeDataField>;
 
 export type OtherLodgeRecord = Pick<
   OtherLodge,
-  "id" | "name" | "centralId" | OtherLodgeDataField | "createdAt" | "updatedAt"
+  "id" | "name" | "centralId" | "ratesFromFees" | OtherLodgeDataField | "createdAt" | "updatedAt"
 > & { amenities: OtherLodgeAmenity[] };
 
 /**
@@ -267,9 +268,7 @@ export function serializeOtherLodgeAmenities(
   return amenities.map((a) => ({ name: a.name, description: a.description }));
 }
 
-export function serializeOtherLodge(
-  lodge: OtherLodgeRecord,
-): SerializedOtherLodge {
+export function serializeOtherLodge(lodge: OtherLodgeRecord): SerializedOtherLodge {
   return {
     id: lodge.id,
     name: lodge.name,
@@ -603,6 +602,9 @@ export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> 
   owned: boolean;
   /** Owned AND keyed by a central id, so a new name renames it there (#64). */
   renamable: boolean;
+  /** Owned only (#77): rates and dates from the Fees page, and why they cannot be, if so. */
+  ratesFromFees?: boolean;
+  feesProblem?: string;
   /**
    * Set only for a row the central server no longer has (#64): unkeyed after
    * the registry was keyed. What still cites it, for the owner to assess.
@@ -636,7 +638,7 @@ export function serializeOtherLodgeForAdmin(
   const { bookingOfficerPhone, ...rest } = serializeOtherLodge(lodge);
   const extra = notOnCentralServer ? { notOnCentralServer } : {};
   return ownsOtherLodge(owned, lodge)
-    ? { ...rest, bookingOfficerPhone, owned: true, renamable: canRenameOtherLodge(owned, lodge), ...extra }
+    ? { ...rest, bookingOfficerPhone, owned: true, renamable: canRenameOtherLodge(owned, lodge), ratesFromFees: lodge.ratesFromFees, ...extra }
     : { ...rest, owned: false, renamable: false, ...extra };
 }
 

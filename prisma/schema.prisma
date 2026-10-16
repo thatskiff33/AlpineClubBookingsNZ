@@ -5302,8 +5302,13 @@ model OtherLodge {
   winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
   summerSeasonEnd        DateTime? @db.Date
+  // This club's own lodge only (#77): when true, its non-member rates and
+  // season dates are filled from the Fees page (the Non-Member type's rates and
+  // their seasons) and are read-only in the editor. A LOCAL setting: never
+  // sent to or taken from the central server. Ignored for another club's lodge.
+  ratesFromFees          Boolean   @default(true)
   // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
-  // GST, a winter and a summer rate for each guideline age group. INTEGER
+  // GST, a winter and a summer rate for each age group (#77). INTEGER
   // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
   // set; the central server carries dollars and `@/lib/servernz-rate` is the
   // one conversion. Display only: nothing is charged from them.

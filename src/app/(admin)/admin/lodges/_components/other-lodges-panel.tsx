@@ -46,9 +46,6 @@ import {
   type OwnedOtherLodgeNames,
 } from "@/lib/other-lodges";
 import {
-  DATE_FIELDS,
-  DATE_FIELD_NAMES,
-  SEASON_DATES_HINT,
   FACILITY_FIELDS,
   FACILITY_LABELS,
   ROOM_TYPE_CHOICES,
@@ -59,7 +56,7 @@ import {
   WHOLE_NUMBER_FIELD_NAMES,
   emptyForm,
   formFromLodge,
-  formPayload,
+  formRequestBody,
   formProblem,
   type AmenityFormRow,
   type OtherLodgeFormState,
@@ -67,7 +64,7 @@ import {
 } from "./other-lodge-form";
 import { OtherLodgeNameCell, OtherLodgeNameField } from "./other-lodge-name";
 import { useHideUnlistedLodge } from "./other-lodge-hide";
-import { OtherLodgeRateGrid } from "./other-lodge-rate-grid";
+import { OtherLodgeSeasonRates } from "./other-lodge-season-rates";
 
 export function OtherLodgesPanel({
   // #2160/#2168 vouch: the Lodges page renders one lodge-area
@@ -189,7 +186,7 @@ export function OtherLodgesPanel({
       const response = await fetch(`/api/admin/other-lodges/${editingId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formPayload(form)),
+        body: JSON.stringify(formRequestBody(form)),
       });
       const data = (await response.json().catch(() => null)) as {
         error?: string;
@@ -380,30 +377,9 @@ export function OtherLodgesPanel({
                   ))}
                 </div>
               </fieldset>
-              {DATE_FIELD_NAMES.map((field) => (
-                <div key={field} className="space-y-2">
-                  <Label htmlFor={`other-lodge-${field}`}>{DATE_FIELDS[field]}</Label>
-                  <Input
-                    id={`other-lodge-${field}`}
-                    type="date"
-                    aria-describedby="other-lodge-season-hint"
-                    value={form.dates[field]}
-                    onChange={(event) => setForm((prev) => ({ ...prev, dates: { ...prev.dates, [field]: event.target.value } }))}
-                  />
-                </div>
-              ))}
-              <p id="other-lodge-season-hint" className="text-xs text-muted-foreground sm:col-span-2">{SEASON_DATES_HINT}</p>
             </div>
 
-            <OtherLodgeRateGrid
-              rates={form.rates}
-              onRateChange={(field, value) =>
-                setForm((prev) => ({
-                  ...prev,
-                  rates: { ...prev.rates, [field]: value },
-                }))
-              }
-            />
+            <OtherLodgeSeasonRates form={form} setForm={setForm} feesProblem={lodges.find((l) => l.id === editingId)?.feesProblem} />
 
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">Facilities</legend>
