@@ -668,7 +668,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // 504 -> 505 (#4154, owner decision on #4154): `booking-payment.capacity-race.refunded-total-corrected`,
   // the guarded recalculation of a capacity race's card charge before its hand-back, awaited on the
   // completion's own transaction under `payment`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 505,
+  // 505 -> 506 (#4210): `booking-payment.card-refund.failed-later-paid-another-way`,
+  // a card refund Stripe failed later that a "Paid another way" close had already
+  // settled, awaited on the ledger writer's transaction under `payment`.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 506 -> 507 (#4210 round 3): `booking-payment.card-refund.checked-not-owed`,
+  // a check row an officer closed as not owed, awaited on its claim's
+  // transaction under `payment`.
+  writeSites: 507,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -873,7 +880,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited on the ledger writer's transaction so the row commits with it.
     // 144 -> 145 (#4154): a capacity race's charge corrected before its hand-back,
     // awaited on the completion's transaction so the row commits with the correction.
-    createAuditLog: { total: 145, uncategorised: 0 },
+    // 145 -> 146 (#4210): a failed-later card refund a "Paid another way" close
+    // settled, awaited on the ledger writer's transaction so the row commits with it.
+    // 146 -> 147 (#4210 round 3): a check row closed as checked - not owed,
+    // awaited on its claim's transaction so the row commits with it.
+    createAuditLog: { total: 147, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1075,7 +1086,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 56 -> 57 (#4170): the refunded-outside-the-app entry, read by the same people.
     // 57 -> 58 (#4154): a capacity race's card charge corrected to its refund
     // rows before its hand-back - the payment's figures, read by the same people.
-    payment: 58,
+    // 58 -> 59 (#4210): a failed-later card refund a "Paid another way" close had
+    // already settled - read by the people who reconcile it.
+    // 59 -> 60 (#4210 round 3): a check row closed as checked - not owed - read
+    // by the people who reconcile it.
+    payment: 60,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

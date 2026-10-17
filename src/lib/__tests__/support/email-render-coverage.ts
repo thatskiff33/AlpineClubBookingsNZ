@@ -164,6 +164,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-manual-refund-task": "adminManualRefundTaskTemplate",
   "admin-late-capture-held": "adminLateCaptureHeldTemplate",
   "admin-late-capture-refunded-outside-app": "adminLateCaptureRefundedOutsideAppTemplate",
+  "admin-card-refund-failed-after-paid-another-way": "adminCardRefundFailedAfterPaidAnotherWayTemplate",
   "admin-manual-settlement-conflict": "adminManualSettlementConflictTemplate",
   "admin-second-instrument-settlement-conflict": "adminSecondInstrumentSettlementConflictTemplate",
   // admin-alerts-settlement (#3979), template split to ./admin-bank-transfer-settlement

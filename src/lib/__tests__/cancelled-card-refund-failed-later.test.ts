@@ -270,4 +270,41 @@ describe("readCancelledCardRefund tells a paid-another-way close's failed refund
       cardRefundClose: { paidBackCents: 9_000, unpaidCents: 0, madeCents: 9_000 },
     });
   });
+
+  // #4210 round 3 (UX 5): a row raised to check against the close is a refund
+  // that close did NOT count - never told as counted, said as a check of its own.
+  describe("#4210: a row raised to check against the close", () => {
+    const check = (status: PaymentRecoveryOperationStatus = PaymentRecoveryOperationStatus.PENDING) =>
+      failedLaterRow("re_late", {
+        status,
+        amountCents: 4_000,
+        attempts: 5,
+        succeededAt: status === PaymentRecoveryOperationStatus.SUCCEEDED ? RETRIED : null,
+        allocationPlan: [{ ...byCancel[0], amountCents: 4_000, paidAnotherWayCheck: { closedOperationId: "op-cancel", reason: "part-close" } }],
+      });
+    const late = [{ ...refund("re_late", "failed", new Date("2026-06-21T00:00:00.000Z")), stripeCreatedAt: MADE }];
+    const partClose = { amountCents: 5_000, raisedAmountCents: 9_000 };
+
+    it("MUTATION: still to check - not a failed-later part, not in the made figure, and its amount said as a check", async () => {
+      db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) =>
+        where.occurrenceKey.in.some((key) => key.includes("op-cancel")) ? partClose : null,
+      );
+      rows([cancelRow()], [check()], late);
+      expect(await readCancelledCardRefund(BOOKING)).toEqual({
+        cardRefundState: "paid-another-way",
+        cardRefundClose: { paidBackCents: 5_000, unpaidCents: 4_000, madeCents: 0, checkOpenCents: 4_000 },
+      });
+    });
+
+    it("MUTATION: closed as checked - not owed (no record of its own) says nothing more", async () => {
+      db.findClose.mockImplementation(async ({ where }: { where: { occurrenceKey: { in: string[] } } }) =>
+        where.occurrenceKey.in.some((key) => key.includes("op-cancel")) && !where.occurrenceKey.in.some((key) => key.includes("op-fl")) ? partClose : null,
+      );
+      rows([cancelRow()], [check(PaymentRecoveryOperationStatus.SUCCEEDED)], late);
+      expect(await readCancelledCardRefund(BOOKING)).toEqual({
+        cardRefundState: "paid-another-way",
+        cardRefundClose: { paidBackCents: 5_000, unpaidCents: 4_000, madeCents: 0 },
+      });
+    });
+  });
 });

@@ -1229,31 +1229,32 @@ one, check the other.
 **Related: `INV-PAY-114`** (an organiser child's refund) and
 **`INV-PAY-122`** (closing a dead card refund).
 
-- **A card refund Stripe answers `failed` or `canceled` on an edit, a
-  cancellation or a refund request, or accepts (`pending`) and fails later, is
+- **A card refund Stripe answers `failed` or `canceled` on an edit,
+  cancellation or refund request, or accepts (`pending`) and fails later, is
   still owed** (#4083, #4096, #4102, #4104), never counted as made.
   - **Whoever reads a refusal moves that slice to a fresh key**
     (`refundSliceStripeIdempotencyKey`): Stripe replays a key's refusal for 24
     hours. A slice never read refused keeps its key.
-  - **The edit doors** queue the refused slices, or the remainder; **a
+  - **Edit doors** queue the refused slices, or the remainder; **a
     cancellation** re-plans its unclaimed row; **a refund request** queues its
     whole plan (#4117).
-  - **The runner never closes a row on a refusal**: it re-plans on the attempt
-    it holds and fails it.
-  - **A slice made beside a refusal or a failure stays, marked**
+  - **The runner never closes a row on a refusal**: it re-plans on its held
+    attempt and fails it.
+  - **A slice made beside a refusal or failure stays, marked**
     (`madeRefundId`): never re-sent; the amount stays.
   - **Failed later**: the refund-row writer sees it once, under the Payment row
     lock. The open row that counted it moves that slice (`failedRefundIds`) - a
-    marked slice, or one it fills carrying exactly that row's runner metadata;
-    else one row per Stripe refund owes it. A retry failing too, or a refund no
+    marked slice, or one it fills carrying exactly its runner's metadata;
+    else one row per Stripe refund owes it. A failing retry, or a refund no
     open row owes that Stripe created before the cutoff migration, is raised
-    dead; one naming no booking only alerts and is audited.
+    dead. One naming no booking only alerts and is audited; one a "Paid
+    another way" close settled: `INV-PAY-136`.
   - **Paid another way** notes only what a card note still in Xero does not
     cover, kept on its record (`failedLaterCardNoteCoverCents`).
-  - **Officers hear once per refused slice or failed-later decision**, and
-    again if retries run out.
+  - **Officers hear once per refusal or failed-later decision**, again if
+    retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
-    `refund.failed`; the read-back finds a dropped one still pending.
+    `refund.failed`, which the read-back finds still pending.
   - **Every other door**: `INV-PAY-130` (#4103).
   - Proven by `refused-card-refund-retry.test.ts`, `payment-recovery.test.ts`,
     `own-card-refund-outcome`, `booking-cancel.test.ts`,
@@ -1433,27 +1434,28 @@ short).
 
 - **A cancel's card refund is recorded by the close that made it, once**
   (#4125, #4145). A member's cancel and a capacity race write REFUNDED only
-  with the close moving their pre-persisted recovery row to `SUCCEEDED`, in
+  with the close moving their pre-persisted row to `SUCCEEDED`, in
   its transaction (`closeRefundRowRecordingEvent`).
-  - **Never on a failure**: an inline refund that threw, was refused or was
+  - **Never on a failure**: an inline refund that threw, was refused or
     part-made writes none; the page reads the row (`readCancelledCardRefund`).
   - **Dated by that close, for the frozen plan's total**; a failed insert
     rolls it back.
   - **Paid another way records only what reached the card**: the slices
     recorded refunds filled, dated by Stripe's latest, never before the
     cancel, marked as that close's (`isMadeBeforePaidAnotherWayEvent`). The
-    page tells each part from its source: card refunds by their events (a
-    capacity race's every row), or undated by the close's rule
+    page tells each part from its source: card refunds by their events (every
+    capacity-race row), or undated by the close's rule
     (`cardRefundMadeForOperation`); the record's paid-back amount; and only
     `paidAnotherWayUnpaidCents` as closed. A capped part is unsaid; a
     capacity race, capped at its rows' plans, follows it up.
   - **One per cancel**: a pre-#4145 cancel's up-front event means a later
     close records none; the page prefers an open or paid-another-way row to it.
-  - **Stated limits, history only.** While both colours serve, an old cancel
-    can write its up-front event after a new close recorded one, and an old
-    runner close a new cancel's row with none. An old worker re-planning a
-    failed-later row drops `madeByOperationId`; the page matches by amount.
-  - **A refund failing later is told by the row owing it** (#4166).
+  - **History-only limits.** While both colours serve, an old cancel
+    can write its up-front event after a new close's, and an old runner close
+    a new cancel's row with none. An old worker's failed-later
+    re-plan drops `madeByOperationId`; the page matches by amount.
+  - **A refund failing later is told by the row owing it** (#4166), or by
+    the close that settled it (`INV-PAY-136`).
   - **The cancel's own event is its settlement** (`isCancelCardRefundEvent`),
     never an edit review's or hand-back's that landed first.
   - Proven by `booking-cancel.test.ts`, `payment-recovery.test.ts`,
@@ -1499,6 +1501,41 @@ refunded total it corrects).
     `payment-transactions-refunds.test.ts`, `booking-narrative.test.ts`,
     `booking-ledger-projection-census.test.ts` and
     `capacity-race-refund-shortfall-task.realdb.test.ts`.
+
+## INV-PAY-136
+
+**Related: `INV-PAY-128`** (a refund failing later is owed again) and
+**`INV-PAY-122`** (closing a dead card refund).
+
+- **A card refund a "Paid another way" close paid back is not owed again when
+  Stripe fails it later** (#4210). The failed-later writer asks first, under
+  the Payment row lock the close took (`findPaidAnotherWayCloseThatSettled`).
+  - **Which close**: the sender's (`madeBy`), Stripe making it by then
+    (`operationWindowTakes`). A refund naming no booking is weighed by the row
+    it fills, on the paid-twice reading only.
+  - **What the close counted decides**, kept on its record
+    (`paidAnotherWayCounted`), never today's matching. Settled only when the
+    refund was not counted and fits a slice the close found unsent - charge
+    and exact amount (`refundFitsSlice`). Anything else is owed as before.
+  - **A close that kept no record**: settled only from the paid-twice list;
+    fitting a planned slice it may have counted, or larger than it owed, is
+    raised dead to check (`uncertain`).
+  - **Checks**: a part close lists what it gave up, less earlier part-close
+    checks against it; a resolved paid-twice row's refund lists in full. Each
+    is raised dead (`paidAnotherWayCheck`), never sent, and closes "Paid
+    another way" or checked - not owed (`closeCardRefundCheckNotOwed`,
+    `finance:edit`, audited, no money).
+  - **A Resolved** is read and written under the same Payment row lock.
+  - **Audited** under `payment`, alerted once by its own locked mail. An open
+    sender's own replay reads the refund as refused.
+  - **Deploy window**: this release never re-sends such a refund. The limit
+    is the old image: while both colours serve, its writer raises a live row
+    that either runner sends, neither re-checking the close; the owner checks
+    failed-later rows raised then. An old Resolved drops the counted list, so
+    that close is weighed as keeping none.
+  - Proven by `card-refund-failed-later-paid-another-way.test.ts`,
+    `card-refund-check-not-owed.test.ts`, `card-refund-paid-twice.test.ts` and
+    `cancel-card-refund-failed-later.realdb.test.ts`.
 
 ## INV-PAY-031
 

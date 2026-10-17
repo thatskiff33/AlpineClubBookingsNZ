@@ -188,6 +188,14 @@ export interface PaidAnotherWayClose {
   paidBackCents: number;
   unpaidCents: number;
   madeCents: number;
+  /**
+   * #4210 round 3 (UX 5): a card refund that failed after the close, raised for
+   * the club to check (`INV-PAY-136`): still to check, and paid back another
+   * way by a close of the check. Each comes first out of what the close left
+   * unpaid. Absent reads as none.
+   */
+  checkOpenCents?: number;
+  checkPaidBackCents?: number;
 }
 
 /**
@@ -226,13 +234,22 @@ function ownCardRefundClauses(
   const clauses = keptDated > 0 && made.on ? [cardRefundClause(money(keptDated), "settled", club.instantDate(made.on))] : [];
   if (keptUndated > 0) clauses.push(cardRefundClause(money(keptUndated), "settled", null));
   clauses.push(...told.clauses);
+  // #4210 round 3 (UX 5): what was raised to check comes first out of what the close left unpaid.
+  const checkOpen = close?.checkOpenCents ?? 0;
+  const checkPaidBack = close?.checkPaidBackCents ?? 0;
+  const reopened = Math.min(unpaid, checkOpen + checkPaidBack);
   // The cancel's own close and its failed-later rows paid another way, said together.
   pushPaidAnotherWayClauses(
     clauses,
-    { paidBackCents: paidBack + told.paidAnotherWay.paidBackCents, unpaidCents: unpaid + told.paidAnotherWay.unpaidCents },
+    { paidBackCents: paidBack + checkPaidBack + told.paidAnotherWay.paidBackCents, unpaidCents: unpaid - reopened + told.paidAnotherWay.unpaidCents },
     money,
   );
-  return { clauses, saidCents: keptDated + keptUndated + told.saidCents + paidBack + unpaid, stalled: told.stalled };
+  // Within what the close left unpaid it is "the remaining" part; beyond it (a resolved or uncertain check) part of the refund.
+  if (checkOpen > 0) {
+    clauses.push(checkOpen <= unpaid && clauses.length > 0 ? `the club will be in touch about the remaining ${money(checkOpen)}` : `the club will be in touch about ${money(checkOpen)} of the refund`);
+  }
+  const beyond = Math.max(0, checkOpen + checkPaidBack - reopened);
+  return { clauses, saidCents: keptDated + keptUndated + told.saidCents + paidBack + unpaid + beyond, stalled: told.stalled };
 }
 
 /**

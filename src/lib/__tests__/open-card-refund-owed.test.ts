@@ -3,6 +3,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cardRefundCountedAtClose,
+  cardRefundPlannedSlices,
+  paidAnotherWayCheckOf,
+  refundFitsSlice,
   cardRefundSentAfterPaidAnotherWay,
   cardRefundSliceFilledBy,
   parseRefundAllocationPlan,
@@ -458,5 +462,60 @@ describe("a refund Stripe failed later (#4104)", () => {
     ]);
     expect(parseRefundAllocationPlan([{ paymentTransactionId: "txn-a", amountCents: 100, failedRefundIds: [""] }])).toBeNull();
     expect(parseRefundAllocationPlan([{ paymentTransactionId: "txn-a", amountCents: 100, failedRefundIds: "re_1" }])).toBeNull();
+  });
+});
+
+// #4210 round 3 (`INV-PAY-136`, money F1/F2): what a "Paid another way" close
+// counts as it closes, and which refund can be the refund of a slice.
+describe("what a close counts as it closes (#4210)", () => {
+  const halves = [
+    { paymentTransactionId: "txn-a", amountCents: 4_000 },
+    { paymentTransactionId: "txn-a", amountCents: 4_000 },
+    { paymentTransactionId: "txn-b", amountCents: 1_000, madeRefundId: "re-marked" },
+  ];
+
+  it("MUTATION: the refunds its slices took as made, and the slices still unsent", () => {
+    const closing = operation({ id: "op-close", amountCents: 9_000, allocationPlan: halves, createdAt: at(1) });
+    const made = refund({ stripeRefundId: "re-made", amountCents: 4_000, createdAt: at(5) });
+    expect(cardRefundCountedAtClose(payment([closing], [made]), "op-close")).toEqual({
+      refundIds: ["re-made"],
+      unsentSlices: [
+        { paymentTransactionId: "txn-a", amountCents: 4_000, exact: true },
+        { paymentTransactionId: "txn-b", amountCents: 1_000, exact: true, madeRefundId: "re-marked" },
+      ],
+    });
+  });
+
+  it("MUTATION: another row's refund is not counted, and nothing recorded leaves every slice unsent", () => {
+    const closing = operation({ id: "op-close", amountCents: 9_000, allocationPlan: halves, createdAt: at(1) });
+    expect(cardRefundCountedAtClose(payment([closing], []), "op-close").refundIds).toEqual([]);
+    expect(cardRefundCountedAtClose(payment([closing], []), "op-close").unsentSlices).toHaveLength(3);
+  });
+
+  it("MUTATION: a refund fits a slice only on its charge, of exactly its amount, and never a slice marked as another refund's", () => {
+    const slice = { paymentTransactionId: "txn-a", amountCents: 4_000, exact: true };
+    expect(refundFitsSlice(slice, { stripeRefundId: "re-1", paymentTransactionId: "txn-a", amountCents: 4_000 })).toBe(true);
+    expect(refundFitsSlice(slice, { stripeRefundId: "re-1", paymentTransactionId: "txn-a", amountCents: 2_500 })).toBe(false);
+    expect(refundFitsSlice(slice, { stripeRefundId: "re-1", paymentTransactionId: "txn-b", amountCents: 4_000 })).toBe(false);
+    expect(refundFitsSlice({ ...slice, madeRefundId: "re-2" }, { stripeRefundId: "re-1", paymentTransactionId: "txn-a", amountCents: 4_000 })).toBe(false);
+    expect(refundFitsSlice({ ...slice, madeRefundId: "re-1" }, { stripeRefundId: "re-1", paymentTransactionId: "txn-a", amountCents: 4_000 })).toBe(true);
+    // A superseded intent's slice is not exact: any refund up to it.
+    expect(refundFitsSlice({ ...slice, exact: false }, { stripeRefundId: "re-1", paymentTransactionId: "txn-a", amountCents: 2_500 })).toBe(true);
+    expect(refundFitsSlice({ ...slice, exact: false }, { stripeRefundId: "re-1", paymentTransactionId: "txn-a", amountCents: 4_001 })).toBe(false);
+  });
+
+  it("a row's planned slices, nothing filled", () => {
+    expect(cardRefundPlannedSlices(operation({ amountCents: 9_000, allocationPlan: halves }))).toEqual([
+      { paymentTransactionId: "txn-a", amountCents: 4_000, exact: true },
+      { paymentTransactionId: "txn-a", amountCents: 4_000, exact: true },
+      { paymentTransactionId: "txn-b", amountCents: 1_000, exact: true, madeRefundId: "re-marked" },
+    ]);
+  });
+
+  it("MUTATION: a check row's mark is parsed, and a malformed one fails the plan", () => {
+    const check = { closedOperationId: "op-close", reason: "part-close" };
+    expect(paidAnotherWayCheckOf({ allocationPlan: [{ paymentTransactionId: "txn-a", amountCents: 1_500, paidAnotherWayCheck: check }] })).toEqual(check);
+    expect(paidAnotherWayCheckOf({ allocationPlan: [{ paymentTransactionId: "txn-a", amountCents: 1_500 }] })).toBeNull();
+    expect(parseRefundAllocationPlan([{ paymentTransactionId: "txn-a", amountCents: 1_500, paidAnotherWayCheck: { closedOperationId: "op-close", reason: "maybe" } }])).toBeNull();
   });
 });

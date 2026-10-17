@@ -236,6 +236,33 @@ describe("#4145: a member's card cancel is settled by its own card refund event"
     );
   });
 
+  // #4210 round 3 (UX 5, `INV-PAY-136`): a card refund that failed after the
+  // close and was raised for the club to check is never said as closed.
+  it("MUTATION (#4210): a check raised after a part close is said as the club being in touch, out of what the close left unpaid", () => {
+    const due = cancelled({ settledAmountCents: 10000, retainedAmountCents: 2000 });
+    // $100.00 owed, $60.00 paid back, $40.00 raised to check.
+    expect(narrate([due], "paid-another-way", {}, { ...closed(6000, { unpaid: 4000 }), checkOpenCents: 4000 })).toBe(
+      `${LEAD}$60.00 could not go back to your card and was paid back to you another way, the club will be in touch about the remaining $40.00 and $20.00 was retained${END}`,
+    );
+    // Part of it still to check: the rest stays closed.
+    expect(narrate([due], "paid-another-way", {}, { ...closed(6000, { unpaid: 4000 }), checkOpenCents: 1500 })).toContain(
+      "$60.00 could not go back to your card and was paid back to you another way, the club checked the remaining $25.00 and closed it, the club will be in touch about the remaining $15.00",
+    );
+    // The check paid back another way in its turn.
+    expect(narrate([due], "paid-another-way", {}, { ...closed(6000, { unpaid: 4000 }), checkPaidBackCents: 4000 })).toBe(
+      `${LEAD}$100.00 could not go back to your card and was paid back to you another way and $20.00 was retained${END}`,
+    );
+    // Checked - not owed: nothing more is said.
+    expect(narrate([due], "paid-another-way", {}, closed(6000, { unpaid: 4000 }))).toContain("the club checked the remaining $40.00 and closed it");
+  });
+
+  it("MUTATION (#4210): a check beyond what the close left unpaid (a resolved paid-twice row) is said as part of the refund", () => {
+    const due = cancelled({ settledAmountCents: 10000, retainedAmountCents: 2000 });
+    expect(narrate([due], "paid-another-way", {}, { ...closed(10000), checkOpenCents: 10000 })).toBe(
+      `${LEAD}$100.00 could not go back to your card and was paid back to you another way, the club will be in touch about $100.00 of the refund and $20.00 was retained${END}`,
+    );
+  });
+
   it("a settled card cancel quotes its own event's figure, not the CANCELLED snapshot's", () => {
     expect(narrate([cancelled(), cardRefunded("2026-05-08T00:00:00.000Z", 8500)], "settled")).toBe(
       `${LEAD}$85.00 was refunded on 8 May 2026 and $30.00 was retained${END}`,

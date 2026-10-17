@@ -94,12 +94,13 @@ offered to them at all:
 
 ### Always-on alerts
 
-Seven alerts are sent outside this grid. They have no checkbox anywhere and cannot
+Eight alerts are sent outside this grid. They have no checkbox anywhere and cannot
 be muted — not here, and not in [Delivery Rules](notification-rules.md), because
 their templates (`admin-email-failure`, `admin-late-capture-auto-refund`,
 `admin-late-capture-hand-back-conflict`, `admin-late-capture-refunded-outside-app`,
 `admin-second-instrument-settlement-conflict`,
-`admin-bank-transfer-settlement-figure`) are locked to always-send:
+`admin-bank-transfer-settlement-figure`,
+`admin-card-refund-failed-after-paid-another-way`) are locked to always-send:
 
 | Alert | Goes to | Sent when |
 | --- | --- | --- |
@@ -110,6 +111,7 @@ their templates (`admin-email-failure`, `admin-late-capture-auto-refund`,
 | *Late payment refunded outside the app - check Xero* | Every admin whose role can **edit** Finance | A card payment that arrived after its booking was cancelled was refunded somewhere other than the app - in the Stripe dashboard, for example (#4170). The app has no record of that refund and raised no Xero credit note, because Xero never received the payment. Sent once per payment, and again by the nightly check if a send failed; money left the club with no record the app wrote, which is why it cannot be switched off |
 | *Booking may have been paid twice — card and Xero* | Every admin whose role can **edit** Finance | A card payment had already settled the booking (or settled it before it was cancelled), and Xero then reported its Internet Banking invoice paid as well. The bank payment is recorded and nothing was refunded or credited automatically, so the mail links the booking and the Xero invoice for a person to reconcile. The club may be holding the price twice, which is why it cannot be switched off |
 | *Bank transfer amount needs checking* | Every admin whose role can **edit** Finance | Xero reported a booking's bank-transfer invoice paid, and the app either kept the amount it had recorded instead of the cash the invoice collected (it could not tie that cash to this booking alone), or the cash is not what the booking owes (#3979). A wrong recorded amount sizes every later refund and credit, which is why it cannot be switched off |
+| *Card refund failed after it was paid back another way* | Every admin whose role can **edit** Finance | Stripe reported a card refund failed after a treasurer had already closed it as **Paid another way**, and that close may have paid it back (#4210). Nothing is sent again; after a part close, when its paid-back-twice row was marked resolved, or where the app cannot tell, what may still be owed is listed on Stuck States, marked **Check before paying**, for a person to close as paid another way or as checked - not owed. The mail is what stops the member being paid a second time, which is why it cannot be switched off |
 
 The first two name the intended recipient's email address and the template that
 failed, so they are operational detail rather than routine notification. The refund

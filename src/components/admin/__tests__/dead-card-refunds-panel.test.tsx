@@ -48,6 +48,7 @@ function row(overrides: Partial<DeadCardRefundPanelRow> = {}): DeadCardRefundPan
     xeroRefundNote: "now",
     cardNoteCoversCents: 0,
     stripeMayHaveRefunded: false,
+    check: null,
     ...overrides,
   };
 }
@@ -478,6 +479,15 @@ describe("the closes Stripe paid as well", () => {
 });
 
 // #3372 (owner, 9 Oct 2026: "Add a 'Resolved' button").
+describe("the paid-twice list's wording", () => {
+  // #4210 round 3 (UX 4): officer-facing copy names no issue number.
+  it("MUTATION: says what happens if Stripe fails one, with no issue number", () => {
+    render(<CardRefundsPaidTwiceList rows={[{ operationId: "op-2", bookingId: "b-2", bookingReference: "BK-0002", closedAt: "2026-06-25T00:00:00.000Z", paidAnotherWayCents: 9_000, refundedByCardCents: 9_000 }]} />);
+    expect(screen.getByText(/if it does, the row leaves this list and the officers are emailed what to do\./)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/#\d{4}/);
+  });
+});
+
 describe("marking a paid-twice row Resolved", () => {
   const twice = {
     operationId: "op-2",
@@ -618,6 +628,72 @@ describe("view-only", () => {
     const button = screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" });
     expect(button).toBeDisabled();
     fireEvent.click(button);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+// #4210 round 3 (`INV-PAY-136`, UX 1 and 2): a row raised for an officer to
+// check after a "Paid another way" close is told apart from a debt, says why,
+// and closes either way.
+describe("a row raised to check after a close", () => {
+  const checkRow = row({ operationId: "op-check", bookingReference: "BK-0003", owedCents: 3_000, check: "part-close" });
+  const notOwedButton = () => screen.getByRole("button", { name: "Close the card refund for booking BK-0003 as checked - not owed" });
+
+  it("MUTATION: says check before paying and why, never just still owed - and the list says what such a row is", () => {
+    render(<DeadCardRefundsPanel rows={[checkRow, row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    const item = screen.getByText(/Booking BK-0003/).closest("li") as HTMLElement;
+    expect(within(item).getByText("Check before paying")).toBeInTheDocument();
+    expect(item).toHaveTextContent("$30.00 may be owed");
+    expect(item).toHaveTextContent("The close paid back only part of what it owed, so this may be part of what it gave up.");
+    expect(item).not.toHaveTextContent("still owed");
+    expect(screen.getByText(/A row marked Check before paying was raised after a refund failed/)).toBeInTheDocument();
+    // An ordinary row has neither the badge nor the second close.
+    const ordinary = screen.getByText(/Booking BK-0001/).closest("li") as HTMLElement;
+    expect(within(ordinary).queryByText("Check before paying")).not.toBeInTheDocument();
+    expect(within(ordinary).queryByRole("button", { name: /checked - not owed/ })).not.toBeInTheDocument();
+  });
+
+  it("names the other two reasons in the officer's words, with no issue number", () => {
+    render(<DeadCardRefundsPanel rows={[row({ operationId: "a", check: "resolved" }), row({ operationId: "b", bookingReference: "BK-0004", check: "uncertain" })]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByText(/Its paid-twice row was marked resolved, so the member may have returned the extra\./)).toBeInTheDocument();
+    expect(screen.getByText(/The app cannot tell whether the close paid this refund back\./)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/#\d{4}/);
+  });
+
+  it("MUTATION: Checked - not owed requires a note, sends it confirmed, then says what was done and moves focus there", async () => {
+    render(<DeadCardRefundsPanel rows={[checkRow]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(notOwedButton());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("$30.00 leaves Refunds owed and Net Collected, and nothing is paid or recorded in Xero.");
+    const submit = within(dialog).getByRole("button", { name: "Close as not owed" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Why is it not owed? (required)"), { target: { value: "The close covered it" } });
+    respond(200, { success: true });
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(mocks.fetch).toHaveBeenCalledWith("/api/admin/payments/card-refunds/op-check/checked-not-owed", expect.objectContaining({ method: "POST" })),
+    );
+    expect(JSON.parse(String((mocks.fetch.mock.calls[0]?.[1] as { body: string }).body))).toEqual({ note: "The close covered it", confirmed: true });
+    const notice = await screen.findByText("The card refund for booking BK-0003 was closed as checked - not owed.");
+    await waitFor(() => expect(document.activeElement).toBe(notice));
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  it("shows a 409 in its dialog and refreshes the list", async () => {
+    render(<DeadCardRefundsPanel rows={[checkRow]} bankNoteWording={BANK_NOTE_WORDING} />);
+    fireEvent.click(notOwedButton());
+    fireEvent.change(screen.getByLabelText("Why is it not owed? (required)"), { target: { value: "Covered" } });
+    respond(409, { error: "This card refund has already been closed." });
+    fireEvent.click(screen.getByRole("button", { name: "Close as not owed" }));
+    expect(await screen.findByText("This card refund has already been closed.")).toBeInTheDocument();
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  it("a finance viewer without edit cannot open it", () => {
+    mocks.canEdit = false;
+    render(<DeadCardRefundsPanel rows={[checkRow]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(notOwedButton()).toBeDisabled();
+    fireEvent.click(notOwedButton());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

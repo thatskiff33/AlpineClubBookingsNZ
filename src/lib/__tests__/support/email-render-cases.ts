@@ -94,6 +94,7 @@ import {
 } from "@/lib/email-templates/admin-finance";
 import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import { adminLateCaptureRefundedOutsideAppTemplate } from "@/lib/email-templates/admin-late-capture-outside-app";
+import { adminCardRefundFailedAfterPaidAnotherWayTemplate } from "@/lib/email-templates/admin-card-refund-failed-after-paid-another-way";
 import { adminBankTransferSettlementFigureTemplate } from "@/lib/email-templates/admin-bank-transfer-settlement";
 import {
   adminAccountDeletionRequestedTemplate,
@@ -835,6 +836,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminManualRefundTaskTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundAmountCents: 104, bookingId: "bookingId-5", reason: "reason-6", reviewUrl: "reviewUrl-7", situation: "group-organiser-internet-banking" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureRefundedOutsideAppTemplate:minimal", fn: "adminLateCaptureRefundedOutsideAppTemplate", render: () =>
     adminLateCaptureRefundedOutsideAppTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", paymentIntentId: "paymentIntentId-5", refundedCents: 106, reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
+  { id: "adminCardRefundFailedAfterPaidAnotherWayTemplate:minimal", fn: "adminCardRefundFailedAfterPaidAnotherWayTemplate", render: () =>
+    adminCardRefundFailedAfterPaidAnotherWayTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", amountCents: 105, note: "note-6 <b>", reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureHeldTemplate:minimal", fn: "adminLateCaptureHeldTemplate", render: () =>
     adminLateCaptureHeldTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminPendingDeadlineTemplate:minimal", fn: "adminPendingDeadlineTemplate", render: () =>

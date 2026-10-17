@@ -489,6 +489,20 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     );
   });
 
+  it("keeps the failed-after-paid-another-way alert admin-audience, delivery-locked and pinned to its decision (#4210)", () => {
+    // The one mail that stops a second payment to a member a close already paid.
+    // MUTATION PROOF: drop it from LOCKED_DELIVERY_TEMPLATE_NAMES and this fails.
+    const definition = getEmailTemplateDefinition("admin-card-refund-failed-after-paid-another-way");
+    if (!definition) throw new Error("missing admin-card-refund-failed-after-paid-another-way");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-card-refund-failed-after-paid-another-way")).toBe("always");
+    expect(definition.defaultSubject).toBe("Card refund failed after it was paid back another way: {{memberName}}");
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining(["paidAnotherWayFailedLaterNote", "amount", "memberName", "reviewUrl"]),
+    );
+  });
+
   it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
     // It ships via sendToAdmins, so it must classify as an admin alert like its
     // siblings (audience "admin") rather than "member". It stays in

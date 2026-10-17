@@ -1,4 +1,5 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
+import { paidAnotherWayFailedLaterNote } from "@/lib/card-refund-failed-later-paid-another-way-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -126,6 +127,10 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // #4170: a late capture refunded OUTSIDE the app - no record, no Xero note the
   // app could raise. Same admin audience, unmuteable sender, delivery-locked below.
   "admin-late-capture-refunded-outside-app",
+  // #4210: a card refund Stripe failed after a "Paid another way" close had
+  // settled it - paying again pays the member twice. Same admin audience,
+  // unmuteable sender, delivery-locked below.
+  "admin-card-refund-failed-after-paid-another-way",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -223,6 +228,8 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-late-capture-hand-back-conflict",
   // #4170: the same lock - money left the club with no record the app wrote.
   "admin-late-capture-refunded-outside-app",
+  // #4210: the same lock - the one mail that stops a second payment to the member.
+  "admin-card-refund-failed-after-paid-another-way",
   // #3638: the same lock for the same reason as #2774 — this alert says the
   // club may hold the price twice (a card payment and a Xero payment on one
   // booking), and nothing is refunded or credited automatically, so muting it
@@ -651,6 +658,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   ],
   // #4170: {{outsideAppRefundNote}} is the instruction - what the app did not do, and when to record it.
   "admin-late-capture-refunded-outside-app": ["memberName", "paymentIntentId", "amount", "outsideAppRefundNote"],
+  // #4210: {{paidAnotherWayFailedLaterNote}} is the whole decision - settled, or what is left to check.
+  "admin-card-refund-failed-after-paid-another-way": ["memberName", "amount", "paidAnotherWayFailedLaterNote", "reviewUrl"],
   // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
   // that says whether the money went out or was withheld. An override that drops
   // it turns a reconciliation notice into an unexplained mention of a booking, on
@@ -962,6 +971,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     // the refund-time audit entry, so a send that never happened is never assumed.
     frequency:
       "On each late capture the webhook refunds automatically — rare; once per refund, sent when the money goes back even if its record is saved later, and two deliveries racing the same event can each send it",
+  },
+  "admin-card-refund-failed-after-paid-another-way": {
+    triggerSummary:
+      "Stripe reported a card refund failed after a treasurer had already closed it as paid another way, so the member was paid back by that close - nothing is sent again, and anything the close may not have covered is listed for a person to check",
+    frequency: "Once per failed card refund, after the decision is saved - rare",
   },
   "admin-late-capture-refunded-outside-app": {
     triggerSummary:
@@ -1561,6 +1575,11 @@ export function sampleValue(token: string): string {
     return ibSettlementFigureParagraph({ keptReason: "folded-refund", owed: null, hasSupplementaryInvoice: false });
   }
   if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
+  // #4210: previewed as the settled arm - the case the alert exists for; the check arms are the sender's others.
+  if (token === "paidAnotherWayFailedLaterNote") {
+    const money = { amount: "$100.00", paidBack: "$100.00", owed: "$100.00", check: "$0.00" };
+    return paidAnotherWayFailedLaterNote({ ...money, outcome: "settled-paid-another-way", stripeRefundId: "re_example", partClose: false, onPaidTwiceList: true, recordedAfterClose: true, resolutionNote: null });
+  }
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);
   }
@@ -2110,6 +2129,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "settlementFigureNote",
   // #4170: the outside-the-app refund alert's instruction.
   "outsideAppRefundNote",
+  // #4210: the failed-after-paid-another-way alert's decision.
+  "paidAnotherWayFailedLaterNote",
   // #2774: the same direction as a SUBJECT-length phrase, so the withheld and
   // paid-twice arms cannot collapse into one claim when an admin saves the template
   // — the {{bookingStateLabel}} construction (#2761), plus the subject requirement

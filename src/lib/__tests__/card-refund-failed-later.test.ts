@@ -86,6 +86,7 @@ function fakeTx({
     },
     paymentTransaction: { findUnique: vi.fn(async () => ({ stripePaymentIntentId: transactionIntent })) },
     auditLog: { create: vi.fn<(args: unknown) => Promise<object>>(async () => ({})) },
+    manualRefundTask: { findFirst: vi.fn<(args: unknown) => Promise<Record<string, unknown> | null>>(async () => null) },
     paymentRecoveryOperation: {
       findMany: vi.fn(async () => rows),
       createMany: vi.fn<(args: unknown) => Promise<{ count: number }>>(async () => ({ count: inserted })),

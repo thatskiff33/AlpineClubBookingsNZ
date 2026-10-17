@@ -1105,6 +1105,12 @@ finance:view gate it lists the closes Stripe paid as well
 /api/admin/payments/card-refunds/[id]/paid-twice-resolved` ->
 `resolveCardRefundPaidTwice`), gated `finance:edit` in the list, under its own
 finance banner, and in the route; it moves no money and touches no Xero.
+A row raised to check after such a close (#4210, `INV-PAY-136`) is marked
+"Check before paying" in the same list and also takes a "Checked - not owed"
+close (`DeadCardRefundsPanel` -> `CheckedNotOwedDialog` -> `POST
+/api/admin/payments/card-refunds/[id]/checked-not-owed` ->
+`closeCardRefundCheckNotOwed`), gated `finance:edit` in the panel, under its
+banner, and in the route; it moves no money and touches no Xero.
 `src/lib/booking-provider-mismatches.ts` answers the same provider-divergence
 questions for a single booking (paid while the club's records hold no Xero invoice,
 Stripe refund with no Xero credit note, waitlist offer whose email needs
@@ -1175,11 +1181,11 @@ tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
 figures rather than trusting a hand count: **99 components render a banner, and
- 322 of the 377 `ViewOnlyActionButton` call sites opt out** of the per-button
+ 323 of the 378 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 322 split by WHICH rule
-covers them: **286** pass the literal
+test currently pins, which is the only authority.) Those 323 split by WHICH rule
+covers them: **287** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **36**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 31 by a parent's own JSX render site (#2168), 5 by the

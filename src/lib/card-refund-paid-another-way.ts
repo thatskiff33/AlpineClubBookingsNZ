@@ -27,23 +27,22 @@ import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { paidAnotherWayCardNoteCoverContext } from "@/lib/card-refund-paid-another-way-cash";
+import { paidAnotherWayCountedContext, type PaidAnotherWayCounted } from "@/lib/card-refund-paid-another-way-counted";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   CARD_REFUND_OPERATION_WHERE,
+  cardRefundCountedAtClose,
   cardRefundSlicesByOperation,
   isOwedCardRefundOperation,
+  paidAnotherWayCheckOf,
   unsentSliceCents,
+  type PaidAnotherWayCheckReason,
 } from "@/lib/open-card-refund-owed";
 import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { prisma } from "@/lib/prisma";
 import { isPaymentRecoveryOperationExhausted, PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
-import {
-  applyLocalRefundAllocation,
-  lockPaymentForRefundedTotal,
-  RefundAllocationExceedsCapturedError,
-  RefundAllocationRacedError,
-} from "@/lib/payment-transactions";
+import { applyLocalRefundAllocation, lockPaymentForRefundedTotal, RefundAllocationExceedsCapturedError, RefundAllocationRacedError } from "@/lib/payment-transactions";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 
 /**
@@ -246,6 +245,8 @@ export interface DeadCardRefundRow {
   cardNoteCoversCents: number;
   /** Its last failure looked like a timeout or a network error, so Stripe may have refunded after all. */
   stripeMayHaveRefunded: boolean;
+  /** #4210: raised for an officer to check after a "Paid another way" close, and why; null for any other row. */
+  check: PaidAnotherWayCheckReason | null;
 }
 
 /**
@@ -305,6 +306,7 @@ export async function listDeadCardRefunds(): Promise<DeadCardRefundRow[]> {
         xeroRefundNote: paidAnotherWayXeroPromise(xeroPlan),
         cardNoteCoversCents: xeroPlan.xeroRefundNote === "now" ? (xeroPlan.cardNoteCoversCents ?? 0) : 0,
         stripeMayHaveRefunded: lastErrorSuggestsStripeMayHaveRefunded(operation.lastError),
+        check: paidAnotherWayCheckOf(operation)?.reason ?? null,
       };
     }),
   );
@@ -428,10 +430,9 @@ async function postPaidAnotherWayLine(
   await writeBookingLedgerRows(tx, rows);
 }
 
-/** The record's `reviewContext` for a card-note cover, or nothing (A-F1). */
-function cardNoteCoverReviewContext(cardNoteCoversCents: number): { reviewContext?: Prisma.InputJsonObject } {
-  const reviewContext = paidAnotherWayCardNoteCoverContext(cardNoteCoversCents);
-  return reviewContext ? { reviewContext } : {};
+/** The record's `reviewContext`: a card-note cover, if any (A-F1), and (#4210 round 3, `INV-PAY-136`) what the close counted. */
+function closeReviewContext(cardNoteCoversCents: number, counted: PaidAnotherWayCounted): Prisma.InputJsonObject {
+  return { ...paidAnotherWayCardNoteCoverContext(cardNoteCoversCents), ...paidAnotherWayCountedContext(counted) } as unknown as Prisma.InputJsonObject;
 }
 
 /** Close one dead card refund as paid another way. See the module comment. */
@@ -594,9 +595,8 @@ export async function closeCardRefundPaidAnotherWay(
         completedByMemberId: input.actingMemberId,
         note,
         reason: paidAnotherWayReason(booking.id, input.paidBack),
-        // #4104 delta review (A-F1): what a card note already in Xero answers
-        // of the close, so its share counts it covered.
-        ...cardNoteCoverReviewContext(paidAnotherWayCardNoteCoversCents(xeroPlan, input.amountCents)),
+        // A-F1: what a card note already in Xero answers of the close; #4210: what it counted.
+        reviewContext: closeReviewContext(paidAnotherWayCardNoteCoversCents(xeroPlan, input.amountCents), cardRefundCountedAtClose(payment, operation.id)),
       },
       select: { id: true },
     });

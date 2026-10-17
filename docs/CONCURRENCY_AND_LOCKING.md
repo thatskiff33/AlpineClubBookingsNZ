@@ -4942,15 +4942,32 @@ Stripe's clock, the raise floored to its second (round 7, M3).
 
 **Marking a paid-twice row Resolved** (owner, 9 Oct 2026;
 `resolveCardRefundPaidTwice`, `src/lib/card-refund-paid-twice.ts`) moves no
-money and touches no Xero, so it joins no lock cohort. It is one
-status-guarded `updateMany` on the close's record, guarded on the resolution
-the record carried when read, with its audit row in the same transaction; a
-second click or a second treasurer matches nothing and is refused with a 409
-(`card-refund-paid-another-way.realdb.test.ts`). Nothing else writes that
-column of a close's record. A Stripe refund recorded after the dialog opened is
-not stopped by any lock either, so the request carries the card figure the
-dialog showed (`expectedRefundedByCardCents`, round 8) and a different figure
-is a 409: a refund the treasurer never saw is never marked resolved.
+money and touches no Xero, so it joins no advisory-lock cohort. Since #4210
+round 3 (concurrency 3) it takes the close's Payment row first
+(`lockPaymentForRefundedTotal`; the record's `paymentId` is read unlocked, as
+it never changes), then in the same transaction re-reads the record, recomputes
+what Stripe refunded after the close and whether the row is still paid twice,
+and writes one status-guarded `updateMany` on the record, guarded on the
+resolution it carried when read, with its audit row. The failed-later writer
+reads that record under the same row (`INV-PAY-136`), so a refund failing
+later and a Resolved are weighed in one order: the Resolved sees the refund
+already failed (no longer paid twice, a 409), or the writer sees the
+resolution. A second click or a second treasurer matches nothing and is
+refused with a 409 (`card-refund-paid-another-way.realdb.test.ts`). A Stripe
+refund recorded after the dialog opened is a different card figure than the
+one the request carries (`expectedRefundedByCardCents`, round 8), a 409: a
+refund the treasurer never saw is never marked resolved.
+
+**Closing a check row as checked - not owed** (#4210 round 3,
+`closeCardRefundCheckNotOwed`, `src/lib/card-refund-check-not-owed.ts`) moves
+no money, refunded total or refund row, so it takes no lock: one
+status-guarded `updateMany` to `SUCCEEDED` on the dead row's plan, status and
+attempts as read, with its audit row in the same transaction. A "Paid another
+way" close of the same row claims on the same dead status, so one wins and the
+other is a 409; a failed-later re-plan compares the status it read, so it
+loses and is retried (`FailedLaterRefundHeldError`). The failed-later writer
+counts a part-close check against its close whatever the check's status, so
+this close cannot change what a later failure is weighed against.
 
 ## A refused card refund's re-plan: fenced writes, no advisory key (#4083, #4096, #4103, #4144)
 
@@ -5053,6 +5070,21 @@ and the debt's writes come last, on `PaymentRecoveryOperation`:
   re-planned, and with none a row is inserted keyed on the Stripe refund
   (`card_refund_failed_later_<refund>`, `skipDuplicates`). A refund that names
   no booking writes an audit row on the same transaction instead.
+- **Settled by a "Paid another way" close** (#4210, `INV-PAY-136`): asked
+  before the no-booking rule, the search reads the close's record
+  (`ManualRefundTask`, by `closeKeysOf`) under the same Payment row lock. A
+  close takes that lock (`lockPaymentForRefundedTotal`, after `lock(1)`) before
+  it moves the row to `SUCCEEDED` and writes the record in one transaction, so
+  the search sees the whole close or none of it. A full close's refund writes
+  no row - only its audit row, on this transaction; a part close's, or a
+  resolved paid-twice row's, inserts a dead row as above, marked a check
+  (`paidAnotherWayCheck`); a part close's check is sized against what earlier
+  part-close checks against that close already list, read under the same lock.
+  The close records what it counted on its record as it writes it, under that
+  lock, and the decision reads that list, never today's matching. The
+  resolution is read and written under the same Payment row
+  (`resolveCardRefundPaidTwice`), so either order leaves one decision. No new
+  lock or key.
 - **A re-plan** is a compare-and-set on the plan, status, `attempts` and
   `nextRetryAt` it read (a claim or re-arm between moves one), never on a row
   someone may be writing: a worker mid-attempt (`PROCESSING`), or a row no
@@ -5127,7 +5159,10 @@ it does not close it, because the new release raises a row from any refund
 status it reads - `charge.refunded`, the cron's read-back, a door's replay
 (`DEPLOYMENT.md`). In the same window an old release's "Resolved" on a
 paid-twice task writes that close record's `reviewContext` whole, dropping the
-card-note cover a new close kept there, and an old release's card-note
+card-note cover a new close kept there (and, #4210 round 3, the list of what it
+counted: a refund failing later is then weighed as against a close that kept
+none, raised dead to check unless the paid-twice list settles it), and an old
+release's card-note
 executor does not subtract the closes' uncovered cash. Either way Xero's total
 can drift from the refunds by that close's amount; the Xero reconciliation
 report lists the difference for the treasurer to correct.

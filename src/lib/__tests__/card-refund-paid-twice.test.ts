@@ -6,7 +6,9 @@ import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   listRecords: vi.fn(),
+  findHead: vi.fn(),
   findRecord: vi.fn(),
+  lockPayment: vi.fn(),
   claim: vi.fn(),
   createAuditLog: vi.fn(),
 }));
@@ -14,13 +16,19 @@ const mocks = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/audit", () => ({ createAuditLog: (...args: unknown[]) => mocks.createAuditLog(...args) }));
 vi.mock("@/lib/prisma", () => {
-  const tx = { manualRefundTask: { updateMany: (...args: unknown[]) => mocks.claim(...args) } };
+  const tx = {
+    $executeRaw: (...args: unknown[]) => mocks.lockPayment(...args),
+    manualRefundTask: {
+      findFirst: (...args: unknown[]) => mocks.findRecord(...args),
+      updateMany: (...args: unknown[]) => mocks.claim(...args),
+    },
+  };
   return {
     prisma: {
       $transaction: (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
       manualRefundTask: {
         findMany: (...args: unknown[]) => mocks.listRecords(...args),
-        findFirst: (...args: unknown[]) => mocks.findRecord(...args),
+        findFirst: (...args: unknown[]) => mocks.findHead(...args),
       },
     },
   };
@@ -29,9 +37,9 @@ vi.mock("@/lib/prisma", () => {
 import {
   CardRefundPaidTwiceError,
   listCardRefundsPaidTwice,
-  readPaidTwiceResolution,
   resolveCardRefundPaidTwice,
 } from "@/lib/card-refund-paid-twice";
+import { readPaidTwiceResolution } from "@/lib/card-refund-paid-twice-resolution";
 
 const CLOSED_AT = new Date("2026-06-25T00:00:00.000Z");
 const STRIPE_BEFORE_CLOSE = { stripeCreatedAt: new Date("2026-06-24T23:59:00.000Z"), createdAt: new Date("2026-06-26T00:00:00.000Z") };
@@ -85,7 +93,9 @@ const resolution = (refundedByCardCents: number) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listRecords.mockResolvedValue([]);
+  mocks.findHead.mockResolvedValue({ paymentId: "p-1" });
   mocks.findRecord.mockResolvedValue(closeRecord([STRIPE_BEFORE_CLOSE]));
+  mocks.lockPayment.mockResolvedValue(1);
   mocks.claim.mockResolvedValue({ count: 1 });
   mocks.createAuditLog.mockResolvedValue(undefined);
 });
@@ -144,6 +154,17 @@ describe("marking a paid-twice row Resolved", () => {
         }),
       }),
     );
+  });
+
+  // #4210 round 3 (concurrency 3): the failed-later writer reads this record
+  // under the Payment row, so the Resolved is read, checked and written under it too.
+  it("MUTATION (#4210): reads the record, checks it and writes it under the Payment row, taken first", async () => {
+    await resolve();
+    const lock = mocks.lockPayment.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]] | undefined;
+    expect(lock?.[0].join("?")).toMatch(/FROM "Payment" WHERE "id" = \? FOR NO KEY UPDATE/);
+    expect(lock?.[1]).toBe("p-1");
+    expect(mocks.lockPayment.mock.invocationCallOrder[0]).toBeLessThan(mocks.findRecord.mock.invocationCallOrder[0] ?? 0);
+    expect(mocks.findRecord.mock.invocationCallOrder[0]).toBeLessThan(mocks.claim.mock.invocationCallOrder[0] ?? 0);
   });
 
   it("MUTATION: one status-guarded write on the close's record - guarded on it having no resolution - with the note and what Stripe had refunded", async () => {
@@ -218,8 +239,9 @@ describe("marking a paid-twice row Resolved", () => {
     });
 
     it("no such close", async () => {
-      mocks.findRecord.mockResolvedValue(null);
+      mocks.findHead.mockResolvedValue(null);
       await expectRefusal(resolve(), 404);
+      expect(mocks.lockPayment).not.toHaveBeenCalled();
     });
 
     it("MUTATION: a close Stripe never paid as well", async () => {

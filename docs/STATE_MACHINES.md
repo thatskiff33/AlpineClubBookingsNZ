@@ -557,7 +557,12 @@ Stripe later fails, owed again on a row of its own
 (dated by its close), on its way, stalled (the club follows it up) or paid
 another way, said with the cancel's own paid-another-way close as one total -
 and taken off the part it was in, the rest keeping its date; a retry that
-fails too is said by the row owing it (#4166). Which row made the refund is
+fails too is said by the row owing it (#4166). A refund a "Paid another way"
+close settled (`INV-PAY-136`) has no row when it fails after a full close: the
+close alone tells it, as paid back another way. A row raised to check against
+that close is none of these: while open it is said as the club being in touch
+about it, out of what the close left unpaid first; paid another way, with the
+close's paid-back part; closed as checked - not owed, as the close's unpaid part. Which row made the refund is
 what the failed-later writer recorded on that row (`madeByOperationId`: by
 metadata, and among several failed-later rows, which all send the same, by the
 slice it fills); a row raised before #4166 is matched by amount. A paid-another-way close's refund is told only if Stripe made it by
@@ -3663,6 +3668,22 @@ PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
                        created the refund before the cutoff migration and no
                        open row counts it: raised PENDING with its attempts
                        spent, never claimed, never in flight)
+(none) -> (none)      (#4210, INV-PAY-136: a "Paid another way" close paid
+                       the refund back - its sender's close, Stripe made it by
+                       then, not among the refunds the close's record says it
+                       counted, fitting a slice it found unsent: no row after a
+                       full close; alerted and audited, never re-sent)
+(none) -> DEAD        (#4210: a check, marked paidAnotherWayCheck - after a
+                       part close, what it gave up less earlier part-close
+                       checks against it, at most the refund; after its
+                       paid-twice row was marked Resolved, or where the close
+                       kept no record and may have counted it, the whole
+                       refund - raised dead for an officer to check)
+DEAD -> SUCCEEDED     (#4210 round 3, a check only: "Checked - not owed",
+                       finance:edit, no lock, one updateMany guarded on the
+                       plan, status and attempts read; lastError is the
+                       checked-not-owed marker; no money, ledger or Xero;
+                       audited under `payment`)
 PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        re-planned instead: the slice on its next key,
                        recording the failure in failedRefundIds; compare-and-set
@@ -3749,7 +3770,21 @@ a migration history that lacks it): it may have failed while nothing could
 notice, and may already have been paid by hand. A refund naming no booking of
 the payment (made in the Stripe dashboard, or a legacy group refund) is taken
 out of the refunded total, alerted with its Stripe id and audited, never
-re-sent. Two ways
+re-sent. Asked before that (#4210, `INV-PAY-136`): whether a "Paid another way"
+close already paid the refund back. The row that sent it decides - closed "Paid
+another way", Stripe made the refund by that close - and what that close counted,
+kept on its record: the refund was not among those it counted as made and fits a
+slice it found unsent (that charge, exactly that amount). A close recorded before
+it kept that list settles only a refund on its paid-twice list; one it may have
+counted is raised dead to check. Only a refund naming no booking, which no row
+sent, is weighed by the row it fills, on the paid-twice reading; another door's
+refund for the booking never is. A full close's refund raises no row; a part
+close raises the part it gave up, less earlier part-close checks against it, at
+most the refund, dead; a close whose paid-twice row was marked Resolved raises
+the whole refund dead, since the member may have returned the extra. Each is audited and alerted through its own
+delivery-locked mail. The close's record is read under the Payment row lock a
+close takes before writing it. An open sender's own replay reads the refund as
+refused, and moves its slice itself. Two ways
 in: the `refund.failed` webhook (and `refund.updated` / `charge.refund.updated`
 where subscribed), and the payments cron, which reads each card refund still
 recorded `pending` back from Stripe, least recently read first. The officers

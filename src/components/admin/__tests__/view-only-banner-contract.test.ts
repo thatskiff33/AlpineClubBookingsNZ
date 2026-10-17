@@ -385,8 +385,10 @@ const FIGURES = {
    * panel's own view-only button. MEASURED on the composed tree after merging main at aaedc5481.
    * 376 -> 377 (#4098): the subscription charge queue's "Close: already paid".
    * MEASURED by re-running this census.
+   * 377 -> 378 (#4210 round 3): the dead card refunds panel's "Checked - not
+   * owed", on a check row. MEASURED by re-running this census.
    */
-  callSites: 377,
+  callSites: 378,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -439,8 +441,9 @@ const FIGURES = {
    * guest entry's button, under the change-request panel's banner. MEASURED
    * on the composed tree.
    * 321 -> 322 (#4098): "Close: already paid", under the billing panel's banner.
+   * 322 -> 323 (#4210 round 3): "Checked - not owed", under the dead card refunds panel's banner.
    */
-  optOuts: 322,
+  optOuts: 323,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -526,8 +529,10 @@ const FIGURES = {
    * panel's own banner. MEASURED on the composed tree after merging main at aaedc5481.
    * 285 -> 286 (#4098): "Close: already paid" sits in the same file as the
    * subscription billing panel's own banner. MEASURED by re-running this census.
+   * 286 -> 287 (#4210 round 3): "Checked - not owed" sits in the same file as
+   * the dead card refunds panel's own banner. MEASURED by re-running this census.
    */
-  staticOptOuts: 286,
+  staticOptOuts: 287,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

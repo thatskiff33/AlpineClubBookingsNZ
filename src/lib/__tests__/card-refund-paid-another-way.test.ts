@@ -171,6 +171,7 @@ import {
 import type { PaidBackChoice } from "@/lib/card-refund-paid-back";
 import { getNetCollectedPaymentParts } from "@/lib/payment-net-collected";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
+import { readPaidAnotherWayCounted } from "@/lib/card-refund-paid-another-way-counted";
 import { CAPACITY_RACE_REFUND_EVENT_REASON } from "@/lib/booking-events";
 import { MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 
@@ -652,13 +653,22 @@ describe("closing a dead card refund as paid another way", () => {
     expect(mocks.kick).toHaveBeenCalledTimes(1);
     // A-F1: the record keeps what the card note answers, so its share counts it covered.
     expect(mocks.createRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ reviewContext: { paidAnotherWayCardNoteCover: 5_000 } }) }),
+      expect.objectContaining({ data: expect.objectContaining({ reviewContext: expect.objectContaining({ paidAnotherWayCardNoteCover: 5_000 }) }) }),
     );
   });
 
-  it("MUTATION (A-F1): a close no card note answers keeps nothing in its record's review context", async () => {
+  it("MUTATION (A-F1): a close no card note answers keeps no card-note cover in its record's review context", async () => {
     await close(15_000);
-    expect(mocks.createRecord.mock.calls[0]?.[0]?.data).not.toHaveProperty("reviewContext");
+    expect(mocks.createRecord.mock.calls[0]?.[0]?.data.reviewContext).not.toHaveProperty("paidAnotherWayCardNoteCover");
+  });
+
+  // #4210 round 3 (`INV-PAY-136`, money F2): what the close counted, kept on its record for a refund failing later.
+  it("MUTATION (#4210 F2): the record keeps the refunds the close counted and the slices it found unsent", async () => {
+    await close(15_000);
+    expect(readPaidAnotherWayCounted(mocks.createRecord.mock.calls[0]?.[0]?.data.reviewContext)).toEqual({
+      refundIds: [],
+      unsentSlices: [{ paymentTransactionId: "txn-1", amountCents: 15_000, exact: true }],
+    });
   });
 
   it("M3: says honestly when no note was queued", async () => {

@@ -58,6 +58,8 @@ import {
 import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email/admin-alerts-internet-banking";
 import { sendAdminLateCaptureRefundedOutsideAppAlert } from "@/lib/email/admin-alerts-late-capture";
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
+import { sendAdminCardRefundFailedAfterPaidAnotherWayAlert } from "@/lib/email/admin-alerts-card-refund";
+import { paidAnotherWayFailedLaterNote } from "@/lib/card-refund-failed-later-paid-another-way-note";
 import {
   sendAdminBankTransferSettlementFigureAlert,
   sendAdminSecondInstrumentSettlementConflictAlert,
@@ -493,6 +495,40 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     ];
     expect(args.subject).toBe("Late payment refunded outside the app - check Xero: Alice Example");
     expect(args.templateName).toBe("admin-late-capture-refunded-outside-app");
+    expect(args.requirement).toEqual({ area: "finance", level: "edit" });
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+  });
+
+  it("admin-card-refund-failed-after-paid-another-way: {{paidAnotherWayFailedLaterNote}} says what was decided (#4210)", async () => {
+    const note = paidAnotherWayFailedLaterNote({
+      outcome: "raised-check-part-close",
+      stripeRefundId: "re_9",
+      amount: "$40.00",
+      paidBack: "$25.00",
+      owed: "$40.00",
+      partClose: true,
+      check: "$15.00",
+      onPaidTwiceList: true,
+      recordedAfterClose: true,
+      resolutionNote: null,
+    });
+    await sendAdminCardRefundFailedAfterPaidAnotherWayAlert(
+      { bookingId: "booking-9", memberName: "Alice Example", checkIn: new Date("2026-08-01"), checkOut: new Date("2026-08-03"), amountCents: 4000, note },
+      CLUB_FORMAT_TEST,
+    );
+
+    const data = capturedUnmuteableTemplateData();
+    expect(data.paidAnotherWayFailedLaterNote).toBe(note);
+    const rendered = renderDefaultBody("admin-card-refund-failed-after-paid-another-way", data);
+    expect(rendered).toContain("Up to $15.00 of this refund may be part of what the close gave up");
+    expect(rendered).toContain("Card refund that failed: $40.00");
+    expect(rendered).toContain("/admin/stuck-states");
+    // Unmuteable, named for the event, owned by Finance editors - never the payment-failure mail.
+    const [args] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
+      { subject: string; templateName: string; requirement: unknown },
+    ];
+    expect(args.subject).toBe("Card refund failed after it was paid back another way: Alice Example");
+    expect(args.templateName).toBe("admin-card-refund-failed-after-paid-another-way");
     expect(args.requirement).toEqual({ area: "finance", level: "edit" });
     expect(mocks.sendToAdmins).not.toHaveBeenCalled();
   });
