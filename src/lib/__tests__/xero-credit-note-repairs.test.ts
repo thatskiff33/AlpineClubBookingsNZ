@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindMany: vi.fn(),
   paymentUpdateMany: vi.fn(),
   paymentFindUnique: vi.fn(),
+  manualRefundTaskFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -43,6 +44,9 @@ vi.mock("@/lib/prisma", () => ({
     paymentTransaction: {
       findMany: mocks.paymentTransactionFindMany,
     },
+    manualRefundTask: {
+      findMany: mocks.manualRefundTaskFindMany,
+    },
   },
 }));
 
@@ -56,6 +60,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { repairRefundedPaymentBusinessState } from "@/lib/xero-inbound/credit-note-repairs";
 import { resolveModificationRefundAmountsByPaymentId } from "@/lib/xero-inbound/modification-note-refunds";
+import { COMPLETED_REFUND_REQUEST_HAND_BACK_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 
 // #3979: the repair writes through a claim on what it read
 // (`updateMany` keyed on id, status and refunded total). These suites assert the
@@ -66,6 +71,8 @@ beforeEach(() => {
     return { count: 1 };
   });
   mocks.paymentTransactionFindMany.mockResolvedValue([]);
+  // #4215: no refund request paid back unless a suite says so.
+  mocks.manualRefundTaskFindMany.mockResolvedValue([]);
 });
 
 function payment(overrides: Record<string, unknown> = {}) {
@@ -212,6 +219,105 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
     });
     expect(result).toEqual({ matchedPayments: 1, updatedPayments: 1 });
     expect(mocks.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #4215 (`INV-PAY-118`): a refund request paid back by bank transfer moved the
+// refunded total by its own amount and carries its own note, never the
+// canonical one. A recount triggered by the canonical note keeps that cash,
+// read from the request's completed hand-back - however its note stands.
+// -----------------------------------------------------------------------------
+describe("#4215: a refund request's paid-back cash survives a canonical-note recount", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+  });
+
+  const bankPayment = payment({
+    source: PaymentSource.INTERNET_BANKING,
+    amountCents: 20000,
+    refundedAmountCents: 15000,
+    status: PaymentStatus.PARTIALLY_REFUNDED,
+  });
+
+  it("MUTATION: keeps the request's $50 beside the canonical note's $100 - no write", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ paymentId: "pay-1", amountCents: 5000 }]);
+
+    const result = await runRepair({ paymentRow: bankPayment, creditNote: { status: "PAID", total: 100 } });
+
+    // Before #4215 this wrote 10000: the request's cash dropped out.
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
+  });
+
+  it("reads the completed refund-request hand-backs of the repaired payments, and no other task", async () => {
+    await runRepair({ paymentRow: bankPayment, creditNote: { status: "PAID", total: 100 } });
+
+    expect(mocks.manualRefundTaskFindMany).toHaveBeenCalledWith({
+      where: { paymentId: { in: ["pay-1"] }, ...COMPLETED_REFUND_REQUEST_HAND_BACK_TASK_WHERE },
+      select: { paymentId: true, amountCents: true },
+    });
+    expect(COMPLETED_REFUND_REQUEST_HAND_BACK_TASK_WHERE).toEqual({
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      status: "COMPLETED",
+      occurrenceKey: { startsWith: "refund-request-hand-back:" },
+    });
+  });
+
+  it("reads the requests after the payment row, so a completion between the reads loses the claim instead of being dropped", async () => {
+    await runRepair({ paymentRow: bankPayment, creditNote: { status: "PAID", total: 100 } });
+
+    const paymentRead = mocks.paymentFindMany.mock.invocationCallOrder[0]!;
+    const requestRead = mocks.manualRefundTaskFindMany.mock.invocationCallOrder[0]!;
+    expect(requestRead).toBeGreaterThan(paymentRead);
+  });
+
+  it("sums every request on the payment, and never one on another payment", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      { paymentId: "pay-1", amountCents: 3000 },
+      { paymentId: "pay-1", amountCents: 2000 },
+      { paymentId: "pay-other", amountCents: 4000 },
+    ]);
+
+    await runRepair({ paymentRow: bankPayment, creditNote: { status: "PAID", total: 100 } });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("an edit's note reconciled on the payment's invoice keeps the request's cash too", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ paymentId: "pay-1", amountCents: 5000 }]);
+    mocks.paymentFindMany.mockResolvedValue([{ ...bankPayment, refundedAmountCents: 7000 }]);
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([]);
+
+    await repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-edit",
+      creditNote: { status: "AUTHORISED", total: 20 } as never,
+      directPaymentIds: [],
+      modificationRefundAmountsByPaymentId: new Map([["pay-1", 2000]]),
+    });
+
+    // Before #4215 this wrote 2000: the edit's $20 alone.
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("the canonical note voided: only the request's cash stays (INV-ADDPAY-041)", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ paymentId: "pay-1", amountCents: 5000 }]);
+
+    await runRepair({ paymentRow: bankPayment, creditNote: { status: "VOIDED", total: 100 } });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { refundedAmountCents: 5000 } });
+  });
+
+  it("a total past the amount paid is clamped and reads REFUNDED", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ paymentId: "pay-1", amountCents: 15000 }]);
+
+    await runRepair({ paymentRow: bankPayment, creditNote: { status: "PAID", total: 100 } });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 20000, status: PaymentStatus.REFUNDED },
+    });
   });
 });
 

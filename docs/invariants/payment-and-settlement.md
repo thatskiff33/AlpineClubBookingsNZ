@@ -2257,20 +2257,21 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 ## INV-PAY-118
 
 - **An approved refund appeal's non-card part raises ONE officer refund task**
-  (#3827; owner decision D-3813-7 on #3492). Approving a refund request plans
+  (#3827; owner decision D-3813-7, #3492). Approving a refund request plans
   the Stripe refund inside the approval's own transaction, under `lock(1)`;
   on an internet-banking payment whatever that plan cannot carry raises a
   `ManualRefundTask` in the same transaction through
-  `raiseRefundRequestHandBack`, so it is netted before the lock is released. A card payment planned short is drift,
-  logged, never a task. A task that cannot be raised refuses the approval.
+  `raiseRefundRequestHandBack`, so it is netted before the lock releases. A card payment planned short is drift,
+  logged, never a task. An unraisable task refuses the approval.
   - **One task per request**: occurrence key
     `refund-request-hand-back:<RefundRequest id>`, unique, inserted
     `ON CONFLICT DO NOTHING`. A released claim (Stripe and its recovery
-    enqueue both failed) deletes the OPEN task in the same locked
+    enqueue both failed) deletes the OPEN task in the approval's locked
     transaction.
   - **The same kind and marker as an edit's.** `isNonCancellationHandBackTask`
     and `NOT_NON_CANCELLATION_HAND_BACK_WHERE` cover both. Completion records
-    the refund on the payment, the bank-refund ledger line and a `REFUNDED`
+    the refund on the payment (kept by `INV-ADDPAY-021`'s recount), the
+    bank-refund ledger line and a `REFUNDED`
     event marked `refund_request_hand_back_completed`, outside the narrative's
     settlement.
   - **Its Xero note is queued on payout, one live note per request**

@@ -541,6 +541,12 @@ export interface BookingClassificationContext {
    */
   cancelledBookingHandBackPaymentIds: Set<string>;
   /**
+   * #4215 (`INV-PAY-118`): the cash this booking's payment paid back on refund
+   * requests (`readRefundRequestPaidBackCentsByPaymentId`), which no
+   * cancellation note answers. The inbound recount reads the same figure.
+   */
+  refundRequestPaidBackCents: number;
+  /**
    * #3924 rounds 12-13: by intent, a late capture's card refunds no note will
    * answer (`readLateCaptureCardRefundsByHand`), in cents and the club's format,
    * for the kept invoice's and the card's record-by-hand findings. Set after the load.

@@ -194,6 +194,10 @@ vi.mock("@/lib/prisma", () => ({
     bookingEvent: {
       update: mocks.bookingEventUpdate,
     },
+    // #4215: the refunded-total recount reads refund requests paid back; none here.
+    manualRefundTask: {
+      findMany: () => Promise.resolve([]),
+    },
     $transaction: mocks.transaction,
   },
 }));

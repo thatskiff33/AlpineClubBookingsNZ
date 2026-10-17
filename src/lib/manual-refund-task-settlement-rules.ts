@@ -320,15 +320,13 @@ export function isEditRefundHandBackTask(task: {
   );
 }
 
-/** #3827 (D-3813-7): is this task an approved refund request's hand-back? */
-export function isRefundRequestHandBackTask(task: {
-  kind: ManualRefundTaskKind | string | null;
-  occurrenceKey: string | null;
-}): boolean {
-  return (
-    task.kind === "CANCELLED_BOOKING_HAND_BACK" &&
-    hasKeyPrefix(task.occurrenceKey, REFUND_REQUEST_HAND_BACK_KEY_PREFIX)
-  );
+/** #3827 (D-3813-7), #4215: THE one definition of an approved refund request's hand-back, for a query and (below) a row. */
+const REFUND_REQUEST_HAND_BACK_WHERE = { kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind, occurrenceKey: { startsWith: REFUND_REQUEST_HAND_BACK_KEY_PREFIX } } as const;
+/** #4215 (`INV-PAY-118`): one marked paid back. Its `amountCents` is what its completion moved `refundedAmountCents` by. */
+export const COMPLETED_REFUND_REQUEST_HAND_BACK_TASK_WHERE = { ...REFUND_REQUEST_HAND_BACK_WHERE, status: "COMPLETED" satisfies ManualRefundTaskStatus } as const;
+/** Is this task an approved refund request's hand-back? The fragment above, for a row. */
+export function isRefundRequestHandBackTask(task: { kind: ManualRefundTaskKind | string | null; occurrenceKey: string | null }): boolean {
+  return task.kind === REFUND_REQUEST_HAND_BACK_WHERE.kind && hasKeyPrefix(task.occurrenceKey, REFUND_REQUEST_HAND_BACK_WHERE.occurrenceKey.startsWith);
 }
 
 /**

@@ -353,6 +353,12 @@ import "./xero-refund-note-void-pointer.realdb.test";
 // voided one, and a link write racing the void keeps it. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4195-` fixtures.
 import "./xero-refund-request-note-void.realdb.test";
+// #4215 reuses it to prove the inbound repair of a bank-transfer payment's
+// canonical refund note keeps the cash a refund request paid back through the
+// real completion - queued, raised or voided, and with the canonical note
+// voided. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4215-` fixtures.
+import "./xero-bt-repair-request-cash.realdb.test";
 // #4098 reuses it to prove closing a subscription charge as already paid: two
 // closes at once close it once (one audit row, each voidGeneration bumped
 // once), and a manual reversal committing while the close waits for the

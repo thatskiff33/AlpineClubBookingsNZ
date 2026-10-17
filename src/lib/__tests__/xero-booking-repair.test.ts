@@ -320,6 +320,8 @@ function createDependencies(state: {
   lateCaptureCardRefundsByHand?: Record<string, CardByHand>;
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
+  // #4215 (`INV-PAY-118`): refund requests' completed hand-backs, the cash each paid back.
+  paidBackRefundRequests?: { paymentId: string; amountCents: number }[];
   // #3643 (owner decision 28 Sep 2026): DECISION 2 part-payment review tasks.
   partPaymentReviewTasks?: {
     bookingId: string;
@@ -550,6 +552,8 @@ function createDependencies(state: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
           where?.occurrenceKey?.in
             ? (state.paidAnotherWayCloses ?? []).filter((close) => where.occurrenceKey.in.includes(close.occurrenceKey))
+            : where?.occurrenceKey?.startsWith === "refund-request-hand-back:" && where?.status === "COMPLETED"
+            ? (state.paidBackRefundRequests ?? []).filter((task) => where.paymentId.in.includes(task.paymentId))
             : where?.kind === "CANCELLED_BOOKING_HAND_BACK"
             ? (state.handBackTasks ?? [])
             : where?.partPaymentReviewPaymentId
@@ -7936,7 +7940,9 @@ describe("a refund request's own note never answers for the payment's refund not
     actions.filter(
       (action) => action.type !== "SETTLE_REFUND_CREDIT_NOTE" && JSON.stringify(action).includes("cn_request")
     );
-  const run = async (state: { operations: any[]; links?: any[]; payment?: Record<string, unknown> }) => {
+  // #4215: the request's $30, paid back - read from its completed hand-back, as the inbound recount reads it.
+  const paidBack = [{ paymentId: "payment_1", amountCents: 3000 }];
+  const run = async (state: { operations: any[]; links?: any[]; payment?: Record<string, unknown>; requests?: typeof paidBack }) => {
     const booking = cancelledInternetBanking();
     Object.assign(booking.payment, state.payment ?? {});
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
@@ -7944,6 +7950,7 @@ describe("a refund request's own note never answers for the payment's refund not
         bookings: [booking],
         links: state.links ?? [requestLink],
         operations: [makePrimaryInvoiceCreateOperation(), ...state.operations],
+        paidBackRefundRequests: state.requests ?? paidBack,
       }),
       scope: { all: true },
     });
@@ -7997,40 +8004,74 @@ describe("a refund request's own note never answers for the payment's refund not
     expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
   });
 
-  // Review F1 at a19beb492: the refunded total net of each request's own note
-  // is what the cancellation's note answers, so an appeal-only refund is no gap.
+  // Review F1 at a19beb492: the refunded total net of each request's paid-back
+  // cash is what the cancellation's note answers, so an appeal-only refund is
+  // no gap. #4215: that cash is the request's completed hand-back, never its note.
   const ambiguousNote = expect.objectContaining({
     code: "MANUAL_REVIEW_REQUIRED",
     summary: expect.stringContaining("missing Xero refund note amount cannot be derived"),
   });
 
-  it("raises nothing when the request's note answers the whole refunded total", async () => {
+  it("raises nothing when the request's paid-back cash is the whole refunded total", async () => {
     const booking = await run({ operations: [requestNote()], payment: { refundedAmountCents: 3000 } });
     expect(booking.findings).not.toContainEqual(ambiguousNote);
     expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
   });
 
-  it("recovers the request's amount from its link when the payload is gone", async () => {
-    const booking = await run({
-      operations: [requestNote({ requestPayload: null })],
-      payment: { refundedAmountCents: 3000 },
-    });
-    expect(booking.findings).not.toContainEqual(ambiguousNote);
+  // #4231 money lens F1: a request completed before the booking had an
+  // invoice queued no note of its own. Netting only the requests' notes, the
+  // tool sized the cancellation's note to hold the request's cash too
+  // (`INV-PAY-118`), and the inbound recount then counted it twice.
+  it("MUTATION (#4215): a request with no note at all - completed before the invoice - still keeps its cash out of the cancellation's note", async () => {
+    const appealOnly = await run({ operations: [], links: [], payment: { refundedAmountCents: 3000 } });
+    expect(appealOnly.findings).not.toContainEqual(ambiguousNote);
+    expect(appealOnly.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+    // Beside the cancellation's own $70: sized by a person, never a $100 note.
+    const beside = await run({ operations: [], links: [] });
+    expect(beside.findings).toContainEqual(ambiguousNote);
+    expect(beside.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
   });
 
-  it("sends it to review when a request's amount cannot be recovered", async () => {
-    const booking = await run({
-      operations: [requestNote({ requestPayload: { refundRequestId: "rr_1" } })],
-      links: [{ ...requestLink, metadata: { refundRequestId: "rr_1" } }],
-      payment: { refundedAmountCents: 3000 },
+  it("reads no request's note for its amount: a note with no paid-back hand-back moves nothing", async () => {
+    // The cancellation's own $100, and a request's note whose task is not (or no longer) completed.
+    const booking = await run({ operations: [requestNote()], requests: [] });
+    expect(booking.findings).not.toContainEqual(ambiguousNote);
+    expect(booking.actions).toContainEqual(
+      expect.objectContaining({ type: "QUEUE_REFUND_CREDIT_NOTE", payload: expect.objectContaining({ refundAmountCents: 10000 }) }),
+    );
+  });
+
+  it("sums every request paid back on a payment, and never one on another booking's payment in the same sweep", async () => {
+    const withRequests = cancelledInternetBanking();
+    const withoutRequests = cancelledInternetBanking();
+    Object.assign(withoutRequests, { id: "booking_2" });
+    Object.assign(withoutRequests.payment, { id: "payment_2", xeroInvoiceId: "inv_primary_2" });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [withRequests, withoutRequests],
+        links: [],
+        operations: [makePrimaryInvoiceCreateOperation()],
+        paidBackRefundRequests: [
+          { paymentId: "payment_1", amountCents: 6000 },
+          { paymentId: "payment_1", amountCents: 4000 },
+        ],
+      }),
+      scope: { all: true },
     });
-    expect(booking.findings).toContainEqual(ambiguousNote);
+    const [first, second] = report.passes[0].bookings;
+    // Two requests answer the first payment's whole $100: no cancellation note.
+    expect(first.findings).not.toContainEqual(ambiguousNote);
+    expect(first.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+    // The second payment's $100 is its cancellation's alone, whatever the first's requests.
+    expect(second.actions).toContainEqual(
+      expect.objectContaining({ type: "QUEUE_REFUND_CREDIT_NOTE", payload: expect.objectContaining({ paymentId: "payment_2", refundAmountCents: 10000 }) }),
+    );
   });
 
   // #4195: a request's note Xero voided still answers for that request's cash.
-  // The void moves no refunded total (the inbound repair reads only the
-  // payment's own refund-note roles), and the request, never the
-  // cancellation's note, raises the replacement (`INV-PAY-118`).
+  // The void moves no refunded total (the inbound recount reads the request's
+  // completed hand-back, #4215), and the request, never the cancellation's
+  // note, raises the replacement (`INV-PAY-118`).
   it("MUTATION (#4195): a request whose note Xero voided keeps its cash out of the cancellation's note", async () => {
     // Its mirror is inactive now, so the loader (active links only) never reads it: the row's amount counts.
     const inactive = await run({ operations: [requestNote()], links: [], payment: { refundedAmountCents: 3000 } });
@@ -8041,10 +8082,10 @@ describe("a refund request's own note never answers for the payment's refund not
       expect(booking.findings).not.toContainEqual(ambiguousNote);
       expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
     }
-    // Neither the row nor an active mirror says the amount: a person sizes it, never the tool.
-    const unknown = await run({ operations: [requestNote({ requestPayload: null })], links: [], payment: { refundedAmountCents: 3000 } });
-    expect(unknown.findings).toContainEqual(ambiguousNote);
-    expect(unknown.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+    // #4215: neither the row nor an active mirror says the amount - the completed hand-back does.
+    const noNoteAmount = await run({ operations: [requestNote({ requestPayload: null })], links: [], payment: { refundedAmountCents: 3000 } });
+    expect(noNoteAmount.findings).not.toContainEqual(ambiguousNote);
+    expect(noNoteAmount.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
   });
 
   // #4195 money lens F1, #4214 (owner decision: the officer re-raises): once
@@ -8070,6 +8111,7 @@ describe("a refund request's own note never answers for the payment's refund not
         // The voided mirror is inactive, so the active-only loader never reads it.
         links: [],
         operations: [makePrimaryInvoiceCreateOperation(), failedRow, raisedRow],
+        paidBackRefundRequests: paidBack,
       });
 
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });

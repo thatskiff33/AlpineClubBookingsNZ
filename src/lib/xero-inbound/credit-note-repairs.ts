@@ -18,6 +18,7 @@ import { formatCents } from "@/lib/utils";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { paymentsCountingInvoiceCorrections, uncapturedPrimaryStatus } from "./modification-note-refunds";
 import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
+import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid-back";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -184,7 +185,9 @@ export async function repairRefundedPaymentBusinessState(input: {
     };
   }
 
-  const [directRefundLinks, modificationAllocationLinks] = await Promise.all([
+  // #4215 (`INV-PAY-118`): requests' paid-back cash, read AFTER the payment rows,
+  // so one completed in between moves the row and loses the claim below.
+  const [directRefundLinks, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId] = await Promise.all([
     prisma.xeroObjectLink.findMany({
       where: {
         localModel: "Payment",
@@ -219,6 +222,7 @@ export async function repairRefundedPaymentBusinessState(input: {
         metadata: true,
       },
     }),
+    readRefundRequestPaidBackCentsByPaymentId(paymentIds),
   ]);
 
   // #3979 (`INV-PAY-126`): a bank-transfer payment's modification notes are
@@ -398,7 +402,8 @@ export async function repairRefundedPaymentBusinessState(input: {
       directRefundTotalCents +
       modificationRefundTotalCents +
       currentDirectRefundContributionCents +
-      currentModificationRefundContributionCents;
+      currentModificationRefundContributionCents +
+      (refundRequestPaidBackCentsByPaymentId.get(payment.id) ?? 0);
     const nextRefundedTotalCents = Math.min(
       Math.max(rawRefundedTotalCents, 0),
       payment.amountCents
