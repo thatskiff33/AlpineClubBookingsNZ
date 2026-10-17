@@ -29,7 +29,8 @@ beforeEach(() => {
   mocks.getLodgeCapacity.mockResolvedValue(20);
 });
 
-const stay = (from: string, to: string) => freeBedsForStay("lodge_1", parseDateOnly(from), parseDateOnly(to));
+const answer = (from: string, to: string) => freeBedsForStay("lodge_1", parseDateOnly(from), parseDateOnly(to));
+const stay = async (from: string, to: string) => (await answer(from, to)).freeBeds;
 
 describe("freeBedsForStay", () => {
   it("is the fewest free beds on any night of the stay, check-out night excluded", async () => {
@@ -59,5 +60,44 @@ describe("freeBedsForStay", () => {
   it("is never negative when a night is over-allocated", async () => {
     occupancy({ "2026-07-10": 23 });
     expect(await stay("2026-07-10", "2026-07-11")).toBe(0);
+  });
+});
+
+describe("freeBedsForStay night by night (#79)", () => {
+  it("lists every night of the stay in order, check-out night excluded, each the calendar's own number", async () => {
+    occupancy({ "2026-07-31": 4, "2026-08-01": 15, "2026-08-02": 1 });
+    expect((await answer("2026-07-30", "2026-08-02")).nights).toEqual([
+      { date: "2026-07-30", freeBeds: 20 },
+      { date: "2026-07-31", freeBeds: 16 },
+      { date: "2026-08-01", freeBeds: 5 },
+    ]);
+  });
+
+  it("never lists a night below 0, and the stay's number is the fewest of the nights", async () => {
+    occupancy({ "2026-07-10": 23, "2026-07-11": 2 });
+    const { freeBeds, nights } = await answer("2026-07-10", "2026-07-12");
+    expect(nights).toEqual([
+      { date: "2026-07-10", freeBeds: 0 },
+      { date: "2026-07-11", freeBeds: 18 },
+    ]);
+    expect(freeBeds).toBe(Math.min(...nights.map((n) => n.freeBeds)));
+  });
+
+  it("reads 0 for every night, and 0 for the stay, at a lodge with no capacity", async () => {
+    mocks.getLodgeCapacity.mockResolvedValue(-1);
+    occupancy({});
+    const { freeBeds, nights } = await answer("2026-07-10", "2026-07-12");
+    expect(nights.map((n) => n.freeBeds)).toEqual([0, 0]);
+    expect(freeBeds).toBe(0);
+  });
+
+  it("covers the longest stay, 30 nights across three months, reading each month once", async () => {
+    occupancy({ "2027-02-14": 6 });
+    const { nights } = await answer("2027-01-31", "2027-03-02");
+    expect(nights).toHaveLength(30);
+    expect(nights[0]?.date).toBe("2027-01-31");
+    expect(nights[29]?.date).toBe("2027-03-01");
+    expect(nights.find((n) => n.date === "2027-02-14")?.freeBeds).toBe(14);
+    expect(mocks.getMonthAvailability.mock.calls.map(([, y, m]) => `${y}-${m}`)).toEqual(["2027-0", "2027-1", "2027-2"]);
   });
 });

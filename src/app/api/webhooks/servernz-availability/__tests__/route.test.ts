@@ -8,8 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * Unauthenticated, so the signature is most of the story; then the shape of
  * the stay, then which lodge — and every "which lodge" refusal must look the
- * same, so probing reveals nothing. The answer itself is one number, and the
- * body is pinned to exactly four keys.
+ * same, so probing reveals nothing. The answer is counts only (the free beds
+ * per night and their minimum, #79), and the body is pinned to exactly five keys.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -77,15 +77,32 @@ beforeEach(() => {
     otherLodgesOwnedLodges: OWNED,
   });
   mocks.resolveLocalLodgeForCentralId.mockResolvedValue("lodge_local");
-  mocks.freeBedsForStay.mockResolvedValue(7);
+  mocks.freeBedsForStay.mockResolvedValue({
+    freeBeds: 7,
+    nights: [
+      { date: "2026-07-10", freeBeds: 9 },
+      { date: "2026-07-11", freeBeds: 7 },
+      { date: "2026-07-12", freeBeds: 12 },
+    ],
+  });
 });
 
 describe("GET /api/webhooks/servernz-availability (#62)", () => {
-  it("answers the free beds for a signed question, with exactly four keys and no caching", async () => {
+  it("answers the free beds for a signed question, night by night (#79), with exactly these keys and no caching", async () => {
     const res = await GET(request());
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ lodgeId: "ol_a", from: "2026-07-10", to: "2026-07-13", freeBeds: 7 });
+    expect(await res.json()).toEqual({
+      lodgeId: "ol_a",
+      from: "2026-07-10",
+      to: "2026-07-13",
+      freeBeds: 7,
+      nights: [
+        { date: "2026-07-10", freeBeds: 9 },
+        { date: "2026-07-11", freeBeds: 7 },
+        { date: "2026-07-12", freeBeds: 12 },
+      ],
+    });
     expect(mocks.resolveLocalLodgeForCentralId).toHaveBeenCalledWith("ol_a", OWNED);
     const [lodgeId, from, to] = mocks.freeBedsForStay.mock.calls[0];
     expect(lodgeId).toBe("lodge_local");

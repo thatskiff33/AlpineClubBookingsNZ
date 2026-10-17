@@ -98,7 +98,7 @@ same **lodge edit** permission as the properties above.
 4. The **Central lodge** card opens `/admin/lodges/[id]/central-lodge`, where you
    say which lodge in the Alpine Central Server's registry this one is. The
    central server's public lodge search then asks this site how many beds are
-   free there (one number, never a guest or a booking — see
+   free there (counts only, night by night, never a guest or a booking — see
    [Connect to the Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)).
    Only the lodges the central server says your club owns are offered, and one
    central lodge can be linked to one of your lodges. A club with **one** active

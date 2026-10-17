@@ -254,7 +254,7 @@ export const explicitPublicApiRoutes = {
   "src/app/api/webhooks/servernz-availability/route.ts": {
     boundary: "webhook",
     reason:
-      "Alpine Central Server signed availability question (#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers one free-bed number for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
+      "Alpine Central Server signed availability question (#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
   },
   "src/app/api/webhooks/servernz-posts/route.ts": {
     boundary: "webhook",

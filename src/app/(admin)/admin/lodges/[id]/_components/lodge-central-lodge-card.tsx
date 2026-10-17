@@ -241,8 +241,8 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
               </select>
               <p className="text-muted-foreground text-xs">
                 Only the lodges the central server says this club owns are offered.
-                Only the number of free beds is shared: never a guest, member or
-                booking.
+                Only free-bed counts are shared, night by night: never a guest,
+                member or booking.
               </p>
             </div>
           )}

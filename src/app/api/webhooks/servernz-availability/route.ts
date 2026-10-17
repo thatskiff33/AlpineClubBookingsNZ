@@ -30,10 +30,11 @@ import {
  * The Alpine Central Server asks how many beds are free (#62).
  *
  * Its public lodge search shows non-members which lodges have room before they
- * click through to book on the lodge's own site. This answers ONE number for
- * ONE lodge and stay — the fewest free beds on any night of it, as the member
- * calendar counts them (`freeBedsForStay`) — and nothing else: no guest,
- * member, booking, hold or per-night detail.
+ * click through to book on the lodge's own site. This answers, for ONE lodge
+ * and stay, the free beds on each night of it as the member calendar counts
+ * them (`nights`, #79: the server's bed planner shows them night by night) and
+ * the fewest of them (`freeBeds`, #62), from `freeBedsForStay` — and nothing
+ * else: no guest, member, booking or hold detail.
  *
  * Unauthenticated by nature, so the request proves itself with the push secret
  * this install was issued (`verifyServerNzSignature`, shared with the
@@ -132,6 +133,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(NOT_FOUND, { status: 404, headers: noStore });
   }
 
-  const freeBeds = await freeBedsForStay(localLodgeId, first, checkOut);
-  return NextResponse.json({ lodgeId, from, to, freeBeds }, { headers: noStore });
+  const { freeBeds, nights: byNight } = await freeBedsForStay(localLodgeId, first, checkOut);
+  return NextResponse.json({ lodgeId, from, to, freeBeds, nights: byNight }, { headers: noStore });
 }

@@ -180,10 +180,11 @@ connection.
 **The central server can ask how many beds are free at your own lodge.** Its
 public lodge search lets non-members choose dates and a party size, see which
 lodges have room, and come to your site to book. For a lodge your club owns it
-asks this site directly, at search time, and is told **one number**: the fewest
-free beds on any night of the stay, exactly as the member calendar counts them
-(a night the whole lodge is booked or held reads as full). Nothing else is
-sent: no guest, member, booking or hold, and no night-by-night detail. The
+asks this site directly, at search time, and is told the **free beds on each
+night** it asks about (up to 30 nights), and the fewest of them, exactly as the
+member calendar counts them (a night the whole lodge is booked or held reads
+as full). Its bed planner shows them night by night. Nothing else is sent: no
+guest, member, booking or hold, only the counts the member calendar shows. The
 server proves each question is genuine with the same signing secret it uses
 for the message board, so this only works once this site has registered for
 the message board's pushes: the **Message board** module is on (see
