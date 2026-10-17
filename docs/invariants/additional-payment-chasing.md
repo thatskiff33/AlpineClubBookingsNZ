@@ -1572,17 +1572,17 @@ decision and would need its own owner decision.
 - **A refund credit note Xero voided is never re-adopted as a payment's
   refund note; a reissue's key names every note whose key it could collide
   with; and on a bank transfer a void undoes the refund** (#4091, owner
-  decisions). Its mirror goes inactive on any payment
-  (`INV-ADDPAY-020`); `findCanonicalPaymentRefundCreditNote`,
-  `mayRecordAsCanonicalRefundNote` and the booking repair's field backfill
+  decisions). Its mirror goes inactive on any payment (`INV-ADDPAY-020`),
+  status-less racing writes too (#4223);
+  `findCanonicalPaymentRefundCreditNote`, `mayRecordAsCanonicalRefundNote` and the booking repair's field backfill
   and conflict check leave out a note a link records VOIDED or DELETED
   (`refundNoteIdSets`), so nothing writes one back into
   `Payment.xeroRefundCreditNoteId`. The nightly link cleanup heals a pre-#4091
   active mirror (#4161).
 - **A refund request's own note** (`INV-PAY-118`, #4195) too: its voided
-  mirror goes inactive, even racing a status-less write, and never covers
-  the request. Only an officer re-raises one (#4214), never a retry; the Xero
-  key and any unqueued row name the voided notes. Its void moves no refunded
+  mirror goes inactive and never covers the request. Only an officer
+  re-raises one (#4214), never a retry; the Xero key and any unqueued row
+  name the voided notes. Its void moves no refunded
   total; the booking repair still counts the request.
 - **The reissue's key** (`refundNoteKeyAfterVoidParts`, row and Xero alike).
   Once a refund note is voided it appends `after-void:<sorted ids>`: every
@@ -1597,6 +1597,6 @@ decision and would need its own owner decision.
   treasurer records the refund again. A refund with no live note is no
   reconciliation-report drift, by design (#4046; visibility: #4162).
   Pinned by `xero-refund-note-{void-pointer,crash-window,after-void-key}`,
-  `xero-refund-request-note-void`, `xero-voided-request-note-retry-routes`,
-  `xero-sync`, `xero-booking-repair`, `xero-operation-retry`,
-  `xero-operation-outbox` and `xero-hardening`.
+  `xero-refund-request-note-void`, `xero-canonical-refund-note-void-race`,
+  `xero-voided-request-note-retry-routes`, `xero-sync`, `xero-booking-repair`,
+  `xero-operation-retry`, `xero-operation-outbox` and `xero-hardening`.

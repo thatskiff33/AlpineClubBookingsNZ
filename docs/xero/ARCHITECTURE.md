@@ -1044,6 +1044,16 @@ drift in that report, by design; making it visible is #4162. A mirror voided
 before #4091 (still active, its pointer naming it) is healed by the nightly
 `link-cleanup` through this same write (#4161).
 
+A link write that names no Xero status (a retry recording the note as its
+cover, the enqueue's existing-note branch, a repair) can race the void: it
+read the note as live, and the void commits before its write. Every
+refund-note link write first locks its own row in its transaction and, when it
+names no status, re-reads it (`keepStoredRefundNoteVoid`), so a void that
+committed while it waited is kept. The mirror stays inactive, the status is
+merged onto the row, no sibling is retired, and a pointer the retry wrote back
+at the note is released by the same write (#4223). Lock order: [Refund-note
+link writes racing a void](../CONCURRENCY_AND_LOCKING.md#refund-note-link-writes-racing-a-void-4195-4223).
+
 A voided note is never re-adopted (owner decision). `findCanonicalPaymentRefundCreditNote`
 skips any note a link records VOIDED or DELETED, whether it arrives as the field,
 a refund payment's note, a succeeded create or an active link. The pointer gate
@@ -1085,8 +1095,9 @@ a refund request's own note (`REFUND_REQUEST_CREDIT_NOTE`, `INV-PAY-118`). The
 inbound sync writes its voided mirror inactive; it never names the pointer, so
 nothing else moves. A request-note link write that names no Xero status (a
 retry's, or a completion's) reads the stored row under its row lock in the same
-transaction (`keepStoredRequestNoteVoid`), so a void that committed while it
-waited keeps the link inactive and its status on the row. `refundRequestOwnNotes`
+transaction (`keepStoredRefundNoteVoid`, the payment's own notes' rule too), so
+a void that committed while it waited keeps the link inactive and its status on
+the row. `refundRequestOwnNotes`
 never takes a voided note as the request's cover, even a mirror an older release
 left active: every reader judges it by its recorded status, so it needs no heal.
 When a request's note is raised again, its Xero key is
