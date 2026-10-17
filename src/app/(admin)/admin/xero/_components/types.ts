@@ -400,6 +400,19 @@ export interface XeroOperation {
   failureRootKey: string | null
   /** #3462: RUNNING past the staleness threshold - offers Mark failed. */
   staleRunning: boolean
+  /** #4214: a refund request's note row whose note Xero voided; no Retry raises it. */
+  voidedRequestNote?: boolean
+}
+
+/** #4214: a refund request whose own Xero credit note Xero voided, with no live note replacing it. */
+export interface VoidedRefundRequestNote {
+  paymentId: string
+  paymentUrl: string | null
+  bookingId: string | null
+  refundRequestId: string
+  voidedNotes: Array<{ xeroObjectId: string; xeroObjectNumber: string | null; status: string | null }>
+  amountCents: number | null
+  activeOperationId: string | null
 }
 
 export interface XeroInboundEvent {

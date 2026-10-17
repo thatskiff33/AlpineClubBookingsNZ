@@ -1111,9 +1111,42 @@ raised. A SUCCEEDED row is never retried, and its enqueue finds that row and
 queues nothing. The panel may show a stale FAILED row as Repaired when a
 SUCCEEDED row shares its plain correlation key, and the booking repair tool
 reports such a request with no Retry and never auto-applies one
-(`refundRequestNoteVoidedWithNoLive`). The officer action #4214 builds, "Raise
-a fresh credit note", is the only remedy; until it ships, raise the replacement
-by hand in Xero.
+(`refundRequestNoteVoidedWithNoLive`). The officer action "Raise a fresh
+credit note" (#4214, below) is the only remedy, and every refusal names it
+(`VOIDED_REQUEST_NOTE_RETRY_REASON`).
+
+**"Raise a fresh credit note" (#4214).** Xero Operations lists, above the
+operations, every refund request whose own note Xero recorded VOIDED or DELETED
+with no live note of its own replacing it (`listVoidedRefundRequestNotes`,
+`xero-refund-request-note-reraise.ts`; `GET
+/api/admin/xero/operations/voided-request-notes`, `finance:view`), whatever its
+rows' states. Each row the operations list shows for such a request gives the
+refusal's reason in place of Retry. A finance editor confirms the action
+(`POST …/voided-request-notes/reraise`, `finance:edit`), and
+`reraiseVoidedRefundRequestNote`, in one transaction:
+
+1. locks the request's own note links (`SELECT 1 … ORDER BY "xeroObjectId"
+   FOR UPDATE`, the rows the inbound void and `keepStoredRequestNoteVoid` lock);
+2. re-reads under that lock and refuses with 409 while the request has a live
+   note (`refundRequestOwnNotes`), has no note recorded voided, has a note row
+   still PENDING, RUNNING or WAITING_PAYMENT, when its voided notes' recorded
+   amounts (`recordedRefundNoteFigure`) cannot be read or disagree, or when an
+   officer resolved a row under the key it would use by hand in Xero;
+3. queues the request's note row through the shared builder
+   (`refundRequestCreditNoteQueuedRow`, the completion's own shape) under the
+   after-void key (`refundNoteKeyAfterVoidParts`) for that amount, and writes
+   `xero.refund_request_note.reraised` (category `xero`) on the same transaction.
+
+The outbox then raises it as any request's note: the executor's Xero key is
+the same after-void key, so Xero cannot hand the voided note back, and the
+fresh note's link becomes the request's live note. Two officers clicking at
+once queue one row: the second waits on the lock and then sees the first's row
+in flight. A re-raise row that fails before Xero raises anything is not
+retried (the request still has no live note); the officer raises again, under
+the same key, so a create Xero did make is replayed rather than duplicated. The
+action moves no money locally. Pinned by
+`xero-refund-request-note-reraise.test.ts`, the panel's test, and the
+real-PostgreSQL proof `xero-refund-request-note-reraise.realdb.test.ts`.
 
 **Deploy and rollback note (#4091).** The previous release writes a voided
 canonical bank-transfer mirror active, re-adopts a voided note through its
@@ -1144,7 +1177,8 @@ rolling back, and after rolling forward, list the request mirrors still active
 that record a void (read-only):
 `SELECT "localId", "xeroObjectId", "updatedAt" FROM "XeroObjectLink" WHERE "localModel" = 'Payment' AND role = 'REFUND_REQUEST_CREDIT_NOTE' AND active AND upper(trim(metadata->>'status')) IN ('VOIDED', 'DELETED')`.
 The new release reads each as voided without a heal; check each listed request
-in Xero, where the officer decides whether to raise a fresh note (#4214).
+in Xero, where the officer decides whether to raise a fresh note ("Raise a
+fresh credit note" on Xero Operations, #4214).
 That check cannot find a link the old colour re-armed with its status
 stripped: nothing local records the void any more. So also list every
 request-note create that completed during the switch window, and check each
@@ -1153,6 +1187,12 @@ note in Xero (read-only; set the window's start and end, in UTC):
 A note Xero shows VOIDED there is a voided note the request still treats as
 live: record it for the officer, who decides as for any voided request note
 (#4214).
+
+**Deploy and rollback note (#4214).** No schema change. The re-raise queues an
+ordinary request-note row, and the previous release (#4195's) executes it the
+same way: it reads no live note for the request and sends the same after-void
+key. Rolling back removes only the list and the action; a row already queued is
+still raised once.
 
 Internet-banking settlement rides this flow: when an invoice is
 paid in Xero **with cash evidence** (`amountPaid` > 0, falling back to actual

@@ -10,6 +10,8 @@ import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
+import { VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
+import { voidedRequestNoteOperationIds } from "@/lib/xero-refund-request-note-reraise";
 import {
   endOfClubDayInclusive,
   requireCalendarDate,
@@ -155,11 +157,15 @@ export async function GET(request: NextRequest) {
     // one.
     const shortCode = await getXeroOrgShortCode();
     const now = new Date();
+    // #4214: a voided request note's rows say why no Retry raises it, and where the officer can.
+    const voidedRequestNoteRows = await voidedRequestNoteOperationIds(operations);
 
     return NextResponse.json({
       data: operations.map((operation) => ({
         ...operation,
         ...getXeroOperationRetryMeta(operation),
+        ...(voidedRequestNoteRows.has(operation.id) ? { supported: false, reason: VOIDED_REQUEST_NOTE_RETRY_REASON } : {}),
+        voidedRequestNote: voidedRequestNoteRows.has(operation.id),
         failureState: failureResolutions.get(operation.id)?.state ?? null,
         failureStateReason: failureResolutions.get(operation.id)?.reason ?? null,
         failureRootKey: failureResolutions.get(operation.id)?.rootKey ?? null,

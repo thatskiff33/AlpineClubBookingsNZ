@@ -165,9 +165,12 @@ export function refundRequestNoteVoidedWithNoLive(
   return raised && !own.some((link) => !isRefundCreditNoteLinkCancelledInXero(link.metadata));
 }
 
-/** #4214 (owner decision): why no retry or requeue path re-raises a voided refund request note. */
+/**
+ * #4214 (owner decision): why no retry or requeue path re-raises a voided
+ * refund request note, and the one action that does.
+ */
 export const VOIDED_REQUEST_NOTE_RETRY_REASON =
-  "This refund request's own Xero credit note was voided in Xero and nothing live replaces it. An officer decides whether to raise a fresh note (#4214); no retry raises one.";
+  "This refund request's own Xero credit note was voided in Xero and nothing live replaces it. No retry raises one: an officer decides, with \"Raise a fresh credit note\" under Voided refund request notes on Xero Operations (#4214).";
 
 /**
  * #4195 review F-A, #4214 (owner decision: the officer re-raises): true when
@@ -246,7 +249,7 @@ export type RefundNoteKeyScope =
  * Inbound, backfilled and pre-#1162 links carry no figures; the create row's
  * payload does (`allocation.amount` in dollars, or the queued figures).
  */
-async function recordedRefundNoteFigure(
+export async function recordedRefundNoteFigure(
   paymentId: string,
   link: { xeroObjectId: string; metadata: unknown },
   field: "watermarkCents" | "amountCents",

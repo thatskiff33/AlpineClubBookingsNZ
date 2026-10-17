@@ -1436,6 +1436,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // lock. See docs/CONCURRENCY_AND_LOCKING.md -> "Refund-request note link
   // writes (#4195)".
   "src/lib/xero-refund-note-status.ts": 1,
+  // #4214: the officer's re-raise of a refund request's voided note locks that
+  // request's own `XeroObjectLink` rows (`SELECT 1 … ORDER BY "xeroObjectId"
+  // FOR UPDATE`) before re-reading them and queuing the note row, so two
+  // officers queue one after the other and the second sees the first's row.
+  // Its counterparts - the inbound void and `keepStoredRequestNoteVoid` - each
+  // hold one of those rows and nothing else, so no cycle can form. Keyed on
+  // immutable ids; no advisory lock. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Re-raising a voided refund-request note (#4214)".
+  "src/lib/xero-refund-request-note-reraise.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

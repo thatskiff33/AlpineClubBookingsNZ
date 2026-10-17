@@ -353,6 +353,12 @@ import "./xero-refund-note-void-pointer.realdb.test";
 // voided one, and a link write racing the void keeps it. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4195-` fixtures.
 import "./xero-refund-request-note-void.realdb.test";
+// #4214 reuses it to prove the officer's "Raise a fresh credit note": two
+// officers clicking at once queue one note behind the request's link lock, the
+// real outbox raises it under the after-void key beside the voided note with no
+// second credit, and a later click is refused. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4214-` fixtures.
+import "./xero-refund-request-note-reraise.realdb.test";
 // #4098 reuses it to prove closing a subscription charge as already paid: two
 // closes at once close it once (one audit row, each voidGeneration bumped
 // once), and a manual reversal committing while the close waits for the

@@ -512,6 +512,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/operations/[id]/retry": "finance",
   "/api/admin/xero/operations/reset-stale-running": "finance",
   "/api/admin/xero/operations/retry-all": "finance",
+  "/api/admin/xero/operations/voided-request-notes": "finance",
+  "/api/admin/xero/operations/voided-request-notes/reraise": "finance",
   "/api/admin/xero/organisation": "finance",
   "/api/admin/xero/records/[localModel]/[localId]": "finance",
   "/api/admin/xero/search-contacts": "finance",
