@@ -388,6 +388,11 @@ import "./ledger-insertion-seq.realdb.test";
 // first. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4177-` fixtures.
 import "./settled-capture-order.realdb.test";
+// #4211 reuses it to prove a member paying one booking three times keeps exactly
+// one capture and has the other two refunded, in every arrival order, through
+// the real settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-4211-` fixtures.
+import "./third-duplicate-capture.realdb.test";
 // #4146 reuses it to prove a key-prefix lookup built from an id matches only
 // its own rows: Prisma's `startsWith` is SQL `LIKE`, whose `_` no mock reads as
 // a wildcard. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans

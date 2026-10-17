@@ -46,7 +46,7 @@ import {
   type SecondInstrumentSettlementConflictEventSnapshot,
 } from "@/lib/manual-settlement-reversal-event";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { buildDuplicateCaptureRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { listDuplicateCaptureRefundIntentIds } from "@/lib/duplicate-capture-ownership";
 import type { ClubFormat } from "@/lib/club-format";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { listSupersededIntentIdsOwningCaptures } from "@/lib/superseded-intent-ownership";
@@ -355,30 +355,19 @@ export async function findSecondInstrumentSettlement(
     : holding.filter((transaction) => !history.has(transaction.id));
   if (candidates.length === 0) return null;
 
-  const duplicateKeys = candidates.flatMap((transaction) =>
-    transaction.stripePaymentIntentId
-      ? [
-          buildDuplicateCaptureRefundRecoveryIdempotencyKey(
-            bookingId,
-            transaction.stripePaymentIntentId,
-          ),
-        ]
-      : []
-  );
-  const duplicateRefunds =
-    duplicateKeys.length > 0
-      ? await tx.paymentRecoveryOperation.findMany({
-          where: { idempotencyKey: { in: duplicateKeys } },
-          select: { idempotencyKey: true },
-        })
-      : [];
+  // Only a card capture can be owned, so with none there is nothing to ask.
+  const anyCardCandidate = candidates.some((transaction) => transaction.stripePaymentIntentId);
+  // #4211: the one reading guard (c) of the duplicate-capture refund uses, so
+  // the two never disagree on which captures that refund owns. Paid or cancelled.
   const ownedByDuplicateRefund = new Set(
-    duplicateRefunds.map((operation) => operation.idempotencyKey)
+    anyCardCandidate
+      ? await listDuplicateCaptureRefundIntentIds({ bookingId, store: tx })
+      : []
   );
   // #4177: on a paid booking only. A cancelled booking's new bank cash has
   // nowhere to go, so a capture going back to the member still counts there.
   const ownedBySupersededMachinery = new Set(
-    !cancelled && duplicateKeys.length > 0
+    !cancelled && anyCardCandidate
       ? await listSupersededIntentIdsOwningCaptures(tx, paymentId)
       : []
   );
@@ -386,12 +375,7 @@ export async function findSecondInstrumentSettlement(
     (transaction) =>
       !transaction.stripePaymentIntentId ||
       (!ownedBySupersededMachinery.has(transaction.stripePaymentIntentId) &&
-        !ownedByDuplicateRefund.has(
-          buildDuplicateCaptureRefundRecoveryIdempotencyKey(
-            bookingId,
-            transaction.stripePaymentIntentId,
-          )
-        ))
+        !ownedByDuplicateRefund.has(transaction.stripePaymentIntentId))
   );
   if (!settledBy) return null;
   return {

@@ -50,7 +50,7 @@ const mocks = vi.hoisted(() => ({
   markCapacityClaimFailedRefundRecoverySucceeded: vi.fn(),
   recordCapacityClaimFailedRefundRecoveryInlineError: vi.fn(),
   enqueueDuplicateCaptureRefundRecovery: vi.fn(),
-  findOtherDuplicateCaptureRefundOperation: vi.fn(),
+  listDuplicateCaptureRefundIntentIds: vi.fn(),
   markDuplicateCaptureRefundRecoverySucceeded: vi.fn(),
   recordDuplicateCaptureRefundRecoveryInlineError: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
@@ -96,12 +96,16 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.recordCapacityClaimFailedRefundRecoveryInlineError(...args),
   enqueueDuplicateCaptureRefundRecovery: (...args: unknown[]) =>
     mocks.enqueueDuplicateCaptureRefundRecovery(...args),
-  findOtherDuplicateCaptureRefundOperation: (...args: unknown[]) =>
-    mocks.findOtherDuplicateCaptureRefundOperation(...args),
   markDuplicateCaptureRefundRecoverySucceeded: (...args: unknown[]) =>
     mocks.markDuplicateCaptureRefundRecoverySucceeded(...args),
   recordDuplicateCaptureRefundRecoveryInlineError: (...args: unknown[]) =>
     mocks.recordDuplicateCaptureRefundRecoveryInlineError(...args),
+}));
+
+// #4211: guard (c)'s reading, shared with the Xero second-instrument conflict.
+vi.mock("@/lib/duplicate-capture-ownership", () => ({
+  listDuplicateCaptureRefundIntentIds: (...args: unknown[]) =>
+    mocks.listDuplicateCaptureRefundIntentIds(...args),
 }));
 
 vi.mock("@/lib/member-credit", () => ({
@@ -346,6 +350,8 @@ function primeLedger(physicalOrder: LedgerRow[]) {
         (transaction) => transaction.stripePaymentIntentId === paymentIntentId
       ) ?? null
   );
+  // The live rows both fakes read, for a case that moves them between calls (#4211).
+  return transactions;
 }
 
 type RecoveryOperationRow = {
@@ -446,7 +452,8 @@ beforeEach(() => {
   mocks.enqueueDuplicateCaptureRefundRecovery.mockResolvedValue({
     id: "dup-op-1",
   });
-  mocks.findOtherDuplicateCaptureRefundOperation.mockResolvedValue(null);
+  // Default: no duplicate-capture refund owns any capture yet (guard c).
+  mocks.listDuplicateCaptureRefundIntentIds.mockResolvedValue([]);
   mocks.markDuplicateCaptureRefundRecoverySucceeded.mockResolvedValue({
     count: 1,
   });
@@ -912,7 +919,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     });
   });
 
-  it("never refunds BOTH sides: once a duplicate-capture refund is adjudicated against one intent, the OTHER capture's replay stays already_paid", async () => {
+  it("never refunds BOTH sides: once a duplicate-capture refund owns one capture, the settling capture's replay stays already_paid", async () => {
     // The duplicate refund of DUPLICATE_PI was already adjudicated (operation
     // row exists). Now the SETTLED intent's webhook redelivers: from the
     // ledger it looks symmetric (a different SUCCEEDED capture exists), so
@@ -930,10 +937,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
         amountCents: 10000,
       }),
     ]);
-    mocks.findOtherDuplicateCaptureRefundOperation.mockResolvedValue({
-      id: "dup-op-1",
-      idempotencyKey: `duplicate_capture_booking-1_${DUPLICATE_PI}`,
-    });
+    mocks.listDuplicateCaptureRefundIntentIds.mockResolvedValue([DUPLICATE_PI]);
 
     const result = await markBookingPaymentSucceeded({
       format: CLUB_FORMAT_TEST,
@@ -944,11 +948,23 @@ describe("#1992 duplicate-capture auto-refund", () => {
     });
 
     expect(result.outcome).toBe("already_paid");
-    expect(mocks.findOtherDuplicateCaptureRefundOperation).toHaveBeenCalledWith({
+    expect(mocks.listDuplicateCaptureRefundIntentIds).toHaveBeenCalledWith({
       bookingId: "booking-1",
-      paymentIntentId: SETTLED_PI,
       store: tx,
     });
+    // Non-vacuity: the only other capture was matched by the ledger shape and
+    // excluded by guard (c) alone.
+    expect(mocks.paymentTransactionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              stripePaymentIntentId: { not: SETTLED_PI, notIn: [DUPLICATE_PI] },
+            }),
+          ]),
+        }),
+      }),
+    );
     expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
   });
@@ -1307,6 +1323,201 @@ describe("#1992 duplicate-capture auto-refund", () => {
     expect(result.outcome).toBe("already_paid");
     expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+});
+
+// #4211 (`INV-PAY-043`, `INV-PAY-133`): guard (c) used to keep an arriving
+// capture whenever ANY other duplicate-capture refund existed on the booking, so
+// once one duplicate was refunded a THIRD capture (a member paying from three
+// stale tabs) was kept, with no task or alert. Now a capture a duplicate-capture
+// refund owns is never the settlement, and every capture beyond the settling
+// one is refunded.
+describe("#4211 every capture beyond the settling one is refunded, a third included", () => {
+  const SETTLING_PI = "pi_settling";
+  const SECOND_PI = "pi_second_tab";
+  const THIRD_PI = "pi_third_tab";
+
+  const arrive = (paymentIntentId: string) =>
+    markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking-1",
+      paymentIntentId,
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+  it("a third capture after one duplicate refund is refunded alone, and the alert and history event name the settling capture, not the refunded one inserted before it", async () => {
+    primeLedger([
+      // The second tab's intent was minted first, so its row is the oldest; a
+      // duplicate-capture refund already owns it.
+      ledgerRow({ id: "txn-second", stripePaymentIntentId: SECOND_PI, insertionSeq: 1 }),
+      ledgerRow({ id: "txn-settling", stripePaymentIntentId: SETTLING_PI, insertionSeq: 2 }),
+      ledgerRow({
+        id: "txn-third",
+        stripePaymentIntentId: THIRD_PI,
+        status: PaymentStatus.PROCESSING,
+        insertionSeq: 3,
+      }),
+    ]);
+    mocks.listDuplicateCaptureRefundIntentIds.mockResolvedValue([SECOND_PI]);
+
+    const result = await arrive(THIRD_PI);
+
+    expect(result.outcome).toBe("duplicate_capture_refunded");
+    expect(mocks.enqueueDuplicateCaptureRefundRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueDuplicateCaptureRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: THIRD_PI,
+        amountCents: 10000,
+        allocationPlan: [{ paymentTransactionId: "txn-third", amountCents: 10000 }],
+        store: tx,
+      }),
+    );
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledTimes(1);
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocation: [{ paymentTransactionId: "txn-third", amountCents: 10000 }],
+        idempotencyKeyPrefix: `duplicate_capture_refund_booking-1_${THIRD_PI}`,
+      }),
+    );
+    expect(mocks.sendAdminDuplicateCaptureRefundAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminDuplicateCaptureRefundAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: THIRD_PI,
+        settledPaymentIntentId: SETTLING_PI,
+        refundFailed: false,
+        operationReference: `duplicate_capture_booking-1_${THIRD_PI}`,
+      }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(mocks.recordDuplicateCaptureRefundEvent).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      amountCents: 10000,
+      duplicatePaymentIntentId: THIRD_PI,
+      settledPaymentIntentId: SETTLING_PI,
+    });
+    // (c′) re-checks the settling capture, never the refunded one.
+    const recheckedIntents = mocks.paymentRecoveryOperationFindFirst.mock.calls.map(
+      ([args]) => (args as { where: { paymentIntentId: string } }).where.paymentIntentId,
+    );
+    expect(recheckedIntents).toEqual([SETTLING_PI]);
+  });
+
+  it("with only refunded-or-owned captures beside it, the arriving capture is the settlement and stays already_paid", async () => {
+    primeLedger([
+      ledgerRow({ id: "txn-second", stripePaymentIntentId: SECOND_PI }),
+      ledgerRow({ id: "txn-settling", stripePaymentIntentId: SETTLING_PI }),
+      ledgerRow({ id: "txn-third", stripePaymentIntentId: THIRD_PI }),
+    ]);
+    mocks.listDuplicateCaptureRefundIntentIds.mockResolvedValue([SECOND_PI, THIRD_PI]);
+
+    const result = await arrive(SETTLING_PI);
+
+    expect(result.outcome).toBe("already_paid");
+    expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.sendAdminDuplicateCaptureRefundAlert).not.toHaveBeenCalled();
+  });
+
+  /**
+   * One booking the fakes keep state for: the arriving write marks a row
+   * SUCCEEDED, an enqueue gives the capture to a duplicate-capture refund, and
+   * an inline refund that Stripe makes leaves the row REFUNDED. `failInline`
+   * names captures whose inline refund throws, leaving the operation queued.
+   */
+  function primeStatefulBooking(failInline: readonly string[] = []) {
+    const rows = primeLedger([
+      ledgerRow({ id: "txn-settling", stripePaymentIntentId: SETTLING_PI }),
+      ledgerRow({ id: "txn-second", stripePaymentIntentId: SECOND_PI, status: PaymentStatus.PROCESSING }),
+      ledgerRow({ id: "txn-third", stripePaymentIntentId: THIRD_PI, status: PaymentStatus.PROCESSING }),
+    ]);
+    const owned = new Set<string>();
+    const enqueued: string[] = [];
+    const refunded: string[] = [];
+    mocks.listDuplicateCaptureRefundIntentIds.mockImplementation(async () => [...owned]);
+    mocks.enqueueDuplicateCaptureRefundRecovery.mockImplementation(
+      async ({ paymentIntentId }: { paymentIntentId: string }) => {
+        owned.add(paymentIntentId);
+        enqueued.push(paymentIntentId);
+        return { created: true, paymentIntentId };
+      },
+    );
+    mocks.upsertPaymentIntentTransaction.mockImplementation(
+      async ({ paymentIntentId, status }: { paymentIntentId: string; status: PaymentStatus }) => {
+        const row = rows.find((candidate) => candidate.stripePaymentIntentId === paymentIntentId);
+        if (row) row.status = status;
+      },
+    );
+    mocks.refundPaymentTransactions.mockImplementation(
+      async ({ allocation }: { allocation: Array<{ paymentTransactionId: string; amountCents: number }> }) => {
+        const row = rows.find((candidate) => candidate.id === allocation[0]!.paymentTransactionId)!;
+        if (failInline.includes(row.stripePaymentIntentId!)) throw new Error("Stripe is unavailable (503)");
+        row.status = PaymentStatus.REFUNDED;
+        row.refundedAmountCents = row.amountCents;
+        refunded.push(row.stripePaymentIntentId!);
+        return { refunds: [] };
+      },
+    );
+    return { rows, enqueued, refunded };
+  }
+
+  const ARRIVALS = [SETTLING_PI, SECOND_PI, THIRD_PI];
+  const permutations = (items: readonly string[]): string[][] =>
+    items.length <= 1
+      ? [[...items]]
+      : items.flatMap((item, index) =>
+          permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [item, ...rest]),
+        );
+
+  it.each(permutations(ARRIVALS).map((order) => [order.join(" → "), order] as const))(
+    "arrival order %s, the settling capture replayed among them: exactly one capture stays, two are refunded once each, and a replay of all three changes nothing",
+    async (_label, order) => {
+      const { rows, enqueued, refunded } = primeStatefulBooking();
+
+      const outcomes = [];
+      for (const paymentIntentId of order) outcomes.push((await arrive(paymentIntentId)).outcome);
+
+      expect(outcomes.filter((outcome) => outcome === "duplicate_capture_refunded")).toHaveLength(2);
+      expect([...enqueued].sort()).toEqual([SECOND_PI, THIRD_PI].sort());
+      expect([...refunded].sort()).toEqual([SECOND_PI, THIRD_PI].sort());
+      expect(rows.filter((row) => row.status === PaymentStatus.SUCCEEDED).map((row) => row.stripePaymentIntentId)).toEqual([
+        SETTLING_PI,
+      ]);
+      for (const call of mocks.sendAdminDuplicateCaptureRefundAlert.mock.calls) {
+        expect(call[0]).toEqual(expect.objectContaining({ settledPaymentIntentId: SETTLING_PI }));
+      }
+
+      vi.clearAllMocks();
+      const replays = [];
+      for (const paymentIntentId of [...order].reverse()) replays.push((await arrive(paymentIntentId)).outcome);
+
+      expect(replays).toEqual(["already_paid", "already_paid", "already_paid"]);
+      expect(enqueued).toHaveLength(2);
+      expect(refunded).toHaveLength(2);
+      expect(mocks.sendAdminDuplicateCaptureRefundAlert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("the second capture's inline refund failed and is still queued: the third is still refunded, the settling replay keeps its money, and the second's replay re-sends only its own frozen refund", async () => {
+    const { rows, enqueued } = primeStatefulBooking([SECOND_PI]);
+
+    expect((await arrive(SECOND_PI)).outcome).toBe("duplicate_capture_refund_failed");
+    expect((await arrive(THIRD_PI)).outcome).toBe("duplicate_capture_refunded");
+    expect(mocks.sendAdminDuplicateCaptureRefundAlert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ paymentIntentId: THIRD_PI, settledPaymentIntentId: SETTLING_PI }),
+      CLUB_FORMAT_TEST,
+    );
+    expect((await arrive(SETTLING_PI)).outcome).toBe("already_paid");
+    expect(enqueued).toEqual([SECOND_PI, THIRD_PI]);
+
+    // The second capture's own replay: the same operation key and Stripe key
+    // prefix as its first attempt, so Stripe answers with the original refund.
+    expect((await arrive(SECOND_PI)).outcome).toBe("duplicate_capture_refund_failed");
+    expect(enqueued).toEqual([SECOND_PI, THIRD_PI, SECOND_PI]);
+    expect(mocks.refundPaymentTransactions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ idempotencyKeyPrefix: `duplicate_capture_refund_booking-1_${SECOND_PI}` }),
+    );
+    expect(rows.find((row) => row.id === "txn-settling")!.status).toBe(PaymentStatus.SUCCEEDED);
   });
 });
 

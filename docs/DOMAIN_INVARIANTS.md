@@ -223,7 +223,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-040` | A capacity failure refuses the mark-paid and records nothing |
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
-| `INV-PAY-043` | Duplicate capture on a cash-settled booking is auto-refunded, not silently kept |
+| `INV-PAY-043` | Every capture beyond the settling one is auto-refunded, never silently kept |
 | `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |

@@ -22,7 +22,6 @@ import {
   enqueueCapacityClaimFailedRefundRecovery,
   enqueueDuplicateCaptureRefundRecovery,
   enqueuePaymentIntentCancellationRecovery,
-  findOtherDuplicateCaptureRefundOperation,
   markCapacityClaimFailedRefundRecoverySucceeded,
   markDuplicateCaptureRefundRecoverySucceeded,
   recordCapacityClaimFailedRefundRecoveryInlineError,
@@ -37,6 +36,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { keepRefusedPrePersistedRefundOwed, RefusedCardRefundError, type RefundAttempt } from "@/lib/refused-card-refund-retry";
 import { closeDoorRow } from "@/lib/pre-persisted-refund-close";
+import { listDuplicateCaptureRefundIntentIds } from "@/lib/duplicate-capture-ownership";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { findAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import {
@@ -143,14 +143,16 @@ const PAYABLE_SUCCESS_STATUSES = new Set<string>(PAYABLE_SUCCESS_STATUS_LIST);
 /**
  * #1992 guard (b): which captures could be the settlement an arriving capture
  * duplicates - another captured PRIMARY row with net cash: a Stripe one under a
- * different intent no superseded-intent operation owns (b′), or any non-Stripe
- * one (#2262). The duplicate-capture guard reads it oldest first (#4177);
- * exported so the real-PostgreSQL proof repeats the exact read.
+ * different intent that no superseded-intent operation (b′) and no
+ * duplicate-capture refund (c, #4211) owns, or any non-Stripe one (#2262). The
+ * duplicate-capture guard reads it oldest first (#4177); exported so the
+ * real-PostgreSQL proofs repeat the exact read.
  */
 export function otherSettledCaptureWhere(input: {
   paymentId: string;
   arrivingPaymentIntentId: string;
   liveSupersededIntentIds: string[];
+  duplicateRefundIntentIds: string[];
 }) {
   return {
     paymentId: input.paymentId,
@@ -161,7 +163,7 @@ export function otherSettledCaptureWhere(input: {
         source: PaymentSource.STRIPE,
         stripePaymentIntentId: {
           not: input.arrivingPaymentIntentId,
-          notIn: input.liveSupersededIntentIds,
+          notIn: [...input.liveSupersededIntentIds, ...input.duplicateRefundIntentIds],
         },
         NOT: { stripePaymentIntentId: null },
       },
@@ -1132,14 +1134,17 @@ async function settleBookingPaymentInTransaction(
       //       alone it is indistinguishable from a settlement; refunding the
       //       arriving capture against it would refund the REAL settlement
       //       while the cron refunds the superseded one — zero net cash;
-      //   (c) no duplicate-capture refund has already been adjudicated for
-      //       this booking against a DIFFERENT intent. Without (c), webhook
-      //       replays of BOTH captures would refund both sides (Y settles, X
-      //       arrives → refund X; Y's redelivery then sees X SUCCEEDED-and-
-      //       different → refund Y too) and settle the booking at zero net
-      //       cash. lock(1), held by every caller of this function, serialises
-      //       the check-then-enqueue, so exactly one side of the pair can ever
-      //       open a refund operation;
+      //   (c) that other capture is NOT one a duplicate-capture refund
+      //       already owns (any status). Without (c), webhook replays of BOTH
+      //       captures would refund both sides (Y settles, X arrives → refund
+      //       X; Y's redelivery then sees X SUCCEEDED-and-different → refund Y
+      //       too) and settle the booking at zero net cash. #4211: (c) used to
+      //       keep the arriving capture whenever ANY other refund existed, so
+      //       a THIRD capture (Y settles, X refunded, Z arrives) was kept
+      //       silently; now Z still finds Y and is refunded. Every capture
+      //       beyond the settling one is refunded, and the settling one never
+      //       is. lock(1), held by every caller of this function, serialises
+      //       the check-then-enqueue;
       //   (c′) belt-and-braces re-check of (b′) against the matched candidate
       //       directly (different query shape) — if a live superseded-intent
       //       operation owns the candidate's money, the arriving capture is
@@ -1151,6 +1156,10 @@ async function settleBookingPaymentInTransaction(
           tx,
           payment.id
         );
+        const duplicateRefundIntentIds = await listDuplicateCaptureRefundIntentIds({
+          bookingId: booking.id,
+          store: tx,
+        });
         // #4177 (`INV-PAY-133`): when several qualify, the OLDEST-INSERTED is the
         // settled one (#4163's rule): (c′) re-checks it, `settledPaymentIntentId` names it.
         const otherSettledCapture = await tx.paymentTransaction.findFirst({
@@ -1159,40 +1168,31 @@ async function settleBookingPaymentInTransaction(
             paymentId: payment.id,
             arrivingPaymentIntentId: paymentIntentId,
             liveSupersededIntentIds,
+            duplicateRefundIntentIds,
           }),
           select: { id: true, stripePaymentIntentId: true },
         });
 
         if (otherSettledCapture) {
-          const adjudicatedElsewhere =
-            await findOtherDuplicateCaptureRefundOperation({
-              bookingId: booking.id,
-              paymentIntentId,
-              store: tx,
-            });
-
           // (c′) — the candidate's own intent id re-checked against the live
-          // superseded-machinery operations. Skipped when (c) already settled
-          // the adjudication.
-          const supersededOwnsOtherCapture =
-            adjudicatedElsewhere || !otherSettledCapture.stripePaymentIntentId
-              ? null
-              : await findLiveSupersededIntentOperation(
-                  tx,
-                  otherSettledCapture.stripePaymentIntentId
-                );
+          // superseded-machinery operations.
+          const supersededOwnsOtherCapture = !otherSettledCapture.stripePaymentIntentId
+            ? null
+            : await findLiveSupersededIntentOperation(
+                tx,
+                otherSettledCapture.stripePaymentIntentId
+              );
 
           // Re-read the arriving duplicate's row AFTER the upsert above so the
           // frozen refund slice targets exactly this capture's transaction and
           // its outstanding captured amount — never a newest-first allocation
           // that could touch the settlement capture.
-          const duplicateTransaction =
-            adjudicatedElsewhere || supersededOwnsOtherCapture
-              ? null
-              : await findPaymentTransactionByIntentId({
-                  paymentIntentId,
-                  store: tx,
-                });
+          const duplicateTransaction = supersededOwnsOtherCapture
+            ? null
+            : await findPaymentTransactionByIntentId({
+                paymentIntentId,
+                store: tx,
+              });
           const duplicateRefundCents = duplicateTransaction
             ? Math.min(
                 amountCents,
