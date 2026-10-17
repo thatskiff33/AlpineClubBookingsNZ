@@ -62,6 +62,15 @@ import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
+import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
+import {
+  CreditNoteSpentOutsideAppError,
+  creditNoteIsShortForAllocation,
+  isCreditNoteOverAllocationRejection,
+  isCreditNoteSpentOutsideAppError,
+} from "@/lib/xero-credit-note-spent-outside-app";
+import { getClubFormat } from "@/lib/club-format-settings";
+import { formatCents } from "@/lib/utils";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 import type { CashRefundMethod } from "./xero-invoice-payments";
 import {
@@ -1219,6 +1228,64 @@ export async function createUnappliedXeroCreditNoteForModification(params: {
  * Used when account credit (backed by a Xero credit note) is applied to a new booking.
  */
 
+/**
+ * #4218: read the credit note's open balance and decide whether it is short for
+ * this slice. Read-only and outside any transaction. Returns an error to throw,
+ * or null whenever the note is healthy OR cannot be judged: a Xero outage, a
+ * cooldown refusal or an odd payload must never turn into a terminal failure, so
+ * every read failure falls through to today's handling.
+ */
+async function findCreditNoteSpentOutsideApp(
+  creditNoteId: string,
+  invoiceId: string,
+  amountCents: number,
+): Promise<CreditNoteSpentOutsideAppError | null> {
+  let note: CreditNote | undefined;
+  try {
+    const { xero, tenantId } = await getAuthenticatedXeroClient();
+    const response = await callXeroApi(
+      () => xero.accountingApi.getCreditNote(tenantId, creditNoteId),
+      {
+        operation: "getCreditNote",
+        resourceType: "CREDIT_NOTE",
+        workflow: "allocateCreditNoteToInvoice",
+        context: `getCreditNote(${creditNoteId}) pre-flight`,
+        armTransientBreaker: false,
+      },
+    );
+    note = response.body.creditNotes?.[0];
+  } catch (readError) {
+    logger.warn(
+      { err: readError, creditNoteId },
+      "Credit-note pre-flight read failed; allocating without it",
+    );
+    return null;
+  }
+  if (!note) return null;
+
+  const allocatedToInvoiceCents = (note.allocations ?? []).flatMap((allocation) => {
+    if (allocation.invoice?.invoiceID !== invoiceId) return [];
+    const cents = exactProviderAmountToCents(allocation.amount);
+    return cents === null ? [] : [cents];
+  });
+  const remainingCents = exactProviderAmountToCents(note.remainingCredit);
+  if (
+    !creditNoteIsShortForAllocation(
+      { status: note.status === undefined ? undefined : String(note.status), remainingCents, allocatedToInvoiceCents },
+      amountCents,
+    )
+  ) {
+    return null;
+  }
+  const format = await getClubFormat();
+  return new CreditNoteSpentOutsideAppError(
+    `The credit note this allocation needs has only ${formatCents(remainingCents ?? 0, format)} left in Xero; it was used outside the app. Retrying cannot succeed.`,
+    creditNoteId,
+    remainingCents ?? 0,
+    amountCents,
+  );
+}
+
 export async function allocateCreditNoteToInvoice(
   creditNoteId: string,
   invoiceId: string,
@@ -1283,6 +1350,14 @@ export async function allocateCreditNoteToInvoice(
   }
 
   try {
+    const spentOutsideApp = await findCreditNoteSpentOutsideApp(
+      creditNoteId,
+      invoiceId,
+      amountCents,
+    );
+    if (spentOutsideApp) {
+      throw spentOutsideApp;
+    }
     const response = await callXeroApi(
       () =>
         xero.accountingApi.createCreditNoteAllocation(
@@ -1338,8 +1413,20 @@ export async function allocateCreditNoteToInvoice(
       "Allocated Xero credit note against invoice"
     );
   } catch (error) {
-    await failXeroSyncOperation(operationId!, error);
-    throw error;
+    // #4218: Xero's own over-allocation rejection means the pre-flight read lagged
+    // an edit made seconds ago. Re-read once; if the note is short, fail with the
+    // terminal error instead of a bare 400 that every retry would repeat.
+    let failure = error;
+    if (
+      !isCreditNoteSpentOutsideAppError(error) &&
+      isCreditNoteOverAllocationRejection(error)
+    ) {
+      failure =
+        (await findCreditNoteSpentOutsideApp(creditNoteId, invoiceId, amountCents)) ??
+        error;
+    }
+    await failXeroSyncOperation(operationId!, failure);
+    throw failure;
   }
 }
 

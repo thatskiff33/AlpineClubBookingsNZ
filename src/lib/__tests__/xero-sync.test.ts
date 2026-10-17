@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
@@ -1274,6 +1275,38 @@ describe("failXeroSyncOperation keepCancelled", () => {
 // #3462: a retry that claimed the original RUNNING abandons the claim when its
 // handler throws early - but only its own claim, never a row the handler
 // already completed or a later claim re-stamped.
+describe("failXeroSyncOperation terminal errors (#4218)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.operationCount.mockResolvedValue(0);
+    mocks.operationUpdate.mockResolvedValue({ id: "op_1", status: "FAILED" });
+  });
+
+  it("records a named code and a non-replayable row for a credit note spent outside the app", async () => {
+    await failXeroSyncOperation(
+      "op_1",
+      new CreditNoteSpentOutsideAppError("only $0.00 left in Xero", "cn_1", 0, 5250)
+    );
+    expect(mocks.operationUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_1" },
+        data: expect.objectContaining({
+          status: "FAILED",
+          lastErrorCode: "CREDIT_NOTE_SPENT_OUTSIDE_APP",
+          replayable: false,
+        }),
+      })
+    );
+  });
+
+  it("leaves every other failure replayable", async () => {
+    await failXeroSyncOperation("op_1", new Error("bad request"));
+    const { data } = mocks.operationUpdate.mock.calls[0][0];
+    expect(data.lastErrorCode).not.toBe("CREDIT_NOTE_SPENT_OUTSIDE_APP");
+    expect(data).not.toHaveProperty("replayable");
+  });
+});
+
 describe("failXeroSyncOperation onlyIfRunningSince", () => {
   const claimedAt = new Date("2026-07-01T00:00:00.000Z");
 

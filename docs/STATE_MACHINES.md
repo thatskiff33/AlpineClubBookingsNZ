@@ -3538,6 +3538,11 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   refused while the operation is RUNNING, a live copy of it is queued, or a
   queued retry of it overlaps the mark (the mark is then withdrawn)
   refused for applied-credit allocations and deallocations (retry-only)
+applied-credit allocation finds its credit note short in Xero (#4218) -> FAILED
+  once, code CREDIT_NOTE_SPENT_OUTSIDE_APP, replayable=false (no Retry: the
+  request would get the same answer); the note's remaining credit is read before
+  the allocation is sent, and again after Xero's own over-allocation 400. An
+  unreadable note (outage, cooldown, odd payload) never takes this arm
 queued retry (REQUEUE) RUNNING -> CANCELLED when its operation read as resolved
   in Xero (before the claim, or the claim lost to the resolve); nothing ran
 outbox copy RUNNING -> CANCELLED when a sibling for the same document was
