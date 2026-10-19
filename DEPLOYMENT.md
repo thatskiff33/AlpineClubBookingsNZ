@@ -100,8 +100,8 @@ may lower both values, but keep the invariant above whenever you change a pool
 size, `max_connections`, or the replica count.
 
 **The ceiling is a setting, and the pool arithmetic above is not what a live host
-measures (fork, booking-fixes).** `POSTGRES_MAX_CONNECTIONS` in `.env` sets
-`max_connections` (default `40`, upstream's figure); it is applied when the
+measures.** `POSTGRES_MAX_CONNECTIONS` in `.env` sets
+`max_connections` (default `40`, the previous fixed value); it is applied when the
 `postgres` container is next created, which a blue/green deploy does at step 11
 when the compose model has changed. It became a setting because a routine
 handover on a live host was sampled, two seconds apart, at **39 client

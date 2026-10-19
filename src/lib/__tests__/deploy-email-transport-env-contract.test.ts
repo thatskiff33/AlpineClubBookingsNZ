@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 /*
   The production deploy's step-3 preflight requires the email transport's
-  credentials PER PROVIDER (fork booking-fixes). Until this change it demanded
+  credentials PER PROVIDER. Until this change it demanded
   the AWS SES keys and the SNS topic unconditionally, so a club relaying
   through its own SMTP provider — `USE_SMTP_RELAY=true`, SES keys legitimately
   blank, exactly as CONFIGURATION.md documents — could not deploy at all.

@@ -689,7 +689,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // undo of a voided bank-transfer refund note) and `.void-answered` (a person's
   // answer on Stuck States), both awaited on their transaction under `payment`.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 507,
+  writeSites: 511, // 507/501 -> 511 (central-server lane on thatskiff33/main, 20 Oct 2026): upstream's +10 and the fork's +4 (#62, #58 x2, #77) are disjoint. RE-MEASURED with `pnpm run audit:census` on the merged tree, never added together.
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -897,7 +897,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited on the ledger writer's transaction so the row commits with it.
     // 144 -> 145 (#4154): a capacity race's charge corrected before its hand-back,
     // awaited on the completion's transaction so the row commits with the correction.
-    createAuditLog: { total: 147, uncategorised: 0 }, // 145 -> 147 (#4162): the two voided-note writers.
+    createAuditLog: { total: 150, uncategorised: 0 }, // 147/142 -> 150 (central-server lane, 20 Oct 2026): #62, #58 and #77 are disjoint from upstream's. RE-MEASURED. // 145 -> 147 (#4162): the two voided-note writers.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1260,11 +1260,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // more readable with `support:view` alone, stated rather than counted. The
     // row names the hidden Other lodges entry by id and name only - never its
     // booking officer's contact - and no member.
-    // row is the removed Other lodges entry (a lodge's public details and its
-    // booking officer's contact, which the registry already holds), no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 108,
+    admin: 110, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

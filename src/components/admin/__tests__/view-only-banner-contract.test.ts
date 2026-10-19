@@ -394,7 +394,7 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  callSites: 378,
+  callSites: 381, // 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -451,8 +451,7 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  // 317 -> 318 (#58): the Other lodges panel's Remove, a vouched opt-out.
-  optOuts: 323,
+  optOuts: 326, // 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -543,7 +542,7 @@ const FIGURES = {
    * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
    * notes panel's own banner. MEASURED by re-running this census.
    */
-  staticOptOuts: 287,
+  staticOptOuts: 289, // 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -567,9 +566,9 @@ const FIGURES = {
    * 34 -> 35 (#58): the panel's Hide, render-site vouched; 29 -> 30 there.
    */
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  vouchedOptOuts: 36,
+  vouchedOptOuts: 37, // 36/35 -> 37 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide. MEASURED.
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 31,
+  renderSiteVouchedOptOuts: 32, // 31/30 -> 32 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide, render-site vouched by the Lodges page. MEASURED.
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**
@@ -638,7 +637,7 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 100,
+  bannerComponents: 101, // 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

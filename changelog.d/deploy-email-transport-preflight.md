@@ -1,5 +1,5 @@
 - **The production deploy no longer demands AWS SES keys from a club that
-  sends mail through its own SMTP relay (fork, booking-fixes).** The deploy
+  sends mail through its own SMTP relay.** The deploy
   script's step-3 preflight required `AWS_SES_ACCESS_KEY_ID`,
   `AWS_SES_SECRET_ACCESS_KEY` and `SES_SNS_TOPIC_ARN` whatever the
   `.env` said about the mail provider, so an installation with

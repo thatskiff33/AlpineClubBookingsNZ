@@ -675,7 +675,7 @@ const CENSUS_CEILING = {
   // for the season check and the audit text; the club's today comes from
   // `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
   // Re-measured by RUNNING this suite on this tree.
-  dateOnlyImporters: 228,
+  dateOnlyImporters: 231, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

@@ -805,11 +805,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // the two other-lodges writers #52 removed with their handlers; plus #62's
     // Central lodge link writer, classified the same way; plus #58's Other
     // lodges removal, beside the registry's update.
-    // Central lodge link writer, classified the same way.
     // name-detail writer, classified the same way for the same reason, plus
     // #3819's school hut-leader kinds writer, likewise; minus the two
     // other-lodges writers #52 removed with their handlers.
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(18);
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(20); // 18/19 -> 20 (central-server lane, 20 Oct 2026): #62 and #58 join #3819's. RE-MEASURED.
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -1010,10 +1009,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // route file (its list route lost its only writer in #52), plus #2942's
     // roster-settings route file, plus #62's central-lodge route file and #58's
     // other-lodges hide route file.
-    // other-lodges remove route file.
-    // roster-settings route file, plus #62's central-lodge route file.
     // roster-settings route file, plus #3819's school hut-leaders route file.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(13); // 11/12 -> 13 (central-server lane, 20 Oct 2026): the central-lodge and other-lodges hide route files join #3819's. RE-MEASURED.
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1467,7 +1464,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // suite on the sync with #4149/#4170 (505 sites minus 128 pinned).
     // 377 -> 379 unpinned (#4162): a voided bank-transfer refund note undone and
     // one answered by a person, unpinned `payment` (507 sites minus 128 pinned).
-    ).toEqual({ pinned: 128, unpinned: 379 });
+    ).toEqual({ pinned: 130, unpinned: 381 }); // 128/128 -> 130, 379/373 -> 381 (central-server lane, 20 Oct 2026): disjoint; RE-MEASURED on the merged tree.
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

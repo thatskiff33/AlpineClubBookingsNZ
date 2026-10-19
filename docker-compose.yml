@@ -389,7 +389,7 @@ services:
       # superuser-reserved slots do NOT protect admin access — see the
       # connection-budget note on x-app-environment and DEPLOYMENT.md.
       #
-      # POSTGRES_MAX_CONNECTIONS (fork booking-fixes): the ceiling is a setting
+      # POSTGRES_MAX_CONNECTIONS: the ceiling is a setting
       # because the budget above is not what a live host measures. A warm-up
       # during a routine handover was sampled at 39 client connections, with
       # one app container holding 18 against a connection_limit of 10 — the

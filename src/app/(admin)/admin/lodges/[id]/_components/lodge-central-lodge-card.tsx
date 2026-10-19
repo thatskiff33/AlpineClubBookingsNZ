@@ -33,7 +33,8 @@ import {
  * The canonical settings pattern, as `lodge-roster-settings-card.tsx`: read-only
  * on mount, a staged Edit -> Save/Cancel step, Save dirty-gated, every edit
  * affordance a `ViewOnlyActionButton` under ONE `AdminViewOnlySectionBanner`
- * mounted in every branch.
+ * mounted in every branch, and focus returning to the Edit button and the
+ * card's title through the hook's own props after Save or Cancel (#4087).
  */
 
 interface OwnedLodge {
@@ -181,10 +182,10 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
     <div>
       {viewOnlyBanner}
       {feedback}
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle {...section.titleProps} className="flex items-center gap-2 text-base">
               <Link2 className="h-4 w-4" />
               Central lodge
             </CardTitle>
@@ -202,6 +203,7 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
               size="sm"
               onClick={section.startEditing}
               disabled={owned === null}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

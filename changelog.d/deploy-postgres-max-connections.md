@@ -1,5 +1,4 @@
-- **The database connection ceiling can be raised from `.env` (fork,
-  booking-fixes).** A routine blue/green handover on a live host was measured
+- **The database connection ceiling can be raised from `.env`.** A routine blue/green handover on a live host was measured
   at 39 open client connections, with one app container holding 18 against
   a configured limit of 10, so the deploy's pre-cutover warm-up found every
   public page failing with "too many database connections opened" and refused

@@ -1,5 +1,4 @@
-- **Caddy can now sit behind a proxy that terminates TLS (fork,
-  booking-fixes).** The shipped Caddy configuration assumed Caddy was the
+- **Caddy can now sit behind a proxy that terminates TLS.** The shipped Caddy configuration assumed Caddy was the
   public edge and always fetched its own certificates from Let's Encrypt. An
   installation with Nginx Proxy Manager or a similar proxy in front could never
   complete that validation, so a freshly created Caddy container had no
