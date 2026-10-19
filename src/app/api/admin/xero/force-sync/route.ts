@@ -1,4 +1,5 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
+import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
@@ -31,16 +32,6 @@ class ForceSyncLookupError extends Error {
     super(message);
     this.name = "ForceSyncLookupError";
     this.status = status;
-  }
-}
-
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
   }
 }
 

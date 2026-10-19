@@ -167,7 +167,7 @@ export function addUnsettledRefundCreditNoteFindings(
       code: "BLOCKED_BY_XERO_OPERATION",
       severity: "warning",
       summary: voided
-        ? "A refund request's Xero refund credit note was voided in Xero and nothing live replaces it. An officer decides whether to raise a fresh note (Xero Operations, #4214); this tool never raises one."
+        ? "A refund request's Xero refund credit note was voided in Xero and nothing live replaces it. An officer decides whether to raise a fresh note, with \"Raise a fresh credit note\" on Xero Operations (#4214); this tool never raises one."
         : match
         ? "A refund request's Xero refund credit note failed or did not finish. Retry it to raise the note for the amount paid back."
         : "A refund request's Xero refund credit note failed or did not finish, and cannot be retried here. Raise it by hand in Xero.",

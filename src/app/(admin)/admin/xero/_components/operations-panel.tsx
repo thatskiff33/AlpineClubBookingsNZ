@@ -34,6 +34,7 @@ import {
 import { xeroSectionId } from "./types"
 import type { XeroOperation } from "./types"
 import { useClubFormat } from "@/components/club-format-provider"
+import { VoidedRequestNotesPanel } from "./voided-request-notes-panel"
 
 export function OperationsPanel({
   connected,
@@ -108,6 +109,7 @@ export function OperationsPanel({
   const [markingFailedOperationId, setMarkingFailedOperationId] = useState<string | null>(null)
   const [retryingAllFailed, setRetryingAllFailed] = useState(false)
   const [resettingStale, setResettingStale] = useState(false)
+  const [notesRefreshToken, setNotesRefreshToken] = useState(0)
 
   const syncUrl = useCallback(() => {
     if (!urlSyncEnabled) return
@@ -387,7 +389,7 @@ export function OperationsPanel({
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
       Your admin role can view Xero operations but cannot retry, reset, mark
-      failed, or resolve them.
+      failed, or resolve them, or raise a fresh credit note.
     </AdminViewOnlySectionBanner>
   )
 
@@ -408,7 +410,7 @@ export function OperationsPanel({
           <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
             {resettingStale ? "Resetting..." : "Reset stale running"}
           </ViewOnlyActionButton>
-          <Button variant="outline" size="sm" onClick={() => void fetchOperations()} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => { void fetchOperations(); setNotesRefreshToken((token) => token + 1) }} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </Button>
         </>
@@ -428,6 +430,13 @@ export function OperationsPanel({
             <li><span className="font-medium">FAILED</span> — could not complete. Open the row for the error, fix the cause if needed, then Retry. Use &ldquo;Retry Active Failed&rdquo; to requeue all replayable failures.</li>
           </ul>
         </details>
+        <VoidedRequestNotesPanel
+          canEdit={canEdit}
+          refreshToken={refreshToken + notesRefreshToken}
+          onMessage={onMessage}
+          onChanged={() => { void fetchOperations(); onRefreshDiagnostics() }}
+          ancestorRendersViewOnlyBanner
+        />
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <FilterSelect label="Status" value={statusFilter} onValueChange={(value) => { setStatusFilter(value); resetPage() }} values={["all", "FAILED", "PENDING", "PARTIAL", "RUNNING", "WAITING_PAYMENT", "SUCCEEDED"]} />
           <FilterSelect label="Entity" value={entityFilter} onValueChange={(value) => { setEntityFilter(value); resetPage() }} values={["all", "CONTACT", "CONTACT_GROUP", "INVOICE", "PAYMENT", "CREDIT_NOTE", "ALLOCATION", "SUBSCRIPTION"]} />
@@ -592,7 +601,7 @@ export function OperationItem({
             <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
               {retrying ? "Queueing..." : "Retry in background"}
             </ViewOnlyActionButton>
-          ) : operation.reason && isFailedOrPartial ? (
+          ) : operation.reason && (isFailedOrPartial || operation.voidedRequestNote) ? (
             <p className="text-xs text-muted-foreground">{operation.reason}</p>
           ) : null}
           {operation.replayable && isFailedOrPartial ? (

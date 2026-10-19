@@ -1,4 +1,5 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
+import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { requireAdmin } from "@/lib/session-guards";
@@ -44,16 +45,6 @@ const pushSchema = z.object({
   entranceFeeInvoiceNarration: z.string().trim().max(500).optional().nullable(),
   forceCreate: z.boolean().optional().default(false),
 });
-
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
 
 /**
  * POST /api/admin/members/[id]/xero-push

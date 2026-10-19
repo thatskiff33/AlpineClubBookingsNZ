@@ -28,4 +28,19 @@ describe("the voided refund-request note's real-database proof stays wired into 
     expect(suite).toContain("a retry's status-less link write that waited on an inbound void keeps the void: inactive, status kept (race)");
     expect(suite).toContain("pg_blocking_pids");
   });
+
+  it("#4214: the officer's re-raise proof is imported by the same harness, and races two clicks", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./xero-refund-request-note-reraise.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/xero-refund-request-note-reraise.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("two officers at once queue one note; the outbox raises it under the after-void key; a third click is refused");
+    expect(suite).toContain("pg_blocking_pids");
+  });
 });

@@ -5381,6 +5381,32 @@ proof (`xero-refund-request-note-void.realdb.test.ts`) holds the void open on
 another connection, shows the retry's write queued behind it, and finds the
 link inactive with its status after both commit.
 
+## Re-raising a voided refund-request note (#4214)
+
+The officer's "Raise a fresh credit note" on Xero Operations
+(`reraiseVoidedRefundRequestNote`, `xero-refund-request-note-reraise.ts`)
+queues a fresh note for a refund request whose own note Xero voided
+(`INV-ADDPAY-041`, owner decision on #4214). Its one transaction locks that
+request's own `REFUND_REQUEST_CREDIT_NOTE` link rows (`SELECT 1 … ORDER BY
+"xeroObjectId" FOR UPDATE`), re-reads them and the request's note rows under
+the lock, refuses while a live note or a row still PENDING, RUNNING or
+WAITING_PAYMENT exists, then inserts the PENDING outbox row and its audit
+entry. Two officers clicking at once therefore queue one row: the second waits
+on the lock, then reads the first's committed row and gets 409. The partial
+unique index on an active correlation key (#1354) stays a backstop behind it.
+
+It writes no money column, no booking status and calls no provider (the outbox
+calls Xero later, outside it); under `INV-LOCK-001` it joins no advisory cohort
+and takes no advisory key, so `INV-LOCK-003`'s Tier-2 registry has no entry,
+and its row lock is in the advisory-lock guard's row-lock inventory. Its
+counterparts each hold one of the same link rows and nothing before it: the
+inbound void and `keepStoredRequestNoteVoid` (#4195, above). It takes its rows
+in a fixed order and they take one, so no cycle can form. The executor's later
+write of the fresh note's link touches a new row. A real-PostgreSQL proof
+(`xero-refund-request-note-reraise.realdb.test.ts`) holds the link row on
+another connection, queues both clicks behind it, and finds one row queued,
+one 409, and after the real outbox one live note beside the voided one.
+
 ## One Xero contact, one local home: the contact-home key (#3367)
 
 **Audience: developer.** The rule this key enforces is `INV-INT-018`

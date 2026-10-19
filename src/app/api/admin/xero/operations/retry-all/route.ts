@@ -1,4 +1,5 @@
-import { after, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
+import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import logger from "@/lib/logger";
@@ -9,16 +10,6 @@ import {
 } from "@/lib/xero-operation-queue";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
 
 export async function POST() {
   const guard = await requireAdmin({

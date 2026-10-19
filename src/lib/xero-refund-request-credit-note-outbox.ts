@@ -4,7 +4,41 @@ import { prisma } from "@/lib/prisma";
 import { refundRequestCreditNoteKey } from "@/lib/xero-credit-notes";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { readResolvedRefundCreditNoteCoverage } from "@/lib/xero-resolved-in-xero-fences";
-import { startXeroSyncOperation } from "@/lib/xero-sync";
+import { startXeroSyncOperation, type XeroSyncOperationInput } from "@/lib/xero-sync";
+
+/**
+ * #3827, #4214: THE ONE SHAPE of a refund request's queued note row - its keys
+ * and payload - shared by the completion's enqueue below and the officer's
+ * re-raise of a voided note (`xero-refund-request-note-reraise.ts`). With
+ * `afterVoid` (`refundNoteKeyAfterVoidParts`) the row's keys name the
+ * request's voided notes, as the executor's Xero key does.
+ */
+export function refundRequestCreditNoteQueuedRow(params: {
+  paymentId: string;
+  refundRequestId: string;
+  amountCents: number;
+  afterVoid?: readonly string[];
+  createdByMemberId?: string | null;
+}): XeroSyncOperationInput & { correlationKey: string } {
+  const correlationKey = refundRequestCreditNoteKey(params.paymentId, params.refundRequestId, params.afterVoid ?? []);
+  return {
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: params.paymentId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+      refundAmountCents: params.amountCents,
+      refundMethod: "internet-banking",
+      refundRequestId: params.refundRequestId,
+    },
+    createdByMemberId: params.createdByMemberId ?? null,
+  };
+}
 
 /**
  * #3827, owner decision D-3813-8 (`INV-PAY-118`): queue a refund request's
@@ -32,7 +66,8 @@ export async function enqueueXeroRefundRequestCreditNoteOperation(params: {
   if (amountCents <= 0) {
     return { queueOperationId: null, message: "No refund was paid back, so no credit note is required." };
   }
-  const correlationKey = refundRequestCreditNoteKey(paymentId, refundRequestId);
+  const row = refundRequestCreditNoteQueuedRow({ paymentId, refundRequestId, amountCents, createdByMemberId: params.createdByMemberId });
+  const { correlationKey } = row;
 
   const resolvedCoverage = await readResolvedRefundCreditNoteCoverage(paymentId, db);
   if (resolvedCoverage.correlationKeys.includes(correlationKey)) {
@@ -61,24 +96,7 @@ export async function enqueueXeroRefundRequestCreditNoteOperation(params: {
     };
   }
 
-  const queuedOperation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "CREDIT_NOTE",
-    operationType: "CREATE",
-    localModel: "Payment",
-    localId: paymentId,
-    status: "PENDING",
-    idempotencyKey: correlationKey,
-    correlationKey,
-    requestPayload: {
-      queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-      refundAmountCents: amountCents,
-      refundMethod: "internet-banking",
-      refundRequestId,
-    },
-    createdByMemberId: params.createdByMemberId ?? null,
-    store: db,
-  });
+  const queuedOperation = await startXeroSyncOperation({ ...row, store: db });
   return {
     queueOperationId: queuedOperation.id,
     message: "This refund request's Xero credit note is queued for background processing.",

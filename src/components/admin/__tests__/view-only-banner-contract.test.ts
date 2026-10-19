@@ -385,8 +385,10 @@ const FIGURES = {
    * panel's own view-only button. MEASURED on the composed tree after merging main at aaedc5481.
    * 376 -> 377 (#4098): the subscription charge queue's "Close: already paid".
    * MEASURED by re-running this census.
+   * 377 -> 378 (#4214): Xero Operations' "Raise a fresh credit note".
+   * MEASURED by re-running this census.
    */
-  callSites: 377,
+  callSites: 378,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -439,8 +441,10 @@ const FIGURES = {
    * guest entry's button, under the change-request panel's banner. MEASURED
    * on the composed tree.
    * 321 -> 322 (#4098): "Close: already paid", under the billing panel's banner.
+   * 322 -> 323 (#4214): "Raise a fresh credit note", vouched by the Xero
+   * Operations panel's banner at its render site.
    */
-  optOuts: 322,
+  optOuts: 323,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -547,10 +551,15 @@ const FIGURES = {
    *
    * 36 -> 34 (#52): the Other lodges panel's Add/Edit/Delete go and Edit my
    * Lodge arrives, all render-site vouched by the Lodges page; 31 -> 29 there.
+   *
+   * 36 -> 37 (#4214): Xero Operations' "Raise a fresh credit note" lives in its
+   * own file (`voided-request-notes-panel.tsx`), rendered by the Operations
+   * panel, which heads the finance banner and passes
+   * `ancestorRendersViewOnlyBanner` at that render site; 31 -> 32 there.
    */
-  vouchedOptOuts: 36,
+  vouchedOptOuts: 37,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 31,
+  renderSiteVouchedOptOuts: 32,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**

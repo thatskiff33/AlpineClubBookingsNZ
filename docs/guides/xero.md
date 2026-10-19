@@ -90,6 +90,11 @@ idempotent — retrying the same work never double-charges.
    though the repair tool still lists it for information. You cannot resolve
    one while a retry of it is running, or an applied-credit allocation at all
    (retry those).
+   **Voided refund request notes**, above the operations, lists each refund
+   request whose own credit note was voided in Xero with nothing replacing it.
+   Nothing re-raises one automatically. If it was voided by mistake, press
+   **Raise a fresh credit note** (finance edit) to queue one new note for the
+   same amount.
    **Inbound Events** lists stored webhooks with a per-event **Replay**. Each
    queue has its own **Reset** for filters and page; it keeps the current section,
    the sibling queue's URL state, and unrelated URL context.
@@ -286,7 +291,7 @@ something else reads that note.
 | Connect / Disconnect Xero | Establish or remove the operational Xero connection | Finance edit; disconnect stops invoicing/reconciliation/paid-status |
 | Contact Sync / Targeted force sync | Broad or single-record contact link/repair | Finance edit |
 | Membership Status Refresh | Refresh current-season paid status from Xero | Also a daily cron; linked members only |
-| Xero Operations | Filter and page outbound work; retry / reset / mark non-replayable / resolve it | Dataset Reset keeps the section and Inbound state; write actions need finance edit and are idempotent |
+| Xero Operations | Filter and page outbound work; retry / reset / mark non-replayable / resolve it; raise a fresh credit note for a refund request whose note was voided in Xero | Dataset Reset keeps the section and Inbound state; write actions need finance edit and are idempotent |
 | Inbound Events | Filter and page stored webhooks; replay an event | Dataset Reset keeps the section and Operations state; Replay needs finance edit |
 | Xero Setup → Mappings | Account/item code mappings and hut/joining fee item codes | Finance edit; joining-fee amounts live in [Fees](fees.md) |
 | Member grouping | Grouping mode + rules, dry-run, bulk re-sync | Finance edit; never auto-re-groups; runbook-driven cutover |
@@ -305,6 +310,7 @@ something else reads that note.
 | Operations/events are read-only ("… can view Xero operations but cannot retry…") | Your finance role is view-only | Ask a finance-edit admin |
 | An outbound operation is stuck **Failed** | A push failed and needs a replay (or was fixed directly in Xero) | **Retry in background**, or **Resolve (fixed in Xero)** with a reason |
 | An allocation is **Failed** with `CREDIT_NOTE_SPENT_OUTSIDE_APP`: "the credit note this allocation needs has only $X left in Xero; it was used outside the app" | The credit note was used in Xero directly (an offset, a payment made against it, a manual allocation) and the app was not told, so it tried to apply credit Xero no longer has. Xero refused the allocation, so nothing changed in Xero | Check the credit note in Xero. If the use was a mistake, reverse it there, then **Retry in background**; the retry sends the allocation again and should go through. If it was deliberate, nothing in Xero needs changing (the invoice already shows what is still owed), but the row stays under Active failures, and **Resolve (fixed in Xero)** is not available for an applied-credit allocation. The automatic fix that brings the app's credit ledger into line and clears the row is planned in [#4219](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4219) |
+| A refund request's credit note was voided in Xero, and its row says no retry raises one | A refund request paid back by bank transfer gets its own credit note. Once that note is voided in Xero, nothing raises a new one by itself, because the note was voided for a reason | Xero Operations lists the request under **Voided refund request notes**. If the note was voided by mistake and the money really went back, press **Raise a fresh credit note** and confirm: one new note is queued for the same amount, and the refund itself is not touched. Otherwise leave it. The button needs finance edit, and the request leaves the list once the new note is in Xero |
 | A credit note voided in Xero still looks live here | The Xero app is not subscribed to Credit Notes, or the void was delivered before credit-note events were reconciled | In the Xero developer portal (**My Apps → your app → Webhooks**), tick **Credit Notes** as well as Invoices and Contacts. Then open **Inbound Events**, filter Category to CREDITNOTE, and **Replay** the void. A later void is recorded on its own. A card payment's voided refund note is then switched off; an internet-banking payment's stays linked, marked voided |
 | A membership subscription invoice operation is **Failed** with "Membership subscription charge not found: [REDACTED]" | A fault before this release (#3971): the job lost the charge it was meant to invoice, so the member was never invoiced | Press **Retry in background** on the row. It goes back to the queue and the next Xero run invoices and emails the member; check the charge in [Subscriptions](subscriptions.md) afterwards. If one charge has several failed rows, only the newest offers the button; the older ones are superseded and need nothing, and show as repaired once it succeeds |
 | An operation is stuck **Running** with no Retry button | Its run stopped without finishing it — a worker was interrupted, or (before this release) a requeue failed early | After 15 minutes the row shows **Mark failed**. Use it, fix the cause named in the error, then **Retry in background** |
