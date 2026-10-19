@@ -92,7 +92,7 @@ describe("LodgeCentralLodgeCard", () => {
     serve(body({ ownedLodges: null }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     expect(await screen.findByText(/has not yet said which lodges this club owns/)).toBeTruthy();
-    expect(screen.queryByLabelText("Central lodge")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Central lodge" })).toBeNull();
   });
 
   it("says why nothing is answered when another lodge holds the link", async () => {
@@ -124,7 +124,7 @@ describe("LodgeCentralLodgeCard", () => {
     serve(body(), body({ centralLodgeId: "ol_b", answersForCentralLodgeId: "ol_b" }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByLabelText("Central lodge"), { target: { value: "ol_b" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Central lodge" }), { target: { value: "ol_b" } });
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Save central lodge" }));

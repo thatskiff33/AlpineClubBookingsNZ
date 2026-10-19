@@ -32,7 +32,7 @@ const h = vi.hoisted(() => ({
   computeMemberGuestBoundary: vi.fn(),
   resolveLinkedBookingMembersWithBoundary: vi.fn(),
   prisma: {
-    otherLodge: { findUnique: vi.fn() },
+    otherLodge: { findFirst: vi.fn() },
     manualRefundTask: { findFirst: vi.fn(), findMany: vi.fn() },
     booking: { findUnique: vi.fn() },
     bookingGuest: { findMany: vi.fn() },
@@ -222,7 +222,7 @@ beforeEach(() => {
     members: new Map(),
     boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
   });
-  h.prisma.otherLodge.findUnique.mockResolvedValue({ id: "ol-1" });
+  h.prisma.otherLodge.findFirst.mockResolvedValue({ id: "ol-1" });
   h.prisma.manualRefundTask.findFirst.mockResolvedValue(null);
   h.prisma.manualRefundTask.findMany.mockResolvedValue([]);
   h.prisma.booking.findUnique.mockResolvedValue(storedBooking());
