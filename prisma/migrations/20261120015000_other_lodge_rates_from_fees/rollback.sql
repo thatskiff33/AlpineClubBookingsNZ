@@ -1,4 +1,4 @@
--- Reverse script for 20261120010000_other_lodge_rates_from_fees (#77).
+-- Reverse script for 20261120015000_other_lodge_rates_from_fees (#77).
 --
 -- Prisma never applies, checksums or reads this file: run it by hand, as the
 -- migration role, against the database being rolled back.
