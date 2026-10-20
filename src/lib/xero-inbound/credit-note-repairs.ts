@@ -1,3 +1,4 @@
+import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -84,10 +85,7 @@ async function recordRestoredBookingAllocationRefusal(
   }
 }
 
-const APPLIED_CREDIT_ALLOCATION_ROLES = [
-  "APPLIED_CREDIT_ALLOCATION",
-  "APPLIED_CREDIT_REMAINDER_ALLOCATION",
-] as const;
+const APPLIED_CREDIT_ALLOCATION_ROLES = [APPLIED_CREDIT_ALLOCATION_ROLE, "APPLIED_CREDIT_REMAINDER_ALLOCATION"] as const;
 
 async function includeDeletedAppliedCreditAllocationTargets(
   creditNoteId: string,
@@ -935,6 +933,7 @@ export async function repairAccountCreditAllocationBusinessState(
           amountCents: true,
           description: true,
           xeroCreditNoteId: true,
+          outsideSpendConvergedAt: true,
         },
       });
 
@@ -951,7 +950,7 @@ export async function repairAccountCreditAllocationBusinessState(
           description?: string;
         } = {};
 
-        if (appliedCredit.description !== expectedDescription) {
+        if (appliedCredit.description !== expectedDescription && appliedCredit.outsideSpendConvergedAt === null) {
           updates.description = expectedDescription;
         }
 
@@ -968,9 +967,8 @@ export async function repairAccountCreditAllocationBusinessState(
         // Historical negative rows plus later positive/negative offsets are an
         // intentional append-only record. The precise slice reconciler below,
         // not destructive rewrites of those rows, determines provider truth.
-        const staleDescriptions = linkedAppliedCredits.filter(
-          (credit) => credit.description !== expectedDescription,
-        );
+        // #4219: a row the credit-note convergence wrote keeps the description that says why.
+        const staleDescriptions = linkedAppliedCredits.filter((credit) => credit.description !== expectedDescription && credit.outsideSpendConvergedAt === null);
         if (staleDescriptions.length > 0) {
           await tx.memberCredit.updateMany({
             where: { id: { in: staleDescriptions.map((credit) => credit.id) } },

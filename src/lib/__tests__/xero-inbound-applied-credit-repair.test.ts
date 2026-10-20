@@ -429,7 +429,47 @@ describe("provider-aware inbound applied-credit repair", () => {
 
     expect(h.memberCreditCreate).not.toHaveBeenCalled();
   });
+  describe("rows the credit-note convergence wrote keep their description (#4219)", () => {
+    const replayState = () => {
+      h.linkFindMany.mockResolvedValue([{ metadata: { creditNoteId: "cn-1", invoiceId: "invoice-1", amountCents: 3000 } }]);
+      h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+      h.memberCreditAggregate.mockReset();
+      h.memberCreditAggregate
+        .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+        .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+        .mockResolvedValue({ _sum: { amountCents: 0 } });
+    };
+    const marked = new Date("2026-10-19T00:00:00.000Z");
+
+    it("rewrites a stale description on ordinary rows but never on a marked one", async () => {
+      replayState();
+      h.memberCreditFindMany.mockResolvedValue([
+        { id: "historical-negative", amountCents: -3000, description: "stale", xeroCreditNoteId: "cn-1", outsideSpendConvergedAt: null },
+        { id: "release", amountCents: 3000, description: "Automatic adjustment: credit no longer applied", xeroCreditNoteId: "cn-1", outsideSpendConvergedAt: marked },
+      ]);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+      expect(h.memberCreditUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ["historical-negative"] } } }),
+      );
+    });
+
+    it("leaves a lone marked row's description alone too", async () => {
+      replayState();
+      h.memberCreditFindMany.mockResolvedValue([
+        { id: "release", amountCents: 3000, description: "Automatic adjustment: credit no longer applied", xeroCreditNoteId: "cn-1", outsideSpendConvergedAt: marked },
+      ]);
+
+      await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+      expect(h.memberCreditUpdate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ description: expect.anything() }) }),
+      );
+    });
+  });
 });
+
 
 describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
   beforeEach(() => {

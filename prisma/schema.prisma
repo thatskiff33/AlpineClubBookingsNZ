@@ -7350,6 +7350,12 @@ model MemberCredit {
   sourceBookingModificationId String?    @unique // Booking modification that generated the credit
   appliedToBookingId          String? // Booking where credit was spent
   xeroCreditNoteId            String? // Linked Xero credit note ID
+  // #4219: set only on the two rows that bring the ledger into line with Xero when
+  // a credit note was spent there outside the app (the release of a booking's
+  // applied credit and the write-down of the lot). It says the row is NOT a
+  // spendable lot: the release is a positive row, and without this marker the
+  // planner would count it as the member's own money and mint a Xero note for it.
+  outsideSpendConvergedAt     DateTime?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)

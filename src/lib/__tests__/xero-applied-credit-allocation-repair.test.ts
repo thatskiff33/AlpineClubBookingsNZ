@@ -16,6 +16,8 @@ const db = {
   memberCredit: {
     findMany: vi.fn(),
     findUnique: vi.fn(),
+    // #4219: the fit check subtracts credit written down because its note was used outside the app.
+    groupBy: vi.fn(),
   },
   memberCreditNoteAllocation: {
     findMany: vi.fn(),
@@ -72,6 +74,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
       amountCents: 5000,
       xeroCreditNoteId: "cn-1",
     });
+    db.memberCredit.groupBy.mockResolvedValue([]);
     db.memberCreditNoteAllocation.findMany.mockResolvedValue([]);
     db.memberCreditNoteAllocation.aggregate.mockResolvedValue({
       _sum: { amountCents: 1000 },
@@ -261,6 +264,20 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
         "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
     ).rejects.toThrow("exceeds remaining funding lot $20.00");
+  });
+
+  it("subtracts credit written down because its note was used outside the app from the funding lot (#4219)", async () => {
+    // The lot holds 5000 and other slices take 1000, which fits a 3000 target; 2500 written down does not.
+    db.memberCredit.groupBy.mockResolvedValue([{ xeroCreditNoteId: "cn-1", _sum: { amountCents: -2500 } }]);
+
+    await expect(
+      repairLegacyAppliedCreditNoteAllocationsForBooking(
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
+      ),
+    ).rejects.toThrow("exceeds remaining funding lot $15.00");
+    expect(db.memberCredit.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ outsideSpendConvergedAt: { not: null } }) }),
+    );
   });
 
   it("fails closed when the stamped note has ambiguous positive funding", async () => {
