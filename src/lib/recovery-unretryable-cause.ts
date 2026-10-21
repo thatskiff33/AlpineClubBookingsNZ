@@ -7,11 +7,16 @@
  * the next attempt will meet again, which only burns the backoff before anyone
  * hears of it.
  *
- * One such refusal today: an edit's ask write that finds its intent already
+ * Two such refusals today. The first: an edit's ask write that finds its intent already
  * recorded for another edit (`AdditionalAskAttributionConflictError`,
  * `INV-MOD-060`). Edit X's recovery adopted edit Y's intent, Y's write was
  * refused, and Y's retry that re-derives the same figure (the frozen fallback,
  * say) is handed the same intent by Stripe and refused again on every attempt.
+ *
+ * The second (#4217): an ask write that finds its intent's ledger row on a
+ * different payment from the one it locked
+ * (`IntentLedgerRowOnAnotherPaymentError`). The row write is pinned to its
+ * payment, so every retry meets the same row and is refused again.
  *
  * So the runner's failure path (`failPaymentRecoveryOperation`) ends the
  * recovery on the first such failure, through the one terminal transition
@@ -24,7 +29,10 @@ import { PaymentRecoveryOperationType, type PaymentRecoveryOperation } from "@pr
 
 import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
 import logger from "@/lib/logger";
-import { AdditionalAskAttributionConflictError } from "@/lib/payment-intent-ledger-row-write";
+import {
+  AdditionalAskAttributionConflictError,
+  IntentLedgerRowOnAnotherPaymentError,
+} from "@/lib/payment-intent-ledger-row-write";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -36,10 +44,13 @@ export async function unretryableRecoveryCause(
   operation: Pick<PaymentRecoveryOperation, "type">,
   error: unknown,
 ): Promise<string | null> {
-  if (
-    operation.type !== PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT ||
-    !(error instanceof AdditionalAskAttributionConflictError)
-  ) {
+  if (operation.type !== PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) {
+    return null;
+  }
+  if (error instanceof IntentLedgerRowOnAnotherPaymentError) {
+    return `The card request ${error.paymentIntentId} for this booking could not be recorded: Stripe's record of it is already filed under a different payment. Retrying would be refused the same way, so the app stopped. The money for this change is still owed: check the card request in Stripe against the booking's payments and ask a developer to reconcile it.`;
+  }
+  if (!(error instanceof AdditionalAskAttributionConflictError)) {
     return null;
   }
   const change = await prisma.bookingModification

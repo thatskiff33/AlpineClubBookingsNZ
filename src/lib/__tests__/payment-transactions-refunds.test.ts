@@ -1734,8 +1734,11 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
 
   it("records the refund rows and the mirror in one transaction when given the root client", async () => {
     const ctx = paidStore();
+    // The transaction client: the same models, without the root client's
+    // `$connect` - so the reconcile inside joins this transaction (#4217).
+    const txClient = { ...ctx.store };
     const transactionSpy = vi.fn(
-      async (fn: (tx: unknown) => Promise<unknown>) => fn(ctx.store),
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(txClient),
     );
     const rootClient = Object.assign(ctx.store, {
       $connect: vi.fn(),

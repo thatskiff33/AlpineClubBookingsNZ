@@ -1180,12 +1180,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **99 components render a banner, and
- 323 of the 378 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **100 components render a banner, and
+ 324 of the 379 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 323 split by WHICH rule
-covers them: **287** pass the literal
+test currently pins, which is the only authority.) Those 324 split by WHICH rule
+covers them: **288** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **36**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 31 by a parent's own JSX render site (#2168), 5 by the
@@ -3271,7 +3271,7 @@ flowchart TD
     Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
-    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-reconciliation-report,<br/>xero-credit-sync-check"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check"]
     Leader --> Cfg["Configurable<br/>backup"]
 ```
 
@@ -3300,6 +3300,7 @@ flowchart TD
 | `xero-membership-refresh` | Daily when enabled | Sync membership invoice state |
 | `xero-link-backfill` | Daily | Backfill canonical Xero object links into the ledger |
 | `xero-link-cleanup` | Daily | Clean stale canonical Xero object links |
+| `xero-bank-refund-void-follow-up` | Daily | Right after the link cleanup: undo each voided bank-transfer refund note and put it back on the refund list (#4162; report-only until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`) |
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |

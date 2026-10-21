@@ -368,8 +368,64 @@ The card holds several kinds of row and says which is which: a cash hand-back
 (above), a part payment settled in Xero (next), a booking change to price
 ("Decide a booking change the system would not price"), an amount the club may
 not have asked for ("Check an amount the club may not have asked for"), a
-late card payment held for approval, a group organiser's repayment and a card refund that fell short (above). Each kind's explaining paragraph appears
+late card payment held for approval, a group organiser's repayment, a card refund that fell short (above) and a bank refund to re-confirm
+(next). Each kind's explaining paragraph appears
 only when a row of that kind is waiting, and none of them speaks for the others.
+
+### Answer a bank refund whose Xero credit note was voided
+
+When you mark a bank refund paid back, the app records it and Xero gets a
+credit note that mirrors it. If that credit note is later **voided in Xero**,
+the refund is no longer recorded anywhere the books agree on. So each night
+(#4162) the app takes the refund back out of the payment's records - its
+refunded total, its refund history and the booking's ledger - and puts it back
+in **Money to settle** as owed, with one question:
+
+> Booking B-123: $200.00 to Sam Lee. Its Xero credit note CN-0456 was found
+> voided on 14 Oct 2026, so it's back on this list. Has the $200.00 gone to the
+> member?
+
+("Found voided" is the day the app learned of the void, not Xero's own date.)
+
+Nothing is sent to the member and nothing is raised in Xero until you answer:
+
+- **Yes, it has gone → Yes, raise a fresh credit note.** The refund is recorded
+  as paid back again and **one** new credit note is queued for Xero, dated
+  today. Nothing is copied from the voided note. If the payment has no Xero
+  invoice for a note to credit, the app refuses and says so: use the next
+  answer with a note you made in Xero.
+- **Yes, it has gone → Yes, I already recorded it in Xero myself.** Type the
+  number of the credit note you made in Xero (for example `CN-0789`). The app
+  reads it from Xero and checks that it is a sales credit note, **approved or
+  paid**, for exactly this amount, for the **same contact** as the booking's
+  invoice, and not allocated to another invoice. If not, it tells you why and
+  nothing changes. If Xero is busy, try again in a minute; if Xero's daily
+  limit has been reached, try again tomorrow; if the booking has no Xero
+  invoice and its owner no Xero contact, there is nothing to check the note
+  against, and the app says so. If it is, the
+  refund is recorded as paid back again against that note, and the app keeps
+  track of it: it reads the note once more straight afterwards, and if that
+  note is ever voided too, the refund comes back here again.
+- **Not yet.** Cancel the dialog and leave it on the list until the money goes.
+- **No, the club keeps it.** The refund stays out of the payment's records and
+  no note is raised. A reason is required.
+
+If the voided note was only a **duplicate** - Xero still has live notes for
+every bank refund on that payment - nothing changes and nothing is asked.
+
+A voided note the app cannot match to a single refund (an older note that
+covered several refunds at once, or one whose amount it cannot read) appears on
+**Stuck States** under **Voided bank refund notes to answer**
+([guide](stuck-states.md#pick-the-refund-a-voided-bank-refund-note-recorded)).
+Press **Pick the refund**, choose which of the payment's bank refunds the note
+recorded, and the app takes that refund back out of the records exactly as it
+does for a matched note - it then appears here with the same question. A note
+that recorded several refunds takes one pick per refund, each with its own
+question here, until the picks add up to its amount.
+
+This only happens once your administrator has switched it on (see
+[`UPGRADING.md`](../UPGRADING.md)); until then the app only reports what it
+would do, and the Stuck States list is read-only.
 
 ### Settle a part payment an officer cancelled as unpaid
 

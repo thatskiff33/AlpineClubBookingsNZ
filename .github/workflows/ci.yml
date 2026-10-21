@@ -55,7 +55,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
 
@@ -137,7 +137,7 @@ jobs:
 
       # No `cache: pnpm`: nothing here installs, so there is no store to hit.
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
 
@@ -241,7 +241,7 @@ jobs:
       # nothing installs and there is no pnpm store to hit.
       - name: Set up Node.js
         if: always()
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
 
@@ -310,7 +310,7 @@ jobs:
       # gate on findings so the alerts still publish.
       - name: Upload Semgrep SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.38.2
+        uses: github/codeql-action/upload-sarif@v4.38.3
         with:
           sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.published.sarif
           category: semgrep
@@ -527,7 +527,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -585,7 +585,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -920,7 +920,8 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: concurrency_race_1881
         ports:
-          - 55442:5432
+          # Docker selects an available high port; never reserve one fixed host port.
+          - 127.0.0.1:55442-65535:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
           --health-interval 5s
@@ -982,7 +983,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -999,15 +1000,21 @@ jobs:
       # #1881: never let the opt-in real-Postgres lock harness silently skip in
       # CI. It uses a separate loopback-only service/database and the harness's
       # high-port + dedicated-name guard remains enforced.
+      - name: Resolve dedicated race database endpoint
+        env:
+          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:${{ job.services.concurrency-race-postgres.ports[5432] }}/concurrency_race_1881
+        run: |
+          pnpm exec tsx -e 'import { assertSafeRaceDbUrl } from "./src/lib/__tests__/support/race-db-url"; assertSafeRaceDbUrl(process.env.CONCURRENCY_RACE_DATABASE_URL ?? "", "CI endpoint");'
+          printf 'CONCURRENCY_RACE_DATABASE_URL=%s\n' "$CONCURRENCY_RACE_DATABASE_URL" >> "$GITHUB_ENV"
+
       - name: Migrate dedicated advisory-lock race database
         env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
+          DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}
         run: pnpm exec prisma migrate deploy
 
       - name: Test advisory-lock race protocol against dedicated PostgreSQL
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
-          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
 
       # #2672: the member-merge partner-share safety case is a set of claims
@@ -1024,7 +1031,6 @@ jobs:
       - name: Test member-merge shared-double races against dedicated PostgreSQL
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
-          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
 
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
@@ -1038,7 +1044,7 @@ jobs:
       # reach, which the census rightly disagrees with.
       # `booking-ledger-realdb-wiring.test.ts` fails if this step goes missing.
       - name: Back-post a seeded booking history and require the census gate
-        run: bash scripts/booking-ledger-seed-gate.sh postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881_ledger_history
+        run: bash scripts/booking-ledger-seed-gate.sh "${CONCURRENCY_RACE_DATABASE_URL}_ledger_history"
 
       # #3852: the page-content DELETE under a concurrent edit and a second delete.
       # The mocked route test can show a P2025 is mapped to 404, not that
@@ -1050,7 +1056,6 @@ jobs:
       - name: Test page-content delete race against dedicated PostgreSQL
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
-          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: pnpm exec vitest run src/lib/__tests__/page-content-delete-race.realdb.test.ts
 
       # #2374 (AID-5): PROVE the dedicated SELECT-only AI Diagnostics database
@@ -1067,7 +1072,6 @@ jobs:
       - name: Prove the SELECT-only diagnostics role against dedicated PostgreSQL
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
-          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
@@ -1196,7 +1200,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: pnpm

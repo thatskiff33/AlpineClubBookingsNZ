@@ -633,6 +633,7 @@ export async function POST(request: NextRequest) {
                     "Payment succeeded, but lodge capacity is no longer available for this booking.",
                   status: BookingStatus.CANCELLED,
                   refunded: reconciliation.outcome === "cancelled_refunded",
+                  capacityRefund: reconciliation.capacityRefund,
                 },
                 { status: 409 }
               );

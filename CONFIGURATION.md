@@ -2508,6 +2508,7 @@ Only these operational-tuning env vars remain (they are not credentials):
 | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`     | Enables daily membership refresh behavior when operational Xero is on. |
 | `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`    | Enables live Xero member group lookups.                                |
 | `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS` | Enables automatic Xero contact-group loading.                          |
+| `XERO_ENABLE_BANK_REFUND_VOID_WRITES`      | `true` lets the nightly follow-up of voided bank-transfer refund notes write (#4162); anything else is report-only. Run `pnpm run xero:bank-refund-void-count` first ([UPGRADING.md](docs/UPGRADING.md)). |
 | `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`     | Optional retry backoff for failed inbound Xero reconciliation.         |
 | `XERO_HTTP_TIMEOUT_MS`                     | Optional OAuth-layer HTTP timeout (identity discovery and token requests) in ms; default 10000, overriding xero-node's 3500ms. |
 

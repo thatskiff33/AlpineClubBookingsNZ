@@ -659,9 +659,11 @@ Stripe payment back to SUCCEEDED from Xero-derived data — an operator voiding
 a refund credit note in Xero cannot "un-refund" money Stripe has already paid
 out, and a missing refund-delta credit note can no longer silently lower the
 ledger the missing-credit-note detector compares against (which previously
-self-masked the divergence). Internet Banking payments are the deliberate
-exception: Xero is their payment rail, so the repair remains authoritative in
-both directions for them.
+self-masked the divergence). Internet Banking payments (#4162): the repair
+follows Xero both ways, but never takes the total below the payment's own
+transaction detail - the hand-backs the treasurer recorded. Below that it keeps
+the detail, logs and raises the same alert; only the nightly follow-up moves the
+detail, line and total together (`INV-ADDPAY-042`).
 
 ### INV-ADDPAY-022
 
@@ -1591,12 +1593,42 @@ decision and would need its own owner decision.
   voided (v3). A figure the link lacks comes from its create row, or counts
   as matching. With no void the key is byte-identical. The create path
   refuses, recording nothing, a VOIDED/DELETED note or one another row raised.
-- **Bank transfers.** Xero is the payment rail (`INV-ADDPAY-021`), so the
-  inbound sync returns the refunded amount to what the live notes say and
-  nothing is re-raised automatically. A fresh note is raised only once the
-  treasurer records the refund again. A refund with no live note is no
-  reconciliation-report drift, by design (#4046; visibility: #4162).
+- **Bank transfers.** The inbound sync never undoes the refund
+  (`INV-ADDPAY-021`'s floor). One writer, the nightly follow-up
+  (`INV-ADDPAY-042`), moves the detail, the `BANK_REFUND` line and the total
+  together and raises the follow-up; nothing is re-raised automatically.
   Pinned by `xero-refund-note-{void-pointer,crash-window,after-void-key}`,
+  `bank-refund-void-follow-up`,
   `xero-refund-request-note-void`, `xero-voided-request-note-retry-routes`,
   `xero-sync`, `xero-booking-repair`, `xero-operation-retry`,
   `xero-operation-outbox` and `xero-hardening`.
+
+### INV-ADDPAY-042
+
+- **A voided bank-transfer refund note is undone, then asked once** (#4162,
+  owner decision 17 Oct 2026). The hand-back is the record that the refund was
+  paid; its note mirrors it. Each night, after #4161's heal, the follow-up
+  (`bank-refund-void-follow-up.ts`) handles every voided `REFUND_CREDIT_NOTE`
+  on an `INTERNET_BANKING` payment EXACTLY ONCE (`bank-refund-void-scan.ts`):
+- **A spare moves nothing.** When live notes, plus notes resolved by hand
+  (`INV-INT-025`), still cover every bank hand-back, a marker on the link
+  records it.
+- **Otherwise one transaction**, under `lock(1)` then the Payment row:
+  re-classify, defer while a create could mint, claim with the follow-up's
+  unique key `bank-refund-void:<payment>:<note>`, then unwind the allocation,
+  reverse the hand-back's line and recompute the total from the detail. The
+  follow-up is a new open `CANCELLED_BOOKING_HAND_BACK`; the completed task is
+  never reopened. A note matches by the task it names, else by a unique amount.
+  For an unmatched one a person picks the live bank refunds it recorded on
+  Stuck States, and the same undo runs (owner, 18 Oct 2026): one pick per
+  refund, keyed `<payment>:<note>:<line>`, until the picks add up to the
+  note's amount (one pick if unreadable). A line its own live notes record
+  even in part is never matched or picked; a card refund's record is never undone
+  here.
+- **Nothing is raised in Xero without a person.** No email, booking event or
+  provider call. Completing the follow-up needs an answer: a fresh note keyed
+  and sized on it, or a hand-made note checked in Xero first and then tracked.
+- **Report-only** until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`: nothing,
+  the person's pick included, writes before then.
+  Pinned by `bank-refund-void-follow-up` (unit and realdb),
+  `bank-refund-void-answer` and `advisory-lock-guard`.

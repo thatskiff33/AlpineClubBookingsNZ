@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdditionalAskAttributionConflictError,
+  IntentLedgerRowOnAnotherPaymentError,
   IntentLedgerRowVanishedError,
   writePaymentIntentTransaction,
 } from "@/lib/payment-intent-ledger-row-write";
@@ -19,6 +20,8 @@ import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-stat
 type Row = Record<string, unknown>;
 
 function ledger(rows: Row[]) {
+  // Every row is the written payment's unless a case says otherwise (#4217).
+  for (const row of rows) row.paymentId ??= "payment-1";
   const refuse = (what: string): never => {
     throw new Error(`in-memory ledger: unsupported ${what}`);
   };
@@ -63,14 +66,29 @@ function ledger(rows: Row[]) {
 const INTENT = "pi_4081";
 
 function write(store: never, status: PaymentStatus, bookingModificationId?: string) {
-  const fields = { paymentId: "payment-1", kind: "ADDITIONAL" as const, source: "STRIPE" as const, amountCents: 6_000, reason: "modification_additional_recovery" };
+  const fields = { kind: "ADDITIONAL" as const, source: "STRIPE" as const, amountCents: 6_000, reason: "modification_additional_recovery" };
   return writePaymentIntentTransaction(store, {
+    paymentId: "payment-1",
     paymentIntentId: INTENT,
     bookingModificationId,
-    create: { ...fields, stripePaymentIntentId: INTENT, status, ...(bookingModificationId ? { bookingModificationId } : {}) },
+    create: { ...fields, paymentId: "payment-1", stripePaymentIntentId: INTENT, status, ...(bookingModificationId ? { bookingModificationId } : {}) },
     update: { ...fields, status, ...(bookingModificationId ? { bookingModificationId } : {}) },
   });
 }
+
+// #4217 review (F3): the write is pinned to the payment its writer locked; an
+// intent's row on another payment is refused and left exactly as it was.
+describe("#4217: an intent's ledger row never moves payment", () => {
+  it.each([undefined, "mod-y"])("refuses the intent's row on another payment, untouched (edit %s)", async (bookingModificationId) => {
+    const rows: Row[] = [{ paymentId: "payment-other", stripePaymentIntentId: INTENT, status: PaymentStatus.PENDING, bookingModificationId: null, amountCents: 1_000 }];
+
+    const refusal = write(ledger(rows), PaymentStatus.PROCESSING, bookingModificationId);
+
+    await expect(refusal).rejects.toBeInstanceOf(IntentLedgerRowOnAnotherPaymentError);
+    await expect(refusal).rejects.toMatchObject({ lockedPaymentId: "payment-1", rowPaymentId: "payment-other" });
+    expect(rows).toEqual([{ paymentId: "payment-other", stripePaymentIntentId: INTENT, status: PaymentStatus.PENDING, bookingModificationId: null, amountCents: 1_000 }]);
+  });
+});
 
 describe("#4081: writing an intent's ledger row never lowers a captured status", () => {
   it.each(CAPTURED_TRANSACTION_STATUS_LIST)(
@@ -127,7 +145,7 @@ describe("#4081: writing an intent's ledger row never lowers a captured status",
   it.each([PaymentStatus.PENDING, PaymentStatus.SUCCEEDED])(
     "an edit's write refuses a %s row naming another edit, and leaves it exactly as it was",
     async (status) => {
-      const before = { stripePaymentIntentId: INTENT, status, bookingModificationId: "mod-x", amountCents: 7_000 };
+      const before = { paymentId: "payment-1", stripePaymentIntentId: INTENT, status, bookingModificationId: "mod-x", amountCents: 7_000 };
       const rows: Row[] = [{ ...before }];
 
       await expect(write(ledger(rows), PaymentStatus.PENDING, "mod-y")).rejects.toBeInstanceOf(AdditionalAskAttributionConflictError);

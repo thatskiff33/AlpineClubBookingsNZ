@@ -13,7 +13,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import {
-  findPaymentTransactionByIntentId,
+  findPaymentTransactionByIntentId, lockPaymentForRefundedTotal,
   planStripeRefundAllocation,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
@@ -105,6 +105,8 @@ type ReconciliationBooking = Prisma.BookingGetPayload<{
   };
 }>;
 
+import type { CapacityCancellationRefund } from "@/lib/booking-card-refund-copy";
+
 export type MarkBookingPaymentSucceededResult = {
   outcome:
     | "paid"
@@ -122,6 +124,7 @@ export type MarkBookingPaymentSucceededResult = {
   bookingId: string;
   bumpedBookingIds: string[];
   refundError?: string;
+  capacityRefund?: CapacityCancellationRefund;
 };
 
 const PAYABLE_SUCCESS_STATUS_LIST = [
@@ -939,6 +942,8 @@ async function settleBookingPaymentInTransaction(
       },
       update: {},
     });
+    // #4217 (`INV-LOCK-002`): the Payment row before any ledger row (the lookup below may backfill).
+    await lockPaymentForRefundedTotal(tx, payment.id);
 
     let refundedIntentHistory = false;
 
@@ -2229,6 +2234,7 @@ export async function markBookingPaymentSucceeded({
 
       return {
         outcome: "cancelled_refunded",
+        capacityRefund: { chargedAmountCents: amountCents, plannedRefundCents },
         bookingId,
         bumpedBookingIds: [],
       };
@@ -2270,6 +2276,7 @@ export async function markBookingPaymentSucceeded({
 
       return {
         outcome: "cancelled_refund_failed",
+        capacityRefund: { chargedAmountCents: amountCents, plannedRefundCents },
         bookingId,
         bumpedBookingIds: [],
         refundError: refundErrorMessage,
@@ -2646,6 +2653,11 @@ export async function reverseManualBookingPayment({
     }
     const bookingLodgeId = lockTarget.lodgeId ?? (await getDefaultLodgeId(tx));
     await acquireLodgeCapacityLock(tx, bookingLodgeId);
+    // #4217 (`INV-LOCK-002`): the Payment row before the recovery rows, the
+    // booking and the ledger rows this reversal writes - the recovery runner's
+    // claim hold locks it before the cancellation rows it upserts.
+    const paymentToLock = await tx.payment.findUnique({ where: { bookingId }, select: { id: true } });
+    if (paymentToLock) await lockPaymentForRefundedTotal(tx, paymentToLock.id);
 
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },

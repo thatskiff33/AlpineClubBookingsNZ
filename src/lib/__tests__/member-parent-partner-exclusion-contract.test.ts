@@ -193,9 +193,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
     );
     expect(job).toContain("image: postgres:16-alpine");
     expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
-    expect(step).toContain(
-      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881",
-    );
+    expect(step).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
     expect(step).toContain(
       "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );

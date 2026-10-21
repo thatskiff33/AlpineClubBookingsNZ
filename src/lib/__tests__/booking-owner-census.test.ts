@@ -501,7 +501,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:309",
+  "src/lib/manual-refund-task-queue-payload.ts:324",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:343",
   "src/lib/waitlist-cross-lodge.ts:531",
@@ -522,8 +522,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1336",
-  "src/lib/payment-recovery.ts:2593",
-  "src/lib/payment-recovery.ts:2645",
+  "src/lib/payment-recovery.ts:2596",
+  "src/lib/payment-recovery.ts:2648",
   "src/lib/xero-admin-health.ts:394",
 ];
 
@@ -809,7 +809,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:104",
-  "src/lib/stuck-state-dashboard.ts:616",
+  "src/lib/stuck-state-dashboard.ts:620",
   "src/lib/xero-booking-repair-types.ts:219",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
 ];

@@ -133,6 +133,9 @@ vi.mock("@/lib/prisma", () => {
 
   return {
     prisma: {
+      // #4217: the ledger writers lock the Payment row first; a single-writer
+      // fake has nothing to wait on.
+      $executeRaw: async () => 0,
       payment: {
         findUnique: async (args: { where: Row; include?: Row }) => {
           onlyArgs(args, ["where", "include"]);

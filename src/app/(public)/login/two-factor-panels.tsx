@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Copy, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +25,12 @@ type TotpSetup = {
   label: string;
 };
 
+// Start a fresh document at the destination already resolved by the server.
+// Both successful exits share this policy; keep private invite paths out of DOM attributes.
+function completeTwoFactorSignIn(callbackUrl: string) {
+  window.location.replace(callbackUrl);
+}
+
 function RecoveryCodes({
   callbackUrl,
   codes,
@@ -33,7 +38,6 @@ function RecoveryCodes({
   callbackUrl: string;
   codes: string[];
 }) {
-  const router = useRouter();
   const [copied, setCopied] = useState(false);
 
   async function copyCodes() {
@@ -62,7 +66,7 @@ function RecoveryCodes({
           <Copy className="h-4 w-4" />
           {copied ? "Copied" : "Copy"}
         </Button>
-        <Button type="button" onClick={() => router.replace(callbackUrl)}>
+        <Button type="button" onClick={() => completeTwoFactorSignIn(callbackUrl)}>
           Continue
         </Button>
       </CardFooter>
@@ -285,7 +289,6 @@ export function TwoFactorVerifyPanel({
   callbackUrl: string;
   enrolledMethod: "TOTP" | "EMAIL";
 }) {
-  const router = useRouter();
   const [method, setMethod] = useState<VerifyMethod>(enrolledMethod);
   const [code, setCode] = useState("");
   const [emailSent, setEmailSent] = useState(false);
@@ -324,7 +327,7 @@ export function TwoFactorVerifyPanel({
       if (!response.ok) {
         throw new Error(await apiErrorMessageFromResponse(response, "Invalid code"));
       }
-      router.replace(callbackUrl);
+      completeTwoFactorSignIn(callbackUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {

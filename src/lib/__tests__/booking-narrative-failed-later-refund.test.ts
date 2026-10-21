@@ -183,7 +183,7 @@ describe("#4166: a capacity race's card refund that failed after its REFUNDED ev
 
   it("MUTATION: part failed, short of the charge - the rest keeps its date and the part no plan carried is still followed up", () => {
     expect(narrate([raceCancel(8000), raceRefunded(8000)], [failedLater(3000, "stalled")])).toBe(
-      `${OPENING} $50.00 was refunded on 5 May 2026 and $30.00 is being refunded to you; the club will be in touch about the card refund and the remaining $20.00.${END}`,
+      `${OPENING} $50.00 was refunded to your card on 5 May 2026 and $30.00 is being refunded to you; the club will be in touch about the card refund and the remaining $20.00.${END}`,
     );
   });
 });

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { render } from "@/lib/__tests__/support/club-time-render";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
@@ -18,6 +19,31 @@ import {
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+
+const invalidCapacityRefundFacts = [
+  { label: "confirmed zero plan", capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 0 } },
+  { label: "fractional charge", capacityRefund: { chargedAmountCents: 12500.5, plannedRefundCents: 9000 } },
+  { label: "fractional refund", capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 9000.5 } },
+  { label: "negative charge", capacityRefund: { chargedAmountCents: -12500, plannedRefundCents: 9000 } },
+  { label: "negative refund", capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: -9000 } },
+  { label: "unsafe integer charge", capacityRefund: { chargedAmountCents: Number.MAX_SAFE_INTEGER + 1, plannedRefundCents: 9000 } },
+  { label: "missing refund amount", capacityRefund: { chargedAmountCents: 12500 } },
+];
+
+const capacityCancellationCases = [
+  ...invalidCapacityRefundFacts.map(({ label, capacityRefund }) => ({
+    label, capacityRefund, refunded: true,
+    heading: "Booking cancelled - refund needs attention",
+    copy: "The club will be in touch about your refund",
+  })),
+  { label: "full", refunded: true, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 12500 }, heading: "Booking cancelled - payment refunded", copy: "$125.00 was refunded to your card" },
+  { label: "partial", refunded: true, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 9000 }, heading: "Booking cancelled - refund needs attention", copy: "$90.00 was refunded to your card; the club will be in touch about the remaining $35.00" },
+  { label: "empty plan", refunded: false, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 0 }, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "failed positive plan", refunded: false, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 9000 }, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "legacy success without amounts", refunded: true, capacityRefund: undefined, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "legacy failure without amounts", refunded: false, capacityRefund: undefined, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "invalid amounts", refunded: true, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 13000 }, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+];
 
 const fetchMock = vi.fn();
 const scrollIntoView = vi.fn();
@@ -456,16 +482,9 @@ describe("BookingPaymentWrapper", () => {
     await expectRecoveryAlertToHoldFocus(alert);
   });
 
-  it.each([
-    [true, "Booking cancelled - payment refunded", /card payment was refunded/i],
-    [
-      false,
-      "Booking cancelled - refund needs attention",
-      /refund could not be confirmed/i,
-    ],
-  ])(
-    "suppresses payment for an initialization-time cancellation (refunded: %s)",
-    async (refunded, heading, copy) => {
+  it.each(capacityCancellationCases)(
+    "suppresses payment for an initialization-time cancellation ($label)",
+    async ({ refunded, capacityRefund, heading, copy }) => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         status: 409,
@@ -473,6 +492,7 @@ describe("BookingPaymentWrapper", () => {
           error: "server detail is not rendered",
           status: "CANCELLED",
           refunded,
+          capacityRefund,
         }),
       });
 
@@ -489,6 +509,9 @@ describe("BookingPaymentWrapper", () => {
       const alert = screen.getByRole("alert", { hidden: true });
       await waitFor(() => expect(alert).toHaveTextContent(heading));
       expect(alert).toHaveTextContent(copy);
+      expect(alert).not.toHaveTextContent("Automatic refund recovery is pending");
+      expect(alert).not.toHaveTextContent("the card payment was refunded");
+      if (!refunded) expect(alert).not.toHaveTextContent("was refunded to your card");
       expect(alert).toHaveTextContent(/Do not try another payment/i);
       expect(alert).not.toHaveTextContent("server detail");
       expect(alert).not.toHaveTextContent(/pay later from your booking page/i);
@@ -756,20 +779,9 @@ describe("BookingPaymentWrapper", () => {
     expect(screen.getByText("Payment successful!")).not.toBeNull();
   });
 
-  it.each([
-    [
-      true,
-      "Booking cancelled - payment refunded",
-      /card payment was refunded/i,
-    ],
-    [
-      false,
-      "Booking cancelled - refund needs attention",
-      /Automatic refund recovery is pending/i,
-    ],
-  ])(
-    "retains the cancelled-booking recovery after confirmation (refunded: %s)",
-    async (refunded, heading, copy) => {
+  it.each(capacityCancellationCases)(
+    "retains the cancelled-booking recovery after confirmation ($label)",
+    async ({ refunded, capacityRefund, heading, copy }) => {
       const onPaymentComplete = vi.fn();
 
       fetchMock
@@ -784,6 +796,7 @@ describe("BookingPaymentWrapper", () => {
             error: "private provider or database detail",
             status: "CANCELLED",
             refunded,
+          capacityRefund,
           }),
         });
 
@@ -802,6 +815,9 @@ describe("BookingPaymentWrapper", () => {
       const alert = screen.getByRole("alert", { hidden: true });
       await waitFor(() => expect(alert).toHaveTextContent(heading));
       expect(alert).toHaveTextContent(copy);
+      expect(alert).not.toHaveTextContent("Automatic refund recovery is pending");
+      expect(alert).not.toHaveTextContent("the card payment was refunded");
+      if (!refunded) expect(alert).not.toHaveTextContent("was refunded to your card");
       expect(alert).toHaveTextContent(/Do not try another payment/i);
       expect(alert).not.toHaveTextContent("private provider or database detail");
       expect(onPaymentComplete).not.toHaveBeenCalled();

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
+import type { ResolvedBankRefundVoidAnswer } from "@/lib/bank-refund-void-answer";
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -43,6 +44,7 @@ export async function recordManualRefundTaskClosureAudit({
   settlement,
   settlementRoute,
   settlementDirection,
+  bankRefundVoidAnswer = null,
   store,
 }: {
   task: {
@@ -64,6 +66,8 @@ export async function recordManualRefundTaskClosureAudit({
   settlement: { amountCents: number; amended: boolean } | null;
   settlementRoute: EditReviewSettlementRoute | null;
   settlementDirection: SettlementDirectionValue;
+  /** #4162: a re-confirmed bank refund's answer, recorded with its closure. */
+  bankRefundVoidAnswer?: ResolvedBankRefundVoidAnswer | null;
   store: Prisma.TransactionClient;
 }): Promise<void> {
   await createAuditLog(
@@ -114,6 +118,14 @@ export async function recordManualRefundTaskClosureAudit({
         taskId: task.id,
         bookingId: task.bookingId,
         paymentId: task.paymentId,
+        ...(bankRefundVoidAnswer
+          ? {
+              bankRefundVoidAnswer: bankRefundVoidAnswer.answer,
+              ...(bankRefundVoidAnswer.answer === "recorded-in-xero"
+                ? { handMadeCreditNoteId: bankRefundVoidAnswer.note.creditNoteId, handMadeCreditNoteNumber: bankRefundVoidAnswer.note.creditNoteNumber }
+                : {}),
+            }
+          : {}),
         // #3030: three amounts, not one, because "audited amendment" (owner
         // decision D2) is only auditable if the entry says what the figure was
         // before and after. `raisedAmountCents` is what the task was raised

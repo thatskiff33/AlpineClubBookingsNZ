@@ -6,6 +6,8 @@ import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import StripeProvider from "./StripeProvider";
 import PaymentForm from "./PaymentForm";
 import SetupForm from "./SetupForm";
+import { capacityCancellationRecovery } from "@/lib/booking-card-refund-copy";
+import { useClubFormat } from "@/components/club-format-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
@@ -20,33 +22,6 @@ import {
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
-
-const CAPACITY_CANCELLATION_RECOVERY = {
-  refunded: {
-    heading: "Booking cancelled - payment refunded",
-    message:
-      "The booking was cancelled because lodge capacity was no longer available, and the card payment was refunded. Reload the booking to see its current status. Do not try another payment.",
-  },
-  refundPending: {
-    heading: "Booking cancelled - refund needs attention",
-    message:
-      "The booking was cancelled because lodge capacity was no longer available, but the refund could not be confirmed. Automatic refund recovery is pending. Do not try another payment. Reload the booking and contact the lodge administrator if the refund is not confirmed.",
-  },
-} as const;
-
-function capacityCancellationRecovery(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as Record<string, unknown>;
-  if (
-    candidate.status !== "CANCELLED" ||
-    typeof candidate.refunded !== "boolean"
-  ) {
-    return null;
-  }
-  return candidate.refunded
-    ? CAPACITY_CANCELLATION_RECOVERY.refunded
-    : CAPACITY_CANCELLATION_RECOVERY.refundPending;
-}
 
 /**
  * Report a payment-initialization failure to ops WITHOUT ever surfacing the raw
@@ -90,6 +65,7 @@ export default function BookingPaymentWrapper({
   returnUrl,
   onPaymentComplete,
 }: BookingPaymentWrapperProps) {
+  const format = useClubFormat();
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   // #1976 — the charge figures the SERVER returns for this booking's payment
   // intent. chargedAmountCents is the amount actually taken today (the member
@@ -140,7 +116,7 @@ export default function BookingPaymentWrapper({
         if (!response.ok) {
           const cancellationRecovery =
             response.status === 409
-              ? capacityCancellationRecovery(data)
+              ? capacityCancellationRecovery(data, format)
               : null;
           if (cancellationRecovery) {
             setRecoveryHeading(cancellationRecovery.heading);
@@ -236,7 +212,7 @@ export default function BookingPaymentWrapper({
     };
 
     initializePayment();
-  }, [bookingId, paymentMode, amountCents]);
+  }, [bookingId, paymentMode, amountCents, format]);
 
   // Zero-dollar booking: no payment is required
   if (amountCents === 0) {
@@ -262,7 +238,7 @@ export default function BookingPaymentWrapper({
           string,
           unknown
         >;
-        const cancellationRecovery = capacityCancellationRecovery(data);
+        const cancellationRecovery = capacityCancellationRecovery(data, format);
         if (cancellationRecovery) {
           setRecoveryHeading(cancellationRecovery.heading);
           setConfirmationError(cancellationRecovery.message);

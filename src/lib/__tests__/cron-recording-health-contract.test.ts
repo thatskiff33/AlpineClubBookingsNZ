@@ -39,7 +39,7 @@ function readInstrumentationRecordedJobNames(): string[] {
     /recordCronRun\(\s*"([a-z0-9-]+)"/g,
     /jobName:\s*"([a-z0-9-]+)"/g,
     /[A-Z_]+_JOB_NAME\s*=\s*"([a-z0-9-]+)"/g,
-    /^\s*(?:memberships|outbox|retries|inbound|backfill|"link-cleanup"|report):\s*"([a-z0-9-]+)"/gm,
+    /^\s*(?:memberships|outbox|retries|inbound|backfill|"link-cleanup"|"bank-refund-voids"|report):\s*"([a-z0-9-]+)"/gm,
   ];
 
   for (const source of sources) {

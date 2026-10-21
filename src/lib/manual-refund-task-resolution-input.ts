@@ -10,6 +10,7 @@
  */
 import type { ManualRefundTaskDirection } from "@prisma/client";
 import type { RecordedStrandNightPrices } from "@/lib/stored-night-price-repair";
+import type { ResolvedBankRefundVoidAnswer } from "@/lib/bank-refund-void-answer";
 
 /**
  * What a completion claims about the amount, and it must be stated.
@@ -94,6 +95,13 @@ export type ManualRefundTaskResolution =
        * same either way, and the answer is ignored on any other route.
        */
       handedBackInCash?: boolean | null;
+      /**
+       * #4162 (`INV-ADDPAY-042`): a bank refund to re-confirm completes only on
+       * one of its two answers - raise a fresh credit note, or the hand-made
+       * note Xero already holds (checked before the transaction,
+       * `prepareBankRefundVoidAnswer`). Refused on any other task.
+       */
+      bankRefundVoidAnswer?: ResolvedBankRefundVoidAnswer | null;
     }
   | {
       taskId: string;
@@ -117,4 +125,6 @@ export type ManualRefundTaskResolution =
       direction?: never;
       /** A dismissal hands nothing back, so there is no way it went (#3536). */
       handedBackInCash?: never;
+      /** #4162: "the club keeps it" IS the dismissal; it carries no answer. */
+      bankRefundVoidAnswer?: never;
     };

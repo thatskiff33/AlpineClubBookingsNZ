@@ -72,6 +72,9 @@ import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
 import { HandBackMethodChoice } from "@/components/admin/hand-back-method-choice";
+import { BankRefundVoidAnswerChoice } from "@/components/admin/bank-refund-void-answer-choice";
+import { bankRefundVoidQuestion, type BankRefundVoidAnswer } from "@/lib/bank-refund-void-follow-up-copy";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
@@ -110,6 +113,8 @@ interface ManualRefundTask {
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
+  /** #4162: a bank refund back on the list because Xero voided its credit note. Optional, as above. */
+  bankRefundVoidFollowUp?: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
   /**
    * #3643 (`INV-PAY-108`): Xero reported the review's invoice paid after the
    * cancel, and the invoice's cash then. Optional, as above.
@@ -614,9 +619,17 @@ function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFor
     if (isPartPaymentReview(task)) {
       return `Close this payment from ${task.memberName} as settled in Xero?`;
     }
+    // #4162: "No, the club keeps it" is this row's dismissal.
+    if (task.bankRefundVoidFollowUp && task.amountCents !== null) {
+      return `The club keeps the ${formatCents(task.amountCents, format)}, and ${task.memberName} is not paid?`;
+    }
     return isFinancialReview(task)
       ? `Close this review for ${task.memberName} with no adjustment?`
       : `Dismiss the refund for ${task.memberName}?`;
+  }
+
+  if (task.bankRefundVoidFollowUp && task.amountCents !== null) {
+    return `Has the ${formatCents(task.amountCents, format)} gone to ${task.memberName}?`;
   }
 
   if (isLateCaptureApproval(task) && task.amountCents !== null) {
@@ -655,6 +668,9 @@ function resolutionDescription({
     if (isPartPaymentReview(task)) {
       return "This closes the item as dealt with. It moves no money here, and the Xero repair tool stops listing the booking for review. Say how the payment was settled in Xero - refunded, or applied - and how the rest of the invoice was cleared, because that note is the record of it.";
     }
+    if (task.bankRefundVoidFollowUp) {
+      return "The refund stays out of the payment's records and no credit note is raised. Give the reason the club is keeping it, so the record makes sense later.";
+    }
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
       : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
@@ -668,6 +684,9 @@ function resolutionDescription({
     return "This refunds the payment to the card it came from, through Stripe, now. If you already refunded it in the Stripe dashboard, close it without refunding instead, saying so.";
   }
 
+  if (task.bankRefundVoidFollowUp) {
+    return "Answer once the money has gone to the member, whenever that was. It records the refund on the payment again; the member is not told anything. If it has not gone yet, cancel and leave it on the list.";
+  }
   if (task.groupOrganiserHandBack === true) {
     return "Only do this once the money has actually gone back to the organiser. It records that the club repaid them and who did it; the joiners' refunds are already in the ledger, so nothing more is written there or on the bookings' history.";
   }
@@ -691,8 +710,10 @@ function confirmButtonLabel(
   if (resolution === "dismissed") {
     if (isLateCaptureApproval(task)) return "Close without refunding";
     if (isPartPaymentReview(task)) return "Close as settled in Xero";
+    if (task.bankRefundVoidFollowUp) return "The club keeps it";
     return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
   }
+  if (task.bankRefundVoidFollowUp) return "Record the answer";
 
   if (isLateCaptureApproval(task)) return "Refund to card";
 
@@ -1016,6 +1037,7 @@ function AutomaticRefundNoticesCard({
  */
 export function ManualRefundTaskQueue() {
   const format = useClubFormat();
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("finance");
   const [tasks, setTasks] = useState<ManualRefundTask[] | null>(null);
   const [autoRefunded, setAutoRefunded] = useState<AutoRefundedNotice[]>([]);
@@ -1063,6 +1085,9 @@ export function ManualRefundTaskQueue() {
   const [direction, setDirection] = useState<SettlementDirection | null>(null);
   /** #3536: the officer's cash-or-bank answer; null is "not said" (bank wording). */
   const [handedBackInCash, setHandedBackInCash] = useState<boolean | null>(null);
+  // #4162: a re-confirmed bank refund's answer, with no default, and the hand-made note's number.
+  const [voidAnswer, setVoidAnswer] = useState<BankRefundVoidAnswer | null>(null);
+  const [handMadeNoteNumber, setHandMadeNoteNumber] = useState("");
   const [amountInput, setAmountInput] = useState("");
   /**
    * #3191: what the officer says each unpriced night sold for, as typed text
@@ -1414,6 +1439,15 @@ export function ManualRefundTaskQueue() {
               this issue.
             */
             ...(recordedNightPrices ? { recordedNightPrices } : {}),
+            // #4162: a re-confirmed bank refund's answer, only on its own completion.
+            ...(target.resolution === "completed" && target.task.bankRefundVoidFollowUp && voidAnswer
+              ? {
+                  bankRefundVoidAnswer:
+                    voidAnswer === "recorded-in-xero"
+                      ? { answer: voidAnswer, creditNoteNumber: handMadeNoteNumber.trim() }
+                      : { answer: voidAnswer },
+                }
+              : {}),
           }),
         },
       );
@@ -1429,6 +1463,8 @@ export function ManualRefundTaskQueue() {
       setNote("");
       setDirection(null);
       setHandedBackInCash(null);
+      setVoidAnswer(null);
+      setHandMadeNoteNumber("");
       setAmountInput("");
       setNightPriceInputs({});
       await load();
@@ -1513,8 +1549,10 @@ export function ManualRefundTaskQueue() {
       !isRefundRequestHandBack(task) &&
       task.groupOrganiserHandBack !== true &&
       task.cardShortfallHandBack !== true &&
-      task.cardShortfallCheck !== true,
+      task.cardShortfallCheck !== true &&
+      !task.bankRefundVoidFollowUp,
   );
+  const hasBankRefundVoidRows = openTasks.some((task) => Boolean(task.bankRefundVoidFollowUp));
   if (
     !showQueue &&
     autoRefunded.length === 0 &&
@@ -1567,6 +1605,19 @@ export function ManualRefundTaskQueue() {
                 no card payment to reverse, so the club has to pay the member
                 back directly. Mark a refund as paid back once the money has
                 actually gone — that is when the ledger records it.
+              </p>
+            ) : null}
+            {hasBankRefundVoidRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-bank-refund-void-intro"
+              >
+                Some of these are bank refunds the club had recorded as paid,
+                whose Xero credit note has since been voided. The app has taken
+                each back out of the payment&apos;s records until you say what
+                happened. If the money has gone to the member, say so and choose
+                how Xero records it. If it has not gone yet, leave it here. If
+                the club is keeping it, say why.
               </p>
             ) : null}
             {hasEditRefundRows ? (
@@ -1763,6 +1814,17 @@ export function ManualRefundTaskQueue() {
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">{task.reason}</p>
+                      {task.bankRefundVoidFollowUp && task.amountCents !== null ? (
+                        <p className="text-sm text-foreground" data-testid="manual-refund-task-bank-refund-void-question">
+                          {bankRefundVoidQuestion({
+                            bookingReference: formatBookingReference(task.bookingId),
+                            amount: formatCents(task.amountCents, format),
+                            memberName: task.memberName,
+                            creditNoteNumber: task.bankRefundVoidFollowUp.voidedCreditNoteNumber,
+                            voidedOn: clubTime.instantDate(new Date(task.bankRefundVoidFollowUp.voidedAt)),
+                          })}
+                        </p>
+                      ) : null}
                       {isPartPaymentReview(task) && task.partPaymentReviewXeroPaid ? (
                         <PartPaymentReviewXeroPaidLine
                           xeroPaid={task.partPaymentReviewXeroPaid}
@@ -1883,7 +1945,9 @@ export function ManualRefundTaskQueue() {
                           ? "Record the adjustment"
                           : isLateCaptureApproval(task)
                             ? "Refund to card"
-                            : "Mark paid back"}
+                            : task.bankRefundVoidFollowUp
+                              ? "Yes, it has gone"
+                              : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
                       {/* #4042: a group organiser's hand-back is paid, never dismissed. */}
@@ -1907,7 +1971,9 @@ export function ManualRefundTaskQueue() {
                             ? "Close this item"
                             : isLateCaptureApproval(task)
                               ? "Close without refunding"
-                              : "Dismiss"}
+                              : task.bankRefundVoidFollowUp
+                                ? "No, the club keeps it"
+                                : "Dismiss"}
                       </ViewOnlyActionButton>
                       )}
                     </div>
@@ -1930,6 +1996,8 @@ export function ManualRefundTaskQueue() {
                 // pre-filled figure nobody priced.
                 setDirection(null);
                 setHandedBackInCash(null);
+                setVoidAnswer(null);
+                setHandMadeNoteNumber("");
                 setAmountInput("");
                 // #3191: figures typed for one booking's nights must never be
                 // carried onto another's, for the same reason the amount is not.
@@ -2121,6 +2189,15 @@ export function ManualRefundTaskQueue() {
                     />
                     );
                   })}
+                  {target.resolution === "completed" && target.task.bankRefundVoidFollowUp ? (
+                    <BankRefundVoidAnswerChoice
+                      answer={voidAnswer}
+                      creditNoteNumber={handMadeNoteNumber}
+                      disabled={submitting || unverified !== null}
+                      onAnswer={setVoidAnswer}
+                      onCreditNoteNumber={setHandMadeNoteNumber}
+                    />
+                  ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}
@@ -2204,7 +2281,11 @@ export function ManualRefundTaskQueue() {
                         (target.resolution === "completed" &&
                           !isFinancialReview(target.task) &&
                           target.task.amountCents === null) ||
-                        (target.resolution === "dismissed" && note.trim().length === 0)
+                        (target.resolution === "dismissed" && note.trim().length === 0) ||
+                        // #4162: a re-confirmed bank refund needs its answer (and the note number for "already in Xero").
+                        (target.resolution === "completed" &&
+                          Boolean(target.task.bankRefundVoidFollowUp) &&
+                          (voidAnswer === null || (voidAnswer === "recorded-in-xero" && handMadeNoteNumber.trim().length === 0)))
                       }
                     >
                       {confirmButtonLabel(target, direction)}

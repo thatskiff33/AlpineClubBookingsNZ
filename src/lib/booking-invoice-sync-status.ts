@@ -113,7 +113,8 @@ import {
  * is a fixed enum the writer chooses rather than provider text.
  *
  * And `lastErrorMessage` is read ONLY on a `FAILED` row, because
- * `completeXeroSyncOperation` never clears it. A row that failed, was retried,
+ * `completeXeroSyncOperation` never clears it on `PARTIAL` (it does on
+ * `SUCCEEDED`, #4049). A row that failed, was retried,
  * and came back `PARTIAL` still carries the previous attempt's message — so
  * showing it beside a partial result would describe the wrong event with
  * authority.

@@ -163,7 +163,7 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
   it("runs #3583's seeded-history gate as a step of the migration-drift job, never on its own", () => {
     const workflow = readFileSync(resolve(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
     expect(workflow).toContain("- name: Back-post a seeded booking history and require the census gate");
-    expect(workflow).toMatch(/run: bash scripts\/booking-ledger-seed-gate\.sh postgresql:\/\/[^\n]*concurrency_race_1881_ledger_history/);
+    expect(workflow).toContain('run: bash scripts/booking-ledger-seed-gate.sh "${CONCURRENCY_RACE_DATABASE_URL}_ledger_history"');
     const gate = readFileSync(resolve(REPO_ROOT, "scripts/booking-ledger-seed-gate.sh"), "utf8");
     for (const command of [
       "src/lib/__tests__/booking-ledger-history-seed.realdb.test.ts",

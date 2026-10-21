@@ -66,6 +66,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.hostingCoverageReevaluationFindMany,
     },
     $transaction: mocks.transaction,
+    // #4217: the root client, so a settle without a caller's transaction opens its own.
+    $connect: vi.fn(),
   },
 }));
 

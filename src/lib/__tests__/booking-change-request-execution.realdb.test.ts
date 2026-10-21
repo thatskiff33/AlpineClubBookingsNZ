@@ -29,7 +29,7 @@
  * uniquely-namespaced `race-3750-` fixtures.
  */
 import { Role, type PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
@@ -87,6 +87,8 @@ let prisma: PrismaClient;
 let executor: typeof import("@/lib/booking-change-request-execution");
 let batchService: typeof import("@/lib/booking-batch-modification-service");
 let clubTimeServer: typeof import("@/lib/club-time/server");
+const pendingXeroWork: Promise<unknown>[] = [];
+let restoreXeroQueue: (() => void) | undefined;
 
 async function modificationIds(): Promise<string[]> {
   const rows = await prisma.bookingModification.findMany({
@@ -118,6 +120,15 @@ async function supplementaryInvoices(expected: number) {
 }
 
 async function clean(): Promise<void> {
+  // The batch's post-commit Xero leg is fire-and-forget. Let the real writer
+  // finish before deleting operations and the modifications that identify them.
+  const enqueueErrors: unknown[] = [];
+  while (pendingXeroWork.length > 0) {
+    const results = await Promise.allSettled(pendingXeroWork.splice(0));
+    for (const result of results) {
+      if (result.status === "rejected") enqueueErrors.push(result.reason);
+    }
+  }
   await prisma.xeroSyncOperation.deleteMany({
     where: { localModel: "BookingModification", localId: { in: await modificationIds() } },
   });
@@ -152,6 +163,9 @@ async function clean(): Promise<void> {
   // Undo the per-case capacity and season changes (no-ops before the lodge exists).
   await prisma.lodgeSettings.updateMany({ where: { id: LODGE_ID }, data: { capacity: 10 } });
   await prisma.season.updateMany({ where: { id: SEASON_ID }, data: { active: true } });
+  if (enqueueErrors.length > 0) {
+    throw new AggregateError(enqueueErrors, "#4234: real Xero fixture enqueues failed; all work drained and owned fixtures cleaned");
+  }
 }
 
 const ADD_LATE_FRIEND = {
@@ -464,6 +478,14 @@ function deferred() {
     executor = await import("@/lib/booking-change-request-execution");
     batchService = await import("@/lib/booking-batch-modification-service");
     clubTimeServer = await import("@/lib/club-time/server");
+    const xeroQueue = await import("@/lib/xero-booking-edit-settlement");
+    const queue = xeroQueue.queueXeroBookingEditSettlement;
+    const spy = vi.spyOn(xeroQueue, "queueXeroBookingEditSettlement").mockImplementation((input) => {
+      const pending = queue(input);
+      if (input.bookingId === BOOKING_ID) pendingXeroWork.push(pending);
+      return pending;
+    });
+    restoreXeroQueue = () => spy.mockRestore();
 
     await clean();
     await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
@@ -532,15 +554,19 @@ function deferred() {
   });
 
   afterAll(async () => {
-    if (!prisma) return;
-    await clean();
-    await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
-    await prisma.season.deleteMany({ where: { id: SEASON_ID } });
-    await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
-    await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
-    await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
-    await prisma.memberAccessRole.deleteMany({ where: { memberId: { in: [OFFICER_ID, OFFICER_2_ID] } } });
-    await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID, OFFICER_2_ID] } } });
+    try {
+      if (!prisma) return;
+      await clean();
+      await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
+      await prisma.season.deleteMany({ where: { id: SEASON_ID } });
+      await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+      await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
+      await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+      await prisma.memberAccessRole.deleteMany({ where: { memberId: { in: [OFFICER_ID, OFFICER_2_ID] } } });
+      await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID, OFFICER_2_ID] } } });
+    } finally {
+      restoreXeroQueue?.();
+    }
   });
 
   it("adds the guest, prices only their nights, raises the amount due and charges no change fee", async () => {
@@ -1295,6 +1321,7 @@ function deferred() {
         ]),
         // Unpaid: no Stripe cash on the invoice.
         primaryInvoiceCashCents: 0,
+        primaryInvoiceAttemptedCashCents: 0,
       });
 
       // The retry takes the create's "invoice already exists" exit — twice.
@@ -1361,13 +1388,16 @@ function deferred() {
           { description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: fee / 100 },
         ]),
         primaryInvoiceCashCents: 0,
+        primaryInvoiceAttemptedCashCents: 0,
       });
       expect(atLink).toMatchObject({ billedChangeFeeCents: fee, recordedChangeFeeCentsAtLink: fee, primaryInvoiceCashCents: 0 });
       // #3955 round 5, finding 4: stored with the link, in the same transaction.
       expect(
         (await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operation.id }, select: { requestPayload: true } }))
           .requestPayload,
-      ).toMatchObject({ primaryInvoiceBilledFee: { primaryInvoiceCashCents: 0, recordedChangeFeeCentsAtLink: fee } });
+      ).toMatchObject({
+        primaryInvoiceBilledFee: { primaryInvoiceCashCents: 0, primaryInvoiceAttemptedCashCents: 0, recordedChangeFeeCentsAtLink: fee },
+      });
 
       // A later edit records its own fee, billed on its own document.
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { changeFeeCents: { increment: 3_000 } } });

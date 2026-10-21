@@ -49,14 +49,19 @@ export async function bookingHasConfirmationLines(
  * The settlement lines already posted for one booking's payment transactions
  * and refunds, with everything a reversal must copy (#3581). The settlement
  * sync reads these to know what is already there and what it may need to
- * reverse; no figure anyone sees comes from it.
+ * reverse; no figure anyone sees comes from it. #4162: `which` reads another
+ * set the same way - the booking's `BANK_REFUND` lines, one of which the
+ * nightly undo of a voided bank-transfer refund note reverses.
  */
 export async function findPostedSettlementLines(
   store: BookingLedgerReadStore,
   bookingId: string,
+  which: Pick<Prisma.BookingLedgerLineWhereInput, "anchorKind" | "kind"> = {
+    anchorKind: { in: ["PAYMENT_TRANSACTION", "PAYMENT_REFUND"] },
+  },
 ): Promise<PostedSettlementLine[]> {
   const rows = await store.bookingLedgerLine.findMany({
-    where: { bookingId, anchorKind: { in: ["PAYMENT_TRANSACTION", "PAYMENT_REFUND"] } },
+    where: { bookingId, ...which },
     select: {
       id: true,
       postingKey: true,

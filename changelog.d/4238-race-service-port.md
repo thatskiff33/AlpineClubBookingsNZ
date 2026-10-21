@@ -1,0 +1,1 @@
+- Fix CI race-database startup when port 55442 is occupied by letting Docker select an available dedicated loopback port, validating and sharing its resolved endpoint across every race check.

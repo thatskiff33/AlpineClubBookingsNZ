@@ -668,6 +668,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // 504 -> 505 (#4154, owner decision on #4154): `booking-payment.capacity-race.refunded-total-corrected`,
   // the guarded recalculation of a capacity race's card charge before its hand-back, awaited on the
   // completion's own transaction under `payment`. RE-MEASURED with `pnpm run audit:census`.
+  // 505 -> 507 (#4162): `booking-payment.bank-refund.void-undone` (the nightly
+  // undo of a voided bank-transfer refund note) and `.void-answered` (a person's
+  // answer on Stuck States), both awaited on their transaction under `payment`.
+  // RE-MEASURED with `pnpm run audit:census`.
   // 505 -> 506 (#4210): `booking-payment.card-refund.failed-later-paid-another-way`,
   // a card refund Stripe failed later that a "Paid another way" close had already
   // settled, awaited on the ledger writer's transaction under `payment`.
@@ -678,7 +682,8 @@ export const AUDIT_CENSUS_TOTALS = {
   // 507 -> 508 (#4210 round 4): the runner's hold of a failed-later row an
   // earlier release raised, as a check, awaited on its claim's transaction
   // under `payment` (same action as the writer's decision).
-  writeSites: 508,
+  // #4162 + #4210: RE-MEASURED on the composed tree with `pnpm run audit:census`.
+  writeSites: 510,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -883,12 +888,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited on the ledger writer's transaction so the row commits with it.
     // 144 -> 145 (#4154): a capacity race's charge corrected before its hand-back,
     // awaited on the completion's transaction so the row commits with the correction.
+    // 145 -> 147 (#4162): the two voided-note writers.
     // 145 -> 146 (#4210): a failed-later card refund a "Paid another way" close
     // settled, awaited on the ledger writer's transaction so the row commits with it.
     // 146 -> 147 (#4210 round 3): a check row closed as checked - not owed,
     // awaited on its claim's transaction so the row commits with it.
     // 147 -> 148 (#4210 round 4): the runner holding a failed-later row as a check.
-    createAuditLog: { total: 148, uncategorised: 0 },
+    // #4162 + #4210: RE-MEASURED on the composed tree with `pnpm run audit:census`.
+    createAuditLog: { total: 150, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1090,12 +1097,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // 56 -> 57 (#4170): the refunded-outside-the-app entry, read by the same people.
     // 57 -> 58 (#4154): a capacity race's card charge corrected to its refund
     // rows before its hand-back - the payment's figures, read by the same people.
+    // 58 -> 60 (#4162): a voided bank-transfer refund note undone, and one
+    // answered by a person - the payment's figures, read by the same people.
     // 58 -> 59 (#4210): a failed-later card refund a "Paid another way" close had
     // already settled - read by the people who reconcile it.
     // 59 -> 60 (#4210 round 3): a check row closed as checked - not owed - read
     // by the people who reconcile it.
     // 60 -> 61 (#4210 round 4): the runner holding a failed-later row as a check.
-    payment: 61,
+    // #4162 + #4210: RE-MEASURED on the composed tree with `pnpm run audit:census`.
+    payment: 63,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

@@ -44,6 +44,7 @@ import {
   buildReissuedAskStripeIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "@/lib/payment-recovery-keys";
+import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { unpaidAskBillingEvidence } from "@/lib/unpaid-ask-billing-evidence";
 import {
@@ -296,6 +297,8 @@ export async function foldWaitingReissuedAsks(
       foldedInvoiceUnknown: false,
     });
   }
+  // #4217 (`INV-LOCK-002`): the Payment row before the recoveries it closes.
+  if (waiting.length > 0) await lockPaymentForRefundedTotal(tx, payment.id);
   await closeWaitingAskRecoveries(tx, waiting, now, WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE);
   // Round 6: recorded on the increase's own history (`unpaidAskOffsetHistory`),
   // so its replay, a later reduction and each re-issue's invoice still see them.
@@ -369,6 +372,8 @@ export async function queueReissuedAskRecovery(
 /** A re-issued ask's recovery, as the door's after-commit mint reads it. */
 export type ReissuedAskRecovery = {
   id: string;
+  /** #4217: the payment whose row is locked before this recovery's. */
+  paymentId: string;
   status: PaymentRecoveryOperationStatus;
   attempts: number;
   processingStartedAt: Date | null;
@@ -389,6 +394,7 @@ export async function readReissuedAskRecovery(
     where: { idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(bookingModificationId) },
     select: {
       id: true,
+      paymentId: true,
       status: true,
       attempts: true,
       processingStartedAt: true,
@@ -415,6 +421,8 @@ export async function writeReissuedAskUnderRecovery<T>(
   now: Date = new Date(),
 ): Promise<T | null> {
   return prisma.$transaction(async (tx) => {
+    // #4217 (`INV-LOCK-002`): the Payment row before the recovery row.
+    await lockPaymentForRefundedTotal(tx, recovery.paymentId);
     const completed = await tx.paymentRecoveryOperation.updateMany({
       where: {
         id: recovery.id,

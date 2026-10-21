@@ -19,6 +19,7 @@ import {
   resolveManualRefundTask,
 } from "@/lib/manual-refund-task-resolution";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { bankRefundVoidAnswerBodySchema, bankRefundVoidAnswerMessage, prepareBankRefundVoidAnswer, reconcileHandMadeNoteAfterCompletion } from "@/lib/bank-refund-void-answer";
 
 const noteField = z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable();
 // Explicit confirmation so closing a money task is never a single-click
@@ -97,6 +98,8 @@ const bodySchema = z.discriminatedUnion("resolution", [
        * changes the words on the Xero credit note and nothing else.
        */
       handedBackInCash: z.boolean().optional().nullable(),
+      /** #4162 (`INV-ADDPAY-042`): a bank refund to re-confirm's answer; the writer refuses it on any other task. */
+      bankRefundVoidAnswer: bankRefundVoidAnswerBodySchema.optional().nullable(),
     })
     .strict(),
   z
@@ -179,6 +182,9 @@ export async function POST(
   const format = await clubFormatValues();
 
   try {
+    // #4162: the "already in Xero" answer reads Xero HERE, before the completion's transaction, so no lock is held across it.
+    const voidAnswer = parsed.data.resolution === "completed" ? parsed.data.bankRefundVoidAnswer : null;
+    const bankRefundVoidAnswer = voidAnswer ? await prepareBankRefundVoidAnswer({ taskId: id, answer: voidAnswer, format }) : null;
     const result = await resolveManualRefundTask(
       parsed.data.resolution === "completed"
         ? {
@@ -190,6 +196,7 @@ export async function POST(
             direction: parsed.data.direction ?? null,
             recordedNightPrices: parsed.data.recordedNightPrices ?? null,
             handedBackInCash: parsed.data.handedBackInCash ?? null,
+            bankRefundVoidAnswer,
           }
         : {
             taskId: id,
@@ -200,13 +207,16 @@ export async function POST(
           },
       format,
     );
+    await reconcileHandMadeNoteAfterCompletion(bankRefundVoidAnswer); // #4162: catch a void since the check
     revalidatePath("/admin/payments");
     revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     return NextResponse.json({
       success: true,
       task: result,
       message: `${
-        parsed.data.resolution === "completed"
+        bankRefundVoidAnswer
+          ? bankRefundVoidAnswerMessage(bankRefundVoidAnswer)
+          : parsed.data.resolution === "completed"
           ? completionMessage(result, format)
           : dismissalMessage(result.kind, result.partPaymentReview)
       }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,

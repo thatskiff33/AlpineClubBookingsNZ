@@ -8477,6 +8477,7 @@ describe("#3954: a reduction set against an unpaid ask", () => {
 
   it("MUTATION (round 8, F6): a lost billed-offset note of an edit that owes its own note too is queued to wait for that note", async () => {
     // $30 reduction, $20 of it set against the ask: $10 is the edit's own note.
+    // A history row written before #4049 records no answer: the round-8 reading stands.
     const deps = createDependencies({ bookings: [billedReduction(-3000)], operations: [makePrimaryInvoiceCreateOperation()] });
 
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
@@ -8501,6 +8502,86 @@ describe("#3954: a reduction set against an unpaid ask", () => {
     const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
     expect(action?.payload).toMatchObject({ refundAmountCents: 2000, ...billedOffsetScoped });
     expect(action?.payload).not.toHaveProperty("ownNoteExpected");
+  });
+
+  // #4049: the repair reads the edit's own answer from its history row, not
+  // the broader "a reduction note is due". The $30 reduction below leaves $10
+  // after the ask, so the round-8 reading would wait for an own note.
+  const recordedBilledReduction = (ownNoteExpected: boolean, extra: Record<string, unknown> = {}) =>
+    reducedAfterUnpaidAsk(-3000, 2000, {
+      unpaidAskRetiredModificationIds: ["mod_increase"],
+      unpaidAskBilledOffsetCents: 2000,
+      unpaidAskBilledOffsetOwnNoteExpected: ownNoteExpected,
+      ...extra,
+    });
+
+  it.each([
+    ["settled by giving back applied credit, nothing captured", { appliedCreditGiveBack: { basisCents: 1000, givenBackCents: 1000 } }],
+    ["the edit recorded false for another reason, e.g. an organiser's card refund the repair cannot see", {}],
+  ])("MUTATION (#4049): a lost billed-offset note whose edit recorded no own note expected (%s) is queued not to wait", async (_label, extra) => {
+    const deps = createDependencies({ bookings: [recordedBilledReduction(false, extra)], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ refundAmountCents: 2000, ...billedOffsetScoped });
+    expect(action?.payload).not.toHaveProperty("ownNoteExpected");
+    const billedOffsetEnqueue = vi
+      .mocked(deps.enqueueXeroModificationCreditNoteOperation)
+      .mock.calls.map(([params]) => params as Record<string, unknown>)
+      .find((params) => params.reviewTaskId === billedOffsetScoped.reviewTaskId);
+    expect(billedOffsetEnqueue).toMatchObject({ refundAmountCents: 2000 });
+    expect(billedOffsetEnqueue).not.toHaveProperty("ownNoteExpected");
+  });
+
+  it("MUTATION (#4049): a lost billed-offset note whose edit recorded an own note expected still waits for it", async () => {
+    const deps = createDependencies({ bookings: [recordedBilledReduction(true)], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ refundAmountCents: 2000, ...billedOffsetScoped, ownNoteExpected: true });
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 2000, ...billedOffsetScoped, ownNoteExpected: true }),
+    );
+  });
+
+  it("MUTATION (#4049): a recorded false outranks a carried true - the note is not held back", async () => {
+    const carriedTrue = billedOffsetNote({
+      status: "CANCELLED",
+      xeroObjectType: null,
+      xeroObjectId: null,
+      requestPayload: {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingModificationId: "mod_reduction",
+        refundAmountCents: 2000,
+        noteWording: "invoice-correction",
+        ...billedOffsetScoped,
+        ownNoteExpected: true,
+      },
+    });
+    const deps = createDependencies({
+      bookings: [recordedBilledReduction(false)],
+      operations: [makePrimaryInvoiceCreateOperation(), carriedTrue],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action).toBeDefined();
+    expect(action?.payload).not.toHaveProperty("ownNoteExpected");
+  });
+
+  it("MUTATION (#4049): the edit's recorded answer outranks one carried on an earlier operation", async () => {
+    const deps = createDependencies({
+      bookings: [recordedBilledReduction(true)],
+      operations: [makePrimaryInvoiceCreateOperation(), billedOffsetNote({ status: "CANCELLED", xeroObjectType: null, xeroObjectId: null })],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ ownNoteExpected: true });
   });
 
   it.each([

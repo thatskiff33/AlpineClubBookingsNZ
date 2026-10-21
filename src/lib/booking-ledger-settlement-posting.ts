@@ -138,6 +138,40 @@ export function settlementChainWalker<T extends { id: string; postingKey: string
   };
 }
 
+/**
+ * THE REVERSAL OF ONE SETTLEMENT LINE: the same kind, method, anchor and
+ * figures with the sign flipped, naming the line it reverses and keyed by it
+ * (`reversalKey`), so a replay posts nothing and the database's unique
+ * `reversesLineId` agrees. The one home for it (`INV-SSOT-001`): the
+ * settlement convergence below, and #4162's nightly undo of a voided
+ * bank-transfer refund note (`bank-refund-void-follow-up.ts`), which takes
+ * back that refund's `BANK_REFUND` hand-back line (`INV-ADDPAY-042`).
+ */
+export function settlementLineReversal(
+  booking: { bookingId: string; lodgeId: string },
+  live: PostedSettlementLine,
+  postedByMemberId?: string | null,
+): BookingLedgerPosting {
+  return {
+    bookingId: booking.bookingId,
+    lodgeId: booking.lodgeId,
+    side: "SETTLEMENT",
+    kind: live.kind,
+    sign: live.sign === 1 ? -1 : 1,
+    quantity: live.quantity,
+    unitCents: live.unitCents,
+    anchorKind: live.anchorKind,
+    anchorId: live.anchorId,
+    // Copied from the line, never re-derived: by now the payment's
+    // provenance may have been cleared by the very reversal being recorded.
+    settlementMethod: live.settlementMethod,
+    narration: `Reversed: ${live.narration}`,
+    reversesLineId: live.id,
+    postingKey: reversalKey(live.id),
+    ...(postedByMemberId ? { postedByMemberId } : {}),
+  };
+}
+
 export function planSettlementLines(input: SettlementPlanInput): SettlementPlan {
   const postings: BookingLedgerPosting[] = [];
   const amountDrift: SettlementPlan["amountDrift"] = [];
@@ -165,21 +199,7 @@ export function planSettlementLines(input: SettlementPlanInput): SettlementPlan 
       return;
     }
     if (!live) return;
-    postings.push({
-      ...base,
-      kind: live.kind,
-      sign: live.sign === 1 ? -1 : 1,
-      quantity: live.quantity,
-      unitCents: live.unitCents,
-      anchorKind: live.anchorKind,
-      anchorId: live.anchorId,
-      // Copied from the line, never re-derived: by now the payment's
-      // provenance may have been cleared by the very reversal being recorded.
-      settlementMethod: live.settlementMethod,
-      narration: `Reversed: ${live.narration}`,
-      reversesLineId: live.id,
-      postingKey: reversalKey(live.id),
-    });
+    postings.push(settlementLineReversal({ bookingId: input.bookingId, lodgeId: input.lodgeId }, live));
   };
 
   for (const transaction of input.transactions) {

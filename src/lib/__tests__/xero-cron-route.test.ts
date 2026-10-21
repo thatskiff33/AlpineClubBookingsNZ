@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   runXeroInboundReconciliationCycle: vi.fn(),
   backfillHistoricalXeroObjectLinks: vi.fn(),
   cleanupStaleCanonicalXeroObjectLinks: vi.fn(),
+  runBankRefundVoidFollowUp: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
   reconcileXeroCreditSync: vi.fn(),
   isEffectiveModuleEnabled: vi.fn(),
@@ -41,6 +42,13 @@ vi.mock("@/lib/xero-hardening", () => ({
   backfillHistoricalXeroObjectLinks: mocks.backfillHistoricalXeroObjectLinks,
   cleanupStaleCanonicalXeroObjectLinks: mocks.cleanupStaleCanonicalXeroObjectLinks,
   sendXeroReconciliationReport: mocks.sendXeroReconciliationReport,
+}));
+
+// #4162: the voided bank-transfer refund notes' follow-up, run after the cleanup.
+vi.mock("@/lib/bank-refund-void-follow-up", () => ({
+  runBankRefundVoidFollowUp: mocks.runBankRefundVoidFollowUp,
+  bankRefundVoidFollowUpFailureMessage: (result: { counts?: { failed?: number } }) =>
+    (result.counts?.failed ?? 0) > 0 ? "follow-up failed" : null,
 }));
 
 vi.mock("@/lib/xero-credit-sync-checker", () => ({
@@ -103,12 +111,13 @@ describe("POST /api/cron/xero", () => {
       inboundReconciliation: null,
       linkBackfill: null,
       linkCleanup: null,
+      bankRefundVoidFollowUp: null,
       reconciliationReport: null,
       creditSyncCheck: null,
     });
     expect(mocks.isXeroConnected).not.toHaveBeenCalled();
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
-    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(8);
+    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(9); // #4162: + the voided bank-transfer refund notes' follow-up
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-outbox",
@@ -223,6 +232,7 @@ describe("POST /api/cron/xero", () => {
       scannedActiveLinks: 5,
       deactivatedLinks: 1,
     });
+    mocks.runBankRefundVoidFollowUp.mockResolvedValue({ mode: "report-only", scanned: 0, counts: { failed: 0 }, items: [] });
     mocks.sendXeroReconciliationReport.mockResolvedValue({
       sent: true,
       report: {

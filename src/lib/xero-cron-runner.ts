@@ -15,6 +15,10 @@ import {
 import { canonicalLinkCleanupFailureMessage } from "@/lib/xero-hardening-shared";
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import {
+  bankRefundVoidFollowUpFailureMessage,
+  runBankRefundVoidFollowUp,
+} from "@/lib/bank-refund-void-follow-up";
+import {
   reconcileXeroCreditSync,
   XERO_CREDIT_SYNC_JOB_NAME,
 } from "@/lib/xero-credit-sync-checker";
@@ -31,6 +35,8 @@ const XERO_CRON_TASKS = [
   "inbound",
   "backfill",
   "link-cleanup",
+  // #4162: after the link cleanup, whose #4161 heal turns voided mirrors off.
+  "bank-refund-voids",
   "report",
   "credit-sync",
 ] as const;
@@ -45,6 +51,7 @@ const XERO_CRON_JOB_NAMES: Record<XeroCronTask, string> = {
   inbound: "xero-inbound-reconcile",
   backfill: "xero-link-backfill",
   "link-cleanup": "xero-link-cleanup",
+  "bank-refund-voids": "xero-bank-refund-void-follow-up",
   report: "xero-reconciliation-report",
   "credit-sync": XERO_CREDIT_SYNC_JOB_NAME,
 };
@@ -59,6 +66,7 @@ export interface XeroCronRunnerPayload {
   inboundReconciliation: unknown | null;
   linkBackfill: unknown | null;
   linkCleanup: unknown | null;
+  bankRefundVoidFollowUp: unknown | null;
   reconciliationReport: unknown | null;
   creditSyncCheck: unknown | null;
 }
@@ -76,6 +84,7 @@ export interface XeroCronRunnerDependencies {
     runXeroInboundReconciliationCycle: typeof runXeroInboundReconciliationCycle;
     backfillHistoricalXeroObjectLinks: typeof backfillHistoricalXeroObjectLinks;
     cleanupStaleCanonicalXeroObjectLinks: typeof cleanupStaleCanonicalXeroObjectLinks;
+    runBankRefundVoidFollowUp: typeof runBankRefundVoidFollowUp;
     sendXeroReconciliationReport: typeof sendXeroReconciliationReport;
     reconcileXeroCreditSync: typeof reconcileXeroCreditSync;
   }>;
@@ -197,6 +206,7 @@ function emptyPayload(task: string, connected = false): XeroCronRunnerPayload {
     inboundReconciliation: null,
     linkBackfill: null,
     linkCleanup: null,
+    bankRefundVoidFollowUp: null,
     reconciliationReport: null,
     creditSyncCheck: null,
   };
@@ -214,6 +224,8 @@ function messageForTask(task: string) {
       return "Historical Xero link maintenance completed";
     case "link-cleanup":
       return "Stale Xero canonical links cleaned up";
+    case "bank-refund-voids":
+      return "Voided bank-transfer refund notes followed up";
     case "inbound":
       return "Xero inbound reconciliation cycle completed";
     case "outbox":
@@ -340,6 +352,23 @@ export async function runXeroCronTaskList(
         if (healFailure) {
           failures.push({ task, message: healFailure });
           (dependencies.log ?? logger).error({ task }, healFailure);
+        }
+      } else if (task === "bank-refund-voids") {
+        // #4162: local rows only, so it runs whether or not Xero is connected.
+        // Report-only unless XERO_ENABLE_BANK_REFUND_VOID_WRITES is true. A
+        // note that failed is recorded FAILURE with the summary, like the heal.
+        const followUp = await runRecordedXeroTask({
+          task,
+          recordCronRun,
+          work: () => (taskDependencies.runBankRefundVoidFollowUp ?? runBankRefundVoidFollowUp)(),
+          statusFor: (result) => (bankRefundVoidFollowUpFailureMessage(result) ? "FAILURE" : "SUCCESS"),
+          errorFor: bankRefundVoidFollowUpFailureMessage,
+        });
+        payload.bankRefundVoidFollowUp = followUp;
+        const followUpFailure = bankRefundVoidFollowUpFailureMessage(followUp);
+        if (followUpFailure) {
+          failures.push({ task, message: followUpFailure });
+          (dependencies.log ?? logger).error({ task }, followUpFailure);
         }
       } else if (task === "report") {
         payload.reconciliationReport = await runRecordedXeroTask({

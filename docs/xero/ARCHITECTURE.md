@@ -640,7 +640,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-booking-edit-settlement` | Classifies an admin booking edit into the right financial follow-up (update invoice / supplementary invoice / credit note) and queues it. |
 | Kept late captures (#3635, `INV-PAY-110`) | A card payment captured after its booking was cancelled and KEPT by a treasurer (the #3639 task dismissed), recorded exactly as a card receipt: GROSS, dated the club day of the Stripe charge (`stripe-capture-date.ts`, stored on the row before the send; a kept change payment's supplementary invoice likewise), paid from `stripeBankAccount` that day. One pure decision, `decideLateCapture` (`late-capture-kept-xero-rules.ts`), serves the reaper, the late-capture release, the dismissal, the worker and the repair tool. A change payment on an invoiced booking keeps its supplementary invoice; the booking's own payment, and a change payment on a booking Xero never invoiced, get a `KEPT_LATE_CAPTURE_INVOICE` (`xero-kept-late-capture-invoice.ts`) anchored on the approval task (`ManualRefundTask`) and keyed by it, carrying `capturedCents` and `capturedOn`, its payment through `createXeroPaymentForInvoice`. It touches neither the booking's own invoice nor its clearing note. A new queue type rather than a third supplementary anchor, because that builder is a booking change's document and its task anchor already means a second ask. **Refunds** of every kind are the ordinary refund note, owed only once the app recorded the capture's receipt (`readLateCaptureXeroReceipt`, `late-capture-xero-receipt.ts`: none, recorded, or resolved by hand), so an invoice cleared at cancel never causes a Stripe-account refund. Notes are sized per capture (`noteLateCaptureRefunds`, the capture's refunds less the notes recording its `paymentIntentId`; complete for every late-capture refund made since #4131, which refunds only the capture's own charge, `lateCaptureOwnChargeSlice`; the stated limit is a slice the previous release's plan took from another charge, before the deploy or by an attempt redelivered across it, which is not the capture's and stays the nightly self-heal's case, raised against the booking's own invoice), name the capture's own receipt and never `payment.xeroInvoiceId`, and are dated the refund's day; the worker credits back refunds taken before its send (`creditBackLateCaptureRefunds`). Every refund-note cap and gap reads one figure, the note-eligible cash (`refund-note-eligible-cash.ts`): the cash evidence less refunds of late captures without an app-recorded receipt, so the nightly self-heal never raises one. A late capture is known by its task row, so one whose automatic refund went out while its record did not (a crash, or a lost record write the webhook answers 500) is recorded first - by Stripe's redelivery, or by the self-heal's own check before it raises any card note, each proving from the refund's Stripe metadata that the late-capture door sent it (#4149, `late-capture-record-recovery.ts`); a payment the self-heal cannot check that night gets no card note. Meanwhile a `charge.refunded` for it queues no generic note, and on a cancelled booking a capture that landed after the cancel (the handler's marker or a cancel claim, `late-capture-landed-after.ts`) is outside the note-eligible cash even before its row exists, and the self-heal finds such captures from its own list rather than the gap (#4170); a capture the superseded-payment refund refunded on a cancelled booking is one of these by its cancel claim, so it is never noted, and the self-heal never asks Stripe about it (#4173). **The task row is the lock**: the enqueue (dismissal, repair) and the worker's send-time check take it `FOR UPDATE`, the check and a withdrawal commit together, and a raised invoice's missing payment is retried whatever the task's status (the repair tool offers it). Approval: an unsent row is withdrawn, a PARTIAL one goes back for its payment. Retry sends FAILED/PARTIAL back to the outbox from the kept queued payload. **An approved refund that Stripe gave up on, closed as "Paid another way"** (#3924 round 6, `INV-PAY-122`) leaves the capture in the Stripe account, so it owes the same receipt (`decideLateCapture`'s `refundClosedPaidAnotherWay`): the close queues it (putting a FAILED row back to PENDING only if it cannot have reached Xero - no payment link, no attempted invoice call, `keptReceiptMayHaveReachedXero`, #3924 rounds 7 and 8; one that may have is left FAILED and the close reports it held for an officer, never queued, as its dialog promised from the same fact, `keptReceiptHeldForOfficer`, round 9), and the worker writes the receipt's link under the task row, then queues the close's bank-transfer refund note at most once in a second transaction under the same row, so the note never precedes the receipt and a note failure never rolls the link back. A receipt already on its way as a change's supplementary invoice (queued, sending or FAILED) gives the close the same waiting key with nothing queued, and that invoice's worker runs the same note step once it is sent (`queueWaitingPaidAnotherWayNote`, round 8). A FAILED one is told apart (`invoiceFailed`), and an officer's retry sends it back through the outbox on its own row with its queued payload, so the receipt reads its invoice and the note step runs - never an inline replay on a new row that names no capture (round 9). Round 10: only a change invoice whose capture an approval task owns goes back this way (an ordinary card edit's keeps the inline replay); one whose change already carries an active `SUPPLEMENTARY_INVOICE` link is refused with a 409 telling the officer to mark it resolved (`late-capture-change-invoice-retry.ts`, reading the link with the receipt reader's own `findActiveSupplementaryInvoiceLink`, round 11) - and, round 12, not to record by hand the close's share, whose note follows the linked invoice, but to record by hand the capture's card refunds no note answers (`readUnnotedLateCaptureCardRefunds`: its own `PaymentRefund` rows less the notes naming it that reached Xero, round 13; round 14: the row is resolved first, a note sent with no reply - the executed payload, no id, `refundCreditNoteCreateAttempted` - is named apart for the officer to check Xero before recording it, here and in every record-by-hand finding, and while the card verdict still names an invoice in Xero the figure is the note writer's own; round 15: a note is also in Xero by its active `REFUND_CREDIT_NOTE` link naming the capture, so an officer's retry on a new row with no queue type counts once, a row Xero refused with a 4xx (`xeroRefusedOperation`) is never sent, and while the card notes can still land - an invoice in Xero, or a receipt row on its way - nothing is recorded by hand and the 409 says the app notes the gap the next time it notes the charge), since every card-refund path reads the resolved row as resolved by hand; with no close or a $0 one, any card refund; and one that attempted `createInvoices` (`xeroCreateCallAttempted`, `invoiceMayBeInXero`) is held for an officer to check Xero first, as a held receipt row is. For a refund closed as paid another way only (`readPaidAnotherWayLateCaptureXeroReceipt`, round 11: the close's plan, its note step and the repair finding), the receipt reader takes the change's active link, or a row resolved by hand after the app sent it, as the receipt recorded against that invoice; every card-refund path keeps `readLateCaptureXeroReceipt`, where a resolved row is resolved by hand. Both run one body. The note names the receipt by its invoice id (`creditsInvoiceId`), never by `paymentIntentId`, which would count it as the capture's card note; it takes the stepped path whatever the payment's source, sized by the close's record less its own notes (`readPaidAnotherWayCloseShare`, never the payment-wide gap, and never closed against another note's link); and the refund-note gap reports the close cash its own notes do not cover (`paidAnotherWayUncoveredCents`, by the gap's own coverage), which the nightly self-heal and the repair tool take off their card ask; for a payment with such cash the self-heal also runs the note step again (`queueWaitingPaidAnotherWayNotesForPayment`, round 9), which queues a note never queued but never retries a failed one: that is **Retry in background** in Xero Operations. The note's Xero idempotency key is the close and its own coverage, never the payment-wide watermark (round 9). The repair tool retries or queues a missing receipt (`PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`; a row that may have reached Xero is left for an officer) and queues a note that never followed its receipt (`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`); every approved capture's close is answered by the close's finding first, never by the kept invoice's `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` (round 11); a receipt resolved by hand before the app sent it is reported, naming the capture's own card refunds less the notes in Xero naming it plus what the close paid back (rounds 12 and 13; never `PaymentTransaction.refundedAmountCents`, which can carry another hand-back), to record by hand (`PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`, round 9), and not once any note row of the close exists, one resolved by hand included (round 10). Wherever every card-refund path reads the receipt resolved by hand (round 13: on that verdict alone, so also a change invoice resolved before the app sent it and a close whose note row exists) and no record-by-hand finding names the capture, `LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND` names its card refunds no note in Xero answers (`readLateCaptureCardRefundsByHand`, round 12), with or without a close; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` reads the same verdict and figure (round 13), so each capture is named once, and none where the app raises the card note: the card-refund verdict is deliberately not widened to raise the note, since rows resolved before #3924 may already be recorded by hand. Every record-by-hand finding is report-only: recording a refund by hand in Xero writes no row the app reads, and the tool cannot acknowledge a finding, so it keeps appearing, and says so. |
 | Change fee on a late primary invoice (#3502) | A supplementary invoice needs a primary one to supplement, so a change fee the card collected before the booking's primary invoice was raised (a credit-paid or card-plus-credit booking edited while its invoice operation was still pending or failed) is billed on no supplementary invoice. The primary invoice bills every fee recorded on the payment (`recordedChangeFeeCents`) on the one shared fee line (`changeFeeLineItem`), as [The change fee on a booking's primary invoice](#the-change-fee-on-a-bookings-primary-invoice-3750-inv-pay-119) describes, so its total equals the cash recorded plus the applied credit allocated against it and the fee is billed exactly once. |
-| Reduction against an unpaid ask (#3954, `INV-PAY-120`) | An increase's supplementary invoice waits `WAITING_PAYMENT` on its card ask and is never raised before the payment. The reduction reads what the parked invoices it retires would have billed, then CANCELS them in its own transaction (`ADDITIONAL_ASK_RETIRED_BY_REDUCTION`, never revived by a late capture, which is refunded). Which invoice billed the rest of the retired ask is read from evidence, not from which invoices happen to be parked yet (`unpaidAskBillingEvidence`): a request's own money by the asking edit's own answer to whether the primary invoice existed - the minting recovery's frozen `hadIssuedXeroInvoice`, or the one the door stamped on the request row (`PaymentTransaction.hadIssuedXeroInvoice`) - and money a request carried by the re-issue or fold its history names; a re-issue its own reduction was unsure of stays unsure. The offset comes off supplementary money first (`splitUnpaidAskOffsetForXero`). Decision A (owner, 9 Oct 2026): a smaller re-issued ask gets its own supplementary invoice, anchored on the reducing edit, for that money less the offset (never more than the ask), queued once the ask is minted and not retired since (withdrawn or failed; a paid one is still invoiced), waiting on its intent so it is marked paid on capture (`queueReissuedAskSupplementaryInvoice`). Where a later increase folded that re-issue into its own ask, the invoice waits on the increase's intent instead (`queueFoldedReissuedAskInvoices`), from its door's mint or its recovery's replay. The rest of the offset the primary invoice billed (owner decision 10 Oct 2026, "Auto credit note") takes an invoice-correction credit note for exactly that part (`unpaidAskBilledOffsetCents`), queued in the edit's own transaction (`queueReductionAskFollowUps`) and allocated against the primary invoice. It is scoped `UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE` on the per-share key slot, as #3809's give-back note is, so one reducing edit has one note however often it is replayed; it moved no cash, so the inbound sync leaves it out of the refunded total; and it is raised after the edit's own note - waiting while that note is queued or running, and while the edit expects one not yet queued, for up to six hours, looked at again every five minutes rather than on every outbox run, after which the repair pass hands it to a person (`unpaid-ask-billed-offset-order.ts`); a note the repair pass queues waits the same way. Where the evidence cannot be established (an answer never recorded, a carried figure that does not add up), nothing is credit-noted or invoiced on a guess: the offset the primary invoice may have billed (`unpaidAskBilledOffsetUnsureCents`) and what the re-issue's invoice may still owe (`reissuedAskInvoiceUnsureCents`) are recorded, and the repair pass lists them for a person. The reduction's own credit note covers only what it returned of money paid. The edit's history names every increase whose ask it retired - by a parked invoice's anchor, a waiting recovery, or the edit stamped on the retired request row (`PaymentTransaction.bookingModificationId`), so an ask retired before its increase queued its invoice is named too; the repair pass raises nothing for a named increase and checks the reduction instead (its re-issue invoice present, deferred while its recovery is open, folded into a later increase, or carried by a later reduction), and verifies or queues the billed-offset note (`scopedBilledOffsetNote`). |
+| Reduction against an unpaid ask (#3954, `INV-PAY-120`) | An increase's supplementary invoice waits `WAITING_PAYMENT` on its card ask and is never raised before the payment. The reduction reads what the parked invoices it retires would have billed, then CANCELS them in its own transaction (`ADDITIONAL_ASK_RETIRED_BY_REDUCTION`, never revived by a late capture, which is refunded). Which invoice billed the rest of the retired ask is read from evidence, not from which invoices happen to be parked yet (`unpaidAskBillingEvidence`): a request's own money by the asking edit's own answer to whether the primary invoice existed - the minting recovery's frozen `hadIssuedXeroInvoice`, or the one the door stamped on the request row (`PaymentTransaction.hadIssuedXeroInvoice`) - and money a request carried by the re-issue or fold its history names; a re-issue its own reduction was unsure of stays unsure. The offset comes off supplementary money first (`splitUnpaidAskOffsetForXero`). Decision A (owner, 9 Oct 2026): a smaller re-issued ask gets its own supplementary invoice, anchored on the reducing edit, for that money less the offset (never more than the ask), queued once the ask is minted and not retired since (withdrawn or failed; a paid one is still invoiced), waiting on its intent so it is marked paid on capture (`queueReissuedAskSupplementaryInvoice`). Where a later increase folded that re-issue into its own ask, the invoice waits on the increase's intent instead (`queueFoldedReissuedAskInvoices`), from its door's mint or its recovery's replay. The rest of the offset the primary invoice billed (owner decision 10 Oct 2026, "Auto credit note") takes an invoice-correction credit note for exactly that part (`unpaidAskBilledOffsetCents`), queued in the edit's own transaction (`queueReductionAskFollowUps`) and allocated against the primary invoice. It is scoped `UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE` on the per-share key slot, as #3809's give-back note is, so one reducing edit has one note however often it is replayed; it moved no cash, so the inbound sync leaves it out of the refunded total; and it is raised after the edit's own note - waiting while that note is queued or running, and while the edit expects one not yet queued, for up to six hours, looked at again every five minutes rather than on every outbox run, after which the repair pass hands it to a person (`unpaid-ask-billed-offset-order.ts`); a note the repair pass queues waits exactly when the edit expected an own note, as the edit recorded it on its history row with the same rule (#4049, `unpaidAskBilledOffsetOwnNoteExpected`): an edit that settled by giving back applied credit with nothing captured, or whose note an organiser's card refund raises, expected none, so the note does not wait. A history row written before #4049 has no answer; the repair pass carries one from an earlier operation of the note, else waits whenever a reduction note is due, which can hold the note six hours and hand it to a person but never raise it first. Where the evidence cannot be established (an answer never recorded, a carried figure that does not add up), nothing is credit-noted or invoiced on a guess: the offset the primary invoice may have billed (`unpaidAskBilledOffsetUnsureCents`) and what the re-issue's invoice may still owe (`reissuedAskInvoiceUnsureCents`) are recorded, and the repair pass lists them for a person. The reduction's own credit note covers only what it returned of money paid. The edit's history names every increase whose ask it retired - by a parked invoice's anchor, a waiting recovery, or the edit stamped on the retired request row (`PaymentTransaction.bookingModificationId`), so an ask retired before its increase queued its invoice is named too; the repair pass raises nothing for a named increase and checks the reduction instead (its re-issue invoice present, deferred while its recovery is open, folded into a later increase, or carried by a later reduction), and verifies or queues the billed-offset note (`scopedBilledOffsetNote`). |
 | Supplementary-invoice anchors | One booking change gets ONE supplementary invoice, anchored on its `BookingModification` — that anchor is what the enqueue's link-check and queued-check are scoped to, and what makes "one invoice per change" true rather than asserted. Since #3193 there is a second anchor: a `ManualRefundTask`, for the SECOND ASK — a settled financial-review share's own small invoice, raised when the change's invoice had already been sent and could not be raised to include it. It bills that share alone, never a total, and being on its own anchor is what keeps it out of every read scoped to the change. Same queue type, same handler, same advisory key namespace. **Only a SENT invoice buys one** (#3193 fix round): a row the outbox has merely claimed can return to the queue un-attempted and be raised to the combined total by the next settlement, which would then bill a separately-invoiced share twice - so the enqueue answers `short-sent` and `short-in-flight` separately and only the first raises anything. And because that anchor hides a second ask from the change's reads, it also hid it from the operator: `ManualRefundTask` is now a Xero local model, so the row opens on a record page, can be filtered for in the operations panel, and has a retry branch that replays it from its queued payload. |
 
 ### Financial document builders (called only by the outbox worker and repair)
@@ -1040,7 +1040,8 @@ The same link write moves `Payment.xeroRefundCreditNoteId` to the newest other
 live note that may be canonical (never a per-refund note, #3880), or clears it,
 as the #2901 repair apply does, so the nightly missing-link report never sees a
 pointer to an inactive mirror (#4046). A refund left with no live note shows no
-drift in that report, by design; making it visible is #4162. A mirror voided
+drift in that report, by design; on a bank transfer the nightly follow-up
+handles it (#4162, below). A mirror voided
 before #4091 (still active, its pointer naming it) is healed by the nightly
 `link-cleanup` through this same write (#4161).
 
@@ -1074,11 +1075,15 @@ watermark between the attempt and its retry, so the retry can mint a second note
 (true on `main` before #4091 too). A void that adds a matching or unreadable
 link to the suffix does the same. Both need a void inside a lost-answer window.
 
-On a bank transfer a void undoes the refund (owner decision; Xero is its payment
-rail, `INV-ADDPAY-021`). The inbound sync returns the refunded amount to what the
-live notes say, and nothing is re-raised automatically. If the refund was real,
-the treasurer records it again, and only then does a request raise the fresh
-note, under its own key.
+On a bank transfer a void is undone, then asked once (#4162, `INV-ADDPAY-042`).
+The inbound sync no longer lowers the refunded total below the payment's own
+transaction detail (`INV-ADDPAY-021`); the nightly follow-up moves the detail,
+the hand-back's ledger line and the total together and puts the money back on
+the refund list. Nothing is re-raised automatically. While a payment holds a
+voided note the follow-up has not handled, the floor logs its divergence at
+info and raises no alert - including, while report-only, notes the job would
+undo, which no screen lists: the count below is where those appear. See
+[Voided bank-transfer refund notes](#voided-bank-transfer-refund-notes-4162).
 
 **A refund request's own note, voided (#4195).** The same void rule holds for
 a refund request's own note (`REFUND_REQUEST_CREDIT_NOTE`, `INV-PAY-118`). The
@@ -1478,6 +1483,73 @@ apply run deactivates the local mirrors. Modules:
 `src/lib/xero-refund-note-link-repair.ts` (planner/applier, no provider calls)
 and `src/lib/xero-refund-note-status-recorder.ts` (read-only status GETs).
 
+### Voided bank-transfer refund notes (#4162)
+
+Owner decision 17 Oct 2026 ("undo, then ask once", `INV-ADDPAY-042`). The
+treasurer's hand-back is the record that a bank refund was paid; its refund
+credit note mirrors it. A void in Xero means "this refund is no longer
+recorded", and only the treasurer knows whether the transfer went or bounced.
+
+**The nightly follow-up** (`src/lib/bank-refund-void-follow-up.ts`) runs in the
+02:25 slot right after `link-cleanup`, whose #4161 heal turns voided mirrors
+off (job `xero-bank-refund-void-follow-up`, local rows only, so it runs with
+Xero disconnected too). For each `REFUND_CREDIT_NOTE` link on an
+`INTERNET_BANKING` payment whose recorded status is VOIDED or DELETED, the
+classifier (`src/lib/bank-refund-void-scan.ts`) answers one of:
+
+| Answer | What happens |
+| --- | --- |
+| awaiting heal | The mirror is still active: the next night, after the heal. |
+| handled | Its nightly follow-up exists (the key is the claim); a link marker records a spare, a person's answer, or picks in full; or a person's picks add up to its amount (one pick when its amount cannot be read). Nothing more. |
+| deferred | A refund-note create on the payment could still mint (a row whose note Xero voided never counts). Tried again next night; listed on Stuck States after 7 days and counted in the run's summary (`deferredOverdue`). |
+| spare | Live notes plus notes resolved by hand (`INV-INT-025`, never a resolved row whose own note Xero voided) still cover every bank hand-back and the eligible card refund cash (`resolveRefundNoteEligibleCash` less paid-another-way cash): nothing moves; a `bankRefundVoid` marker on the link records it. |
+| undo | In one transaction under `lock(1)` then the Payment row: insert the follow-up (`CANCELLED_BOOKING_HAND_BACK`, key `bank-refund-void:<paymentId>:<creditNoteId>`), unwind the amount from the allocation (`unwindLocalRefundAllocation`, oldest first, never below card refunds), reverse the hand-back's `BANK_REFUND` line (`settlementLineReversal`) and recompute the total (`reconcilePaymentAggregates`). No email, booking event or provider call. |
+| unmatched | The amount cannot be read, no single live hand-back line has it, the detail no longer holds it, it recorded a card refund's record (a "Paid another way" close or shortfall), or a person has picked part of it: listed on Stuck States. A person picks the live bank refunds it recorded, one at a time, and the same undo runs for each (`pickRefundForUnmatchedVoid`, owner 18 Oct 2026), claimed under `bank-refund-void:<paymentId>:<creditNoteId>:<lineId>`; never a line its own task's live notes still record even in part (shown with its live share, left to a recorded answer), nor one larger than what is left of the note's amount. The pick that leaves nothing to pick writes a `picked` marker. A card refund's record has nothing to pick - its note is re-raised from the repair tool and the answer recorded; any other row with nothing to pick says why and takes a recorded answer. |
+
+A note is matched to the hand-back it recorded by the task it names - a
+cancellation's note carries `handBackTaskId` in its payload since #4162 (never
+in its key), a review's `reviewTaskId`, a follow-up's fresh note
+`paidAnotherWayTaskId`, a hand-made note's link `handBackTaskId` - and that
+task's live line for exactly the note's amount. An older note naming no task
+takes the one live hand-back line of its amount, only when no other live
+`BANK_REFUND` line on the booking has that amount. A line whose own task's live
+notes (create rows naming the task, or a hand-made link) still record any of it
+is never matched: an undo takes back the whole line.
+
+**Report-only by default.** Until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`
+the job classifies and logs, and writes nothing; a person's pick or answer is
+refused (409) and the panel is read-only. Each night a note is classified
+unlocked first; only a spare or an undo takes the locks, and handled notes are
+left out of the scan in SQL.
+
+**The answers** (refund list, `resolveManualRefundTask`): a fresh note is queued
+in the completion's transaction, keyed and sized on the follow-up (the
+`paidAnotherWayTaskId` path a card refund shortfall uses: Xero key
+`payment:<id>:refund-credit-note:paid-another-way:<task>:<own cover>:v3`), dated
+today. "Already in Xero" reads the hand-made note by number before the
+transaction (`getCreditNotes`, and the payment's invoice for its contact,
+`bank-refund-void-answer.ts`; one retry, 5s wait, "Xero is busy" on a rate
+limit, "try again tomorrow" on the daily limit), checks it is an `ACCRECCREDIT` that is AUTHORISED or PAID, for the
+amount, for the invoice's contact (else the owner's), allocated to no other
+invoice and tracked by nothing else here (this payment's own inactive,
+non-voided link is reactivated), and the completion links it as a per-refund
+`REFUND_CREDIT_NOTE` naming the follow-up. After the commit the note is
+reconciled once more (`reconcileXeroCreditNote`), so a void in between is
+caught. A fresh note is refused on a payment with no Xero invoice, and when
+nothing could be queued.
+
+**Count before switching on.** `pnpm run xero:bank-refund-void-count` (read-only:
+no transaction, no lock, no write, no provider call; `--list` adds ids,
+`--json` is machine-readable) sorts every voided note with the job's own
+classifier into: awaiting heal; handled (follow-up, spare, answered, picked);
+deferred; spare; undo with the payment's total already below its detail or
+still equal to it; unmatched by reason (amount unknown, no line, ambiguous,
+detail short, paid another way, coverage unknown, partly picked - counted at
+what is left to pick). It also counts bank-transfer payments whose
+total is below their detail with no void, which the job never touches, and
+says how many payments hold several voids (each note is counted against today's
+records, so those can overstate).
+
 ### Stripe refund notes cover cash evidence, never the mirror (#2902)
 
 `Payment.refundedAmountCents` deliberately mirrors BOTH refund dispositions —
@@ -1828,6 +1900,21 @@ idempotency key, which returns the original invoice
   payment (found by its `Stripe <intent>` reference) and the cap reaches
   zero, its `INVOICE_PAYMENT` link is recorded and its amount stored as the
   primary's cash, rather than the cash being skipped.
+- **Repaired at the attempted payment.** When the Stripe payment write fails,
+  the create ends PARTIAL, and the Xero Operations repair records the payment
+  that create tried to write (`primaryInvoiceAttemptedCashCents`, stored in the
+  same record), read through the same parser as the gap check
+  (`xero-primary-invoice-fee-at-link.ts`, sized in
+  `xero-partial-invoice-repair-amount.ts`). It never records the invoice total,
+  which on a card booking with applied credit overstates the card cash and
+  leaves the credit allocation nothing to settle (#4010), nor the stored
+  `primaryInvoiceCashCents`, which is floored at an earlier unmatched payment.
+  Older records fall back: stored cash before #4010, the total before #3955
+  (no `primaryInvoiceBilledFee` record, or one without the cash figure). A
+  zero repair amount on a non-zero invoice is reported as taken by applied
+  credit, but that path is defensive and effectively unreachable today: every
+  create that skips its payment records `paymentSkipped`, which refuses the
+  repair.
 - **Limits.** The ordinary settled edit's fee increment (#3980) is not claimed
   against the link, so its fee racing a create has no anchor: it is logged,
   not billed. An invoice linked without stored figures (before this check, or
@@ -2597,3 +2684,26 @@ These are candidates for future issues, not commitments.
    in `xero-cron-runner` is now a `switch`. The webhook route's per-category
    `if` blocks were kept — they emit real observability log lines, so dropping
    them would change log output rather than being no-ops.
+
+## Credit lots and the outside-spend marker (#4219, expand release)
+
+A credit lot's remaining balance is its amount less the slices drawn from it
+(`MemberCreditNoteAllocation`) and less credit written down because its Xero note
+was spent outside the app. A written-down lot is recorded as a negative
+`ADMIN_ADJUSTMENT` row for the member stamped with the note, and the row that
+releases the booking's applied credit is a positive `BOOKING_APPLIED` row. Both
+carry `MemberCredit.outsideSpendConvergedAt`, which says the row is **not a
+spendable lot**: a positive row is otherwise the member's own money, and the
+planner would mint a Xero note for it. `src/lib/xero-credit-note-write-down.ts` is
+the one definition; `gatherAppliedCreditLots`, the funding-lot finder and the
+slice-fit check read through it, and `xero-applied-credit-slice-lookup.ts` holds
+the two lookups they share. A note's write-down is taken once, from its oldest lot
+first, not from every lot stamped with the note; the inbound repair never rewrites a
+marked row's description.
+
+This is the **expand release**: the readers ship first and nothing writes the
+marker yet, so every row is unmarked and behaviour is unchanged. The writer, the
+credit-note convergence, is a later release that must not be deployed until this
+one is live and the previous app version has drained, so a previous version never
+meets a marked row it cannot read.
+

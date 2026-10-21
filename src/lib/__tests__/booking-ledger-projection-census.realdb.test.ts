@@ -94,6 +94,12 @@ let censusStore: typeof import("@/lib/booking-ledger-projection-census-store");
 
 async function clean(): Promise<void> {
   const where = { bookingId: { in: BOOKINGS } };
+  const payments = await prisma.payment.findMany({ where, select: { id: true } });
+  const modifications = await prisma.bookingModification.findMany({ where, select: { id: true } });
+  const tasks = await prisma.manualRefundTask.findMany({ where, select: { id: true } });
+  await prisma.xeroSyncOperation.deleteMany({
+    where: { localId: { in: [...BOOKINGS, ...payments.map((p) => p.id), ...modifications.map((m) => m.id), ...tasks.map((t) => t.id)] } },
+  });
   await prisma.xeroObjectLink.deleteMany({ where: { xeroObjectId: BANK_APPEAL_INVOICE } });
   await prisma.bookingLedgerLine.deleteMany({ where });
   await prisma.bedAllocation.deleteMany({ where });
@@ -103,7 +109,6 @@ async function clean(): Promise<void> {
   await prisma.manualRefundTask.deleteMany({ where });
   await prisma.paymentRecoveryOperation.deleteMany({ where });
   await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
-  const payments = await prisma.payment.findMany({ where, select: { id: true } });
   await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: payments.map((p) => p.id) } } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: { in: payments.map((p) => p.id) } } });
   await prisma.payment.deleteMany({ where });

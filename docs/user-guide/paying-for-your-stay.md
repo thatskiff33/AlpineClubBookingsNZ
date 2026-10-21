@@ -37,6 +37,13 @@ Payment** card (`/bookings/<id>`). The payment states are in
 The figures come from the server, not from arithmetic in your browser, so the
 "charged today" amount always matches what is actually taken.
 
+If the dates fill up while your card payment is going through, the booking is
+cancelled. The payment panel tells you how much was confirmed refunded to your
+card. If only part was refunded, it names the remaining amount the club will be
+in touch about. If no refund was confirmed, it says the club will be in touch
+about your refund. **Do not try another payment**; reload the booking to check
+its current status.
+
 ### Pay by internet banking (Xero invoice)
 
 If your club has internet banking enabled and your stay is far enough ahead of

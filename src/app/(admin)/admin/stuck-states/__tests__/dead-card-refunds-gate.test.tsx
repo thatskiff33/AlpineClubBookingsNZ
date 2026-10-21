@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   areas: [] as string[],
   listDeadCardRefunds: vi.fn(),
   listCardRefundsPaidTwice: vi.fn(),
+  listBankRefundVoidsToAnswerRows: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: async () => ({ user: { id: "officer-1" } }) }));
@@ -24,6 +25,10 @@ vi.mock("@/lib/stuck-state-dashboard", () => ({
 }));
 vi.mock("@/lib/card-refund-paid-another-way", () => ({
   listDeadCardRefunds: mocks.listDeadCardRefunds,
+}));
+// #4162: the voided bank refund notes a person answers, under the same finance:view gate.
+vi.mock("@/lib/bank-refund-void-follow-up", () => ({
+  listBankRefundVoidsToAnswerRows: mocks.listBankRefundVoidsToAnswerRows,
 }));
 vi.mock("@/lib/card-refund-paid-twice", () => ({
   listCardRefundsPaidTwice: mocks.listCardRefundsPaidTwice,
@@ -72,6 +77,7 @@ const PAID_TWICE = {
 beforeEach(() => {
   mocks.listDeadCardRefunds.mockResolvedValue([DEAD]);
   mocks.listCardRefundsPaidTwice.mockResolvedValue([PAID_TWICE]);
+  mocks.listBankRefundVoidsToAnswerRows.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -117,5 +123,65 @@ describe("who sees the card refunds Stripe gave up on", () => {
     expect(mocks.listCardRefundsPaidTwice).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Card refunds paid back twice")).toBeInTheDocument();
     expect(screen.getByText(/\$90\.00 refunded to the card after \$90\.00 was paid back another way/)).toBeInTheDocument();
+  });
+
+  it("#4162: a Finance viewer sees the voided bank refund notes to answer; a Support viewer never reads them", async () => {
+    mocks.areas = ["support"];
+    render(await AdminStuckStatesPage());
+    expect(mocks.listBankRefundVoidsToAnswerRows).not.toHaveBeenCalled();
+    cleanup();
+
+    mocks.areas = ["support", "finance"];
+    mocks.listBankRefundVoidsToAnswerRows.mockResolvedValue([
+      {
+        linkId: "link-1", bookingId: "booking-1", bookingReference: "B-123", creditNoteNumber: "CN-0456", amountCents: 20_000, remainingCents: 20_000,
+        foundVoidedAt: "2026-06-30T00:00:00.000Z", reason: "no-line", partlyCoveredLines: [], pickableLines: [{ lineId: "line-1", amountCents: 20_000, matchesNote: true, recordedAt: null }],
+      },
+    ]);
+    // Report-only: shown, with no action and the reason why.
+    delete process.env.XERO_ENABLE_BANK_REFUND_VOID_WRITES;
+    render(await AdminStuckStatesPage());
+    expect(screen.getByText("Voided bank refund notes to answer")).toBeInTheDocument();
+    expect(screen.getByTestId("bank-refund-voids-report-only")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pick the refund for the voided refund note on booking B-123" })).not.toBeInTheDocument();
+    cleanup();
+
+    process.env.XERO_ENABLE_BANK_REFUND_VOID_WRITES = "true";
+    try {
+      render(await AdminStuckStatesPage());
+      expect(screen.getByRole("button", { name: "Pick the refund for the voided refund note on booking B-123" })).toBeInTheDocument();
+      expect(screen.queryByTestId("bank-refund-voids-report-only")).not.toBeInTheDocument();
+    } finally {
+      delete process.env.XERO_ENABLE_BANK_REFUND_VOID_WRITES;
+    }
+  });
+
+  it("#4162 final review: a partly picked note says what is left; a row with nothing to pick says why in one line", async () => {
+    mocks.areas = ["support", "finance"];
+    mocks.listBankRefundVoidsToAnswerRows.mockResolvedValue([
+      {
+        linkId: "link-1", bookingId: "booking-1", bookingReference: "B-123", creditNoteNumber: "CN-0456", amountCents: 20_000, remainingCents: 5_000,
+        foundVoidedAt: "2026-06-30T00:00:00.000Z", reason: "partly-picked", partlyCoveredLines: [], pickableLines: [{ lineId: "line-1", amountCents: 5_000, matchesNote: true, recordedAt: null }],
+      },
+      {
+        linkId: "link-2", bookingId: "booking-2", bookingReference: "B-456", creditNoteNumber: "CN-0457", amountCents: 9_000, remainingCents: 9_000,
+        foundVoidedAt: "2026-06-30T00:00:00.000Z", reason: "detail-short", partlyCoveredLines: [{ lineId: "line-x", amountCents: 5_000, coveredCents: 2_000, recordedAt: null }], pickableLines: [],
+      },
+      {
+        linkId: "link-3", bookingId: "booking-3", bookingReference: "B-789", creditNoteNumber: "CN-0458", amountCents: null, remainingCents: null,
+        foundVoidedAt: "2026-06-30T00:00:00.000Z", reason: "amount-unknown", partlyCoveredLines: [], pickableLines: [{ lineId: "line-3", amountCents: 4_000, matchesNote: false, recordedAt: null }],
+      },
+    ]);
+    process.env.XERO_ENABLE_BANK_REFUND_VOID_WRITES = "true";
+    try {
+      render(await AdminStuckStatesPage());
+      expect(screen.getByText(/\$50\.00 is still to pick/)).toBeInTheDocument();
+      expect(screen.getByText(/no longer hold a refund it could have recorded/)).toBeInTheDocument();
+      expect(screen.getByText(/\$20\.00 of the \$50\.00 refund still has a live note in Xero/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Answer the voided refund note on booking B-456" })).toBeInTheDocument();
+      expect(screen.getByText("Its amount cannot be read, so you can pick one refund for it.")).toBeInTheDocument();
+    } finally {
+      delete process.env.XERO_ENABLE_BANK_REFUND_VOID_WRITES;
+    }
   });
 });

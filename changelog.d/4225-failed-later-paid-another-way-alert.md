@@ -28,5 +28,16 @@
   under Payment. A failed refund that another part of the app made, a refund of
   another amount carrying the same details (a second booking change's), or one
   the close counted as made, is still asked for again automatically, as before.
-  Marking a paid-twice row resolved now waits for any refund being recorded on
-  the same payment, so the two are always weighed in one order.
+  Where two booking changes for the same reason sent refunds of the same
+  amount, so the app cannot tell which change a failed refund belonged to, it
+  is listed as "Check before paying" rather than paid again or closed. Marking a
+  paid-twice row resolved now waits for any refund being recorded on the same
+  payment, so the two are always weighed in one order, and remembers which
+  card refunds it covered.
+
+  **Operator step for this release.** While the old and new versions both
+  serve during the switch, the old version can still raise a card refund that
+  fails after a "Paid another way" close and send it again. The new version
+  checks such a refund before it sends it, but the old one does not. After the
+  switch, open Stuck States and check every card refund raised while both
+  versions served whose card refund had been closed "Paid another way".

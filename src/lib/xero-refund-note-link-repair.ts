@@ -540,11 +540,15 @@ const BLOCKING_REQUEUE_STATUSES = ["PENDING", "RUNNING"];
  */
 export async function findBlockingRefundCreditNoteOperationId(
   paymentId: string,
-  db: Prisma.TransactionClient
+  db: Prisma.TransactionClient,
+  /** #4162: leave out rows whose note is one of these (a note Xero voided cannot mint again). Omitted, none. */
+  options?: { ignoreXeroObjectIds?: readonly string[] }
 ): Promise<string | null> {
+  const ignored = options?.ignoreXeroObjectIds ?? [];
   const operation = await db.xeroSyncOperation.findFirst({
     where: {
       ...paymentCreditNoteOperationWhere(paymentId),
+      ...(ignored.length > 0 ? { AND: [{ OR: [{ xeroObjectId: null }, { xeroObjectId: { notIn: [...ignored] } }] }] } : {}),
       OR: [
         {
           operationType: "CREATE",

@@ -408,6 +408,10 @@ describe("#3366: no existing query changes its result", () => {
  * directory it is CI-caught by design.
  */
 const DECLARED_FILES: Record<string, string> = {
+  // #4162 review (money 3): a hand-made refund credit note must be for the
+  // booking's Xero contact - an organisation's own when it owns the booking.
+  "src/lib/bank-refund-void-answer.ts":
+    "the \"already in Xero\" check reads the owner's Xero contact (the organisation's for a school) when the payment has no invoice",
   // ---- added in stage 4 (#3369): the provider identity of a school ------
   // These DECIDE something about a school rather than merely selecting the
   // owner projection, which is why they are declared rather than exempt.

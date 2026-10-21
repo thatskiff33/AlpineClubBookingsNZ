@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { APPLIED_CREDIT_ALLOCATION_ROLE } from "./xero-applied-credit-link-roles";
 import {
   deriveBookingAppliedCreditCents,
   lockMemberCreditLedger,
@@ -28,7 +29,6 @@ import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
 
-const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
 

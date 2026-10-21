@@ -66,6 +66,8 @@ export function parsePaymentCreditNoteRetryInput(
   /** #3924 round 7 (`INV-PAY-122`): the paid-another-way close a note answers, and the invoice it named. */
   paidAnotherWayTaskId?: string;
   creditsInvoiceId?: string;
+  /** #4162 (`INV-ADDPAY-042`): the bank hand-back task a note records. */
+  handBackTaskId?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -86,6 +88,7 @@ export function parsePaymentCreditNoteRetryInput(
       ? { paidAnotherWayTaskId: readString(payload.paidAnotherWayTaskId)! }
       : {}),
     ...(readString(payload.creditsInvoiceId) ? { creditsInvoiceId: readString(payload.creditsInvoiceId)! } : {}),
+    ...(readString(payload.handBackTaskId) ? { handBackTaskId: readString(payload.handBackTaskId)! } : {}),
   };
   const queuedRefundAmount = readNumber(payload.refundAmountCents);
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {

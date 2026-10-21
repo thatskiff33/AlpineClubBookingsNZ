@@ -106,6 +106,8 @@ const shortfallAlert = vi.hoisted(() => ({
 vi.mock("@/lib/capacity-race-refund-shortfall", () => shortfallAlert);
 
 vi.mock("@/lib/payment-transactions", () => ({
+  // #4217: the settle locks the Payment row before its ledger lookup.
+  lockPaymentForRefundedTotal: async () => undefined,
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mocks.upsertPaymentIntentTransaction(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
@@ -1044,6 +1046,7 @@ describe("markBookingPaymentSucceeded", () => {
       });
 
       expect(result.outcome).toBe("cancelled_refund_failed");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 10000 });
       expect(result.refundError).toContain("503");
 
       // The durable debt was persisted with the transaction client (atomic
@@ -1100,6 +1103,18 @@ describe("markBookingPaymentSucceeded", () => {
       );
     });
 
+    it("reports an empty refund plan without claiming any automatic refund (#4178)", async () => {
+      primeCapacityRaceLoss();
+      mocks.planStripeRefundAllocation.mockResolvedValue({ slices: [], plannedAmountCents: 0, totalRefundableCents: 0 });
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: "pi_race", amountCents: 10000, paymentMethodId: "pm_123",
+      });
+      expect(result.outcome).toBe("cancelled_refund_failed");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 0 });
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.enqueueCapacityClaimFailedRefundRecovery).not.toHaveBeenCalled();
+    });
+
     it("executes the inline refund from the frozen plan under the shared capacity_claim_failed Stripe key prefix and closes the pre-persisted operation on success", async () => {
       primeCapacityRaceLoss();
 
@@ -1112,6 +1127,7 @@ describe("markBookingPaymentSucceeded", () => {
       });
 
       expect(result.outcome).toBe("cancelled_refunded");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 10000 });
       // #4125: made inline, so the REFUNDED event follows the CANCELLED one.
       expect(bookingEvents.create.mock.calls.map(([args]) => (args as { data: { type: string } }).data.type)).toEqual(["CANCELLED", "REFUNDED"]);
       // The durable backstop is enqueued unconditionally, before the refund.
@@ -1162,6 +1178,7 @@ describe("markBookingPaymentSucceeded", () => {
       });
 
       expect(result.outcome).toBe("cancelled_refunded");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 9000 });
       // #4154: the $10.00 no refund covers is a task to check, raised in the void's own claim transaction.
       expect(shortfallAlert.raiseCapacityRaceRefundShortfallTask).toHaveBeenCalledWith(tx, {
         bookingId: "booking-1", paymentId: expect.any(String), paymentIntentId: "pi_race", chargedCents: 10000, plannedRefundCents: 9000, format: CLUB_FORMAT_TEST,
@@ -1189,7 +1206,7 @@ describe("markBookingPaymentSucceeded", () => {
         events: written.map((event) => ({ ...event, occurredAt: new Date("2026-05-05T00:00:00.000Z") })),
       }, CLUB_FORMAT_TEST);
       expect(narrative.message).toBe(
-        "This booking was cancelled on 5 May 2026, after you paid $100.00 on 5 May 2026, because the dates filled up while your payment was going through. $90.00 was refunded on 5 May 2026; the club will be in touch about the remaining $10.00. No further payment is required.",
+        "This booking was cancelled on 5 May 2026, after you paid $100.00 on 5 May 2026, because the dates filled up while your payment was going through. $90.00 was refunded to your card on 5 May 2026; the club will be in touch about the remaining $10.00. No further payment is required.",
       );
     });
 

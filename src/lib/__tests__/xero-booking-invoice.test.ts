@@ -553,6 +553,7 @@ describe("createXeroInvoiceForBooking", () => {
       recordedChangeFeeCentsAtLink: 3_000,
       // Nothing captured, so no cash on the invoice.
       primaryInvoiceCashCents: 0,
+      primaryInvoiceAttemptedCashCents: 0,
     };
     expect(mocks.prisma.payment.update).toHaveBeenCalledWith({
       where: { id: "pay_1" },
@@ -834,6 +835,61 @@ describe("createXeroInvoiceForBooking", () => {
       );
       expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
         expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 8_000 }) }),
+      );
+    });
+
+    // #4010 review: the repair records the payment this run TRIED to write,
+    // which the floor below must never raise to an earlier unmatched payment.
+    describe("#4010: the attempted payment is stored beside the floored cash", () => {
+      it.each([
+        { earlierPaidCents: 6_000, capturedCents: 8_000, attempted: 4_000, floored: 6_000 },
+        { earlierPaidCents: 3_000, capturedCents: 2_000, attempted: 2_000, floored: 3_000 },
+      ])(
+        "earlier unmatched $earlierPaidCents, cap $attempted: a failed write stores $attempted attempted, $floored cash",
+        async ({ earlierPaidCents, capturedCents, attempted, floored }) => {
+          mocks.prisma.booking.findUnique.mockResolvedValue(
+            cardCreditBooking({ amountCents: capturedCents, creditAppliedCents: 0 }),
+          );
+          mocks.prisma.memberCredit.groupBy.mockResolvedValue([]);
+          mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+            body: {
+              invoices: [
+                {
+                  invoiceID: "inv_1",
+                  invoiceNumber: "INV-1",
+                  total: 100,
+                  amountPaid: earlierPaidCents / 100,
+                  amountDue: (10_000 - earlierPaidCents) / 100,
+                  status: "AUTHORISED",
+                  payments: [{ paymentID: "xpay_other", amount: earlierPaidCents / 100, reference: "Stripe pi_other" }],
+                },
+              ],
+            },
+          });
+          mocks.xeroClientInstance.accountingApi.createPayment.mockRejectedValue(new Error("Xero rejected the payment"));
+
+          await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+          expect(mocks.xeroClientInstance.accountingApi.createPayment).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ amount: attempted / 100 }),
+            expect.anything(),
+          );
+          expect(mocks.prisma.xeroSyncOperation.update).toHaveBeenCalledWith({
+            where: { id: "op_1" },
+            data: {
+              requestPayload: expect.objectContaining({
+                primaryInvoiceBilledFee: expect.objectContaining({
+                  primaryInvoiceCashCents: floored,
+                  primaryInvoiceAttemptedCashCents: attempted,
+                }),
+              }),
+            },
+          });
+          expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
+            "op_1",
+            expect.objectContaining({ status: "PARTIAL" }),
+          );
+        },
       );
     });
 

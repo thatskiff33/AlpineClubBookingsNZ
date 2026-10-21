@@ -11,6 +11,8 @@
  * note covering money that cancelled an ask and was never paid.
  */
 
+import { ownNoteExpected } from "@/lib/unpaid-ask-billed-offset-order";
+
 const HISTORY_KEY = "unpaidAskOffsetCents" as const;
 
 /**
@@ -85,6 +87,17 @@ const REISSUED_ASK_INVOICE_KEY = "reissuedAskInvoiceCents" as const;
 const BILLED_OFFSET_KEY = "unpaidAskBilledOffsetCents" as const;
 
 /**
+ * #4049: WHETHER THE EDIT EXPECTED AN OWN NOTE BESIDE ITS BILLED-OFFSET NOTE -
+ * the edit's own answer (`ownNoteExpected`), written beside `BILLED_OFFSET_KEY`
+ * and only with it. The repair pass reads this rather than recomputing the
+ * rule from what the history row cannot hold (an organiser's card refund, a
+ * reduction the Xero leg returns nothing of): one rule, decided once, by the
+ * edit (`INV-SSOT-001`). `true` or `false` when recorded; absent on a row
+ * written before #4049.
+ */
+const BILLED_OFFSET_OWN_NOTE_EXPECTED_KEY = "unpaidAskBilledOffsetOwnNoteExpected" as const;
+
+/**
  * #3954 round 6: the part of the offset the primary invoice may have billed,
  * where what it billed could not be established (`unpaidAskBillingEvidence`).
  * Never credit-noted: the repair pass reports it for a person.
@@ -127,6 +140,9 @@ export const NO_FOLDED_REISSUED_ASKS: FoldedReissuedAsks = { cents: 0, modificat
 
 /** An edit that set nothing against an unpaid ask - a guest add, which only folds. */
 export const NO_UNPAID_ASK_SETTLEMENT = {
+  hasIssuedXeroInvoice: false,
+  xeroRefundAmountCents: 0,
+  organiserChildRefund: null,
   unpaidAskOffsetCents: 0,
   retiredAskModificationIds: [] as readonly string[],
   reissuedAskInvoiceCents: 0,
@@ -137,6 +153,10 @@ export const NO_UNPAID_ASK_SETTLEMENT = {
 
 /** The `newData` fields an edit writes for what of its reduction an unpaid ask took, or what its increase folded in, or none. */
 export function unpaidAskOffsetHistory(settled: {
+  /** #4049: the edit's own-note inputs (`ownNoteExpected`), recorded beside a billed offset. */
+  hasIssuedXeroInvoice: boolean;
+  xeroRefundAmountCents: number;
+  organiserChildRefund: unknown;
   unpaidAskOffsetCents: number;
   retiredAskModificationIds: readonly string[];
   reissuedAskInvoiceCents: number;
@@ -150,6 +170,7 @@ export function unpaidAskOffsetHistory(settled: {
   [REISSUED_ASK_INVOICE_KEY]?: number;
   [REISSUED_ASK_INVOICE_UNSURE_KEY]?: number;
   [BILLED_OFFSET_KEY]?: number;
+  [BILLED_OFFSET_OWN_NOTE_EXPECTED_KEY]?: boolean;
   [BILLED_OFFSET_UNSURE_KEY]?: number;
   [FOLDED_REISSUE_KEY]?: number;
   [FOLDED_REISSUE_IDS_KEY]?: string[];
@@ -175,7 +196,12 @@ export function unpaidAskOffsetHistory(settled: {
     ...(settled.reissuedAskInvoiceUnsureCents > 0
       ? { [REISSUED_ASK_INVOICE_UNSURE_KEY]: settled.reissuedAskInvoiceUnsureCents }
       : {}),
-    ...(settled.unpaidAskBilledOffsetCents > 0 ? { [BILLED_OFFSET_KEY]: settled.unpaidAskBilledOffsetCents } : {}),
+    ...(settled.unpaidAskBilledOffsetCents > 0
+      ? {
+          [BILLED_OFFSET_KEY]: settled.unpaidAskBilledOffsetCents,
+          [BILLED_OFFSET_OWN_NOTE_EXPECTED_KEY]: ownNoteExpected(settled),
+        }
+      : {}),
     ...(settled.unpaidAskBilledOffsetUnsureCents > 0
       ? { [BILLED_OFFSET_UNSURE_KEY]: settled.unpaidAskBilledOffsetUnsureCents }
       : {}),
@@ -206,6 +232,15 @@ export function recordedReissuedAskInvoiceCents(newData: unknown): number {
 /** The part of a reduction's offset Xero had already billed, or 0. */
 export function recordedUnpaidAskBilledOffsetCents(newData: unknown): number {
   return recordedPositiveCents(newData, BILLED_OFFSET_KEY);
+}
+
+/**
+ * #4049: whether the edit expected an own note beside its billed-offset note,
+ * as its history row records it; null on a row written before #4049.
+ */
+export function recordedBilledOffsetOwnNoteExpected(newData: unknown): boolean | null {
+  const value = historyRecord(newData)?.[BILLED_OFFSET_OWN_NOTE_EXPECTED_KEY];
+  return typeof value === "boolean" ? value : null;
 }
 
 /** The part of a reduction's offset whose billing could not be established, or 0 (round 6). */

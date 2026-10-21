@@ -846,6 +846,13 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * (`sumLateCaptureNotedCents`), and would mask a later Stripe refund of it.
      */
     creditsInvoiceId?: string;
+    /**
+     * #4162 (`INV-ADDPAY-042`): the bank hand-back task whose completion this
+     * note records. Payload only - never part of the key or the sizing - so a
+     * void of the note can be matched to the hand-back it recorded
+     * (`bank-refund-void-scan.ts`).
+     */
+    handBackTaskId?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -1082,6 +1089,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
       ...(options?.paidAnotherWayTaskId ? { paidAnotherWayTaskId: options.paidAnotherWayTaskId } : {}),
       ...(options?.creditsInvoiceId ? { creditsInvoiceId: options.creditsInvoiceId } : {}),
+      ...(options?.handBackTaskId ? { handBackTaskId: options.handBackTaskId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -3042,6 +3050,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
             ...(payload.paidAnotherWayTaskId ? { paidAnotherWayTaskId: payload.paidAnotherWayTaskId } : {}),
             ...(payload.creditsInvoiceId ? { creditsInvoiceId: payload.creditsInvoiceId } : {}),
+            // #4162: the hand-back this note records rides the executed row.
+            ...(payload.handBackTaskId ? { handBackTaskId: payload.handBackTaskId } : {}),
             // #3827 (D-3813-8): a refund request's own note (`refund-request-credit-note.ts`).
             ...(readRefundRequestIdFromPayload(queuedOperation.requestPayload)
               ? { refundRequestId: readRefundRequestIdFromPayload(queuedOperation.requestPayload)! }

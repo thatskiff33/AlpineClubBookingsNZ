@@ -9,6 +9,11 @@
  * what the ask asks for, or Stripe answering a replayed key. The rule is
  * `INV-MOD-060`.
  *
+ * #4217: AN INTENT'S ROW NEVER MOVES PAYMENT. Every write is pinned to the
+ * payment whose row the writer locked (`lockPaymentForRefundedTotal`); a row
+ * the intent already has on another payment is refused, never re-pointed under
+ * one payment's lock while the other's rebuild reads it.
+ *
  * #4081: NO WRITE LOWERS A CAPTURED ROW'S STATUS. A webhook may have marked the
  * row captured (`CAPTURED_TRANSACTION_STATUS_LIST`) before a door's, a runner's
  * or a card attach's PENDING or PROCESSING write lands, and a refund may have
@@ -37,6 +42,21 @@ export class AdditionalAskAttributionConflictError extends Error {
 }
 
 /**
+ * #4217: the intent's ledger row belongs to a different payment from the one a
+ * writer locked. Refused before anything is written: writing it would move or
+ * touch one payment's row under another payment's lock. Never expected; loud,
+ * and retried like any other failure.
+ */
+export class IntentLedgerRowOnAnotherPaymentError extends Error {
+  constructor(readonly paymentIntentId: string, readonly lockedPaymentId: string, readonly rowPaymentId: string) {
+    super(
+      `PaymentIntent ${paymentIntentId}'s ledger row belongs to payment ${rowPaymentId}, not the locked payment ${lockedPaymentId}; not writing it (#4217)`,
+    );
+    this.name = "IntentLedgerRowOnAnotherPaymentError";
+  }
+}
+
+/**
  * Update the intent's row where the write may land (any row, or for an edit's
  * write one naming that edit or none); else insert it; else update once more;
  * else refuse. Each step is one statement, so under READ COMMITTED a concurrent
@@ -54,11 +74,14 @@ export class AdditionalAskAttributionConflictError extends Error {
 export async function writePaymentIntentTransaction(
   store: PaymentStore,
   {
+    paymentId,
     paymentIntentId,
     bookingModificationId,
     create,
     update,
   }: {
+    /** #4217: the payment whose row the writer locked; the write lands on that payment's row or none. */
+    paymentId: string;
     paymentIntentId: string;
     /** Given, the write is that edit's ask (`INV-MOD-060`); omitted, any row is the intent's. */
     bookingModificationId: string | undefined;
@@ -68,6 +91,7 @@ export async function writePaymentIntentTransaction(
 ): Promise<void> {
   const ours: Prisma.PaymentTransactionWhereInput = {
     stripePaymentIntentId: paymentIntentId,
+    paymentId,
     ...(bookingModificationId !== undefined ? { OR: [{ bookingModificationId: null }, { bookingModificationId }] } : {}),
   };
   // `undefined` is Prisma's "leave as is": a captured row keeps its status.
@@ -83,8 +107,11 @@ export async function writePaymentIntentTransaction(
   // the recovery at once (#4081), so a row merely gone is the retryable error.
   const row = await store.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
-    select: { bookingModificationId: true },
+    select: { paymentId: true, bookingModificationId: true },
   });
+  if (row && row.paymentId !== paymentId) {
+    throw new IntentLedgerRowOnAnotherPaymentError(paymentIntentId, paymentId, row.paymentId);
+  }
   if (bookingModificationId !== undefined && row?.bookingModificationId != null && row.bookingModificationId !== bookingModificationId) {
     throw new AdditionalAskAttributionConflictError(paymentIntentId, bookingModificationId);
   }

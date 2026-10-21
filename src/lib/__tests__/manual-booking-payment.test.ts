@@ -27,6 +27,7 @@ import { parseDateOnly } from "@/lib/date-only";
  */
 
 const mocks = vi.hoisted(() => ({
+  lockPaymentForRefundedTotal: vi.fn<(tx: unknown, paymentId: string) => Promise<undefined>>(async () => undefined),
   transaction: vi.fn(),
   executeRaw: vi.fn(),
   bookingFindUnique: vi.fn(),
@@ -70,6 +71,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  // #4217: the settle locks the Payment row before its ledger lookup.
+  lockPaymentForRefundedTotal: (tx: unknown, paymentId: string) => mocks.lockPaymentForRefundedTotal(tx, paymentId),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mocks.upsertPaymentIntentTransaction(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
@@ -842,6 +845,23 @@ describe("#2262 — the reversal (direction unpaid)", () => {
       note: null,
     });
   }
+
+  // #4217 review: the Payment row before the recovery rows it deletes - the
+  // order the recovery runner's claim hold takes (Payment, then the
+  // cancellation rows it upserts) - and before the booking and ledger writes.
+  it("MUTATION (#4217): locks the Payment row after the lodge key and before the recovery rows, the booking or the payment are read or written", async () => {
+    primeReversal();
+    await reverse();
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(expect.anything(), "payment-1");
+    const lockedAt = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!;
+    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]!).toBeLessThan(lockedAt);
+    const fullBookingRead = mocks.bookingFindUnique.mock.calls.findIndex(([args]) => !(args as { select?: unknown }).select);
+    expect(lockedAt).toBeLessThan(mocks.bookingFindUnique.mock.invocationCallOrder[fullBookingRead]!);
+    expect(lockedAt).toBeLessThan(mocks.paymentRecoveryOperationFindMany.mock.invocationCallOrder[0]!);
+    expect(lockedAt).toBeLessThan(mocks.paymentRecoveryOperationDeleteMany.mock.invocationCallOrder[0]!);
+    expect(lockedAt).toBeLessThan(mocks.paymentUpdateMany.mock.invocationCallOrder[0]!);
+  });
 
   it("#3581 — posts the booking ledger's reversal of the officer's cash line, copying it", async () => {
     primeReversal();

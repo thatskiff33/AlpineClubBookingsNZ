@@ -574,7 +574,8 @@ export function OperationItem({
           </span>
         ) : null}
       </div>
-      {operation.lastErrorMessage ? (
+      {/* #4049: a SUCCEEDED row's leftover wait or error code describes an attempt that is over. */}
+      {operation.lastErrorMessage && operation.status !== "SUCCEEDED" ? (
         <p className="text-sm text-danger">
           {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
           {redactSensitiveText(operation.lastErrorMessage)}

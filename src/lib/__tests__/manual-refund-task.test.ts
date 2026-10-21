@@ -1625,6 +1625,8 @@ describe("#2262 guard 3 — the self-match refutation, pinned", () => {
       amountCents: 1000,
       status: "SUCCEEDED",
       store: {
+        // #4217: the writer locks the Payment row first.
+        $executeRaw: vi.fn(async () => 0),
         paymentTransaction: { updateMany, createMany },
         payment: { update: vi.fn() },
       } as never,
@@ -2317,7 +2319,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment-1",
       9000,
-      { createdByMemberId: "admin-1", refundMethod: "internet-banking", store: tx }
+      // #4162: the payload names the hand-back it records, so a void can be matched to it.
+      { createdByMemberId: "admin-1", refundMethod: "internet-banking", handBackTaskId: "task-1", store: tx }
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();

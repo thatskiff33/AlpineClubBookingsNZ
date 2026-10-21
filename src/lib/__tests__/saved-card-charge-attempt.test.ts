@@ -64,6 +64,12 @@ const { ledger, mocks } = vi.hoisted(() => {
   let seq = 0;
   const ledger = {
     rows,
+    // #4217: the settle locks the Payment row first (`lockPaymentForRefundedTotal`),
+    // in a short transaction of its own on the root client - which this ledger
+    // stands in for, so `$transaction` runs the callback on the ledger itself.
+    $connect: vi.fn(),
+    $executeRaw: vi.fn(async () => 0),
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(ledger)),
     reset() {
       rows.splice(0, rows.length);
       seq = 0;
@@ -1252,7 +1258,30 @@ describe("settleSavedCardChargeAttempt", () => {
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: PAYMENT, store: ledger });
   });
 
-  it("P2002 race: the unique violation on the intent id takes the keep-existing branch instead of throwing on a path that has just captured money", async () => {
+  // #4217 review (F2): the settle locked its own payment's row; an intent row
+  // on another payment is refused before anything is written or deleted.
+  it("MUTATION (#4217): a row for the intent on ANOTHER payment is refused before any write - the attempt row stays", async () => {
+    const attempt = await begin();
+    const foreignRow = ledger.seed({
+      paymentId: "payment_other",
+      status: PaymentStatus.PROCESSING,
+      stripePaymentIntentId: "pi_foreign",
+      amountCents: 10000,
+    });
+    ledger.paymentTransaction.updateMany.mockClear();
+    ledger.paymentTransaction.deleteMany.mockClear();
+
+    await expect(
+      settle(attempt.attemptRowId, { id: "pi_foreign", status: "succeeded", amount: 10000, payment_method: "pm_1" }),
+    ).rejects.toMatchObject({ name: "IntentLedgerRowOnAnotherPaymentError", lockedPaymentId: PAYMENT, rowPaymentId: "payment_other" });
+    expect(ledger.paymentTransaction.updateMany).not.toHaveBeenCalled();
+    expect(ledger.paymentTransaction.deleteMany).not.toHaveBeenCalled();
+    expect(row(foreignRow.id).status).toBe(PaymentStatus.PROCESSING);
+    expect(row(attempt.attemptRowId)).toBeDefined();
+    expect(mocks.reconcilePaymentAggregates).not.toHaveBeenCalled();
+  });
+
+  it("P2002 race: the unique violation on the intent id rolls the short transaction back, and its one retry takes the keep-existing branch instead of throwing on a path that has just captured money", async () => {
     const attempt = await begin();
     // Not visible to the pre-check, present by the time the write runs.
     const winner = { id: "txn_hook", paymentId: PAYMENT } as unknown as LedgerRow;
@@ -1267,6 +1296,37 @@ describe("settleSavedCardChargeAttempt", () => {
     expect(ledger.paymentTransaction.deleteMany).toHaveBeenCalledWith({
       where: { id: attempt.attemptRowId, stripePaymentIntentId: null },
     });
+    // #4217: inside a transaction a violation cannot be recovered from, so the
+    // keep-existing branch runs in a second transaction of its own.
+    expect(ledger.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("MUTATION (#4217): takes the Payment row lock before it reads or writes the attempt's row", async () => {
+    const attempt = await begin();
+    ledger.$executeRaw.mockClear();
+    ledger.paymentTransaction.findUnique.mockClear();
+    ledger.paymentTransaction.updateMany.mockClear();
+
+    await settle(attempt.attemptRowId, { id: "pi_x", status: "succeeded", amount: 10000, payment_method: "pm_1" });
+
+    const [strings, paymentId] = ledger.$executeRaw.mock.calls[0] as unknown as [string[], string];
+    expect(strings.join("?")).toContain('FROM "Payment" WHERE "id" = ? FOR NO KEY UPDATE');
+    expect(paymentId).toBe(PAYMENT);
+    const lockedAt = ledger.$executeRaw.mock.invocationCallOrder[0]!;
+    expect(lockedAt).toBeLessThan(ledger.paymentTransaction.findUnique.mock.invocationCallOrder[0]!);
+    expect(lockedAt).toBeLessThan(ledger.paymentTransaction.updateMany.mock.invocationCallOrder[0]!);
+  });
+
+  it("a second unique violation is not retried again: it propagates", async () => {
+    const attempt = await begin();
+    ledger.paymentTransaction.updateMany
+      .mockRejectedValueOnce(uniqueViolation())
+      .mockRejectedValueOnce(uniqueViolation());
+
+    await expect(
+      settle(attempt.attemptRowId, { id: "pi_hook", status: "succeeded", amount: 10000, payment_method: "pm_1" })
+    ).rejects.toMatchObject({ code: "P2002" });
+    expect(ledger.$transaction).toHaveBeenCalledTimes(2);
   });
 
   it("any other error from the row write propagates untouched", async () => {

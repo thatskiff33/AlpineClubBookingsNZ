@@ -73,6 +73,8 @@ describe("GET /api/admin/stuck-states", () => {
 
     expect(mocks.getStuckStateDashboard).toHaveBeenCalledWith({
       viewerCanViewMembership: true,
+      // #4162: and finance:view, for the voided bank refund notes' panel link.
+      viewerCanViewFinance: true,
     });
   });
 
@@ -94,6 +96,7 @@ describe("GET /api/admin/stuck-states", () => {
     expect(response.status).toBe(200);
     expect(mocks.getStuckStateDashboard).toHaveBeenCalledWith({
       viewerCanViewMembership: false,
+      viewerCanViewFinance: false,
     });
   });
 

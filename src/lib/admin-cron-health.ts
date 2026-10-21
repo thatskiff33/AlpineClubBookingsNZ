@@ -435,6 +435,18 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // #4162: runs in the link cleanup's slot, right after it.
+        jobName: "xero-bank-refund-void-follow-up",
+        label: "Voided bank-transfer refund notes",
+        schedule: "25 2 * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:25 daily in ${clubTimeZone}`,
+        staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "xero-reconciliation-report",
         label: "Xero reconciliation report",
         schedule: "35 2 * * *",

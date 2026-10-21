@@ -52,7 +52,7 @@ export default async function TwoFactorVerifyPage({
   // #2827: a 2FA-enabled member who came from a family invite must still land back
   // on the invite after the challenge. The address is read from the HttpOnly cookie
   // rather than carried in this page's query string, and the panel below only ever
-  // passes it to `router.replace()` — never into a rendered attribute. #2974: and
+  // passes it to `window.location.replace()` — never into a rendered attribute. #2974: and
   // only when this request presents the nonce the invite page's own tab was given.
   const landing = resolvePostLoginLandingPath({
     explicitCallbackUrl,

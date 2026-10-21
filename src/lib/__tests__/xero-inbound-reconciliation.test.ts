@@ -1322,8 +1322,9 @@ describe("processStoredXeroInboundEvents", () => {
         draftExpiresAt: null,
       },
     });
-    // The inbound path reads the payment three times: the lodge key only, then
-    // (#3792) the full snapshot after the lodge key, then the capacity re-read.
+    // The inbound path reads the payment four times: the lodge key only, then
+    // (#3792) the full snapshot after the lodge key, then (#4217) its figures
+    // again under the Payment row lock, then the capacity re-read.
     // The booking ledger's
     // settlement sync (#3581) adds its own two reads — the owner, then the
     // rows it posts from — which are counted separately so this still pins
@@ -1336,7 +1337,7 @@ describe("processStoredXeroInboundEvents", () => {
       );
     expect(
       mocks.paymentFindUnique.mock.calls.filter(([args]) => !ledgerSyncRead(args)),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(
       mocks.paymentFindUnique.mock.calls.filter(([args]) => ledgerSyncRead(args)),
     ).toHaveLength(2);
@@ -1352,7 +1353,20 @@ describe("processStoredXeroInboundEvents", () => {
     const ownReads = mocks.paymentFindUnique.mock.calls
       .map(([args], index) => ({ args, order: mocks.paymentFindUnique.mock.invocationCallOrder[index]! }))
       .filter(({ args }) => !ledgerSyncRead(args));
-    const postLockReread = ownReads[2]!.order;
+    const postLockReread = ownReads[3]!.order;
+    // #4217 (Q2): the Payment row is locked after the full snapshot and before
+    // the figures are read again, and the receipt is written only after both.
+    const paymentRowLocks = mocks.txExecuteRaw.mock.calls
+      .map(([strings], index) => ({
+        sql: Array.isArray(strings) ? strings.join("?") : String(strings),
+        order: mocks.txExecuteRaw.mock.invocationCallOrder[index]!,
+      }))
+      .filter(({ sql }) => sql.includes('FROM "Payment"') && sql.includes("FOR NO KEY UPDATE"));
+    expect(paymentRowLocks).toHaveLength(1);
+    expect(ownReads[1]!.order).toBeLessThan(paymentRowLocks[0]!.order);
+    expect(paymentRowLocks[0]!.order).toBeLessThan(ownReads[2]!.order);
+    expect(ownReads[2]!.args).toEqual({ where: { id: "pay_ib_1" } });
+    expect(ownReads[2]!.order).toBeLessThan(mocks.paymentTransactionUpdateMany.mock.invocationCallOrder[0]!);
     // #3792: the owner the member key is taken on is read after the lodge key.
     expect(ownReads[0]!.order).toBeLessThan(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]);
     expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(ownReads[1]!.order);

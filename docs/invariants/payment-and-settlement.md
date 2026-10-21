@@ -412,7 +412,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   retried: the writer above, #1491's fold, `applyLocalRefundAllocation`, which
   refuses only when headroom is gone, and a capacity race's guarded correction,
   which only lowers a total to its refund rows (`INV-PAY-135`). All take the `Payment` row first
-  (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows.
+  (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows; so
+  does every ledger-row writer that waits while holding a row, and the rebuild (#4217).
 - Two writers set an organiser-settled child's mirror directly, because the
   child has no transaction rows: the pre-#3653 group-settlement path
   (`INV-PAY-031`–`037`) and the organiser child refund executor
@@ -1511,30 +1512,30 @@ refunded total it corrects).
   Stripe fails it later** (#4210). The failed-later writer asks first, under
   the Payment row lock the close took (`findPaidAnotherWayCloseThatSettled`).
   - **Which close**: the sender's (`madeBy`), Stripe making it by then
-    (`operationWindowTakes`). A refund naming no booking is weighed by the row
-    it fills, on the paid-twice reading only.
-  - **What the close counted decides**, kept on its record
-    (`paidAnotherWayCounted`), never today's matching. Settled only when the
-    refund was not counted and fits a slice the close found unsent - charge
-    and exact amount (`refundFitsSlice`). Anything else is owed as before.
-  - **A close that kept no record**: settled only from the paid-twice list;
-    fitting a planned slice it may have counted, or larger than it owed, is
-    raised dead to check (`uncertain`).
-  - **Checks**: a part close lists what it gave up, less earlier part-close
-    checks against it; a resolved paid-twice row's refund lists in full. Each
-    is raised dead (`paidAnotherWayCheck`), never sent, and closes "Paid
-    another way" or checked - not owed (`closeCardRefundCheckNotOwed`,
-    `finance:edit`, audited, no money).
+    (`operationWindowTakes`). Several rows sending its metadata: any of their
+    closes that may have paid it raises an `uncertain` check, never a settle
+    or re-send. A refund naming no booking: the row it fills, paid-twice
+    reading only.
+  - **What the close counted decides** (`paidAnotherWayCounted`), never
+    today's matching: settled only if not counted and it fits an unsent slice
+    exactly (`refundFitsSlice`). A close keeping no record settles only from
+    the paid-twice list; one it may have counted, or larger than it owed, is
+    `uncertain`.
+  - **Checks** are raised dead (`paidAnotherWayCheck`), never sent, and take
+    no refund: a part close's gap less earlier part-close checks; a refund a
+    resolution listed (`refundIds`; else made by the close, recorded after),
+    whole. Each closes "Paid another way" or checked - not owed
+    (`closeCardRefundCheckNotOwed`, `finance:edit`, audited, no money).
   - **A Resolved** is read and written under the same Payment row lock.
   - **Audited** under `payment`, alerted once by its own locked mail. An open
     sender's own replay reads the refund as refused.
-  - **Deploy window**: this release never re-sends such a refund. The limit
-    is the old image: while both colours serve, its writer raises a live row
-    that either runner sends, neither re-checking the close; the owner checks
-    failed-later rows raised then. An old Resolved drops the counted list, so
-    that close is weighed as keeping none.
+  - **Deploy window**: this release marks its rows weighed; the runner,
+    having claimed an unmarked failed-later row, holds it as an `uncertain`
+    check where a close may have paid it back. Only the old image's runner
+    still sends such a row; the owner checks failed-later rows raised then.
   - Proven by `card-refund-failed-later-paid-another-way.test.ts`,
-    `card-refund-check-not-owed.test.ts`, `card-refund-paid-twice.test.ts` and
+    `card-refund-failed-later-recheck.test.ts`,
+    `card-refund-check-not-owed.test.ts` and
     `cancel-card-refund-failed-later.realdb.test.ts`.
 
 ## INV-PAY-031
@@ -3427,9 +3428,10 @@ _Split from `INV-PAY-057` (#3220)._
 - **The primary invoice bills the recorded fee in full.** Its link is saved
   in one transaction with what it billed, the fee then recorded and its Stripe
   cash (capped so unallocated ledger credit fits). A supplementary invoice,
-  anchored on a correction routing its fee there, bills the gap, paid from
-  cash the primary left, else unpaid; untaken cash is logged. Retries re-check
-  stored figures without re-queuing.
+  anchored on its routing correction, bills the gap, paid from cash the
+  primary left, else unpaid; untaken cash is logged. Retries re-check stored
+  figures without re-queuing; PARTIAL repairs record the attempted payment
+  (#4010).
 - Limits: a capture recorded for its intent is not re-checked against a later
   fee; a fee the ordinary settled edit (#3980, `applyPaymentAdjustments`)
   records mid-create, before the link is saved, is unclaimed: logged, not

@@ -48,6 +48,7 @@ import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-s
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
+import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { findUnconvergedAppliedCreditDeallocation, XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   hasInvoiceClearingNote,
@@ -488,6 +489,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // it. #3369: no member, no key.
       const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
       if (creditLedgerMemberId) await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      // #4217: then the Payment row, which a card refund holds without lock(1);
+      // the figures (re-read here) and the rows are read under it (`INV-LOCK-002`).
+      await lockPaymentForRefundedTotal(tx, fresh.id);
+      const lockedFigures = await tx.payment.findUnique({ where: { id: fresh.id } });
+      if (!lockedFigures || lockedFigures.source !== PaymentSource.INTERNET_BANKING) {
+        return { type: "missing" as const };
+      }
+      Object.assign(fresh, lockedFigures);
 
       // B5 (#2262) — the RECIPROCAL fence, and the counterpart to the outbound
       // refusal. An admin recorded this booking's payment as cash / an off-Xero

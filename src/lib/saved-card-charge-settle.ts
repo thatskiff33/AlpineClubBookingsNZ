@@ -15,6 +15,7 @@ import {
   PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
+  type Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
 
@@ -22,7 +23,10 @@ import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { stripeReferenceId } from "./stripe-references";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
+import { isRootPrismaClient, withStoreTransaction } from "./db-transaction";
+import { IntentLedgerRowOnAnotherPaymentError } from "./payment-intent-ledger-row-write";
 import {
+  lockPaymentForRefundedTotal,
   reconcilePaymentAggregates,
   type PaymentStore,
 } from "./payment-transactions";
@@ -183,7 +187,9 @@ function forwardOnlyStatusGuard(answer: PaymentStatus) {
  * inside a caller's transaction cannot be recovered from (PostgreSQL aborts the
  * transaction on the first error), so on a transaction client the pre-check is
  * the only defence and the violation propagates — stated here rather than
- * discovered.
+ * discovered. #4217: the write takes the Payment row first, so on the root
+ * client it runs in a short transaction of its own; a violation there rolls
+ * that back whole, and the one retry's pre-check reads the winning row.
  */
 export async function settleSavedCardChargeAttempt(params: {
   attemptRowId: string;
@@ -197,62 +203,92 @@ export async function settleSavedCardChargeAttempt(params: {
   const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
   const answer = { ledgerStatus, amountCents: paymentIntent.amount, paymentMethodId };
 
+  // #4217 (`INV-LOCK-002`): the Payment row before the attempt's row, inside
+  // the caller's locked release transaction (or a short one of its own), the
+  // order a failure webhook (`markPaymentIntentTransactionFailed`) takes them
+  // in. Writing the row first and reaching the Payment row at the reconcile
+  // would deadlock that webhook on a replayed attempt's intent.
+  const settle = () =>
+    withStoreTransaction(store, async (db) => {
+      await lockPaymentForRefundedTotal(db, paymentId);
+      return settleSavedCardChargeAttemptUnderLock(db, { attemptRowId, paymentId, paymentIntent, answer });
+    });
+  if (!isRootPrismaClient(store)) return settle();
+  try {
+    return await settle();
+  } catch (err) {
+    // On the root client the short transaction is ours: a unique violation
+    // (another row took the intent first) rolled it back whole, so it runs
+    // once more and its pre-check now reads that row and keeps it.
+    if (!isPrismaUniqueConstraintError(err)) throw err;
+    return settle();
+  }
+}
+
+async function settleSavedCardChargeAttemptUnderLock(
+  store: Prisma.TransactionClient,
+  {
+    attemptRowId,
+    paymentId,
+    paymentIntent,
+    answer,
+  }: {
+    attemptRowId: string;
+    paymentId: string;
+    paymentIntent: SavedCardChargeAnswer;
+    answer: { ledgerStatus: PaymentStatus; amountCents: number; paymentMethodId: string | null };
+  },
+): Promise<SettledSavedCardChargeAttempt> {
+  const { ledgerStatus, paymentMethodId } = answer;
   const existing = await store.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntent.id },
     select: { id: true, paymentId: true },
   });
   if (existing && existing.id !== attemptRowId) {
-    return keepExistingRow(store, { attemptRowId, existing, answer });
+    return keepExistingRow(store, { attemptRowId, paymentId, paymentIntentId: paymentIntent.id, existing, answer });
   }
 
-  try {
-    const moved = await store.paymentTransaction.updateMany({
-      where: { id: attemptRowId, status: forwardOnlyStatusGuard(ledgerStatus) },
-      data: {
-        stripePaymentIntentId: paymentIntent.id,
-        status: ledgerStatus,
-        amountCents: paymentIntent.amount,
-        ...(paymentMethodId !== null ? { paymentMethodId } : {}),
+  const moved = await store.paymentTransaction.updateMany({
+    where: { id: attemptRowId, status: forwardOnlyStatusGuard(ledgerStatus) },
+    data: {
+      stripePaymentIntentId: paymentIntent.id,
+      status: ledgerStatus,
+      amountCents: paymentIntent.amount,
+      ...(paymentMethodId !== null ? { paymentMethodId } : {}),
+    },
+  });
+  if (moved.count === 0) {
+    const current = await store.paymentTransaction.findUnique({
+      where: { id: attemptRowId },
+      select: { status: true },
+    });
+    logger.warn(
+      {
+        attemptRowId,
+        paymentIntentId: paymentIntent.id,
+        answered: ledgerStatus,
+        rowStatus: current?.status ?? null,
       },
-    });
-    if (moved.count === 0) {
-      const current = await store.paymentTransaction.findUnique({
-        where: { id: attemptRowId },
-        select: { status: true },
-      });
-      logger.warn(
-        {
-          attemptRowId,
-          paymentIntentId: paymentIntent.id,
-          answered: ledgerStatus,
-          rowStatus: current?.status ?? null,
-        },
-        "The attempt row had already moved past Stripe's answer (a webhook won); left it as it is (#3267)"
-      );
-      return {
-        transactionId: attemptRowId,
-        ledgerStatus: current?.status ?? ledgerStatus,
-        keptExistingRow: false,
-        moved: false,
-      };
-    }
-    await reconcilePaymentAggregates({ paymentId, store });
-    return { transactionId: attemptRowId, ledgerStatus, keptExistingRow: false, moved: true };
-  } catch (err) {
-    if (!isPrismaUniqueConstraintError(err)) throw err;
-    const winner = await store.paymentTransaction.findUnique({
-      where: { stripePaymentIntentId: paymentIntent.id },
-      select: { id: true, paymentId: true },
-    });
-    if (!winner || winner.id === attemptRowId) throw err;
-    return keepExistingRow(store, { attemptRowId, existing: winner, answer });
+      "The attempt row had already moved past Stripe's answer (a webhook won); left it as it is (#3267)"
+    );
+    return {
+      transactionId: attemptRowId,
+      ledgerStatus: current?.status ?? ledgerStatus,
+      keptExistingRow: false,
+      moved: false,
+    };
   }
+  await reconcilePaymentAggregates({ paymentId, store });
+  return { transactionId: attemptRowId, ledgerStatus, keptExistingRow: false, moved: true };
 }
 
 async function keepExistingRow(
   store: PaymentStore,
   params: {
     attemptRowId: string;
+    /** #4217: the payment whose row the settle locked. */
+    paymentId: string;
+    paymentIntentId: string;
     existing: { id: string; paymentId: string };
     answer: {
       ledgerStatus: PaymentStatus;
@@ -262,6 +298,10 @@ async function keepExistingRow(
   }
 ): Promise<SettledSavedCardChargeAttempt> {
   const { attemptRowId, existing, answer } = params;
+  // #4217: only the locked payment's row is written; one on another payment is refused before any write.
+  if (existing.paymentId !== params.paymentId) {
+    throw new IntentLedgerRowOnAnotherPaymentError(params.paymentIntentId, params.paymentId, existing.paymentId);
+  }
   const moved = await store.paymentTransaction.updateMany({
     where: { id: existing.id, status: forwardOnlyStatusGuard(answer.ledgerStatus) },
     data: {

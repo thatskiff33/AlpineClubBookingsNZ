@@ -25,7 +25,8 @@ const REVIEWED_WRITERS = [
   "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "e2e/setup/seed-second-lodge.ts|bookingGuest|create|priceCents|1",
   "e2e/setup/seed-second-lodge.ts|bookingGuestNight|create|priceCents,priceSource|1",
-  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|11",
+  // #4162: +1, the three cancelled bank-transfer bookings whose refunds are back on the refund list (one create, in a loop).
+  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|12",
   "prisma/demo-seed.ts|bookingGuest|create,deleteMany|priceCents|2",
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource|2",
   "prisma/demo-seed.ts|promoRedemption|deleteMany||1",

@@ -370,7 +370,8 @@ describe("bed allocation lock topology", () => {
     ["the paid cancel", "src/lib/booking-cancel.ts", "lockMemberCreditLedger(paidCreditLedgerMemberId, tx)", "lockPaymentForRefundedTotal(tx, fresh.payment.id)"],
     ["the pending cancel", "src/lib/booking-cancel.ts", "lockMemberCreditLedger(pendingCreditLedgerMemberId, tx)", "tx.payment.update("],
     ["the settle capacity void", "src/lib/payment-reconciliation.ts", "lockMemberCreditLedger(settleCreditLedgerMemberId, tx)", "tx.payment.upsert("],
-    ["the late capacity cancel", "src/lib/xero-inbound/invoice-paid-effects.ts", "lockMemberCreditLedger(creditLedgerMemberId, tx)", "tx.payment.update("],
+    // #4217 (Q2): the settle's first touch of its Payment row is now its lock.
+    ["the late capacity cancel", "src/lib/xero-inbound/invoice-paid-effects.ts", "lockMemberCreditLedger(creditLedgerMemberId, tx)", "lockPaymentForRefundedTotal(tx, fresh.id)"],
   ])("%s takes lock(1), the lodge key, then the member key, before the Payment row", (_label, file, memberLock, paymentRow) => {
     const text = stripComments(source(file));
     const memberAt = text.indexOf(memberLock);

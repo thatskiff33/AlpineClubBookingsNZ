@@ -66,6 +66,8 @@ vi.mock("@/lib/booking-ledger-modification-sync", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #4217: the ledger writers lock the Payment row first.
+    $executeRaw: vi.fn(async () => 0),
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as any)(fn);

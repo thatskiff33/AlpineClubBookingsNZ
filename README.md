@@ -128,6 +128,9 @@ and Docker-based blue/green deployment. The full system design — data model,
 booking capacity rules, integration boundaries, cron, and deployment shape — is
 in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+After successful two-factor verification, sign-in opens the resolved destination
+in a fresh page load. Enrollment keeps recovery codes visible until **Continue**.
+
 ## Quickstart
 
 Needs Node 24 and pnpm 11 (`npm install -g pnpm@11` once per machine; see

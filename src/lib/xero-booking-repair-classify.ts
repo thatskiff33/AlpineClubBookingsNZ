@@ -926,7 +926,7 @@ export function classifyBookingContext(
     });
     const billedOffsetNote = scopedBilledOffsetNote({ newData: modification.newData, operations: modificationOperations });
     if (billedOffsetNote && primaryInvoice) {
-      // Round 8: a note queued here waits for the edit's own, when one is due.
+      // Round 8, #4049: a note queued here waits as the edit recorded (`repairOwnNoteExpected`).
       addScopedSideNoteFindings({ bookingId: booking.id, modificationId: modification.id, note: billedOffsetNote, edit: { operations: modificationOperations, links: modificationLinks }, ownNoteDue: reductionNoteDueCents > 0, actionMap, findings });
     }
     // Round 6/7: what the edit could not establish of the offset's billing, or

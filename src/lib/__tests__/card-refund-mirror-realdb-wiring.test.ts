@@ -49,6 +49,29 @@ describe("the card-refund writer's race proof stays wired into CI (#3640)", () =
     expect(suite).toContain("the runner moves a refused slice only on the attempt it holds");
   });
 
+  // #4217: the Payment-row-first proofs ride the same harness.
+  it("wires the payment-lock-before-rebuild real-database proof the same way (#4217)", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./payment-lock-before-rebuild.realdb.test";');
+    expect(harness).toContain('import "./additional-ask-reduction.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/payment-lock-before-rebuild.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("pg_blocking_pids");
+    for (const race of ["RACE 1:", "RACE 2:", "RACE 3:", "RACE 4:", "RACE 5:", "RACE 6 (the cost):", "RACE 7:"]) expect(suite).toContain(race);
+    const reduction = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/additional-ask-reduction.realdb.test.ts"),
+      "utf8",
+    );
+    expect(reduction).toContain("RACE (#4217): the capture webhook holding the Payment row while the retire starts");
+    expect(reduction).toContain("RACE (#4217 F1): a credit give-back's reduction racing the runner's claim hold");
+  });
+
   // #4104: the failed-later refund proof rides the same harness.
   it("wires the failed-later card refund's real-database proof the same way (#4104)", () => {
     const harness = readFileSync(

@@ -41,6 +41,7 @@ beforeEach(() => {
 describe("queueReissuedAskSupplementaryInvoice", () => {
   it("MUTATION: queues the recorded figure on the reducing edit, waiting on the minted intent and recording its payment", async () => {
     h.newData = unpaidAskOffsetHistory({
+      ...NO_UNPAID_ASK_SETTLEMENT,
       unpaidAskOffsetCents: 2_000,
       retiredAskModificationIds: ["mod_increase"],
       reissuedAskInvoiceCents: 3_000,
@@ -59,6 +60,7 @@ describe("queueReissuedAskSupplementaryInvoice", () => {
 
   it("queues nothing where the reduction recorded no invoice (the ask was cancelled, or Xero already billed it)", async () => {
     h.newData = unpaidAskOffsetHistory({
+      ...NO_UNPAID_ASK_SETTLEMENT,
       unpaidAskOffsetCents: 5_000,
       retiredAskModificationIds: ["mod_increase"],
       reissuedAskInvoiceCents: 0,

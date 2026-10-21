@@ -489,6 +489,8 @@ describe("retireUnusableSavedCard (#3268)", () => {
       return { count };
     });
     const store = {
+      // #4217: the reconcile locks the Payment row before it reads.
+      $executeRaw: vi.fn(async () => 0),
       payment: {
         findUnique: vi.fn(async () => payment),
         update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {

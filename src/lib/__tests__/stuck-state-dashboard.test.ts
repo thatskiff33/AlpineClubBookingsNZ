@@ -181,6 +181,8 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     // unit and wording are keyed on the CLUB's active-lodge count (#2917
     // review), not on how many lodges its rows happen to span.
     countActiveLodges: vi.fn().mockResolvedValue(1),
+    // #4162: the voided bank refund notes a person answers.
+    countBankRefundVoidsToAnswer: vi.fn().mockResolvedValue(0),
   };
 
   return {
@@ -994,5 +996,21 @@ describe("getStuckStateDashboard", () => {
         (candidate) => candidate.id === "booking-hosting-coverage-incidents",
       )?.details,
     ).toBeUndefined();
+  });
+});
+
+describe("voided bank refund notes to answer (#4162)", () => {
+  it("counts them under Xero, linking a finance viewer to the panel and anyone else to the Xero screen", async () => {
+    const deps = buildDeps({ countBankRefundVoidsToAnswer: vi.fn().mockResolvedValue(2) });
+    const finance = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z"), viewerCanViewFinance: true });
+    expect(finance.items.find((item) => item.id === "xero-bank-refund-voids-to-answer")).toMatchObject({
+      domain: "xero",
+      owner: "Finance",
+      count: 2,
+      href: "/admin/stuck-states#bank-refund-voids",
+      summary: expect.stringContaining("2 bank refunds had their Xero credit note voided"),
+    });
+    const support = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
+    expect(support.items.find((item) => item.id === "xero-bank-refund-voids-to-answer")?.href).toBe("/admin/xero");
   });
 });

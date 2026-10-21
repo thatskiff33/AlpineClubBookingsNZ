@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  508
+row-producing sites:  510
 uncategorised:        0
-category values: admin 108, booking 108, xero 39, family 35, payment 61,
+category values: admin 108, booking 108, xero 39, family 35, payment 63,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -841,6 +841,12 @@ the same people instead of being noted in Xero.
 a capacity race's card charge corrected to its refund rows before its hand-back
 (the owner's guarded recalculation), filed `payment` beside the close it enables.
 
+#4162 then added two (`payment` 58 -> 60, 505 -> 507, MEASURED with
+`pnpm run audit:census`): `booking-payment.bank-refund.void-undone`, the nightly
+undo of a voided bank-transfer refund note, and `.void-answered`, a person's
+answer to one the undo could not match - both the payment's figures, filed
+`payment` for the people who reconcile it.
+
 #4210 then added one more (`payment` 58 -> 59, 505 -> 506, MEASURED with
 `pnpm run audit:census`): `booking-payment.card-refund.failed-later-paid-another-way`,
 a card refund Stripe failed later that a "Paid another way" close had already
@@ -856,6 +862,9 @@ raised to check after such a close that an officer closed as not owed, filed
 `booking-payment.card-refund.failed-later-paid-another-way`, the runner holding a
 failed-later row an earlier release raised as a check, filed `payment` beside
 the writer's own.
+
+The #4162 and #4210 writers above are disjoint. Re-measured on their composed
+tree with `pnpm run audit:census`: 510 sites, `payment` 63, zero uncategorised.
 
 #2942 then added one more (`admin` 106 -> 107, 482 -> 483 on the MERGED tree —
 the MAD epic's own children carried the total from 472 to 482 without a

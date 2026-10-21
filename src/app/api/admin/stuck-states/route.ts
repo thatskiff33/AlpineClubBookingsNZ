@@ -19,9 +19,15 @@ export async function GET() {
     level: "view",
   });
 
+  // #4162: the voided bank refund notes' panel is finance information.
+  const viewerCanViewFinance = hasAdminAreaAccess(guard.session.user, {
+    area: "finance",
+    level: "view",
+  });
+
   try {
     return NextResponse.json(
-      await getStuckStateDashboard({ viewerCanViewMembership }),
+      await getStuckStateDashboard({ viewerCanViewMembership, viewerCanViewFinance }),
     );
   } catch (error) {
     logger.error({ err: error }, "Failed to load stuck-state dashboard");

@@ -76,7 +76,7 @@ import {
   CAPTURED_TRANSACTION_STATUS_LIST,
   isCapturedTransactionStatus,
 } from "@/lib/payment-transaction-status";
-import { reconcilePaymentAggregates } from "@/lib/payment-transactions";
+import { lockPaymentForRefundedTotal, reconcilePaymentAggregates } from "@/lib/payment-transactions";
 import { ADDITIONAL_ASK_RETIRED_BY_REDUCTION_XERO_ERROR_CODE } from "@/lib/unpaid-ask-offset-marker";
 import { waitingSupplementaryInvoiceOperationsWhere } from "@/lib/xero-supplementary-invoice-statuses";
 
@@ -239,7 +239,8 @@ export function assertReductionReadForNet(
 
 export type UnpaidAskDb = Pick<
   Prisma.TransactionClient,
-  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation"
+  // #4217: `$executeRaw` for the Payment row lock a fold-close takes first.
+  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation" | "$executeRaw"
 >;
 
 export type UnpaidAskBooking = {
@@ -468,9 +469,13 @@ async function retireUnpaidAskChainUnderLocks(
   tx: Prisma.TransactionClient,
   { bookingId, paymentId, ask, now }: { bookingId: string; paymentId: string; ask: UnpaidPriceAsk; now: Date },
 ): Promise<RetiredUnpaidAsk> {
-  // Round 6: the waiting recoveries first, then the rows - the order the
-  // runner's claim hold writes them in (recovery, then its row), so the two
-  // never deadlock on each other.
+  // #4217 (`INV-LOCK-002`): the Payment row FIRST, then the waiting
+  // recoveries, then the ask's rows - the one order the capture webhook
+  // (Payment, then its row), the runner's claim hold and the re-issue door
+  // (Payment, then the recovery, then the row) and a give-back that already
+  // wrote the Payment row all take. Either row before the Payment row is a
+  // deadlock with one of them.
+  await lockPaymentForRefundedTotal(tx, paymentId);
   await closeWaitingAskRecoveries(tx, ask.recoveries, now);
 
   const retired: RetiredAdditionalAsk[] = [];

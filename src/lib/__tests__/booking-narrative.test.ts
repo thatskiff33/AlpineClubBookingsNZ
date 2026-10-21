@@ -5,6 +5,7 @@ import {
   type NarrativeBooking,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
+import { CAPACITY_RACE_REFUND_EVENT_REASON } from "@/lib/cancel-card-refund-event-reason";
 import { DUPLICATE_CAPTURE_REFUND_EVENT_KIND } from "@/lib/duplicate-capture-refund-event";
 import { editRefundHandBackCompletedSnapshot } from "@/lib/manual-refund-task-settlement-rules";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
@@ -434,6 +435,24 @@ describe("resolveBookingNarrative", () => {
       ["stalled", [raceCancel(8000)], "stalled", "$80.00 is being refunded to you; the club will be in touch about the card refund and the remaining $20.00."],
     ] as const)("MUTATION: a refund short of the charge, %s, names the rest", (_label, events, state, clause) => {
       expect(narrate([...events], state)).toBe(`${OPENING} ${clause} No further payment is required.`);
+    });
+
+    it("shares the card clause only for the automatic refund's own events (#4178)", () => {
+      const cardRefund = event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", {
+        amountCents: 8000, reason: CAPACITY_RACE_REFUND_EVENT_REASON,
+      });
+      expect(narrate([raceCancel(8000), cardRefund])).toBe(
+        `${OPENING} $80.00 was refunded to your card on 5 May 2026; the club will be in touch about the remaining $20.00. No further payment is required.`,
+      );
+      const bankRefund = event(BookingEventType.REFUNDED, "2026-05-20T00:00:00.000Z", {
+        amountCents: 2000, reason: "Capacity-race shortfall paid by bank transfer.",
+      });
+      const mixed = narrate([raceCancel(8000), cardRefund, bankRefund]);
+      expect(mixed).toBe(`${OPENING} $100.00 was refunded on 20 May 2026. No further payment is required.`);
+      expect(mixed).not.toContain("to your card");
+      const bankOnly = narrate([raceCancel(0), { ...bankRefund, amountCents: 10000 }]);
+      expect(bankOnly).toBe(`${OPENING} $100.00 was refunded on 20 May 2026. No further payment is required.`);
+      expect(bankOnly).not.toContain("to your card");
     });
 
     // An empty plan refunds nothing by card: never "no refund was due", only what the club follows up.

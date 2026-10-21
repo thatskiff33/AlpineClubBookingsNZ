@@ -119,6 +119,48 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Count voided bank-transfer refund notes, then switch the follow-up on (#4162)
+
+**What changes.** A bank-transfer refund whose Xero refund credit note is voided
+is now undone in the club's records each night (after the 02:25 Xero link
+cleanup) and put back on the treasurer's **Money to settle** list with one
+question ([guide](guides/payments.md#answer-a-bank-refund-whose-xero-credit-note-was-voided)).
+The inbound Xero sync also stops lowering a bank-transfer payment's refunded
+total below its own refund history (`INV-ADDPAY-021`). No migration runs.
+
+**It ships report-only.** Until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true` is
+set, the nightly job classifies every voided note and logs what it would do,
+and writes nothing - and the Stuck States list of voids a person must pick a
+refund for is read-only, so nothing anywhere writes. The cron-health page
+records it as `xero-bank-refund-void-follow-up`.
+
+**Before switching it on.**
+
+1. Run the read-only count against the live database (it opens no transaction
+   and writes nothing):
+
+   ```bash
+   pnpm run xero:bank-refund-void-count
+   ```
+
+   It sorts every voided bank-transfer refund note into the buckets in
+   [the runbook](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162):
+   how many will be undone (one refund-list question each), how many are spare
+   duplicates (nothing moves), how many go to a person on Stuck States (who
+   picks the refunds each recorded, one at a time, after the switch), and how many wait for the
+   link cleanup or an in-flight note. It also counts bank-transfer payments
+   whose total is already below their refund history with no void, and says
+   when a payment holds several voids (its count can then overstate).
+2. Read the count with the treasurer: every "will be undone" note becomes a
+   question on the refund list the first night.
+3. Set `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true` and restart. The next 02:25
+   run handles the backlog like any new void.
+
+**Rollback.** Unset the variable to go back to report-only. A follow-up already
+raised stays on the refund list; the previous app version completes it as an
+ordinary hand-back (it records the refund and queues the payment's refund
+note, under a key that never replays the voided one).
+
 ### One-off correction of the starter privacy policy's audit-log retention (#4031)
 
 `20261119010000_correct_starter_privacy_audit_retention` is a **data-only

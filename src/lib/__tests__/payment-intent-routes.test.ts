@@ -845,6 +845,32 @@ describe("payment intent routes", () => {
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["full", "cancelled_refunded", 12500],
+    ["partial", "cancelled_refunded", 9000],
+    ["empty", "cancelled_refund_failed", 0],
+    ["failed", "cancelled_refund_failed", 9000],
+  ] as const)("returns capacity-cancellation facts before asking for another card: %s (#4178)", async (_label, outcome, plannedRefundCents) => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1", memberId: "member-1", status: "CONFIRMED", finalPriceCents: 12500,
+      member: { id: "member-1", email: "member@example.com", firstName: "Test", lastName: "Member" },
+      payment: { stripePaymentIntentId: "pi_existing", status: "PROCESSING" },
+    });
+    mockGetPaymentIntent.mockResolvedValue({ id: "pi_existing", amount: 12500, payment_method: "pm_123", status: "succeeded" });
+    const capacityRefund = { chargedAmountCents: 12500, plannedRefundCents };
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome, bookingId: "booking-1", bumpedBookingIds: [], capacityRefund, refundError: "private provider detail" });
+    const response = await createPaymentIntentRoute(new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST", body: JSON.stringify({ bookingId: "booking-1" }), headers: { "Content-Type": "application/json" },
+    }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Payment succeeded, but lodge capacity is no longer available for this booking.",
+      status: "CANCELLED", refunded: outcome === "cancelled_refunded", capacityRefund,
+    });
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.queueXeroInvoiceForPaidBooking).not.toHaveBeenCalled();
+  });
+
   it("reconciles a succeeded Stripe payment before asking for another card", async () => {
     mockPrisma.booking.findUnique.mockResolvedValue({
       id: "booking-1",
@@ -1742,6 +1768,25 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
       }
     );
   }
+
+  it.each([
+    ["full", "cancelled_refunded", 12500],
+    ["partial", "cancelled_refunded", 9000],
+    ["empty", "cancelled_refund_failed", 0],
+    ["failed", "cancelled_refund_failed", 9000],
+  ] as const)("returns capacity-cancellation facts after confirmation: %s (#4178)", async (_label, outcome, plannedRefundCents) => {
+    setupConfirmPayment();
+    const capacityRefund = { chargedAmountCents: 12500, plannedRefundCents };
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome, bookingId: "booking-1", bumpedBookingIds: [], capacityRefund, refundError: "private provider detail" });
+    const response = await confirmPaymentRoute(makeRequest(), { params: Promise.resolve({ id: "booking-1" }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Payment succeeded, but lodge capacity is no longer available for this booking.",
+      status: "CANCELLED", refunded: outcome === "cancelled_refunded", capacityRefund,
+    });
+    expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(mocks.queueXeroInvoiceForPaidBooking).not.toHaveBeenCalled();
+  });
 
   it("sends exactly one confirmation email on a fresh paid outcome", async () => {
     setupConfirmPayment();

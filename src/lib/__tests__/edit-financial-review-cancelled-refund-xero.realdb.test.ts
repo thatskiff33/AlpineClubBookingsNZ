@@ -23,6 +23,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { assertNoForeignPendingXeroOperations } from "./support/race-harness-outbox-guard";
 import type { CalendarDate } from "@/lib/club-time";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -384,11 +385,11 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       });
       expect(rows.map((row) => (row.requestPayload as { watermarkCents: number }).watermarkCents)).toEqual([1_000, 1_000]);
 
-      // The worker takes the oldest PENDING rows of every kind; anything not
-      // this race's (the cancel's account note, another suite's leftovers) is
-      // parked for the duration and put back.
+      await assertNoForeignPendingXeroOperations(prisma, [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID]);
+      // Select these two refund notes while parking only this suite's other
+      // work (the cancel's account note), then restore it exactly.
       const parked = await prisma.xeroSyncOperation.findMany({
-        where: { status: "PENDING", id: { notIn: rows.map((row) => row.id) } },
+        where: { status: "PENDING", localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] }, id: { notIn: rows.map((row) => row.id) } },
         select: { id: true },
       });
       await prisma.xeroSyncOperation.updateMany({ where: { id: { in: parked.map((row) => row.id) } }, data: { status: "PARKED_RACE_3880" } });
@@ -545,9 +546,10 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       }
     }
 
-    /** The real worker, on this one row: every other PENDING row is parked meanwhile and put back. */
+    /** The real worker on this row; temporarily park only this suite's other work. */
     async function processOnly(rowId: string) {
-      const parked = await prisma.xeroSyncOperation.findMany({ where: { status: "PENDING", id: { not: rowId } }, select: { id: true } });
+      await assertNoForeignPendingXeroOperations(prisma, [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID]);
+      const parked = await prisma.xeroSyncOperation.findMany({ where: { status: "PENDING", localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] }, id: { not: rowId } }, select: { id: true } });
       await prisma.xeroSyncOperation.updateMany({ where: { id: { in: parked.map((row) => row.id) } }, data: { status: "PARKED_RACE_3880" } });
       try {
         return await outbox.processQueuedXeroOutboxOperations({ limit: 1 });

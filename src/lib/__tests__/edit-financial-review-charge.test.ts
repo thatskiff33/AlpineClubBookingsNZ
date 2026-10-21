@@ -104,6 +104,8 @@ vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #4217: the ledger writers lock the Payment row first.
+    $executeRaw: vi.fn(async () => 0),
     $transaction: (...a: unknown[]) => mocks.transaction(...a),
     manualRefundTask: {
       findMany: (...a: unknown[]) => mocks.manualRefundTaskFindMany(...a),

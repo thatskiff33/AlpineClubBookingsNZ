@@ -31,6 +31,8 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { recordBankRefundVoidAnswerInTransaction } from "@/lib/bank-refund-void-answer";
+import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import {
   EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
   isCancelCardShortfallTask, isEditRefundHandBackTask,
@@ -162,15 +164,9 @@ export async function resolveManualRefundTask(
     // cannot commit between the two reads, which would count the same money
     // as neither refunded nor promised. Its occurrence key, like its kind, is
     // written once at creation and never again.
-    const head = await tx.manualRefundTask.findUnique({
-      where: { id: taskId },
-      select: { kind: true, occurrenceKey: true },
-    });
+    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true, occurrenceKey: true } });
     // #4042 (`INV-PAY-124`): so does a group organiser's, which later joiners' shares grow under it.
-    if (
-      head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW ||
-      (head !== null && (isNonCancellationHandBackTask(head) || isGroupOrganiserHandBackTask(head)))
-    ) {
+    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW || (head !== null && (isNonCancellationHandBackTask(head) || isGroupOrganiserHandBackTask(head)))) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
     const task = await tx.manualRefundTask.findUnique({
@@ -474,6 +470,8 @@ export async function resolveManualRefundTask(
       }
       // #3880: its Xero note on a cancelled booking commits, or rolls back, with it.
       await queueCancelledBookingHandBackNoteInTransaction({ task, route: settlementRoute, actingMemberId, store: tx });
+      // #4162: a re-confirmed bank refund's answer (refused when missing or misplaced): its fresh note, or the hand-made note it tracks.
+      await recordBankRefundVoidAnswerInTransaction({ task, route: settlementRoute, answer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null, actingMemberId, store: tx });
     }
 
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
@@ -556,6 +554,7 @@ export async function resolveManualRefundTask(
       settlement,
       settlementRoute,
       settlementDirection,
+      bankRefundVoidAnswer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null,
       store: tx,
     });
 
@@ -605,7 +604,8 @@ export async function resolveManualRefundTask(
        * rather than `REFUNDED` - the member got credit, not their money back.
        */
       recordedRefund:
-        settlement && settlementRoute?.kind === "local-allocation" && settlementRoute.refundCents > 0
+        // #4162: not a re-confirmed bank refund's - its money moved once, and the member is not told again (Q3).
+        settlement && settlementRoute?.kind === "local-allocation" && settlementRoute.refundCents > 0 && !isBankRefundVoidFollowUpTask(task)
           ? { amountCents: settlementRoute.refundCents }
           : null,
       /**

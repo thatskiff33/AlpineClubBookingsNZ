@@ -239,6 +239,8 @@ vi.mock("@/lib/payment-reconciliation", () => ({
     mockMarkBookingSetupIntentSucceeded(...args),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
+  // #4217: the attempt-row settle locks the Payment row first.
+  lockPaymentForRefundedTotal: async () => undefined,
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
     mockFindPaymentTransactionByIntentId(...args),
   markPaymentIntentTransactionFailed: (...args: unknown[]) =>

@@ -11,7 +11,9 @@ import {
   isPartPaymentReviewTask,
   isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
+import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -185,6 +187,13 @@ export type OpenManualRefundTaskPayload = {
   cardShortfallHandBack: boolean;
   cardShortfallCheck: boolean;
   /**
+   * #4162 (`INV-ADDPAY-042`): a bank refund back on the list because Xero
+   * voided the credit note that recorded it. The card asks one question - has
+   * the money gone to the member? - and completes only on one of its two
+   * answers. Null on every other task.
+   */
+  bankRefundVoidFollowUp: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
+  /**
    * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
    * Xero sync learned the invoice was reported PAID and the invoice's cash then.
    * Nothing was credited or handed back for it; the treasurer decides. The
@@ -258,7 +267,10 @@ export function toOpenManualRefundTaskPayload(
 ): OpenManualRefundTaskPayload {
   // #4042: a group organiser's hand-back keeps its joiners' shares there, not review evidence.
   const groupHandBack = isGroupOrganiserHandBackTask(task);
-  const reviewContext = groupHandBack ? null : parseEditFinancialReviewContext(task.reviewContext);
+  // #4162: a re-confirmed bank refund keeps its void's facts there, not review evidence.
+  const followUp = isBankRefundVoidFollowUpTask(task) ? readBankRefundVoidFollowUpContext(task.reviewContext) : null;
+  const ownContext = groupHandBack || isBankRefundVoidFollowUpTask(task);
+  const reviewContext = ownContext ? null : parseEditFinancialReviewContext(task.reviewContext);
 
   return {
     id: task.id,
@@ -273,6 +285,9 @@ export function toOpenManualRefundTaskPayload(
     groupOrganiserHandBack: groupHandBack,
     cardShortfallHandBack: cancelCardShortfallPart(task) === "bank",
     cardShortfallCheck: cancelCardShortfallPart(task) === "check",
+    bankRefundVoidFollowUp: followUp
+      ? { voidedCreditNoteNumber: followUp.voidedCreditNoteNumber, voidedAt: followUp.voidedAt }
+      : null,
     partPaymentReviewXeroPaid:
       isPartPaymentReviewTask(task) &&
       task.partPaymentReviewXeroPaidAt &&
@@ -317,7 +332,7 @@ export function toOpenManualRefundTaskPayload(
       destroyed is unreadable, rather than silently see a task with no evidence
       section and assume none was ever taken.
     */
-    reviewEvidenceUnreadable: !groupHandBack && task.reviewContext !== null && !reviewContext,
+    reviewEvidenceUnreadable: !ownContext && task.reviewContext !== null && !reviewContext,
     unpricedNights,
   };
 }

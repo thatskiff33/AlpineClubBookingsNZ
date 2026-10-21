@@ -423,6 +423,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/public-content-settings": "content",
   "/api/admin/payments": "finance",
   "/api/admin/payments/[id]/generate-invoice": "finance",
+  "/api/admin/payments/bank-refund-voids/[id]/answered": "finance",
+  "/api/admin/payments/bank-refund-voids/[id]/pick": "finance",
   // B5 (#2262): the open hand-back queue and the endpoint that closes a task.
   // The /api/admin/payments prefix already resolves to finance, so no
   // SPECIAL_ROUTE_AREA_PATTERNS entry is needed for this one.

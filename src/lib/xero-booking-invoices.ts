@@ -109,6 +109,7 @@ import {
   recheckPrimaryInvoiceChangeFeeGap,
   unrecordedPrimaryInvoiceCash,
 } from "@/lib/xero-primary-invoice-fee-gap";
+import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -863,7 +864,7 @@ export async function createXeroInvoiceForBooking(
         : earlierPaymentUnmatched
           ? "An earlier payment is present on the invoice but not matched by reference; no further cash is recorded against it."
         : netCapturedCents > 0
-          ? "Nothing is left due on the invoice once its applied account credit is allowed for; no cash is recorded against it."
+          ? PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON
           : (booking.payment.refundedAmountCents ?? 0) > 0
             ? "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice."
             : "Zero-total invoice does not require Xero payment recording.";
@@ -1149,9 +1150,7 @@ export async function createXeroInvoiceForBooking(
     // The Stripe cash recorded against this invoice, computed ONCE (#3955
     // round 5, finding 4): the payment Xero holds where there is one, else the
     // figure it was sized at, floored (round 6, F1) at the cash the invoice
-    // already held. If the payment write failed, the operator repair does NOT
-    // size at this figure: it sizes by the stored invoice total
-    // (`readStoredInvoiceTotalCents`, xero-operation-retry.ts), tracked in #4010.
+    // already held. A PARTIAL repair records the attempted figure instead (#4010).
     const primaryInvoiceCashCents = Math.max(
       providerAmountToCents(paymentResponseBody?.amount) ??
         (shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0),
@@ -1168,6 +1167,7 @@ export async function createXeroInvoiceForBooking(
       xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       billed: primaryInvoiceBilledFee(createdInvoice.invoiceID, createdInvoice.lineItems ?? lineItems),
       primaryInvoiceCashCents,
+      primaryInvoiceAttemptedCashCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0,
     });
     await prisma.paymentTransaction.updateMany({
       where: {

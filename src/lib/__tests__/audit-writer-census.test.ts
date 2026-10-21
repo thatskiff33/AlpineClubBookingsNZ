@@ -1453,7 +1453,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // owed, unpinned `payment` (507 sites minus 128 pinned).
     // 379 -> 380 unpinned (#4210 round 4): the runner holding a failed-later row
     // as a check, unpinned `payment` (508 sites minus 128 pinned).
-    ).toEqual({ pinned: 128, unpinned: 380 });
+    // 377 -> 379 unpinned (#4162): a voided bank-transfer refund note undone and
+    // one answered by a person, unpinned `payment` (507 sites minus 128 pinned).
+    // #4162 + #4210: 510 sites RE-MEASURED by `pnpm run audit:census`, minus 128 pinned.
+    ).toEqual({ pinned: 128, unpinned: 382 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

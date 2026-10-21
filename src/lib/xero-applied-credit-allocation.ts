@@ -23,6 +23,9 @@ import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
 import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
+import { APPLIED_CREDIT_ALLOCATION_ROLE } from "./xero-applied-credit-link-roles";
+import { sliceHeldInXero } from "./xero-applied-credit-slice-lookup";
+import { NOT_A_CONVERGENCE_ROW, writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
 import { lockMemberCreditLedger } from "./member-credit";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
 import {
@@ -54,7 +57,6 @@ import {
 } from "./xero-applied-credit-operation-serialization";
 
 // XeroObjectLink roles for this engine's artefacts.
-const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
 const APPLIED_CREDIT_REMAINDER_NOTE_ROLE = "APPLIED_CREDIT_REMAINDER_NOTE";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
@@ -90,7 +92,7 @@ async function gatherAppliedCreditLots(
   tx: Prisma.TransactionClient,
 ): Promise<AppliedCreditLot[]> {
   const positiveLots = await tx.memberCredit.findMany({
-    where: { memberId, amountCents: { gt: 0 } },
+    where: { memberId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
     // `type` is read for the mint's account mapping (#2717) — see
     // `mintSliceMappingKey`. Blue/green runtime-prep: name only what is read.
     select: {
@@ -114,9 +116,19 @@ async function gatherAppliedCreditLots(
     allocated.map((a) => [a.memberCreditId, a._sum.amountCents ?? 0]),
   );
 
+  // #4219: credit written down because its note was used outside the app is gone.
+  const writtenDown = await writtenDownCentsByCreditNote(
+    tx,
+    memberId,
+    positiveLots.flatMap((l) => (l.xeroCreditNoteId ? [l.xeroCreditNoteId] : [])),
+  );
   const lots: AppliedCreditLot[] = [];
   for (const lot of positiveLots) {
-    const remainingCents = lot.amountCents - (allocatedById.get(lot.id) ?? 0);
+    const free = lot.amountCents - (allocatedById.get(lot.id) ?? 0);
+    // A note's write-down is taken once, oldest lot first, never from each lot stamped with the note.
+    const downCents = lot.xeroCreditNoteId ? Math.min(Math.max(free, 0), writtenDown.get(lot.xeroCreditNoteId) ?? 0) : 0;
+    if (lot.xeroCreditNoteId && downCents > 0) writtenDown.set(lot.xeroCreditNoteId, (writtenDown.get(lot.xeroCreditNoteId) ?? 0) - downCents);
+    const remainingCents = free - downCents;
     if (remainingCents <= 0) {
       continue;
     }
@@ -480,17 +492,7 @@ export async function allocateAppliedCreditForBooking(
     if (!joinRow) {
       continue;
     }
-    const alreadyAllocated = await prisma.xeroObjectLink.findFirst({
-      where: {
-        localModel: "MemberCreditNoteAllocation",
-        localId: joinRow.id,
-        xeroObjectType: "ALLOCATION",
-        role: APPLIED_CREDIT_ALLOCATION_ROLE,
-        active: true,
-      },
-      select: { id: true },
-    });
-    if (alreadyAllocated) {
+    if (await sliceHeldInXero(prisma, joinRow.id)) {
       continue;
     }
     await allocateCreditNoteToInvoice(na.xeroCreditNoteId, invoiceId, na.amountCents, {

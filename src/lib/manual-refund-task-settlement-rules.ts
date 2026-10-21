@@ -3,6 +3,7 @@ import type { ManualRefundTaskKind, ManualRefundTaskStatus } from "@prisma/clien
 import { getRemainingRefundableCentsNetOf } from "@/lib/booking-payment-state";
 import { sumInternetBankingLateCashCreditCents } from "@/lib/internet-banking-late-cash-credit";
 import { openCardRefundOwedCents, type CardRefundOwedPaymentRow } from "@/lib/open-card-refund-owed";
+import { BANK_REFUND_VOID_FOLLOW_UP_KEY_PREFIX, isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 
 /**
  * #3213 (epic #2797): WHICH FINANCE-QUEUE ITEMS CAN BE SETTLED AT ALL, and the
@@ -238,6 +239,7 @@ const NON_CANCELLATION_HAND_BACK_KEY_PREFIXES = [
   EDIT_REFUND_HAND_BACK_KEY_PREFIX,
   REFUND_REQUEST_HAND_BACK_KEY_PREFIX,
   CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX,
+  BANK_REFUND_VOID_FOLLOW_UP_KEY_PREFIX,
 ] as const;
 
 function hasKeyPrefix(occurrenceKey: string | null, prefix: string): boolean {
@@ -347,21 +349,18 @@ export function refundRequestIdOfHandBack(task: {
 }
 
 /**
- * #3827 (`INV-PAY-117`): IS THIS HAND-BACK SOMETHING OTHER THAN A
- * CANCELLATION'S - an edit's refund or an approved refund request's? Both are
- * money promised back by bank transfer whose `refundedAmountCents` moves only
- * when the treasurer marks the task paid back, both take `lock(1)` to close,
- * and both are netted from refundable cash while open. On completion an
- * edit's owes Xero nothing (the edit queued its note); a refund request's
- * queues that request's own refund note (D-3813-8,
- * `refundRequestIdOfHandBack`). Every server
+ * #3827 (`INV-PAY-117`): IS THIS HAND-BACK SOMETHING OTHER THAN A CANCELLATION'S - an edit's refund, an approved refund
+ * request's (or #4162, a bank refund to re-confirm)? Money promised back by bank transfer whose `refundedAmountCents`
+ * moves only when the treasurer marks the task paid back: each takes `lock(1)` to close and is netted from refundable
+ * cash while open. On completion an edit's owes Xero nothing (the edit queued its note); a refund request's queues that
+ * request's own refund note (D-3813-8, `refundRequestIdOfHandBack`), and a re-confirmed refund its own. Every server
  * reader that asks "is this a CANCELLATION's hand-back?" asks this.
  */
 export function isNonCancellationHandBackTask(task: {
   kind: ManualRefundTaskKind | string | null;
   occurrenceKey: string | null;
 }): boolean {
-  return isEditRefundHandBackTask(task) || isRefundRequestHandBackTask(task) || isCardRefundPaidAnotherWayTask(task);
+  return isEditRefundHandBackTask(task) || isRefundRequestHandBackTask(task) || isCardRefundPaidAnotherWayTask(task) || isBankRefundVoidFollowUpTask(task);
 }
 
 /**

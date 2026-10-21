@@ -2202,6 +2202,21 @@ though the booking is cancelled, because the cancel came first and never
 counted it. See
 [`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-118).
 
+**#4162 (owner decision 17 Oct 2026): a bank refund to re-confirm follows it
+too, raised by a void.** When Xero voids the credit note of a bank hand-back,
+the nightly follow-up (`INV-ADDPAY-042`) takes that refund back out of the
+payment's records and inserts ONE new task OPEN - never a reopen: the completed
+hand-back stays COMPLETED (#3498) and its ledger line is reversed instead. It is
+a `CANCELLED_BOOKING_HAND_BACK` keyed `bank-refund-void:<payment>:<note>` (the
+claim, so one per voided note), or `bank-refund-void:<payment>:<note>:<line>`
+for each refund a person picks for an unmatched note, netted from refundable cash while OPEN like an
+edit's. OPEN -> COMPLETED needs one of two answers (raise a fresh credit note
+keyed on the task; or the hand-made note's number, checked in Xero before the
+transaction and then tracked), writes the allocation and the `BANK_REFUND` line
+as any hand-back's completion does, and writes NO `REFUNDED` event: the money
+moved once. OPEN -> DISMISSED is "the club keeps it", with a reason. The
+previous app version completes it as an ordinary hand-back.
+
 **#4042: so does a group organiser's, except that it cannot be dismissed.** An
 organiser's cancel of a group paid by Internet Banking raises the task OPEN on
 the organiser's booking, inside the first per-child claim that books a
@@ -3529,6 +3544,8 @@ unconfirmed environment, and a provider failure — stay distinguishable
 ```text
 local business event -> Xero outbox operation queued
 worker claims operation -> provider call -> success or retryable failure
+success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
+  wait's or failure's code is not shown on it (#4049); PARTIAL keeps them
 worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   to PENDING without failing, status-guarded; the billed-offset wait makes no
   Xero call; lastErrorCode is the wait's code or null
@@ -3536,6 +3553,8 @@ worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   BILLED_OFFSET_AWAITING_OWN_NOTE, rechecked every
   BILLED_OFFSET_OWN_NOTE_RECHECK_MS; at BILLED_OFFSET_OWN_NOTE_WAIT_MS from
   createdAt -> FAILED for a person (an operator's retry raises it unwaited)
+  it waits only when its edit expected an own note; a note the repair pass
+  queues reads that from the edit's history row (#4049)
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
@@ -3543,6 +3562,18 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   refused while the operation is RUNNING, a live copy of it is queued, or a
   queued retry of it overlaps the mark (the mark is then withdrawn)
   refused for applied-credit allocations and deallocations (retry-only)
+credit-note allocation refused by Xero as more than the note has left (#4218)
+  -> FAILED with code CREDIT_NOTE_SPENT_OUTSIDE_APP when a read of the note
+  afterwards CONFIRMS it was spent outside the app. Xero's refusal is the
+  trigger (a read made beforehand could lag an edit and fail an allocation Xero
+  would accept) but not proof: the app's own earlier allocation, whose
+  completion was never recorded, is refused the same way. So the original error
+  stands, unnamed, when the read fails, shows the note now has enough, or shows
+  this invoice already holds an allocation of at least the slice. The row stays
+  replayable and the named code still counts as refused by Xero
+  (xeroRefusedOperation); a retry sends the allocation again and should go
+  through once the credit is restored in Xero. Applies to every credit-note
+  allocation, applied credit included
 queued retry (REQUEUE) RUNNING -> CANCELLED when its operation read as resolved
   in Xero (before the claim, or the claim lost to the resolve); nothing ran
 outbox copy RUNNING -> CANCELLED when a sibling for the same document was
@@ -3679,11 +3710,17 @@ PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
                        paid-twice row was marked Resolved, or where the close
                        kept no record and may have counted it, the whole
                        refund - raised dead for an officer to check)
+PROCESSING -> DEAD    (#4210 round 4: the runner, having claimed a failed-later
+                       row an older release raised - no paidAnotherWayWeighed
+                       mark - where a "Paid another way" close may have paid its
+                       refund back: an uncertain check, compare-and-set on its
+                       own claim, audited and alerted, never sent)
 DEAD -> SUCCEEDED     (#4210 round 3, a check only: "Checked - not owed",
                        finance:edit, no lock, one updateMany guarded on the
-                       plan, status and attempts read; lastError is the
-                       checked-not-owed marker; no money, ledger or Xero;
-                       audited under `payment`)
+                       plan, status and attempts read, refused for a plan
+                       recording a refund failed later; the check is marked
+                       notOwed and lastError is the checked-not-owed marker; no
+                       money, ledger or Xero; audited under `payment`)
 PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        re-planned instead: the slice on its next key,
                        recording the failure in failedRefundIds; compare-and-set
@@ -3975,12 +4012,22 @@ valid TOTP/email/recovery code -> server mints single-use challenge token (hashe
 session update carrying that token -> jwt callback consumes it -> twoFactorVerified=true
 client-forged session update without a valid token -> ignored, session stays unverified
 invalid attempts -> per-member counter increments -> 15 minute lockout after 5 failures
+enrollment accepted -> recovery codes stay visible until Continue -> replace document at server-resolved destination
+verification accepted -> replace document at server-resolved destination
+rejected or failed request -> retain challenge and correction flow, no navigation
 ```
 
 To verify: Auth.js JWT callback claim handling, challenge-token single-use
 consumption, protected route-group layout redirects, API guard rejection,
 email-code expiry, TOTP skew window, recovery code single-use consumption, and
-lockout reset after successful verification.
+lockout reset after successful verification. The two successful panel exits share
+one local document-replacement function (`window.location.replace`); destination
+selection stays server-side, including safe deep links and nonce-bound private
+family-invite returns. Neither exit renders that destination in a DOM attribute.
+Enrollment waits for explicit **Continue** so the member can save recovery codes.
+Rendered panel tests cover accepted, pending, rejected and network-failed requests;
+direct browser journeys require protected content after Continue and verification,
+without a later helper navigation (#4060).
 
 ## Magic-Link Sign-In Lifecycle
 

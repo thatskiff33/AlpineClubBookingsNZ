@@ -2208,6 +2208,24 @@ internet-banking cash that became credit on an already-cancelled booking. Only
 the first is the #3640 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
+### Count voided bank-transfer refund notes before the follow-up writes (#4162)
+
+`scripts/bank-refund-void-count.ts` sorts every voided bank-transfer refund
+credit note with the nightly follow-up's own classifier, so the count is what
+the first writing run will do, and counts bank-transfer payments whose refunded
+total is below their own transaction detail with no void. It is READ-ONLY - no
+transaction, no lock, no write, no provider call - and is meant to be run on the
+live database before `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true` is set.
+
+```bash
+pnpm run xero:bank-refund-void-count          # counts and amounts per bucket
+pnpm run xero:bank-refund-void-count --list   # also each link / payment id
+pnpm run xero:bank-refund-void-count --json
+```
+
+The buckets and what each one leads to are in
+[`xero/ARCHITECTURE.md` -> "Voided bank-transfer refund notes (#4162)"](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162).
+
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
 Before #3979 the inbound Xero settle kept the figure an Internet Banking payment

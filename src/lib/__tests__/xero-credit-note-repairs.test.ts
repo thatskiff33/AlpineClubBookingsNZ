@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   xeroSyncOperationFindMany: vi.fn(),
   paymentRefundAggregate: vi.fn(),
   paymentTransactionFindMany: vi.fn(),
+  paymentTransactionAggregate: vi.fn(),
   paymentUpdateMany: vi.fn(),
   paymentFindUnique: vi.fn(),
 }));
@@ -42,6 +43,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       findMany: mocks.paymentTransactionFindMany,
+      // #4162: the bank-transfer floor reads the payment's own refund detail.
+      aggregate: mocks.paymentTransactionAggregate,
     },
   },
 }));
@@ -66,6 +69,8 @@ beforeEach(() => {
     return { count: 1 };
   });
   mocks.paymentTransactionFindMany.mockResolvedValue([]);
+  // No refund detail by default, so the #4162 floor has nothing to keep.
+  mocks.paymentTransactionAggregate.mockResolvedValue({ _sum: { refundedAmountCents: 0 } });
 });
 
 function payment(overrides: Record<string, unknown> = {}) {
@@ -192,6 +197,28 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
     });
     expect(result).toEqual({ matchedPayments: 1, updatedPayments: 1 });
     expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+  });
+
+  it("#4162 MUTATION (INV-ADDPAY-021): never lowers a bank-transfer total below its own detail - it alerts instead", async () => {
+    mocks.paymentTransactionAggregate.mockResolvedValue({ _sum: { refundedAmountCents: 5000 } });
+    const result = await runRepair({
+      paymentRow: payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 5000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+      creditNote: { status: "VOIDED", total: 50 },
+    });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
+    expect(mocks.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({ errorType: "refund-ledger-divergence" }));
+  });
+
+  it("#4162: lowers a bank-transfer total to its detail, never below it", async () => {
+    mocks.paymentTransactionAggregate.mockResolvedValue({ _sum: { refundedAmountCents: 3000 } });
+    await runRepair({
+      paymentRow: payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 5000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+      creditNote: { status: "AUTHORISED", total: 10 },
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { refundedAmountCents: 3000 } });
   });
 
   it("repairs a lagging status upward from the floored local ledger", async () => {

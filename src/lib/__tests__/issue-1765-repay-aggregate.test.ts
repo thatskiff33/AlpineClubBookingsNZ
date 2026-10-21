@@ -56,6 +56,8 @@ type StorePayment = {
 function makeStore(payment: StorePayment) {
   const paymentTransactionCreate = vi.fn();
   const store = {
+    // #4217: the reconcile locks the Payment row before it reads.
+    $executeRaw: vi.fn(async () => 0),
     // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
     // ledger's settlement lines from the same rows, so it reads and writes here.
     bookingLedgerLine: {

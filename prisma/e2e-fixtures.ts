@@ -362,6 +362,19 @@ export const UNRECONCILED_BOOKING_ID = "e2e-unreconciled-booking";
 export const UNRECONCILED_BOOKING_WINDOW = relWindow(340, 1);
 export const ADDITIONAL_OWED_AMOUNT_CENTS = 21_000;
 
+// --- A bank refund back on the refund list after its note's void (#4162) ----
+// Three cancelled bookings paid by internet banking, each with a bank refund
+// the nightly follow-up put back on Money to settle because Xero voided its
+// credit note (the follow-up task, as the follow-up writes it, and the voided
+// note's link). e2e/bank-refund-void-follow-up.spec.ts answers ONE per attempt
+// (the first still open): an answer is final and the suite seeds once per
+// run, so a retry must never meet the row its earlier attempt answered
+// (docs/E2E_PLAYWRIGHT.md, flake invariant 1). The ids' first eight characters
+// differ, so each booking reference does. Every window is in
+// SEEDED_BOOKING_WINDOWS below, which `seededBookingDates` requires (#4004).
+export const BANK_REFUND_VOID_BOOKING_IDS = ["e2ebrv0-booking", "e2ebrv1-booking", "e2ebrv2-booking"] as const;
+export const BANK_REFUND_VOID_WINDOWS = [relWindow(360, 1), relWindow(362, 1), relWindow(364, 1)] as const;
+
 // --- Finished-stay free-text change request (#4030) -----------------------
 // A COMPLETED two-night stay of Heidi's, paid in full by internet banking
 // against an issued invoice, carrying one REQUESTED locked-period change
@@ -513,6 +526,7 @@ export const SEEDED_BOOKING_WINDOWS: ReadonlyArray<{
   PAID_CANCEL_WINDOW,
   ADDITIONAL_OWED_WINDOW,
   UNRECONCILED_BOOKING_WINDOW,
+  ...BANK_REFUND_VOID_WINDOWS,
   CHANGE_REQUEST_FINISHED_WINDOW,
   ROSTER_ISOLATION_WINDOW,
   CAPACITY_ISOLATION_WINDOW,

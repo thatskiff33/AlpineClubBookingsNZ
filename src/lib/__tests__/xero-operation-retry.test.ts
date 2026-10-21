@@ -167,6 +167,7 @@ import {
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
+import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
@@ -1985,6 +1986,121 @@ describe("retryXeroSyncOperation", () => {
         invoiceId: "inv_123",
         amountCents: 4567,
       },
+    });
+  });
+
+  // #4010: the repair records the cash the create would have recorded — the
+  // figure stored with the invoice link, capped for applied account credit —
+  // not the invoice total. The total is only an older operation's fallback.
+  describe("primary invoice PARTIAL repair sizes at the stored cash figure (#4010)", () => {
+    // `attempted` undefined models a record written before #4010 stored it.
+    const storedAtLink = (
+      primaryInvoiceCashCents: number,
+      xeroInvoiceId = "inv_123",
+      primaryInvoiceAttemptedCashCents: number | undefined = primaryInvoiceCashCents,
+    ) => ({
+      invoices: [{ lineItems: [{ quantity: 1, unitAmount: 100 }] }],
+      primaryInvoiceBilledFee: {
+        xeroInvoiceId,
+        billedChangeFeeCents: 0,
+        billedTotalCents: 10_000,
+        recordedChangeFeeCentsAtLink: 0,
+        primaryInvoiceCashCents,
+        ...(primaryInvoiceAttemptedCashCents === undefined ? {} : { primaryInvoiceAttemptedCashCents }),
+      },
+    });
+    const partialPrimary = (requestPayload: unknown) =>
+      makeOperation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_123",
+        requestPayload,
+        responsePayload: {
+          invoice: { invoices: [{ total: 100 }] },
+          paymentError: { message: "Xero rejected the payment" },
+        },
+      });
+    const repairedPaymentCents = () => {
+      expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+      const call = mocks.createXeroPaymentForInvoice.mock.calls[0][0];
+      expect(call.metadata.amountCents).toBe(call.amountCents);
+      expect(call.idempotencyKey).toBe("payment:pay_123:invoice-payment:v1");
+      return call.amountCents;
+    };
+
+    it("card plus applied credit: records the card cash (total less credit), not the total", async () => {
+      // $100 invoice, $20 of it paid by applied credit: the card paid $80.
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(8_000)));
+      await expect(
+        retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+      ).resolves.toEqual({ message: "Repaired Xero booking invoice payment recording." });
+      expect(repairedPaymentCents()).toBe(8_000);
+    });
+
+    // #4010 review: the stored cash is floored at an earlier unmatched payment
+    // on the invoice; the repair records what the create tried to pay.
+    it.each([
+      { floored: 6_000, attempted: 4_000 },
+      { floored: 3_000, attempted: 2_000 },
+    ])("records the attempted $attempted, never the floored $floored", async ({ floored, attempted }) => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(floored, "inv_123", attempted)));
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(attempted);
+    });
+
+    it("a record from before the attempted figure falls back to the stored cash", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(8_000, "inv_123", undefined)));
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(8_000);
+    });
+
+    it("card only: the stored figure is the total, so the repair is unchanged", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(10_000)));
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(10_000);
+    });
+
+    it("an operation from before the stored figure falls back to the invoice total", async () => {
+      // Pre-#3955: no record at all.
+      mocks.findUniqueOperation.mockResolvedValue(
+        partialPrimary({ invoices: [{ lineItems: [{ quantity: 1, unitAmount: 100 }] }] }),
+      );
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(10_000);
+    });
+
+    it("a record without the cash figure (pre-round-5) or for another invoice also falls back", async () => {
+      const withoutCash: Record<string, unknown> = { ...storedAtLink(8_000, "inv_123", undefined).primaryInvoiceBilledFee };
+      delete withoutCash.primaryInvoiceCashCents;
+      for (const requestPayload of [
+        { ...storedAtLink(8_000), primaryInvoiceBilledFee: withoutCash },
+        storedAtLink(8_000, "inv_other"),
+      ]) {
+        vi.clearAllMocks();
+        mocks.findUniqueOperation.mockResolvedValue(partialPrimary(requestPayload));
+        await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+        expect(repairedPaymentCents()).toBe(10_000);
+      }
+    });
+
+    it("a stored figure of zero records no payment and says the credit took it, not that the invoice was zero", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(0)));
+      await expect(
+        retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+      ).resolves.toEqual({
+        message:
+          "Marked Xero booking invoice as repaired without payment recording: its applied account credit leaves no card cash to record.",
+      });
+      expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_123",
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          responsePayload: expect.objectContaining({
+            paymentSkipped: true,
+            paymentSkipReason: PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON,
+          }),
+        }),
+      );
     });
   });
 

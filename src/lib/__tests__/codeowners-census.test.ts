@@ -74,8 +74,16 @@ const OWNER = "@thatskiff33";
  * and an edit's attribution (`payment-intent-ledger-row-write.ts`), is owned by
  * the existing `payment-*` glob rather than a widened one, inside the same 18%
  * ceiling: 237 of 1382, 17.1%, measured on the tree composed with #4104.
+ * And 18 Oct 2026 (#4162, owner decision
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4162#issuecomment-6245873327):
+ * seven new money modules, each owned by the
+ * existing `*refund*` glob rather than a widened one - the voided bank-transfer
+ * refund note's classifier, nightly follow-up, answers, count, copy and key
+ * (`bank-refund-void-*.ts`) and the allocation unwind
+ * (`refund-allocation-unwind.ts`): 256 of 1420, 18.03%, so the ceiling moves
+ * to 18.5%.
  */
-const MAX_OWNED_SRC_LIB_SHARE = 0.18;
+const MAX_OWNED_SRC_LIB_SHARE = 0.185;
 
 /**
  * Outside `src/lib`, a share of one directory bounds nothing, so every pattern

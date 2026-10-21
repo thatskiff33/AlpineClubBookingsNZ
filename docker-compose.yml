@@ -211,6 +211,8 @@ x-app-environment: &app-environment
   XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: ${XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH:-false}
   XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: ${XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS:-false}
   XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: ${XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS:-false}
+  # #4162: report-only until set true (run `pnpm run xero:bank-refund-void-count` first).
+  XERO_ENABLE_BANK_REFUND_VOID_WRITES: ${XERO_ENABLE_BANK_REFUND_VOID_WRITES:-false}
   # First-boot seed for the club's currency and locale (src/lib/club-format-env.ts):
   # copied once into the recorded setting, then never read again; unset falls back
   # to NZD / en-NZ. The NEXT_PUBLIC_* twins are not read at all (#3567). Club time

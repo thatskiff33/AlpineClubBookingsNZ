@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   enrollTotp,
   readStoredTwoFactor,
@@ -21,6 +21,26 @@ test.describe.configure({ timeout: 180_000 });
 
 const enrollee = personas.enrollee;
 
+async function expectPaymentsDestination(page: Page): Promise<void> {
+  await expect(page).toHaveURL(/\/admin\/payments/);
+  const payments = page.getByRole("heading", { name: "Payments", exact: true });
+  const details = page.getByRole("dialog", { name: "Confirm member details", exact: true });
+  const confirmDetails = details.getByRole("button", {
+    name: /^(Save and continue|Confirm details are correct)$/,
+  });
+
+  // The protected layout can require profile confirmation before rendering
+  // Payments. Either state must contain real destination content; a URL or
+  // blank streamed shell cannot complete the authentication journey.
+  await expect.poll(async () =>
+    await payments.isVisible() ||
+    (await details.isVisible() && await confirmDetails.isVisible()),
+  {
+    message: "Payments must render its heading or the usable member-details gate",
+    timeout: 15_000,
+  }).toBe(true);
+}
+
 test("first login forces two-factor enrollment and issues recovery codes", async ({
   page,
 }) => {
@@ -39,7 +59,7 @@ test("first login forces two-factor enrollment and issues recovery codes", async
   // admin matrix grants finance=view. Post-login now defaults an admin-access
   // member to their first accessible admin page (#2090 D-D3), which for a
   // finance-only member is /admin/payments — not /dashboard.
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  await expectPaymentsDestination(page);
 });
 
 test("session that has not passed the challenge cannot reach protected pages", async ({
@@ -72,7 +92,7 @@ test("re-login rejects a wrong code and accepts a valid TOTP code", async ({
   await page.getByRole("button", { name: "Verify" }).click();
   // Bob (finance VIEWER) defaults to his first accessible admin page (#2090
   // D-D3): /admin/payments, re-resolved server-side at /login/verify.
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  await expectPaymentsDestination(page);
 });
 
 test("recovery code completes the challenge and is single-use", async ({
@@ -93,7 +113,7 @@ test("recovery code completes the challenge and is single-use", async ({
   await page.getByRole("button", { name: "Verify" }).click();
   // Bob (finance VIEWER) defaults to his first accessible admin page (#2090
   // D-D3): /admin/payments, re-resolved server-side at /login/verify.
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  await expectPaymentsDestination(page);
 
   // The same code must not work twice.
   const secondContext = await page.context().browser()!.newContext();

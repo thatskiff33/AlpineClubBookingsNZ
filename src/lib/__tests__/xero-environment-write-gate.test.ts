@@ -274,6 +274,8 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "getContactGroups",
       "getContacts",
       "getCreditNote",
+      // #4162: the "already in Xero" answer reads the hand-made note by its number.
+      "getCreditNotes",
       "getInvoice",
       "getInvoices",
       "getItems",

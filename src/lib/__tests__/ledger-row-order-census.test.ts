@@ -106,6 +106,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "reads only which candidate intents are already recorded (a Set of intent ids).",
   "src/lib/orphaned-applied-credit-backfill.ts > CANDIDATE_BOOKING_SELECT":
     "reads only each row's status to ask whether ANY row was captured (`.some`).",
+  "src/lib/refund-allocation-unwind.ts > unwindableHandBackCents":
+    "#4162: sums each row's refunded total less its card refunds; a sum does not depend on the order " +
+    "(the unwind itself orders its rows, oldest first).",
   "src/lib/payment-reconciliation.ts > enqueueManualSettlementIntentCancellations":
     "cancels EVERY live Stripe intent on the payment except the one named to spare (an intent id, unique); " +
     "the order only changes the order the cancellations are queued in.",

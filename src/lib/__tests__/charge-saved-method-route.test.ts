@@ -217,6 +217,8 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: (...args: unknown[]) => mockPaymentTransactionDeleteMany(...args),
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
+    // #4217: the root client, so a settle without a caller's transaction opens its own.
+    $connect: vi.fn(),
   },
 }));
 

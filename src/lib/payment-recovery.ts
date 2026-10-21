@@ -26,6 +26,7 @@ import {
 } from "@/lib/stripe";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
+  lockPaymentForRefundedTotal,
   reconcilePaymentAggregates,
   recordStripeRefundsAgainstTransaction,
   refundPaymentTransactions,
@@ -2378,10 +2379,12 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * a reduction outright while the supersede and invoice below finish.
  */
 async function holdAdditionalIntentRecoveryClaim<T>(
-  operation: Pick<PaymentRecoveryOperation, "id" | "attempts" | "processingStartedAt">,
+  operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "attempts" | "processingStartedAt">,
   write: (store: Prisma.TransactionClient) => Promise<T>,
 ): Promise<{ value: T; heldAt: Date } | null> {
   return prisma.$transaction(async (tx) => {
+    // #4217 (`INV-LOCK-002`): the Payment row before the recovery row, as a reduction netting this ask off takes them.
+    await lockPaymentForRefundedTotal(tx, operation.paymentId);
     const heldAt = new Date();
     const held = await tx.paymentRecoveryOperation.updateMany({
       where: {
@@ -2949,7 +2952,7 @@ async function processCreateAdditionalPaymentIntentOperation(
   // invoice is queued to wait on this intent. A lost claim queues none: the
   // reduction accounted for this ask's money in its own invoice and history.
   const stillHeld = await holdAdditionalIntentRecoveryClaim(
-    { id: operation.id, attempts: operation.attempts, processingStartedAt: held.heldAt },
+    { id: operation.id, paymentId: operation.paymentId, attempts: operation.attempts, processingStartedAt: held.heldAt },
     async () => true,
   );
   if (stillHeld === null) {

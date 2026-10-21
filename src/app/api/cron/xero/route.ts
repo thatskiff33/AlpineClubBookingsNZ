@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   const taskParam = request.nextUrl.searchParams.get("task") ?? "memberships";
   if (taskParam !== "all" && !isXeroCronTask(taskParam)) {
     return NextResponse.json(
-      { error: "Invalid task. Expected memberships, outbox, retries, inbound, backfill, link-cleanup, report, credit-sync, or all." },
+      { error: "Invalid task. Expected memberships, outbox, retries, inbound, backfill, link-cleanup, bank-refund-voids, report, credit-sync, or all." },
       { status: 400 }
     );
   }

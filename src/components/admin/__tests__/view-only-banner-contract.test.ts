@@ -385,10 +385,13 @@ const FIGURES = {
    * panel's own view-only button. MEASURED on the composed tree after merging main at aaedc5481.
    * 376 -> 377 (#4098): the subscription charge queue's "Close: already paid".
    * MEASURED by re-running this census.
+   * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
+   * bank refund note. MEASURED by re-running this census.
    * 377 -> 378 (#4210 round 3): the dead card refunds panel's "Checked - not
    * owed", on a check row. MEASURED by re-running this census.
+   * #4162 + #4210: 379 call sites MEASURED on the composed tree by this census.
    */
-  callSites: 378,
+  callSites: 379,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -441,9 +444,11 @@ const FIGURES = {
    * guest entry's button, under the change-request panel's banner. MEASURED
    * on the composed tree.
    * 321 -> 322 (#4098): "Close: already paid", under the billing panel's banner.
+   * 322 -> 323 (#4162): "Record the answer", under the voided bank refund notes panel's banner.
    * 322 -> 323 (#4210 round 3): "Checked - not owed", under the dead card refunds panel's banner.
+   * #4162 + #4210: 324 opt-outs MEASURED on the composed tree by this census.
    */
-  optOuts: 323,
+  optOuts: 324,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -529,10 +534,13 @@ const FIGURES = {
    * panel's own banner. MEASURED on the composed tree after merging main at aaedc5481.
    * 285 -> 286 (#4098): "Close: already paid" sits in the same file as the
    * subscription billing panel's own banner. MEASURED by re-running this census.
+   * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
+   * notes panel's own banner. MEASURED by re-running this census.
    * 286 -> 287 (#4210 round 3): "Checked - not owed" sits in the same file as
    * the dead card refunds panel's own banner. MEASURED by re-running this census.
+   * #4162 + #4210: 288 static opt-outs MEASURED on the composed tree by this census.
    */
-  staticOptOuts: 287,
+  staticOptOuts: 288,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -619,8 +627,10 @@ const FIGURES = {
    *
    * 98 -> 99 (#3372): the stuck-states page's dead card refunds panel, gated on
    * finance inside a support page, so it states its own area's reason.
+   * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
+   * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 99,
+  bannerComponents: 100,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

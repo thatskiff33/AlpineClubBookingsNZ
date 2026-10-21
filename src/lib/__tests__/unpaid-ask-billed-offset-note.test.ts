@@ -27,6 +27,9 @@ vi.mock("@/lib/additional-ask-reissue", () => ({ queueReissuedAskRecovery: h.rei
 
 const { queueReductionAskFollowUps, queueUnpaidAskBilledOffsetNote } = await import("@/lib/unpaid-ask-billed-offset-note");
 const { UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE } = await import("@/lib/xero-review-task-key");
+const { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, recordedBilledOffsetOwnNoteExpected, unpaidAskOffsetHistory } = await import(
+  "@/lib/unpaid-ask-offset-marker"
+);
 
 const tx = { marker: "the edit's transaction" } as unknown as Parameters<typeof queueUnpaidAskBilledOffsetNote>[0];
 const NO_ASK = NO_ADDITIONAL_ASK;
@@ -98,5 +101,43 @@ describe("queueReductionAskFollowUps", () => {
     await queueReductionAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
 
     expect(h.calls).toEqual(["reissue"]);
+  });
+});
+
+/**
+ * #4049: the edit's history row records the SAME answer its billed-offset
+ * note's payload carries, so the repair pass reads the edit's rule rather than
+ * recomputing a broader one. The two cases where no own note is ever raised -
+ * a reduction settled by giving back applied credit with nothing captured
+ * (the Xero leg returns nothing: `xeroRefundAmountCents` is 0), and an
+ * organiser's card refund - record false.
+ */
+describe("the edit's history records whether its own note is expected (#4049)", () => {
+  const offset = { ...NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetCents: 2_000, unpaidAskBilledOffsetCents: 2_000, foldedReissuedAsks: NO_FOLDED_REISSUED_ASKS };
+
+  it.each([
+    ["a refund left after the ask, against an issued invoice", { hasIssuedXeroInvoice: true, xeroRefundAmountCents: 1_000, organiserChildRefund: null }, true],
+    ["settled by giving back applied credit, nothing captured", { hasIssuedXeroInvoice: true, xeroRefundAmountCents: 0, organiserChildRefund: null }, false],
+    ["an organiser's card refund, whose note comes later", { hasIssuedXeroInvoice: true, xeroRefundAmountCents: 1_000, organiserChildRefund: { amountCents: 1_000 } }, false],
+    ["no issued primary invoice", { hasIssuedXeroInvoice: false, xeroRefundAmountCents: 1_000, organiserChildRefund: null }, false],
+  ])("MUTATION: %s", async (_label, figures, expected) => {
+    const settled = { ...offset, ...figures, additionalAsk: NO_ASK };
+    const history = unpaidAskOffsetHistory(settled);
+    expect(recordedBilledOffsetOwnNoteExpected(history)).toBe(expected);
+
+    await queueReductionAskFollowUps(tx, { bookingId: "booking_1", paymentId: "payment_1", bookingModificationId: "mod_reduction", settled });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.objectContaining({ ownNoteExpected: expected }), { store: tx });
+  });
+
+  it("is recorded only beside a billed offset - no note, no answer", () => {
+    const history = unpaidAskOffsetHistory({ ...offset, unpaidAskBilledOffsetCents: 0, hasIssuedXeroInvoice: true, xeroRefundAmountCents: 1_000 });
+    expect(history).not.toHaveProperty("unpaidAskBilledOffsetOwnNoteExpected");
+    expect(recordedBilledOffsetOwnNoteExpected(history)).toBeNull();
+  });
+
+  it("a history row written before #4049 records no answer (null), and only a boolean is an answer", () => {
+    expect(recordedBilledOffsetOwnNoteExpected({ unpaidAskBilledOffsetCents: 2_000 })).toBeNull();
+    expect(recordedBilledOffsetOwnNoteExpected({ unpaidAskBilledOffsetOwnNoteExpected: "true" })).toBeNull();
+    expect(recordedBilledOffsetOwnNoteExpected(null)).toBeNull();
   });
 });

@@ -36,6 +36,8 @@ import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import { redeemPromoCode } from "../src/lib/promo";
 import { getClubFormat } from "../src/lib/club-format-settings";
+import { bankRefundVoidFollowUpOccurrenceKey } from "../src/lib/bank-refund-void-follow-up-key";
+import { bankRefundVoidFollowUpReviewContext } from "../src/lib/bank-refund-void-follow-up-copy";
 import { stripeChargeCurrency } from "../src/lib/stripe-charge-currency";
 import {
   DEMO_BOOKING_WINDOWS,
@@ -65,6 +67,8 @@ import {
   PAID_PROMO_BOOKING_ID,
   UNRECONCILED_BOOKING_ID,
   UNRECONCILED_BOOKING_WINDOW,
+  BANK_REFUND_VOID_BOOKING_IDS,
+  BANK_REFUND_VOID_WINDOWS,
   LOCKED_OUT_MEMBER,
   PAID_CANCEL_BOOKING_ID,
   PAID_CANCEL_WINDOW,
@@ -1282,6 +1286,64 @@ async function main() {
     UNRECONCILED_BOOKING_WINDOW.checkOut,
     NIGHTLY + 100,
   );
+
+  // #4162: three cancelled internet-banking bookings, each with a bank refund
+  // the nightly follow-up put back on Money to settle because Xero voided its
+  // credit note - the open follow-up as the follow-up writes it, its voided
+  // note's link, and the payment with nothing recorded as refunded (the undo
+  // took it out). e2e/bank-refund-void-follow-up.spec.ts answers one per attempt.
+  for (const [index, bookingId] of BANK_REFUND_VOID_BOOKING_IDS.entries()) {
+    const window = must(BANK_REFUND_VOID_WINDOWS[index], "bank refund void window");
+    await prisma.booking.create({
+      data: {
+        id: bookingId,
+        memberId: nadia.id,
+        status: "CANCELLED",
+        totalPriceCents: NIGHTLY,
+        finalPriceCents: NIGHTLY,
+        ...seededBookingDates(window.checkIn, window.checkOut),
+      },
+    });
+    const invoiceId = `${bookingId}-invoice`;
+    const payment = await prisma.payment.create({
+      data: { bookingId, amountCents: NIGHTLY, source: "INTERNET_BANKING", status: "SUCCEEDED", xeroInvoiceId: invoiceId },
+    });
+    await prisma.paymentTransaction.create({
+      data: { paymentId: payment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: NIGHTLY, status: "SUCCEEDED", xeroInvoiceId: invoiceId },
+    });
+    const noteId = `${bookingId}-note`;
+    const noteNumber = `CN-E2E-${index}`;
+    await prisma.xeroObjectLink.create({
+      data: {
+        localModel: "Payment",
+        localId: payment.id,
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: noteId,
+        xeroObjectNumber: noteNumber,
+        role: "REFUND_CREDIT_NOTE",
+        active: false,
+        metadata: { amountCents: NIGHTLY, status: "VOIDED", total: NIGHTLY / 100 },
+      },
+    });
+    await prisma.manualRefundTask.create({
+      data: {
+        bookingId,
+        paymentId: payment.id,
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        amountCents: NIGHTLY,
+        raisedAmountCents: NIGHTLY,
+        occurrenceKey: bankRefundVoidFollowUpOccurrenceKey(payment.id, noteId),
+        reason: `Refund to re-confirm: Xero credit note ${noteNumber} was voided, so this bank refund is back on the list (#4162).`,
+        reviewContext: bankRefundVoidFollowUpReviewContext({
+          voidedCreditNoteId: noteId,
+          voidedCreditNoteNumber: noteNumber,
+          voidedAt: new Date().toISOString(),
+          originalTaskId: `${bookingId}-original-hand-back`,
+          reversedLineId: `${bookingId}-reversed-line`,
+        }),
+      },
+    });
+  }
 
   // Outstanding additional payment spec (#2350): a PAID booking whose price was
   // pushed up after payment, with the extra still uncollected. Seeded directly

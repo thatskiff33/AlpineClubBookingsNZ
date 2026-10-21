@@ -77,6 +77,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  // #4217: the settle locks the Payment row before its ledger lookup.
+  lockPaymentForRefundedTotal: async () => undefined,
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mocks.upsertPaymentIntentTransaction(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>

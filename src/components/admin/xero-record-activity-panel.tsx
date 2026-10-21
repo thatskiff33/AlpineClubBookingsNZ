@@ -146,7 +146,7 @@ function OperationItem({
         )}
       </div>
 
-      {operation.lastErrorMessage && (
+      {operation.lastErrorMessage && operation.status !== "SUCCEEDED" && (
         <p className="text-sm text-danger-11">
           {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
           {redactSensitiveText(operation.lastErrorMessage)}

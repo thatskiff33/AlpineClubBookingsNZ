@@ -172,11 +172,8 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
     route?.kind === "local-allocation" &&
     route.refundCents > 0
   ) {
-    await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
-      createdByMemberId: actingMemberId,
-      refundMethod: "internet-banking",
-      store,
-    });
+    // #4162 (`INV-ADDPAY-042`): the payload names the hand-back it records (never its key or sizing), so a void is matched to it.
+    await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", handBackTaskId: task.id, store });
   }
 }
 

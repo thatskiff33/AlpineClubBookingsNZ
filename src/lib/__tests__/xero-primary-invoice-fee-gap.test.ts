@@ -357,8 +357,14 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
         xeroInvoiceNumber: "INV-1",
         billed,
         primaryInvoiceCashCents: 8_000,
+        primaryInvoiceAttemptedCashCents: 8_000,
       }),
-    ).resolves.toEqual({ ...billed, recordedChangeFeeCentsAtLink: 6_500, primaryInvoiceCashCents: 8_000 });
+    ).resolves.toEqual({
+      ...billed,
+      recordedChangeFeeCentsAtLink: 6_500,
+      primaryInvoiceCashCents: 8_000,
+      primaryInvoiceAttemptedCashCents: 8_000,
+    });
 
     const { prisma } = await import("@/lib/prisma");
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
@@ -369,7 +375,12 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     });
     expect(store.payload).toMatchObject({
       invoices: [],
-      primaryInvoiceBilledFee: { ...billed, recordedChangeFeeCentsAtLink: 6_500, primaryInvoiceCashCents: 8_000 },
+      primaryInvoiceBilledFee: {
+        ...billed,
+        recordedChangeFeeCentsAtLink: 6_500,
+        primaryInvoiceCashCents: 8_000,
+        primaryInvoiceAttemptedCashCents: 8_000,
+      },
     });
   });
 
@@ -383,6 +394,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       xeroInvoiceNumber: null,
       billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
       primaryInvoiceCashCents: 0,
+      primaryInvoiceAttemptedCashCents: 0,
     });
     // A later edit records 30.00 more, billed on its own document.
     mocks.payment.findUnique.mockResolvedValue({ ...unpaid, changeFeeCents: 5_500 });
@@ -404,6 +416,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       xeroInvoiceNumber: null,
       billed: primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]),
       primaryInvoiceCashCents: 0,
+      primaryInvoiceAttemptedCashCents: 0,
     });
     mocks.enqueue.mockRejectedValueOnce(new Error("connection reset"));
     await expect(queuePrimaryInvoiceChangeFeeGap({ bookingId: "booking_1", atLink: fees })).rejects.toThrow(

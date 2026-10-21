@@ -596,7 +596,7 @@ let markerFinishedAt: Date | null = null;
         const made = stripeAccepts();
         const row = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: RACE_KEY } });
         expect(await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST)).toBe("succeeded");
-        expect(await narrative()).toContain(`$150.00 was refunded on ${club.instantDate(FROZEN_AT)}; ${REST}`);
+        expect(await narrative()).toContain(`$150.00 was refunded to your card on ${club.instantDate(FROZEN_AT)}; ${REST}`);
         return made;
       }
 

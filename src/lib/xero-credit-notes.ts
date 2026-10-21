@@ -62,6 +62,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
+import { failAllocation } from "@/lib/xero-credit-note-spent-detail";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 import type { CashRefundMethod } from "./xero-invoice-payments";
 import {
@@ -130,6 +131,11 @@ export interface CreateXeroRefundCreditNoteOptions
    * note as the capture's card refund note).
    */
   creditsInvoiceId?: string;
+  /**
+   * #4162 (`INV-ADDPAY-042`): the bank hand-back task whose completion this
+   * note records. Rides the executed row only, so a void can be matched to it.
+   */
+  handBackTaskId?: string;
   /**
    * #3827 (D-3813-8, `INV-PAY-118`): this is that refund request's OWN note,
    * raised when its task is marked paid back. Keyed by the request, linked
@@ -529,6 +535,8 @@ export async function createXeroCreditNote(
     // retry credits the same document and the close's note stays findable.
     ...(options?.paidAnotherWayTaskId ? { paidAnotherWayTaskId: options.paidAnotherWayTaskId } : {}),
     ...(options?.creditsInvoiceId ? { creditsInvoiceId: options.creditsInvoiceId } : {}),
+    // #4162: the hand-back this note records rides the row, so a retry keeps it.
+    ...(options?.handBackTaskId ? { handBackTaskId: options.handBackTaskId } : {}),
     // #3935: the officer's cash answer rides the row, so a retry says the same.
     ...(noteWording ? { noteWording } : {}),
     // #3880 F2: a delta run's watermark rides its row, so an operator retry of
@@ -1338,8 +1346,7 @@ export async function allocateCreditNoteToInvoice(
       "Allocated Xero credit note against invoice"
     );
   } catch (error) {
-    await failXeroSyncOperation(operationId!, error);
-    throw error;
+    throw await failAllocation(operationId!, error, creditNoteId, invoiceId, amountCents);
   }
 }
 
