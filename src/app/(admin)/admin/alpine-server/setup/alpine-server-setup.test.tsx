@@ -414,3 +414,34 @@ describe("AlpineServerSetup key save names the shown address (#4470)", () => {
     expect((await screen.findByText(/address was changed after this page was loaded/i)).textContent).toMatch(/reload the page/i);
   });
 });
+
+describe("the deployment default server address (#81)", () => {
+  it("pre-fills the field and says where it came from while no address is saved", async () => {
+    versionRouteAnswers({ status: "unknown" });
+    render(
+      <AlpineServerSetup
+        initialState={initial({ apiKeySet: false, baseUrl: null, defaultBaseUrl: "https://alpine-server.example.nz" })}
+      />,
+    );
+    expect((screen.getByLabelText("Server base URL") as HTMLInputElement).value).toBe("https://alpine-server.example.nz");
+    expect(screen.getByTestId("acs-base-url-default")).toBeTruthy();
+    // Nothing is saved yet, so the Request a Connection link waits for Save.
+    expect(screen.queryByRole("link", { name: /Request a Connection/ })).toBeNull();
+  });
+
+  it("leaves a saved address alone, and an unset default pre-fills nothing", async () => {
+    versionRouteAnswers({ status: "unknown" });
+    const { unmount } = render(
+      <AlpineServerSetup
+        initialState={initial({ baseUrl: "https://central.test", defaultBaseUrl: "https://alpine-server.example.nz" })}
+      />,
+    );
+    expect((screen.getByLabelText("Server base URL") as HTMLInputElement).value).toBe("https://central.test");
+    expect(screen.queryByTestId("acs-base-url-default")).toBeNull();
+    unmount();
+
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false, baseUrl: null, defaultBaseUrl: null })} />);
+    expect((screen.getByLabelText("Server base URL") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByTestId("acs-base-url-default")).toBeNull();
+  });
+});

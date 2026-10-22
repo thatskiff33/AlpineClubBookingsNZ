@@ -151,6 +151,13 @@ from a page that still shows the old address is refused with "The central
 server address was changed after this page was loaded": reload the page,
 check the address, and enter the key again.
 
+**Connecting a new site.** The setup page's server address is pre-filled from
+the deployment's `SERVERNZ_DEFAULT_BASE_URL` while nothing is saved, and says
+so; press **Save** to use it (nothing is contacted before then). Then **Request
+a Connection**: register on the central server, copy the API key it shows you
+once, paste it into the API key field, Save, and Download. The key starts
+working once the central server's administrator approves the connection.
+
 **Read this before you turn it on.** This is the one integration that sends data
 *out* of your club. When you enable a shared item, everything recorded on **your
 own lodge's** entry in the **Other lodges** panel is uploaded to the central
