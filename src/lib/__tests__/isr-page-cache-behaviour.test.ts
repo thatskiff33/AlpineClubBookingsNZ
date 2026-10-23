@@ -25,7 +25,9 @@ const { CachedRouteKind, IncrementalCacheKind } = responseCache as unknown as {
 /**
  * The three properties #2352 slice 1 depends on inside Next's own cache, EXECUTED
  * against the vendored Next rather than assumed (first read on next@16.2.12,
- * re-verified on 16.3.8, which scoped response-cache keys to the owning route).
+ * re-verified on 16.3.8, which scoped response-cache keys to the owning route,
+ * and on 16.4.1, which changed only how the cache is constructed: it takes the
+ * preview props and the prerender manifest as plain objects).
  *
  * Why this file exists at all: the #2352 planning pass asked for an *observed*
  * cache-full degradation rather than an assumed one, and reading the vendored
@@ -157,6 +159,12 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
     expect(fs.mkdir).not.toHaveBeenCalled();
   });
 
+  const PREVIEW_PROPS = {
+    previewModeId: "preview-id",
+    previewModeSigningKey: "signing-key",
+    previewModeEncryptionKey: "encryption-key",
+  };
+
   it("DEGRADES to a warning when a store cannot be written, rather than throwing", async () => {
     // The observed cache-full behaviour. `IncrementalCache.set()` swallows the
     // handler's error, so a page that cannot be stored is simply rendered again on
@@ -186,17 +194,17 @@ describe("Next's full-route cache, as vendored (#2352 slice 1)", () => {
       minimalMode: false,
       requestHeaders: {},
       maxMemoryCacheSize: MEMORY_CACHE_BYTES,
-      getPrerenderManifest: () => ({
+      // Since next@16.4.1 the constructor takes the preview props and the
+      // prerender manifest as plain objects (16.3.8 took a
+      // `getPrerenderManifest` thunk and read the preview props out of it).
+      previewProps: PREVIEW_PROPS,
+      prerenderManifest: {
         version: 4,
         routes: {},
         dynamicRoutes: {},
         notFoundRoutes: [],
-        preview: {
-          previewModeId: "preview-id",
-          previewModeSigningKey: "signing-key",
-          previewModeEncryptionKey: "encryption-key",
-        },
-      }),
+        preview: PREVIEW_PROPS,
+      },
       CurCacheHandler: RefusingHandler as never,
     } as never);
 
