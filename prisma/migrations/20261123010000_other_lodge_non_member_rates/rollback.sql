@@ -1,4 +1,4 @@
--- Reverse script for 20261121010000_other_lodge_non_member_rates (#61).
+-- Reverse script for 20261123010000_other_lodge_non_member_rates (#61).
 --
 -- Prisma never applies, checksums or reads this file: run it by hand, as the
 -- migration role, against the database being rolled back to a release that
@@ -54,7 +54,7 @@ ALTER TABLE "OtherLodge"
 COMMIT;
 
 -- RE-UPGRADING. Prisma will NOT put the columns back: this script does not
--- touch `_prisma_migrations`, which still records 20261121010000 as APPLIED,
+-- touch `_prisma_migrations`, which still records 20261123010000 as APPLIED,
 -- so `prisma migrate deploy` answers "No pending migrations to apply." and a
 -- 2.2 release would fail every OtherLodge read on the missing columns. So,
 -- with the 2.2 release deployed but BEFORE it serves traffic or syncs (the

@@ -1,4 +1,4 @@
--- Reverse script for 20261121030000_other_lodge_central_id (#64).
+-- Reverse script for 20261123030000_other_lodge_central_id (#64).
 --
 -- Prisma never applies, checksums or reads this file: run it by hand, as the
 -- migration role, against the database being rolled back.
@@ -15,7 +15,7 @@
 -- Server" in the Other lodges panel for an administrator to assess.
 --
 -- RE-UPGRADING after running this: `_prisma_migrations` still records
--- 20261121030000 as APPLIED, so `prisma migrate deploy` skips it and the
+-- 20261123030000 as APPLIED, so `prisma migrate deploy` skips it and the
 -- release would fail on the missing column. Re-apply migration.sql BY HAND
 -- before the release serves traffic.
 

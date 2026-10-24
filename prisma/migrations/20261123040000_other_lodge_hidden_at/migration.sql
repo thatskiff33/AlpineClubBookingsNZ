@@ -10,11 +10,12 @@
 --
 -- One nullable column with no default, and the name index swap. NO DML.
 --
--- OLD-CODE COMPATIBLE, one bounded exposure: the draining colour's client never
--- names "hiddenAt" (a hidden lodge shows in its lists until it drains, which
--- is harmless). Its download creates a new lodge with an upsert keyed on the
--- name, which needs the full unique index; a download the OLD colour runs in
--- the drain window fails (no data is written; the next download repeats it).
+-- WINDOWED: Old API 2.1 ON CONFLICT(name) upserts need the full unique index removed here. A version pause cannot fence an old request already in flight.
+-- Stop every old web app and worker and drain other app-database clients before
+-- migrating, using the existing deploy gate. Prevent reconnects/restarts until
+-- new code is ready. Back up immediately before migration. Reverse in descending
+-- order: reconcile duplicate visible names before names_not_unique reversal and
+-- ALL duplicate names before hidden_at reversal and restarting old code.
 --
 -- LOCK IMPACT: brief ACCESS EXCLUSIVE locks on "OtherLodge", a small admin
 -- registry, not a hot table; the new index builds over its few hundred rows.

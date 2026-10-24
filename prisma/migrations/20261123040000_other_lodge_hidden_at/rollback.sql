@@ -1,4 +1,4 @@
--- Reverse script for 20261121040000_other_lodge_hidden_at (#58).
+-- Reverse script for 20261123040000_other_lodge_hidden_at (#58).
 --
 -- Prisma never applies, checksums or reads this file: run it by hand, as the
 -- migration role, against the database being rolled back.
@@ -17,10 +17,15 @@
 -- AND v."id" <> o."id");
 --
 -- RE-UPGRADING after running this: `_prisma_migrations` still records
--- 20261121040000 as APPLIED, so `prisma migrate deploy` skips it and the
+-- 20261123040000 as APPLIED, so `prisma migrate deploy` skips it and the
 -- release would fail on the missing column. Re-apply migration.sql BY HAND
 -- before the release serves traffic.
 
+-- Maintain the offline window. A uniqueness failure rolls index changes back
+-- too; do not restart old code until every required reversal succeeds.
+BEGIN;
 DROP INDEX IF EXISTS "OtherLodge_name_visible_key";
 CREATE UNIQUE INDEX "OtherLodge_name_key" ON "OtherLodge"("name");
 ALTER TABLE "OtherLodge" DROP COLUMN IF EXISTS "hiddenAt";
+
+COMMIT;

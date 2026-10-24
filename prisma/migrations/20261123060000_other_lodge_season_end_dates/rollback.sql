@@ -1,4 +1,4 @@
--- Reverse script for 20261121060000_other_lodge_season_end_dates (#75).
+-- Reverse script for 20261123060000_other_lodge_season_end_dates (#75).
 --
 -- Prisma never applies, checksums or reads this file: run it by hand, as the
 -- migration role, against the database being rolled back.
@@ -7,7 +7,7 @@
 -- run from each start to the other's start again.
 --
 -- RE-UPGRADING after running this: `_prisma_migrations` still records
--- 20261121060000 as APPLIED, so `prisma migrate deploy` skips it. Re-apply
+-- 20261123060000 as APPLIED, so `prisma migrate deploy` skips it. Re-apply
 -- migration.sql BY HAND before the release serves traffic; the next
 -- whole-registry download refills the end dates other clubs set.
 

@@ -5,13 +5,12 @@
 --
 -- One index swap. NO DML.
 --
--- OLD-CODE COMPATIBLE: the draining colour speaks central server API 2.4, so
--- against a 2.5 server its sync is paused and it neither uploads nor
--- downloads. Its other writers (an administrator's edit, Hide) never rely on
--- the index; a rename onto a taken name simply succeeds instead of answering
--- 409. The new colour no longer reads "ServerNzSettings"."otherLodgesOwnedNames"
--- but leaves it as last written, so the draining colour's owned-lodge answer
--- (its edit route and committee booking-officer sync) stays as it was.
+-- WINDOWED: The preceding migration removes full name uniqueness required by old API 2.1; this step also permits duplicate visible names.
+-- Stop every old web app and worker and drain other app-database clients before
+-- migrating, using the existing deploy gate. Prevent reconnects/restarts until
+-- new code is ready. Back up immediately before migration. Reverse in descending
+-- order: reconcile duplicate visible names before names_not_unique reversal and
+-- ALL duplicate names before hidden_at reversal and restarting old code.
 --
 -- LOCK IMPACT: brief ACCESS EXCLUSIVE locks on "OtherLodge", a small admin
 -- registry, not a hot table; the new index builds over its few hundred rows.

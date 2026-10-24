@@ -1,4 +1,4 @@
--- Reverse script for 20261121050000_other_lodge_names_not_unique (#69).
+-- Reverse script for 20261123050000_other_lodge_names_not_unique (#69).
 --
 -- Prisma never applies, checksums or reads this file: run it by hand, as the
 -- migration role, against the database being rolled back.
@@ -13,8 +13,13 @@
 -- v."id" <> o."id") ORDER BY "name";
 --
 -- RE-UPGRADING after running this: `_prisma_migrations` still records
--- 20261121050000 as APPLIED, so `prisma migrate deploy` skips it. Re-apply
+-- 20261123050000 as APPLIED, so `prisma migrate deploy` skips it. Re-apply
 -- migration.sql BY HAND before the release serves traffic.
 
+-- Maintain the offline window. A uniqueness failure rolls index changes back
+-- too; do not restart old code until every required reversal succeeds.
+BEGIN;
 DROP INDEX IF EXISTS "OtherLodge_name_idx";
 CREATE UNIQUE INDEX "OtherLodge_name_visible_key" ON "OtherLodge"("name") WHERE "hiddenAt" IS NULL;
+
+COMMIT;
