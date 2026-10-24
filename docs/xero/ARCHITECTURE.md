@@ -701,6 +701,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. Cleanup and the report's drift classifications are source-aware for Stripe per-delta refund notes (#2901): see "Repairing Stripe refund-note links" under Flow 3. |
 | `xero-refund-note-link-repair` | Dry-run-first operator repair for Stripe per-delta `REFUND_CREDIT_NOTE` links damaged by the pre-#2901 cleanup loop: unconditionally deactivates local mirrors of notes VOIDED/DELETED in Xero, reactivates wrongly deactivated links (recorded-status only, never past the note-eligible cash — `resolveRefundNoteEligibleCash`, #2902/INV-PAY-050 less late captures Xero never received, #3635 — with notes resolved in Xero counted as coverage; landing short is applied honestly and the self-heal reissues the remainder), refuses payments with a still-executable credit-note operation (queued/running/awaiting-payment, failed-but-retryable, or a queued retry of one). No provider calls; `--apply` is bound to reviewed payment ids. CLI entry: `scripts/xero-refund-note-link-repair.ts`. Runbook: "Repairing Stripe refund-note links (#2901)" under Flow 3. |
 | `xero-refund-note-status-recorder` | Read-only provider GETs that record each linked refund credit note's live Xero status onto ALL of its local links, active or not (`--record-statuses`; run automatically before `--apply`). Exists because inbound reconciliation structurally cannot stamp a status onto an inactive link, and the repair never reactivates an unknown-status note. |
+| `xero-voided-refund-note-report` | #4336 read-only report of refund credit notes (`REFUND_CREDIT_NOTE` and `REFUND_REQUEST_CREDIT_NOTE` links) whose ACTIVE link points at a note Xero reports VOIDED/DELETED, a state an older live status read could revive before #4288. It reads each distinct note once (`getCreditNote` through `withXeroRetry`, one a second, no usage row) and judges it with the shared `xero-refund-note-status` predicate. No database write, no Xero change, no repair. CLI entry: `scripts/xero-voided-refund-note-report.ts`. Runbook: "Find refund notes Xero voided that the app still shows as live (#4336)". |
 | `xero-refund-note-status` | The one home for "does this credit-note status still count as refund coverage?" (`VOIDED`/`DELETED` do not) and for reading a link's recorded status — shared by the inbound contribution math, `sumCoveredRefundCreditNoteCents`, cleanup, the drift report and the operator repair so no path can disagree (#2901). |
 | `xero-invoice-rounding-audit` | Read-only diagnostic that replays the pre-#1231 line maths in integer cents to flag issued invoices that would have carried the #1163 rounding drift, across **both** builder callers — per-booking invoices (`Payment.xeroInvoiceId`) and group-settlement invoices (`GroupBookingSettlement.xeroInvoiceId`). Makes **no** live-provider calls and mutates nothing (only `booking.findMany` + `groupBookingSettlement.findMany`). CLI entry: `scripts/audit-xero-invoice-rounding.ts`. See "Historical rounding-drift audit" below. |
 | `xero-credit-sync-checker` | #2501 detect-and-warn reconciliation of **applied account credit**: compares each booking's stamped `BOOKING_APPLIED` sum (BookingApp's known credit, the same figure the #2483 email nets from) against its live Xero invoice `amountCredited`, and warns admins on drift with the exact per-booking amount. Read-only, idempotent, fail-safe. See "Credit-sync drift checker" below. |
@@ -1816,6 +1817,40 @@ what is left to pick). It also counts bank-transfer payments whose
 total is below their detail with no void, which the job never touches, and
 says how many payments hold several voids (each note is counted against today's
 records, so those can overstate).
+
+### Find refund notes Xero voided that the app still shows as live (#4336)
+
+Before #4288, an older live status read from Xero could revive the mirror of a
+refund credit note that had already been voided, and the write erased the record
+of the void. Local data cannot find those mirrors, and each can hide a whole
+refund: a bank refund the app counts as documented while Xero credits nothing.
+
+The report is READ-ONLY: it writes no database row, changes nothing in Xero and
+repairs nothing. Run it once #4288 is deployed, so new cases have stopped, with
+the owner's production pattern:
+
+```bash
+docker compose --profile migrate run --rm migrate pnpm run xero:voided-refund-note-report
+docker compose --profile migrate run --rm migrate pnpm run xero:voided-refund-note-report --csv <file> --json <file>
+```
+
+It walks every active refund-note link (a payment's own note, and a refund
+request's note), asks Xero about each distinct note once (about one call a
+second, which stays under Xero's minute limit; a minute-limit answer waits and
+retries), and prints each note Xero reports VOIDED or DELETED: payment id,
+booking id and reference, note number, amount (Xero's, else the figure the link
+recorded) and the status the app has stored. It then lists links whose note
+Xero does not have, and notes it could not read. `--csv` and `--json` also
+write a file, which must not already exist. The output holds ids, numbers and
+amounts only.
+
+**What to do with each finding: correct it by hand.** The app may count the
+refund as documented while Xero credits nothing, so a person decides whether
+the money went to the member, then raises or records a note in Xero, or
+corrects the payment's refund records. Nothing is repaired automatically.
+Exit code 2 means the list is INCOMPLETE (a note could not be read, or a Xero
+limit or outage stopped the run): run it again before treating it as the whole
+list. Reading Xero can refresh the stored Xero login, as any Xero call does.
 
 ### A later refund folded into the first note (#4230)
 

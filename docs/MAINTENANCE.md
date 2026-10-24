@@ -2274,6 +2274,22 @@ pnpm run xero:bank-refund-void-count --json
 The buckets and what each one leads to are in
 [`xero/ARCHITECTURE.md` -> "Voided bank-transfer refund notes (#4162)"](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162).
 
+### Find refund notes Xero voided that the app still shows as live (#4336)
+
+`scripts/xero-voided-refund-note-report.ts` asks Xero about every active
+refund-note link and lists each note Xero reports VOIDED or DELETED, with its
+payment, booking, note number, amount and the status the app stored. It is
+READ-ONLY (no database write, no Xero change, no repair). Run it on the live
+database after #4288 is deployed, then correct each finding by hand.
+
+```bash
+docker compose --profile migrate run --rm migrate pnpm run xero:voided-refund-note-report
+```
+
+`--csv <file>` and `--json <file>` also write a file. Exit code 2 means the list
+is incomplete: run it again. The runbook is
+[`xero/ARCHITECTURE.md` -> "Find refund notes Xero voided that the app still shows as live (#4336)"](xero/ARCHITECTURE.md#find-refund-notes-xero-voided-that-the-app-still-shows-as-live-4336).
+
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
 Before #3979 the inbound Xero settle kept the figure an Internet Banking payment
