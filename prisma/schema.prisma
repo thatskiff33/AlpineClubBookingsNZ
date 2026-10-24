@@ -3260,7 +3260,9 @@ model PaymentTransaction {
   /// while it was unpaid. A withdrawn row is no longer the live ask:
   /// `reconcilePaymentAggregates` projects the Payment's additional columns
   /// from the latest row WITHOUT one, and the repair pass raises nothing for
-  /// it. Never deleted, never cleared - the audit row says who and why.
+  /// it. Never deleted, never cleared - the audit row says who and why. A
+  /// reduction stamps it too (INV-PAY-120), and so does a mark-paid reversal
+  /// restoring a card ask, on its reversed INTERNET_BANKING cash row (#4320).
   withdrawnAt           DateTime?
   /// #3954 round 7 (INV-PAY-120): on an ADDITIONAL request an edit asked for, that
   /// edit's own answer to `hasIssuedPrimaryXeroInvoice` when it asked - the twin of

@@ -41,7 +41,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { cancelPaymentIntentIfCancellable } from "./stripe";
 import {
   beginSavedCardChargeAttempt,
-  SAVED_CARD_CHARGE_KEY_PREFIX,
+  NOT_SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
   type SavedCardChargeAttempt,
@@ -1115,14 +1115,9 @@ async function cancelSupersededLinkIntentsBestEffort(
         id: { not: claim.attempt.attemptRowId },
         // Never a saved-card charge attempt row (#3267) — this cron's own,
         // the admin route's or charge-saved-method's, recognised by the key
-        // prefix on `reference` (see the ordering note above). A negated
-        // `startsWith` alone would also drop rows with a NULL reference (SQL
-        // `NOT (NULL LIKE …)` is NULL), so include them explicitly: a link
-        // intent's row carries no reference.
-        OR: [
-          { reference: null },
-          { NOT: { reference: { startsWith: SAVED_CARD_CHARGE_KEY_PREFIX } } },
-        ],
+        // prefix on `reference` (see the ordering note above); a link intent's
+        // row, with no reference, is kept.
+        ...NOT_SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE,
       },
       select: { id: true, stripePaymentIntentId: true },
     });

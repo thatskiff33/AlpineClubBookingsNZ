@@ -8,7 +8,7 @@ files below grow by the unavoidable registration line count of a new cron job, a
 new email message and the runner's single hook.
 
 file: src/lib/payment-recovery.ts
-lines: 3375
+lines: 3374
 reason: the runner's branch is one early fork at the top of
   `processCreateAdditionalPaymentIntentOperation` plus its import; the rest is in
   `credit-release-ask.ts`. The fork must sit inside the function that claims the

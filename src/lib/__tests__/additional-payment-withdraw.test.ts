@@ -366,6 +366,55 @@ describe("withdrawAdditionalPaymentAsk", () => {
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  describe("#4320: the request is the newest ADDITIONAL row an officer has not withdrawn, as the mirror reads", () => {
+    /** The reversal's cash row: newer than the card ask, FAILED, stamped withdrawn. */
+    const REVERSED_CASH_ROW = request({
+      id: "txn-cash",
+      source: "INTERNET_BANKING",
+      status: "FAILED",
+      stripePaymentIntentId: null,
+      reason: "manual_mark_paid_additional_reversed",
+      withdrawnAt: new Date("2026-06-19T00:00:00.000Z"),
+    });
+
+    /** Applies the read's own `transactions.where` to a newest-first ledger, as Postgres would. */
+    function ledgerNewestFirst(rows: Array<ReturnType<typeof request>>, payment: Record<string, unknown> = {}) {
+      mocks.prisma.booking.findUnique.mockImplementation(
+        async (args: { select: { payment: { select: { transactions: { where: { withdrawnAt?: null } } } } } }) => {
+          const where = args.select.payment.select.transactions.where;
+          const visible = rows.filter((row) => !("withdrawnAt" in where) || row.withdrawnAt === null);
+          return booking({ payment: { transactions: visible.slice(0, 1), ...payment } });
+        },
+      );
+    }
+
+    it("MUTATION (F3): withdraws the card ask a reversal restored, reading past its withdrawn cash row", async () => {
+      ledgerNewestFirst([REVERSED_CASH_ROW, request()]);
+      stripeSays("canceled", true);
+
+      const result = await withdraw();
+
+      expect(result).toMatchObject({ ok: true, paymentIntentId: INTENT_ID });
+      expect(mocks.prisma.paymentTransaction.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: "txn-1" }) }),
+      );
+    });
+
+    it("an ask an officer truly withdrew zeroed the columns, so the owed gate refuses before any row is read for it", async () => {
+      ledgerNewestFirst([request({ withdrawnAt: NOW, status: "FAILED" })], {
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        additionalPaymentIntentId: null,
+      });
+
+      const result = await withdraw();
+
+      expect(result).toMatchObject({ ok: false, status: 409 });
+      expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
   it("does nothing on a booking whose lifecycle ended the obligation", async () => {
     mocks.prisma.booking.findUnique.mockResolvedValue(booking({ status: "CANCELLED" }));
     expect(await withdraw()).toMatchObject({ ok: false, status: 409 });

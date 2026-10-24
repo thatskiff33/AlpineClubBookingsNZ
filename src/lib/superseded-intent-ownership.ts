@@ -104,8 +104,12 @@ type RecoveryOperationReader = Pick<Prisma.TransactionClient, "paymentRecoveryOp
 /** The Xero reader also reads the payment, for what each open row still owes (#4221). */
 export type OwnershipReader = Pick<Prisma.TransactionClient, "paymentRecoveryOperation" | "payment">;
 
-/** The one liveness predicate both reads below share. */
-function liveSupersededOperation() {
+/**
+ * The one liveness predicate both reads below share - and what a manual
+ * mark-paid reversal withdraws (#4320, `INV-PAY-045`): only a row this reads
+ * as dead is invisible to (b′) and (c′).
+ */
+export function liveSupersededOperation() {
   return {
     type: { in: [...SUPERSEDED_INTENT_OPERATION_TYPES] },
     status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },

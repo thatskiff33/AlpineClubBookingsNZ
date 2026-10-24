@@ -4070,13 +4070,32 @@ the pre-#4217 code). Now:
   used to delete those rows first and reach the `Payment` row only at its own
   write, while the claim hold takes the `Payment` row and then upserts the same
   cancellation rows: a deadlock.
-- A writer that reaches only the rebuild, such as the superseded-intent late
-  capture in `payment-recovery.ts` (an autocommit row write, then the
-  root-client rebuild), is covered by the rebuild's own lock.
+- The superseded-intent hand-off (`handoffSucceededSupersededIntentToRefund`,
+  #4320) re-claims its cancel row, marks the capture SUCCEEDED
+  (`markSupersededTransactionSucceeded`) and rebuilds in one transaction, the
+  `Payment` row first, then the recovery row, then the transaction row. The
+  reversal holds that `Payment` row from its "no settled Stripe transaction"
+  check to its commit, so the two serialise: a hand-off that commits first
+  makes the reversal refuse, and one that waits finds its row withdrawn and
+  claims nothing. As separate statements the flip could land after that check,
+  and the member was charged and refunded on a booking left unpaid. No provider
+  call runs inside; its callers all run outside any transaction.
+- The reversal re-arms a cancellation it leaves standing that the runner will
+  not finish (`rearmDeadIntentCancellations`, #4320), including one a worker
+  holds PROCESSING on its last attempt, mid-Stripe-call and holding no lock.
+  That worker cannot undo the re-arm: its failure write is fenced on the
+  attempt it claimed (`attempts`, with `processingStartedAt` set), which the
+  re-arm reset; its success write closes the row, which is true; its hand-off
+  re-claims the PENDING row through the same status-fenced claim the webhook's
+  uses (only the webhook's adds an attempt), and queues the refund by key.
+- A writer that reaches only the rebuild, such as the superseded refund's own
+  late flip in `processRefundSupersededPaymentOperation` (an autocommit row
+  write, then the root-client rebuild), is covered by the rebuild's own lock.
 - Some writers need no lock because each of their statements autocommits, so
-  they never hold a row while they wait for another: the superseded-intent
-  marks in `payment-recovery.ts` (`markSupersededTransactionFailed` and
-  `markSupersededTransactionSucceeded`, before their rebuild), the attempt's
+  they never hold a row while they wait for another:
+  `markSupersededTransactionFailed` in `payment-recovery.ts` (before its
+  rebuild), and `markSupersededTransactionSucceeded` outside the hand-off
+  above, the attempt's
   FAILED and PROCESSING flips in `saved-card-charge-request.ts`, the retired
   card's ledger clear in `saved-card-charge-failure.ts`, and the invoice stamp
   in `xero-booking-invoices.ts`. `beginSavedCardChargeAttempt` writes attempt
@@ -4101,7 +4120,8 @@ advisory key and no row-lock statement was added: every site calls
 `lockPaymentForRefundedTotal`. Every holder of the `Payment` row was checked
 for a row it takes after it that a writer above already held. The retire, the
 saved-card settle, the claim hold, the re-issue door, the fold-close and the
-manual-payment reversal were those writers, and they now lock first.
+manual-payment reversal were those writers, and they now lock first; the
+superseded hand-off joined them in #4320.
 
 `payment-lock-before-rebuild.realdb.test.ts` proves it with seven forced
 interleavings. Races 1 to 5 each fail on the pre-#4217 code; the third stands
@@ -4111,7 +4131,10 @@ manual-payment reversal against the claim hold's shape. The two reduction
 races in `additional-ask-reduction.realdb.test.ts` cover the capture webhook,
 and the credit give-back against the real runner's claim hold.
 `payment-lock-before-rebuild.test.ts` pins the lock as each writer's first
-statement.
+statement. The hand-off against the real reversal is proved in
+`manual-reversal-retrying-cancel.realdb.test.ts` (a capture landing while the
+reversal holds the `Payment` row settles the booking, never refunded), and its
+lock order in `payment-recovery.test.ts`.
 
 **The cost: P2028 and Stripe's retry.** These writers were autocommit before
 #3640 and #4217, so they now carry Prisma's interactive-transaction limits (2 s

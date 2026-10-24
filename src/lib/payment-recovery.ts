@@ -1673,16 +1673,18 @@ async function markSupersededTransactionSucceeded({
   operation,
   amountCents,
   paymentMethodId,
+  store = prisma,
 }: {
   operation: PaymentRecoveryOperation;
   amountCents: number;
   paymentMethodId?: string | null;
+  store?: Prisma.TransactionClient | typeof prisma; // #4320: the hand-off's, holding the Payment row
 }) {
   if (!operation.paymentTransactionId) {
     throw new Error("Payment recovery operation is missing paymentTransactionId");
   }
 
-  await prisma.paymentTransaction.update({
+  await store.paymentTransaction.update({
     where: { id: operation.paymentTransactionId },
     data: {
       amountCents,
@@ -1694,7 +1696,7 @@ async function markSupersededTransactionSucceeded({
     },
   });
 
-  await reconcilePaymentAggregates({ paymentId: operation.paymentId });
+  await reconcilePaymentAggregates({ paymentId: operation.paymentId, store });
 }
 
 async function handoffSucceededSupersededIntentToRefund({
@@ -1719,26 +1721,29 @@ async function handoffSucceededSupersededIntentToRefund({
   }
 
   // #2262 H2 — RE-CLAIM the operation immediately before the money-adjacent
-  // writes. The worker's copy of this operation was read before its Stripe
-  // call; a manual mark-paid reversal can DELETE the row in that window (its
-  // disarm — see reverseManualBookingPayment), and without this fence the
-  // stale copy would still flip the transaction SUCCEEDED and enqueue a fresh
-  // superseded-refund operation the disarm never covered, netting a PAID
-  // booking to zero cash. The claim is a status-fenced WRITE, not a read: a
-  // deleted row matches nothing, a SUCCEEDED row is already terminal, and
-  // PENDING/FAILED are included because the webhook-side handoff
-  // (queueSupersededPaymentIntentRefundRecovery) legitimately hands off an
-  // operation the cron has not claimed.
-  const claimed = await prisma.paymentRecoveryOperation.updateMany({
-    where: {
-      id: operation.id,
-      status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] },
-    },
-    data: {
-      status: PaymentRecoveryOperationStatus.PROCESSING,
-      processingStartedAt: new Date(),
-      ...(takenFromOutside ? { attempts: { increment: 1 } } : {}),
-    },
+  // writes: a manual mark-paid reversal can DELETE the row after the worker
+  // read it (its disarm, `reverseManualBookingPayment`), and a stale copy must
+  // not flip the transaction SUCCEEDED and queue a refund the disarm never saw.
+  // A status-fenced WRITE: a deleted row matches nothing, a SUCCEEDED one is
+  // terminal, and PENDING/FAILED are included for the webhook-side hand-off.
+  // #4320 (`INV-LOCK-002`): claim, flip and rebuild commit together under the
+  // Payment row (then the recovery row, then the transaction row), which the
+  // reversal holds from its "no settled Stripe transaction" check to its
+  // commit. A hand-off first makes it refuse; a reversal first leaves nothing
+  // to claim. Apart, a flip after that check charged and refunded the member
+  // on a booking left unpaid. No provider call runs inside.
+  const claimed = await prisma.$transaction(async (tx) => {
+    await lockPaymentForRefundedTotal(tx, operation.paymentId);
+    const claim = await tx.paymentRecoveryOperation.updateMany({
+      where: { id: operation.id, status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] } },
+      data: {
+        status: PaymentRecoveryOperationStatus.PROCESSING,
+        processingStartedAt: new Date(),
+        ...(takenFromOutside ? { attempts: { increment: 1 } } : {}),
+      },
+    });
+    if (claim.count === 1) await markSupersededTransactionSucceeded({ operation, amountCents, paymentMethodId, store: tx });
+    return claim;
   });
   if (claimed.count === 0) {
     logger.error(
@@ -1751,12 +1756,6 @@ async function handoffSucceededSupersededIntentToRefund({
     );
     return false;
   }
-
-  await markSupersededTransactionSucceeded({
-    operation,
-    amountCents,
-    paymentMethodId,
-  });
 
   // #3639: on a CANCELLED booking this capture is a late capture, so it follows
   // the club's setting like every other - held for a treasurer, no refund.

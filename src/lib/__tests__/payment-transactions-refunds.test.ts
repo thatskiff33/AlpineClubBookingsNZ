@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 
 const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
@@ -1468,6 +1469,56 @@ describe("#3528 - reconcilePaymentAggregates reads past a WITHDRAWN ask (INV-ADD
       additionalPaymentIntentId: "pi_ask_2",
     });
   });
+
+  /*
+    #4320 / #4355: a reversed covering mark-paid. The cash ADDITIONAL row is
+    FAILED and NEWER than the card ask the extra goes back to, and the member
+    then pays that ask. The reversal stamps its cash row withdrawn (only when a
+    live card ask stands), so the rebuild after the capture reads the ask.
+  */
+  function reversedCashRow(transaction: ReturnType<typeof createRefundStore>["transaction"], withdrawnAt: Date | null) {
+    return {
+      ...transaction,
+      id: "txn_cash",
+      kind: "ADDITIONAL",
+      source: PaymentSource.INTERNET_BANKING,
+      stripePaymentIntentId: null,
+      paymentMethodId: null,
+      amountCents: 2275,
+      status: "FAILED",
+      reason: "manual_mark_paid_additional_reversed",
+      withdrawnAt,
+      createdAt: new Date("2026-01-06T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-07T00:00:00.000Z"),
+    };
+  }
+
+  for (const [label, withdrawnAt, expected] of [
+    [
+      "CONTROL: unstamped, the reversed cash row hides the paid ask: the extra reads FAILED with no pointer and is chased",
+      null,
+      { additionalAmountCents: 2275, additionalPaymentStatus: "FAILED", additionalPaymentIntentId: null },
+    ],
+    [
+      "stamped by the reversal, the rebuild reads past it to the paid ask: SUCCEEDED, the pointer on the ask, nothing chased",
+      new Date("2026-01-07T00:00:00.000Z"),
+      { additionalAmountCents: 2275, additionalPaymentStatus: "SUCCEEDED", additionalPaymentIntentId: "pi_ask" },
+    ],
+  ] as const) {
+    it(label, async () => {
+      const { store, payment, transaction, transactions } = createRefundStore();
+      transactions.push({ ...additionalRow(transaction), status: "SUCCEEDED" });
+      transactions.push(reversedCashRow(transaction, withdrawnAt));
+
+      await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+      const projected = stampedAdditional(store);
+      expect(projected).toEqual(expected);
+      expect(isAdditionalAmountUncollected(projected as { additionalAmountCents: number; additionalPaymentStatus: string | null })).toBe(
+        withdrawnAt === null,
+      );
+    });
+  }
 });
 
 /*

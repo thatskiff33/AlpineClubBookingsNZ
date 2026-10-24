@@ -4439,6 +4439,29 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
   });
 
+  // #4320 (`INV-LOCK-002`): the re-claim, the SUCCEEDED flip and the rebuild run
+  // under the Payment row, taken first, so a manual mark-paid reversal (which
+  // holds that row from its "no settled card money" check to its commit) can
+  // never see the transaction unsettled and then have it flipped under it.
+  it("MUTATION (#4320): the hand-off locks the Payment row before it re-claims, then flips and rebuilds on that transaction", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+
+    await expect(
+      queueSupersededPaymentIntentRefundRecovery({ id: "pi_superseded", amount: 6000, payment_method: "pm_1" }),
+    ).resolves.toBe(true);
+
+    expect(mockLockPaymentForRefundedTotal).toHaveBeenCalledWith(expect.anything(), op.paymentId);
+    const lockedAt = mockLockPaymentForRefundedTotal.mock.invocationCallOrder[0]!;
+    const claimAt = mockPaymentRecoveryUpdateMany.mock.calls.findIndex(
+      ([args]) => (args as { data?: { status?: unknown } }).data?.status === PaymentRecoveryOperationStatus.PROCESSING,
+    );
+    expect(lockedAt).toBeLessThan(mockPaymentRecoveryUpdateMany.mock.invocationCallOrder[claimAt]!);
+    expect(mockPaymentRecoveryUpdateMany.mock.invocationCallOrder[claimAt]!).toBeLessThan(mockPaymentTransactionUpdate.mock.invocationCallOrder[0]!);
+    expect(mockPaymentTransactionUpdate.mock.invocationCallOrder[0]!).toBeLessThan(mockReconcilePaymentAggregates.mock.invocationCallOrder[0]!);
+    expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: op.paymentId, store: expect.anything() });
+  });
+
   // #4083 review: the webhook takes a row from outside any worker's attempt, so
   // its claim counts an attempt - the worker it took the row from cannot then
   // write FAILED over it (the failure write is fenced on the attempt).

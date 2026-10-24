@@ -156,7 +156,11 @@ export async function withdrawAdditionalPaymentAsk(params: {
           additionalPaymentStatus: true,
           additionalPaymentIntentId: true,
           transactions: {
-            where: { kind: PaymentTransactionKind.ADDITIONAL },
+            // Past a withdrawn row, as the mirror rebuild reads (`INV-ADDPAY-040`):
+            // a reversal stamps its reversed cash row withdrawn and points the
+            // mirror back at the card ask under it (#4320). A truly withdrawn
+            // ask has zeroed the columns, so the owed gate below refuses it.
+            where: { kind: PaymentTransactionKind.ADDITIONAL, withdrawnAt: null },
             orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
             take: 1,
             select: {

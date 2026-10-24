@@ -1559,27 +1559,28 @@ _Legacy: settles tasks raised before #4317._
 
 - **An unpaid additional-payment request a completed financial review raised
   can always be withdrawn, and withdrawal retires every instrument it minted**
-  (#3528). One service, `additional-payment-withdraw.ts`, one
-  route (`finance:edit`), one button on the admin booking page. In order: the
+  (#3528). One service (`additional-payment-withdraw.ts`), one
+  `finance:edit` route, one admin button. In order: the
   Stripe PaymentIntent is cancelled at the provider FIRST, outside any lock
-  (`INV-LOCK-001`; idempotent — an already-cancelled intent makes no call); then,
+  (`INV-LOCK-001`; idempotent); then,
   under the global money key, the `Payment` summary columns are zeroed behind a
-  fence re-asserting the exact values retired (count 0 → 409, nothing changes),
+  fence re-asserting the exact values retired (count 0 → 409),
   the `ADDITIONAL` row is FAILED and stamped `withdrawnAt`, and any
   `SUPPLEMENTARY_INVOICE` operation parked `WAITING_PAYMENT` on that intent is
   CANCELLED (`ADDITIONAL_ASK_WITHDRAWN`). A live intent-mint recovery
   (PENDING, PROCESSING, or a retry scheduled) REFUSES the withdrawal rather
-  than being retired here — one route to terminal failure (`INV-PAY-056`).
+  than being retired — one route to terminal failure (`INV-PAY-056`).
   The source task stays COMPLETED (`INV-PAY-099`); the
-  `booking.additionalPayment.withdrawn` audit row is the record.
+  `booking.additionalPayment.withdrawn` audit row records it.
 - **`withdrawnAt` is the durable fact; the columns are a projection.** A
-  reduction stamps it too ([INV-PAY-120]).
+  reduction ([INV-PAY-120]) stamps it too, and so does a mark-paid reversal
+  restoring a card ask, on its reversed INTERNET_BANKING cash row (#4320).
   `reconcilePaymentAggregates` derives the additional columns from the latest
   ADDITIONAL row WITHOUT a stamp, so the `payment_intent.canceled` webhook the
   cancel triggers cannot put the ask back. A FAILED row still projects as owed
-  (a declined card is retried), which is why FAILED alone cannot mean
-  withdrawn. `findEditReviewChargeRequest` and the repair pass's
-  `planEditReviewChargeInvoicePayment` (`withdrawn` outcome, no finding) read
+  (a declined card is retried), so FAILED alone cannot mean
+  withdrawn. `findEditReviewChargeRequest`, this door and the repair pass's
+  `planEditReviewChargeInvoicePayment` (`withdrawn` outcome) read
   past it too, so no fresh invoice is parked on a cancelled intent.
 - **Only a review-raised request, and only its own money** (D-3528-2): an
   ordinary price-increase ask is the price itself (`INV-PAY-047`), and so is

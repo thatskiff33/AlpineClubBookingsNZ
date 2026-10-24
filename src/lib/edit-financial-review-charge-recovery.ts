@@ -5,6 +5,7 @@ import {
 
 import type { EditReviewChargeSyncOutcome } from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
+import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -72,14 +73,7 @@ export async function rearmEditFinancialReviewChargeRecovery(idempotencyKey: str
   });
   await prisma.paymentRecoveryOperation.updateMany({
     where: { idempotencyKey, status: PaymentRecoveryOperationStatus.SUCCEEDED },
-    data: {
-      status: PaymentRecoveryOperationStatus.PENDING,
-      attempts: 0,
-      nextRetryAt: now,
-      lastError: null,
-      processingStartedAt: null,
-      succeededAt: null,
-    },
+    data: rearmedPaymentRecoveryOperationData(now),
   });
 }
 

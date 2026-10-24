@@ -604,9 +604,12 @@ let ledgerStartSeconds = 0;
       expect(race.holderError).toBeUndefined();
       expect(race.error).toBeUndefined();
       expect(race.queued, "the reversal never queued behind the claim hold's Payment row").toBeGreaterThanOrEqual(1);
-      // The reversal ran after the hold committed: it disarmed the cancellation
-      // the hold re-queued and restored the booking.
-      expect(await prisma.paymentRecoveryOperation.count({ where: { paymentId: PAYMENT_ID, type: "CANCEL_PAYMENT_INTENT" } })).toBe(0);
+      // The reversal ran after the hold committed and restored the booking. The
+      // ask is stale (the payment names no live ask), so its cancellation - the
+      // one the hold re-queued - stands (#4320: the reversal re-derives it).
+      expect(await prisma.paymentRecoveryOperation.findMany({ where: { paymentId: PAYMENT_ID, type: "CANCEL_PAYMENT_INTENT" }, select: { paymentIntentId: true, status: true } })).toEqual([
+        { paymentIntentId: STALE_INTENT, status: "PENDING" },
+      ]);
       expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).status).toBe("PAYMENT_PENDING");
       expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { manuallyMarkedPaidAt: true } })).manuallyMarkedPaidAt).toBeNull();
     });

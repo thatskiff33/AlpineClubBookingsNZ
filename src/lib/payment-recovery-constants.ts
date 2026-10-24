@@ -105,6 +105,24 @@ export const PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE = {
 } satisfies Prisma.PaymentRecoveryOperationWhereInput;
 
 /**
+ * A recovery row put back to run from the start, due now: PENDING, attempts
+ * reset, its last error and claim cleared. The re-arms write it, each fenced
+ * on the rows it may reopen: an edit's review charge
+ * (`rearmEditFinancialReviewChargeRecovery`) and a dead cancellation a
+ * mark-paid's reversal still needs (`withdrawManualSettlementIntentCancellations`, #4320).
+ */
+export function rearmedPaymentRecoveryOperationData(now: Date) {
+  return {
+    status: "PENDING",
+    attempts: 0,
+    nextRetryAt: now,
+    lastError: null,
+    processingStartedAt: null,
+    succeededAt: null,
+  } as const satisfies Prisma.PaymentRecoveryOperationUpdateManyMutationInput;
+}
+
+/**
  * #4104 review (CL4, `INV-SSOT`): {@link PAYMENT_RECOVERY_EXHAUSTED_WHERE} as a
  * predicate - the one "dead" rule of a card refund row: the "Paid another way"
  * close's claim (`deadCardRefundOperationWhere`), the card refund shortfall's

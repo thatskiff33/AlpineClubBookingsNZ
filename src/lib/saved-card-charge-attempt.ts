@@ -145,14 +145,16 @@ import { readSupersededOwnership } from "@/lib/superseded-capture-ownership";
 import { isCapturedTransactionStatus } from "./payment-transactions";
 
 /**
- * The one prefix every saved-card charge key carries. The #1992 pre-charge
- * sweep in the cron excludes attempt rows by `reference: { startsWith }` on this
- * constant, and `savedCardChargeIdempotencyKey` builds the key from it, so the
- * sweep and the mint cannot disagree about what an attempt row looks like
- * (`INV-SSOT-002`). The bare pre-#3267 key `pending_charge_<bookingId>` is
- * retired; nothing mints it and nothing matches on it.
+ * The one prefix every saved-card charge key carries. The ledger filters below
+ * select attempt rows by it (the cron's #1992 pre-charge sweep excludes them;
+ * #4320's reversal judges them at their own figure), and
+ * `savedCardChargeIdempotencyKey` builds the key from it, so no reader and the
+ * mint can disagree about what an attempt row is (`INV-SSOT-002`). The complement
+ * keeps a NULL `reference` (a link intent's row): SQL `NOT (NULL LIKE …)` is NULL.
  */
 export const SAVED_CARD_CHARGE_KEY_PREFIX = "pending_charge_";
+export const SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE = { reference: { startsWith: SAVED_CARD_CHARGE_KEY_PREFIX } } satisfies Prisma.PaymentTransactionWhereInput;
+export const NOT_SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE = { OR: [{ reference: null }, { NOT: SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE }] } satisfies Prisma.PaymentTransactionWhereInput;
 
 /**
  * How long a recorded key may still be RE-SENT for a row whose first POST never

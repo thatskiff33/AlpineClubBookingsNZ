@@ -528,6 +528,13 @@ import "./xero-voided-note-recount.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4300-` fixtures.
 import "./superseded-intent-card-doors.realdb.test";
+// #4320 reuses it to prove a manual mark-paid's reversal withdraws the
+// cancellations the mark-paid queued, one Stripe's outage left FAILED and
+// retrying included, so the member's capture of the intent it made payable
+// again settles the booking; and leaves an edit's earlier cancellation to do
+// its job. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4320-` fixtures.
+import "./manual-reversal-retrying-cancel.realdb.test";
 // #4316 reuses it to prove an edit's after-commit mint never leaves a live ask
 // on a booking cancelled in the gap: the REAL cancelBooking before the mint,
 // between the provider call and the row write, and queued on the Payment row

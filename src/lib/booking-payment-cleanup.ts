@@ -40,6 +40,11 @@ export async function queueSupersededPrimaryIntentCancellations(
      * keep an intent that would charge the old currency.
      */
     wrongCurrencyPaymentIntentId?: string | null;
+    /**
+     * #4320: only the rows this filter matches, so a caller can judge one
+     * class of row against its own figure (a saved-card charge attempt's).
+     */
+    rows?: Prisma.PaymentTransactionWhereInput;
   },
 ): Promise<SupersededPrimaryPaymentIntent[]> {
   const pendingPrimaryTransactions = await tx.paymentTransaction.findMany({
@@ -63,6 +68,7 @@ export async function queueSupersededPrimaryIntentCancellations(
             ],
           }
         : { amountCents: { gt: 0, not: options.newFinalPriceCents } }),
+      ...(options.rows ? { AND: [options.rows] } : {}),
     },
     select: {
       id: true,
@@ -149,7 +155,11 @@ export type QueuedSupersededIntentCancellation = {
 export async function queueSupersededAdditionalIntentCancellationRows(options: {
   bookingId: string;
   paymentId: string;
-  newPaymentIntentId: string;
+  /**
+   * The one ADDITIONAL intent to keep. Null keeps none: a manual mark-paid's
+   * reversal re-applying this rule to a payment with no live ask (#4320).
+   */
+  newPaymentIntentId: string | null;
   store?: Prisma.TransactionClient;
 }): Promise<QueuedSupersededIntentCancellation[]> {
   const store = options.store ?? prisma;

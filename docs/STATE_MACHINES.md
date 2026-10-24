@@ -2142,16 +2142,76 @@ Payment: SUCCEEDED -> PENDING, provenance cleared, source left as-is; a
 PaymentTransaction (the manual PRIMARY row): SUCCEEDED -> FAILED,
   reason "manual_mark_paid_reversed" — history, never deleted, and never
   resurrected by a later re-mark (the mint predicate skips FAILED rows)
+PaymentTransaction (the manual ADDITIONAL row, when the settle covered the
+  extra): SUCCEEDED -> FAILED, reason "manual_mark_paid_additional_reversed".
+  When the extra goes back to owing and an open card ask for it stands that
+  the reversal does not keep cancelled, the row is
+  also stamped `withdrawnAt` and `additionalPaymentIntentId` is put back to
+  that ask (#4355): the mirror reads past the stamped row, so a capture of the
+  ask reads SUCCEEDED. With no such ask the row stays the mirror's anchor.
 PaymentRecoveryOperation (every CANCEL_PAYMENT_INTENT /
-  REFUND_SUPERSEDED_PAYMENT on this payment still PENDING|PROCESSING):
+  REFUND_SUPERSEDED_PAYMENT not yet SUCCEEDED — PENDING, PROCESSING or
+  FAILED, retrying or exhausted (#4320) — on a live card intent the restored
+  booking can still be paid with):
   DELETED, inside the reversal's transaction — not flipped to a terminal
   status, because every webhook-side liveness predicate keys on
   `status != SUCCEEDED` and a FAILED "closed" row would still hand a
   post-reversal capture to the superseded-refund machinery. The deleted rows'
-  full content is preserved on the reversal's AuditLog entry, and a member-owed
-  superseded refund can never be reached: its settled transaction 409s the
-  reversal first.
+  full content is preserved on the reversal's AuditLog entry.
+PaymentRecoveryOperation (the cancellation of a stale intent, or of one the
+  settle found already queued): KEPT, or queued afresh as PENDING where the
+  intent had none — it goes on to cancel the intent, or hand its capture to
+  the superseded refund. One the runner will not finish (given up at the
+  attempt ceiling, or PROCESSING on its last attempt) is RE-ARMED: PENDING,
+  attempts 0, due now.
 ```
+
+Which intents stay cancelled is derived from the restored booking, never
+remembered (#4320): the cancel key is shared, so an edit on the PAID booking,
+an additional ask's supersede or the `/pay` link's supersede can share the very
+row the settle minted, and a settle recorded before #4320 kept no list. The
+reversal re-applies the supersede rules — a PRIMARY intent not at the amount the
+booking owes (`readBookingAmountOwed`, #1161), a saved-card charge attempt not
+at the booking's worth (`bookingWorthCents`: what the cron charges, and what
+the capture path accepts), an ADDITIONAL intent that is not the live ask
+(`additionalPaymentIntentId`, #3340) — and keeps those intents cancelled. A
+settle that covered the extra minted a newer cash ADDITIONAL row, so any
+rebuild of the mirror since nulls that pointer; when the reversal puts the
+extra back to owing, the live ask is the newest card ask an officer has not
+withdrawn, if it asks exactly that extra and its intent is still open
+(PENDING or PROCESSING: a FAILED one may be cancelled at Stripe). It also keeps an intent the settle
+found already queued (`adoptedCancelPaymentIntentIds` on the mark-paid's audit
+row), because a superseded intent is never handed out again (`INV-PAY-138`)
+and a wrong-currency supersede (#3567) is not derivable. A settle row without
+that list adopts nothing. For every intent left cancelled, a cancellation the
+runner will not finish is re-armed, so "still cancelled" is true. A worker
+still holding a re-armed row cannot undo it: its failure write is fenced on
+the attempt it claimed, which the re-arm reset. Every other live row on a live
+card intent is withdrawn; a row on an intent the ledger already retired is
+left. The reversal's audit row lists the intents left cancelled
+(`stillCancelledPaymentIntentIds`), the rows it re-armed
+(`rearmedRecoveryOperationIds`) and the card ask it put the extra back to
+(`restoredAdditionalPaymentIntentId`). Each delete is fenced on the same
+liveness predicate, so a worker that claims the row meanwhile (FAILED ->
+PROCESSING) loses it, and a row a worker finished (SUCCEEDED) is left and not
+reported closed.
+
+A member-owed superseded refund is never deleted. The hand-off that creates one
+re-claims its cancel row, marks the capture SUCCEEDED and rebuilds the payment
+in one transaction under the `Payment` row, which the reversal holds from its
+"no settled Stripe transaction" check to its commit: a hand-off that commits
+first makes the reversal refuse, and a reversal that commits first leaves the
+hand-off nothing to claim, so the capture settles the booking. A worker that
+claimed a row before the reversal may still reach Stripe's cancel after it
+commits: the member's open tab then fails, and the pay step mints a fresh
+intent. No money moves.
+
+The FAILED row is why #4320 exists: a mark-paid's cancel that met a Stripe
+outage waits FAILED to retry, and while the reversal deleted only
+PENDING|PROCESSING rows it survived. Once the booking was payable again, the
+member's capture of that intent was refunded as superseded and the booking
+never settled, or the retry cancelled the intent the member still had open.
+Proved on PostgreSQL in `manual-reversal-retrying-cancel.realdb.test.ts`.
 
 Both directions record an `AuditLog` naming the acting admin, and the reversal
 records a durable `BookingEvent` — a `CANCELLED` event carrying the

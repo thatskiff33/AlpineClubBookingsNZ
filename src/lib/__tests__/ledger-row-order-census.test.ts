@@ -109,9 +109,12 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/refund-allocation-unwind.ts > unwindableHandBackCents":
     "#4162: sums each row's refunded total less its card refunds; a sum does not depend on the order " +
     "(the unwind itself orders its rows, oldest first).",
-  "src/lib/payment-reconciliation.ts > enqueueManualSettlementIntentCancellations":
+  "src/lib/manual-settlement-intent-hygiene.ts > enqueueManualSettlementIntentCancellations":
     "cancels EVERY live Stripe intent on the payment except the one named to spare (an intent id, unique); " +
-    "the order only changes the order the cancellations are queued in.",
+    "the order only changes the order the cancellations are queued in, and the adopted ones it records are a set (#4320).",
+  "src/lib/manual-settlement-intent-hygiene.ts > withdrawManualSettlementIntentCancellations":
+    "#4320: reads the payable intents' ids only as a set for the recovery-row read's `in` filter; the rows it " +
+    "deletes are read ordered (createdAt) from the recovery table.",
   "src/lib/xero-applied-credit-ledger-state.ts > appliedCreditSettledByCancel":
     "reads only each row's status for paymentHasCaptureEvidence, which asks whether ANY row was captured.",
   "src/lib/xero-inbound/modification-note-refunds.ts > paymentsCountingInvoiceCorrections":

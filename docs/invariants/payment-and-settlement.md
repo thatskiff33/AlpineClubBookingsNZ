@@ -212,25 +212,31 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   could not undo: booking PAID, provenance present, no refund, no
   `PaymentRefund` rows, no settled Stripe transaction, no OPEN
   `ManualRefundTask`, and no Xero link or queued mint acquired since. It
-  restores `manuallyMarkedPaidPreviousStatus` (a stored `DRAFT` deliberately
-  restores as `PAYMENT_PENDING`, because the PAID claim cleared
-  `draftExpiresAt` and a restored DRAFT would be an expiry-less draft
-  forever), clears the provenance, marks the manual transaction FAILED rather
-  than deleting it, clears a restored CONFIRMED internet-banking hold deadline
-  (or the expiry cron would auto-cancel the booking minutes later), and
-  DELETES every still-PENDING/PROCESSING `CANCEL_PAYMENT_INTENT` /
-  `REFUND_SUPERSEDED_PAYMENT` operation on the payment — those operations
-  must not outlive the settlement they were minted to protect, or a later
-  legitimate capture would be refunded as if superseded. Deletion, not a
-  terminal status flip: the webhook-side liveness predicates key on
-  `status != SUCCEEDED`, so only a deleted row is invisible to all of them.
-  The scope is safe because that set IS the settle's own hygiene: the
-  settle's enqueue upserts on the shared cancel idempotency key (adopting any
-  pre-existing cancel op), and a member-owed superseded refund can never be
-  reached — the handoff that creates one marks its transaction SUCCEEDED
-  first, and the reversal refuses on any settled Stripe transaction before
-  the disarm. The deleted rows' full content is preserved in the reversal's
-  `AuditLog` metadata.
+  restores `manuallyMarkedPaidPreviousStatus` (a stored `DRAFT` restores as
+  `PAYMENT_PENDING`, because the PAID claim cleared `draftExpiresAt`), clears
+  the provenance, marks the manual transaction FAILED rather than deleting it,
+  and clears a restored CONFIRMED internet-banking hold deadline (else the
+  expiry cron cancels the booking).
+- Its intent hygiene is derived, never remembered (#4320). On the restored
+  booking it re-applies the supersede rules: a primary intent not at the
+  amount owed (a saved-card charge attempt: not at the booking's worth, what
+  the cron charges and capture accepts), and an additional intent that is not
+  the live ask (a nulled pointer with the extra restored: the newest
+  unwithdrawn open card ask at that figure), stay or become queued for
+  cancellation. So does one the settle found queued
+  (`adoptedCancelPaymentIntentIds`; none before #4320): a superseded intent is
+  never reissued (`INV-PAY-138`). Any such row the runner will not
+  finish (exhausted, or PROCESSING on its last attempt) is re-armed. Every
+  other live (not SUCCEEDED) `CANCEL_PAYMENT_INTENT` /
+  `REFUND_SUPERSEDED_PAYMENT` row on a live card intent is DELETED, since
+  webhook-side liveness keys on `status != SUCCEEDED`. With the extra back on a
+  live ask not left cancelled, the reversed cash ADDITIONAL row is stamped `withdrawnAt` and
+  the pointer restored to that ask (#4355). The audit row records each step.
+- The superseded hand-off re-claims its row, marks the capture SUCCEEDED and
+  rebuilds in one transaction under the `Payment` row, which the reversal holds
+  from its settled-transaction check to its commit, so a member-owed superseded
+  refund is never deleted. A worker's Stripe cancel may land after commit,
+  moving no money. Proven by `manual-reversal-retrying-cancel.realdb.test.ts`.
 
 ## INV-PAY-046
 
