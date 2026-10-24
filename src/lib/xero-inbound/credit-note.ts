@@ -1,6 +1,8 @@
 import { CreditType } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
+import { creditNoteMirrorEvidenceFrom, mirrorCreditNoteOutsideSpend } from "@/lib/xero-credit-note-mirror";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
@@ -431,6 +433,17 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     links: voidedMirrorAuditLinks,
     metadata: auditMetadata,
   });
+
+  // #4270: LAST, after the links and repairs above, so a refund payment or booking invoice
+  // the app made is already recorded when the mirror asks which spend is the app's own. It
+  // reuses the note read above, writes only the credit ledger, and never fails the event:
+  // the links are already written and a replay would only repeat them.
+  try {
+    const mirrorEvidence = creditNoteMirrorEvidenceFrom(creditNote);
+    if (mirrorEvidence) await mirrorCreditNoteOutsideSpend(mirrorEvidence);
+  } catch (err) {
+    logger.error({ err, creditNoteId: creditNote.creditNoteID }, "Mirroring a credit note spent outside the app failed; the sweep will try again");
+  }
 
   return {
     handled: true,

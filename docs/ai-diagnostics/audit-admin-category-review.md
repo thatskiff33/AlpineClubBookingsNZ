@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  514
+row-producing sites:  516
 uncategorised:        0
-category values: admin 108, booking 108, xero 42, family 35, payment 64,
+category values: admin 108, booking 108, xero 44, family 35, payment 64,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -844,11 +844,15 @@ convergence's own row, filed `xero` beside the other Xero rows.
 `pnpm run audit:census`): `xero.credit_note.spent_outside_app_attempt_closed`,
 the same convergence closing a concurrent attempt's failed allocation, filed
 `xero` beside it.
-
 #4253 then added five (`payment` 60 -> 64, `xero` 41 -> 42, 509 -> 514, MEASURED with
 `pnpm run audit:census`): a released-credit card request raised, one closed without
 asking and two closed because Xero shows its invoice paid (one at ask time, one by the
 sweep), filed `payment`, and the recording of its card payment in Xero, filed `xero`.
+
+#4270 then added two (`xero` 42 -> 44, 514 -> 516, MEASURED with
+`pnpm run audit:census`): `xero.credit_note.outside_spend_mirrored` and
+`xero.credit_note.outside_spend_restored`, the inbound credit-note mirror's rows, filed
+`xero` beside the converge's.
 
 #4154 then added one more (`payment` 57 -> 58, 504 -> 505, MEASURED with
 `pnpm run audit:census`): `booking-payment.capacity-race.refunded-total-corrected`,

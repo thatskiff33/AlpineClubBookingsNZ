@@ -99,6 +99,11 @@ import "./credit-only-card-allocation.realdb.test";
 // with spies for its own describe only, so it cannot replace the suite above's.
 // Its describe stays skipped unless the shared race flag is set.
 import "./credit-note-spent-outside-app.realdb.test";
+// #4270 proves the inbound mirror of a credit note spent or un-spent in Xero: the free part
+// written down and a reversed spend restored, the member's credit lock taken and the global
+// one not, and agreement with the #4219 converge in either order and at once. Its describe
+// stays skipped unless the shared race flag is set.
+import "./credit-note-outside-spend-mirror.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real

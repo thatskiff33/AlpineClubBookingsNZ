@@ -3761,6 +3761,13 @@ applied-credit allocation raises that named failure (#4219) -> the worker
   exist; otherwise the row stays FAILED. Only credit Xero shows spent on an invoice or
   payment the app has no record of counts. Fails closed (original failure
   stands) when it cannot account for the discrepancy
+inbound credit-note event or the backstop sweep finds the note funding a lot (#4270)
+  -> the mirror writes down the free part of the lot Xero shows spent outside the
+  app, or restores what it wrote down when Xero shows the spend undone (an
+  additive `ADMIN_ADJUSTMENT` row and one audit row, member credit lock only).
+  Defers a note changed under two minutes ago (a sweep recheck follows), a note
+  with allocation work in flight, and writes nothing for a note that is not
+  AUTHORISED or PAID, whose list does not add up, or that funds several lots
 queued retry (REQUEUE) RUNNING -> CANCELLED when its operation read as resolved
   in Xero (before the claim, or the claim lost to the resolve); nothing ran
 outbox copy RUNNING -> CANCELLED when a sibling for the same document was

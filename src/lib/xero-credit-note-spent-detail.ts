@@ -12,6 +12,7 @@ import {
   getAuthenticatedXeroClient,
   getXeroErrorSearchText,
 } from "@/lib/xero-api-client";
+import { xeroAllocationsOf, xeroPaymentsOf } from "@/lib/xero-credit-note-outside-spend";
 import {
   CreditNoteSpentOutsideAppError,
   isCreditNoteOverAllocationText,
@@ -21,29 +22,6 @@ import {
   type XeroNoteAllocation,
   type XeroNotePayment,
 } from "@/lib/xero-credit-note-spent-outside-app";
-
-/** The note's allocations with an exact-cent amount and an invoice (anything else is skipped). */
-function xeroAllocationsOf(
-  allocations: ReadonlyArray<{ invoice?: { invoiceID?: string } | null; amount?: unknown; isDeleted?: boolean }> | null | undefined,
-): XeroNoteAllocation[] {
-  return (allocations ?? []).flatMap((allocation) => {
-    if (allocation.isDeleted === true) return [];
-    const invoiceId = allocation.invoice?.invoiceID;
-    const cents = exactProviderAmountToCents(allocation.amount);
-    return invoiceId && cents !== null ? [{ invoiceId, cents }] : [];
-  });
-}
-
-/** The payments made against the note (refunds of its credit) with an exact-cent amount. */
-function xeroPaymentsOf(
-  payments: ReadonlyArray<{ paymentID?: string; amount?: unknown; status?: unknown }> | null | undefined,
-): XeroNotePayment[] {
-  return (payments ?? []).flatMap((payment) => {
-    if (String(payment.status ?? "") === "DELETED") return [];
-    const cents = exactProviderAmountToCents(payment.amount);
-    return payment.paymentID && cents !== null ? [{ paymentId: payment.paymentID, cents }] : [];
-  });
-}
 
 /**
  * #4218: Xero refused the allocation as larger than the note's remaining credit.

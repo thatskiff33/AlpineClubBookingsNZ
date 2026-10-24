@@ -507,7 +507,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/waitlist-cross-lodge.ts:531",
   "src/lib/waitlist.ts:1091",
   "src/lib/waitlist.ts:949",
-  "src/lib/xero-applied-credit-spent-outside-app.ts:218",
+  "src/lib/xero-applied-credit-spent-outside-app.ts:174",
   "src/lib/xero-period-lock-guard.ts:569",
 ];
 

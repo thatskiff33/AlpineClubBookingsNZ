@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   runBankRefundVoidFollowUp: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
   reconcileXeroCreditSync: vi.fn(),
+  runCreditNoteMirrorSweep: vi.fn(),
   isEffectiveModuleEnabled: vi.fn(),
   recordCronJobRunSafe: vi.fn(),
 }));
@@ -54,6 +55,11 @@ vi.mock("@/lib/bank-refund-void-follow-up", () => ({
 vi.mock("@/lib/xero-credit-sync-checker", () => ({
   reconcileXeroCreditSync: mocks.reconcileXeroCreditSync,
   XERO_CREDIT_SYNC_JOB_NAME: "xero-credit-sync-check",
+}));
+
+// #4270: the credit-note mirror's backstop sweep.
+vi.mock("@/lib/xero-credit-note-mirror-sweep", () => ({
+  runCreditNoteMirrorSweep: mocks.runCreditNoteMirrorSweep,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -114,10 +120,11 @@ describe("POST /api/cron/xero", () => {
       bankRefundVoidFollowUp: null,
       reconciliationReport: null,
       creditSyncCheck: null,
+      creditNoteMirror: null,
     });
     expect(mocks.isXeroConnected).not.toHaveBeenCalled();
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
-    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(9); // #4162: + the voided bank-transfer refund notes' follow-up
+    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(10); // #4162: + the voided bank-transfer refund notes' follow-up; #4270: + the credit-note mirror
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-outbox",
@@ -252,6 +259,15 @@ describe("POST /api/cron/xero", () => {
       completePass: true,
       emailSent: true,
     });
+    mocks.runCreditNoteMirrorSweep.mockResolvedValue({
+      skipped: false,
+      read: 2,
+      writtenDown: 1,
+      restored: 0,
+      refused: { unsettled: 1 },
+      readFailures: 0,
+      completePass: true,
+    });
 
     const response = await POST(makeRequest("all"));
     const body = await response.json();
@@ -346,6 +362,13 @@ describe("POST /api/cron/xero", () => {
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-credit-sync-check",
+        status: "SUCCESS",
+      })
+    );
+    expect(body.creditNoteMirror).toMatchObject({ read: 2, writtenDown: 1, completePass: true });
+    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobName: "xero-credit-note-outside-spend-mirror",
         status: "SUCCESS",
       })
     );

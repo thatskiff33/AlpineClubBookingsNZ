@@ -52,8 +52,8 @@ import {
   type XeroNoteAllocation,
   type XeroNotePayment,
 } from "./xero-credit-note-spent-outside-app";
+import { outsideSpendCents, spendIsExplained } from "./xero-credit-note-outside-spend";
 import {
-  BOOKING_INVOICE_LINK_MODELS,
   creditNoteReleaseDescription,
   creditNoteWriteDownDescription,
   creditNoteWriteDownWhere,
@@ -151,50 +151,6 @@ async function convergeEvidenceExists(
   return writeDown !== null;
 }
 
-/**
- * How much of the note Xero shows spent on things the app has no record of: the
- * allocations to invoices that are not a booking's and the payments it did not
- * make. An invoice is a booking's if a payment's `xeroInvoiceId` is it or a booking
- * `XeroObjectLink` names it; a payment is the app's if a link names it.
- */
-async function outsideSpendCents(
-  tx: Pick<typeof prisma, "xeroObjectLink" | "payment">,
-  allocations: readonly XeroNoteAllocation[],
-  payments: readonly XeroNotePayment[],
-): Promise<number> {
-  const invoiceIds = [...new Set(allocations.map((a) => a.invoiceId))];
-  const paymentIds = [...new Set(payments.map((p) => p.paymentId))];
-  const [invoiceLinks, localPayments, paymentLinks] = await Promise.all([
-    invoiceIds.length
-      ? tx.xeroObjectLink.findMany({
-          // Only a booking's invoice is "the app's own" here: those are the ones the inbound sync
-          // mirrors. An offset against a subscription or other invoice moved the member's credit
-          // and nothing else will record it.
-          where: { xeroObjectType: "INVOICE", xeroObjectId: { in: invoiceIds }, localModel: { in: [...BOOKING_INVOICE_LINK_MODELS] } },
-          select: { xeroObjectId: true },
-        })
-      : [],
-    invoiceIds.length
-      ? tx.payment.findMany({ where: { xeroInvoiceId: { in: invoiceIds } }, select: { xeroInvoiceId: true } })
-      : [],
-    paymentIds.length
-      ? tx.xeroObjectLink.findMany({
-          where: { xeroObjectType: "PAYMENT", xeroObjectId: { in: paymentIds } },
-          select: { xeroObjectId: true },
-        })
-      : [],
-  ]);
-  const knownInvoices = new Set([
-    ...invoiceLinks.map((l) => l.xeroObjectId),
-    ...localPayments.flatMap((p) => (p.xeroInvoiceId ? [p.xeroInvoiceId] : [])),
-  ]);
-  const knownPayments = new Set(paymentLinks.map((l) => l.xeroObjectId));
-  return (
-    allocations.filter((a) => !knownInvoices.has(a.invoiceId)).reduce((sum, a) => sum + a.cents, 0) +
-    payments.filter((p) => !knownPayments.has(p.paymentId)).reduce((sum, p) => sum + p.cents, 0)
-  );
-}
-
 export async function convergeCreditNoteSpentOutsideApp(input: ConvergeInput): Promise<ConvergeResult> {
   const { bookingId, creditNoteId, requestedCents } = input;
   if (!Number.isInteger(requestedCents) || requestedCents <= 0) {
@@ -279,12 +235,14 @@ export async function convergeCreditNoteSpentOutsideApp(input: ConvergeInput): P
 
     // What Xero shows spent on things the app has no record of, less what this
     // routine has already written down for the note. The slice bounds the rest.
-    // The explained-shortfall rail: Xero's list must account for exactly what the
-    // note has lost (its total less what remains). A list that does not add up (a
-    // removed entry still shown, an amount we could not read) is not acted on.
-    const listedCents =
-      input.xeroAllocations.reduce((sum, a) => sum + a.cents, 0) + input.xeroPayments.reduce((sum, p) => sum + p.cents, 0);
-    if (input.noteTotalCents === null || listedCents !== input.noteTotalCents - input.remainingCents) {
+    if (
+      !spendIsExplained({
+        allocations: input.xeroAllocations,
+        payments: input.xeroPayments,
+        totalCents: input.noteTotalCents,
+        remainingCents: input.remainingCents,
+      })
+    ) {
       return { converged: false, reason: "unexplained-spend" };
     }
     const spent = await outsideSpendCents(tx, input.xeroAllocations, input.xeroPayments);

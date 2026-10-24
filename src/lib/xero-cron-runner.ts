@@ -22,6 +22,8 @@ import {
   reconcileXeroCreditSync,
   XERO_CREDIT_SYNC_JOB_NAME,
 } from "@/lib/xero-credit-sync-checker";
+import { CREDIT_NOTE_MIRROR_JOB_NAME } from "@/lib/xero-credit-note-mirror";
+import { runCreditNoteMirrorSweep } from "@/lib/xero-credit-note-mirror-sweep";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
@@ -39,6 +41,8 @@ const XERO_CRON_TASKS = [
   "bank-refund-voids",
   "report",
   "credit-sync",
+  // #4270: after the inbound cycle, whose webhook path mirrors a note as it changes.
+  "credit-note-mirror",
 ] as const;
 
 export type XeroCronTask = (typeof XERO_CRON_TASKS)[number];
@@ -54,6 +58,7 @@ const XERO_CRON_JOB_NAMES: Record<XeroCronTask, string> = {
   "bank-refund-voids": "xero-bank-refund-void-follow-up",
   report: "xero-reconciliation-report",
   "credit-sync": XERO_CREDIT_SYNC_JOB_NAME,
+  "credit-note-mirror": CREDIT_NOTE_MIRROR_JOB_NAME,
 };
 
 export interface XeroCronRunnerPayload {
@@ -69,6 +74,7 @@ export interface XeroCronRunnerPayload {
   bankRefundVoidFollowUp: unknown | null;
   reconciliationReport: unknown | null;
   creditSyncCheck: unknown | null;
+  creditNoteMirror: unknown | null;
 }
 
 export interface XeroCronRunnerDependencies {
@@ -87,6 +93,7 @@ export interface XeroCronRunnerDependencies {
     runBankRefundVoidFollowUp: typeof runBankRefundVoidFollowUp;
     sendXeroReconciliationReport: typeof sendXeroReconciliationReport;
     reconcileXeroCreditSync: typeof reconcileXeroCreditSync;
+    runCreditNoteMirrorSweep: typeof runCreditNoteMirrorSweep;
   }>;
   includeLinkCleanupForBackfill?: boolean;
 }
@@ -209,6 +216,7 @@ function emptyPayload(task: string, connected = false): XeroCronRunnerPayload {
     bankRefundVoidFollowUp: null,
     reconciliationReport: null,
     creditSyncCheck: null,
+    creditNoteMirror: null,
   };
 }
 
@@ -220,6 +228,8 @@ function messageForTask(task: string) {
       return "Xero reconciliation report completed";
     case "credit-sync":
       return "Xero credit-sync check completed";
+    case "credit-note-mirror":
+      return "Credit notes spent or un-spent in Xero mirrored into the credit ledger";
     case "backfill":
       return "Historical Xero link maintenance completed";
     case "link-cleanup":
@@ -377,6 +387,17 @@ export async function runXeroCronTaskList(
           work: () =>
             (taskDependencies.sendXeroReconciliationReport ??
               sendXeroReconciliationReport)(format),
+        });
+      } else if (task === "credit-note-mirror") {
+        // #4270: backstop for the inbound credit-note mirror. Writes the credit ledger
+        // only (never Xero); a Xero that is not connected has nothing to read.
+        payload.creditNoteMirror = await runRecordedXeroTask({
+          task,
+          recordCronRun,
+          work: async () =>
+            connected
+              ? await (taskDependencies.runCreditNoteMirrorSweep ?? runCreditNoteMirrorSweep)()
+              : { skipped: true, reason: "Xero not connected" },
         });
       } else {
         // credit-sync (#2501): reconcile stamped applied credit against Xero's

@@ -5009,12 +5009,42 @@ read that confirmed the signal, and the allocations and payments it listed, happ
 before the transaction, so no provider call is held inside it. That evidence can
 go stale in the milliseconds between: if the treasurer reverses the outside spend
 then, the routine writes down credit Xero has given back. The amount is capped by
-the booking's slice, and the inbound mirror (the next change of #4219) is what
+the booking's slice, and the inbound mirror (#4270, below) is what
 restores a reversed spend. There is no separate claim row: a repeat finds the
 write-down already counted and writes nothing, and a concurrent run that lost the
 race finds the booking converged or its slice already shrunk below what was refused. Registered in `advisory-lock-guard.test.ts`
 (`convergeCreditNoteSpentOutsideApp#1`); proved against real PostgreSQL by
 `credit-note-spent-outside-app.realdb.test.ts`.
+
+## A credit note spent or un-spent in Xero: the member's credit ledger only (#4270)
+
+`mirrorCreditNoteOutsideSpend` (`xero-credit-note-mirror.ts`) writes down the free
+part of a funding lot Xero shows spent outside the app, and restores it when Xero
+shows the spend undone. It adds one `ADMIN_ADJUSTMENT` row and one audit row; it
+releases no booking's applied credit and moves no settlement money, so it takes the
+**member's credit-ledger key and nothing else**, never the global key. That cannot
+invert the converge's order (global, then member): a mirror and a converge on one
+member serialise on the member key, and the converge's extra global key excludes only
+the cancel, capture and refund writers the mirror does not conflict with.
+
+| Step | Where |
+| --- | --- |
+| Xero read of the note | before the transaction (the webhook's own read, or the sweep's), no lock held |
+| Member and lot chosen | before the transaction, from the note's single funding lot; more than one lot or member fails closed |
+| `lockMemberCreditLedger(memberId)` | first statement of the transaction |
+| Re-read under the lock | the lot, its slices, the net write-down, the balance, the outside spend, in-flight `APPLIED_CREDIT_ALLOCATION` or `APPLIED_CREDIT_DEALLOCATION` operations and the deallocation fence of every payment that holds a slice on the lot |
+| Write | the row and its audit row, in the same transaction; none when nothing changes |
+
+There is no claim row. The target is recomputed from Xero's list under the lock and
+the rows are additive, so a second mirror (or a converge) that runs after the first
+finds `delta = 0`; two that race queue on the member key and the second finds the
+first's rows. `real-PostgreSQL` proof: `credit-note-outside-spend-mirror.realdb.test.ts`
+(two mirrors, a mirror and a converge in both orders and at once, a credit writer
+holding the member key, and a writer holding the global key that the mirror does not
+wait for). It is imported into `concurrency-lock-races.realdb.test.ts`. The writers
+that change a lot's free balance (the allocation engine's plan, a cancel's restore,
+an admin adjustment) take the member key, so the mirror's free-credit and balance
+reads under that key are exact.
 
 ## A request for released credit: the recovery claim, and one global-key close (#4253)
 

@@ -3290,7 +3290,7 @@ reference):
 ```mermaid
 flowchart TD
     Leader["app cron-leader<br/>(CRON_ENABLED=true)"]
-    Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert,<br/>credit-release-asks, duplicate-capture-kept-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
+    Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert,<br/>credit-release-asks, duplicate-capture-kept-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile,<br/>xero-credit-note-outside-spend-mirror"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
     Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check"]
@@ -3320,6 +3320,7 @@ flowchart TD
 | `xero-outbox` | Every 15 minutes | Process queued Xero outbox operations |
 | `xero-operation-replay` | Every 15 minutes | Replay queued Xero retries |
 | `xero-inbound-reconcile` | Every 15 minutes | Process inbound Xero events |
+| `xero-credit-note-outside-spend-mirror` | Every 15 minutes (in the inbound reconcile's slot) | Backstop sweep for credit notes used or un-used in Xero outside the app (#4270); writes only the credit ledger, self-throttled, switchable off without a deploy |
 | `complete-bookings` | Daily | Mark past bookings completed |
 | `xero-membership-refresh` | Daily when enabled | Sync membership invoice state |
 | `xero-link-backfill` | Daily | Backfill canonical Xero object links into the ledger |

@@ -719,6 +719,13 @@ check the others.
   matching row, both marked `outsideSpendConvergedAt`. It has no requester or
   approver by design (Xero's figure for the note is the decision), but it still has
   an audit row and a visible business reason, and it moves no member's balance.
+- The same holds for the inbound credit-note mirror (#4270; owner decision, 24 Oct
+  2026): it writes down only the free part of a lot Xero shows spent outside the app
+  and restores it, as a positive row marked and stamped the same way, when Xero shows
+  the spend undone, never more than was written down. Its audit rows are
+  `xero.credit_note.outside_spend_mirrored` and `.outside_spend_restored`. A
+  write-down never takes the member's balance below zero, and the member is not
+  emailed.
 
 ## INV-MONEY-008
 

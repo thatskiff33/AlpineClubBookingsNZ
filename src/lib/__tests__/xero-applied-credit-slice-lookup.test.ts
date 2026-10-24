@@ -47,7 +47,7 @@ describe("sliceHeldInXero", () => {
 });
 
 describe("writtenDownCentsByCreditNote", () => {
-  it("reads only the member's marked negative ADMIN_ADJUSTMENT rows for those notes, as positive cents", async () => {
+  it("reads the member's marked ADMIN_ADJUSTMENT rows for those notes as a signed net, in positive cents (#4270)", async () => {
     const groupBy = vi.fn().mockResolvedValue([{ xeroCreditNoteId: "cn-1", _sum: { amountCents: -2500 } }, { xeroCreditNoteId: null, _sum: { amountCents: -9 } }]);
 
     const result = await writtenDownCentsByCreditNote({ memberCredit: { groupBy } } as never, "member-1", ["cn-1"]);
@@ -58,12 +58,21 @@ describe("writtenDownCentsByCreditNote", () => {
       where: {
         memberId: "member-1",
         type: "ADMIN_ADJUSTMENT",
-        amountCents: { lt: 0 },
         outsideSpendConvergedAt: { not: null },
         xeroCreditNoteId: { in: ["cn-1"] },
       },
       _sum: { amountCents: true },
     });
+  });
+
+  it("nets a restore against the write-down and never reports a negative figure (#4270)", async () => {
+    const groupBy = vi.fn().mockResolvedValue([
+      { xeroCreditNoteId: "cn-1", _sum: { amountCents: -1500 } },
+      { xeroCreditNoteId: "cn-2", _sum: { amountCents: 0 } },
+      { xeroCreditNoteId: "cn-3", _sum: { amountCents: 400 } },
+    ]);
+    const result = await writtenDownCentsByCreditNote({ memberCredit: { groupBy } } as never, "member-1", ["cn-1", "cn-2", "cn-3"]);
+    expect(result).toEqual(new Map([["cn-1", 1500], ["cn-2", 0], ["cn-3", 0]]));
   });
 
   it("reads nothing when no note is asked about", async () => {

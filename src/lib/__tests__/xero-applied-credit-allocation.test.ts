@@ -614,7 +614,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     );
     expect(groupByCalls).toContainEqual(
       expect.objectContaining({
-        where: expect.objectContaining({ memberId: "m1", type: "ADMIN_ADJUSTMENT", amountCents: { lt: 0 }, outsideSpendConvergedAt: { not: null }, xeroCreditNoteId: { in: ["cn1"] } }),
+        where: expect.objectContaining({ memberId: "m1", type: "ADMIN_ADJUSTMENT", outsideSpendConvergedAt: { not: null }, xeroCreditNoteId: { in: ["cn1"] } }),
       }),
     );
   });

@@ -480,6 +480,18 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // #4270: runs in the inbound reconcile's slot, right after it.
+        jobName: "xero-credit-note-outside-spend-mirror",
+        label: "Credit notes used in Xero",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "xero-inbound-reconcile",
         label: "Xero inbound reconcile",
         schedule: "*/15 * * * *",
