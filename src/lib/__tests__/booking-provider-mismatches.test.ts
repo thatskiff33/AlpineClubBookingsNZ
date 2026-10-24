@@ -341,6 +341,32 @@ async function renderFault(fault: BookingInvoiceSyncFault) {
   return mismatch;
 }
 
+describe("the booking warning explains the failure in plain English (#4278)", () => {
+  it("replaces Xero's raw over-allocation wording with the explanation", async () => {
+    const mismatch = await renderFault(
+      syncFault({
+        reasonCode: "400",
+        reason:
+          "Credit Note cannot be allocated as the allocation amount is greater than the amount remaining on the Credit Note",
+      }),
+    );
+
+    expect(mismatch.description).toContain("less credit left than the app expected");
+    expect(mismatch.description).not.toContain("cannot be allocated as the allocation amount");
+  });
+
+  it("uses the app's own code even when the message is generic", async () => {
+    const mismatch = await renderFault(syncFault({ reasonCode: "ORPHANED_STALE_RUNNING", reason: "stuck" }));
+    expect(mismatch.description).toContain("lost track of this job");
+  });
+
+  it("does not invent a reason when the fault has none", async () => {
+    const mismatch = await renderFault(syncFault({ reason: null }));
+    expect(mismatch.description).not.toContain("Xero said");
+    expect(mismatch.description).not.toContain("less credit left");
+  });
+});
+
 describe("a failed Xero invoice operation, on the booking (#3001)", () => {
   it("warns on the booking, and links to that booking's own Xero activity", async () => {
     const mismatch = await renderFault(

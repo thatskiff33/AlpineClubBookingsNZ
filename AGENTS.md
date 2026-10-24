@@ -132,9 +132,16 @@ checks anchors; neither checks that a row points to the right place.
 - **Claude Code:** `/context` must list `CLAUDE.md` and this file — if not,
   stop and say so. `/usage` before a sizeable lane, `/clear` at a checkpoint,
   `/mcp` to drop unneeded connectors, `/hooks` when a session misbehaves.
-- **Gate the blueprint by risk.** Low/Medium: a concise plan. High/Critical:
-  a blueprint (invariants, counterpart writers, data and rollback, validation,
-  stop conditions) reviewed by the owner before implementing.
+- **Plan by risk, and never hand the owner a document to read** (owner rule,
+  24 Oct 2026). Low/Medium: a concise plan. High/Critical: work out the
+  invariants, counterpart writers, data and rollback, validation and stop
+  conditions yourself, and keep them in the issue for reviewers. The owner does
+  not read blueprints. Anything that needs the owner's input is asked as a
+  decision pop-up, or a series of them: plain English, the full detail needed to
+  decide, the pros and cons of each option, and a recommendation first. Any
+  visual layout is shown as an Artifact or mock-up for the owner to review, not
+  described in prose. Record the answer as a DECIDED line (see "Pre-authorisation
+  and attributability").
 - **Validate coherent batches** — the cheapest relevant check at each
   meaningful boundary.
 - **Two identical failures trip a circuit breaker:** keep the command and

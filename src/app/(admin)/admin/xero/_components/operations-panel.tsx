@@ -34,6 +34,7 @@ import {
 import { xeroSectionId } from "./types"
 import type { XeroOperation } from "./types"
 import { useClubFormat } from "@/components/club-format-provider"
+import { XeroFailureExplanation } from "@/components/admin/xero-failure-explanation"
 
 /**
  * The resolve dialog's text. A credit note's adds the owner's rule (#4250,
@@ -588,10 +589,7 @@ export function OperationItem({
       </div>
       {/* #4049: a SUCCEEDED row's leftover wait or error code describes an attempt that is over. */}
       {operation.lastErrorMessage && operation.status !== "SUCCEEDED" ? (
-        <p className="text-sm text-danger">
-          {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
-          {redactSensitiveText(operation.lastErrorMessage)}
-        </p>
+        <XeroFailureExplanation code={operation.lastErrorCode} message={redactSensitiveText(operation.lastErrorMessage)} entityType={operation.entityType} />
       ) : null}
       {operation.failureStateReason && operation.status === "FAILED" && !resolved ? <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p> : null}
       {resolved ? (

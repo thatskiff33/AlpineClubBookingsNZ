@@ -92,6 +92,12 @@ idempotent — retrying the same work never double-charges.
    (retry those). If you later void a card refund's credit note in Xero, even
    one you resolved, don't replace it by hand: the app raises a fresh one
    overnight (#4250).
+   A failed operation (and the booking page's invoice warning) says **why** in
+   plain English: what happened, what it means for the club, and **What to do**,
+   including whether the app tries again by itself. Xero's own wording and the
+   stored error code sit under **Show technical details**; quote those when you
+   ask for help. When the reason is hidden for privacy, or is one the app does not
+   recognise, the explanation says so instead of guessing (#4278).
    **Inbound Events** lists stored webhooks with a per-event **Replay**. Each
    queue has its own **Reset** for filters and page; it keeps the current section,
    the sibling queue's URL state, and unrelated URL context.

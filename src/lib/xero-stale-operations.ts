@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+
+// #4278: re-exported so existing importers keep one name; the definition is in the client-safe module.
+export { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE };
 
 // Issue #819: an outbox operation is claimed by flipping it to RUNNING and
 // stamping startedAt. If the worker dies (or an unexpected dispatch-level error
@@ -8,18 +12,6 @@ import { prisma } from "@/lib/prisma";
 // threshold is almost certainly stuck rather than genuinely in flight, and
 // should be surfaced to operators.
 export const STALE_RUNNING_XERO_OPERATION_MINUTES = 15;
-
-/**
- * THE ERROR CODE a stale-RUNNING reset stamps on the row it fails (#3001).
- *
- * One home, because three places depend on the exact string: the operator reset
- * route writes it, the contact-create recovery reads it back, and the booking
- * page's invoice warning uses it to tell an operation that FAILED from an
- * operation that was never seen through — a worker killed mid-invoice leaves no
- * evidence either way, so the honest reading of such a row is that the invoice
- * state is UNKNOWN rather than that no invoice was raised.
- */
-export const XERO_ORPHANED_STALE_RUNNING_ERROR_CODE = "ORPHANED_STALE_RUNNING";
 
 /**
  * #4256: the code a retry's claim stamps on a PARTIAL row it is REPAIRING

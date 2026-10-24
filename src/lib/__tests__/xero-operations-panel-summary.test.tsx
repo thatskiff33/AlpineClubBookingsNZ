@@ -103,6 +103,33 @@ describe("OperationItem summary + raw toggle", () => {
   });
 });
 
+describe("OperationItem failure explanation (#4278)", () => {
+  const overAllocation =
+    "Credit Note cannot be allocated as the allocation amount is greater than the amount remaining on the Credit Note";
+
+  it("explains a failed row in plain English, with the stored text behind a disclosure", () => {
+    const { container } = renderItem(
+      makeOperation({ status: "FAILED", entityType: "ALLOCATION", lastErrorCode: "400", lastErrorMessage: overAllocation }),
+    );
+
+    expect(screen.getByText(/less credit left than the app expected/)).toBeDefined();
+    expect(screen.getByText("What to do:")).toBeDefined();
+    expect(container.querySelector("[data-xero-failure-kind='CREDIT_TOO_LOW']")).not.toBeNull();
+
+    const details = container.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("Show technical details");
+    expect(details?.textContent).toContain("allocation amount is greater than the amount remaining");
+  });
+
+  it("still shows something useful when the stored detail is hidden", () => {
+    const { container } = renderItem(
+      makeOperation({ status: "FAILED", lastErrorCode: "400", lastErrorMessage: "[REDACTED]" }),
+    );
+    expect(container.querySelector("[data-xero-failure-kind='DETAIL_HIDDEN']")).not.toBeNull();
+  });
+});
+
 describe("OperationItem Mark failed (#3462)", () => {
   it("offers Mark failed on a stale running operation and calls it", () => {
     const onMarkFailed = vi.fn();
