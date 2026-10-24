@@ -173,9 +173,9 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
   },
   {
     file: "src/lib/prisma.ts",
-    reads: 2,
+    reads: 1,
     reason:
-      "Query logging in development, and the global client cached across hot reloads.",
+      "Query logging in development only; the process-global client is cached in every environment.",
   },
   {
     file: "src/instrumentation-client.ts",
