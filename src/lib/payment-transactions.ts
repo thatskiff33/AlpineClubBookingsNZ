@@ -804,6 +804,7 @@ export async function recordStripeRefundsAgainstTransaction({
     let createdRefundsCount = 0;
     let createdRefundAmountCents = 0;
     let newlyCountedCents = 0;
+    const newlyCountedRefundIds: string[] = []; // #4312: which refunds those are, for a bank transfer's own notes
     let reversedCents = 0;
     const ordered = [...refunds].sort((a, b) => compareOrdinal(a.id, b.id));
     for (const refund of ordered) {
@@ -825,6 +826,7 @@ export async function recordStripeRefundsAgainstTransaction({
       // An undated refund counts as new here: only a dated pre-ledger one was already folded in.
       if (isRecordedRefundStatus(recorded.status) && !predatesRefundLedger(refund.created, ledgerStartSeconds, "since-ledger")) {
         newlyCountedCents += recorded.amountCents;
+        newlyCountedRefundIds.push(refund.id);
       }
     }
 
@@ -882,6 +884,7 @@ export async function recordStripeRefundsAgainstTransaction({
       ledgerRefundedAmountCents,
       refundedAmountCents: nextCents,
       appliedCents: nextCents - previousCents,
+      newlyCountedRefundIds,
       failedLaterDebts,
       /** #4104: refunds its caller was told counted that a row it is moving owns; the caller reads them as refused. */
       readAsRefused,
@@ -1241,6 +1244,8 @@ export async function syncRefundsFromStripeCharge({
     transactionId: transaction.id,
     createdRefundsCount: recorded.createdRefundsCount,
     createdRefundAmountCents: recorded.createdRefundAmountCents,
+    /** #4312: the refunds this sync was the first to record and count. */
+    newlyCountedRefundIds: recorded.newlyCountedRefundIds,
     ledgerRefundedAmountCents: recorded.ledgerRefundedAmountCents,
     /** #4104: alerted already unless `store` was the caller's transaction. */
     failedLaterDebts: recorded.failedLaterDebts,

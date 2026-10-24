@@ -84,6 +84,7 @@ import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import type { ClubFormat } from "@/lib/club-format";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { findResolvedSiblingSince } from "@/lib/xero-resolved-in-xero-fences";
+import { cardRefundIdOfNoteRow } from "@/lib/card-refund-own-note-share";
 import {
   isStrayInvoiceAfterCloseOutcome,
   membershipChargeNeedsNoInvoice,
@@ -1853,6 +1854,7 @@ export async function retryXeroSyncOperation(
         // #3827 (D-3813-8): a refund request's own note is never a per-delta
         // note - it is keyed by its request, for exactly its amount.
         const retriedReviewTaskId = queuedReviewTaskId(operation);
+        const retriedCardRefundId = cardRefundIdOfNoteRow(operation);
         const deltaWatermarkCents = retryInput.refundRequestId
           ? undefined
           : retryInput.watermarkCents ??
@@ -1874,6 +1876,8 @@ export async function retryXeroSyncOperation(
           ...(retryInput.paidAnotherWayTaskId ? { paidAnotherWayTaskId: retryInput.paidAnotherWayTaskId } : {}),
           ...(retryInput.creditsInvoiceId ? { creditsInvoiceId: retryInput.creditsInvoiceId } : {}),
           ...(retryInput.handBackTaskId ? { handBackTaskId: retryInput.handBackTaskId } : {}),
+          // #4312: the card refund this row answers - its payload, else its key, which an older worker's rewrite keeps.
+          ...(retriedCardRefundId ? { cardRefundId: retriedCardRefundId } : {}),
           ...(retryInput.refundRequestId ? { refundRequestId: retryInput.refundRequestId } : {}),
           ...(options?.requeueOperationId ? { requeueOperationId: options.requeueOperationId } : {}),
           ...(retriedReviewTaskId ? { reviewTaskId: retriedReviewTaskId } : {}),

@@ -12,6 +12,7 @@ import { BANK_REFUND_VOID_FOLLOW_UP_TASK_WHERE, isBankRefundVoidFollowUpTask } f
 import { BANK_REFUND_VOID_FOLLOW_UP_CONTEXT_KEY } from "@/lib/bank-refund-void-follow-up-copy";
 import { sumRefundCreditNoteCoverageOfRowsCents } from "@/lib/xero-resolved-in-xero-fences";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
+import { exactContains } from "@/lib/prisma-exact-prefix";
 
 /**
  * #3924 round 4 (money review, M1 and M3; `INV-PAY-122`): THE BANK CASH A
@@ -274,14 +275,32 @@ export async function readPaidAnotherWayCash(db: CashStore, paymentId: string): 
  * dedupe and the close's coverage all ask this, and nothing else.
  */
 export function paidAnotherWayCloseNoteRowsWhere(paymentId: string, closeId: string) {
+  return { ...ownRecordRefundNoteRowsBase(paymentId), requestPayload: { path: ["paidAnotherWayTaskId"], equals: closeId } } satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
+/**
+ * #4312 (`INV-ADDPAY-047`): THE SAME QUESTION OF A CARD REFUND'S OWN NOTE ROWS
+ * on a bank transfer - every refund-note create naming the refund, in any
+ * status: by its payload (`cardRefundId`), or by its key
+ * (`:card-refund:<id>:`, `cardRefundNoteKey`), which a previous release's
+ * worker keeps when it rewrites the payload without the field - matched
+ * literally (`exactContains`, `INV-SSOT-006`): a refund id holds a `_`.
+ */
+export function cardRefundNoteRowsWhere(paymentId: string, stripeRefundId: string) {
   return {
-    direction: "OUTBOUND",
-    entityType: "CREDIT_NOTE",
-    operationType: "CREATE",
-    localModel: "Payment",
-    localId: paymentId,
-    requestPayload: { path: ["paidAnotherWayTaskId"], equals: closeId },
+    ...ownRecordRefundNoteRowsBase(paymentId),
+    OR: [{ requestPayload: { path: ["cardRefundId"], equals: stripeRefundId } }, { correlationKey: exactContains(cardRefundNoteKeyTag(stripeRefundId)) }],
   } satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
+/** The part of a card refund's own note key that names it (`cardRefundNoteKey`). */
+export function cardRefundNoteKeyTag(stripeRefundId: string): string {
+  return `:card-refund:${stripeRefundId}:`;
+}
+
+/** The refund-note creates on one payment: the base both own-record row questions above narrow. */
+function ownRecordRefundNoteRowsBase(paymentId: string) {
+  return { direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "CREATE", localModel: "Payment", localId: paymentId } satisfies Prisma.XeroSyncOperationWhereInput;
 }
 
 /**

@@ -68,6 +68,8 @@ export function parsePaymentCreditNoteRetryInput(
   creditsInvoiceId?: string;
   /** #4162 (`INV-ADDPAY-042`): the bank hand-back task a note records. */
   handBackTaskId?: string;
+  /** #4312 (`INV-ADDPAY-047`): the card refund on a bank transfer a note answers. */
+  cardRefundId?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -89,6 +91,7 @@ export function parsePaymentCreditNoteRetryInput(
       : {}),
     ...(readString(payload.creditsInvoiceId) ? { creditsInvoiceId: readString(payload.creditsInvoiceId)! } : {}),
     ...(readString(payload.handBackTaskId) ? { handBackTaskId: readString(payload.handBackTaskId)! } : {}),
+    ...(readString(payload.cardRefundId) ? { cardRefundId: readString(payload.cardRefundId)! } : {}),
   };
   const queuedRefundAmount = readNumber(payload.refundAmountCents);
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {

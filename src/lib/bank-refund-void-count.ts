@@ -128,6 +128,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "unmatched-ambiguous": "Unmatched, to a person: more than one hand-back could be the one",
   "unmatched-detail-short": "Unmatched, to a person: the payment's detail no longer holds the amount",
   "unmatched-paid-another-way": "To a person, nothing to pick: it recorded a card refund paid another way",
+  "unmatched-card-refund": "To a person, nothing to pick: it recorded a card refund made through Stripe (#4312)",
   "unmatched-coverage-unknown": "Unmatched, to a person: a note resolved by hand in Xero has no readable amount",
   "unmatched-partly-picked": "Unmatched, to a person: some of the refunds it recorded are picked, the rest still to pick",
   "not-in-scope": "Not in scope (re-checked in code)",

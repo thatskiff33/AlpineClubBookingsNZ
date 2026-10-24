@@ -227,7 +227,7 @@ describe("the attempt's failure", () => {
   it("names the refused amount and reads as a definite refusal on the stuck list, never as 'Stripe may have refunded'", async () => {
     const slice = { paymentTransactionId: "txn_a", amountCents: 50_000 };
     const failure = (await refundPlanOrRetryRefusals({
-      operation: { id: "op_1", bookingId: "b1", paymentIntentId: "pi_1", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") },
+      operation: { id: "op_1", idempotencyKey: "refund_request_refund_rr_1", bookingId: "b1", paymentIntentId: "pi_1", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") },
       plan: [slice],
       format: CLUB_FORMAT_TEST,
       refund: async () => ({ refunds: [{ status: "failed", slice, refundId: "re_1", paymentIntentId: "pi_1" }] }),
@@ -240,7 +240,7 @@ describe("the attempt's failure", () => {
 
 // #4126: a record the runner writes names the refund of the plan's first slice.
 describe("the runner's made refund", () => {
-  const held = { id: "op_1", bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") };
+  const held = { id: "op_1", idempotencyKey: "refund_request_refund_rr_1", bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") };
   const first = { paymentTransactionId: "txn_a", amountCents: 1000 };
   const second = { paymentTransactionId: "txn_b", amountCents: 500 };
   const made = (slice: typeof first, refundId: string) => ({ status: "succeeded", slice, refundId, paymentIntentId: "pi_a" });
@@ -271,7 +271,7 @@ describe("the runner's made refund", () => {
 // #4117: the runner alerts once per refused slice - when a slice is first moved
 // off the key it was planned under - not once per row.
 describe("the runner's refusal alert", () => {
-  const held = { id: "op_1", bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") };
+  const held = { id: "op_1", idempotencyKey: "refund_request_refund_rr_1", bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") };
   const moved = { paymentTransactionId: "txn_a", amountCents: 1000, stripeKeySuffix: "refused1" };
   const ownKey = { paymentTransactionId: "txn_b", amountCents: 500 };
   const refusedAnswer = (slice: typeof ownKey & { stripeKeySuffix?: string }, intent: string) => ({ status: "failed", slice, refundId: `re_${slice.paymentTransactionId}`, paymentIntentId: intent });
@@ -307,7 +307,7 @@ describe("the runner's refusal alert", () => {
 // counted the refund, found exactly by its refund id - so the slices made before
 // ANY partial failure are marked, not only those beside a refusal.
 describe("made slices are marked on any partial failure (#4104)", () => {
-  const held = { id: "op_1", bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") };
+  const held = { id: "op_1", idempotencyKey: "refund_request_refund_rr_1", bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") };
   const made = { paymentTransactionId: "txn_a", amountCents: 1000 };
   const threw = { paymentTransactionId: "txn_b", amountCents: 500 };
 
@@ -524,5 +524,94 @@ describe("a slice's key generation, read from the refusals recorded for it (#410
     const after = sliceAfterRecordedRefusals(slice, rows);
     expect(after).toEqual(suffix ? { ...slice, stripeKeySuffix: suffix } : slice);
     expect(isRefusedRefundKeySuffix(after.stripeKeySuffix ?? "refused1")).toBe(true);
+  });
+});
+
+// #4312 round 7 (#4104, `INV-ADDPAY-047`): a replay Stripe answered in full marks each slice it sent for a refund
+// Stripe failed later with the refund it made - the one record that pairs a re-send with its failures - and leaves
+// every other slice as it was. Round 8: compare-and-set on the plan it sent from, never on its hold of the row.
+describe("a re-send's slice is marked made on success (#4312 round 7)", () => {
+  const holding = (idempotencyKey: string) => ({ id: "op_1", idempotencyKey, bookingId: "b1", paymentIntentId: "pi_row", processingStartedAt: new Date("2026-06-20T00:00:00.000Z") });
+  const resent = { paymentTransactionId: "txn_a", amountCents: 1000, stripeKeySuffix: "refused1", failedRefundIds: ["re_failed"] };
+  const first = { paymentTransactionId: "txn_b", amountCents: 500 };
+  const made = (slice: { paymentTransactionId: string; amountCents: number }, refundId: string) => ({ status: "succeeded", slice, refundId, paymentIntentId: "pi_a" });
+
+  beforeEach(() => updateMany.mockReset().mockResolvedValue({ count: 1 }));
+
+  it("MUTATION: a re-planned slice is marked with its refund, on the plan it was sent from; a slice sent for nothing that failed is not", async () => {
+    await expect(
+      refundPlanOrRetryRefusals({
+        operation: holding("refund_request_refund_rr_1"),
+        plan: [resent, first],
+        format: CLUB_FORMAT_TEST,
+        refund: async () => ({ refunds: [made(resent, "re_resent"), made(first, "re_first")] }),
+      }),
+    ).resolves.toBe("re_resent");
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "op_1", allocationPlan: { equals: [resent, first] } },
+      data: { allocationPlan: [{ ...resent, madeRefundId: "re_resent" }, first] },
+    });
+  });
+
+  it("MUTATION (round 8, F2): the mark never names the attempt's hold - a reaper that moved the row on leaves it to land", async () => {
+    await refundPlanOrRetryRefusals({
+      operation: holding("refund_request_refund_rr_1"),
+      plan: [resent],
+      format: CLUB_FORMAT_TEST,
+      refund: async () => ({ refunds: [made(resent, "re_resent")] }),
+    });
+    const where = (updateMany.mock.calls[0]?.[0] as { where: Record<string, unknown> }).where;
+    expect(Object.keys(where).sort()).toEqual(["allocationPlan", "id"]);
+  });
+
+  it("round 8: a mark whose plan changed in between writes nothing and never fails the replay", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      refundPlanOrRetryRefusals({
+        operation: holding("refund_request_refund_rr_1"),
+        plan: [resent],
+        format: CLUB_FORMAT_TEST,
+        refund: async () => ({ refunds: [made(resent, "re_resent")] }),
+      }),
+    ).resolves.toBe("re_resent");
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION (round 8, F2): a refusal's re-plan that lost its hold still marks the re-send Stripe made beside it, and moves no key", async () => {
+    const refusedSlice = { paymentTransactionId: "txn_b", amountCents: 500 };
+    updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+    await expect(
+      refundPlanOrRetryRefusals({
+        operation: holding("refund_request_refund_rr_1"),
+        plan: [resent, refusedSlice],
+        format: CLUB_FORMAT_TEST,
+        refund: async () => ({ refunds: [made(resent, "re_resent"), { status: "failed", slice: refusedSlice, refundId: "re_refused", paymentIntentId: "pi_a" }] }),
+      }),
+    ).rejects.toThrow();
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(updateMany.mock.calls[1]?.[0]).toEqual({
+      where: { id: "op_1", allocationPlan: { equals: [resent, refusedSlice] } },
+      data: { allocationPlan: [{ ...resent, madeRefundId: "re_resent" }, refusedSlice] },
+    });
+  });
+
+  it("MUTATION: every slice of a row of its own is marked - its key names the failure", async () => {
+    await refundPlanOrRetryRefusals({
+      operation: holding("card_refund_failed_later_re_failed"),
+      plan: [first],
+      format: CLUB_FORMAT_TEST,
+      refund: async () => ({ refunds: [made(first, "re_resent")] }),
+    });
+    expect((updateMany.mock.calls[0]?.[0] as { data: { allocationPlan: unknown } }).data.allocationPlan).toEqual([{ ...first, madeRefundId: "re_resent" }]);
+  });
+
+  it("a replay with no slice sent for a failure writes nothing", async () => {
+    await refundPlanOrRetryRefusals({
+      operation: holding("refund_request_refund_rr_1"),
+      plan: [first],
+      format: CLUB_FORMAT_TEST,
+      refund: async () => ({ refunds: [made(first, "re_first")] }),
+    });
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });

@@ -6,10 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { isXeroConnected } from "@/lib/xero";
-import {
-  enqueueXeroRefundCreditNoteOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import { sendEmail } from "@/lib/email";
 import {
   refundRequestApprovedTemplate,
@@ -29,7 +26,8 @@ import {
 } from "@/lib/payment-transactions";
 import { inlineRefundAfterAttempt } from "@/lib/refused-card-refund-retry";
 import { NO_CARD_REFUND_OWED, queueUnmadeRefundRequestCardRefund, refundRequestCardRefundAnswer } from "@/lib/refund-request-card-refund";
-import { buildRefundRequestRefundMetadata } from "@/lib/payment-recovery-keys";
+import { buildRefundRequestRefundMetadata, buildRefundRequestRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
+import { notesEachCardRefund, queueRefundRequestCardNotes } from "@/lib/card-refund-own-note";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatStayDate } from "@/lib/club-time";
 import { clubFormat } from "@/lib/club-format-server";
@@ -107,6 +105,7 @@ export async function PUT(
   const payment = booking.payment;
 
   let cardRefund = NO_CARD_REFUND_OWED; // #4117: what its card refund left unmade, queued or not, and why
+  let madeSlices: ReadonlyArray<{ madeRefundId?: string }> = []; // #4312: the refunds its inline attempt made
   if (status === "APPROVED") {
     if (!approvedAmountCents || approvedAmountCents <= 0) {
       return NextResponse.json(
@@ -396,7 +395,7 @@ export async function PUT(
           // a byte-identical body and Stripe replays the original refund instead
           // of rejecting the reused idempotency key with idempotency_error.
           metadata: buildRefundRequestRefundMetadata(booking.id, id),
-          idempotencyKeyPrefix: `refund_request_${id}`,
+          idempotencyKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id),
         });
       } catch (err) {
         // The approval stands: complete the refund through the durable payment
@@ -418,12 +417,14 @@ export async function PUT(
       // (`INV-PAY-128`): a slice Stripe refused is among them on its next key;
       // one that threw or was never sent keeps its key; a made one is marked.
       const read = inlineRefundAfterAttempt(refundPlan, attempt);
+      madeSlices = read.plan;
       const outcome = await queueUnmadeRefundRequestCardRefund({
         bookingId: booking.id,
         paymentId: payment.id,
         refundRequestId: id,
         read,
         paymentIntentIdFallback: payment.stripePaymentIntentId ?? "",
+        notesEachRefund: await notesEachCardRefund(payment), // #4312: the replay notes each refund it makes
         format: money.format,
       });
       cardRefund = refundRequestCardRefundAnswer(read, outcome, attemptedAt);
@@ -475,16 +476,15 @@ export async function PUT(
     // when the treasurer marks its task paid back, after the money has moved
     // (`enqueueXeroRefundRequestCreditNoteOperation`). Nor does an
     // organiser-card refund (#3956): the executor queues its note with the
-    // refund row, once Stripe has answered.
+    // refund row, once Stripe has answered. #4312 (`INV-ADDPAY-047`): on a bank
+    // transfer each refund the attempt made is noted on its own record, and
+    // the recovery replay notes those it makes (`queueRefundRequestCardNotes`).
     const unqueuedCents = cardRefund.cardRefundQueued ? 0 : cardRefund.cardRefundOwedCents; // #4117: not refunded, so not noted
     const cardNoteCents = organiserChildDebtId ? 0 : approvedAmountCents - bankTransferCents - unqueuedCents;
     try {
-      const queuedCreditNote =
-        cardNoteCents > 0
-          ? await enqueueXeroRefundCreditNoteOperation(payment.id, cardNoteCents, {
-              createdByMemberId: session.user.id,
-            })
-          : { queueOperationId: null };
+      const queuedCreditNote = organiserChildDebtId
+        ? { queueOperationId: null }
+        : await queueRefundRequestCardNotes({ payment, cardNoteCents, plan: madeSlices, createdByMemberId: session.user.id });
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
         void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {

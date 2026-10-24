@@ -18,12 +18,12 @@
  * A later cancellation hand-back on a bank-transfer payment that already has
  * its canonical note is queued a note of its own, keyed on its task (#4287,
  * owner decision 22 Oct 2026); `xero-bt-per-refund-notes` proves it through to
- * Xero and the readers. CURRENT BEHAVIOUR, still pinned on purpose: a refund
- * request's card part on such a payment is ABSORBED by the single-note branch
- * of `enqueueXeroRefundCreditNoteOperation` and gets no note of its own - #4287
- * stopped on the card writers for the owner (#4312). Xero is then genuinely short a
- * note, so the floor keeps the total and the alert is true; it names that cause
- * and asks for the note by hand. The recount deliberately does not add the
+ * Xero and the readers. Since #4312 a refund request's card part on such a
+ * payment is queued a note of its own too, keyed on its card refund (pinned
+ * here; `xero-bt-card-refund-notes` proves it through to Xero). A refund folded
+ * before either release leaves Xero genuinely short a note, so the floor keeps
+ * the total and the alert is true; it names that cause and asks for the note
+ * by hand. The recount deliberately does not add the
  * absorbed cash (that would silence the only signal). Which void states reach
  * the alert is pinned too (only an answered void with its cash kept), and the
  * deploy note's read-only query is run here as an operator would run it.
@@ -327,8 +327,11 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(await paymentState(ORGANISER_PAYMENT_ID)).toEqual({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" });
     });
 
-    it("CURRENT BEHAVIOUR: a refund request's card part on a bank transfer is absorbed - the floor keeps it, the alert asks for its note, the deploy note lists it", async () => {
+    it("a refund request's card part on a bank transfer is queued its own note, keyed on its card refund - never absorbed into the canonical note (#4312)", async () => {
       await seedRefundedUnderCanonicalNote({ amountCents: 25_000 });
+      // The #4312 cutover marker's finish: the card refund below is made after it, so it gets a note of its own.
+      const { CARD_REFUND_NOTE_CUTOVER_MIGRATION } = await import("@/lib/card-refund-own-note-share");
+      const [marker] = await prisma.$queryRaw<Array<{ finished_at: Date }>>`SELECT "finished_at" FROM "_prisma_migrations" WHERE "migration_name" = ${CARD_REFUND_NOTE_CUTOVER_MIGRATION}`;
       // An edit's card capture on the bank-transfer payment, $40 of it refunded by the approved request.
       await prisma.paymentTransaction.create({
         data: {
@@ -339,22 +342,27 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.paymentRefund.create({
         data: {
           paymentId: ORGANISER_PAYMENT_ID, paymentTransactionId: "race-4230-card", stripeRefundId: "re_race_4230", stripePaymentIntentId: "pi_race_4230",
-          amountCents: 4_000, currency: "nzd", status: "succeeded",
+          amountCents: 4_000, currency: "nzd", status: "succeeded", stripeCreatedAt: new Date(marker!.finished_at.getTime() + 60_000),
         },
       });
       await prisma.payment.update({ where: { id: ORGANISER_PAYMENT_ID }, data: { refundedAmountCents: 14_000 } });
-      // The approval's own call (`refund-requests/[id]`): no keyed options. Still absorbed:
-      // #4287 stopped on the card writers for the owner (no record of its own sizes this note; #4312).
-      const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
-      expect(await enqueueXeroRefundCreditNoteOperation(ORGANISER_PAYMENT_ID, 4_000, { createdByMemberId: OFFICER_ID })).toEqual(
-        expect.objectContaining({ queueOperationId: null, message: "Xero refund credit note already linked for this payment." }),
-      );
-      expect(await refundNoteRows()).toBe(0);
-      // The refund-note gap reader cannot see it: the bank note's coverage hides the card cash.
-      const { readRefundCreditNoteGap } = await import("@/lib/xero-admin-health");
-      expect((await readRefundCreditNoteGap({ id: ORGANISER_PAYMENT_ID, bookingId: ORGANISER_BOOKING_ID, refundedAmountCents: 14_000 })).uncoveredCents).toBe(0);
+      // The approval's own call for its card part (`refund-requests/[id]`, `queueRefundRequestCardNotes`): the refund its attempt made.
+      const { queueRefundRequestCardNotes } = await import("@/lib/card-refund-own-note");
+      const queued = await queueRefundRequestCardNotes({
+        payment: { id: ORGANISER_PAYMENT_ID, source: "INTERNET_BANKING" }, cardNoteCents: 4_000, plan: [{ madeRefundId: "re_race_4230" }], createdByMemberId: OFFICER_ID,
+      });
+      const [own] = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: ORGANISER_PAYMENT_ID, entityType: "CREDIT_NOTE" }, select: { id: true, status: true, correlationKey: true, requestPayload: true } });
+      expect(queued.queueOperationId).toBe(own!.id);
+      expect(own).toMatchObject({ status: "PENDING", requestPayload: expect.objectContaining({ refundAmountCents: 4_000, cardRefundId: "re_race_4230", refundMethod: "card" }) });
+      expect(own!.correlationKey).toContain(":card-refund:re_race_4230:");
+      expect(await refundNoteRows()).toBe(1);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: ORGANISER_PAYMENT_ID }, select: { xeroRefundCreditNoteId: true } })).xeroRefundCreditNoteId).toBe(CANONICAL_NOTE);
+      // Asked again, the same row.
+      expect(await queueRefundRequestCardNotes({ payment: { id: ORGANISER_PAYMENT_ID, source: "INTERNET_BANKING" }, cardNoteCents: 4_000, plan: [{ madeRefundId: "re_race_4230" }], createdByMemberId: OFFICER_ID })).toEqual({ queueOperationId: own!.id });
+      expect(await refundNoteRows()).toBe(1);
+      // Until that note is in Xero, the deploy note lists the payment and the floor's alert is true
+      // (`xero-bt-card-refund-notes` raises it and proves every reader then counts it).
       expect(await deployNoteListedPaymentIds()).toEqual([ORGANISER_PAYMENT_ID]);
-
       const { BANK_TRANSFER_REFUND_SHORTFALL_ADVICE } = await import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
       const alerts = await watchDivergenceAlertMessages(() => reconcileCanonicalNote(100));
       expect(await paymentState(ORGANISER_PAYMENT_ID)).toEqual({ refundedAmountCents: 14_000, status: "PARTIALLY_REFUNDED" });

@@ -8,12 +8,19 @@ files below grow by the unavoidable registration line count of a new cron job, a
 new email message and the runner's single hook.
 
 file: src/lib/payment-recovery.ts
-lines: 3375
+lines: 3400
 reason: the runner's branch is one early fork at the top of
   `processCreateAdditionalPaymentIntentOperation` plus its import; the rest is in
   `credit-release-ask.ts`. The fork must sit inside the function that claims the
   row, before the ordinary replay derives its inputs from a `BookingModification`
   this request does not have.
+  Also (#4312, merged into this one entry): the refund request recovery row's marker (`notesEachRefund`, written as
+  the row's Stripe key prefix by the one enqueue that writes these rows), the
+  check the replay reads it back with, and the replay handing each refund it
+  makes to `replayNotingEachRefund`, which asks every other row's refunds by the
+  one rule `charge.refunded` applies (#4104, review round 6). The replay's refunds are only known inside
+  its own refund callback, and the marker belongs beside the enqueue that
+  writes it.
 
 file: src/lib/admin-cron-health.ts
 lines: 927

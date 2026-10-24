@@ -371,7 +371,7 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
         where: { id: queued.id },
         data: { status: "PROCESSING", attempts: 1, processingStartedAt: claimedAt },
       });
-      const held = (processingStartedAt: Date) => ({ id: queued.id, bookingId: BOOKING_ID, paymentIntentId: queued.paymentIntentId, processingStartedAt });
+      const held = (processingStartedAt: Date) => ({ id: queued.id, idempotencyKey: queued.idempotencyKey, bookingId: BOOKING_ID, paymentIntentId: queued.paymentIntentId, processingStartedAt });
       const refusedAnswer = (slice: { paymentTransactionId: string; amountCents: number; stripeKeySuffix?: string }) => async () => ({
         refunds: [{ status: "failed", slice, refundId: "re_race_4083_runner", paymentIntentId: queued.paymentIntentId }],
       });
@@ -779,7 +779,7 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
 
       await expect(
         refundPlanOrRetryRefusals({
-          operation: { id: row.id, bookingId: BOOKING_ID, paymentIntentId: row.paymentIntentId, processingStartedAt: claimedAt },
+          operation: { id: row.id, idempotencyKey: row.idempotencyKey, bookingId: BOOKING_ID, paymentIntentId: row.paymentIntentId, processingStartedAt: claimedAt },
           plan: [REFUSED_SLICE],
           format: CLUB_FORMAT_TEST,
           refund: async () => ({ refunds: [{ status: "canceled", slice: REFUSED_SLICE, refundId: "re_race_4103_superseded", paymentIntentId: row.paymentIntentId }] }),

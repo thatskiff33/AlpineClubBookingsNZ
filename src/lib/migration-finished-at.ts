@@ -4,10 +4,13 @@ import { z } from "zod";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 
 /**
- * #3640, #4104 (`INV-SSOT`): WHEN A NAMED MIGRATION FINISHED ON THIS INSTALL -
- * the one read of `_prisma_migrations`, which the refund ledger's start
- * (`payment-transactions.ts`) and the failed-later card refund cutoff
- * (`card-refund-failed-later.ts`) each date a fact of the install by.
+ * #3640, #4104, #4312 (`INV-SSOT`): WHEN A NAMED MIGRATION FINISHED ON THIS
+ * INSTALL - the one read of `_prisma_migrations`, which the refund ledger's
+ * start (`payment-transactions.ts`), the failed-later card refund cutoff
+ * (`card-refund-failed-later.ts`) and the bank-transfer card refund note
+ * cutover (`card-refund-own-note-share.ts`) each date a fact of the install by.
+ * A marker migration rolled back and applied again moves its fact to the new
+ * finish; a squash that drops its name leaves none (`BLUE_GREEN_MIGRATION_POLICY.md`).
  *
  * Read raw because no Prisma model covers the table (`INV-OPS-001`: each row is
  * decoded, never cast). A database built with `prisma db push` (a dev

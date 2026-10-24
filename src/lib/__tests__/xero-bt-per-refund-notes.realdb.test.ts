@@ -15,7 +15,9 @@
  *   through `applyLocalRefundAllocation` and `postHandBackLedgerLine`).
  * - REAL: completions (`resolveManualRefundTask`); card refunds
  *   (`refundPaymentTransactions`, Stripe's create answered as Stripe would);
- *   the card note through the refund-request approval's own enqueue call; every
+ *   the card note through the enqueue call a card note with no keyed options
+ *   makes (the cancel's card branch; before #4312, a refund request's card
+ *   part too, which `xero-bt-card-refund-notes` now proves on its own); every
  *   note through the outbox worker and every Xero event through the inbound
  *   reconcile, both against a fake Xero transport (no provider call); the
  *   nightly undo of a voided note (`followUpVoidedBankRefundNote`).
@@ -395,7 +397,7 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
       const { readPaidAnotherWayCash } = await import("@/lib/card-refund-paid-another-way-cash");
       expect((await readPaidAnotherWayCash(prisma, PAYMENT_ID)).notedCents).toBe(0);
 
-      // Later, a card refund and its note: the refund-request approval's own call (no keyed options).
+      // Later, a card refund and its note: the enqueue a card note with no keyed options makes (the cancel's card branch).
       await refundCard(4_000);
       const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
       const queued = await enqueueXeroRefundCreditNoteOperation(PAYMENT_ID, 4_000, { createdByMemberId: OFFICER_ID });
@@ -426,7 +428,7 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
     /** A note the treasurer made by hand in Xero for the whole $100, as the "already in Xero" check returns it. */
     const handMadeNote = (id: string) => ({ answer: "recorded-in-xero" as const, note: { creditNoteId: id, creditNoteNumber: `CN-${id}`, amountCents: 10_000, status: "AUTHORISED", total: 100, updatedDateUTC: null } });
 
-    /** A later card refund and its note, through the refund-request approval's own call: what Xero is asked to raise. */
+    /** A later card refund and its note, through the enqueue a card note with no keyed options makes: what Xero is asked to raise. */
     async function laterCardNote(noteId: string) {
       await refundCard(4_000);
       const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");

@@ -67,6 +67,8 @@ import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
 import {
   CARD_REFUND_OPERATION_WHERE,
   cardRefundPaymentBeforeFailure,
+  carriesCardRefundOperationMetadata,
+  cardRefundSliceFailedRefundIds,
   cardRefundSliceFilledBy,
   isOpenCardRefundOperationStatus,
   parseRefundAllocationPlan,
@@ -79,7 +81,6 @@ import {
 import {
   buildCardRefundFailedLaterRecoveryKey,
   CARD_REFUND_FAILED_LATER_REASON,
-  cardRefundOperationRefundMetadata,
   nextRefusedRefundKeySuffix,
 } from "@/lib/payment-recovery-keys";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
@@ -174,11 +175,9 @@ export async function cardRefundFailedLaterCutoffSeconds(db: Prisma.TransactionC
   return cutoff.finishedAtSeconds;
 }
 
-/** Whether a refund carries exactly the Stripe metadata this row's runner sends (`cardRefundOperationRefundMetadata`). */
+/** Whether a refund carries exactly the Stripe metadata this row's runner sends (`carriesCardRefundOperationMetadata`). */
 function sentByRow(row: PaymentRecoveryOperation, refund: FailedLaterRefundInput): boolean {
-  const expected = Object.entries(cardRefundOperationRefundMetadata(row));
-  const actual = refund.metadata ?? {};
-  return Object.keys(actual).length === expected.length && expected.every(([key, value]) => actual[key] === value);
+  return carriesCardRefundOperationMetadata(row, refund.metadata);
 }
 
 /** The open row that counted this refund as made: the slice it moves, or (`sliceIndex` null) a plan-less row that re-derives what it sends. */
@@ -213,11 +212,15 @@ async function findOwner(
 ): Promise<OpenOwner | "owed" | { madeBy: string | null }> {
   const refundId = refund.id;
   const rows = await tx.paymentRecoveryOperation.findMany({ where: { paymentId: payment.id, ...CARD_REFUND_OPERATION_WHERE } });
-  if (rows.some((row) => row.idempotencyKey === buildCardRefundFailedLaterRecoveryKey(refundId))) return "owed";
+  // Already owed, by the one spelling of what a slice is sent for (`cardRefundSliceFailedRefundIds`): any row of
+  // its own, open or closed (its key names it, whatever its plan), and an open row's slice that recorded it.
+  const sendsFor = (row: PaymentRecoveryOperation, slice: Parameters<typeof cardRefundSliceFailedRefundIds>[1]) =>
+    cardRefundSliceFailedRefundIds(row, slice).includes(refundId);
+  if (rows.some((row) => sendsFor(row, {}))) return "owed";
   const open = rows.filter((row) => isOpenCardRefundOperationStatus(row.status));
   for (const row of open) {
     const plan = parseRefundAllocationPlan(row.allocationPlan) ?? [];
-    if (plan.some((slice) => slice.failedRefundIds?.includes(refundId))) return "owed";
+    if (plan.some((slice) => sendsFor(row, slice))) return "owed";
     const marked = plan.findIndex((slice) => slice.madeRefundId === refundId);
     if (marked >= 0) return { row, sliceIndex: marked };
   }

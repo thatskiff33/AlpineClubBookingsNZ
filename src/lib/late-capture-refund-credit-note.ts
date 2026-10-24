@@ -26,6 +26,7 @@ import type { ClubTimeZone } from "@/lib/club-time";
 import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import { paidAnotherWayCloseXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { paidAnotherWayCloseNoteRowsWhere } from "@/lib/card-refund-paid-another-way-cash";
+import { cardRefundIdOfNoteRow, cardRefundNoteCutoverSeconds, madeSinceCardRefundNoteCutover, planLateCaptureCardNotes } from "@/lib/card-refund-own-note-share";
 
 /**
  * #1350 / #3639 / #3635: the Xero correction that follows a refund of a late
@@ -53,6 +54,12 @@ import { paidAnotherWayCloseNoteRowsWhere } from "@/lib/card-refund-paid-another
  * N4) so a caller reporting to an operator claims no note it did not queue:
  * `queued`, `nothing-owed` (no receipt, or every refunded cent already noted),
  * or `failed` (logged; the note must be raised by hand).
+ *
+ * #4312 (`INV-ADDPAY-047`): ON A BANK-TRANSFER PAYMENT the same ask is split
+ * (`planLateCaptureCardNotes`): each refund made since the cutover gets its
+ * own note, keyed on it (`cardRefundId`) and naming the capture, so the
+ * single-note branch never folds it; older refunds keep the one note for the
+ * capture they always had.
  */
 export type LateCaptureNoteResult = "queued" | "nothing-owed" | "failed";
 
@@ -67,22 +74,29 @@ export async function noteLateCaptureRefunds(params: {
     const refundedCents = counted.reduce((sum, refund) => sum + Math.max(0, refund.amountCents), 0);
     const askCents = refundedCents - (await sumLateCaptureNotedCents(paymentId, paymentIntentId));
     if (askCents <= 0) return "nothing-owed";
-    const latest = counted
-      .map((refund) => refund.stripeCreatedAt ?? refund.createdAt)
-      .reduce((max, at) => (at > max ? at : max));
-    const documentDate = xeroDocumentDateFromInstant(latest, await readClubTimeZoneOutsideRequest());
-    const queued = await enqueueXeroRefundCreditNoteOperation(paymentId, askCents, {
-      refundMethod: "card",
-      paymentIntentId,
-      documentDate,
-    });
-    if (!queued.queueOperationId) {
+    const clubZone = await readClubTimeZoneOutsideRequest();
+    const dayOf = (refunds: typeof counted) =>
+      xeroDocumentDateFromInstant(refunds.map((refund) => refund.stripeCreatedAt ?? refund.createdAt).reduce((max, at) => (at > max ? at : max)), clubZone);
+    const plan = await planLateCaptureAsk(paymentId, paymentIntentId, counted);
+    const asks = [
+      ...plan.own.map((ask) => ({ cents: ask.askCents, refunds: counted.filter((refund) => refund.stripeRefundId === ask.stripeRefundId), cardRefundId: ask.stripeRefundId })),
+      ...(plan.legacyAskCents > 0 ? [{ cents: plan.legacyAskCents, refunds: plan.legacy, cardRefundId: undefined }] : []),
+    ];
+    let queuedAny = false;
+    let refused = false;
+    for (const ask of asks) {
+      const queued = await enqueueXeroRefundCreditNoteOperation(paymentId, ask.cents, {
+        refundMethod: "card",
+        paymentIntentId,
+        documentDate: dayOf(ask.refunds),
+        ...(ask.cardRefundId ? { cardRefundId: ask.cardRefundId } : {}),
+      });
+      if (queued.queueOperationId) queuedAny = true;
       // A refusal over an unreadable hand-resolved note is logged by the
       // enqueue and wants the note raised by hand; anything else is covered.
-      return "resolvedInXeroOperationId" in queued && queued.resolvedInXeroOperationId
-        ? "failed"
-        : "nothing-owed";
+      else if ("resolvedInXeroOperationId" in queued && queued.resolvedInXeroOperationId) refused = true;
     }
+    if (!queuedAny) return refused ? "failed" : "nothing-owed";
     if (await isXeroConnected()) {
       await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
     }
@@ -100,9 +114,39 @@ export async function noteLateCaptureRefunds(params: {
 async function readLateCaptureCardRefunds(paymentId: string, paymentIntentId: string) {
   const refunds = await prisma.paymentRefund.findMany({
     where: { paymentId, stripePaymentIntentId: paymentIntentId },
-    select: { amountCents: true, status: true, stripeCreatedAt: true, createdAt: true },
+    select: { stripeRefundId: true, amountCents: true, status: true, stripeCreatedAt: true, createdAt: true },
+    orderBy: [{ createdAt: "asc" }, { stripeRefundId: "asc" }],
   });
   return refunds.filter((refund) => isRecordedRefundStatus(refund.status));
+}
+
+/**
+ * #4312: the capture's ask split on a bank transfer (`planLateCaptureCardNotes`):
+ * the refunds made since the cutover, each with what the notes naming it
+ * already ask, and the older ones. On any other payment, or before the
+ * cutover, everything is older - one note for the capture, as before.
+ */
+async function planLateCaptureAsk(paymentId: string, paymentIntentId: string, counted: Awaited<ReturnType<typeof readLateCaptureCardRefunds>>) {
+  const payment = await prisma.payment.findUnique({ where: { id: paymentId }, select: { source: true } });
+  const cutoverSeconds = payment?.source === "INTERNET_BANKING" ? await cardRefundNoteCutoverSeconds(prisma) : Number.POSITIVE_INFINITY;
+  const own = counted.filter((refund) => madeSinceCardRefundNoteCutover(refund, cutoverSeconds));
+  const legacy = counted.filter((refund) => !own.includes(refund));
+  const askedByRefund = new Map<string, number>();
+  let legacyNotedCents = 0;
+  for (const note of await readLateCaptureCardNotes(paymentId, paymentIntentId)) {
+    if (note.status === "SUCCEEDED" && classifyLateCaptureCardNote(note) !== "in-xero") continue;
+    const recorded = parsePaymentCreditNoteRetryInput(note);
+    const cents = recorded?.amountCents ?? 0;
+    const refundId = cardRefundIdOfNoteRow(note);
+    if (refundId && own.some((refund) => refund.stripeRefundId === refundId)) askedByRefund.set(refundId, (askedByRefund.get(refundId) ?? 0) + cents);
+    else legacyNotedCents += cents;
+  }
+  const plan = planLateCaptureCardNotes({
+    own: own.map((refund) => ({ stripeRefundId: refund.stripeRefundId, amountCents: refund.amountCents, ownNotedCents: askedByRefund.get(refund.stripeRefundId) ?? 0 })),
+    legacyRefundedCents: legacy.reduce((sum, refund) => sum + Math.max(0, refund.amountCents), 0),
+    legacyNotedCents,
+  });
+  return { ...plan, legacy };
 }
 
 /**
@@ -238,7 +282,7 @@ async function readLateCaptureCardNotes(
       status: { not: "CANCELLED" },
       requestPayload: { path: ["paymentIntentId"], equals: paymentIntentId },
     },
-    select: { status: true, lastErrorCode: true, xeroObjectId: true, requestPayload: true, manuallyResolvedAt: true },
+    select: { status: true, lastErrorCode: true, xeroObjectId: true, requestPayload: true, manuallyResolvedAt: true, correlationKey: true },
   });
   return (notes ?? []).filter((note) => !parsePaymentCreditNoteRetryInput(note)?.paidAnotherWayTaskId);
 }

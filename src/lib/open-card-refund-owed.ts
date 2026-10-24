@@ -7,7 +7,12 @@ import {
   getRemainingRefundableCents,
   type BookingPaymentState,
 } from "@/lib/booking-payment-state";
-import { cardRefundFailedLaterRefundId, isGroupSettlementRefundRecoveryKey, isRefusedRefundKeySuffix } from "@/lib/payment-recovery-keys";
+import {
+  cardRefundFailedLaterRefundId,
+  cardRefundOperationRefundMetadata,
+  isGroupSettlementRefundRecoveryKey,
+  isRefusedRefundKeySuffix,
+} from "@/lib/payment-recovery-keys";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import type { RefundAllocationSlice } from "@/lib/payment-transactions";
 
@@ -85,6 +90,82 @@ export function cardRefundSliceRecordsFailedLaterRefund(slice: Pick<RefundAlloca
  */
 export function cardRefundSliceOwesFailedLaterRefund(slice: Pick<RefundAllocationSlice, "failedRefundIds" | "madeRefundId">): boolean {
   return cardRefundSliceRecordsFailedLaterRefund(slice) && !slice.madeRefundId;
+}
+
+/**
+ * #4104, #4312 (`INV-SSOT`): THE REFUNDS STRIPE FAILED LATER THAT ONE SLICE IS
+ * SENT FOR - the one spelling, per slice, of the two links #4104 keeps: every
+ * slice of a row of its own (`card_refund_failed_later_<refund>`, the key names
+ * it) and a re-planned slice's `failedRefundIds`. Empty for a slice sent for
+ * nothing that failed. Every per-slice reader asks it - the pairing, the mark,
+ * the failed-later owner and the paid-another-way cover. A question about the
+ * whole row (is it a row of its own, and so owed at its amount) reads the key
+ * itself (`cardRefundFailedLaterRefundId`).
+ */
+export function cardRefundSliceFailedRefundIds(
+  operation: { idempotencyKey: string },
+  slice: Pick<RefundAllocationSlice, "failedRefundIds">,
+): string[] {
+  const byKey = cardRefundFailedLaterRefundId(operation.idempotencyKey);
+  return [...new Set([...(byKey ? [byKey] : []), ...(slice.failedRefundIds ?? [])])];
+}
+
+/**
+ * #4104 review (CM), #4312 round 8 (`INV-SSOT`): whether a Stripe refund
+ * carries exactly the metadata this row's runner sends
+ * (`cardRefundOperationRefundMetadata`) - no key missing, none extra. The one
+ * test of "this row's runner could have sent it": a refund another door or the
+ * Stripe dashboard made never passes it.
+ */
+export function carriesCardRefundOperationMetadata(
+  operation: Parameters<typeof cardRefundOperationRefundMetadata>[0],
+  metadata: Record<string, string> | null | undefined,
+): boolean {
+  const expected = Object.entries(cardRefundOperationRefundMetadata(operation));
+  const actual = metadata ?? {};
+  return Object.keys(actual).length === expected.length && expected.every(([key, value]) => actual[key] === value);
+}
+
+/**
+ * #4312 round 7 (#4104, `INV-ADDPAY-047`): WHICH REFUNDS STRIPE FAILED LATER A
+ * REFUND WAS SENT AGAIN FOR, by the record the recovery replay keeps and by
+ * nothing else. The replay sends a slice for its failures
+ * (`cardRefundSliceFailedRefundIds`) and marks that slice with the refund
+ * Stripe made for it (`madeRefundId`, `refundPlanOrRetryRefusals`), so the
+ * refund a slice is marked with answers that slice's failures. A refund no
+ * slice is marked with - one made in the Stripe dashboard, say - answers none,
+ * whatever its charge, amount or time.
+ *
+ * THE CHAIN. A failure that was itself a re-send passes on what it answered:
+ * the slice marked with it lists its own failures, which join the answer. A
+ * slice re-planned while its row is open loses its mark and lists the failed
+ * re-send with the earlier failures (`card-refund-failed-later.ts`), so either
+ * way each failure is reached once. Pure; every card refund row of the payment,
+ * open or closed, as read.
+ */
+export function cardRefundFailuresAnsweredBy(
+  operations: ReadonlyArray<{ idempotencyKey: string; allocationPlan: unknown }>,
+  stripeRefundId: string,
+): string[] {
+  const marked = operations.flatMap((operation) =>
+    (parseRefundAllocationPlan(operation.allocationPlan) ?? []).flatMap((slice) =>
+      slice.madeRefundId ? [{ madeRefundId: slice.madeRefundId, failed: cardRefundSliceFailedRefundIds(operation, slice) }] : [],
+    ),
+  );
+  const answered: string[] = [];
+  const seen = new Set([stripeRefundId]);
+  const toWalk = [stripeRefundId];
+  for (let refundId = toWalk.shift(); refundId !== undefined; refundId = toWalk.shift()) {
+    for (const slice of marked) {
+      if (slice.madeRefundId !== refundId) continue;
+      for (const failed of slice.failed.filter((id) => !seen.has(id))) {
+        seen.add(failed);
+        answered.push(failed);
+        toWalk.push(failed);
+      }
+    }
+  }
+  return answered;
 }
 
 /**
@@ -274,7 +355,7 @@ function sliceTakes(slice: CardRefundSlice, refund: RecordedCardRefundRow, leftC
 }
 
 /** When Stripe made a refund: its own time where recorded, else when the app recorded it. */
-function stripeMadeAt(refund: RecordedCardRefundRow): Date {
+function stripeMadeAt(refund: Pick<RecordedCardRefundRow, "createdAt" | "stripeCreatedAt">): Date {
   return refund.stripeCreatedAt ?? refund.createdAt;
 }
 
@@ -285,7 +366,9 @@ function flooredToSecond(at: Date): number {
 
 /**
  * Whether an operation can take a refund: one MADE BY STRIPE at or after it
- * was raised and, once it closed, at or before its close.
+ * was raised and, once it closed, at or before its close. Also the window of a
+ * re-send `charge.refunded` records before its slice is marked
+ * (`unmarkedResendSlicesFor`, #4312 round 8).
  *
  * - One clock at both ends (#3924 round 7, money M3): the raised end reads
  *   Stripe's time too, against the raise floored to its second, so a refund
@@ -309,7 +392,10 @@ function flooredToSecond(at: Date): number {
  * one made in the second an operation was raised, just before it, reads as
  * made after it. A refund with no Stripe time is read at when the app recorded it.
  */
-function operationWindowTakes(operation: CardRefundOperationRow, refund: RecordedCardRefundRow): boolean {
+export function operationWindowTakes(
+  operation: Pick<CardRefundOperationRow, "createdAt" | "status" | "succeededAt">,
+  refund: Pick<RecordedCardRefundRow, "createdAt" | "stripeCreatedAt">,
+): boolean {
   if (flooredToSecond(operation.createdAt) > stripeMadeAt(refund).getTime()) return false;
   if (operation.status !== SUCCEEDED || operation.succeededAt === null) return true;
   return stripeMadeAt(refund).getTime() <= operation.succeededAt.getTime();

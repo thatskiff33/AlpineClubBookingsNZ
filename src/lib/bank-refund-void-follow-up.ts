@@ -11,6 +11,7 @@ import {
   listBankRefundVoidsForAPerson,
   readPickableHandBackLines,
   readVoidedBankRefundNoteLinkIds,
+  isCardMoneyVoidReason,
   resolvePickedUndo,
   type BankRefundVoidClassification,
   type BankRefundVoidUndo,
@@ -421,8 +422,9 @@ export function bankRefundVoidFollowUpFailureMessage(result: BankRefundVoidJobRe
 
 /**
  * #4162: a person's answer to a voided note that has no bank refund to pick -
- * one that recorded a card refund's record (its note is re-raised from the
- * card refund pipeline), or a note with no live bank refund left on its
+ * one that recorded card money (a card refund's record, whose note is re-raised
+ * from the card refund pipeline, or #4312 a card refund itself,
+ * `isCardMoneyVoidReason`), or a note with no live bank refund left on its
  * payment. It moves no money: under the same locks as the job, it
  * re-classifies the note, refuses unless that is still so, and writes the
  * "answered" marker - with who answered and their note - on its link (taken
@@ -443,7 +445,7 @@ export async function markUnmatchedBankRefundVoidAnswered(input: {
     const nothingToPick =
       c.kind === "unmatched" &&
       note.bookingId !== null &&
-      (c.reason === "paid-another-way" || (await readPickableHandBackLines(tx, note.paymentId, note.bookingId, c.remainingCents)).length === 0);
+      (isCardMoneyVoidReason(c.reason) || (await readPickableHandBackLines(tx, note.paymentId, note.bookingId, c.remainingCents)).length === 0);
     if (!nothingToPick || !note.bookingId || c.kind !== "unmatched") {
       throw new BankRefundVoidAnswerRefusal("This voided refund note no longer takes an answer here: pick the refund it recorded instead. The list has been refreshed.", 409);
     }

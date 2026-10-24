@@ -644,7 +644,7 @@ cleanup deactivates, and active non-cancelled coverage above the cash
 refund-note target is reported as its own drift class
 (`overCoveredStripeRefundPayments`) because it silently suppresses every
 later refund note. A non-Stripe payment keeps ONE refund note; a request's
-own (`INV-PAY-118`) and a later hand-back's (`INV-ADDPAY-043`) are outside it. A void deactivates
+own (`INV-PAY-118`) and per-refund notes (`INV-ADDPAY-043`, `INV-ADDPAY-047`) are outside it. A void deactivates
 either mirror (`INV-ADDPAY-041`).
 Operator repair: `scripts/xero-refund-note-link-repair.ts`
 ([runbook](../xero/ARCHITECTURE.md)).
@@ -678,8 +678,8 @@ alert; only the nightly follow-up moves the detail, line and total together
   Xero.
   Pinned by `xero-credit-note-repairs`, `xero-booking-repair` and
   `xero-bt-repair-request-cash`.
-- **Below the detail, Xero is short a note** (#4230), usually card parts or
-  older refunds folded into one note (`INV-ADDPAY-043`). The alert says so; adding folded
+- **Below the detail, Xero is short a note** (#4230), usually refunds
+  folded into one note before `INV-ADDPAY-043` and `INV-ADDPAY-047`. The alert says so; adding folded
   cash to the recount would silence it. Pinned by
   `xero-bt-recount-handbacks`.
 
@@ -1684,8 +1684,7 @@ _Legacy: settles tasks raised before #4317._
   allocation. No new advisory key.
 - **Never for a historical refund.** Only the completion asks; an older
   absorbed refund stays on the #4230 deploy note's list.
-- **The card writers still absorb** (a refund request's card part, the
-  webhook's card delta, a late capture's note): #4312, for the owner.
+- **A card refund is noted on its own record** (`INV-ADDPAY-047`).
   Pinned by `xero-bt-per-refund-notes` (realdb), `bank-hand-back-refund-note`,
   `card-refund-paid-another-way-cash`, `manual-refund-task`,
   `payment-lock-before-rebuild` and `xero-bt-recount-handbacks`.
@@ -1773,3 +1772,36 @@ _Legacy: settles tasks raised before #4317._
   under the global key fences the row and writes the money as bank cash.
 - **No new advisory key.** Home: `credit-release-xero-payment.ts`,
   `credit-release-ask-close.ts`.
+
+### INV-ADDPAY-047
+
+- **A card refund on a bank transfer gets its own Xero note, keyed and sized
+  on its `PaymentRefund` row** (#4312, owner decision 24 Oct 2026). On an
+  `INTERNET_BANKING` payment its note names the refund (`cardRefundId`) and
+  answers its amount less its own notes (`readCardRefundNoteShare`), never the
+  canonical note (`INV-ADDPAY-020`). One key for row and Xero
+  (`cardRefundNoteKey`), so two writers collide on one row; a `perDelta` link.
+  The invoice it credits is read from the refund (`queueCardRefundOwnNotes`).
+- **Each writer asks where it first knows the refund.** A refund request's
+  approval and replay, for each refund made, on any outcome
+  (`replayNotingEachRefund`, `INV-PAY-118`); any other replay, only for
+  re-sends whose failures were own-noted and for late-capture refunds;
+  `charge.refunded`, for a refund it first records, by its metadata
+  (`cardRefundDoorOf`); a late capture's note, per refund.
+- **A re-send is paired with its failures only by the replay's record**
+  (#4104). The replay marks the slice it sent with the refund it made
+  (`madeRefundId`), compare-and-set on its plan; that refund is sized less the
+  failures' own notes, a chain followed through marks
+  (`cardRefundFailuresAnsweredBy`). A dashboard refund is noted in full. A
+  re-send never enters the canonical delta: one recorded first is left to its
+  row's replay, or marked on a dead row (`pairResendRecordedFirst`).
+- **Never for a historical refund.** Only a refund Stripe made since the
+  marker migration finished qualifies (`madeSinceCardRefundNoteCutover`);
+  none if the marker never finished, when the approval takes the one note. An
+  older one keeps its fold and the #4230 deploy note's list.
+- **No new term in a reader.** Coverage, gap and recount count its link, and
+  the hand-back cash reader (`INV-ADDPAY-043`) never does. A voided one is
+  never undone as a bank refund (`card-refund`, `INV-ADDPAY-042`).
+- **No lock.** Enqueued outside transactions; no new advisory key.
+  Pinned by `xero-bt-card-refund-notes` (realdb), `card-refund-resend-answer`,
+  `card-refund-own-note-share` and `xero-bt-recount-handbacks`.

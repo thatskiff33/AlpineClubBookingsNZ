@@ -414,8 +414,8 @@ import "./xero-refund-note-stale-live-status.realdb.test";
 import "./xero-bt-repair-request-cash.realdb.test";
 // #4230 reuses it to pin the bank-transfer recount: a group organiser's
 // hand-back moves no payment's total; the recount never writes the charge rows
-// the #4162 floor keeps; a later refund absorbed into the canonical note (#4287)
-// is kept by the floor and alerted; which void states reach that alert; and the
+// the #4162 floor keeps; a later refund noted on its own record (#4287, #4312),
+// and one folded before them, kept by the floor and alerted; which void states reach that alert; and the
 // deploy note's read-only query.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4230-` fixtures.
@@ -429,6 +429,15 @@ import "./xero-bt-recount-handbacks.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4287-` fixtures.
 import "./xero-bt-per-refund-notes.realdb.test";
+// #4312 reuses it to prove a card refund on a bank transfer gets its own Xero
+// note, keyed on its PaymentRefund row: through the refund request's real
+// approval route and its recovery replay, the `charge.refunded` webhook and a
+// late capture's note, the outbox worker and inbound reconcile (a fake Xero
+// transport), the readers and the #4162 floor; never for a refund made before
+// the cutover; one row for two writers racing; a voided card note never undone
+// as a bank refund. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-4312-` fixtures.
+import "./xero-bt-card-refund-notes.realdb.test";
 // #4098 reuses it to prove closing a subscription charge as already paid: two
 // closes at once close it once (one audit row, each voidGeneration bumped
 // once), and a manual reversal committing while the close waits for the

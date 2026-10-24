@@ -226,6 +226,27 @@ Most rows in [`BLUE_GREEN_MIGRATION_SAFETY.tsv`](BLUE_GREEN_MIGRATION_SAFETY.tsv
 
 The measurement behind the 5 s default, both of its bounds, and the recovery an operator runs are in [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-migration-lock-timeout-3377) and [`PRODUCTION_UPGRADE_RUNBOOK.md` §2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
 
+## Marker migrations are never squashed
+
+Three migrations exist only so their finish time on an install can be read
+back as a fact of that install (`readMigrationFinishedAt` in
+`src/lib/migration-finished-at.ts`): `20260509090000_enrich_payment_refund_ledger`
+dates the refund ledger's start (#3640), `20261115010000_card_refund_failed_later_cutoff`
+the failed-later card refund cutoff (#4104), and
+`20261122010000_bt_card_refund_notes_cutover` the bank-transfer card refund note
+cutover (#4312); the last two are a bare `SELECT 1`. Their name and their
+`_prisma_migrations` row ARE the data:
+
+- **Never squash, rename or delete one.** A squash that drops the name leaves
+  the readers with no finish: each says what that means for it (#4104 and #4312
+  read every refund as made before the cutover; #3640 reads every refund as
+  made since the ledger started, so a rowless pre-ledger refund would be added
+  to a mirror that already counts it).
+- **Rolled back and applied again, the fact moves** to the new finish (the
+  reader takes the first finish that was not rolled back). Refunds made in
+  between are read as made before it. Each marker's own entry in
+  [`UPGRADING.md`](UPGRADING.md) says what that costs.
+
 ## Deploy Gate
 
 `scripts/run-production-blue-green-deploy.sh --internal-blue-green-deploy` calls `scripts/validate-blue-green-migrations.sh` before `prisma migrate deploy`. The validator checks pending migration SQL for:

@@ -483,8 +483,8 @@ export function buildBookingCancellationRefundMetadata(
 // `reason: "refund_appeal_approved"`. The inline shape is UNCHANGED by this
 // convergence (only the recovery branch now matches), so every Stripe refund the
 // route has ever created already carries this exact body — there is no
-// pre-deploy sliver. Nothing downstream reads this off the Stripe refund; it is
-// dashboard-only.
+// pre-deploy sliver. Since #4312 the webhook reads its `reason` back (`cardRefundDoorOf`), to leave a request's refund to its approval.
+export const buildRefundRequestRefundStripeKeyPrefix = (refundRequestId: string) => `refund_request_${refundRequestId}`; // the route's and its replay's (#1039, #1507)
 export function buildRefundRequestRefundMetadata(
   bookingId: string,
   refundRequestId: string,

@@ -491,7 +491,7 @@ export async function readRefundNoteRaisingRow(
   return db.xeroSyncOperation.findFirst({
     where: { entityType: "CREDIT_NOTE", operationType: "CREATE", localModel: "Payment", localId: paymentId, xeroObjectId: creditNoteId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, requestPayload: true },
+    select: { id: true, requestPayload: true, correlationKey: true },
   });
 }
 

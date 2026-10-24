@@ -84,6 +84,7 @@ export async function queueUnmadeRefundRequestCardRefund({
   refundRequestId,
   read,
   paymentIntentIdFallback,
+  notesEachRefund = false,
   format,
 }: {
   bookingId: string;
@@ -92,6 +93,8 @@ export async function queueUnmadeRefundRequestCardRefund({
   read: InlineRefundRead;
   /** The payment's own intent, for an alert with no refused answer to name one. */
   paymentIntentIdFallback: string;
+  /** #4312: a bank transfer's approval notes each refund, so the replay notes those it makes. */
+  notesEachRefund?: boolean;
   format: ClubFormat;
 }): Promise<RefundRequestCardRefundOutcome> {
   if (read.unmadeCents <= 0) return "nothing_owed";
@@ -107,6 +110,7 @@ export async function queueUnmadeRefundRequestCardRefund({
       refundRequestId,
       amountCents: read.plan.reduce((sum, slice) => sum + slice.amountCents, 0),
       allocationPlan: read.plan,
+      notesEachRefund,
     }));
   } catch (enqueueErr) {
     if (!read.reachedStripe) {

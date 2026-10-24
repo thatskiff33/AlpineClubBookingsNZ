@@ -22,7 +22,8 @@ import { recoverRefundCreditNoteLinkAmountCents } from "@/lib/xero-sync";
  * a drift fails here rather than leaving a query that quietly lists nothing.
  * The real-PostgreSQL proof (`xero-bt-recount-handbacks`) runs the same query.
  * It also pins how the writers the doc names enqueue - a refund request's card
- * part still unkeyed, a later cancellation hand-back on its own record (#4287) -
+ * part on its own refunds' records (#4312), a later cancellation hand-back on
+ * its own record (#4287) -
  * and that the Xero guide quotes the alert's advice.
  */
 const REPO_ROOT = resolve(__dirname, "../../..");
@@ -95,9 +96,13 @@ describe("the #4230 deploy note's SQL matches the code's one definition", () => 
 });
 
 describe("how the writers the deploy note names enqueue a bank-transfer refund note (#4287)", () => {
-  it("a refund request's card part: no keyed option, so the single-note branch absorbs it", () => {
+  it("a refund request's card part: on a bank transfer each refund is noted on its own record, never absorbed (#4312)", () => {
     const route = read("src/app/api/admin/refund-requests/[id]/route.ts");
-    expect(route).toMatch(/enqueueXeroRefundCreditNoteOperation\(payment\.id, cardNoteCents, \{\s*createdByMemberId: session\.user\.id,\s*\}\)/);
+    expect(route).toContain("await queueRefundRequestCardNotes({ payment, cardNoteCents, plan: madeSlices, createdByMemberId: session.user.id });");
+    expect(route).toContain("notesEachRefund: await notesEachCardRefund(payment),");
+    expect(route).not.toContain("enqueueXeroRefundCreditNoteOperation(");
+    const writers = read("src/lib/card-refund-own-note.ts");
+    expect(writers).toContain('cardRefundId: refund.stripeRefundId,');
   });
 
   it("a cancellation hand-back's completion: a later one is keyed and sized on its own task, never absorbed", () => {

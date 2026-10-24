@@ -10,7 +10,7 @@ import {
 } from "@/lib/late-capture-xero-receipt";
 import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
 import { lateCaptureIntentOfCardRefundOperation } from "@/lib/late-capture-paid-another-way";
-import { cardRefundSliceRecordsFailedLaterRefund, parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
+import { cardRefundSliceFailedRefundIds, parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { cardRefundFailedLaterRefundId } from "@/lib/payment-recovery-keys";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { readResolvedRefundCreditNoteCoverage, sumRefundCreditNoteCoverageCents } from "@/lib/xero-resolved-in-xero-fences";
@@ -250,7 +250,7 @@ export async function failedLaterCardNoteCoverCents(
           // question here is which notes in Xero answer failed refunds, and a
           // re-made slice's failed refund keeps its note too. The answer is
           // bounded by the notes' excess, and by what the close paid back.
-          .filter(cardRefundSliceRecordsFailedLaterRefund)
+          .filter((slice) => cardRefundSliceFailedRefundIds(operation, slice).length > 0)
           .reduce((sum, slice) => sum + slice.amountCents, 0);
   if (failedCents <= 0) return 0;
   const payment = await db.payment.findUnique({ where: { id: paymentId }, select: { id: true, bookingId: true, refundedAmountCents: true } });

@@ -95,7 +95,7 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // #3635: the late capture this note answers, and its refund's club day.
   paymentIntentId?: string;
   documentDate?: string;
-  paidAnotherWayTaskId?: string; creditsInvoiceId?: string; handBackTaskId?: string; // #3924 r7: the close it answers, the invoice it names; #4162: the hand-back it records
+  paidAnotherWayTaskId?: string; creditsInvoiceId?: string; handBackTaskId?: string; cardRefundId?: string; // #3924 r7: the close it answers, the invoice it names; #4162: the hand-back it records; #4312: the card refund
 }
 
 interface QueuedAccountCreditNoteOutboxPayload {
@@ -342,7 +342,7 @@ export function readQueuedOutboxPayload(
       documentDate: readString(payload.documentDate) ?? undefined,
       paidAnotherWayTaskId: readString(payload.paidAnotherWayTaskId) ?? undefined,
       creditsInvoiceId: readString(payload.creditsInvoiceId) ?? undefined,
-      handBackTaskId: readString(payload.handBackTaskId) ?? undefined,
+      handBackTaskId: readString(payload.handBackTaskId) ?? undefined, cardRefundId: readString(payload.cardRefundId) ?? undefined,
     };
   }
 

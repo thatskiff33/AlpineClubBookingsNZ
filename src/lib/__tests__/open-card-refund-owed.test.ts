@@ -460,3 +460,25 @@ describe("a refund Stripe failed later (#4104)", () => {
     expect(parseRefundAllocationPlan([{ paymentTransactionId: "txn-a", amountCents: 100, failedRefundIds: "re_1" }])).toBeNull();
   });
 });
+
+// #4312 round 8 (F4): the replay marks a re-sent slice with the refund Stripe made for it (`markResentSlices`). A
+// marked slice takes its own refund before the newest-row-first matching, so the re-send fills the row that sent it
+// and a newer row's unsent slice of the same charge and amount reads as owed - before the mark, the newer row took it.
+describe("a re-sent slice marked with its refund fills its own row first (#4312 round 8)", () => {
+  const resentSlice = { paymentTransactionId: "txn-a", amountCents: 4_000, stripeKeySuffix: "refused1", failedRefundIds: ["re_failed"] };
+  const failed = refund({ stripeRefundId: "re_failed", amountCents: 4_000, status: "failed", createdAt: at(12) });
+  const resend = refund({ stripeRefundId: "re_resend", amountCents: 4_000, createdAt: at(30) });
+  const owed = (mark: boolean) => {
+    const older = operation({ id: "op-older", amountCents: 4_000, createdAt: at(10), allocationPlan: [mark ? { ...resentSlice, madeRefundId: "re_resend" } : resentSlice] });
+    const newer = operation({ id: "op-newer", amountCents: 4_000, createdAt: at(20), idempotencyKey: "refund_request_refund_rr2", allocationPlan: [{ paymentTransactionId: "txn-a", amountCents: 4_000 }] });
+    return Object.fromEntries(openCardRefundOwedByOperation(payment([older, newer], [failed, resend], { refundedAmountCents: 4_000 })));
+  };
+
+  it("MUTATION: marked, the re-send is its own row's and the newer row still owes its slice", () => {
+    expect(owed(true)).toEqual({ "op-older": 0, "op-newer": 4_000 });
+  });
+
+  it("unmarked, as before the mark: the newest row raised before the re-send takes it", () => {
+    expect(owed(false)).toEqual({ "op-older": 4_000, "op-newer": 0 });
+  });
+});
