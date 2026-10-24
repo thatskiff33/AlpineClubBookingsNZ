@@ -82,10 +82,29 @@ afterEach(() => {
 });
 
 describe("LodgeCentralLodgeCard", () => {
-  it("says it is linked automatically under the one-lodge default", async () => {
-    serve(body({ ownedLodges: [A], answersForCentralLodgeId: "ol_a" }));
+  it("shows Not linked for an unlinked single-lodge club and lets it explicitly link", async () => {
+    serve(body({ ownedLodges: [A] }), body({ ownedLodges: [A], centralLodgeId: "ol_a", answersForCentralLodgeId: "ol_a" }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
-    expect(await screen.findByText(/Linked automatically to Aorangi Ski Club/)).toBeTruthy();
+    expect(await screen.findByText(/Not linked, so .* free beds as unknown/)).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Central lodge" }) as HTMLSelectElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect((screen.getByRole("button", { name: "Save central lodge" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("combobox", { name: "Central lodge" }), { target: { value: "ol_a" } });
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save central lodge" }));
+    expect(await screen.findByText(/Linked to Aorangi Ski Club/)).toBeTruthy();
+  });
+
+  it("clears a single-lodge link after Save and reports availability as unknown", async () => {
+    serve(body({ ownedLodges: [A], centralLodgeId: "ol_a", answersForCentralLodgeId: "ol_a" }), body({ ownedLodges: [A] }));
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    expect(await screen.findByText(/Linked to Aorangi Ski Club/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Central lodge" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save central lodge" }));
+    expect(await screen.findByText(/Not linked, so .* free beds as unknown/)).toBeTruthy();
+    const [, init] = fetchMock.mock.calls.find(([, i]) => i?.method === "PUT")!;
+    expect(JSON.parse(init.body)).toEqual({ centralLodgeId: null });
   });
 
   it("says when the central server has not said which lodges are owned, and offers no editor", async () => {

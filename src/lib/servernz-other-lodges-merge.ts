@@ -101,7 +101,7 @@ function isUniqueViolation(error: unknown): boolean {
  *
  * `byNameAllowed` says whether a lodge WITH a usable id may key an unkeyed row
  * by its name (#69): the caller allows it only on a whole-registry download,
- * and only when the name is the registry's alone or the lodge is ours, so a
+ * and only when the name is the registry's alone, so a
  * row is never keyed to another club's lodge of the same name. A lodge
  * without a usable id is always matched by name.
  *
@@ -117,6 +117,7 @@ export async function mergeDistributedLodge(
   final: boolean,
   knownIds: ReadonlySet<string> | null = null,
   byNameAllowed = true,
+  transaction: <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T> = (work) => prisma.$transaction(work),
 ): Promise<MergeOutcome> {
   const centralId = usableCentralId(lodge.id);
   const byId = centralId
@@ -180,7 +181,7 @@ export async function mergeDistributedLodge(
     // after the rest of the pull, when the lookups above find the row that
     // writer made and merge into it.
     try {
-      await prisma.$transaction(async (tx) => {
+      await transaction(async (tx) => {
         const row = await tx.otherLodge.create({
           data: { name: lodge.name, centralId, ...data, ...stamp },
           select: { id: true },
@@ -211,11 +212,11 @@ export async function mergeDistributedLodge(
     let keyed = 0;
     try {
       keyed = (
-        await prisma.otherLodge.updateMany({
+        await transaction((tx) => tx.otherLodge.updateMany({
           // `row.centralId` is null, or a stale id a whole download disowned.
           where: { id: row.id, centralId: row.centralId, updatedAt: row.updatedAt, hiddenAt: null },
           data: { centralId, updatedAt: row.updatedAt },
-        })
+        }))
       ).count;
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
@@ -249,7 +250,7 @@ export async function mergeDistributedLodge(
   // the upload watermark, so the edit would never be sent. A miss is the local
   // edit winning after all (keptLocal). The same write takes the row's lock, so
   // a concurrent amenity replacement on this lodge queues behind it.
-  const applied = await prisma.$transaction(async (tx) => {
+  const applied = await transaction(async (tx) => {
     const claimed = await tx.otherLodge.updateMany({
       where: { id: row.id, updatedAt: row.updatedAt, hiddenAt: null },
       data: { ...data, ...stamp, ...(renameTo !== null ? { name: renameTo } : {}) },
@@ -276,18 +277,19 @@ export async function mergeDistributedLodge(
  */
 export async function hideDeletedLodge(
   centralId: string,
+  db: Pick<Prisma.TransactionClient, "$executeRaw" | "otherLodge"> = prisma,
 ): Promise<{ hidden: string | null; unlinked: number }> {
   // A club lodge LINKED to the deleted central lodge (#62's "Central lodge")
-  // points at nothing now: the link is cleared, so the one-lodge default can
-  // link it to a successor. Raw, like the hide: not an administrator's edit.
-  const unlinked = await prisma.$executeRaw`UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" = ${centralId}`;
-  const row = await prisma.otherLodge.findUnique({
+  // points at nothing now: clear it and stop publication until an administrator
+  // explicitly links a successor. Raw, like the hide: not an administrator's edit.
+  const unlinked = await db.$executeRaw`UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" = ${centralId}`;
+  const row = await db.otherLodge.findUnique({
     where: { centralId },
     select: { id: true, name: true, hiddenAt: true },
   });
   if (!row || row.hiddenAt) return { hidden: null, unlinked };
   // The instant is the app's, as an administrator's Hide stamps it: the
   // database's NOW() would be read in its own time zone.
-  const hidden = await prisma.$executeRaw`UPDATE "OtherLodge" SET "hiddenAt" = ${new Date()} WHERE "id" = ${row.id} AND "centralId" = ${centralId} AND "hiddenAt" IS NULL`;
+  const hidden = await db.$executeRaw`UPDATE "OtherLodge" SET "hiddenAt" = ${new Date()} WHERE "id" = ${row.id} AND "centralId" = ${centralId} AND "hiddenAt" IS NULL`;
   return { hidden: hidden === 1 ? row.name : null, unlinked };
 }

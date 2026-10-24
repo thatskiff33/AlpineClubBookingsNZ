@@ -37,6 +37,9 @@ import "./support/race-harness-outbox-guard";
 // the explicit CI race command without changing the workflow or making ordinary
 // `pnpm test` depend on a database.
 import "./minimum-stay-policy-trigger.realdb.test";
+// #4262 proves durable connection/claim fences, row-lock serialization and link
+// audit rollback through the real sync helpers and admin route; opt-in only.
+import "./servernz-sync-fences.realdb.test";
 // #2532 reuses the same guarded harness to prove the AI Diagnostics monthly
 // budget (AID-2, #2371) can never be overspent by concurrent reservers. Its
 // race describe is `describe.skip` unless RUN_CONCURRENCY_RACE_TESTS=1, so this

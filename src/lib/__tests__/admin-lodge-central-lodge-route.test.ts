@@ -8,16 +8,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * linked; one central lodge links to one local lodge (the unique index, as a
  * 409 naming the holder); null unlinks; the audit row records before and after
  * under the lodge subsystem's `admin` category; and the GET reports the
- * one-lodge default for THIS lodge only.
+ * explicit publication link for THIS lodge only.
  */
 
-const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings, mockSecret } = vi.hoisted(() => ({
+const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings, mockSecret, mockSettingsLock } = vi.hoisted(() => ({
   mockPrisma: (() => {
     const client = {
       lodge: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
       // The owned lodges' local copies, for the options' labels (#69).
       otherLodge: { findMany: vi.fn() },
       $transaction: vi.fn(),
+      $executeRaw: vi.fn().mockResolvedValue(1),
     };
     client.$transaction.mockImplementation(async (fn: (tx: typeof client) => unknown) => fn(client));
     return client;
@@ -26,6 +27,7 @@ const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings, mockSecr
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockSettings: vi.fn(),
   mockSecret: vi.fn(),
+  mockSettingsLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -38,6 +40,7 @@ vi.mock("@/lib/audit", () => ({
 }));
 vi.mock("@/lib/servernz-settings", () => ({
   loadServerNzSettings: (...args: unknown[]) => mockSettings(...args),
+  lockServerNzSettings: (...args: unknown[]) => mockSettingsLock(...args),
 }));
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: (...args: unknown[]) => mockSecret(...args),
@@ -60,6 +63,9 @@ const put = (body: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma));
+  mockSettingsLock.mockResolvedValue(undefined);
+  mockCreateAuditLog.mockResolvedValue(undefined);
   mockRequireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
   // A lookup BY ID is the page's own lodge; a lookup by central id is the
   // resolver asking who holds a link (nobody, unless a test says so).
@@ -118,11 +124,20 @@ describe("GET /api/admin/lodges/[id]/central-lodge", () => {
   it("reports what the endpoint's resolver answers for", async () => {
     mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A] });
     // The page's own lodge read, then the resolver's explicit-link lookup
-    // (none); the one-lodge default then applies to lodge_1.
-    mockPrisma.lodge.findUnique.mockResolvedValueOnce({ ...LODGE }).mockResolvedValueOnce(null);
+    // on this active lodge.
+    mockPrisma.lodge.findUnique
+      .mockResolvedValueOnce({ ...LODGE, centralLodgeId: "ol_a" })
+      .mockResolvedValueOnce({ ...LODGE, centralLodgeId: "ol_a" });
     const body = await (await GET(new Request("http://localhost"), params())).json();
     expect(body.answersForCentralLodgeId).toBe("ol_a");
     expect(body.linkHeldBy).toBeNull();
+  });
+
+  it("reports no publication for an unlinked single-lodge club", async () => {
+    mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A] });
+    const body = await (await GET(new Request("http://localhost"), params())).json();
+    expect(body.centralLodgeId).toBeNull();
+    expect(body.answersForCentralLodgeId).toBeNull();
   });
 
   it("reports whether this site holds the push secret", async () => {
@@ -148,12 +163,76 @@ describe("PUT /api/admin/lodges/[id]/central-lodge", () => {
         entityId: "lodge_1",
         metadata: { before: { centralLodgeId: null }, after: { centralLodgeId: "ol_b" } },
       }),
+      mockPrisma,
+    );
+    expect(mockSettingsLock).toHaveBeenCalledWith(mockPrisma);
+    expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+    expect(mockSettingsLock.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPrisma.$executeRaw.mock.invocationCallOrder[0]!,
     );
   });
 
+  it("serializes concurrent saves so each audit names the committed predecessor", async () => {
+    let value: string | null = null;
+    let previous = Promise.resolve();
+    const releases = new WeakMap<object, () => void>();
+    mockSettingsLock.mockImplementation(async (tx: object) => {
+      const wait = previous;
+      previous = new Promise<void>((resolve) => releases.set(tx, resolve));
+      await wait;
+    });
+    mockPrisma.$transaction.mockImplementation(async (work: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      const tx = { ...mockPrisma };
+      try { return await work(tx); } finally { releases.get(tx)?.(); }
+    });
+    mockPrisma.lodge.findUnique.mockImplementation(async () => ({ ...LODGE, centralLodgeId: value }));
+    mockPrisma.lodge.update.mockImplementation(async ({ data }: { data: { centralLodgeId: string | null } }) => {
+      value = data.centralLodgeId;
+      return {};
+    });
+
+    const responses = await Promise.all([
+      PUT(put({ centralLodgeId: "ol_a" }), params()),
+      PUT(put({ centralLodgeId: "ol_b" }), params()),
+    ]);
+
+    expect(responses.map((r) => r.status)).toEqual([200, 200]);
+    expect(mockCreateAuditLog.mock.calls.map(([row]) => row.metadata)).toEqual([
+      { before: { centralLodgeId: null }, after: { centralLodgeId: "ol_a" } },
+      { before: { centralLodgeId: "ol_a" }, after: { centralLodgeId: "ol_b" } },
+    ]);
+    expect(value).toBe("ol_b");
+  });
+
+  it("rolls back the link when its audit fails in the write transaction", async () => {
+    let committed: string | null = "ol_a";
+    mockPrisma.$transaction.mockImplementation(async (work: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      let pending = committed;
+      const tx = { ...mockPrisma, lodge: { ...mockPrisma.lodge,
+        findUnique: vi.fn(async () => ({ centralLodgeId: pending })),
+        update: vi.fn(async ({ data }: { data: { centralLodgeId: string | null } }) => { pending = data.centralLodgeId; return {}; }),
+      } };
+      const result = await work(tx);
+      committed = pending;
+      return result;
+    });
+    mockCreateAuditLog.mockRejectedValueOnce(new Error("audit unavailable"));
+
+    expect((await PUT(put({ centralLodgeId: "ol_b" }), params())).status).toBe(500);
+    expect(committed).toBe("ol_a");
+    expect(mockCreateAuditLog.mock.calls[0][1]).toHaveProperty("lodge.update");
+  });
+
   it("unlinks with null", async () => {
-    mockPrisma.lodge.findUnique.mockResolvedValue({ ...LODGE, centralLodgeId: "ol_a" });
-    expect((await PUT(put({ centralLodgeId: null }), params())).status).toBe(200);
+    let centralLodgeId: string | null = "ol_a";
+    mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A] });
+    mockPrisma.lodge.findUnique.mockImplementation(async ({ where }: { where: { id?: string; centralLodgeId?: string } }) =>
+      where.id || where.centralLodgeId === centralLodgeId ? { ...LODGE, centralLodgeId } : null,
+    );
+    mockPrisma.lodge.update.mockImplementation(async () => { centralLodgeId = null; return {}; });
+    const res = await PUT(put({ centralLodgeId: null }), params());
+    expect(res.status).toBe(200);
+    expect((await res.json()).answersForCentralLodgeId).toBeNull();
     expect(mockPrisma.lodge.update).toHaveBeenCalledWith({ where: { id: "lodge_1" }, data: { centralLodgeId: null } });
   });
 

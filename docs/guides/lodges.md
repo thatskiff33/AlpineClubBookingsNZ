@@ -102,9 +102,11 @@ same **lodge edit** permission as the properties above.
    free there (counts only, night by night, never a guest or a booking — see
    [Connect to the Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)).
    Only the lodges the central server says your club owns are offered, and one
-   central lodge can be linked to one of your lodges. A club with **one** active
-   lodge that owns **one** central lodge is linked automatically and needs no
-   setting; the card says so. The link is by the central lodge's permanent id,
+   central lodge can be linked to one of your lodges. Every club must explicitly
+   link each participating lodge, even with only one lodge: press **Edit**,
+   choose its central lodge, then **Save central lodge**. Until saved, its free
+   beds are shown as unknown. To stop publishing them, choose **Not linked**
+   and save. The link is by the central lodge's permanent id,
    so it survives the lodge being renamed on the central server. It is specific
    to this site, so it is not part of a configuration export.
 

@@ -109,12 +109,18 @@ export async function loadOwnedOtherLodges(
  * Lock the settings row for the rest of the caller's transaction (#64). Taken by
  * the download's record step, which re-reads the connection and the cursor
  * under it before recording, so a change made meanwhile is never overwritten
- * by an older answer. A row lock on a singleton, not an advisory key: nothing
- * else orders against it. A missing row (never configured) locks nothing.
+ * by an older answer. Connection changes, claims and central-link saves share
+ * this row lock; Settings precedes credential and Lodge writes. Upserting first
+ * also fences initial configuration. No advisory key (INV-LOCK-001/002).
  */
 export async function lockServerNzSettings(
-  db: Pick<Prisma.TransactionClient, "$executeRaw">,
+  db: Pick<Prisma.TransactionClient, "$executeRaw" | "serverNzSettings">,
 ): Promise<void> {
+  await db.serverNzSettings.upsert({
+    where: { id: SERVERNZ_SETTINGS_ID },
+    create: { id: SERVERNZ_SETTINGS_ID },
+    update: {},
+  });
   await db.$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = ${SERVERNZ_SETTINGS_ID} FOR UPDATE`;
 }
 
@@ -122,9 +128,11 @@ export async function lockServerNzSettings(
  * Read the ServerNZ settings with safe defaults. A missing row or query failure
  * falls back to defaults so the setup page keeps rendering.
  */
-export async function loadServerNzSettings(): Promise<ServerNzSettingsValues> {
+export async function loadServerNzSettings(
+  db: Pick<Prisma.TransactionClient, "serverNzSettings"> = prisma,
+): Promise<ServerNzSettingsValues> {
   try {
-    const row = await prisma.serverNzSettings.findUnique({
+    const row = await db.serverNzSettings.findUnique({
       where: { id: SERVERNZ_SETTINGS_ID },
     });
     if (!row) return { ...DEFAULTS };
@@ -205,7 +213,7 @@ export async function updateServerNzSettings(input: {
   baseUrl?: string | null;
   otherLodgesEnabled?: boolean;
   updatedByMemberId: string;
-}): Promise<ServerNzSettingsValues> {
+}, db: Pick<Prisma.TransactionClient, "serverNzSettings"> = prisma): Promise<ServerNzSettingsValues> {
   const data: {
     baseUrl?: string | null;
     otherLodgesEnabled?: boolean;
@@ -215,12 +223,12 @@ export async function updateServerNzSettings(input: {
   if (input.otherLodgesEnabled !== undefined)
     data.otherLodgesEnabled = input.otherLodgesEnabled;
 
-  await prisma.serverNzSettings.upsert({
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: { id: SERVERNZ_SETTINGS_ID, ...data },
     update: data,
   });
-  return loadServerNzSettings();
+  return loadServerNzSettings(db);
 }
 
 /**
@@ -340,8 +348,9 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
 export async function recordServerVersionCheck(
   version: string,
   at: Date = new Date(),
+  db: Pick<Prisma.TransactionClient, "serverNzSettings"> = prisma,
 ): Promise<void> {
-  await prisma.serverNzSettings.upsert({
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: {
       id: SERVERNZ_SETTINGS_ID,
@@ -376,8 +385,10 @@ export async function clearServerVersionCheck(): Promise<void> {
  * leave the row half-forgotten: a stale version pausing a new connection, or a
  * stale owned list editable under a new key.
  */
-export async function forgetServerConnectionAnswers(): Promise<void> {
-  await prisma.serverNzSettings.upsert({
+export async function forgetServerConnectionAnswers(
+  db: Pick<Prisma.TransactionClient, "serverNzSettings"> = prisma,
+): Promise<void> {
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: { id: SERVERNZ_SETTINGS_ID },
     update: {

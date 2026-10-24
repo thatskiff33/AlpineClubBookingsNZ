@@ -172,9 +172,11 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   "src/lib/mirotalk-config-write.ts::setMirotalkSecret#0":
     "setIntegrationCredential (forwarded) params.actor / (forwarded) params.expect",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
-    "deleteIntegrationCredential (forwarded) actor / any",
+    "deleteIntegrationCredentialInTransaction (forwarded) actor / any",
   "src/lib/servernz-config.ts::setServerNzApiKey#0":
-    "setIntegrationCredential (forwarded) actor / any",
+    "setIntegrationCredentialInTransaction (forwarded) actor / any",
+  "src/lib/servernz-config.ts::updateServerNzConnectionSettings#0":
+    "deleteIntegrationCredentialInTransaction admin / any",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
     "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/stripe-config.ts::recordStripeWebhookVerified#0":

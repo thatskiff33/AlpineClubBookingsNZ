@@ -2017,17 +2017,28 @@ mispricing a booking.
   deliberately **not** taken — the master stays unlocked until step 5, and the
   family-link drift re-check above is what closes that window.
 
-- **Owned-lodge list writer** — `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64):
-  the Other lodges download's record step (`downloadOtherClubsFromServer`)
-  takes `$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE``
-  on the singleton settings row, then re-reads the connection (address and API
-  key stamp) and the cursor and keyed marker under it, so a download that ran
-  while the connection changed, or while another download recorded, writes
-  nothing back. Since #69 the owned list is stored by central id as the server
-  sent it, so an admin's rename of the club's own lodge no longer rewrites it
-  and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
-  from the booking/capacity/credit and money clusters. A missing row (never
-  configured) locks nothing, and its first upsert is the only writer then.
+- **Owned-lodge list writer** — `src/lib/servernz-settings.ts`
+  (`lockServerNzSettings`, triyder/AlpineClubBookingsNZ#64, #4262): upserts the
+  singleton before `SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE`,
+  so first configuration also has a real row to lock. The download captures its
+  address, durable credential version, claim instant, cursor and keyed marker
+  there. Each hide/unlink, key backfill, create, merge and final metadata
+  transaction takes that same row and re-checks the snapshot before writing;
+  a replaced connection or reaped claim aborts the stale pass. Version discovery
+  and download 409 answers use the same fence. Provider calls happen outside
+  transactions. Earlier completed row transactions remain committed; an aborted
+  pass leaves its cursor unchanged so the next pass re-fetches them.
+  Credential replacement/deletion and address changes take this row inside
+  `withCredentialTransaction`, mutate the credential and forget connection
+  answers atomically. Claim acquisition/reaping also takes it; release guards
+  the original claim instant. The credential transaction wrapper adds no row or
+  advisory lock before Settings. The central-link PUT takes Settings, validates
+  ownership, then locks the immutable `Lodge.id`, reads the before-value and
+  commits the link and awaited audit together. Download unlinks take Settings
+  before updating Lodge rows too. No path takes Lodge then Settings. All are
+  singleton-keyed, with no advisory key, disjoint from booking/capacity/credit
+  and money clusters. Lodges retain their existing lifecycle/capacity locks;
+  this protocol changes only their nullable central link.
 
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes

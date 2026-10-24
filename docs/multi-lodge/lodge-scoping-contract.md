@@ -622,7 +622,11 @@ new ADR:
   central server exchanges clubs' lodges with no dimension for THIS club's
   buildings, so a lodge dimension on these rows would have nowhere to travel;
   the one link between the two, `Lodge.centralLodgeId` (which of the central
-  server's lodges a club lodge is, for the free-beds answer), sits on `Lodge`. An amenity is a fact about the
+  server's lodges a club lodge is, for the free-beds answer), sits on `Lodge`.
+  Every participating lodge needs this explicit link, including a club with
+  only one active local lodge and one owned central lodge. Without it, no
+  free-bed counts are published; clearing it stops publication (`INV-INT-028`).
+  An amenity is a fact about the
   other club's lodge and follows its parent; it is replaced as a whole set, not
   edited per row, so it carries no scoping of its own.
 

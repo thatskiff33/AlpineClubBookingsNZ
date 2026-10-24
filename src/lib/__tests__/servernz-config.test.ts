@@ -13,10 +13,13 @@ const mocks = vi.hoisted(() => ({
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
   forgetServerConnectionAnswers: vi.fn(),
+  lockSettings: vi.fn(),
+  tx: {},
 }));
 
 vi.mock("@/lib/servernz-settings", () => ({
   forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
+  lockServerNzSettings: mocks.lockSettings,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -25,8 +28,9 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
-  setIntegrationCredential: mocks.setIntegrationCredential,
-  deleteIntegrationCredential: mocks.deleteIntegrationCredential,
+  setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
+  deleteIntegrationCredentialInTransaction: mocks.deleteIntegrationCredential,
+  withCredentialTransaction: async (_providers: unknown, fn: (tx: unknown) => unknown) => fn(mocks.tx),
 }));
 
 import {
@@ -76,6 +80,8 @@ describe("ServerNZ credential wiring", () => {
     const actor = { kind: "admin", memberId: "member-1" } as const;
     await setServerNzApiKey("acs_new", actor);
     expect(mocks.setIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.tx,
+      request: undefined,
       provider: "servernz",
       key: "api_key",
       value: "acs_new",
@@ -85,6 +91,7 @@ describe("ServerNZ credential wiring", () => {
 
     await clearServerNzApiKey(actor);
     expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.tx,
       provider: "servernz",
       key: "api_key",
       actor,
@@ -92,17 +99,19 @@ describe("ServerNZ credential wiring", () => {
     });
   });
 
-  it("forgets the owned-lodge list on disconnect, and only on disconnect (#52)", async () => {
+  it("forgets connection answers atomically on replacement and disconnect", async () => {
     // The list was the server's answer for THAT key; the next key may own
     // different lodges. (The settings route routes a server-address change
     // through this same helper, so it is covered too.)
     const actor = { kind: "admin", memberId: "member-1" } as const;
     await setServerNzApiKey("acs_new", actor);
-    expect(mocks.forgetServerConnectionAnswers).not.toHaveBeenCalled();
+    expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledWith(mocks.tx);
+    expect(mocks.lockSettings.mock.invocationCallOrder[0]).toBeLessThan(mocks.setIntegrationCredential.mock.invocationCallOrder[0]!);
+    expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]!);
     await clearServerNzApiKey(actor);
     // #49: the server's last reported version was that connection's answer
     // too, and both are forgotten in the one write.
-    expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(1);
+    expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(2);
   });
 });
 

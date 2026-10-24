@@ -4,9 +4,14 @@ const mocks = vi.hoisted(() => ({ updateMany: vi.fn(), warn: vi.fn() }));
 
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, info: vi.fn(), error: vi.fn() } }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: { serverNzSettings: { updateMany: mocks.updateMany } },
-}));
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
+    serverNzSettings: { updateMany: mocks.updateMany, upsert: vi.fn() },
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    $transaction: async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(prisma),
+  };
+  return { prisma };
+});
 
 import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
 

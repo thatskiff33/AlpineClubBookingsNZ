@@ -1,7 +1,7 @@
 import "server-only";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { SERVERNZ_SETTINGS_ID } from "@/lib/servernz-settings";
+import { SERVERNZ_SETTINGS_ID, lockServerNzSettings } from "@/lib/servernz-settings";
 
 /**
  * Single-flight claim for an Other Clubs sync pass.
@@ -52,7 +52,9 @@ export async function withOtherLodgesSyncClaim<T>(
   // The guarded claim. `updateMany` returns the number of rows it matched, so a
   // count of 1 means THIS caller moved the column from "free or stale" to "held",
   // atomically, and any concurrent caller matched zero rows.
-  const claim = await prisma.serverNzSettings.updateMany({
+  const claim = await prisma.$transaction(async (tx) => {
+    await lockServerNzSettings(tx);
+    return tx.serverNzSettings.updateMany({
     where: {
       id: SERVERNZ_SETTINGS_ID,
       OR: [
@@ -61,6 +63,7 @@ export async function withOtherLodgesSyncClaim<T>(
       ],
     },
     data: { otherLodgesSyncStartedAt: now },
+    });
   });
 
   if (claim.count === 0) return null;

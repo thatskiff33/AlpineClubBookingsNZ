@@ -21,13 +21,18 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/servernz-settings", () => ({
   forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
+  lockServerNzSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/access-roles", () => ({ isFullAdmin: mocks.isFullAdmin }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: { integrationCredential: { findMany: mocks.findMany } },
-}));
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
+    integrationCredential: { findMany: mocks.findMany },
+    $transaction: async (work: (tx: unknown) => unknown): Promise<unknown> => work(prisma),
+  };
+  return { prisma };
+});
 // PARTIAL, deliberately. This route reads `INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH`
 // from this module at IMPORT time — it bounds the zod schema — so a factory that
 // returns only the writer kills the whole file before a test runs. Spelling the

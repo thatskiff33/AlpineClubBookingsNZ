@@ -9,7 +9,7 @@ import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { otherLodgeChoiceLabel } from "@/lib/other-lodge-choice-label";
 import { OWNED_CENTRAL_LODGE_ID_MAX, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
-import { loadServerNzSettings } from "@/lib/servernz-settings";
+import { loadServerNzSettings, lockServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -27,8 +27,9 @@ import { requireAdmin } from "@/lib/session-guards";
  * `/api/admin/lodges/`, so the `lodge` permission area applies.
  *
  * A single-row update of one nullable unique column on `Lodge`: it joins no
- * lifecycle, settlement or capacity cohort, takes no advisory lock, and
- * INV-LOCK-001/002 are unaffected. The unique index is what stops one central
+ * lifecycle, settlement or capacity cohort and takes no advisory lock.
+ * The Settings row precedes the immutable Lodge row; the audit commits with
+ * that transition. The unique index stops one central
  * lodge being linked to two local ones, including under two concurrent saves.
  */
 
@@ -36,7 +37,7 @@ const paramsSchema = z.object({ id: z.string().min(1) });
 
 const putSchema = z
   .object({
-    // Null clears the link; the one-lodge default may then apply.
+    // Null clears the link and stops free-bed publication (INV-INT-028).
     centralLodgeId: z.string().trim().min(1).max(OWNED_CENTRAL_LODGE_ID_MAX).nullable(),
   })
   .strict();
@@ -81,8 +82,8 @@ async function readSettings(lodgeId: string) {
      */
     ownedLodges: owned === null ? null : await labelOwnedLodges(owned),
     /**
-     * The owned central lodge this lodge actually answers for — by its link or
-     * by the one-lodge default — decided by the endpoint's resolver; or null.
+     * The owned central lodge this lodge actually answers for through its
+     * explicit link, decided by the endpoint's resolver; or null.
      */
     answersForCentralLodgeId: status.answersFor,
     /** The other local lodge holding the only owned central lodge's link, if any. */
@@ -139,26 +140,19 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  // Only a lodge the central server says this club owns may be linked:
-  // anything else could never be asked about, and would hide a typo.
-  if (body.centralLodgeId !== null) {
-    const { otherLodgesOwnedLodges: owned } = await loadServerNzSettings();
-    if (!owned?.some((l) => l.id === body.centralLodgeId)) {
-      return NextResponse.json(
-        {
-          error:
-            "That is not a lodge the Alpine Central Server says this club owns. Download from the central server, then choose again.",
-        },
-        { status: 400 },
-      );
-    }
-  }
-
   // Before and after in one transaction, so the audit row describes a real
   // transition even when two administrators save at once.
-  let before: { centralLodgeId: string | null } | null = null;
+  let before: { centralLodgeId: string | null } | { invalidOwned: true } | null = null;
   try {
     before = await prisma.$transaction(async (tx) => {
+      // Settings -> immutable Lodge row, also used by the download's unlink.
+      // No lifecycle/capacity advisory tier is needed (INV-LOCK-001/002).
+      await lockServerNzSettings(tx);
+      const { otherLodgesOwnedLodges: owned } = await loadServerNzSettings(tx);
+      if (body.centralLodgeId !== null && !owned?.some((l) => l.id === body.centralLodgeId)) {
+        return { invalidOwned: true } as const;
+      }
+      await tx.$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = ${parsedParams.data.id} FOR UPDATE`;
       const current = await tx.lodge.findUnique({
         where: { id: parsedParams.data.id },
         select: { centralLodgeId: true },
@@ -168,6 +162,24 @@ export async function PUT(
         where: { id: parsedParams.data.id },
         data: { centralLodgeId: body.centralLodgeId },
       });
+
+      // Category `admin`, like every writer under `/api/admin/lodges/`
+      // (INV-PRIV-013; see `LODGE_GATED_ADMIN_CATEGORIES_2765` in the audit census).
+      await createAuditLog({
+        action: "LODGE_CENTRAL_LINK_UPDATED",
+        memberId: guard.session.user.id,
+        actorMemberId: guard.session.user.id,
+        entityType: "Lodge",
+        entityId: parsedParams.data.id,
+        category: "admin",
+        severity: "important",
+        outcome: "success",
+        summary: "Central lodge link updated",
+        metadata: {
+          before: { centralLodgeId: current.centralLodgeId },
+          after: { centralLodgeId: body.centralLodgeId },
+        },
+      }, tx);
       return current;
     });
   } catch (error) {
@@ -186,27 +198,12 @@ export async function PUT(
     return NextResponse.json({ error: "Could not save" }, { status: 500 });
   }
 
+  if (before && "invalidOwned" in before) {
+    return NextResponse.json({ error: "That is not a lodge the Alpine Central Server says this club owns. Download from the central server, then choose again." }, { status: 400 });
+  }
   if (!before) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
-
-  // Category `admin`, like every writer under `/api/admin/lodges/`
-  // (INV-PRIV-013; see `LODGE_GATED_ADMIN_CATEGORIES_2765` in the audit census).
-  await createAuditLog({
-    action: "LODGE_CENTRAL_LINK_UPDATED",
-    memberId: guard.session.user.id,
-    actorMemberId: guard.session.user.id,
-    entityType: "Lodge",
-    entityId: parsedParams.data.id,
-    category: "admin",
-    severity: "important",
-    outcome: "success",
-    summary: "Central lodge link updated",
-    metadata: {
-      before: { centralLodgeId: before.centralLodgeId },
-      after: { centralLodgeId: body.centralLodgeId },
-    },
-  });
 
   const settings = await readSettings(parsedParams.data.id);
   if (!settings) {

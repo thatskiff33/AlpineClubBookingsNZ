@@ -79,8 +79,8 @@ export class ServerNzApiError extends Error {
 /**
  * The central server is on a different API version from the one this site was
  * built for, so nothing is transferred (#49, `INV-INT-027`). Thrown by
- * `resolveConnection` BEFORE any request is built, so no caller can reach the
- * server past it. Carries only the two numbers - never the key or the URL.
+ * `resolveConnection` or the captured download connection before a transfer
+ * is built. Carries only the two numbers - never the key or the URL.
  */
 export class ServerNzVersionMismatchError extends Error {
   /** The version this site speaks. */
@@ -199,7 +199,7 @@ function authHeaders(apiKey: string): HeadersInit {
 export async function fetchServerVersion(connection?: {
   baseUrl: string;
   apiKey: string;
-}): Promise<string> {
+}, recordAnswer?: (version: string) => Promise<string | null>): Promise<string> {
   const { baseUrl, apiKey } =
     connection ?? (await resolveConnection({ skipVersionGate: true }));
   const res = await fetch(`${baseUrl}/api/v1/version`, {
@@ -209,7 +209,7 @@ export async function fetchServerVersion(connection?: {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (res.status === 404) return SERVER_VERSION_UNKNOWN;
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, apiKey, recordAnswer);
   // Malformed or over-long on the wire reads as the unknown marker: still an
   // ANSWER (and a mismatch), never a failed check.
   return storableServerVersion(versionResultSchema.parse(await res.json()).version);
@@ -262,13 +262,23 @@ async function recordServerAnswer(
 export async function refreshStoredServerVersion(connection?: {
   baseUrl: string;
   apiKey: string;
-}): Promise<string | null> {
+}, recordAnswer?: (version: string) => Promise<string | null>): Promise<string | null> {
   const resolved =
     connection ?? (await resolveConnection({ skipVersionGate: true }));
+  let recordingFailed = false;
+  const recorder = recordAnswer && (async (answer: string) => {
+    try {
+      return await recordAnswer(answer);
+    } catch (error) {
+      recordingFailed = true;
+      throw error;
+    }
+  });
   let version: string;
   try {
-    version = await fetchServerVersion(resolved);
+    version = await fetchServerVersion(resolved, recorder);
   } catch (error) {
+    if (recordingFailed) throw error;
     if (error instanceof ServerNzVersionMismatchError) {
       // `refuse` already recorded the server's 409 answer.
       return error.serverVersion;
@@ -279,7 +289,7 @@ export async function refreshStoredServerVersion(connection?: {
     );
     return null;
   }
-  return recordServerAnswer(version, resolved.apiKey);
+  return recordAnswer ? recordAnswer(version) : recordServerAnswer(version, resolved.apiKey);
 }
 
 /**
@@ -325,7 +335,10 @@ function remoteErrorMessage(status: number, body: { error?: unknown }): string {
  * will never change and retires the share for good. Every other failure is
  * the `ServerNzApiError` it always was.
  */
-async function refuse(res: Response, apiKeyUsed: string): Promise<never> {
+async function refuse(
+  res: Response, apiKeyUsed: string,
+  recordAnswer?: (version: string) => Promise<string | null>,
+): Promise<never> {
   let body: { error?: unknown; code?: unknown; serverVersion?: unknown } = {};
   try {
     body = (await res.json()) ?? {};
@@ -338,7 +351,8 @@ async function refuse(res: Response, apiKeyUsed: string): Promise<never> {
     typeof body.serverVersion === "string" &&
     body.serverVersion.length <= MAX_SERVER_VERSION_CHARS
   ) {
-    const stored = await recordServerAnswer(body.serverVersion, apiKeyUsed);
+    const version = storableServerVersion(body.serverVersion);
+    const stored = await (recordAnswer ? recordAnswer(version) : recordServerAnswer(version, apiKeyUsed));
     throw new ServerNzVersionMismatchError(
       SERVERNZ_EXPECTED_SERVER_VERSION,
       stored ?? storableServerVersion(body.serverVersion),
@@ -545,11 +559,15 @@ export async function uploadOtherLodges(
   return uploadResultSchema.parse(await res.json());
 }
 
-/** Pull the distributed Other Clubs set from the central server. */
+/** Pull through resolveConnection, or a version-checked captured sync connection. */
 export async function pullOtherLodges(
   since?: string | null,
+  connection?: { baseUrl: string; apiKey: string },
+  recordAnswer?: (version: string) => Promise<string | null>,
 ): Promise<OtherLodgesPullResult> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey } = connection ?? await resolveConnection();
+  const check = validateCentralServerBaseUrl(baseUrl);
+  if (!check.ok) throw new ServerNzNotConfiguredError("The stored Alpine Central Server base URL is not usable.");
   const url = new URL(`${baseUrl}/api/v1/other-lodges`);
   if (since) url.searchParams.set("since", since);
   const res = await fetch(url, {
@@ -558,7 +576,7 @@ export async function pullOtherLodges(
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, apiKey, recordAnswer);
   const envelope = pullEnvelopeSchema.parse(await res.json());
 
   // Per-row validation: a row the server sends that breaks the bounds above is

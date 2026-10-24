@@ -27,8 +27,8 @@ import {
  *
  * The central server's public lodge search asks this site how many beds are
  * free, naming the lodge by its permanent central id. This card is where an
- * administrator links the two. A club with one active lodge that owns one
- * central lodge needs nothing here: the card says it is linked automatically.
+ * administrator links the two. Every club must explicitly link its lodge
+ * before publishing free-bed counts, including a club with only one lodge.
  *
  * The canonical settings pattern, as `lodge-roster-settings-card.tsx`: read-only
  * on mount, a staged Edit -> Save/Cancel step, Save dirty-gated, every edit
@@ -146,9 +146,8 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
   const owned = draft.ownedLodges;
   const linkedName = nameOf(owned, draft.centralLodgeId);
   // What the endpoint actually answers for, from the server's resolver: the
-  // card never re-derives the one-lodge rule.
+  // card never re-derives the publication rule.
   const answersName = nameOf(owned, draft.answersForCentralLodgeId);
-  const defaultName = draft.centralLodgeId === null ? answersName : null;
   // A stored link to a lodge the club no longer owns stays visible, so an
   // administrator can see why the lodge is not answering and clear it.
   const staleLink = draft.centralLodgeId !== null && linkedName === null;
@@ -165,13 +164,11 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
       "This site has not registered with the central server, so it cannot check that a question really came from it and answers none. Turn on the Message board module; the site's address must start with https://. The next sync registers it.";
   } else if (!draft.lodgeActive) {
     state = "This lodge is inactive, so it never answers.";
-  } else if (draft.centralLodgeId !== null && !staleLink) {
-    state = `Linked to ${linkedName}. The central server's lodge search shows its free beds.`;
+  } else if (answersName) {
+    state = `Linked to ${answersName}. The central server's lodge search shows its free beds.`;
   } else if (staleLink) {
     state =
       "Linked to a lodge the central server no longer says this club owns, so nothing is answered. Choose again or clear it.";
-  } else if (defaultName) {
-    state = `Linked automatically to ${defaultName}, because this club has one lodge and owns one central lodge.`;
   } else if (draft.linkHeldBy) {
     state = `Not linked: the club's central lodge is linked to ${draft.linkHeldBy}. Unlink it there to use it here.`;
   } else {
@@ -229,9 +226,7 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
                   })
                 }
               >
-                <option value={NOT_LINKED}>
-                  {defaultName ? `Not linked (automatically ${defaultName})` : "Not linked"}
-                </option>
+                <option value={NOT_LINKED}>Not linked</option>
                 {owned.map((lodge) => (
                   <option key={lodge.id} value={lodge.id}>
                     {lodge.label}
@@ -243,6 +238,7 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
               </select>
               <p className="text-muted-foreground text-xs">
                 Only the lodges the central server says this club owns are offered.
+                Save a link to publish free-bed counts, or clear it to stop sharing them.
                 Only free-bed counts are shared, night by night: never a guest,
                 member or booking.
               </p>

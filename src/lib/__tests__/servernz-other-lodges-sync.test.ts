@@ -67,11 +67,17 @@ vi.mock("@/lib/servernz-api", () => ({
     };
   },
   pullOtherLodges: (...args: unknown[]) => mockPullOtherLodges(...args),
+  assertStoredServerVersionMatches: vi.fn(),
+  refreshStoredServerVersion: vi.fn().mockResolvedValue("2.6"),
 }));
 
-const mockKeyStamp = vi.fn();
+const mockCredential = vi.fn();
+vi.mock("@/lib/integration-credentials", () => ({
+  readIntegrationCredentialRow: (...args: unknown[]) => mockCredential(...args),
+}));
 vi.mock("@/lib/servernz-config", () => ({
-  readServerNzApiKeyStamp: (...args: unknown[]) => mockKeyStamp(...args),
+  SERVERNZ_PROVIDER: "servernz",
+  SERVERNZ_CREDENTIAL_KEYS: { apiKey: "api_key" },
 }));
 
 const mockLoggerWarn = vi.fn();
@@ -99,6 +105,7 @@ const mockLockSettings = vi.fn();
 
 vi.mock("@/lib/servernz-settings", () => ({
   SERVERNZ_SETTINGS_ID: "default",
+  validateCentralServerBaseUrl: (value: string) => ({ ok: true, value }),
   loadServerNzSettings: (...args: unknown[]) => mockLoadSettings(...args),
   recordOtherLodgesUpload: (...args: unknown[]) => mockRecordUpload(...args),
   recordOtherLodgesDownload: (cursor: unknown, lodges: unknown, options: unknown) => {
@@ -117,6 +124,7 @@ import {
 
 const SETTINGS = {
   baseUrl: "https://central.test",
+  serverVersion: "2.6",
   otherLodgesEnabled: true,
   otherLodgesLastUploadAt: null as string | null,
   otherLodgesLastDownloadAt: null as string | null,
@@ -263,11 +271,12 @@ beforeEach(() => {
     const loaded = await mockLoadSettings();
     return {
       baseUrl: loaded.baseUrl,
+      otherLodgesSyncStartedAt: new Date("2026-07-01T00:00:00Z"),
       otherLodgesCursor: loaded.otherLodgesCursor,
       otherLodgesKeyedAt: loaded.otherLodgesKeyedAt ? new Date(loaded.otherLodgesKeyedAt) : null,
     };
   });
-  mockKeyStamp.mockResolvedValue("2026-10-01T00:00:00.000Z");
+  mockCredential.mockResolvedValue({ status: "configured", value: "test-key", version: "credential-v1" });
   mockExecuteRaw.mockResolvedValue(0);
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
@@ -367,7 +376,7 @@ describe("downloadOtherClubsFromServer", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockPullOtherLodges).toHaveBeenCalledWith("c-100");
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("c-100", { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
     expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined);
     expect(result).toEqual({
       fetched: 0,
@@ -892,7 +901,7 @@ describe("download cursor overlap", () => {
 
       await downloadOtherClubsFromServer();
 
-      expect(mockPullOtherLodges).toHaveBeenCalledWith(requested);
+      expect(mockPullOtherLodges).toHaveBeenCalledWith(requested, { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
       // Strictly earlier as TEXT as well as as an instant, because a server is
       // free to treat an opaque-by-contract cursor as a string key. Preserving
       // the separator and the offset is what makes both readings agree.
@@ -985,7 +994,7 @@ describe("download cursor overlap", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z", { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
     expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
   });
@@ -1004,7 +1013,7 @@ describe("download cursor overlap", () => {
     // No cursor means no watermark to overlap: the full/initial pull is asked
     // for unchanged, rather than for a window before an instant that has no
     // meaning yet.
-    expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
+    expect(mockPullOtherLodges).toHaveBeenCalledWith(null, { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
     expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T00:00:00.000Z", undefined);
   });
 
@@ -1055,7 +1064,7 @@ describe("download cursor overlap", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z", { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
     expect(mockRecordDownload).toHaveBeenCalledWith(stored, undefined);
   });
 
@@ -1109,7 +1118,7 @@ describe("download cursor overlap", () => {
 
       await downloadOtherClubsFromServer();
 
-      expect(mockPullOtherLodges).toHaveBeenCalledWith(stored);
+      expect(mockPullOtherLodges).toHaveBeenCalledWith(stored, { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
       // Unreadable on both sides, so the server's answer still stands: the
       // monotonic guard narrows nothing it cannot order.
       expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined);
@@ -1722,19 +1731,20 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
   });
 
-  it("on a whole download sharing a name, keys our unkeyed row only to OUR lodge (#69)", async () => {
-    const rows = registry([row("ol_9", "Kea Lodge", null)]);
+  it.each([false, true])("keeps ambiguous historical identity even when a remote twin is owned (ours first: %s)", async (oursFirst) => {
+    const historical = row("ol_9", "Kea Lodge", null);
+    const rows = registry([historical]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
-    // Another club's "Kea Lodge" first, ours second.
-    pull([remoteLodge("Kea Lodge", { id: "c-theirs" }), remoteLodge("Kea Lodge", { id: "c-ours" })], {
-      ownLodges: [{ id: "c-ours", name: "Kea Lodge" }],
-    });
+    const twins = [remoteLodge("Kea Lodge", { id: "c-theirs" }), remoteLodge("Kea Lodge", { id: "c-ours" })];
+    pull(oursFirst ? twins.reverse() : twins, { ownLodges: [{ id: "c-ours", name: "Kea Lodge" }] });
 
     await downloadOtherClubsFromServer();
 
-    expect(rows[0].centralId).toBe("c-ours");
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockCreate.mock.calls[0][0].data).toMatchObject({ name: "Kea Lodge", centralId: "c-theirs" });
+    // A booking naming ol_9 still names exactly the same historical row.
+    expect(rows[0]).toEqual(historical);
+    expect(rows[0].centralId).toBeNull();
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate.mock.calls.map(([args]) => args.data.centralId).sort()).toEqual(["c-ours", "c-theirs"]);
   });
 
   it("keys the ONE unkeyed row of a name, and creates a new lodge when two share it (#69)", async () => {
@@ -1809,7 +1819,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
+    expect(mockPullOtherLodges).toHaveBeenCalledWith(null, { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
   });
 
@@ -1832,7 +1842,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockPullOtherLodges).toHaveBeenCalledWith("c-opaque");
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("c-opaque", { baseUrl: SETTINGS.baseUrl, apiKey: "test-key" }, expect.any(Function));
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
   });
 
@@ -1902,7 +1912,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockLockSettings).toHaveBeenCalledTimes(1);
+    expect(mockLockSettings).toHaveBeenCalledTimes(2);
     expect(mockLockSettings.mock.invocationCallOrder[0]).toBeLessThan(
       mockRecordDownload.mock.invocationCallOrder[0],
     );
@@ -2018,7 +2028,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     });
     pull([]);
 
-    await downloadOtherClubsFromServer();
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow(/connection changed|superseded/i);
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
     expect(mockExecuteRaw).not.toHaveBeenCalled();
@@ -2035,15 +2045,67 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
   it("records NOTHING when the API key was replaced while the download ran", async () => {
     registry([]);
-    mockKeyStamp
-      .mockResolvedValueOnce("2026-10-01T00:00:00.000Z")
-      .mockResolvedValueOnce("2026-10-14T09:00:00.000Z");
+    mockCredential
+      .mockResolvedValueOnce({ status: "configured", value: "test-key", version: "v1" })
+      .mockResolvedValueOnce({ status: "configured", value: "replacement", version: "v2" });
     pull([]);
 
-    await downloadOtherClubsFromServer();
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow(/connection changed|superseded/i);
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
-    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
+  });
+
+  it.each(["key", "same-key ABA", "address", "claim", "cursor", "keyed marker"].flatMap(
+    (replacement) => ["hide/unlink", "merge", "metadata"].map((stage) => ({ replacement, stage })),
+  ))(
+    "fences stale $replacement before $stage writes",
+    async ({ replacement, stage }) => {
+      const rows = registry([row("ol_deleted", "Gone Lodge", "c-gone"), row("ol_changed", "Changed Lodge", "c-change")]);
+      const original = structuredClone(rows);
+      const readSettings = mockSettingsRow.getMockImplementation()!;
+      pull(stage === "metadata" ? [] : [remoteLodge("Changed Lodge", { id: "c-change", bedCapacity: 99 }), remoteLodge("New Lodge", { id: "c-new" })], {
+        deletedLodgeIds: stage === "hide/unlink" ? ["c-gone"] : [],
+      });
+      const answer = mockPullOtherLodges.getMockImplementation()!;
+      mockPullOtherLodges.mockImplementation(async (...args) => {
+        const result = await answer(...args);
+        if (replacement === "key" || replacement === "same-key ABA") {
+          // The same plaintext after A -> B -> A still has a new durable version.
+          mockCredential.mockResolvedValue({ status: "configured", value: replacement === "key" ? "new-key" : "test-key", version: "credential-v3" });
+        } else {
+          const changed = replacement === "address" ? { baseUrl: "https://replacement.test" }
+            : replacement === "claim" ? { otherLodgesSyncStartedAt: new Date("2026-07-01T00:16:00Z") }
+            : replacement === "cursor" ? { otherLodgesCursor: "newer-cursor" }
+            : { otherLodgesKeyedAt: new Date("2026-07-01T01:00:00Z") };
+          mockSettingsRow.mockImplementation(async () => ({ ...await readSettings(), ...changed }));
+        }
+        return result;
+      });
+
+      await expect(downloadOtherClubsFromServer()).rejects.toThrow(/superseded/);
+
+      expect(rows).toEqual(original);
+      expect(mockExecuteRaw).not.toHaveBeenCalled(); // includes the local Lodge unlink
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+      expect(mockAuditCreate).not.toHaveBeenCalled();
+      expect(mockRecordDownload).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-checks the fence for a later merge after an earlier row committed", async () => {
+    registry([row("ol_1", "First", "c-1"), row("ol_2", "Second", "c-2")]);
+    pull([remoteLodge("First", { id: "c-1", bedCapacity: 99 }), remoteLodge("Second", { id: "c-2", bedCapacity: 99 })]);
+    const update = mockUpdateMany.getMockImplementation()!;
+    mockUpdateMany.mockImplementation(async (...args) => {
+      const result = await update(...args);
+      mockCredential.mockResolvedValue({ status: "configured", value: "test-key", version: "credential-v2" });
+      return result;
+    });
+
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow(/superseded/);
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockRecordDownload).not.toHaveBeenCalled();
   });
 
   it("retries a create that lost a race for its central id, merging into the row the other writer made", async () => {
@@ -2069,10 +2131,9 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     mockSettingsRow.mockResolvedValue({ baseUrl: "https://other-central.test" });
     pull([]);
 
-    await downloadOtherClubsFromServer();
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow(/connection changed|superseded/i);
 
     expect(mockRecordDownload).not.toHaveBeenCalled();
-    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
   });
 
   it("HIDES a lodge the server deleted, keeping the row, its data and its central id (#58)", async () => {

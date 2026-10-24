@@ -25,11 +25,13 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   getIntegrationCredentialValue,
-  setIntegrationCredential,
-  deleteIntegrationCredential,
+  setIntegrationCredentialInTransaction,
+  deleteIntegrationCredentialInTransaction,
+  withCredentialTransaction,
+  type SetCredentialResult,
 } from "@/lib/integration-credentials";
-import type { CredentialActor } from "@/lib/integration-credential-actor";
-import { forgetServerConnectionAnswers } from "@/lib/servernz-settings";
+import type { CredentialActor, CredentialRequestContext } from "@/lib/integration-credential-actor";
+import { forgetServerConnectionAnswers, lockServerNzSettings, loadServerNzSettings, updateServerNzSettings, normalizeBaseUrl, SERVERNZ_SETTINGS_ID } from "@/lib/servernz-settings";
 
 export const SERVERNZ_PROVIDER = "servernz";
 
@@ -54,6 +56,18 @@ export async function getOperationalServerNzApiKey(): Promise<
   );
 }
 
+/** Connection replacement and its forgotten answers share the download's row lock. */
+async function withServerNzConnectionChange<T>(
+  work: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return withCredentialTransaction([SERVERNZ_PROVIDER], async (tx) => {
+    await lockServerNzSettings(tx);
+    const result = await work(tx);
+    await forgetServerConnectionAnswers(tx);
+    return result;
+  });
+}
+
 /**
  * Store (or replace) the ServerNZ API key. Encrypted at rest.
  *
@@ -64,16 +78,12 @@ export async function getOperationalServerNzApiKey(): Promise<
 export async function setServerNzApiKey(
   value: string,
   actor: CredentialActor,
-): Promise<void> {
-  await setIntegrationCredential({
-    provider: SERVERNZ_PROVIDER,
-    key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
-    value,
-    actor,
-    // The admin form posts the key it wants stored outright; there is no
-    // read-modify-write here to be stale against.
-    expect: { expect: "any" },
-  });
+  request?: CredentialRequestContext,
+): Promise<SetCredentialResult> {
+  return withServerNzConnectionChange((tx) => setIntegrationCredentialInTransaction({
+    tx, provider: SERVERNZ_PROVIDER, key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
+    value, actor, expect: { expect: "any" }, request,
+  }));
 }
 
 /**
@@ -87,13 +97,30 @@ export async function setServerNzApiKey(
 export async function clearServerNzApiKey(
   actor: CredentialActor,
 ): Promise<void> {
-  await deleteIntegrationCredential({
-    provider: SERVERNZ_PROVIDER,
+  await withServerNzConnectionChange((tx) => deleteIntegrationCredentialInTransaction({
+    tx, provider: SERVERNZ_PROVIDER,
     key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
     actor,
     expect: { expect: "any" },
+  }));
+}
+
+/** Address change, credential deletion and answer reset are one fenced commit. */
+export async function updateServerNzConnectionSettings(input: Parameters<typeof updateServerNzSettings>[0]) {
+  return withCredentialTransaction([SERVERNZ_PROVIDER], async (tx) => {
+    await lockServerNzSettings(tx);
+    const before = await tx.serverNzSettings.findUnique({ where: { id: SERVERNZ_SETTINGS_ID }, select: { baseUrl: true } });
+    const moved = input.baseUrl !== undefined && (before?.baseUrl ?? null) !== normalizeBaseUrl(input.baseUrl);
+    await updateServerNzSettings(input, tx);
+    if (moved) {
+      await deleteIntegrationCredentialInTransaction({
+        tx, provider: SERVERNZ_PROVIDER, key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
+        actor: { kind: "admin", memberId: input.updatedByMemberId }, expect: { expect: "any" },
+      });
+      await forgetServerConnectionAnswers(tx);
+    }
+    return { settings: await loadServerNzSettings(tx), apiKeyCleared: moved };
   });
-  await forgetServerConnectionAnswers();
 }
 
 export interface ServerNzSetupState {
@@ -110,14 +137,7 @@ export async function getServerNzSetupState(): Promise<ServerNzSetupState> {
   return { apiKeySet: apiKeyUpdatedAt !== null, apiKeyUpdatedAt };
 }
 
-/**
- * When the stored API key was last written, or `null` when there is none —
- * metadata only, never the key. A new key, or a new server address (which
- * removes the key), changes it, so it doubles as the CONNECTION's identity: the
- * Other lodges download compares it before and after (#64) so a download that
- * outlived a change of connection records nothing. Read through `db` so it can
- * run under a lock inside the caller's transaction.
- */
+/** Setup metadata only; sync fencing uses the durable credential version instead. */
 export async function readServerNzApiKeyStamp(
   db: Pick<Prisma.TransactionClient, "integrationCredential"> = prisma,
 ): Promise<string | null> {

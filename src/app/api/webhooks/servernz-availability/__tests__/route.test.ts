@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
   getIntegrationCredentialValue: vi.fn(),
   loadServerNzSettings: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
-  resolveLocalLodgeForCentralId: vi.fn(),
+  findLodge: vi.fn(),
+  activeLodges: vi.fn(),
   freeBedsForStay: vi.fn(),
   applyRateLimit: vi.fn(),
 }));
@@ -30,8 +31,10 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   ...((await importOriginal()) as object),
   loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags,
 }));
-vi.mock("@/lib/central-lodge-link", () => ({
-  resolveLocalLodgeForCentralId: mocks.resolveLocalLodgeForCentralId,
+// Keep the real resolver: a stubbed answer would miss accidental publication
+// by the one-active/one-owned fallback forbidden by INV-INT-028.
+vi.mock("@/lib/prisma", () => ({
+  prisma: { lodge: { findUnique: mocks.findLodge, findMany: mocks.activeLodges } },
 }));
 vi.mock("@/lib/central-availability", async (importOriginal) => ({
   ...((await importOriginal()) as object),
@@ -82,7 +85,8 @@ beforeEach(() => {
     otherLodgesEnabled: true,
     otherLodgesOwnedLodges: OWNED,
   });
-  mocks.resolveLocalLodgeForCentralId.mockResolvedValue("lodge_local");
+  mocks.findLodge.mockResolvedValue({ id: "lodge_local", active: true });
+  mocks.activeLodges.mockResolvedValue([{ id: "lodge_local", centralLodgeId: null }]);
   mocks.freeBedsForStay.mockResolvedValue({
     freeBeds: 7,
     nights: [
@@ -109,7 +113,10 @@ describe("GET /api/webhooks/servernz-availability (#62)", () => {
         { date: "2026-07-12", freeBeds: 12 },
       ],
     });
-    expect(mocks.resolveLocalLodgeForCentralId).toHaveBeenCalledWith("ol_a", OWNED);
+    expect(mocks.findLodge).toHaveBeenCalledWith({
+      where: { centralLodgeId: "ol_a" },
+      select: { id: true, active: true },
+    });
     const [lodgeId, from, to] = mocks.freeBedsForStay.mock.calls[0];
     expect(lodgeId).toBe("lodge_local");
     expect((from as Date).toISOString().slice(0, 10)).toBe("2026-07-10");
@@ -201,12 +208,39 @@ describe("GET /api/webhooks/servernz-availability (#62)", () => {
       const res = await GET(request());
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ error: "Lodge not available" });
-      expect(mocks.resolveLocalLodgeForCentralId).not.toHaveBeenCalled();
+      expect(mocks.findLodge).not.toHaveBeenCalled();
     });
 
-    it("when the lodge is unknown, unowned, unlinked or inactive (one resolver answer)", async () => {
-      mocks.resolveLocalLodgeForCentralId.mockResolvedValue(null);
+    it("when the lodge is unknown or unowned, even if a local link exists", async () => {
       const res = await GET(request({ lodgeId: "ol_somebody_else" }));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "Lodge not available" });
+      expect(mocks.findLodge).not.toHaveBeenCalled();
+      expect(mocks.freeBedsForStay).not.toHaveBeenCalled();
+    });
+
+    it("INV-INT-028: when one active local lodge and one owned central lodge have no explicit link", async () => {
+      mocks.findLodge.mockResolvedValue(null);
+      const res = await GET(request());
+      expect(res.status).toBe(404);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.json()).toEqual({ error: "Lodge not available" });
+      expect(mocks.freeBedsForStay).not.toHaveBeenCalled();
+    });
+
+    it("stops publishing when the explicit link is cleared", async () => {
+      expect((await GET(request())).status).toBe(200);
+      mocks.findLodge.mockResolvedValue(null);
+      mocks.freeBedsForStay.mockClear();
+      const res = await GET(request());
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "Lodge not available" });
+      expect(mocks.freeBedsForStay).not.toHaveBeenCalled();
+    });
+
+    it("when the explicitly linked lodge is inactive", async () => {
+      mocks.findLodge.mockResolvedValue({ id: "lodge_local", active: false });
+      const res = await GET(request());
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ error: "Lodge not available" });
       expect(mocks.freeBedsForStay).not.toHaveBeenCalled();

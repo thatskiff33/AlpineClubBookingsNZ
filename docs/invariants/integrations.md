@@ -541,13 +541,13 @@ Syncing with the Alpine Central Server runs only while the server's API
 version is IDENTICAL to the one this site was built for; otherwise every
 server-bound transfer, both ways, is refused locally.
 
-- **One gate, where it cannot be bypassed.** `resolveConnection` in
-  `servernz-api.ts` refuses a server-bound request with
-  `ServerNzVersionMismatchError` before any request is built; every function
-  that reaches the server goes through it, and the only opt-out is the version
-  call itself. Callers that hold a single-flight claim or an attempt counter
-  ask first (`checkServerVersion` / `isServerSyncPaused`), so a pause takes no
-  claim and burns no attempt.
+- **One comparison on every transfer.** `assertStoredServerVersionMatches` in
+  `servernz-api.ts` refuses mismatches before a transfer is built. Ordinary
+  calls use `resolveConnection`; downloads use `captureServerNzSyncConnection`
+  to check their captured connection, fencing its version answers and writes
+  against replacement. Only version discovery skips the comparison. Claim or
+  attempt-counter callers ask first (`checkServerVersion` / `isServerSyncPaused`),
+  so a pause takes no claim and burns no attempt.
 - **Integer equality, never a float.** `compareServerVersions` in
   `servernz-api-version.ts` is the one comparison: `major.minor` parsed as two
   integers, equal only when both are; `1.10` is not `1.1`; a minor-only
@@ -580,6 +580,7 @@ The central server's public lodge search may ask this site how many beds are fre
 
 - **Two switches, both on.** `GET /api/webhooks/servernz-availability` answers only while the `alpineCentralServer` module is on AND `ServerNzSettings.otherLodgesEnabled` is set; either off is the same 404 as an unknown lodge, so a club that turns the module off (and can no longer reach the setup page) stops answering at once.
 - **Signed before read.** The question is verified with the push secret over a route-specific text (`centralAvailabilitySignedText`) within a five-minute window before its query is parsed, and the posts webhook refuses any body that is not a JSON object before its own check, so a captured request of either route cannot be replayed to the other.
-- **Counts only.** The body is the free beds per night and their minimum, for a lodge the club has linked to its central id (`Lodge.centralLodgeId`, or the one-lodge default); never a guest, member or booking, and every refusal is one 404.
+- **Explicit lodge opt-in.** Every participating active local lodge must be explicitly linked to an owned central id (`Lodge.centralLodgeId`), even with one local lodge and one owned central lodge. No link means no publication; clearing it stops publication.
+- **Counts only.** The body is the free beds per night and their minimum; never a guest, member or booking, and every refusal is one 404.
 
 Pinned by `webhooks/servernz-availability/__tests__/route.test.ts`, `webhooks/servernz-posts/__tests__/route.test.ts`, `central-lodge-link.test.ts`.

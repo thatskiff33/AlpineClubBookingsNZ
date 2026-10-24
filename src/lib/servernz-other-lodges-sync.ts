@@ -26,16 +26,14 @@ import {
   type MergeOutcome,
   type NameConflict,
 } from "@/lib/servernz-other-lodges-merge";
-import { readServerNzApiKeyStamp } from "@/lib/servernz-config";
+import { captureServerNzSyncConnection, recordServerNzSyncVersion, withServerNzSyncTransaction } from "@/lib/servernz-sync-connection";
 import { ratesToServer } from "@/lib/servernz-rate";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
 import {
-  SERVERNZ_SETTINGS_ID,
   loadServerNzSettings,
-  lockServerNzSettings,
   recordOtherLodgesUpload,
   recordOtherLodgesDownload,
 } from "@/lib/servernz-settings";
@@ -285,10 +283,10 @@ export interface DownloadSummary {
  * rules that keep `updatedAt` honest as the upload watermark's signal.
  */
 export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
-  const settings = await loadServerNzSettings();
-  // The connection this download is for (#64): checked again under the lock
-  // before anything is recorded.
-  const connection = await readServerNzApiKeyStamp();
+  const connection = await captureServerNzSyncConnection();
+  const { settings } = connection;
+  const transaction = <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    withServerNzSyncTransaction(connection, work);
   // Ask from one overlap BEFORE the stored cursor, where the stored cursor is
   // an instant — see `@/lib/servernz-cursor-overlap` for why the repeat is deliberate,
   // why removing it re-opens a permanent skip, and what an opaque cursor means.
@@ -303,6 +301,8 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     wholeRegistry
       ? null
       : overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
+    connection.api,
+    (answer) => recordServerNzSyncVersion(connection, answer),
   );
 
   if (pull.ownLodgesRefused) {
@@ -335,7 +335,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   const hiddenLodges: string[] = [];
   let unlinkedLodges = 0;
   for (const centralId of heldDeleted) {
-    const outcome = await hideDeletedLodge(centralId);
+    const outcome = await transaction((tx) => hideDeletedLodge(centralId, tx));
     if (outcome.hidden !== null) hiddenLodges.push(outcome.hidden);
     unlinkedLodges += outcome.unlinked;
   }
@@ -395,8 +395,9 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       ? new Set(lodges.flatMap((l) => usableCentralId(l.id) ?? []))
       : null;
   // Keying by name (#69: names may repeat) only on a whole download, which
-  // sees every lodge of the name: when the name is one lodge's alone, or for
-  // our own lodge. Otherwise a lodge with an id is new here, never welded onto
+  // sees every lodge of the name: only when the name is one lodge's alone.
+  // Remote ownership cannot establish the provenance of an old local row.
+  // Otherwise a lodge with an id is new here, never welded onto
   // a row that may be another lodge of the same name.
   const namesInPull = new Map<string, number>();
   for (const l of lodges) namesInPull.set(l.name, (namesInPull.get(l.name) ?? 0) + 1);
@@ -405,12 +406,12 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // row only stops ids from being treated as stale.
   const byNameAllowed = (lodge: (typeof lodges)[number]) =>
     wholeRegistry &&
-    (namesInPull.get(lodge.name) === 1 || ownsOtherLodge(owned, { centralId: usableCentralId(lodge.id) }));
+    namesInPull.get(lodge.name) === 1;
   let pending = lodges;
   for (;;) {
     const next: typeof lodges = [];
     for (const lodge of pending) {
-      const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds, byNameAllowed(lodge));
+      const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds, byNameAllowed(lodge), transaction);
       if (outcome.kind === "deferred") next.push(lodge);
       else count(outcome);
     }
@@ -421,7 +422,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     pending = next;
   }
   for (const lodge of pending) {
-    const outcome = await mergeDistributedLodge(lodge, owned, true, knownIds, byNameAllowed(lodge));
+    const outcome = await mergeDistributedLodge(lodge, owned, true, knownIds, byNameAllowed(lodge), transaction);
     if (outcome.kind !== "deferred") count(outcome);
   }
   if (nameConflicts.length > 0) {
@@ -460,25 +461,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // lists (another server's after an address change, or a lodge deleted
   // there), so such a row uploads by name again and is marked "not found".
   // Raw, so `updatedAt` stays put: a forgotten id is not an edit.
-  const recorded = await prisma.$transaction(async (tx) => {
-    await lockServerNzSettings(tx);
-    const current = await tx.serverNzSettings.findUnique({
-      where: { id: SERVERNZ_SETTINGS_ID },
-      select: { baseUrl: true, otherLodgesCursor: true, otherLodgesKeyedAt: true },
-    });
-    if ((current?.baseUrl ?? null) !== settings.baseUrl) return false;
-    if ((await readServerNzApiKeyStamp(tx)) !== connection) return false;
-    // Another download recorded since this one started: its answer is newer,
-    // so this one records nothing rather than write an older cursor back or
-    // forget ids that download has just keyed. Since #66 the buttons and the
-    // nightly pass share the sync claim, so this guards the rarer case of a
-    // claim reaped as stale under a pass still running.
-    if (
-      (current?.otherLodgesCursor ?? null) !== settings.otherLodgesCursor ||
-      (current?.otherLodgesKeyedAt?.toISOString() ?? null) !== settings.otherLodgesKeyedAt
-    ) {
-      return false;
-    }
+  await transaction(async (tx) => {
     const keyed = wholeRegistry && everyLodgeKeyed;
     // A club lodge linked to a deleted central lodge in the moments since the
     // hide above (an administrator's Central lodge save) is unlinked again, now
@@ -504,11 +487,6 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     );
     return true;
   });
-  if (!recorded) {
-    logger.warn(
-      "The Alpine Central Server connection changed, or another Other lodges download recorded first, while this one ran; nothing from it was recorded",
-    );
-  }
   return {
     fetched: pull.count,
     created,

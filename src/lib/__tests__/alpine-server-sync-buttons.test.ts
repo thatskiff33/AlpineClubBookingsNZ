@@ -23,12 +23,17 @@ vi.mock("@/lib/session-guards", async () => ({
   requireAdmin: (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock,
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: { serverNzSettings: { updateMany: mocks.claimUpdateMany } },
-}));
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
+    serverNzSettings: { updateMany: mocks.claimUpdateMany },
+    $transaction: async (work: (tx: unknown) => unknown): Promise<unknown> => work(prisma),
+  };
+  return { prisma };
+});
 vi.mock("@/lib/servernz-settings", () => ({
   SERVERNZ_SETTINGS_ID: "default",
   loadServerNzSettings: mocks.loadServerNzSettings,
+  lockServerNzSettings: vi.fn(),
 }));
 vi.mock("@/lib/servernz-other-lodges-sync", () => ({
   uploadOtherClubsToServer: mocks.upload,
