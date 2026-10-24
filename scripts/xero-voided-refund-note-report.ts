@@ -11,7 +11,9 @@
  * stay under Xero's limit), and the only file written is the one named by
  * `--csv` / `--json` (never overwritten). The output carries ids, note numbers
  * and amounts only. Exit code 2 means the list is INCOMPLETE (a note could not
- * be read, or a Xero limit stopped the run): run it again.
+ * be read, or a Xero limit stopped the run): run it again. Exit code 1 with
+ * "Xero credentials can't be read here" means the process lacks the app's
+ * AUTH_SECRET (checked before any link is walked).
  * Runbook: docs/xero/ARCHITECTURE.md, "Find refund notes Xero voided that the
  * app still shows as live (#4336)".
  */
@@ -20,7 +22,9 @@ import { writeFile } from "node:fs/promises";
 import process from "node:process";
 import { prisma } from "../src/lib/prisma";
 import {
+  assertXeroReadableHere,
   buildVoidedRefundNoteReport,
+  XeroReportPreflightError,
   createXeroCreditNoteReader,
   formatVoidedRefundNoteReport,
   isVoidedRefundNoteReportComplete,
@@ -57,6 +61,7 @@ async function main() {
     console.log(USAGE);
     return;
   }
+  await assertXeroReadableHere(); // before any link is walked
   const readCreditNote = await createXeroCreditNoteReader();
   const report = await buildVoidedRefundNoteReport({ db: prisma, readCreditNote });
   console.log(formatVoidedRefundNoteReport(report));
@@ -68,7 +73,9 @@ async function main() {
 
 main()
   .catch((error: unknown) => {
-    console.error(error);
+    // A preflight refusal is a fixed sentence: print it alone, no stack.
+    if (error instanceof XeroReportPreflightError) console.error(error.message);
+    else console.error(error);
     process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());

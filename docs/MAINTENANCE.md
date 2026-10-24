@@ -2280,12 +2280,17 @@ The buckets and what each one leads to are in
 refund-note link and lists each note Xero reports VOIDED or DELETED, with its
 payment, booking, note number, amount and the status the app stored. It is
 READ-ONLY (no database write, no Xero change, no repair). Run it on the live
-database after #4288 is deployed, then correct each finding by hand.
+database after #4288 is deployed, then correct each finding by hand. It needs
+the **same `AUTH_SECRET` as the running app** (the `migrate` service does not
+carry it by default), so pass it in. It refreshes the Xero login when that is
+due, as any Xero call does.
 
 ```bash
-docker compose --profile migrate run --rm migrate pnpm run xero:voided-refund-note-report
+docker compose --profile migrate run --rm -e AUTH_SECRET="$AUTH_SECRET" migrate pnpm run xero:voided-refund-note-report
 ```
 
+If the secret is missing or wrong it stops before doing anything, exit code 1,
+with "Xero credentials can't be read here"; it never prints the secret.
 `--csv <file>` and `--json <file>` also write a file. Exit code 2 means the list
 is incomplete: run it again. The runbook is
 [`xero/ARCHITECTURE.md` -> "Find refund notes Xero voided that the app still shows as live (#4336)"](xero/ARCHITECTURE.md#find-refund-notes-xero-voided-that-the-app-still-shows-as-live-4336).

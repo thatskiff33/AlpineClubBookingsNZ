@@ -1826,13 +1826,20 @@ of the void. Local data cannot find those mirrors, and each can hide a whole
 refund: a bank refund the app counts as documented while Xero credits nothing.
 
 The report is READ-ONLY: it writes no database row, changes nothing in Xero and
-repairs nothing. Run it once #4288 is deployed, so new cases have stopped, with
-the owner's production pattern:
+repairs nothing. Run it once #4288 is deployed, so new cases have stopped. It
+needs the **same `AUTH_SECRET` as the running app**: the stored Xero login and
+the Xero client credentials are encrypted under a key rooted in it, and the
+`migrate` compose service does not carry it by default, so pass it in:
 
 ```bash
-docker compose --profile migrate run --rm migrate pnpm run xero:voided-refund-note-report
-docker compose --profile migrate run --rm migrate pnpm run xero:voided-refund-note-report --csv <file> --json <file>
+docker compose --profile migrate run --rm -e AUTH_SECRET="$AUTH_SECRET" migrate pnpm run xero:voided-refund-note-report
+docker compose --profile migrate run --rm -e AUTH_SECRET="$AUTH_SECRET" migrate pnpm run xero:voided-refund-note-report --csv <file> --json <file>
 ```
+
+Before it walks any link it checks, without writing anything, that it can read
+the Xero login and client credentials. If not, it exits 1 with "Xero credentials
+can't be read here: run with the application's AUTH_SECRET and DATABASE_URL"
+(or says Xero is not connected on that database); it never prints the secret.
 
 It walks every active refund-note link (a payment's own note, and a refund
 request's note), asks Xero about each distinct note once (about one call a
@@ -1841,7 +1848,8 @@ retries), and prints each note Xero reports VOIDED or DELETED: payment id,
 booking id and reference, note number, amount (Xero's, else the figure the link
 recorded) and the status the app has stored. It then lists links whose note
 Xero does not have, and notes it could not read. `--csv` and `--json` also
-write a file, which must not already exist. The output holds ids, numbers and
+write a file, which must not already exist; inside `docker compose run --rm` that file
+is lost with the container unless a folder is mounted, so otherwise copy the table. The output holds ids, numbers and
 amounts only.
 
 **What to do with each finding: correct it by hand.** The app may count the
@@ -1850,7 +1858,7 @@ the money went to the member, then raises or records a note in Xero, or
 corrects the payment's refund records. Nothing is repaired automatically.
 Exit code 2 means the list is INCOMPLETE (a note could not be read, or a Xero
 limit or outage stopped the run): run it again before treating it as the whole
-list. Reading Xero can refresh the stored Xero login, as any Xero call does.
+list. It refreshes the stored Xero login when that is due, as any Xero call does.
 
 ### A later refund folded into the first note (#4230)
 

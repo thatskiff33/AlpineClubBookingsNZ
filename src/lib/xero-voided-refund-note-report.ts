@@ -30,6 +30,8 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { formatCentsPlain } from "@/lib/utils";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import { getOperationalXeroConfig } from "@/lib/xero-config";
+import { getXeroTokenReadability, type XeroTokenReadability } from "@/lib/xero-token-store";
 import {
   getAuthenticatedXeroClient,
   withXeroRetry,
@@ -93,6 +95,45 @@ type ReportDb = Pick<Prisma.TransactionClient, "xeroObjectLink" | "payment">;
 export const DEFAULT_XERO_READ_SPACING_MS = 1_000;
 
 const PAYMENT_LOOKUP_PAGE = 1_000;
+
+/**
+ * Thrown by `assertXeroReadableHere` with a fixed sentence: it names no secret,
+ * no value and no path, so the script can print it as it stands.
+ */
+export class XeroReportPreflightError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "XeroReportPreflightError";
+  }
+}
+
+export const XERO_UNREADABLE_HERE_MESSAGE =
+  "Xero credentials can't be read here: run with the application's AUTH_SECRET and DATABASE_URL. See docs/MAINTENANCE.md, \"Find refund notes Xero voided that the app still shows as live (#4336)\".";
+
+export const XERO_NOT_CONNECTED_MESSAGE =
+  "Xero is not connected on this database, so there is nothing to ask. Check DATABASE_URL points at the live database, and that Xero is connected in the admin panel.";
+
+/**
+ * Resolve the Xero connection and its encryption key ONCE, before any link is
+ * walked. The stored Xero login and the app's Xero client credentials are both
+ * encrypted under a key rooted in `AUTH_SECRET`, so a process without the
+ * app's secret cannot read them (the compose `migrate` service carries none).
+ * Both checks are side-effect free: they decrypt and discard, and neither
+ * generates a key, writes a row or calls Xero. Throws `XeroReportPreflightError`.
+ */
+export async function assertXeroReadableHere(
+  deps: {
+    tokenReadability?: () => Promise<XeroTokenReadability>;
+    clientConfig?: () => Promise<{ clientId: string; clientSecret: string }>;
+  } = {},
+): Promise<void> {
+  const readability = await (deps.tokenReadability ?? getXeroTokenReadability)();
+  if (readability === "no_tokens") throw new XeroReportPreflightError(XERO_NOT_CONNECTED_MESSAGE);
+  if (readability === "unreadable") throw new XeroReportPreflightError(XERO_UNREADABLE_HERE_MESSAGE);
+  const config = await (deps.clientConfig ?? getOperationalXeroConfig)();
+  // An unreadable credential resolves to "": the refresh could not authenticate.
+  if (!config.clientId || !config.clientSecret) throw new XeroReportPreflightError(XERO_UNREADABLE_HERE_MESSAGE);
+}
 
 /**
  * The real reader: `getCreditNote` through `withXeroRetry` (a minute-limit 429

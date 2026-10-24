@@ -21,6 +21,10 @@ const {
   isVoidedRefundNoteReportComplete,
   voidedRefundNoteReportCsv,
   REPORTED_REFUND_NOTE_ROLES,
+  assertXeroReadableHere,
+  XeroReportPreflightError,
+  XERO_UNREADABLE_HERE_MESSAGE,
+  XERO_NOT_CONNECTED_MESSAGE,
 } = await import("@/lib/xero-voided-refund-note-report");
 
 type Reading = import("@/lib/xero-voided-refund-note-report").XeroCreditNoteReading;
@@ -263,5 +267,36 @@ describe("createXeroCreditNoteReader (#4336)", () => {
     await expect(read("n-2")).resolves.toBeNull();
     getCreditNote.mockRejectedValueOnce(Object.assign(new Error("forbidden"), { response: { statusCode: 403 } }));
     await expect(read("n-3")).rejects.toThrow("forbidden");
+  });
+});
+
+describe("assertXeroReadableHere (#4336 preflight)", () => {
+  const config = { clientId: "id-value", clientSecret: "secret-value" };
+
+  it("passes when the stored login decrypts and the client credentials resolve", async () => {
+    await expect(assertXeroReadableHere({ tokenReadability: async () => "readable", clientConfig: async () => config })).resolves.toBeUndefined();
+  });
+
+  it("refuses with a fixed message naming AUTH_SECRET when the stored login cannot be decrypted, and never reads the client credentials", async () => {
+    const clientConfig = vi.fn(async () => config);
+    const attempt = assertXeroReadableHere({ tokenReadability: async () => "unreadable", clientConfig });
+    await expect(attempt).rejects.toBeInstanceOf(XeroReportPreflightError);
+    await expect(attempt).rejects.toThrow(XERO_UNREADABLE_HERE_MESSAGE);
+    expect(XERO_UNREADABLE_HERE_MESSAGE).toContain("AUTH_SECRET");
+    expect(clientConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the app's client credentials resolve empty (unreadable without the secret), without printing any value", async () => {
+    for (const empty of [{ clientId: "", clientSecret: "secret-value" }, { clientId: "id-value", clientSecret: "" }]) {
+      const attempt = assertXeroReadableHere({ tokenReadability: async () => "readable", clientConfig: async () => empty });
+      await expect(attempt).rejects.toThrow(XERO_UNREADABLE_HERE_MESSAGE);
+      await expect(attempt).rejects.not.toThrow(/secret-value|id-value/);
+    }
+  });
+
+  it("says so plainly when Xero is not connected on this database", async () => {
+    await expect(assertXeroReadableHere({ tokenReadability: async () => "no_tokens", clientConfig: async () => config })).rejects.toThrow(
+      XERO_NOT_CONNECTED_MESSAGE,
+    );
   });
 });
