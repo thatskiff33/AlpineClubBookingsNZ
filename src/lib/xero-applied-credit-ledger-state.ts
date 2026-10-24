@@ -66,7 +66,7 @@ export async function appliedCreditSettledByCancel(
       select: {
         status: true,
         payment: {
-          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } } },
+          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } }, booking: { select: { organiserSettled: true, parentBookingId: true } } }, // #3949
         },
       },
     }),

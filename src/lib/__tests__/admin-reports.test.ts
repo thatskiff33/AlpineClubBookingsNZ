@@ -20,6 +20,7 @@ const LIVE = {
   creditsApplied: [],
   creditsFromCancellation: [],
   manualRefundTasks: [],
+  organiserSettled: false, parentBookingId: null,
 };
 // A card payment with a captured ledger row: the capture evidence a refunded
 // status needs to count in Net Collected (`getNetCollectedPaymentParts`).

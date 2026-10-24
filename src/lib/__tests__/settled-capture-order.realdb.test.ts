@@ -1,9 +1,11 @@
 /**
  * Real-PostgreSQL proof of #4177 (`INV-PAY-133`): when a different card
- * capture arrives on an already-PAID booking and several captures could be the
- * one that settled it, the duplicate-capture refund names the OLDEST-INSERTED
- * (`createdAt`, then `insertionSeq`), the rule #4163 set for the Xero settling
- * capture, whatever order PostgreSQL keeps the rows in.
+ * capture arrives on an already-PAID booking with no recorded settler (#4211:
+ * paid before `Payment.settledByTransactionId` existed) and several captures
+ * could be the one that settled it, the duplicate-capture guard names the
+ * OLDEST-INSERTED (`createdAt`, then `insertionSeq`) - the rule #4163 set for
+ * the Xero settling capture - whatever order PostgreSQL keeps the rows in. It
+ * keeps the arriving capture and the admins' alert names that capture.
  *
  * What a mock can only imitate, run here through the REAL
  * `markBookingPaymentSucceeded`:
@@ -15,8 +17,8 @@
  *   `insertionSeq` tells them apart. The production read repeated with no
  *   order meets the later capture first, under any plan (a btree keeps equal
  *   keys in heap order): the premise an unordered read gets wrong. The
- *   arriving third capture is refunded alone, and the admin-only history event
- *   the refund records names the FIRST capture as the settlement.
+ *   arriving third capture is kept, nothing is refunded, and the guard's
+ *   verdict - what the admins' alert names - is the FIRST capture.
  * - **A regression pin, not a proof: captures created apart.** An index on
  *   `createdAt` can return the first capture without any `orderBy`, so this
  *   case cannot show the order is needed; it pins that the earlier-created
@@ -90,6 +92,7 @@ function capturesOnPayment() {
   { timeout: 60_000 },
   () => {
     async function deleteBookingRows() {
+      await prisma.alertCooldown.deleteMany({ where: { key: { contains: BOOKING_ID } } });
       await prisma.auditLog.deleteMany({ where: { targetId: { in: [BOOKING_ID, PAYMENT_ID] } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
@@ -158,13 +161,15 @@ function capturesOnPayment() {
       // meets the later capture first: the answer the unordered read gave.
       // Apart, an index on `createdAt` may return the first, so the premise is
       // asserted only here.
-      const { otherSettledCaptureWhere } = await import("@/lib/payment-reconciliation");
+      const { otherSettledCaptureWhere } = await import("@/lib/duplicate-capture-guard");
       const { listLiveSupersededIntentIds } = await import("@/lib/superseded-intent-ownership");
+      const { listDuplicateCaptureRefundIntentIds } = await import("@/lib/duplicate-capture-ownership");
       const unordered = await prisma.paymentTransaction.findFirst({
         where: otherSettledCaptureWhere({
           paymentId: PAYMENT_ID,
           arrivingPaymentIntentId: ARRIVING_PI,
           liveSupersededIntentIds: await listLiveSupersededIntentIds(prisma, PAYMENT_ID),
+          duplicateRefundIntentIds: await listDuplicateCaptureRefundIntentIds({ bookingId: BOOKING_ID, store: prisma }),
         }),
         select: { id: true, stripePaymentIntentId: true },
       });
@@ -204,15 +209,20 @@ function capturesOnPayment() {
       });
     }
 
-    async function settledIntentTheHistoryNames(): Promise<unknown> {
-      const events = await prisma.bookingEvent.findMany({
-        where: { bookingId: BOOKING_ID, type: "REFUNDED" },
-        select: { snapshot: true },
-      });
-      expect(events).toHaveLength(1);
-      const snapshot = events[0]!.snapshot as { duplicatePaymentIntentId?: string; settledPaymentIntentId?: string | null };
-      expect(snapshot.duplicatePaymentIntentId).toBe(ARRIVING_PI);
-      return snapshot.settledPaymentIntentId;
+    /** #4211: the capture the guard names to the admins, read through its real verdict. */
+    async function settledIntentTheAlertNames(): Promise<unknown> {
+      const { judgeCaptureOnPaidBooking } = await import("@/lib/duplicate-capture-guard");
+      const verdict = await prisma.$transaction((tx) =>
+        judgeCaptureOnPaidBooking(tx, {
+          bookingId: BOOKING_ID,
+          paymentId: PAYMENT_ID,
+          recordedSettlerId: null,
+          paymentIntentId: ARRIVING_PI,
+          amountCents: PRICE_CENTS,
+        }),
+      );
+      expect(verdict.verdict).toBe("keep_unrecorded_settler");
+      return verdict.verdict === "keep_unrecorded_settler" ? verdict.otherPaymentIntentId : undefined;
     }
 
     beforeAll(async () => {
@@ -272,26 +282,26 @@ function capturesOnPayment() {
 
     // A regression pin, not a proof: apart, an index on `createdAt` may return the
     // first capture with no `orderBy` at all (see the file header).
-    it("regression pin: captures created apart, the later one first in the heap: the refund names the first as the settlement", async () => {
+    it("regression pin: captures created apart, the later one first in the heap: the arriving capture is kept and the alert names the first", async () => {
       await writeCapturesLaterFirstInHeap({ first: EARLIER, later: TIED_AT });
       const asked = stripeMakesRefunds();
 
       const result = await settleArrivingCapture();
 
-      expect(result.outcome).toBe("duplicate_capture_refunded");
-      expect(asked, "only the arriving capture is refunded").toEqual([ARRIVING_PI]);
-      expect(await settledIntentTheHistoryNames()).toBe(FIRST_PI);
+      expect(result.outcome).toBe("duplicate_capture_kept");
+      expect(asked, "nothing is refunded with no recorded settler").toEqual([]);
+      expect(await settledIntentTheAlertNames()).toBe(FIRST_PI);
     });
 
-    it("proof: captures tied on createdAt, the later one first in the heap: insertionSeq decides, and the refund names the first", async () => {
+    it("proof: captures tied on createdAt, the later one first in the heap: insertionSeq decides, and the alert names the first", async () => {
       await writeCapturesLaterFirstInHeap({ first: TIED_AT, later: TIED_AT });
       const asked = stripeMakesRefunds();
 
       const result = await settleArrivingCapture();
 
-      expect(result.outcome).toBe("duplicate_capture_refunded");
-      expect(asked, "only the arriving capture is refunded").toEqual([ARRIVING_PI]);
-      expect(await settledIntentTheHistoryNames()).toBe(FIRST_PI);
+      expect(result.outcome).toBe("duplicate_capture_kept");
+      expect(asked, "nothing is refunded with no recorded settler").toEqual([]);
+      expect(await settledIntentTheAlertNames()).toBe(FIRST_PI);
     });
 
     it("the Xero reader counts a superseded refund until it SUCCEEDED and a cancel only while in flight; (b′) counts both until SUCCEEDED", async () => {

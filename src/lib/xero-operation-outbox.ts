@@ -832,13 +832,13 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * noted per refund, capped by coverage, on a bank transfer as on a card. */
     reviewTaskId?: string;
     /**
-     * #3924 round 4 (M3, `INV-PAY-122`): the record of a "Paid another way"
-     * close this note answers. Keyed on it, so the close's note is a row of its
-     * own beside any card delta on the payment - never deduplicated into a
-     * pending card note that happens to share its watermark. Round 8: sized by
-     * the record alone - what it paid back less what its own notes cover
-     * (`readPaidAnotherWayCloseShare`), and never above `refundAmountCents`
-     * (#4104: a close a card note partly answers asks for less).
+     * #3924 round 4 (M3, `INV-PAY-122`): the bank record this note answers - a
+     * "Paid another way" close, a card refund shortfall (#4097), a re-confirmed
+     * bank refund (#4162) or a later cancellation hand-back (#4287,
+     * `INV-ADDPAY-043`). Keyed on it, so its note is a row of its own beside any
+     * other note on the payment. Round 8: sized by the record alone - what it
+     * paid back less what its own notes cover (`readPaidAnotherWayCloseShare`),
+     * and never above `refundAmountCents` (#4104).
      */
     paidAnotherWayTaskId?: string;
     /**
@@ -951,7 +951,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       const share = await readPaidAnotherWayCloseShare(db, paymentId, options.paidAnotherWayTaskId);
       if (!share) {
         throw new Error(
-          `Refusing to queue a paid-another-way Xero refund note for payment ${paymentId}: its close ${options.paidAnotherWayTaskId} is not on this payment`
+          `Refusing to queue a Xero refund note for payment ${paymentId}: its bank record ${options.paidAnotherWayTaskId} (a paid-another-way close, a shortfall, a re-confirmed refund or a completed hand-back) is not on this payment`
         );
       }
       // #4104 review (MM2, ML1): never more than the caller asks for - a close
@@ -983,9 +983,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
       };
     }
   } else if (canonicalLink) {
-    // Non-Stripe callers (internet-banking cron, group-cancel) issue at most one
-    // refund per payment and re-enqueue on cron reruns; the single-note skip
-    // absorbs those replays by repointing at the existing note.
+    // Non-Stripe callers that name no record of their own (internet-banking cron,
+    // group-cancel) re-enqueue on reruns; the single-note skip absorbs those replays
+    // by repointing. #4287: a later hand-back names its own (`paidAnotherWayTaskId`).
     if (payment.xeroRefundCreditNoteId !== canonicalLink.xeroObjectId) {
       await db.payment.update({
         where: { id: paymentId },

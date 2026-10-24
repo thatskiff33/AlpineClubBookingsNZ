@@ -310,6 +310,9 @@ export function netCollectedFixtureBooking(row: FixtureRow) {
     creditsApplied: row.creditsApplied,
     creditsFromCancellation: row.creditsFromCancellation,
     manualRefundTasks: row.manualRefundTasks,
+    // #3949: no fixture row is a joiner's place an organiser paid for.
+    organiserSettled: false,
+    parentBookingId: null,
   };
 }
 

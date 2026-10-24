@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
 import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
-import { isResolvedInXero } from "@/lib/xero-operation-resolution"
+import { isResolvedInXero, resolutionLabel } from "@/lib/xero-operation-resolution"
 import { resetXeroOperationsDatasetSearchParams } from "@/lib/admin-dataset-reset-state"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
@@ -553,7 +553,7 @@ export function OperationItem({
       <div className="flex flex-wrap items-center gap-2">
         <OperationStatusChip status={operation.status} />
         {resolved ? (
-          <ToneChip tone="success" icon={CheckCircle2}>Resolved in Xero</ToneChip>
+          <ToneChip tone="success" icon={CheckCircle2}>{resolutionLabel(operation.manuallyResolvedReason)}</ToneChip>
         ) : operation.failureState ? (
           <FailureStateChip state={operation.failureState} />
         ) : null}
@@ -596,7 +596,7 @@ export function OperationItem({
       {operation.failureStateReason && operation.status === "FAILED" && !resolved ? <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p> : null}
       {resolved ? (
         <p className="text-xs text-success">
-          Resolved in Xero{operation.manuallyResolvedReason ? `: ${operation.manuallyResolvedReason}` : ""}
+          {resolutionLabel(operation.manuallyResolvedReason)}{operation.manuallyResolvedReason ? `: ${operation.manuallyResolvedReason}` : ""}
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">

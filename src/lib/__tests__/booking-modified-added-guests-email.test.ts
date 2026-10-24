@@ -49,7 +49,7 @@ function params(addedGuests: ReadonlyArray<typeof ARI & { consentStatus?: string
     appliedCreditGivenBackCents: 0,
     unpaidAskCancelled: false,
     financialReviewPending: false,
-    refundByBankTransfer: false,
+    refundByBankTransfer: null,
     refundDestination: "own" as const,
   };
 }

@@ -119,6 +119,38 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### The app records which payment settled each booking (#4211)
+
+`20261121010000_payment_settled_by_transaction` adds one nullable column,
+`Payment.settledByTransactionId`. It is **additive only** (no backfill, no
+index, no rewrite), so it is safe in the ordinary deploy window with the
+previous colour still serving.
+
+**What changes.** When a booking is paid, the app now records which payment
+paid it. If the member pays again (a second or third card payment from old
+browser tabs), the extra payments are refunded automatically and the recorded
+one never is.
+
+**Bookings paid before this release, or by the old colour during the switch,**
+have no record. The old colour does not know the column, so a booking it
+settles stays unrecorded. For those bookings, if a card payment arrives while
+another payment on the booking still holds money, the app keeps it, refunds
+nothing, and sends the admins a *"Booking may have been paid twice — check by
+hand"* alert that cannot be muted. The same email repeats at most once a day
+per payment while the payment repeats - a Stripe redelivery, or a reconcile or
+cron re-run. A payment the app had already started refunding as a duplicate
+still finishes its own refund.
+
+**During the switch the old colour still refunds automatically**, by the rule
+it shipped with, and on a repeat of the real payment it can refund that one.
+So before refunding anything by hand, check in Stripe that neither payment has
+already been refunded; the alert says so too.
+
+**What admins will notice.** Before this release a second card payment on a
+paid booking was refunded automatically. On a booking with no record it now
+waits for an admin to decide. Nothing goes back through past bookings, and the
+alert only comes for a booking that is already holding two payments.
+
 ### Count voided bank-transfer refund notes, then switch the follow-up on (#4162)
 
 **What changes.** A bank-transfer refund whose Xero refund credit note is voided
@@ -185,6 +217,33 @@ in this release raises it back: not a replay of its Xero events, and not the
 booking repair tool. The next refund the app records on that payment resets the
 total from its rows. Until then, read `rowsRefundedCents` as the cash handed
 back.
+
+### A later bank-transfer hand-back gets its own Xero credit note (#4287)
+
+**What changes.** On a bank-transfer payment that already has its refund
+credit note, a cancellation refund handed back later now gets a credit note of
+its own in Xero, for exactly that refund, instead of being counted under the
+first note. On a bank-transfer payment that was also partly paid by card, this
+applies to the first refund handed back too. No migration runs.
+
+**After upgrading.** Nothing to do for refunds handed back from now on. A
+refund handed back before the upgrade that never got its own note is not given
+one now: keep using the read-only query in
+[the deploy note](xero/ARCHITECTURE.md#a-later-refund-folded-into-the-first-note-4230)
+to find those payments, and raise their notes by hand as that entry says. A
+refund appeal's card-refunded part, a dashboard card refund and a late card
+capture's refund on a bank-transfer payment still have no note of their own
+(#4312); the query lists those too.
+
+**During the switch, and if you roll back.** While the previous version still
+runs - the blue/green switch window, or after a rollback - its Xero worker
+cannot raise a hand-back's own credit note: the row fails with "is not on this
+payment" and nothing reaches Xero. Once this version serves alone again, open
+the Xero failed-operations panel and press **Retry in background** on those
+rows. In the same window a card refund's credit note on a bank-transfer
+payment that also had a hand-back noted this way can come out short; check
+those payments in Xero. Details:
+[A later bank-transfer hand-back gets its own note](xero/ARCHITECTURE.md#a-later-bank-transfer-hand-back-gets-its-own-note-4287).
 
 ### One-off correction of the starter privacy policy's audit-log retention (#4031)
 

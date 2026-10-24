@@ -55,6 +55,10 @@ const txClient = {
   groupBooking: { update: mocks.groupBookingUpdate },
   booking: { update: mocks.bookingUpdate, updateMany: mocks.bookingUpdate },
   payment: { update: mocks.paymentUpdate, updateMany: mocks.paymentUpdateMany, findUniqueOrThrow: mocks.paymentFindUniqueOrThrowLocked },
+  // #3949: the replay reads the child's paid-back hand-backs under its Payment row; none by default.
+  manualRefundTask: { findMany: vi.fn(async () => [] as unknown[]) },
+  // Review round 3: the latest CANCELLED event, whose snapshot marks a member's own cancel (none by default).
+  bookingEvent: { findFirst: vi.fn(async (): Promise<unknown> => null) },
   groupBookingSettlement: {
     updateMany: mocks.settlementUpdateMany,
     findUnique: mocks.settlementAtFenceFindUnique,
@@ -203,7 +207,9 @@ beforeEach(() => {
   // by default nothing moved it since the load.
   mocks.paymentFindUniqueOrThrowLocked.mockImplementation(async ({ where }: { where: { id: string } }) => {
     const loaded = (await mocks.bookingFindMany.mock.results.at(-1)?.value) as Array<{ payment: { id: string } | null }> | undefined;
-    const payment = loaded?.find((row) => row.payment?.id === where.id)?.payment;
+    // #3949: the replay re-reads a child it loaded one at a time (`prisma.booking.findUnique`) under its Payment row.
+    const replayed = await Promise.all(mocks.bookingFindUnique.mock.results.map((result) => result.value as Promise<{ payment: { id: string } | null } | null>));
+    const payment = loaded?.find((row) => row.payment?.id === where.id)?.payment ?? replayed.find((row) => row?.payment?.id === where.id)?.payment;
     if (!payment) throw new Error(`no payment ${where.id}`);
     return payment;
   });
@@ -1445,6 +1451,70 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
       store: txClient,
     });
+  });
+
+  // #3949 (`INV-PAY-137`): an Internet Banking child's paid-back edit or appeal
+  // hand-back moves its refunded total too, so "above zero" is no longer
+  // "mirrored": the replay asks it net of those hand-backs, under the Payment row.
+  it("mirrors a child whose total only a paid-back hand-back moved, and skips one whose plan share is written beside it (#3949)", async () => {
+    mocks.settlementFindUnique.mockResolvedValue(settlement({ status: PaymentStatus.REFUNDED }));
+    const paidBack = (paymentId: string) => [
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "edit-refund-hand-back:mod-1", paymentId, amountCents: 1000 },
+    ];
+    txClient.manualRefundTask.findMany.mockImplementation(async (args?: unknown) => paidBack((args as { where: { paymentId: string } }).where.paymentId));
+    const child = (id: string, paymentId: string, refunded: number) => ({
+      ...cancelledChild(id, paymentId, refunded),
+      payment: { id: paymentId, amountCents: 9000, refundedAmountCents: refunded, status: PaymentStatus.PARTIALLY_REFUNDED },
+    });
+    mocks.bookingFindUnique
+      .mockResolvedValueOnce(child("child-1", "pay-1", 1000))
+      .mockResolvedValueOnce(child("child-2", "pay-2", 5500));
+
+    const result = await executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST);
+
+    expect(result).toEqual({ outcome: "already_refunded", mirroredChildren: 1 });
+    // The hand-back's $10 stays; the plan's $45 goes on top, guarded on the figure read under the row lock.
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: "pay-1", refundedAmountCents: 1000 },
+      data: { refundedAmountCents: 5500, status: PaymentStatus.PARTIALLY_REFUNDED },
+    });
+    // The note and the event are this plan's share, never the hand-back's again.
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, { store: txClient });
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "child-1", amountCents: 4500 }));
+    // The Payment row first, then the read (a hand-back's completion holds that row before its claim).
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.paymentFindUniqueOrThrowLocked.mock.invocationCallOrder[0]!);
+    txClient.manualRefundTask.findMany.mockImplementation(async () => []);
+  });
+
+  it("review round 3: a plan child its member cancelled themselves is never mirrored by the replay; a review's or joiner cancel's refund is not the plan's", async () => {
+    mocks.settlementFindUnique.mockResolvedValue(settlement({ status: PaymentStatus.REFUNDED }));
+    mocks.bookingFindUnique
+      .mockResolvedValueOnce(cancelledChild("child-1", "pay-1"))
+      .mockResolvedValueOnce({ ...cancelledChild("child-2", "pay-2", 1000), payment: { id: "pay-2", amountCents: 9000, refundedAmountCents: 1000, status: PaymentStatus.PARTIALLY_REFUNDED } });
+    // child-1 was cancelled by its member (a paid cancel's snapshot); child-2's $10 came from a completed review.
+    txClient.bookingEvent.findFirst.mockImplementation(async (args?: unknown) =>
+      (args as { where: { bookingId: string } }).where.bookingId === "child-1" ? { snapshot: { refundMethod: "card" } } : null,
+    );
+    txClient.manualRefundTask.findMany.mockImplementation(async (args?: unknown) =>
+      (args as { where: { paymentId: string } }).where.paymentId === "pay-2"
+        ? [{ kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", occurrenceKey: null, paymentId: "pay-2", amountCents: 1000, settlementDirection: "REFUND_TO_MEMBER" }]
+        : [],
+    );
+
+    const result = await executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST);
+
+    expect(result).toEqual({ outcome: "already_refunded", mirroredChildren: 1 });
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: "pay-2", refundedAmountCents: 1000 },
+      data: { refundedAmountCents: 5500, status: PaymentStatus.PARTIALLY_REFUNDED },
+    });
+    expect(groupLedger.postGroupSettlementRefundLedgerLine).not.toHaveBeenCalledWith(expect.objectContaining({ bookingId: "child-1" }));
+    txClient.bookingEvent.findFirst.mockImplementation(async () => null);
+    txClient.manualRefundTask.findMany.mockImplementation(async () => []);
   });
 
   it("leaves ACTIVE children to the inline loop / reaper resume path", async () => {

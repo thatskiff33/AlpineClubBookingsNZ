@@ -101,6 +101,7 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
   // read - and judged in code (`getNetCollectedPaymentParts`), the one home of
   // which rows count; no `where` here, so the query cannot disagree with it.
   status: true,
+  organiserSettled: true, parentBookingId: true, // #3949: an IB organiser child's settle mirror is money taken
   creditsApplied: { select: { type: true, amountCents: true } },
   creditsFromCancellation: {
     // `description` for a restore written before the marker existed

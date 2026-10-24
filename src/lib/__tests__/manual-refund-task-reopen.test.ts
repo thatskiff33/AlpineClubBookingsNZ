@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ManualRefundTaskStatus } from "@prisma/client";
 import { EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
+import { editRefundHandBackReopenAfterCancelMessage } from "@/lib/manual-refund-task-copy";
 
 /**
  * #3498 (owner decision D2, epic #2797): putting a DISMISSED money task back on
@@ -481,5 +482,46 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
 
     await expect(reopen()).rejects.toMatchObject({ message: REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE });
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3949 (`INV-PAY-137`): the same two keys on a joiner's booking the group
+ * organiser paid for by internet banking. The rules are unchanged - the group
+ * cancel nets an open edit refund as a member's cancel does - and the refusal
+ * names the organiser, whose money it is.
+ */
+describe("reopening a dismissed hand-back on a joiner the organiser paid for by internet banking (#3949)", () => {
+  const GROUP_CHILD = { organiserSettled: true, parentBookingId: "organiser-booking", payment: { source: "INTERNET_BANKING" } };
+  function dismissedOnGroupChild(occurrenceKey: string, status: string) {
+    return {
+      ...DISMISSED_BY_OFFICER,
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey,
+      amountCents: 1500,
+      raisedAmountCents: 1500,
+      payment: { id: "pay-1", bookingId: "booking-1", status: "SUCCEEDED", amountCents: 10000, refundedAmountCents: 4000 },
+      booking: { memberId: "member-1", status, organisation: null, ...GROUP_CHILD },
+    };
+  }
+
+  it("refuses an edit's after the group cancel, naming the organiser", async () => {
+    mocks.findUnique.mockResolvedValue(dismissedOnGroupChild("edit-refund-hand-back:mod-1", "CANCELLED"));
+
+    await expect(reopen()).rejects.toMatchObject({ status: 409, message: editRefundHandBackReopenAfterCancelMessage(GROUP_CHILD) });
+    expect(editRefundHandBackReopenAfterCancelMessage(GROUP_CHILD)).toContain("organiser");
+    expect(editRefundHandBackReopenAfterCancelMessage({ ...GROUP_CHILD, organiserSettled: false })).toBe(EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("puts an edit's back on a live child, and an appeal's on the cancelled one, while the cash is still there", async () => {
+    for (const [key, status] of [["edit-refund-hand-back:mod-1", "PAID"], ["refund-request-hand-back:req-1", "CANCELLED"]] as const) {
+      mocks.updateMany.mockClear();
+      mocks.findUnique.mockResolvedValue(dismissedOnGroupChild(key, status));
+      mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
+
+      await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
+      expect(mocks.updateMany).toHaveBeenCalledTimes(1);
+    }
   });
 });

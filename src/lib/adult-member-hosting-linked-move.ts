@@ -78,9 +78,10 @@ export const HOSTING_COVERAGE_LINKED_MOVE_CODE =
  * `NO_CAPACITY` is the owner's "cannot" arm and it is NOT a failure: the member is
  * told plainly that there are not beds for both on the new nights, and the
  * warn-and-continue path is offered instead. Nothing about a full lodge should
- * stop a member moving their own booking.
+ * stop a member moving their own booking. `GROUP_CANCEL_IN_PROGRESS` (#3949) is that arm for a dependent whose
+ * group organiser paid by Internet Banking and is part-way through cancelling the group: it cannot move until then.
  */
-export type LinkedMoveFeasibility = "AVAILABLE" | "NO_CAPACITY";
+export type LinkedMoveFeasibility = "AVAILABLE" | "NO_CAPACITY" | "GROUP_CANCEL_IN_PROGRESS";
 
 /**
  * One booking the offer would move alongside the one the member asked about.
@@ -133,9 +134,11 @@ export interface LinkedMoveQuote {
    * what comes back to the member.
    */
   combinedPolicyRetainedCents: number;
+  /** #3949: what goes back to a group organiser who paid for a booking in the move, never the member; and the part by bank transfer (the rest to their card). */
+  combinedOrganiserRefundCents: number; combinedOrganiserBankTransferRefundCents: number;
   /**
    * True when this settlement needs a card-or-credit choice. One choice covers
-   * every booking — see `formatLinkedMoveOfferMessage`.
+   * every booking the member paid for - see `formatLinkedMoveOfferMessage`.
    */
   settlementMethodRequired: boolean;
   /** True when the request that produced this quote already carried that choice. */
@@ -194,22 +197,16 @@ export interface LinkedMoveQuote {
 export function linkedMoveStateKey(input: {
   stranded: readonly StrandedCoverageBooking[];
   sourceBookingId: string;
-  proposals: ReadonlyArray<{
-    bookingId: string;
-    checkIn: string;
-    checkOut: string;
-  }>;
+  proposals: ReadonlyArray<{ bookingId: string; checkIn: string; checkOut: string }>;
   combinedAmountDueCents: number;
   combinedRefundCents: number;
   combinedChangeFeeCents: number;
   combinedPriceDiffCents: number;
+  /** #3949: the organiser's refunds, which the member is shown and so accepts. */
+  combinedOrganiserRefundCents: number; combinedOrganiserBankTransferRefundCents: number;
 }): string {
   const proposals = [...input.proposals]
-    .map((proposal) => ({
-      bookingId: proposal.bookingId,
-      checkIn: proposal.checkIn,
-      checkOut: proposal.checkOut,
-    }))
+    .map(({ bookingId, checkIn, checkOut }) => ({ bookingId, checkIn, checkOut }))
     .sort(byBookingId);
   const digest = createHash("sha256")
     .update(
@@ -222,6 +219,7 @@ export function linkedMoveStateKey(input: {
           refund: input.combinedRefundCents,
           changeFee: input.combinedChangeFeeCents,
           priceDiff: input.combinedPriceDiffCents,
+          organiserRefund: [input.combinedOrganiserRefundCents, input.combinedOrganiserBankTransferRefundCents],
         },
       }),
     )
@@ -339,15 +337,13 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
         `for adult supervision, so moving this one on its own would leave them ` +
         `without.`;
 
-  if (quote.feasibility === "NO_CAPACITY") {
-    return (
-      `${opening} There are not enough beds free on the new nights to move ` +
-      `${linkedMoveAllBookingsPhrase(count)}, so they cannot travel together ` +
-      `this time. You can still move this booking: ` +
-      `${count === 1 ? "the other one" : `the other ${count}`} will be left ` +
-      `without adult supervision, a Booking Officer will be told, and it will ` +
-      `be raised for their attention.`
-    );
+  if (quote.feasibility !== "AVAILABLE") {
+    // #3949: or a dependent's group organiser is part-way through cancelling its group, so it cannot move now.
+    const why = quote.feasibility === "NO_CAPACITY"
+      ? `There are not enough beds free on the new nights to move ${linkedMoveAllBookingsPhrase(count)}, so they cannot travel together this time.`
+      : `${count === 1 ? "That booking's" : "One of those bookings'"} group organiser is part-way through cancelling its group, so its place cannot be moved right now, and they cannot travel together.`;
+    const others = count === 1 ? "the other one" : `the other ${count}`;
+    return `${opening} ${why} You can still move this booking: ${others} will be left without adult supervision, a Booking Officer will be told, and it will be raised for their attention.`;
   }
 
   const moves = quote.linked
@@ -366,6 +362,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
     combinedRefundCents: quote.combinedRefundCents,
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
+    combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     settlementMethodRequired: quote.settlementMethodRequired,
     settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,
@@ -552,6 +549,7 @@ export function combineLinkedMoveQuote(input: {
   bothChangeFeesCharged: boolean;
   settlementMethodChosen: boolean;
   feasibility: LinkedMoveFeasibility;
+  organiserRefunds: { totalCents: number; bankTransferCents: number }; // #3949: the organisers', taken out of each `refundAmountCents`
 }): LinkedMoveQuote {
   const linked: LinkedMoveBooking[] = input.linked
     .map((entry) => ({
@@ -606,6 +604,7 @@ export function combineLinkedMoveQuote(input: {
       (r) => r.refundAmountCents + r.accountCreditAmountCents + r.appliedCreditGivenBackCents,
     ),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
+    combinedOrganiserRefundCents: input.organiserRefunds.totalCents, combinedOrganiserBankTransferRefundCents: input.organiserRefunds.bankTransferCents,
     // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is
     // an OR over BOTH options, priced from two separate policy tiers, and a quote is
     // priced on ONE. A tier whose card option nets to zero (a processing fee larger
@@ -693,6 +692,7 @@ export function buildSameOwnerCoverageLinkedMoveBody(
     combinedAmountDueCents: quote.combinedAmountDueCents,
     combinedRefundCents: quote.combinedRefundCents,
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
+    combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     settlementMethodRequired: quote.settlementMethodRequired,
     settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,

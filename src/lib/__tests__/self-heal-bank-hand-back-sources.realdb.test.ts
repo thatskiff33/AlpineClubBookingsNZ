@@ -275,7 +275,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       const { raiseRefundRequestHandBack } = await import("@/lib/edit-refund-hand-back");
       await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        expect(await raiseRefundRequestHandBack(tx, { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, refundRequestId: REFUND_REQUEST_ID, amountCents: 5_000 })).toBe(1);
+        expect(await raiseRefundRequestHandBack(tx, { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, refundRequestId: REFUND_REQUEST_ID, amountCents: 5_000, booking: { organiserSettled: false, parentBookingId: null, payment: null } })).toBe(1);
       });
       const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "refund-request-hand-back:" } } });
 
@@ -294,7 +294,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
         // The edit's own test: money not captured through Stripe goes back by hand.
         expect(await raiseEditRefundHandBackIfOwed(tx, {
           bookingId: BOOKING_ID, paymentId: PAYMENT_ID, bookingModificationId: MODIFICATION_ID,
-          adjusted: { refundAmountCents: 5_000, hasSucceededPayment: false }, editLabel: "date change",
+          adjusted: { refundAmountCents: 5_000, hasSucceededPayment: false }, editLabel: "date change", booking: { organiserSettled: false, parentBookingId: null, payment: null },
         })).toBe(true);
       });
       const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, occurrenceKey: { startsWith: "edit-refund-hand-back:" } } });

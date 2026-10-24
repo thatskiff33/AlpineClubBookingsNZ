@@ -295,10 +295,10 @@ export async function priceGroupChildWithPromoCodes(prisma: PrismaClient, names:
  * #3827 `INV-PAY-117`), so the real organiser cancel sizes that child's refund
  * net of the open hand-back. Returns that task's id (null without one).
  *
- * The hand-back stays OPEN: the real resolver cannot complete one on a child an
- * Internet Banking settlement paid, whose payment holds no captured
- * `PaymentTransaction` for `applyLocalRefundAllocation` to draw on (a main-side
- * limit of #3827 on group children, reported with #3854's sync).
+ * The hand-back stays OPEN here. Since #3949 (`INV-PAY-137`) the real resolver
+ * can complete one on such a child, onto its mirror rather than through
+ * `applyLocalRefundAllocation` (the child's payment holds no captured
+ * `PaymentTransaction`); `ib-group-child-hand-back.realdb.test.ts` proves that.
  */
 export async function buildPromoHandBackGroup(
   prisma: PrismaClient,
@@ -325,7 +325,8 @@ export async function buildPromoHandBackGroup(
   const { raiseEditRefundHandBackIfOwed } = await import("@/lib/edit-refund-hand-back");
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: editedChild! } });
+    const child = await tx.booking.findUniqueOrThrow({ where: { id: editedChild! }, include: { payment: true } });
+    const payment = child.payment!;
     expect(
       await raiseEditRefundHandBackIfOwed(tx, {
         bookingId: editedChild!,
@@ -333,6 +334,7 @@ export async function buildPromoHandBackGroup(
         bookingModificationId: modificationId,
         adjusted: { refundAmountCents: 1_500, hasSucceededPayment: false },
         editLabel: "night re-price",
+        booking: child, // #3949: an organiser-settled IB child, so the organiser is the payee
       }),
     ).toBe(true);
   });

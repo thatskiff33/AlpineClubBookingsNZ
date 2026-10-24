@@ -489,6 +489,26 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     );
   });
 
+  it("keeps the kept-capture alert admin-audience, delivery-locked and pinned to its reason note (#4211)", () => {
+    // Nothing was refunded automatically and the club may hold the price twice;
+    // this mail is the only thing that pulls a person to it. MUTATION PROOF: drop
+    // it from LOCKED_DELIVERY_TEMPLATE_NAMES and this fails.
+    const definition = getEmailTemplateDefinition("admin-duplicate-capture-kept");
+    if (!definition) throw new Error("missing admin-duplicate-capture-kept");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-duplicate-capture-kept")).toBe("always");
+    expect(definition.defaultSubject).toBe("Booking may have been paid twice — check by hand: {{memberName}}");
+    expect(definition.defaultBody).toContain("check in Stripe that neither payment has already been refunded");
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining(["duplicateCaptureKeptNote", "duplicateCaptureKeptAction", "memberName", "reviewUrl"]),
+    );
+    // #4211 review: the action is a composed token, never fixed text that says
+    // "refund the other one" when no other payment holds money.
+    expect(definition.defaultBody).not.toContain("refund the other one by hand");
+    expect(definition.defaultBody).toContain("{{duplicateCaptureKeptAction}}");
+  });
+
   it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
     // It ships via sendToAdmins, so it must classify as an admin alert like its
     // siblings (audience "admin") rather than "member". It stays in

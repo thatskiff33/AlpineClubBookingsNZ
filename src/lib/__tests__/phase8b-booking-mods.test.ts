@@ -2590,7 +2590,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       skipDuplicates: true,
     });
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 2500, refundByBankTransfer: true }),
+      expect.objectContaining({ refundAmountCents: 2500, refundByBankTransfer: "member" }),
       expect.anything(),
     );
   });
@@ -3350,7 +3350,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",
@@ -3382,7 +3382,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",
@@ -3413,7 +3413,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",
@@ -3443,7 +3443,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",
@@ -3476,7 +3476,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",
@@ -3508,7 +3508,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
       refundDestination: "own",

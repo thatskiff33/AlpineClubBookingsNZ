@@ -5,11 +5,17 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 
-import { canAskCardForReviewCharge } from "@/lib/booking-payment-state";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import {
+  canAskCardForReviewCharge,
+  refusesReviewChargeForCancellation,
+} from "@/lib/booking-payment-state";
+import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
+  REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE,
+  REVIEW_CHARGE_BOOKING_CANCELLED_ORGANISER_MESSAGE,
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
+  REVIEW_CHARGE_ORGANISER_PAID_BY_BANK_MESSAGE,
   REVIEW_CHARGE_ORGANISER_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
@@ -24,6 +30,7 @@ import {
 import {
   syncEditFinancialReviewChargeRequest,
   type EditReviewChargeMember,
+  type EditReviewChargeSyncOutcome,
 } from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -194,8 +201,9 @@ export async function chooseEditReviewChargeRoute({
 }: {
   bookingModificationId: string | null;
   /**
-   * #3653: whether the group organiser paid for this booking (`paidByOrganiserCard`).
-   * #3947: and its `status`, half of the card question (`canAskCardForReviewCharge`).
+   * #3653, #3949: whether the group organiser paid for this booking (`paidByOrganiserCard`,
+   * `paidByOrganiserInternetBanking`). #3947: and its `status`, half of the card question
+   * (`canAskCardForReviewCharge`), and the whole of the cancelled-booking refusal (#4272).
    */
   booking: { status: string; organiserSettled: boolean; parentBookingId: string | null };
   bookingPayment: {
@@ -221,6 +229,24 @@ export async function chooseEditReviewChargeRoute({
       409,
     );
   }
+  // #4272 (owner decision 21 Oct 2026): a CANCELLED booking is refused before
+  // any route is chosen, and before every other refusal that reads its payment:
+  // the cancellation is what makes every instrument wrong. A card ask on it is
+  // one the member cannot pay (`INV-ADDPAY-023`), and the recovery replay skips
+  // it, so asking here would leave the inline path and the replay disagreeing.
+  // The helper the card question asks refuses it too, so a cancellation landing
+  // after this commit stops the sync's mint as well.
+  if (refusesReviewChargeForCancellation(booking)) {
+    // A joiner the organiser settled, by card or internet banking, is pointed
+    // at the organiser, as the organiser-paid refusal below does.
+    const organiserSettledJoiner = booking.organiserSettled && booking.parentBookingId != null;
+    throw new ManualBookingPaymentError(
+      organiserSettledJoiner
+        ? REVIEW_CHARGE_BOOKING_CANCELLED_ORGANISER_MESSAGE
+        : REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE,
+      409,
+    );
+  }
   // #3653 (`INV-PAY-114`): the organiser paid for this booking by card. Its
   // payment mirror is a slice of the organiser's combined payment, so a card
   // ask would charge the joiner's own card and an invoice would bill the joiner;
@@ -228,14 +254,19 @@ export async function chooseEditReviewChargeRoute({
   if (paidByOrganiserCard({ ...booking, payment: bookingPayment })) {
     throw new ManualBookingPaymentError(REVIEW_CHARGE_ORGANISER_PAID_MESSAGE, 409);
   }
+  // #3949: so is one the organiser paid for by Internet Banking - refused in the organiser's words, before the
+  // no-instrument refusal below would answer it in general ones.
+  if (paidByOrganiserInternetBanking({ ...booking, payment: bookingPayment })) {
+    throw new ManualBookingPaymentError(REVIEW_CHARGE_ORGANISER_PAID_BY_BANK_MESSAGE, 409);
+  }
   // #3947 (owner decision 15 Oct 2026): the review charge's ONE card question,
   // which the sync's mint asks again after the commit - so the two cannot
   // disagree and strand the debt on a replay that never raises. It is the
   // edit doors' `canAskCardForIncrease` (#3502), so a booking paid wholly with
   // credit - a $0 SUCCEEDED card payment - is asked by card, Xero or not; plus
-  // the captured-card test this path used before - today's route for a
-  // booking outside the settled statuses, kept pending a decision (#4272), not
-  // the intended rule (the helper's docblock says why). `Payment.source` alone
+  // the captured-card test this path used before, for a booking outside the
+  // settled statuses other than a cancelled one (refused above; the helper's
+  // docblock says why the clause stays). `Payment.source` alone
   // is not enough - its schema DEFAULT is STRIPE, so a hand-settled booking
   // carries it with nothing captured behind it. A MEMBER is part of the test
   // rather than a fallback: minting needs somebody to bill, and a booking with
@@ -543,7 +574,14 @@ export async function executeEditReviewCharge({
   taskId: string;
   route: EditReviewChargeRoute;
   format: ClubFormat; // #3565: resolved before any transaction by the caller
-}): Promise<{ paymentIntentId: string | null; totalCents: number }> {
+}): Promise<{
+  paymentIntentId: string | null;
+  totalCents: number;
+  /** The sync's answer on the card route (#4272: `booking-cancelled` asks nothing). */
+  outcome?: EditReviewChargeSyncOutcome;
+  /** #4272: on `booking-cancelled`, whether that run wrote the uncollected-share record. */
+  recordedUncollected?: boolean;
+}> {
   // Derived here as well as inside the sync, because BOTH arms need it and the
   // failure arm needs it after the sync has thrown: the supplementary Xero
   // invoice the caller queues must bill the whole edit rather than this one share

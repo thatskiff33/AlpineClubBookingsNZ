@@ -229,12 +229,12 @@ describe("the mirror fold is one walk (#1491, #4119)", () => {
 
 describe("the preview asks only where the cancel raises the parts (#4119)", () => {
   const short = [card(14_000), bank(6_000)];
-  const ask = (payment: { source: string; manuallyMarkedPaidAt: Date | null }, organiserCard = false, refundAmountCents = 20_000) =>
-    cancelPreviewCardShortfall(store(short) as never, { payment: { id: "payment-1", ...payment }, organiserCard, refundAmountCents });
+  const ask = (payment: { source: string; manuallyMarkedPaidAt: Date | null }, organiserCard = false, refundAmountCents = 20_000, organiserByBank = false) =>
+    cancelPreviewCardShortfall(store(short) as never, { payment: { id: "payment-1", ...payment }, organiserCard, organiserByBank, refundAmountCents });
 
   it("a card refund on the card branch: the split, read in one read-only RepeatableRead snapshot", async () => {
     const db = store(short);
-    expect(await cancelPreviewCardShortfall(db as never, { payment: { id: "payment-1", source: "STRIPE", manuallyMarkedPaidAt: null }, organiserCard: false, refundAmountCents: 20_000 })).toEqual({
+    expect(await cancelPreviewCardShortfall(db as never, { payment: { id: "payment-1", source: "STRIPE", manuallyMarkedPaidAt: null }, organiserCard: false, organiserByBank: false, refundAmountCents: 20_000 })).toEqual({
       cardShortfall: { cardCents: 14_000, bankCents: 6_000, checkCents: 0 },
     });
     expect(db.$transaction).toHaveBeenCalledTimes(1);
@@ -248,12 +248,17 @@ describe("the preview asks only where the cancel raises the parts (#4119)", () =
     for (const source of ["STRIPE", "INTERNET_BANKING"]) {
       for (const manuallyMarkedPaidAt of [null, new Date("2026-06-01T00:00:00.000Z")]) {
         for (const organiserCard of [false, true]) {
-          for (const cents of [0, 20_000]) {
-            // As the cancel's claim resolves them: the forced method, then the branch.
-            const refundMethod = source === "INTERNET_BANKING" && !organiserCard ? "credit" : "card";
-            const branch = paidCancellationBranch({ manualDisposition: !organiserCard && manuallyMarkedPaidAt !== null, refundMethod, refundAmountCents: cents });
-            const raises = cancelRaisesCardShortfall({ branch, organiserCard });
-            expect(Boolean((await ask({ source, manuallyMarkedPaidAt }, organiserCard, cents)).cardShortfall), JSON.stringify({ source, manuallyMarkedPaidAt, organiserCard, cents })).toBe(raises);
+          for (const organiserByBank of [false, true]) {
+            for (const cents of [0, 20_000]) {
+              // As the cancel's claim resolves them: the forced method, then the branch. #3949: the organiser paid by
+              // internet banking is refunded by hand on the card tier.
+              const byBank = organiserByBank && !organiserCard;
+              const refundMethod = source === "INTERNET_BANKING" && !organiserCard && !byBank ? "credit" : "card";
+              const branch = paidCancellationBranch({ manualDisposition: !organiserCard && (manuallyMarkedPaidAt !== null || byBank), refundMethod, refundAmountCents: cents });
+              const raises = cancelRaisesCardShortfall({ branch, organiserCard });
+              const facts = JSON.stringify({ source, manuallyMarkedPaidAt, organiserCard, organiserByBank, cents });
+              expect(Boolean((await ask({ source, manuallyMarkedPaidAt }, organiserCard, cents, organiserByBank)).cardShortfall), facts).toBe(raises);
+            }
           }
         }
       }
@@ -271,7 +276,9 @@ describe("the preview asks only where the cancel raises the parts (#4119)", () =
     { why: "a joiner's booking the organiser paid refunds to the organiser's card", payment: { source: "STRIPE", manuallyMarkedPaidAt: null }, organiserCard: true, cents: 20_000 },
     { why: "a payment marked paid by hand is handed back by hand", payment: { source: "STRIPE", manuallyMarkedPaidAt: new Date("2026-06-01T00:00:00.000Z") }, organiserCard: false, cents: 20_000 },
     { why: "no refund is due", payment: { source: "STRIPE", manuallyMarkedPaidAt: null }, organiserCard: false, cents: 0 },
-  ])("nothing when $why", async ({ payment, organiserCard, cents }) => {
-    expect(await ask(payment, organiserCard, cents)).toEqual({});
+    // #3949 (owner decision, 22 Oct 2026): the cancel raises the organiser's hand-back, never a card refund.
+    { why: "a joiner's booking the organiser paid by internet banking is refunded to them by hand", payment: { source: "INTERNET_BANKING", manuallyMarkedPaidAt: null }, organiserCard: false, cents: 20_000, organiserByBank: true },
+  ])("nothing when $why", async ({ payment, organiserCard, cents, organiserByBank }) => {
+    expect(await ask(payment, organiserCard, cents, organiserByBank)).toEqual({});
   });
 });

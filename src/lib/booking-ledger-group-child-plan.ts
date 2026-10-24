@@ -23,7 +23,7 @@
  *           up to what the settlement collected post nothing, and the child is
  *           refused (`GROUP_SHARES_DO_NOT_RECONCILE`), never guessed.
  *   refund  `planGroupSettlementRefundLine` for a mirror plan's frozen share,
- *           only once the mirror is written (`refundedAmountCents > 0`, the
+ *           only once the mirror is written (`mirrorPlanShareWritten`, the
  *           replay's own test); an unmirrored plan is the replay's to post.
  *   kept    an organiser cancel froze no CANCELLED snapshot (nor any kept or
  *           hand-back figure on its event), so the kept figure is the live
@@ -44,7 +44,7 @@
  *           and refund are in the child's refunds, made or owed, and come back
  *           out by its key (`organiserCardAppealRefundsFromRows`).
  */
-import type { BookingStatus, ManualRefundTaskStatus, PaymentSource } from "@prisma/client";
+import type { BookingStatus, ManualRefundTaskDirection, ManualRefundTaskKind, ManualRefundTaskStatus, PaymentSource } from "@prisma/client";
 
 import type { BackPostRefusal } from "@/lib/booking-ledger-back-post-report";
 import {
@@ -62,6 +62,7 @@ import {
   type OrganiserChildRefundEvidence,
 } from "@/lib/group-settlement-refund-plan";
 import { isEditRefundHandBackTask, isRefundRequestHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
+import { isGroupSettlementMirrorHandBackKind } from "@/lib/group-settlement-mirror-kinds";
 import { isOrganiserChildAppealRefundKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 
@@ -141,25 +142,69 @@ export function groupSettledChildKeptFrom(
  *    completed task's amount is what it settled; non-review kinds cannot be
  *    repriced), so the planner takes it back out to read the refunds as the
  *    cancel left them.
+ *  - `completedOtherMirrorWritesCents` (#3949, `INV-PAY-137`): every OTHER
+ *    completion that writes an Internet Banking child's mirror - an edit's
+ *    hand-back, the joiner's own cancellation's (keyless,
+ *    `isGroupSettlementMirrorHandBackKind`) and a refund-direction edit review.
+ *    They are in `refundedAmountCents` and are NOT the plan's: the "is the
+ *    plan's share written?" test takes them out (`mirrorPlanShareWritten`).
+ *    The kept figure keeps them in: an edit's or a review's paid before the
+ *    cancel were refunds it counted, an edit's paid after it the open
+ *    hand-backs it netted (a review is refused after it), the same cents
+ *    either way; a joiner-cancelled child takes its kept figure from its own
+ *    snapshot.
  *
- * An open or dismissed refund-request hand-back counts for neither: it moved
+ * An open or dismissed refund-request hand-back counts for none: it moved
  * nothing, and the cancel never counted it.
  */
-export type GroupChildHandBacks = { openEditRefundHandBackCents: number; completedRefundRequestHandBackCents: number };
+export type GroupChildHandBacks = {
+  openEditRefundHandBackCents: number;
+  completedRefundRequestHandBackCents: number;
+  completedOtherMirrorWritesCents: number;
+};
 
 const OPEN: ManualRefundTaskStatus = "OPEN";
 const COMPLETED: ManualRefundTaskStatus = "COMPLETED";
+const EDIT_FINANCIAL_REVIEW: ManualRefundTaskKind = "EDIT_FINANCIAL_REVIEW";
+const REFUND_TO_MEMBER: ManualRefundTaskDirection = "REFUND_TO_MEMBER";
 
 export function groupChildHandBacksFromRows(
   paymentId: string,
-  tasks: ReadonlyArray<{ kind: string | null; status: string; occurrenceKey: string | null; paymentId: string | null; amountCents: number | null }>,
+  tasks: ReadonlyArray<{
+    kind: string | null;
+    status: string;
+    occurrenceKey: string | null;
+    paymentId: string | null;
+    amountCents: number | null;
+    settlementDirection: string | null;
+  }>,
 ): GroupChildHandBacks {
   const sum = (matches: (task: (typeof tasks)[number]) => boolean) =>
     tasks.filter((task) => task.paymentId === paymentId && matches(task)).reduce((total, task) => total + (task.amountCents ?? 0), 0);
   return {
     openEditRefundHandBackCents: sum((task) => task.status === OPEN && isEditRefundHandBackTask(task)),
     completedRefundRequestHandBackCents: sum((task) => task.status === COMPLETED && isRefundRequestHandBackTask(task)),
+    completedOtherMirrorWritesCents: sum(
+      (task) =>
+        task.status === COMPLETED &&
+        ((isGroupSettlementMirrorHandBackKind(task) && !isRefundRequestHandBackTask(task)) ||
+          (task.kind === EDIT_FINANCIAL_REVIEW && task.settlementDirection === REFUND_TO_MEMBER)),
+    ),
   };
+}
+
+/**
+ * #3949 (`INV-PAY-137`): HAS A MIRROR PLAN'S SHARE BEEN WRITTEN ON THIS CHILD?
+ * Before #3949 nothing but the organiser cancel moved an organiser-settled
+ * child's `refundedAmountCents`, so any figure above zero meant "mirrored".
+ * An Internet Banking child's paid-back edit and appeal hand-backs now move it
+ * too, so the plan's share is written exactly when the total is above what
+ * those hand-backs moved. The one test the cancel's recovery replay
+ * (`executeGroupSettlementRefundPlan`) and this planner both ask, so the two
+ * never disagree on whether the plan's refund is on the child.
+ */
+export function mirrorPlanShareWritten(refundedAmountCents: number, handBacks: GroupChildHandBacks): boolean {
+  return refundedAmountCents - handBacks.completedRefundRequestHandBackCents - handBacks.completedOtherMirrorWritesCents > 0;
 }
 
 /**
@@ -273,8 +318,11 @@ export function planGroupChildLines(input: {
   const plannedRefundCents = mirror ? (deserializeRefundPlan(settlement.refundPlan).get(child.id) ?? 0) : 0;
   // The refunds as the cancel left them: an appeal's card refund since is not its (#3956).
   const refundedBeforeAppealsCents = Math.max(0, payment.refundedAmountCents - input.appealRefunds.recordedCents);
-  const mirrored = refundedBeforeAppealsCents > 0;
-  if (mirror && mirrored) {
+  // #3949: a paid-back edit or appeal hand-back is in the total, and is not the plan's.
+  const mirrored = mirrorPlanShareWritten(refundedBeforeAppealsCents, input.handBacks);
+  // #3949 review round 3: only a child the organiser's cancel claimed (cancelled, no member cancel's snapshot) holds the plan's refund.
+  const claimedByGroupCancel = child.status === "CANCELLED" && child.cancelledWithoutSnapshot;
+  if (mirror && mirrored && claimedByGroupCancel) {
     const refund = planGroupSettlementRefundLine({ settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: plannedRefundCents });
     if (refund) {
       postings.push(refund);
@@ -301,7 +349,7 @@ export function planGroupChildLines(input: {
     cancellationKeptCents = groupSettledChildKeptFrom(
       now,
       planKind === "mirror"
-        ? { kind: "mirror", plannedRefundCents: mirror && refundedAtCancelCents > 0 ? 0 : plannedRefundCents }
+        ? { kind: "mirror", plannedRefundCents: mirror && mirrored ? 0 : plannedRefundCents }
         : {
             kind: "per-child",
             committedRefundCents: Math.max(0, input.perChildCommittedRefundCents! - input.appealRefunds.committedCents),

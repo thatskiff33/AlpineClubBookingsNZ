@@ -556,7 +556,6 @@ export async function enqueueRefundRequestRefundRecovery({
   });
 }
 
-import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import {
   BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX,
   CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX,
@@ -567,8 +566,8 @@ import {
   buildCapacityClaimFailedRefundRecoveryIdempotencyKey,
   buildCapacityClaimFailedRefundStripeKeyPrefix,
   buildDuplicateCaptureRefundRecoveryIdempotencyKey,
-  buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking,
   buildDuplicateCaptureRefundStripeKeyPrefix,
+  duplicateCaptureIntentIdForRecoveryKey,
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
@@ -860,10 +859,10 @@ export async function recordCapacityClaimFailedRefundRecoveryInlineError({
  * replays with backoff. The processor replays the frozen plan under the stored
  * inline Stripe key prefix (`duplicate_capture_refund_<bookingId>_<pi>`), so a
  * refund that succeeded on Stripe but was never recorded is replayed, never
- * repeated. One operation per (booking, duplicate intent); the per-booking key
- * prefix is also the adjudication marker that keeps the refund direction
- * stable when BOTH captures' webhooks replay (see
- * findOtherDuplicateCaptureRefundOperation).
+ * repeated. One operation per (booking, duplicate intent); its key names the
+ * capture it refunds and so OWNS it: the guard reads owned intents through
+ * `listDuplicateCaptureRefundIntentIds` (`duplicate-capture-ownership.ts`)
+ * and never counts one as the settlement (#4211).
  */
 export async function enqueueDuplicateCaptureRefundRecovery({
   bookingId,
@@ -895,38 +894,6 @@ export async function enqueueDuplicateCaptureRefundRecovery({
     ),
     allocationPlan,
     store,
-  });
-}
-
-/**
- * The duplicate-capture adjudication lookup (#1992): returns the existing
- * duplicate-capture refund operation for this booking that targets a DIFFERENT
- * intent, or null. Callers run this under lock(1) BEFORE enqueueing a new
- * duplicate-capture refund: if some other intent's duplicate refund was already
- * adjudicated for the booking, the arriving intent is the SETTLEMENT side of
- * that pair and must not be refunded — otherwise interleaved webhook replays of
- * the two captures would refund both sides and settle the booking at zero net
- * cash.
- */
-export async function findOtherDuplicateCaptureRefundOperation({
-  bookingId,
-  paymentIntentId,
-  store = prisma,
-}: {
-  bookingId: string;
-  paymentIntentId: string;
-  store?: PaymentRecoveryStore;
-}) {
-  return store.paymentRecoveryOperation.findFirst({
-    where: {
-      // #4146: on the booking's index, and the prefix matched literally: Prisma's
-      // `startsWith` is `LIKE`, which reads a `_` in the booking id as any character.
-      bookingId,
-      idempotencyKey: {
-        ...exactPrefix(buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(bookingId)),
-        not: buildDuplicateCaptureRefundRecoveryIdempotencyKey(bookingId, paymentIntentId),
-      },
-    },
   });
 }
 
@@ -2170,20 +2137,21 @@ async function processBookingModificationRefundOperation(
       : closeCapacityRaceRefundRecordingEvent({ ...refunded, actorMemberId: null }, close));
     return;
   }
-  const duplicateCapturePrefix =
-    buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(operation.bookingId);
-  if (operation.idempotencyKey.startsWith(duplicateCapturePrefix)) {
+  // The duplicate intent id is the suffix of the operation's per-booking
+  // idempotency key.
+  const duplicatePaymentIntentId = duplicateCaptureIntentIdForRecoveryKey(
+    operation.bookingId,
+    operation.idempotencyKey,
+  );
+  if (duplicatePaymentIntentId !== null) {
     if (await completePaymentRecoveryOperation(operation.id, { lossExpected: true })) {
       await recordDuplicateCaptureRefundEvent({
         bookingId: operation.bookingId,
         amountCents: operation.amountCents,
-        // The duplicate intent id is the suffix of the operation's per-booking
-        // idempotency key. The settling intent is not persisted on the
-        // operation, so the replay records it as null (the inline path, which
-        // owns the common case, carries the settling intent).
-        duplicatePaymentIntentId: operation.idempotencyKey.slice(
-          duplicateCapturePrefix.length,
-        ),
+        // The settling intent is not persisted on the operation, so the replay
+        // records it as null (the inline path, which owns the common case,
+        // carries the settling intent).
+        duplicatePaymentIntentId,
         settledPaymentIntentId: null,
       });
     }
@@ -2465,17 +2433,11 @@ async function processCreateAdditionalPaymentIntentOperation(
         `Booking ${operation.bookingId} not found for edit-financial-review charge recovery`,
       );
     }
-    if (booking.status === BookingStatus.CANCELLED) {
-      // Same reasoning as the ordinary path's cancelled-booking skip (#1358):
-      // the cancel flow retired this booking's additional intents, so minting a
-      // live one here would resurrect a collectable that must never be captured.
-      logger.info(
-        { operationId: operation.id, bookingId: operation.bookingId },
-        "Skipping edit-financial-review charge recovery for cancelled booking",
-      );
-      await completePaymentRecoveryOperation(operation.id);
-      return;
-    }
+    // #1358: the cancel flow retired a cancelled booking's asks, so a mint here would resurrect one
+    // nobody can pay (#4272). Its uncollected shares are recorded and the row closed instead.
+    const { closeCancelledEditReviewChargeReplay } = await import("@/lib/edit-financial-review-charge-cancelled");
+    const cancelledReplay = { format, operation, bookingModificationId, memberId: bookingOwner(booking).member.id ?? null };
+    if (await closeCancelledEditReviewChargeReplay({ ...cancelledReplay, status: booking.status })) return;
     const synced = await syncEditFinancialReviewChargeRequest({
       format,
       bookingId: operation.bookingId,
@@ -2685,6 +2647,8 @@ async function processCreateAdditionalPaymentIntentOperation(
      * being processed is already this debt's durable retry, and a second row for
      * one debt is a second debt.
      */
+    // #4272: a cancellation landing mid-replay takes the cancelled path, not a retry.
+    if (synced.outcome === "not-raised" && (await closeCancelledEditReviewChargeReplay(cancelledReplay))) return;
     if (!EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY[synced.outcome]) {
       throw new Error(
         `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents, format)} still owed); leaving the recovery operation open to retry`,

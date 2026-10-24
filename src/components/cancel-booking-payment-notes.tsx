@@ -6,6 +6,7 @@ import {
   bookingCancelledRefundMade,
   bookingCancelledRefundSentence,
   type OrganiserRefundMethod,
+  organiserByHandRefundSentence,
   ownCardRefundPendingSentence,
   ownCardRefundWithShortfallSentence,
 } from "@/lib/booking-modified-email-copy";
@@ -95,9 +96,17 @@ export function ForcedRefundNote({
     creditRefundAmountCents: number;
     creditRefundPercentage: number;
   };
-  forced: "credit" | "organiser_card";
+  forced: "credit" | "organiser_card" | "organiser_by_hand";
   format: ClubFormat;
 }) {
+  // #3949 (owner decision, 22 Oct 2026): the organiser paid by Internet Banking, so the club repays them by bank transfer.
+  if (forced === "organiser_by_hand") {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="cancel-organiser-by-hand-refund-note">
+        {organiserByHandRefundSentence(formatCents(preview.refundAmountCents, format))} ({preview.refundPercentage}% refund)
+      </p>
+    );
+  }
   return forced === "organiser_card" ? (
     <OrganiserCardRefundNote
       refundAmountCents={preview.refundAmountCents}

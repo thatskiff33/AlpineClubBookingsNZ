@@ -62,7 +62,7 @@ export function assertSafeExactPrefixRaceDbUrl(url: string): void {
 let prisma: PrismaClient;
 let exactContains: typeof import("@/lib/prisma-exact-prefix")["exactContains"];
 let exactPrefix: typeof import("@/lib/prisma-exact-prefix")["exactPrefix"];
-let findOtherDuplicateCaptureRefundOperation: typeof import("@/lib/payment-recovery")["findOtherDuplicateCaptureRefundOperation"];
+let duplicateCaptureOwnership: typeof import("@/lib/duplicate-capture-ownership");
 let keys: typeof import("@/lib/payment-recovery-keys");
 let handBack: typeof import("@/lib/group-organiser-hand-back-rules");
 
@@ -88,7 +88,7 @@ async function clean(): Promise<void> {
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
       ({ exactPrefix, exactContains } = await import("@/lib/prisma-exact-prefix"));
-      ({ findOtherDuplicateCaptureRefundOperation } = await import("@/lib/payment-recovery"));
+      duplicateCaptureOwnership = await import("@/lib/duplicate-capture-ownership");
       keys = await import("@/lib/payment-recovery-keys");
       handBack = await import("@/lib/group-organiser-hand-back-rules");
 
@@ -220,15 +220,35 @@ async function clean(): Promise<void> {
       // B's row is in place from the contrast case. C's key starts with A's
       // prefix literally (C's id is A's id plus `_x`), so only the booking scope
       // rules it out. The A row below is no duplicate-capture key; it matches
-      // A's prefix only as a LIKE pattern, so only the escape rules it out.
+      // A's prefix only as a LIKE pattern, so the escape rules it out. Since
+      // #4211 the lookup also parses each key literally, which would hide a lost
+      // escape, so the read itself (its exported `where`) is asserted too.
       await prisma.paymentRecoveryOperation.createMany({
         data: [
           recoveryRow(BOOKING_C, keys.buildDuplicateCaptureRefundRecoveryIdempotencyKey(BOOKING_C, "pi_race_4146_c")),
           recoveryRow(BOOKING_A, "duplicate-capture-race-4146-b-1-not-a-duplicate-capture-key"),
         ],
       });
-      expect(await findOtherDuplicateCaptureRefundOperation({ bookingId: BOOKING_A, paymentIntentId: "pi_race_4146_a" })).toBeNull();
-      // A's own row for a different intent is still found.
+      const { duplicateCaptureRefundOperationWhere, listDuplicateCaptureRefundIntentIds } = duplicateCaptureOwnership;
+      const read = async () =>
+        (
+          await prisma.paymentRecoveryOperation.findMany({
+            where: duplicateCaptureRefundOperationWhere(BOOKING_A),
+            select: { idempotencyKey: true },
+          })
+        ).map((row) => row.idempotencyKey);
+      // Premise: the decoy is a LIKE match for A's unescaped prefix.
+      expect(
+        await prisma.paymentRecoveryOperation.count({
+          where: {
+            bookingId: BOOKING_A,
+            idempotencyKey: { startsWith: keys.buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(BOOKING_A) },
+          },
+        }),
+      ).toBe(1);
+      expect(await read()).toEqual([]);
+      expect(await listDuplicateCaptureRefundIntentIds({ bookingId: BOOKING_A, store: prisma })).toEqual([]);
+      // A's own row is still found, and names its intent.
       await prisma.paymentRecoveryOperation.create({
         data: {
           type: "REFUND_BOOKING_MODIFICATION",
@@ -239,8 +259,8 @@ async function clean(): Promise<void> {
           idempotencyKey: keys.buildDuplicateCaptureRefundRecoveryIdempotencyKey(BOOKING_A, "pi_race_4146_a2"),
         },
       });
-      const found = await findOtherDuplicateCaptureRefundOperation({ bookingId: BOOKING_A, paymentIntentId: "pi_race_4146_a" });
-      expect(found?.bookingId).toBe(BOOKING_A);
+      expect(await read()).toEqual([keys.buildDuplicateCaptureRefundRecoveryIdempotencyKey(BOOKING_A, "pi_race_4146_a2")]);
+      expect(await listDuplicateCaptureRefundIntentIds({ bookingId: BOOKING_A, store: prisma })).toEqual(["pi_race_4146_a2"]);
     });
 
     it("a group settlement's hand-back tasks exclude another settlement's supplementary task", async () => {

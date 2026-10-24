@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { readStripeErrorFields } from "@/lib/stripe-errors";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import {
   beginSavedCardChargeAttempt,
   SAVED_CARD_CHARGE_REASON,
@@ -842,10 +843,7 @@ export async function POST(
       );
     }
 
-    if (
-      reconciliation.outcome === "duplicate_capture_refunded" ||
-      reconciliation.outcome === "duplicate_capture_refund_failed"
-    ) {
+    if (settledByAnotherCapture(reconciliation.outcome)) {
       // #1992 — the booking had ALREADY been settled by a different capture
       // (e.g. the member paid an in-flight /pay link intent in the same
       // window), so the charge this route just made was duplicate money. The
@@ -860,13 +858,15 @@ export async function POST(
       return NextResponse.json({
         success: true,
         status: "PAID",
-        charged: false,
+        charged: reconciliation.outcome === "duplicate_capture_kept", // #4211: kept, so it stands charged
         duplicateChargeRefunded:
           reconciliation.outcome === "duplicate_capture_refunded",
         message:
           reconciliation.outcome === "duplicate_capture_refunded"
             ? "The booking was already paid by another payment; this duplicate charge was automatically refunded in full."
-            : "The booking was already paid by another payment; the refund of this duplicate charge failed inline and has been queued for automatic retry. Admins have been alerted.",
+            : reconciliation.outcome === "duplicate_capture_kept"
+              ? "The booking was already paid by another payment, and the app cannot tell which of the payments to keep, so this charge was kept and nothing was refunded. Admins have been asked to check by hand."
+              : "The booking was already paid by another payment; the refund of this duplicate charge failed inline and has been queued for automatic retry. Admins have been alerted.",
       });
     }
 

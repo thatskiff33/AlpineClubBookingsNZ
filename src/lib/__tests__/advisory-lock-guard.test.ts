@@ -157,6 +157,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "convergeCreditNoteSpentOutsideApp#1",
+    tier: "GLOBAL",
+    reason:
+      "Releasing a booking's applied credit changes what it owes, so the converge (#4219) joins the cancel/capture/refund cohort on the global key before the member's credit-ledger key: a concurrent cancel's restore or a capture must not read the applied credit between the release row and the slice change. Global first, then the member key, as the checklist orders them.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "POST /api/admin/hut-leaders#1",
     tier: "GLOBAL",
     reason:
@@ -528,7 +535,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "resolveManualRefundTask#1",
     tier: "GLOBAL",
     reason:
-      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only) → the per-anchor xero-supplementary-invoice key LAST (#3947, owner decision 22 Oct 2026: an invoice-route review charge queues its edit's supplementary invoice in this transaction through enqueueEditReviewChargeInvoiceInTransaction, so the next share, behind it on this key, sees it; only the outbox row is written, the kick runs after the commit, and no holder of that key takes another). #4042: also taken for a group organiser's hand-back, which each later joiner's claim grows under this key while it is OPEN, so a growth and a completion never interleave.",
+      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only) → the per-anchor xero-supplementary-invoice key LAST (#3947, owner decision 22 Oct 2026: an invoice-route review charge queues its edit's supplementary invoice in this transaction through enqueueEditReviewChargeInvoiceInTransaction, so the next share, behind it on this key, sees it; only the outbox row is written, the kick runs after the commit, and no holder of that key takes another). #4042: also taken for a group organiser's hand-back, which each later joiner's claim grows under this key while it is OPEN, so a growth and a completion never interleave. #3949 (INV-PAY-137): an edit's or appeal's hand-back on a joiner the organiser paid for by Internet Banking then takes the child's Payment row (lockPaymentForRefundedTotal) before its cap read and holds it to the mirror write - global, then the row.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1435,7 +1442,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // the Stripe settle, the Internet Banking settle, and (review F1) the
   // recovery runner's claim hold, the re-issue door, the increase's
   // fold-close and the manual-payment reversal, each before the recovery row;
-  // still one site, no new key.
+  // still one site, no new key. #3949: also by a group child's Internet Banking
+  // hand-back route (after its completion's lock(1), before the cap read and
+  // the mirror write) and the organiser cancel's recovery replay (no lock(1),
+  // before it reads whether the plan's share is written).
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.

@@ -377,14 +377,15 @@ export function PriceSummaryCard({
               </div>
             )}
 
-            {quote.chargeRefusal && (
-              // #3653: the organiser paid by card; the save refuses this charge.
+            {(quote.chargeRefusal || quote.priceChangeRefusal) && (
+              // #3653: the organiser paid by card; the save refuses this charge. #3949: or the organiser paid by
+              // Internet Banking and is part-way through cancelling the group; the save refuses any price change.
               <p
                 role="alert"
-                data-testid="organiser-charge-refusal"
+                data-testid={quote.priceChangeRefusal ? "organiser-price-change-refusal" : "organiser-charge-refusal"}
                 className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11"
               >
-                {quote.chargeRefusal}
+                {quote.priceChangeRefusal ?? quote.chargeRefusal}
               </p>
             )}
 
@@ -404,7 +405,7 @@ export function PriceSummaryCard({
               </p>
             )}
 
-            {quote.netChargeCents < 0 && quote.settlementOptions && (
+            {quote.netChargeCents < 0 && quote.settlementOptions && !quote.priceChangeRefusal && (
               <div className="space-y-2 rounded-md border p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="font-medium">Return method</p>
@@ -419,7 +420,7 @@ export function PriceSummaryCard({
                   // #3653: the organiser paid, so the organiser is refunded.
                   <p data-testid="organiser-refund-notice">
                     {quote.settlementOptions.cardRefundAmountCents > 0
-                      ? `Refunded to the group organiser's card: ${formatCents(quote.settlementOptions.cardRefundAmountCents, format)} (${quote.settlementOptions.cardRefundPercentage}%). The organiser paid for this booking, so the refund goes back to them.`
+                      ? `${quote.settlementOptions.organiserRefundByBankTransfer ? "To be refunded to the group organiser by bank transfer" : "Refunded to the group organiser's card"}: ${formatCents(quote.settlementOptions.cardRefundAmountCents, format)} (${quote.settlementOptions.cardRefundPercentage}%). The organiser paid for this booking, so the refund goes back to them.`
                       : "No refund is available for this reduction under the current policy."}
                   </p>
                 ) : quote.settlementOptions.requiresSettlementMethod ? (

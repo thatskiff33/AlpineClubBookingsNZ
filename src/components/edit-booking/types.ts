@@ -257,8 +257,10 @@ export interface SettlementOptions {
   accountCreditPercentage: number;
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
-  /** #3653: paid for by the group organiser; the reduction goes back to their card. */
+  /** #3653, #3949: paid for by the group organiser; the reduction goes back to them. */
   returnsToOrganiser: boolean;
+  /** #3949: by bank transfer, the organiser having paid by Internet Banking; else to their card. */
+  organiserRefundByBankTransfer: boolean;
 }
 
 export interface QuoteResult {
@@ -285,6 +287,12 @@ export interface QuoteResult {
    * verbatim; Save stays off while it is set.
    */
   chargeRefusal?: string | null;
+  /**
+   * #3949: set when the save would refuse ANY price change because the group organiser paid by Internet Banking and
+   * is part-way through cancelling the group. The server's sentence, shown verbatim; no refund is offered and Save
+   * stays off while it is set.
+   */
+  priceChangeRefusal?: string | null;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;

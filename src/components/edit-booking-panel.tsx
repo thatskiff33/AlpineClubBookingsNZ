@@ -1874,8 +1874,7 @@ export function EditBookingPanel({
             >
               <p className="font-medium">Return method</p>
               <p className="text-xs text-muted-foreground">
-                Moving both bookings brings money back on the other booking.
-                Choose where it goes; the same choice covers both.
+                Moving both bookings brings money back on the other booking.{(activeLinkedMoveState?.prompt.combinedOrganiserRefundCents ?? 0) > 0 ? " Choose where yours goes; the same choice covers every booking you paid for. A group organiser's refund goes back to them." : " Choose where it goes; the same choice covers both."}
               </p>
               <label className="flex cursor-pointer items-start gap-2">
                 <input
@@ -1936,7 +1935,7 @@ export function EditBookingPanel({
                 saving ||
                 quoteLoading ||
                 !quote ||
-                !capacityOk || Boolean(quote.chargeRefusal) /* #3653 */ ||
+                !capacityOk || Boolean(quote.chargeRefusal) /* #3653 */ || Boolean(quote.priceChangeRefusal) /* #3949 */ ||
                 (settlementRequired && !settlementMethod) ||
                 (linkedMoveSettlementRequired &&
                   linkedMoveChoice === "MOVE_BOTH" &&

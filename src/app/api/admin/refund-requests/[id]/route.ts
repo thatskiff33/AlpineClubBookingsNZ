@@ -35,6 +35,8 @@ import { formatStayDate } from "@/lib/club-time";
 import { clubFormat } from "@/lib/club-format-server";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
+import { bankTransferRefundPayee } from "@/lib/group-organiser-paid";
+import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
 import {
   OrganiserChildRefundRefusedError,
   organiserCardAppealCap,
@@ -268,7 +270,7 @@ export async function PUT(
           bookingId: booking.id,
           paymentId: payment.id,
           refundRequestId: id,
-          amountCents: bankTransferCents,
+          amountCents: bankTransferCents, booking: { ...booking, payment: lockedPayment }, // #3949: names the payee
         });
         // A row already holds this request's key (left by an earlier approval
         // of it), so nobody would be asked to send this money. Refuse rather
@@ -288,7 +290,7 @@ export async function PUT(
         return { kind: "handBackNotRaised" as const };
       }
       // Thrown after the claim, so the claim rolls back with it.
-      if (err instanceof OrganiserChildRefundRefusedError) {
+      if (err instanceof OrganiserChildRefundRefusedError || err instanceof GroupCancelInProgressError) {
         return { kind: "organiserCardRefused" as const, message: err.message };
       }
       throw err;
@@ -554,7 +556,7 @@ export async function PUT(
           firstName: refundRequest.member.firstName,
           amountCents: approvedAmountCents,
           bankTransferCents,
-          organiserCardRefund,
+          organiserCardRefund, bankTransferPayee: bankTransferRefundPayee(booking), // #3949
           adminNotes: adminNotes ?? null,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
@@ -577,7 +579,7 @@ export async function PUT(
             approvedAmountCents,
             bankTransferCents,
             money.cents,
-            organiserCardRefund,
+            organiserCardRefund, bankTransferRefundPayee(booking), // #3949: the group organiser, when they paid by internet banking
           ),
           adminNotes: adminNotes ?? "",
           // #2268: pre-composed optional line — the flat body has no

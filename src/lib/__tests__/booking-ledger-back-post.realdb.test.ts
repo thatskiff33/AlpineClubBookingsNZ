@@ -755,7 +755,7 @@ async function lines(bookingId: string) {
       const { raiseRefundRequestHandBack } = await import("@/lib/edit-refund-hand-back");
       expect(
         await prisma.$transaction((tx) =>
-          raiseRefundRequestHandBack(tx, { bookingId: id!, paymentId: payment.id, refundRequestId: `${PREFIX}appeal`, amountCents: 1_000 }),
+          raiseRefundRequestHandBack(tx, { bookingId: id!, paymentId: payment.id, refundRequestId: `${PREFIX}appeal`, amountCents: 1_000, booking: { organiserSettled: false, parentBookingId: null, payment: null } }),
         ),
       ).toBe(1);
 

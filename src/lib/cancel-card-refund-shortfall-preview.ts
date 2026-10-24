@@ -4,7 +4,7 @@ import type { PaymentSource, PrismaClient } from "@prisma/client";
 
 import { cancelRaisesCardShortfall, sizeCancelCardShortfall, sumHeadroomCents, type CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
 import { nonCardChargeHeadroom } from "@/lib/cancel-card-refund-shortfall-settle";
-import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { paidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
@@ -73,7 +73,7 @@ export async function previewCancelCardRefundSplit(
  *
  * Asked only where the cancel raises those parts (`cancelRaisesCardShortfall`,
  * on the branch `paidCancellationBranch` gives the method the cancel would be
- * forced to, `forcedCancelRefundMethod`). Read in ONE read-only `RepeatableRead`
+ * forced to, `cancelRefundDisposition`). Read in ONE read-only `RepeatableRead`
  * snapshot, so the payment's record and its ledger rows - two statements - are
  * read as of one moment; it takes no lock, writes nothing and calls no
  * provider. Advisory, like the rest of the preview: the cancel re-plans under
@@ -88,13 +88,22 @@ export async function cancelPreviewCardShortfall(
     payment: { id: string; source: PaymentSource | string | null; manuallyMarkedPaidAt: Date | null };
     /** The joiner's booking the group organiser paid by card (`organiserChildCancelBasis` answered). */
     organiserCard: boolean;
+    /** #3949: the joiner's booking the group organiser paid by Internet Banking (`paidByOrganiserInternetBanking`). */
+    organiserByBank: boolean;
     /** The preview's card-tier refund. */
     refundAmountCents: number;
   },
 ): Promise<{ cardShortfall?: CancelCardRefundSplit }> {
   const { payment, organiserCard, refundAmountCents } = params;
-  const refundMethod = forcedCancelRefundMethod(payment.source, organiserCard) === "credit" ? "credit" : "card";
-  const manualDisposition = !organiserCard && Boolean(payment.manuallyMarkedPaidAt);
+  // The cancel's own method and disposition (`cancelRefundDisposition`, #3949), so the preview asks this only where
+  // the cancel raises the card's parts. The card is the method a preview asks about.
+  const { refundMethod, manualDisposition } = cancelRefundDisposition({
+    paymentSource: payment.source,
+    organiserCard,
+    organiserByBank: params.organiserByBank,
+    manuallyMarkedPaid: Boolean(payment.manuallyMarkedPaidAt),
+    requested: "card",
+  });
   const branch = paidCancellationBranch({ manualDisposition, refundMethod, refundAmountCents });
   if (!cancelRaisesCardShortfall({ branch, organiserCard })) return {};
   const cardShortfall = await client.$transaction(

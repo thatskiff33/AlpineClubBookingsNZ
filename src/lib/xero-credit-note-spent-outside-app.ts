@@ -23,6 +23,18 @@
 /** `XeroSyncOperation.lastErrorCode` for this failure (not an HTTP status). */
 export const CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE = "CREDIT_NOTE_SPENT_OUTSIDE_APP";
 
+/** One of a credit note's allocations in Xero: the invoice it went to, in exact cents. */
+export interface XeroNoteAllocation {
+  invoiceId: string;
+  cents: number;
+}
+
+/** One payment made against a credit note in Xero (a refund of its credit), in exact cents. */
+export interface XeroNotePayment {
+  paymentId: string;
+  cents: number;
+}
+
 export class CreditNoteSpentOutsideAppError extends Error {
   readonly code = CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE;
 
@@ -32,11 +44,26 @@ export class CreditNoteSpentOutsideAppError extends Error {
     /** What Xero says is left, in cents. */
     readonly remainingCents: number,
     readonly requestedCents: number,
-    options?: { cause?: unknown },
+    options?: {
+      cause?: unknown;
+      /** The note's allocations in Xero, from the confirming read. */
+      xeroAllocations?: readonly XeroNoteAllocation[];
+      /** The payments made against the note in Xero (refunds), from the same read. */
+      xeroPayments?: readonly XeroNotePayment[];
+      /** The note's total in Xero, from the same read; null when it was not an exact cent figure. */
+      totalCents?: number | null;
+    },
   ) {
-    super(message, options);
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "CreditNoteSpentOutsideAppError";
+    this.xeroAllocations = options?.xeroAllocations ?? [];
+    this.xeroPayments = options?.xeroPayments ?? [];
+    this.totalCents = options?.totalCents ?? null;
   }
+
+  readonly xeroAllocations: readonly XeroNoteAllocation[];
+  readonly xeroPayments: readonly XeroNotePayment[];
+  readonly totalCents: number | null;
 }
 
 export function isCreditNoteSpentOutsideAppError(

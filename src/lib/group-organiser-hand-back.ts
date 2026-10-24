@@ -1,7 +1,7 @@
 import { ManualRefundTaskKind, ManualRefundTaskStatus, Prisma } from "@prisma/client";
 
 import { groupSettlementRefundKey } from "@/lib/booking-ledger-posting-keys";
-import { bookingOwner } from "@/lib/booking-owner";
+import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner-name";
 import { ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES } from "@/lib/booking-status";
 import { NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import type { ClubFormat } from "@/lib/club-format";
@@ -85,16 +85,6 @@ export function composeGroupHandBackReason(input: {
     if (reason.length <= MANUAL_REFUND_TASK_REASON_MAX) return reason;
   }
   return head.slice(0, MANUAL_REFUND_TASK_REASON_MAX);
-}
-
-const OWNER_NAME_SELECT = Prisma.validator<Prisma.BookingSelect>()({
-  member: { select: { firstName: true, lastName: true } },
-  organisation: { select: { name: true, email: true } },
-});
-
-function ownerName(booking: Prisma.BookingGetPayload<{ select: typeof OWNER_NAME_SELECT }>): string {
-  const { firstName, lastName } = bookingOwner(booking).member;
-  return [firstName, lastName].filter(Boolean).join(" ");
 }
 
 /**
@@ -203,9 +193,9 @@ async function joinersOwed(
   }
   const unnamed = [...new Set([...ledgerCents.keys(), input.claimedChildId])].filter((id) => !owed.has(id));
   const names = unnamed.length
-    ? await tx.booking.findMany({ where: { id: { in: unnamed } }, select: { id: true, ...OWNER_NAME_SELECT } })
+    ? await tx.booking.findMany({ where: { id: { in: unnamed } }, select: { id: true, ...BOOKING_OWNER_NAME_SELECT } })
     : [];
-  const nameOf = new Map(names.map((booking) => [booking.id, ownerName(booking)]));
+  const nameOf = new Map(names.map((booking) => [booking.id, bookingOwnerName(booking)]));
   for (const [bookingId, cents] of ledgerCents) {
     const known = owed.get(bookingId);
     owed.set(bookingId, { bookingId, name: known?.name ?? nameOf.get(bookingId) ?? "a joiner", cents });
@@ -289,7 +279,7 @@ export async function alertUnsentGroupOrganiserHandBacks(input: {
     if (unsent.length === 0) return 0;
     const organiserBooking = await prisma.booking.findUniqueOrThrow({
       where: { id: input.organiserBookingId },
-      select: { checkIn: true, checkOut: true, ...OWNER_NAME_SELECT },
+      select: { checkIn: true, checkOut: true, ...BOOKING_OWNER_NAME_SELECT },
     });
     for (const { id: taskId } of unsent) {
       try {
@@ -301,7 +291,7 @@ export async function alertUnsentGroupOrganiserHandBacks(input: {
         const claimedAt = claimed.record.alertClaimedAt;
         const outcome = await sendAdminManualRefundTaskAlert(
           {
-            memberName: ownerName(organiserBooking),
+            memberName: bookingOwnerName(organiserBooking),
             checkIn: organiserBooking.checkIn,
             checkOut: organiserBooking.checkOut,
             refundAmountCents: claimed.amountCents ?? 0,

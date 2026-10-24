@@ -1309,34 +1309,36 @@ only after they appeared in Preview. Existing policies migrate to `HOLD`.
 
 ## INV-MOD-028
 
-**Exact stored sold-price evidence, or an explicit financial review. Never an
-estimate of historical money.** (#3031, epic #2797.)
+**Every night a guest holds has a value, read from stored data and adding up to
+the guest's stored total** (#4305, epic #4302, owner decision D1, 23 Oct 2026).
+This replaces epic #2797's "exact evidence or review, never an estimate" as the
+valuation rule. Its one home is `valueStrandNights`
+(`src/lib/strand-night-valuation.ts`).
 
-A guest strand is **exactly priced** when every night it holds carries a stored
-non-negative integer `BookingGuestNight.priceCents` and those prices sum to
-`BookingGuest.priceCents` to the cent.
+A night's row is usable when its `BookingGuestNight.priceCents` is a
+non-negative integer. A missing, `NULL`, negative or non-integer row leaves the
+night unvalued. A stored `0` is a real price (a comped night). Provenance never
+changes a value.
 
-**`priceCents` is nullable, and a `NULL` is the column's own statement that the
-night's sold price is NOT KNOWN** (#3170, epic #2797). It joins the class this
-rule already had — an absent, negative or non-integer row — as an ABSENCE of
-usable evidence. It is never a zero: a stored `0` is a real sold price
-(a comped night) and reconciles like any other. So the definition above does not
-change shape and restates in one sentence: **a strand holding a `NULL` night is
-not exact, and goes to a person.** An evenly-split
-backfilled strand carries an integer on every night, so it still reconciles and
-still prices as exact — the consequence this rule was written to preserve. A
-`RATE_DERIVED` row (#3531) is exact night by night: the backfill writes it only
-where the rate table, over the strand as sold, reproduces the stored total.
+- **R1.** Every night has a usable row and the rows sum to
+  `BookingGuest.priceCents`: the rows are the values. Such a strand is **exactly
+  priced**.
+- **R2.** Otherwise, if some nights are unvalued and the usable rows sum to no
+  more than the total, those rows keep their figures and the remainder is split
+  evenly over the unvalued nights.
+- **R3.** Otherwise the total is split evenly over every night.
+- **A negative stored total** values every night at $0 and is flagged for #2745
+  (D11).
 
-Only a PARKED edit writes a `NULL`, and only for a night it cannot value: one the
-strand already held whose row carried no usable money, or one the edit newly puts
-that strand on while its stored total is frozen. A night an edit BUYS at a price
-the member is charged carries that integer.
+An even split puts leftover cents one each on the earliest nights
+(`evenlySplitCents`).
 
-The rest of this rule: how a blank is filled and what the repair does not
-repair, `INV-MOD-036` to `-040`; where it holds, the five paths that park and
-every other night-price writer, `INV-MOD-041` to `-048`; the limits it does not
-close and where all of it is pinned, `INV-MOD-049` to `-054`.
+**No edit calls it until wave A2 does.** Until then a live edit still follows
+`INV-MOD-036` to `-054`. A strand that is not exactly priced parks for review;
+at individual-night grain an `EVEN_SPLIT` or `UNKNOWN` row also parks, while a
+`RATE_DERIVED` row (#3531) does not. Only a parked edit writes a `NULL`: for a
+held night with no usable row, or one newly added while the stored total is
+frozen. A night an edit buys carries the integer charged.
 
 ## INV-MOD-036
 

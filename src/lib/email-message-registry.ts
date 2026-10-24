@@ -5,6 +5,7 @@ import {
 } from "@/lib/email-message-audit-defaults";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { ibSettlementFigureParagraph } from "@/lib/ib-settlement-figure-note";
+import { duplicateCaptureKeptAction, duplicateCaptureKeptParagraph } from "@/lib/duplicate-capture-kept-note";
 import {
   adminSplitSettlementCancelledLeadParagraph,
   adminSplitSettlementUnpaidLeadParagraph,
@@ -109,6 +110,9 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // person - the stored figure kept, or the cash not what the booking owes.
   // Admin audience, unmuteable sender, delivery-locked below, for #3638's reason.
   "admin-bank-transfer-settlement-figure",
+  // #4211: a card capture the duplicate-capture guard kept on a paid booking with
+  // no usable record of which payment settled it. Same audience, sender and lock.
+  "admin-duplicate-capture-kept",
   // #2761: the alert for an automatically refunded late capture on a cancelled
   // booking. Ships to admins, so admin audience — but through the unmuteable
   // sender rather than sendToAdmins, because it reports an automatic MONEY
@@ -231,6 +235,9 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // #3979: the same lock - a recorded bank-transfer figure that is wrong sizes
   // every later refund and credit, and this mail is what pulls a person to check it.
   "admin-bank-transfer-settlement-figure",
+  // #4211: the same lock - nothing was refunded automatically and the club may
+  // hold the price twice, so muting it would leave the money with nobody.
+  "admin-duplicate-capture-kept",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -630,6 +637,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "settlementFigureNote",
     "xeroObjectUrl",
   ],
+  // #4211: {{duplicateCaptureKeptNote}} says why nothing was refunded (no record,
+  // or a recorded settler that no longer holds money) and names the other payment.
+  "admin-duplicate-capture-kept": ["memberName", "reviewUrl", "duplicateCaptureKeptNote", "duplicateCaptureKeptAction"],
   // #2761: memberName and reviewUrl as its siblings, plus the two tokens that
   // carry WHICH of the two populations this was. An override that drops
   // {{bookingStateLabel}} or {{refundOutcomeNote}} leaves an operator unable to
@@ -932,6 +942,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Xero reported a booking's bank-transfer invoice paid, and the app either kept the amount it had recorded instead of the cash the invoice collected, or the cash is not what the booking owes",
     frequency:
       "Once per booking and invoice, when the payment is first recorded - the record is written with the payment, and the email is re-sent on a later Xero delivery only if it had not gone out",
+  },
+  "admin-duplicate-capture-kept": {
+    triggerSummary:
+      "A card payment arrived on a booking that was already paid and the app had no usable record of which payment settled it - while another payment on it still held money, or because the recorded payment no longer holds money - so it kept the payment and refunded nothing",
+    frequency:
+      "On a payment or a repeat of it reaching such a booking - rare; at most once a day per booking and payment, by a cross-instance cooldown given back when the send throws",
   },
   "admin-manual-refund-task": {
     triggerSummary:
@@ -1561,6 +1577,12 @@ export function sampleValue(token: string): string {
     return ibSettlementFigureParagraph({ keptReason: "folded-refund", owed: null, hasSupplementaryInvoice: false });
   }
   if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
+  // #4211: previewed as the no-record arm, the case every booking paid before
+  // the record existed meets; the released-settler arm is the guard's other reason.
+  if (token === "duplicateCaptureKeptNote") {
+    return duplicateCaptureKeptParagraph({ reason: "not-recorded", otherPaymentIntentId: "pi_example" });
+  }
+  if (token === "duplicateCaptureKeptAction") return duplicateCaptureKeptAction({ otherHoldsMoney: true });
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);
   }
@@ -2108,6 +2130,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "secondInstrumentConflictNote",
   // #3979: the bank-transfer settlement alert's what-needs-a-person sentence.
   "settlementFigureNote",
+  // #4211: the kept-capture alert's why-nothing-was-refunded sentence.
+  "duplicateCaptureKeptNote",
+  "duplicateCaptureKeptAction",
   // #4170: the outside-the-app refund alert's instruction.
   "outsideAppRefundNote",
   // #2774: the same direction as a SUBJECT-length phrase, so the withheld and

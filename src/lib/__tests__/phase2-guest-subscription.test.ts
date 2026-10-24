@@ -958,6 +958,7 @@ describe("P2.3: Guest subscription check", () => {
       daysUntilCheckIn: 30,
       requiresSettlementMethod: true,
       returnsToOrganiser: false,
+      organiserRefundByBankTransfer: false,
     });
   });
 

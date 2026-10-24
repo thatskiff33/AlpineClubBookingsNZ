@@ -19,6 +19,7 @@
  * depend on it.
  */
 import { CARD_REFUND_SHORTFALL_ALERT_BODY, CARD_REFUND_SHORTFALL_ALERT_LEAD } from "@/lib/cancel-card-refund-shortfall-copy";
+import { JOINER_CANCEL_ORGANISER_ALERT_BODY, JOINER_CANCEL_ORGANISER_ALERT_LEAD } from "@/lib/joiner-cancel-organiser-alert-copy";
 
 /**
  * #2268 — compose an OPTIONAL line of an admin-editable plain-text email body.
@@ -281,13 +282,14 @@ export function internetBankingHoldKeptParagraph(
  * #4097 (`INV-PAY-129`): a card cancel whose card refund plan carried less
  * than the refund due, whose remainder the club pays by bank transfer.
  */
-export type ManualRefundTaskAlertSituation = "cash-cancellation" | "group-organiser-internet-banking" | "card-refund-shortfall";
+export type ManualRefundTaskAlertSituation = "cash-cancellation" | "group-organiser-internet-banking" | "card-refund-shortfall" | "joiner-cancel-organiser"; // #3949: a joiner's own cancel
 
 /** Each situation's subject phrase, text heading, amount row label and recipient row label: the cash ones exactly as they always read. */
 const ALERT_WORDS: Record<ManualRefundTaskAlertSituation, { label: string; heading: string; amountLabel: string; recipientLabel: string }> = {
   "cash-cancellation": { label: "cash booking cancelled", heading: "Manual Refund Needed - Cash Booking Cancelled", amountLabel: "Amount to refund", recipientLabel: "Member" },
   "group-organiser-internet-banking": { label: "Internet Banking group cancelled", heading: "Manual Refund Needed - Internet Banking Group Cancelled", amountLabel: "Owed when this alert was sent", recipientLabel: "Organiser" },
   "card-refund-shortfall": { label: "card refund short on a cancelled booking", heading: "Manual Refund Needed - Card Refund Short on a Cancelled Booking", amountLabel: "Amount the card refund could not carry", recipientLabel: "Member" },
+  "joiner-cancel-organiser": { label: "group joiner cancelled, refund to the organiser", heading: "Manual Refund Needed - Group Joiner Cancelled, Refund to the Organiser", amountLabel: "Amount to refund to the organiser", recipientLabel: "Organiser" },
 };
 
 /** The subject phrase (`{{handBackLabel}}`). */
@@ -307,15 +309,13 @@ export const GROUP_HAND_BACK_ALERT_LEAD =
 export const GROUP_HAND_BACK_ALERT_BODY =
   "Each joiner's refund has been recorded in the app's ledger as made, but no money has moved. The hand-back task on the payments board holds the total owed: it grows as each joiner's place is cancelled, and its reason lists each joiner's share. Pay the organiser the total the task shows, then mark it paid back - that records only that the money went, because the refunds are already in the ledger. It cannot be dismissed: if the club decides not to repay the organiser, take it to the treasurer.";
 
+/** A non-cash situation's lead and paragraph: the HTML's warning box and paragraph, and the note's (#4042, #4097, #3949). */
+export const manualRefundTaskAlertLeadAndBody = (situation: ManualRefundTaskAlertSituation): readonly [string, string] | null =>
+  situation === "group-organiser-internet-banking" ? [GROUP_HAND_BACK_ALERT_LEAD, GROUP_HAND_BACK_ALERT_BODY] : situation === "card-refund-shortfall" ? [CARD_REFUND_SHORTFALL_ALERT_LEAD, CARD_REFUND_SHORTFALL_ALERT_BODY] : situation === "joiner-cancel-organiser" ? [JOINER_CANCEL_ORGANISER_ALERT_LEAD, JOINER_CANCEL_ORGANISER_ALERT_BODY] : null;
+
 /** The text body's explaining paragraphs (`{{handBackNote}}`). */
 export function manualRefundTaskAlertNote(situation: ManualRefundTaskAlertSituation): string {
-  if (situation === "group-organiser-internet-banking") {
-    return `${GROUP_HAND_BACK_ALERT_LEAD}\n\n${GROUP_HAND_BACK_ALERT_BODY}`;
-  }
-  if (situation === "card-refund-shortfall") {
-    return `${CARD_REFUND_SHORTFALL_ALERT_LEAD}\n\n${CARD_REFUND_SHORTFALL_ALERT_BODY}`;
-  }
-  return [
+  return manualRefundTaskAlertLeadAndBody(situation)?.join("\n\n") ?? [
     "A booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand - nothing was refunded automatically.",
     "The member's cancellation refund has been worked out under the club's normal policy, but there is no card charge to reverse and no Xero invoice to credit, so the system has raised a hand-back task instead of pretending money moved. The member has been told the club will arrange the refund.",
     "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. If the member declines it, or it was settled another way, dismiss the task with a note.",

@@ -72,6 +72,7 @@ import {
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 
 /**
@@ -1439,9 +1440,9 @@ export async function sendBookingModifiedEmail(params: {
   /**
    * #3827 (D-3813-6, `INV-PAY-117`): the refund is a bank transfer the club
    * still has to send. REQUIRED, as `financialReviewPending` is; the template's
-   * own field says why.
+   * own field says why. #3949: who it goes to, member or group organiser.
    */
-  refundByBankTransfer: boolean;
+  refundByBankTransfer: BankTransferRefundPayee | null;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 },

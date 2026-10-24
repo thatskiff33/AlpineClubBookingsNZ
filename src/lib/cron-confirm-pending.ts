@@ -32,6 +32,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
   savedPaymentMethodForBooking,
@@ -1729,17 +1730,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           continue;
         }
 
-        if (
-          reconciliation.outcome === "duplicate_capture_refunded" ||
-          reconciliation.outcome === "duplicate_capture_refund_failed"
-        ) {
+        if (settledByAnotherCapture(reconciliation.outcome)) {
           // #1992 — the member's in-flight link intent won the race and had
           // already settled the booking; this saved-card charge was the
           // duplicate and was auto-refunded (or its refund is pending in the
-          // recovery cron). The booking IS settled, so it counts as
-          // confirmed, but the settling path already sent the confirmation
-          // email and queued the Xero invoice — repeating either here would
-          // double them up.
+          // recovery cron) or, #4211, kept for an admin to check by hand. The
+          // booking IS settled, so it counts as confirmed, but the settling
+          // path already sent the confirmation email and queued the Xero
+          // invoice — repeating either here would double them up.
           logger.warn(
             {
               bookingId: resolution.booking.id,
@@ -1747,7 +1745,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               outcome: reconciliation.outcome,
               job: "confirmPendingBookings",
             },
-            "Auto-charge captured against a booking already settled by its payment link; the duplicate charge was handed to the #1992 auto-refund"
+            reconciliation.outcome === "duplicate_capture_kept"
+              ? "Auto-charge captured against a booking another payment already settled; with no usable record of which payment to keep, the charge was kept and admins were asked to check by hand"
+              : "Auto-charge captured against a booking already settled by its payment link; the duplicate charge was handed to the #1992 auto-refund"
           );
           result.confirmedBookingIds.push(resolution.booking.id);
           continue;

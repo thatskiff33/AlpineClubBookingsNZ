@@ -635,6 +635,7 @@ describe("#3954: the save refuses options sized before the offset", () => {
           daysUntilCheckIn: 31,
           requiresSettlementMethod: true,
           returnsToOrganiser: false,
+          organiserRefundByBankTransfer: false,
         },
         settlementMethod: "card",
         todayAtClub: TODAY,

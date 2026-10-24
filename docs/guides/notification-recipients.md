@@ -78,7 +78,7 @@ offered to them at all:
 | Payment failures | Finance | A booking payment fails; an expired internet banking hold needs attention because money may be paid against its invoice or Xero cannot read it (#3643); an expired hold is left for reconciliation by hand because its stay has started (#3663); a paid group's unpaid joiners were switched to paying for themselves mid-stay and the treasurer must collect by hand (#3672); or a card payment that went through after its booking was cancelled is held for a treasurer's approval (*Late payment held for approval*, once per payment; if nobody could receive it, the payments cron tries it again a day later while the item is still waiting, #3635) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
 | Bookings bumped | Bookings | A pending booking is bumped by another booking |
-| Xero sync errors | Finance | Xero contact or invoice sync fails |
+| Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292) |
 | Capacity warnings | Bookings | Occupancy is nearing full capacity |
 | Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts |
 | Waitlist offers | Bookings | A waitlist spot is offered to a member |
@@ -94,12 +94,13 @@ offered to them at all:
 
 ### Always-on alerts
 
-Seven alerts are sent outside this grid. They have no checkbox anywhere and cannot
+Eight alerts are sent outside this grid. They have no checkbox anywhere and cannot
 be muted — not here, and not in [Delivery Rules](notification-rules.md), because
 their templates (`admin-email-failure`, `admin-late-capture-auto-refund`,
 `admin-late-capture-hand-back-conflict`, `admin-late-capture-refunded-outside-app`,
 `admin-second-instrument-settlement-conflict`,
-`admin-bank-transfer-settlement-figure`) are locked to always-send:
+`admin-bank-transfer-settlement-figure`, `admin-duplicate-capture-kept`) are
+locked to always-send:
 
 | Alert | Goes to | Sent when |
 | --- | --- | --- |
@@ -110,6 +111,7 @@ their templates (`admin-email-failure`, `admin-late-capture-auto-refund`,
 | *Late payment refunded outside the app - check Xero* | Every admin whose role can **edit** Finance | A card payment that arrived after its booking was cancelled was refunded somewhere other than the app - in the Stripe dashboard, for example (#4170). The app has no record of that refund and raised no Xero credit note, because Xero never received the payment. Sent once per payment, and again by the nightly check if a send failed; money left the club with no record the app wrote, which is why it cannot be switched off |
 | *Booking may have been paid twice — card and Xero* | Every admin whose role can **edit** Finance | A card payment had already settled the booking (or settled it before it was cancelled), and Xero then reported its Internet Banking invoice paid as well. The bank payment is recorded and nothing was refunded or credited automatically, so the mail links the booking and the Xero invoice for a person to reconcile. The club may be holding the price twice, which is why it cannot be switched off |
 | *Bank transfer amount needs checking* | Every admin whose role can **edit** Finance | Xero reported a booking's bank-transfer invoice paid, and the app either kept the amount it had recorded instead of the cash the invoice collected (it could not tie that cash to this booking alone), or the cash is not what the booking owes (#3979). A wrong recorded amount sizes every later refund and credit, which is why it cannot be switched off |
+| *Booking may have been paid twice — check by hand* | Every admin whose role can **edit** Finance | A card payment arrived on a booking that was already paid while another payment on it still held money, and the app had no usable record of which payment settled the booking (paid before it kept one, or the recorded payment no longer holds money), so it kept the card payment and refunded nothing (#4211). At most once a day per payment while the payment repeats |
 
 The first two name the intended recipient's email address and the template that
 failed, so they are operational detail rather than routine notification. The refund

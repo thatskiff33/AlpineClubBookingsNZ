@@ -141,6 +141,7 @@ import {
 } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
 import { readReductionAgainstUnpaidAsk, reductionLeftAfterAskCents } from "@/lib/additional-ask-reduction";
+import { organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions, organiserChildChargeRefusal,
@@ -2503,7 +2504,7 @@ export async function POST(
     priceDiffCents,
     changeFeeCents,
     netChargeCents,
-    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), // #3653: an increase the save refuses
+    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents }), // #3653, #3949: what the save refuses
     // #3954: the part of a reduction that cancels or shrinks the unpaid card
     // ask, and what is left of that ask afterwards (0: nothing left to pay).
     unpaidAskOffsetCents: reduction.offsetCents,

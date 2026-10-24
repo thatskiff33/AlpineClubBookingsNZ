@@ -1277,7 +1277,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000);
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination, refundByBankTransfer: false }),
+      expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination, refundByBankTransfer: null }),
       expect.anything(),
     );
   });
@@ -1330,7 +1330,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       // #4070: no Stripe refund ran, so the member's own wording stands.
-      expect.objectContaining({ refundAmountCents: 3000, refundByBankTransfer: true, refundDestination: "own" }),
+      expect.objectContaining({ refundAmountCents: 3000, refundByBankTransfer: "member", refundDestination: "own" }),
       expect.anything(),
     );
 
@@ -1676,6 +1676,39 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
       expect.anything(),
     );
+  });
+
+  it("#3949 review round 6: refuses a guest add on a place the organiser paid by Internet Banking while the group cancel is part-way through (409)", async () => {
+    const booking = makeBooking({
+      organiserSettled: true,
+      parentBookingId: "organiser_bk",
+      payment: { ...makeBooking().payment, source: "INTERNET_BANKING" },
+    });
+    const tx = makeTx(booking);
+    // The organiser's group is CANCELLED and this child not yet claimed.
+    (tx as any).groupBooking = { findUnique: vi.fn().mockResolvedValue({ status: "CANCELLED" }) };
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+    const { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE } = await import("@/lib/group-cancel-in-progress");
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/bookings/bk1/guests", {
+        method: "POST",
+        body: JSON.stringify({ guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }] }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE);
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   it("creates additional PaymentIntent when adding guest to CONFIRMED booking", async () => {

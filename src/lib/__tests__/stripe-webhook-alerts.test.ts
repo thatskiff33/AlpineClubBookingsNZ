@@ -792,6 +792,112 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  // #4211 review: captured at 15000; a later correction recorded a 2500 fee, so
+  // the booking now owes 17500. Which captures skip the stale-amount check.
+  const SETTLER = "txn-1";
+  it.each([
+    {
+      label: "the recorded settler, the intent pointer since moved to a later row",
+      bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_later_row", settledByTransactionId: SETTLER },
+      handed: true,
+    },
+    {
+      label: "the recorded settler, partly refunded since",
+      bookingStatus: "COMPLETED", rowStatus: "PARTIALLY_REFUNDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_later_row", settledByTransactionId: SETTLER },
+      handed: true,
+    },
+    {
+      label: "F1: a kept or refund-queued duplicate replayed on a PAID booking edited since",
+      bookingStatus: "PAID", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: "txn-other" },
+      handed: true,
+    },
+    {
+      label: "F2: a duplicate's FIRST delivery at a stale amount on a PAID booking",
+      bookingStatus: "PAID", rowStatus: "PENDING", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: "txn-other" },
+      handed: true,
+    },
+    {
+      label: "not widened to an unpaid booking: a stale intent there is refused (#1161)",
+      bookingStatus: "PAYMENT_PENDING", rowStatus: "PENDING", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: null },
+      handed: false,
+    },
+    {
+      label: "not the settler on a booking that is not PAID",
+      bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: "txn-other" },
+      handed: false,
+    },
+    {
+      label: "no settler recorded and the intent pointer names another intent, on an unpaid booking",
+      bookingStatus: "PAYMENT_PENDING", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: null },
+      handed: false,
+    },
+    {
+      label: "the settler's id, but on a row of another payment",
+      bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-elsewhere",
+      payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: SETTLER },
+      handed: false,
+    },
+    {
+      label: "a PAID booking, but the capture's row is on another payment",
+      bookingStatus: "PAID", rowStatus: "SUCCEEDED", rowPaymentId: "payment-elsewhere",
+      payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: "txn-other" },
+      handed: false,
+    },
+  ])("#4211: the stale-amount check skips $label: $handed", async ({ bookingStatus, rowStatus, rowPaymentId, payment, handed }) => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_redelivered_4211",
+      type: "payment_intent.succeeded",
+      data: { object: { id: "pi_settled", amount: 15000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" } },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: SETTLER,
+      paymentId: rowPaymentId,
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 15000,
+      status: rowStatus,
+    });
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      status: bookingStatus,
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+      finalPriceCents: 15000,
+      discountCents: 0,
+      guests: [{ id: "g1" }],
+      member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      payment: { id: "payment-1", status: "SUCCEEDED", changeFeeCents: 2500, ...payment },
+      promoRedemption: null,
+    });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", booking: { id: "booking-1" } });
+
+    const response = await POST(makeRequest());
+
+    if (handed) {
+      // Not re-checked against the later fee: handed to the settle, which keeps or refunds it.
+      expect(response.status).toBe(200);
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: "pi_settled", amountCents: 15000 }),
+      );
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    } else {
+      // Compared with what the booking owes now, and refused.
+      expect(response.status).toBe(500);
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ errorMessage: expect.stringContaining("Expected $175.00") }),
+        CLUB_FORMAT_TEST,
+      );
+    }
+  });
+
   it("uses the deduplicated notifier when credit note creation fails after a refund webhook", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_refund",

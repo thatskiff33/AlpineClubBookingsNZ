@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from "vitest";
  */
 vi.mock("@/lib/late-capture-paid-another-way", () => ({ paidAnotherWayCloseReceiptRecorded: vi.fn() }));
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({ sumRefundCreditNoteCoverageOfRowsCents: vi.fn(async () => 0) }));
+// #4315 item 2: what a re-confirmed follow-up's hand-made note covers, read through its link.
+vi.mock("@/lib/xero-sync", () => ({ sumCoveredRefundCreditNoteCents: vi.fn(async (_p: string, _db: unknown, ids?: string[]) => (ids?.length ? 2_000 : 0)) }));
 
 import { readPaidAnotherWayCash, readPaidAnotherWayCloseShare } from "@/lib/card-refund-paid-another-way-cash";
 
@@ -32,5 +34,70 @@ describe("a capacity race's part to check, as the note pipeline reads its bank c
 
   it("CONTROL: with no cover and no note row (a booking with no invoice), it stays un-noted", async () => {
     await expect(readPaidAnotherWayCash(db({ reviewContext: null }, 0), "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 20_000, awaitingReceiptCents: 0 });
+  });
+});
+
+describe("a cancellation hand-back noted on its own record, as the note pipeline reads its bank cash (#4287, INV-ADDPAY-043)", () => {
+  /** The hand-back, its own note rows, and the `bank-refund-void:` follow-ups whose undo named it. */
+  function handBackDb(noteRows: number, undoneCents: number[] = []) {
+    const row = { id: "task-hand-back", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null, amountCents: 3_000, reviewContext: null };
+    const findMany = vi.fn(async (args: { where: { occurrenceKey?: unknown } }) =>
+      args.where.occurrenceKey ? undoneCents.map((amountCents) => ({ amountCents })) : [row],
+    );
+    return {
+      manualRefundTask: { findMany, findFirst: vi.fn(async () => row) },
+      xeroSyncOperation: { count: vi.fn(async () => noteRows) },
+      xeroObjectLink: {},
+      paymentRecoveryOperation: {},
+    } as never;
+  }
+
+  it("MUTATION: once a note row names it, it is noted bank cash - so a card note's coverage counts it beside its cash", async () => {
+    await expect(readPaidAnotherWayCash(handBackDb(1), "payment-1")).resolves.toEqual({ notedCents: 3_000, unnotedCents: 0, awaitingReceiptCents: 0 });
+    await expect(readPaidAnotherWayCloseShare(handBackDb(1), "payment-1", "task-hand-back")).resolves.toMatchObject({ amountCents: 3_000, uncoveredCents: 3_000 });
+  });
+
+  it("CONTROL: with no note row of its own (the canonical note's, or one the old release absorbed) it is no record here at all - never un-noted", async () => {
+    await expect(readPaidAnotherWayCash(handBackDb(0), "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 0, awaitingReceiptCents: 0 });
+  });
+
+  it("MUTATION (review F1): once its note is voided and the nightly undo took its refund back, it counts for nothing, in both readers", async () => {
+    await expect(readPaidAnotherWayCash(handBackDb(1, [3_000]), "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 0, awaitingReceiptCents: 0 });
+    await expect(readPaidAnotherWayCloseShare(handBackDb(1, [3_000]), "payment-1", "task-hand-back")).resolves.toMatchObject({ amountCents: 0, uncoveredCents: 0 });
+  });
+});
+
+describe("a re-confirmed bank refund (a completed void follow-up) as the note pipeline reads its bank cash (#4315 item 2, INV-ADDPAY-043)", () => {
+  /** The follow-up, its own note rows, hand-made note links naming it, and later follow-ups whose undo named it. */
+  function followUpDb(options: { noteRows?: number; handMadeLinks?: number; undoneCents?: number[] }) {
+    const row = { id: "follow-up", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "bank-refund-void:payment-1:cn-1", amountCents: 2_000, reviewContext: null };
+    const findMany = vi.fn(async (args: { where: { reviewContext?: unknown } }) =>
+      args.where.reviewContext ? (options.undoneCents ?? []).map((amountCents) => ({ amountCents })) : [row],
+    );
+    return {
+      manualRefundTask: { findMany, findFirst: vi.fn(async () => row) },
+      xeroSyncOperation: { count: vi.fn(async () => options.noteRows ?? 0) },
+      xeroObjectLink: { findMany: vi.fn(async () => Array.from({ length: options.handMadeLinks ?? 0 }, (_, i) => ({ xeroObjectId: `cn-hand-${i}` }))) },
+      paymentRecoveryOperation: {},
+    } as never;
+  }
+
+  it("MUTATION: re-confirmed with a fresh note keyed on it, it is noted bank cash at its amount", async () => {
+    await expect(readPaidAnotherWayCash(followUpDb({ noteRows: 1 }), "payment-1")).resolves.toEqual({ notedCents: 2_000, unnotedCents: 0, awaitingReceiptCents: 0 });
+    await expect(readPaidAnotherWayCloseShare(followUpDb({ noteRows: 1 }), "payment-1", "follow-up")).resolves.toMatchObject({ amountCents: 2_000, uncoveredCents: 2_000 });
+  });
+
+  it("MUTATION: re-confirmed with a hand-made note, it is noted, and that note covers it", async () => {
+    await expect(readPaidAnotherWayCash(followUpDb({ handMadeLinks: 1 }), "payment-1")).resolves.toEqual({ notedCents: 2_000, unnotedCents: 0, awaitingReceiptCents: 0 });
+    await expect(readPaidAnotherWayCloseShare(followUpDb({ handMadeLinks: 1 }), "payment-1", "follow-up")).resolves.toMatchObject({ amountCents: 2_000, uncoveredCents: 0 });
+  });
+
+  it("MUTATION: its own note voided and undone in turn, it counts for nothing, in both readers", async () => {
+    await expect(readPaidAnotherWayCash(followUpDb({ noteRows: 1, undoneCents: [2_000] }), "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 0, awaitingReceiptCents: 0 });
+    await expect(readPaidAnotherWayCloseShare(followUpDb({ noteRows: 1, undoneCents: [2_000] }), "payment-1", "follow-up")).resolves.toMatchObject({ amountCents: 0, uncoveredCents: 0 });
+  });
+
+  it("CONTROL: with no note of its own it is no record here", async () => {
+    await expect(readPaidAnotherWayCash(followUpDb({}), "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 0, awaitingReceiptCents: 0 });
   });
 });

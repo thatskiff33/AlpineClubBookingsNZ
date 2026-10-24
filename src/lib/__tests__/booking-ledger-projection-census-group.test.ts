@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import {
   groupChildHandBacksFromRows,
+  mirrorPlanShareWritten,
   organiserCardAppealRefundsFromRows,
   organiserChildRefundEvidenceFromRows,
   planGroupChildLines,
@@ -432,12 +433,13 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
   const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 } };
   const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
   const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING" as const } }];
-  const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string, amountCents: number) => ({
-    kind: "CANCELLED_BOOKING_HAND_BACK" as const,
+  const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string | null, amountCents: number, kind: "CANCELLED_BOOKING_HAND_BACK" | "EDIT_FINANCIAL_REVIEW" = "CANCELLED_BOOKING_HAND_BACK") => ({
+    kind,
     status,
     occurrenceKey,
     paymentId: "pay-1",
     amountCents,
+    settlementDirection: kind === "EDIT_FINANCIAL_REVIEW" && status === "COMPLETED" ? ("REFUND_TO_MEMBER" as const) : null,
   });
   const kept = (refundedAmountCents: number, tasks: ReturnType<typeof task>[]) => {
     const plan = planGroupChildLines({
@@ -473,6 +475,61 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
   it("a paid appeal never stands in for an unwritten mirror: the plan's share is still added", () => {
     // Defensive: refunds made since the cancel that are the appeal's say nothing about the mirror.
     expect(kept(1_000, [task("COMPLETED", appeal, 1_000)])).toBe(2_250);
+  });
+
+  // #3949 (`INV-PAY-137`): an IB child's paid-back edit hand-back is in `refundedAmountCents` too,
+  // so it no longer says the plan's share is written; only what is above the paid-back hand-backs does.
+  it("#3949: a paid-back edit hand-back never stands in for an unwritten mirror either", () => {
+    const edit = "edit-refund-hand-back:m1";
+    // Only the $10 hand-back is on the mirror: the plan's $22.50 is still added to what goes back.
+    expect(kept(1_000, [task("COMPLETED", edit, 1_000)])).toBe(1_250);
+    // Hand-back paid before the cancel, plan sized net of it and written beside it: kept the same.
+    expect(kept(3_250, [task("COMPLETED", edit, 1_000)])).toBe(1_250);
+    const handBacks = groupChildHandBacksFromRows("pay-1", [task("COMPLETED", edit, 1_000), task("COMPLETED", appeal, 500)]);
+    expect(handBacks.completedOtherMirrorWritesCents).toBe(1_000);
+    expect(mirrorPlanShareWritten(1_500, handBacks)).toBe(false);
+    expect(mirrorPlanShareWritten(1_501, handBacks)).toBe(true);
+    // And the plan's refund line is posted only once its share is on the mirror.
+    const planRefund = (refundedAmountCents: number) => {
+      const plan = planGroupChildLines({
+        child,
+        settlement,
+        siblings,
+        perChildCommittedRefundCents: null,
+        payment: { status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING", amountCents: 4_500, refundedAmountCents },
+        handBacks: groupChildHandBacksFromRows("pay-1", [task("COMPLETED", edit, 1_000)]),
+        appealRefunds: { recordedCents: 0, committedCents: 0 },
+      });
+      if (plan?.kind !== "plan") throw new Error("expected a plan");
+      return plan.postings.filter((posting) => posting.kind === "BANK_REFUND").map((posting) => posting.unitCents);
+    };
+    expect(planRefund(1_000)).toEqual([]);
+    expect(planRefund(3_250)).toEqual([2_250]);
+  });
+
+  it("review round 3: a review's refund and a joiner cancel's hand-back are mirror writes too, and a child the cancel never claimed plans no refund", () => {
+    const writes = groupChildHandBacksFromRows("pay-1", [
+      task("COMPLETED", null, 700),
+      task("COMPLETED", null, 300, "EDIT_FINANCIAL_REVIEW"),
+      task("DISMISSED", null, 900),
+      { ...task("COMPLETED", null, 400, "EDIT_FINANCIAL_REVIEW"), settlementDirection: "CHARGE_TO_MEMBER" as never },
+    ]);
+    expect(writes.completedOtherMirrorWritesCents).toBe(1_000);
+    expect(mirrorPlanShareWritten(1_000, writes)).toBe(false);
+    // A child its member cancelled (a snapshot), or a live one mid-cancel, holds no plan refund line however much is on its mirror.
+    for (const unclaimed of [{ ...child, cancelledWithoutSnapshot: false }, { ...child, status: "PAID" as const, cancelledWithoutSnapshot: false }]) {
+      const plan = planGroupChildLines({
+        child: unclaimed as never,
+        settlement,
+        siblings,
+        perChildCommittedRefundCents: null,
+        payment: { status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING", amountCents: 4_500, refundedAmountCents: 3_250 },
+        handBacks: groupChildHandBacksFromRows("pay-1", []),
+        appealRefunds: { recordedCents: 0, committedCents: 0 },
+      });
+      if (plan?.kind !== "plan") throw new Error("expected a plan");
+      expect(plan.postings.filter((posting) => posting.kind === "BANK_REFUND")).toEqual([]);
+    }
   });
 
   it("the census plans the same, and once the back-post posts it the child agrees: no in-flight or dismissed hand-back to acknowledge", () => {

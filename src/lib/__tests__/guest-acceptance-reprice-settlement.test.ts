@@ -417,7 +417,7 @@ describe("after commit: the card refund, the Xero correction, the email and the 
     expect(h.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay-1", amountCents: 6000 }));
     expectQueuedOnce(h.enqueueBookingModificationRefundRecovery, queued, 6000);
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 6000, refundDestination: destination, refundByBankTransfer: false }),
+      expect.objectContaining({ refundAmountCents: 6000, refundDestination: destination, refundByBankTransfer: null }),
       CLUB_FORMAT_TEST,
     );
   });
@@ -512,7 +512,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
     expect(h.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 6000, refundByBankTransfer: true, refundDestination: "own" }),
+      expect.objectContaining({ refundAmountCents: 6000, refundByBankTransfer: "member", refundDestination: "own" }),
       CLUB_FORMAT_TEST,
     );
   });
@@ -531,7 +531,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundByBankTransfer: false }),
+      expect.objectContaining({ refundByBankTransfer: null }),
       CLUB_FORMAT_TEST,
     );
   });

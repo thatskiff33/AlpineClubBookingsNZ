@@ -143,6 +143,8 @@ export function HostingCoverageLinkedMovePrompt({
                       combinedChangeFeeCents: prompt.combinedChangeFeeCents,
                       combinedPolicyRetainedCents:
                         prompt.combinedPolicyRetainedCents,
+                      combinedOrganiserRefundCents: prompt.combinedOrganiserRefundCents,
+                      combinedOrganiserBankTransferRefundCents: prompt.combinedOrganiserBankTransferRefundCents,
                       settlementMethodRequired: prompt.settlementMethodRequired,
                       settlementMethodChosen: prompt.settlementMethodChosen,
                       bothChangeFeesCharged: prompt.bothChangeFeesCharged,
@@ -151,7 +153,9 @@ export function HostingCoverageLinkedMovePrompt({
                   </span>
                 ) : (
                   <span className="block text-xs text-muted-foreground">
-                    {`Not available: there are not enough beds free on the new nights for ${linkedMoveAllBookingsPhrase(prompt.linkedBookings.length)}.`}
+                    {prompt.unavailableBecauseGroupCancelInProgress
+                      ? "Not available right now: a group organiser is part-way through cancelling the group one of these bookings is in, so its place cannot be moved until that finishes."
+                      : `Not available: there are not enough beds free on the new nights for ${linkedMoveAllBookingsPhrase(prompt.linkedBookings.length)}.`}
                   </span>
                 )}
               </span>

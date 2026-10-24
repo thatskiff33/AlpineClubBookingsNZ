@@ -3598,6 +3598,33 @@ does too, and both would post. So `resolveManualRefundTask` takes
   to PENDING and deletes that OPEN task in one transaction under the same key
   (`PUT /api/admin/refund-requests/[id]#2`, `INV-LOCK-001`).
 
+**#3949 adds no key.** An edit's or an appeal's hand-back on a joiner the
+organiser paid for by Internet Banking (`INV-PAY-137`) completes under the
+`lock(1)` above and then the child's `Payment` row (`lockPaymentForRefundedTotal`),
+taken in the route choice before it counts the payment's transactions and reads
+the cap, and held to the mirror write (a refund-direction edit review takes the
+same order):
+global, then the row (`INV-LOCK-002`), the order every refunded-total writer
+takes it in. The organiser cancel's per-child claim holds `lock(1)` and writes
+the same row, so the two serialise on the global key. Its recovery replay
+(`executeGroupSettlementRefundPlan`) holds no `lock(1)`, so it now takes that
+`Payment` row before it reads whether the plan's share is written
+(`readGroupChildMirrorForPlanReplay`): a completion holds the row before its
+claim, so the replay reads the refunded total and the paid-back task together.
+The organiser cancel freezes its plan outside the lock and claims each child
+under `lock(1)` after it; a completion, and an edit's or appeal's raise of a
+new hand-back to the organiser, each under its own `lock(1)`, is refused while
+the group is CANCELLED and the child not yet claimed (`groupCancelInProgress`,
+the child's status read under that lock), so the plan it froze cannot also be
+paid by hand. Any price change of such a child - a price difference or a change fee,
+each tested on its own - is refused the same way
+(`refuseOrganiserBankChildPriceChangeInGroupCancel`), in
+`applyPaymentAdjustments` and in the guest-add door, which settles itself, each
+under the door's `lock(1)` with the booking re-read after it, so an
+account-credit choice cannot pay the joiner either. The edit quote asks the
+same function unlocked, as advice.
+The replay plans nothing for a child the cancel did not claim.
+
 **#3791 adds the per-member credit-ledger lock to that completion, after
 `lock(1)`, the claim and the closure's re-price**, on the account-credit route
 only where nothing was captured: the share goes back through
@@ -3953,6 +3980,12 @@ the pre-#4217 code). Now:
 - The Internet Banking settle (#4094) takes it after `lock(1)`, the lodge key
   and the member key, and re-reads the payment's figures under it; its rows are
   read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged.
+- A cancellation hand-back's completion decides whether its Xero note stands
+  on its own task (#4287, `INV-ADDPAY-043`,
+  `cancellationHandBackNotedOnItsOwnRecord`) only after its allocation has
+  taken the `Payment` row, on the same transaction, and relies on that lock:
+  a second completion on the payment reads the first's committed note row, so
+  two hand-backs never both take the canonical route. It adds no key.
 - The waiting ask's recovery row comes after the `Payment` row too (#4217
   review). A reduction that gives credit back has written the `Payment` row
   before its retire closes the recovery; the runner's claim hold
@@ -4071,14 +4104,23 @@ writers happening to hold `lock(1)`. The reversal takes the first two tiers only
 it writes no amount and reads no credit ledger, but it does restore booking
 status and can release capacity.
 
-`lock(1)` also serialises the duplicate-capture adjudication (#1992). When a
-Stripe success arrives for an already-PAID booking, `markBookingPaymentSucceeded`
-refunds the arriving capture only if it is a DIFFERENT intent from a captured
-PRIMARY transaction still holding net cash, AND no duplicate-capture refund
-operation (`duplicate_capture_<bookingId>_<pi>`) already exists for the booking
-against another intent. That check-then-enqueue is race-free only because every
-caller runs it under `lock(1)`: interleaved webhook replays of BOTH captures
-would otherwise refund both sides and settle the booking at zero net cash. The
+`lock(1)` also serialises the duplicate-capture adjudication (#1992,
+`duplicate-capture-guard.ts`). The PAID claim that wins under `lock(1)` writes
+`Payment.settledByTransactionId` in its own transaction (#4211), so exactly one
+settlement is ever recorded, and the reversal that clears it holds the same
+lock. When a Stripe success arrives for an already-PAID booking,
+`markBookingPaymentSucceeded` keeps the recorded settler, and refunds any other
+arriving capture with no refund history (#1765) only while the recorded settler
+still holds net cash, is a card capture that neither the superseded-intent
+machinery (b′: a live operation, or #4227 a failed-later refund open rows owe
+back in full) nor a duplicate-capture refund operation
+(`duplicate_capture_<bookingId>_<pi>`, at any status) owns, or is a non-card
+settlement (#2262); with no usable record it refunds nothing new and alerts.
+An arriving capture the superseded machinery holds is never refunded on top
+(#4283).
+That check-then-enqueue is race-free only because every caller runs it under
+`lock(1)`: interleaved webhook replays of BOTH captures would otherwise refund
+both sides and settle the booking at zero net cash. The
 refund itself follows the #1349 enqueue-then-execute shape — the durable
 operation (with the slice pinned to the duplicate's own transaction) commits
 with the detection, and the Stripe refund executes after commit under the
@@ -4884,6 +4926,26 @@ DB-enforced NULL-distinct unique column, `openStateKey`, present on both the new
 - **The on-request notification is post-commit and fire-and-forget** — it is
   never awaited inside the request path and its failure is logged, so an alert
   outage cannot fail or roll back a member's request.
+
+## A credit note spent outside the app: global, then the member's credit ledger (#4219)
+
+`convergeCreditNoteSpentOutsideApp` releases a booking's applied credit and writes
+the funding lot down. Releasing applied credit changes what the booking owes, so
+it is a settlement-money writer: it takes the global key (`INV-LOCK-002`: global,
+then the member's credit-ledger key) and excludes the cancel, capture and refund
+writers that take the global key as well as the credit writers that take the
+member's. It re-reads the slice, the lot and the write-downs, and checks the
+cancel-settled and deallocation-fence preconditions, under both keys. The Xero
+read that confirmed the signal, and the allocations and payments it listed, happened
+before the transaction, so no provider call is held inside it. That evidence can
+go stale in the milliseconds between: if the treasurer reverses the outside spend
+then, the routine writes down credit Xero has given back. The amount is capped by
+the booking's slice, and the inbound mirror (the next change of #4219) is what
+restores a reversed spend. There is no separate claim row: a repeat finds the
+write-down already counted and writes nothing, and a concurrent run that lost the
+race finds the booking converged or its slice already shrunk below what was refused. Registered in `advisory-lock-guard.test.ts`
+(`convergeCreditNoteSpentOutsideApp#1`); proved against real PostgreSQL by
+`credit-note-spent-outside-app.realdb.test.ts`.
 
 ## Credit restoration: exactly-once is now STRUCTURAL (#1636)
 

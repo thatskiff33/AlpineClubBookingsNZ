@@ -13,6 +13,7 @@
  * sender does live in `src/lib/email/booking.ts` — booking-scoped, so the
  * per-booking "No emails" switch withholds it.
  */
+import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import {
   refundRequestApprovedRefundSentence,
   type OrganiserCardAppealRefund,
@@ -71,6 +72,8 @@ export function refundRequestApprovedTemplate(data: {
   bankTransferCents: number;
   /** #3956: the refund goes to the group organiser's card - made or on its way; null otherwise. */
   organiserCardRefund?: OrganiserCardAppealRefund | null;
+  /** #3949: who the bank-transfer part goes to; the member when absent. */
+  bankTransferPayee?: BankTransferRefundPayee;
   adminNotes: string | null;
   checkIn: Date;
   checkOut: Date;
@@ -87,6 +90,7 @@ export function refundRequestApprovedTemplate(data: {
         data.bankTransferCents,
         (cents) => formatCents(cents, format),
         data.organiserCardRefund ?? null,
+        data.bankTransferPayee ?? "member",
       ),
     outcomeTone: "success",
     adminNotes: data.adminNotes,

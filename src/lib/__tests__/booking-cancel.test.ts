@@ -400,6 +400,8 @@ describe("cancelBooking credit refunds", () => {
             booking: {
               findUnique: fenceBooking.findUnique,
               findMany: fenceBooking.findMany,
+              // #3949 review round 4: the organiser's booking, read to name the organiser a joiner's cancel repays.
+              findUniqueOrThrow: vi.fn(async () => ({ member: { firstName: "Olive", lastName: "Organiser" }, organisation: null })),
               update: mocks.bookingUpdate,
               updateMany: mocks.bookingUpdateMany,
             },
@@ -2975,6 +2977,31 @@ describe("cancelBooking credit refunds", () => {
         expect(mocks.txManualRefundTaskCreateMany).not.toHaveBeenCalled();
         expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
         expect(mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0].situation).toBeUndefined();
+      });
+
+      it("#3949 (owner decision, 22 Oct 2026): a joiner's own cancel of a place the organiser paid for by internet banking raises the organiser's hand-back, emails the organiser wording and alerts with it", async () => {
+        const base = (await mocks.txBookingFindUnique()) as { payment: Record<string, unknown> };
+        const child = { ...base, organiserSettled: true, parentBookingId: "organiser_booking", payment: { ...base.payment, source: "INTERNET_BANKING", manuallyMarkedPaidAt: null } };
+        mocks.bookingFindUnique.mockResolvedValue(child);
+        mocks.txBookingFindUnique.mockResolvedValue(child);
+        mocks.txManualRefundTaskCreate.mockResolvedValue({ id: "task_organiser" });
+        prime(0);
+
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
+
+        expect(result).toMatchObject({ status: 200, data: { refundMethod: "manual", organiserRefund: { method: "organiser_by_hand" } } });
+        const reason = mocks.txManualRefundTaskCreate.mock.calls[0][0].data.reason as string;
+        expect(reason).toContain("the group organiser (Olive Organiser) paid for it by internet banking");
+        expect(reason).toContain("to the group organiser by bank transfer");
+        expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("organiser_by_hand");
+        expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
+        const alert = mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0] as { situation: string; memberName: string; reason: string };
+        expect(alert.situation).toBe("joiner-cancel-organiser");
+        // Review round 4: the Organiser row names the organiser, as #4042's alert does; the reason names the joiner;
+        // officer-facing words cite no issue numbers.
+        expect(alert.memberName).toBe("Olive Organiser");
+        expect(alert.reason).toMatch(/cancelled their own place in the group/);
+        for (const words of [reason, alert.reason]) expect(words).not.toMatch(/#\d/);
       });
 
       it("a refund the plan carries in full raises no task and no alert", async () => {

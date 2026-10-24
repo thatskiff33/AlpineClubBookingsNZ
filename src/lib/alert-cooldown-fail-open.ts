@@ -28,6 +28,9 @@ import { claimAlertCooldown } from "@/lib/alert-cooldown";
  * - #3643 Internet Banking hold kept or released (`internet-banking-hold-kept.ts`),
  *   once ever: a released hold is never selected again. Its after-send handling
  *   (give back, owed marker) is its own, documented there.
+ * - #4211 kept duplicate capture (`duplicate-capture-guard.ts`), 24 h,
+ *   `SETTLEMENT_MONEY_ALERT_REPEAT_MS`: raised by a payment arriving, and a
+ *   repeat of it may never come; the claim is given back when the send throws.
  *
  * @returns true when the caller should send.
  */

@@ -93,6 +93,8 @@ const CANDIDATE_BOOKING_SELECT = {
       transactions: {
         select: { status: true },
       },
+      // #3949: an Internet Banking organiser child's settle mirror is capture evidence.
+      booking: { select: { organiserSettled: true, parentBookingId: true } },
     },
   },
 } satisfies Prisma.BookingSelect;

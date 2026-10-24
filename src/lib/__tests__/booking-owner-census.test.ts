@@ -475,8 +475,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:70",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:86",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
-  "src/app/api/bookings/[id]/guests/route.ts:343",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:366",
+  "src/app/api/bookings/[id]/guests/route.ts:344",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:367",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:271",
   "src/app/api/bookings/[id]/refund-request/route.ts:49",
@@ -487,26 +487,27 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1080",
-  "src/lib/booking-cancel.ts:2490",
-  "src/lib/booking-cancel.ts:541",
+  "src/lib/booking-cancel.ts:2510",
+  "src/lib/booking-cancel.ts:543",
   "src/lib/booking-date-modification-service.ts:406",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
   "src/lib/booking-guest-removal-service.ts:460",
   "src/lib/booking-guest-removal-service.ts:796",
-  "src/lib/booking-linked-date-move-service.ts:240",
+  "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:618",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:324",
+  "src/lib/manual-refund-task-queue-payload.ts:342",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:343",
   "src/lib/waitlist-cross-lodge.ts:531",
   "src/lib/waitlist.ts:1091",
   "src/lib/waitlist.ts:949",
+  "src/lib/xero-applied-credit-spent-outside-app.ts:158",
   "src/lib/xero-period-lock-guard.ts:569",
 ];
 
@@ -522,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1344",
-  "src/lib/payment-recovery.ts:2596",
-  "src/lib/payment-recovery.ts:2648",
+  "src/lib/payment-recovery.ts:2558",
+  "src/lib/payment-recovery.ts:2610",
   "src/lib/xero-admin-health.ts:394",
 ];
 
@@ -785,15 +786,15 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
   "src/lib/booking-change-request-admin-decision.ts:88",
-  "src/lib/cron-additional-payment-reminders.ts:440",
-  "src/lib/cron-confirm-pending.ts:209",
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
-  // #4042: the organiser hand-back's owner-name select, shared by its two
-  // booking reads. Verified by hand: written through
-  // `Prisma.validator<Prisma.BookingSelect>()` and spread into
+  // #4042, #3949: the owner-name select, moved out of the organiser hand-back to
+  // be shared with the joiner cancel's organiser name. Verified by hand: written
+  // through `Prisma.validator<Prisma.BookingSelect>()` and spread into
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
-  "src/lib/group-organiser-hand-back.ts:92",
+  "src/lib/booking-owner-name.ts:12",
+  "src/lib/cron-additional-payment-reminders.ts:440",
+  "src/lib/cron-confirm-pending.ts:210",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
@@ -808,7 +809,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:104",
+  "src/lib/payment-reconciliation.ts:100",
   "src/lib/stuck-state-dashboard.ts:620",
   "src/lib/xero-booking-repair-types.ts:225",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",

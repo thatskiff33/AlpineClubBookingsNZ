@@ -643,8 +643,8 @@ home for that judgement), its still-active local mirror is stale drift that
 cleanup deactivates, and active non-cancelled coverage above the cash
 refund-note target is reported as its own drift class
 (`overCoveredStripeRefundPayments`) because it silently suppresses every
-later refund note. A non-Stripe payment keeps ONE refund note; a refund
-request's own note (`INV-PAY-118`) is outside that rule. A void deactivates
+later refund note. A non-Stripe payment keeps ONE refund note; a request's
+own (`INV-PAY-118`) and a later hand-back's (`INV-ADDPAY-043`) are outside it. A void deactivates
 either mirror (`INV-ADDPAY-041`).
 Operator repair: `scripts/xero-refund-note-link-repair.ts`
 ([runbook](../xero/ARCHITECTURE.md)).
@@ -678,8 +678,8 @@ alert; only the nightly follow-up moves the detail, line and total together
   Xero.
   Pinned by `xero-credit-note-repairs`, `xero-booking-repair` and
   `xero-bt-repair-request-cash`.
-- **Below the detail, Xero is short a note** (#4230), usually for a later
-  refund folded into the payment's one note. The alert says so; adding folded
+- **Below the detail, Xero is short a note** (#4230), usually card parts or
+  older refunds folded into one note (`INV-ADDPAY-043`). The alert says so; adding folded
   cash to the recount would silence it. Pinned by
   `xero-bt-recount-handbacks`.
 
@@ -1652,3 +1652,37 @@ decision and would need its own owner decision.
   the person's pick included, writes before then.
   Pinned by `bank-refund-void-follow-up` (unit and realdb),
   `bank-refund-void-answer` and `advisory-lock-guard`.
+
+### INV-ADDPAY-043
+
+- **A later cancellation hand-back on a bank transfer gets its own Xero note,
+  keyed and sized on its task** (#4287, owner decision 22 Oct 2026). An
+  `INTERNET_BANKING` payment's first refund takes its one canonical note
+  (`INV-ADDPAY-020`). A completed cancellation hand-back is noted on its own
+  task (`paidAnotherWayTaskId`, as a close is, `INV-PAY-122`) when the
+  payment has that note linked or on its way (a create row PENDING, RUNNING,
+  FAILED or unreadable: two equal hand-backs would else dedupe into one
+  canonical row), or has any
+  STRIPE transaction row, in any status, or card refund row (a wrong "own" is
+  harmless; `cancellationHandBackNotedOnItsOwnRecord`). Sized from its task less its
+  own notes (`readPaidAnotherWayCloseShare`), never payment-wide cash less all
+  coverage, which floors at nothing once card refunds exist.
+- **Its cash counts beside its note while its refund stands.** Once a note row
+  names it (any status), it - or a re-confirmed `bank-refund-void:` follow-up
+  (#4315 item 2), also once a hand-made note is linked to it - is noted bank
+  cash (`readPaidAnotherWayCash`), so a card note is
+  never squeezed by that note, less what a follow-up naming it took back
+  (`INV-ADDPAY-042`): undone or dismissed, nothing.
+- **No new term in the recount or the coverage sum; three in the cash
+  reader** (the record, its netting, a hand-made note's cover in its share).
+  They count its `perDelta` link; its payload names the hand-back
+  (`handBackTaskId`), so a void is matched to it.
+- **Decided under the completion's Payment row lock** (#4217), after the
+  allocation. No new advisory key.
+- **Never for a historical refund.** Only the completion asks; an older
+  absorbed refund stays on the #4230 deploy note's list.
+- **The card writers still absorb** (a refund request's card part, the
+  webhook's card delta, a late capture's note): #4312, for the owner.
+  Pinned by `xero-bt-per-refund-notes` (realdb), `bank-hand-back-refund-note`,
+  `card-refund-paid-another-way-cash`, `manual-refund-task`,
+  `payment-lock-before-rebuild` and `xero-bt-recount-handbacks`.

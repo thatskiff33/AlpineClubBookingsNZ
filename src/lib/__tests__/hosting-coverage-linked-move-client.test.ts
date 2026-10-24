@@ -73,6 +73,11 @@ function body(overrides: Record<string, unknown> = {}) {
 
 describe("reading the linked-move offer (#3232)", () => {
   it("reads the complete body", () => {
+    // #3949 review round 7: the organiser's refunds and the unavailable arm's reason travel too.
+    expect(readHostingCoverageLinkedMovePrompt(body({ combinedOrganiserRefundCents: 400, combinedOrganiserBankTransferRefundCents: 400, linkedMoveAvailable: false, feasibility: "GROUP_CANCEL_IN_PROGRESS" }))).toMatchObject({
+      combinedOrganiserRefundCents: 400, combinedOrganiserBankTransferRefundCents: 400, unavailableBecauseGroupCancelInProgress: true,
+    });
+    expect(readHostingCoverageLinkedMovePrompt(body({ combinedOrganiserRefundCents: 1.5 }))).toBeNull();
     const prompt = readHostingCoverageLinkedMovePrompt(body());
     expect(prompt).not.toBeNull();
     expect(prompt?.acceptStateKey).toBe(KEY_A);
@@ -175,6 +180,8 @@ describe("what the offer says about the money (#3232)", () => {
       combinedRefundCents: 0,
       combinedChangeFeeCents: 0,
       combinedPolicyRetainedCents: 0,
+      combinedOrganiserRefundCents: 0,
+      combinedOrganiserBankTransferRefundCents: 0,
       settlementMethodRequired: false,
       settlementMethodChosen: false,
       bothChangeFeesCharged: true,
@@ -182,6 +189,28 @@ describe("what the offer says about the money (#3232)", () => {
       ...overrides,
     };
   }
+
+  it("#3949 review round 7: says what goes back to a group organiser, by the way they paid, and never as the member's", () => {
+    const bank = formatLinkedMoveMoneySentence(money({ combinedRefundCents: 900, combinedOrganiserRefundCents: 400, combinedOrganiserBankTransferRefundCents: 400 }), CLUB_FORMAT_TEST);
+    expect(bank).toContain("$9.00 would come back to you");
+    expect(bank).toContain("A group organiser paid for a booking in this move, so $4.00 by bank transfer goes back to the group organiser rather than to you.");
+    const card = formatLinkedMoveMoneySentence(money({ combinedOrganiserRefundCents: 400 }), CLUB_FORMAT_TEST);
+    expect(card).toContain("so $4.00 to their card goes back to the group organiser");
+    const both = formatLinkedMoveMoneySentence(money({ combinedOrganiserRefundCents: 700, combinedOrganiserBankTransferRefundCents: 400 }), CLUB_FORMAT_TEST);
+    expect(both).toContain("so $4.00 by bank transfer and $3.00 to their card goes back to the group organiser");
+    expect(formatLinkedMoveMoneySentence(money(), CLUB_FORMAT_TEST)).not.toContain("organiser");
+  });
+
+  it("#3949 review round 7: the one card-or-credit choice covers only the bookings the member paid for", () => {
+    const withOrganiser = formatLinkedMoveMoneySentence(
+      money({ combinedRefundCents: 900, combinedOrganiserRefundCents: 400, settlementMethodRequired: true }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(withOrganiser).toContain("the one choice covers every booking you paid for.");
+    expect(withOrganiser).not.toContain("the one choice covers both bookings");
+    const own = formatLinkedMoveMoneySentence(money({ combinedRefundCents: 900, settlementMethodRequired: true }), CLUB_FORMAT_TEST);
+    expect(own).toContain("the one choice covers both bookings.");
+  });
 
   it("says nothing about a change fee when there is no change fee", () => {
     // A move outside every fee band, an unchanged check-in, a DRAFT. The charged
@@ -374,6 +403,8 @@ describe("the hosting-coverage state-key format (#3232, INV-SSOT-001)", () => {
       combinedRefundCents: 0,
       combinedChangeFeeCents: 50,
       combinedPriceDiffCents: 50,
+      combinedOrganiserRefundCents: 0,
+      combinedOrganiserBankTransferRefundCents: 0,
     });
     const decline = strandedCoverageStateKey(stranded, "b-source");
     for (const key of [accept, decline]) {

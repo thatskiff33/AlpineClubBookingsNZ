@@ -45,7 +45,7 @@ interface CancelPreview {
    * internet banking payment, decided in `cancel-refund-method.ts` and returned
    * by the preview. When set, the dialog shows only that option.
    */
-  refundMethodForced?: "credit" | "organiser_card" | null;
+  refundMethodForced?: Parameters<typeof ForcedRefundNote>[0]["forced"] | null; // #3949: or organiser_by_hand
   /**
    * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
    * so an officer's cancel treats the booking as unpaid and the treasurer
@@ -356,7 +356,7 @@ export function CancelBookingButton({
             refund to and mints no account credit — the club hands the money
             back directly. The plan-forbidden sentence ("processed to your
             original payment method") must never render for this outcome. */}
-        {refund > 0 && result?.refundMethod === "manual" ? (
+        {refund > 0 && result?.refundMethod === "manual" && !result.organiserRefund ? (
           <p className="text-sm text-success-11">
             {onBehalfOfMember
               ? `The club will arrange the member's refund of ${formatCents(refund, format)} directly — they'll hear from the club about how it will be paid back.`

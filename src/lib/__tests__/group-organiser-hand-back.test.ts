@@ -457,6 +457,8 @@ describe("the finance queue payload marks it for the card's own sentence", () =>
         organisation: null,
         memberId: "olive",
         deletedAt: null,
+        organiserSettled: false,
+        parentBookingId: null,
         status: "CANCELLED",
         payment: null,
       },
