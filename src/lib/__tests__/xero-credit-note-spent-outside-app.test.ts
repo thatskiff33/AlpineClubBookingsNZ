@@ -188,6 +188,29 @@ describe("allocateCreditNoteToInvoice — credit note spent outside the app (#42
     );
   });
 
+  it("carries Xero's own list of what was done to the note: its allocations and its payments, in exact cents", async () => {
+    mocks.createCreditNoteAllocation.mockRejectedValue(new Error(OVER_ALLOCATION_400));
+    mocks.getCreditNote.mockResolvedValue(
+      note({
+        remainingCredit: 0,
+        total: 52.5,
+        allocations: [
+          { invoice: { invoiceID: "inv_other" }, amount: 20 },
+          { invoice: { invoiceID: "inv_bad" }, amount: 0.005 },
+          { invoice: { invoiceID: "inv_removed" }, amount: 9, isDeleted: true },
+          { invoice: null, amount: 1 },
+        ],
+        payments: [{ paymentID: "pay_1", amount: 32.5 }, { paymentID: "pay_gone", amount: 4, status: "DELETED" }, { amount: 5 }],
+      }),
+    );
+
+    await expect(allocateCreditNoteToInvoice("cn_1", "inv_1", 5250)).rejects.toMatchObject({
+      xeroAllocations: [{ invoiceId: "inv_other", cents: 2000 }],
+      xeroPayments: [{ paymentId: "pay_1", cents: 3250 }],
+      totalCents: 5250,
+    });
+  });
+
   it("keeps the original error when the follow-up read fails, since the refusal alone is not proof", async () => {
     const original = new Error(OVER_ALLOCATION_400);
     mocks.createCreditNoteAllocation.mockRejectedValue(original);

@@ -3026,6 +3026,26 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
     });
 
+    it("#4211: a charge KEPT for an admin (no record of which payment settled the booking) sends no second confirmation and queues no invoice", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
+      mockMarkBookingPaymentSucceeded.mockResolvedValue({
+        outcome: "duplicate_capture_kept",
+        bookingId: "child_1",
+        bumpedBookingIds: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(result.failedBookingIds).toHaveLength(0);
+      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    });
+
     it("tolerates a cancel API error (best-effort): logged, charge proceeds, booking confirms", async () => {
       primeChargeableSplitChild();
       mockPaymentTransactionFindMany.mockResolvedValue([

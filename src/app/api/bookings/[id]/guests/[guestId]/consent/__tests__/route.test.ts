@@ -583,4 +583,14 @@ describe("DECLINE", () => {
     // Not a blocked row: nothing is audited as needing a human.
     expect(h.logAudit).not.toHaveBeenCalled();
   });
+
+  it("#3949 review round 5: answers a group cancel part-way through with its own 409 and words, recording no outcome", async () => {
+    const { GroupCancelInProgressError, GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE } = await import("@/lib/group-cancel-in-progress");
+    h.removeBookingGuestInTransaction.mockRejectedValue(new GroupCancelInProgressError(GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE));
+    const res = await callRoute(makeRequest({ action: "DECLINE" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
+    // Not a blocked row (the cancel's claim takes the guest's place with the booking): nothing is audited.
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
 });

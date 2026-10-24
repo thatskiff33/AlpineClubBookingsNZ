@@ -335,7 +335,11 @@ on the member's behalf:
 - **Move both bookings**, with the combined figure beside it: what is payable or
   coming back across both bookings, whether both change fees are included (the
   club's setting decides, and the sentence says which answer it gave), and a note
-  that the card-or-credit choice already made above covers both.
+  that the card-or-credit choice already made above covers both. Where a group
+  organiser paid for one of the bookings (#3949), its refund is not "coming back
+  to you": the sentence says how much goes back to the group organiser, by bank
+  transfer or to their card, and that the one choice covers only the bookings the
+  member paid for.
 - **Move only this booking**, with the consequence beside it: the other booking
   will be left without adult supervision on those nights, a Booking Officer will
   be told, and they will be in touch if anything needs to change.
@@ -357,7 +361,10 @@ shows that message in the price summary and Save stays off, and an officer
 completing a parked edit's review cannot charge the joiner for it either. The
 cancel dialog likewise offers only the refund to the organiser's card, including
 after an earlier reduction was refunded. A child the organiser settled by
-Internet Banking keeps the ordinary choices.
+Internet Banking (#3949) likewise shows no **Return method** choice: the price
+summary says the reduction is to be refunded to the group organiser by bank
+transfer; while that organiser is part-way through cancelling the group, the
+price summary shows that any change is refused and Save stays off.
 
 A booking that still owes an unpaid additional payment from an earlier change shows,
 when the edit lowers its price, how much **comes off the unpaid additional
@@ -374,7 +381,10 @@ with the new figure.
 
 Where there are not enough beds free on the new nights for both, the first option
 is shown **disabled with the reason**, and the second is still available: a full
-lodge never stops somebody moving their own booking.
+lodge never stops somebody moving their own booking. The same happens, with its
+own reason, when the other booking's group organiser paid for it by Internet
+Banking and is part-way through cancelling the group (#3949): its place cannot
+move until that finishes, but this booking still can.
 
 Feedback: the offer sits in a permanently mounted assertive live region, so it is
 announced when it appears; the radio group sits outside that region so choosing an

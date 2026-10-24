@@ -150,7 +150,7 @@ describe("#3973: the Booking Cancelled refund line names where the refund went",
 
   it("is the Booking Modified sentence, from the one home", () => {
     expect(organiserCardRefundSentence("$45.00")).toBe(ORGANISER_CARD);
-    expect(bookingModifiedRefundSentence("$45.00", false, "organiser_card")).toBe(ORGANISER_CARD);
+    expect(bookingModifiedRefundSentence("$45.00", null, "organiser_card")).toBe(ORGANISER_CARD);
   });
 
   it.each([
@@ -202,7 +202,7 @@ describe("#4084: the Booking Cancelled refund line for an own-card refund not ma
 
   it("is the Booking Modified sentence, from the one home", () => {
     expect(ownCardRefundPendingSentence("$45.00")).toBe(OWN_CARD_PENDING);
-    expect(bookingModifiedRefundSentence("$45.00", false, "own_card_pending")).toBe(OWN_CARD_PENDING);
+    expect(bookingModifiedRefundSentence("$45.00", null, "own_card_pending")).toBe(OWN_CARD_PENDING);
   });
 
   it("claims no refund when nothing was refunded", () => {

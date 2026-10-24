@@ -32,6 +32,8 @@ export interface FlattenedCandidatePayment {
   amountCents: number;
   refundedAmountCents: number;
   transactions: Array<{ status: PaymentStatus }>;
+  /** #3949: whose payment it is - an Internet Banking organiser child's settle mirror is its capture. */
+  booking: { organiserSettled: boolean; parentBookingId: string | null };
 }
 
 export interface FlattenedPaymentRestoration {
@@ -60,7 +62,7 @@ export function paymentHasCaptureEvidence(
   const hasCapturedLedgerRow = payment.transactions.some((transaction) =>
     isCapturedTransactionStatus(transaction.status)
   );
-  return paymentShowsCaptureEvidence(payment, hasCapturedLedgerRow);
+  return paymentShowsCaptureEvidence(payment, hasCapturedLedgerRow, payment.booking);
 }
 
 /**
@@ -132,6 +134,8 @@ const CANDIDATE_PAYMENT_SELECT = {
   transactions: {
     select: { status: true },
   },
+  // #3949: an Internet Banking organiser child's settle mirror is capture evidence.
+  booking: { select: { organiserSettled: true, parentBookingId: true } },
 } satisfies Prisma.PaymentSelect;
 
 /**

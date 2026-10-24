@@ -19,6 +19,7 @@ function payment(
     amountCents: overrides.amountCents ?? 10_000,
     refundedAmountCents: overrides.refundedAmountCents ?? 0,
     transactions: overrides.transactions ?? [],
+    booking: overrides.booking ?? { organiserSettled: false, parentBookingId: null },
   };
 }
 

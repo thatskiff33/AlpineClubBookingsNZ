@@ -6,6 +6,12 @@
  */
 import { adminSecondInstrumentSettlementConflictTemplate } from "@/lib/email-templates/admin-finance";
 import { adminBankTransferSettlementFigureTemplate } from "@/lib/email-templates/admin-bank-transfer-settlement";
+import { adminDuplicateCaptureKeptTemplate } from "@/lib/email-templates/admin-duplicate-capture-kept";
+import {
+  duplicateCaptureKeptAction,
+  duplicateCaptureKeptParagraph,
+  type DuplicateCaptureKeptReason,
+} from "@/lib/duplicate-capture-kept-note";
 import { ibSettlementFigureParagraph, type IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
 import { secondInstrumentConflictOutcomeParagraph } from "../email-message-notes";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
@@ -142,6 +148,65 @@ export async function sendAdminBankTransferSettlementFigureAlert(data: {
         owed: data.owed,
         hasSupplementaryInvoice: data.hasSupplementaryInvoice,
       }),
+    },
+    requirement: { area: "finance", level: "edit" },
+  });
+}
+
+/**
+ * #4211 (`INV-PAY-043`): the duplicate-capture guard KEPT a card capture on a
+ * paid booking - another payment on it still holds money and nothing records
+ * which one settled it - so nothing was refunded and a person decides. It first
+ * shipped through `sendAdminPaymentFailureAlert` ("Payment Failed"), which
+ * misdescribed it and let the `adminPaymentFailure` checkbox and a digest-only
+ * delivery mode silence it. ITS OWN SUBJECT, NOT GATED ON A NOTIFICATION
+ * PREFERENCE and delivery-locked in the registry, through
+ * `sendUnmuteableAdminAlert`, as #3638's sibling above: the system refunds
+ * nothing on its own and this mail is the only thing that pulls a person to it.
+ * Same audience: whoever can edit finance. Throttled by the caller
+ * (`alertCaptureKeptWithoutRecordedSettler`).
+ */
+export async function sendAdminDuplicateCaptureKeptAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  bookingId: string;
+  reason: DuplicateCaptureKeptReason;
+  amountCents: number;
+  paymentIntentId: string;
+  otherPaymentIntentId: string | null;
+  otherHoldsMoney?: boolean;
+},
+  format: ClubFormat,
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/payments`;
+  const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
+
+  await sendUnmuteableAdminAlert({
+    subject: `Booking may have been paid twice — check by hand: ${data.memberName}`,
+    html: await renderEmailHtml(() =>
+      adminDuplicateCaptureKeptTemplate({ ...data, bookingUrl, reviewUrl }, format),
+    ),
+    templateName: "admin-duplicate-capture-kept",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
+      bookingId: data.bookingId,
+      amount: formatMoneyCents(data.amountCents, format),
+      paymentIntentId: data.paymentIntentId,
+      bookingUrl,
+      reviewUrl,
+      // The same sentence the hand-built HTML renders (#2268 convention).
+      duplicateCaptureKeptNote: duplicateCaptureKeptParagraph({
+        reason: data.reason,
+        otherPaymentIntentId: data.otherPaymentIntentId,
+        otherHoldsMoney: data.otherHoldsMoney,
+      }),
+      // What to do differs too: with nothing else holding money this payment
+      // may be the one paying for the booking (#4211 review).
+      duplicateCaptureKeptAction: duplicateCaptureKeptAction({ otherHoldsMoney: data.otherHoldsMoney }),
     },
     requirement: { area: "finance", level: "edit" },
   });

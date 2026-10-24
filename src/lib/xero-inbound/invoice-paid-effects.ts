@@ -11,6 +11,7 @@ import {
   sendBookingConfirmedEmail,
 } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { findSettlingInternetBankingTransactionId, recordSettlingTransaction } from "@/lib/payment-settler";
 import {
   findSecondInstrumentSettlement,
   recordManualSettlementConflict,
@@ -1360,6 +1361,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       if (claimed.count === 0) {
         throw new Error("Xero reconciliation lost its booking status claim");
       }
+      // #4211 (`INV-PAY-043`): the bank receipt's row settled it; a card capture arriving later is refunded.
+      await recordSettlingTransaction(tx, { paymentId: fresh.id, transactionId: await findSettlingInternetBankingTransactionId(tx, fresh.id) });
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: fresh.bookingId,
         db: tx,

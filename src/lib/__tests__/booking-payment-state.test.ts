@@ -210,7 +210,7 @@ describe("the Net Collected ledger-gap warning", () => {
   price) and marks it PARTIALLY_REFUNDED: bookkeeping, not cash.
 */
 describe("Net Collected counts a refunded status only with capture evidence", () => {
-  const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [] };
+  const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [], organiserSettled: false, parentBookingId: null };
   const live = { deletedAt: null, status: "CONFIRMED", ...noRows };
   const cancelled = { deletedAt: null, status: "CANCELLED", ...noRows };
   const nothing = {
@@ -308,7 +308,7 @@ describe("Net Collected counts a refunded status only with capture evidence", ()
 });
 
 describe("what a cancelled booking adds to Net Collected (owner review on #3811, decision 3 Oct)", () => {
-  const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [] };
+  const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [], organiserSettled: false, parentBookingId: null };
   // A card payment with a captured ledger row: the capture evidence a
   // refunded status needs to count (`getNetCollectedPaymentParts`).
   const cardEvidence = { source: "STRIPE", _count: { transactions: 1 }, recoveryOperations: [], refunds: [] };

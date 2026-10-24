@@ -119,9 +119,9 @@ export interface CreateXeroRefundCreditNoteOptions
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
   /**
-   * #3924 round 7 (`INV-PAY-122`): the "Paid another way" close this note
-   * answers - one of several notes on its payment whatever its source, and
-   * never the payment's one refund-note pointer.
+   * #3924 round 7 (`INV-PAY-122`): the bank record this note answers - a
+   * close, a shortfall (#4097), a re-confirmed refund (#4162) or a later
+   * hand-back (#4287) - one of several notes, never the canonical pointer.
    */
   paidAnotherWayTaskId?: string;
   /**
@@ -380,7 +380,7 @@ export async function createXeroCreditNote(
       const share = await readPaidAnotherWayCloseShare(prisma, paymentId, paidAnotherWayTaskId);
       if (!share) {
         throw new Error(
-          `Refusing to create a paid-another-way Xero refund credit note for payment ${paymentId}: its close ${paidAnotherWayTaskId} is not on this payment`
+          `Refusing to create a Xero refund credit note for payment ${paymentId}: its bank record ${paidAnotherWayTaskId} (a paid-another-way close, a shortfall, a re-confirmed refund or a completed hand-back) is not on this payment`
         );
       }
       uncoveredCents = share.uncoveredCents;

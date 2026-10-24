@@ -288,7 +288,7 @@ describe("DELETE guest removal on the member's own card: the email's refund dest
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay_1", amountCents: 2000 }));
     expectQueuedOnce(mocks.enqueueBookingModificationRefundRecovery, queued, 2000);
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 2000, refundDestination: destination, refundByBankTransfer: false }),
+      expect.objectContaining({ refundAmountCents: 2000, refundDestination: destination, refundByBankTransfer: null }),
       expect.anything(),
     );
   });
@@ -347,7 +347,7 @@ describe("DELETE guest removal on the member's own card: the email's refund dest
 
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 2000, refundDestination: "own", refundByBankTransfer: true }),
+      expect.objectContaining({ refundAmountCents: 2000, refundDestination: "own", refundByBankTransfer: "member" }),
       expect.anything(),
     );
   });

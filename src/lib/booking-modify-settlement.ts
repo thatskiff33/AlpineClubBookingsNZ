@@ -45,10 +45,7 @@ import {
   isSettledBookingStatus,
   recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
-import {
-  type BookingModificationSettlementMethod,
-  type LoadedBookingForModify,
-} from "@/lib/booking-modify-validation";
+import { type BookingModificationSettlementMethod, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
 import { calculateBookingHoldDecision } from "@/lib/policies/booking-route-decisions";
 import {
@@ -64,6 +61,7 @@ import {
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 
 export type PaymentAdjustmentResult = {
   refundAmountCents: number;
@@ -201,6 +199,8 @@ export async function applyPaymentAdjustments(
     primaryInvoiceRaisedMessage?: string; // #3980: the claim's refusal, in the caller's words
   },
 ): Promise<PaymentAdjustmentResult> {
+  // #3949 review round 5: the one place a price change is refused mid group cancel (every door settles through here).
+  await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents });
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);

@@ -71,11 +71,15 @@ export interface HostingCoverageLinkedMovePromptData {
   declineStateKey: string;
   /** False when there are not beds for both — the owner's "cannot" arm. */
   linkedMoveAvailable: boolean;
+  /** #3949: WHY it is unavailable, so the panel says the true reason (beds, or a group cancel part-way through). */
+  unavailableBecauseGroupCancelInProgress: boolean;
   linkedBookings: HostingCoverageLinkedMoveBooking[];
   combinedAmountDueCents: number;
   combinedRefundCents: number;
   combinedChangeFeeCents: number;
   combinedPolicyRetainedCents: number;
+  combinedOrganiserRefundCents: number;
+  combinedOrganiserBankTransferRefundCents: number;
   settlementMethodRequired: boolean;
   settlementMethodChosen: boolean;
   bothChangeFeesCharged: boolean;
@@ -105,6 +109,13 @@ export interface LinkedMoveMoneyFacts {
    * themselves why a $500 reduction returned $250.
    */
   combinedPolicyRetainedCents: number;
+  /**
+   * #3949: what goes back to a group organiser who paid for a booking in the move -
+   * never to the member, and outside the one card-or-credit choice - and the part of
+   * it by bank transfer (the rest goes to the organiser's card).
+   */
+  combinedOrganiserRefundCents: number;
+  combinedOrganiserBankTransferRefundCents: number;
   settlementMethodRequired: boolean;
   /**
    * True when the request that produced this quote ALREADY carried a card-or-credit
@@ -219,7 +230,11 @@ export function formatLinkedMoveMoneySentence(
         `${all}, and each booking is paid on its own booking page.`,
     );
   } else {
-    parts.push("There is nothing more to pay and nothing to come back.");
+    parts.push(
+      facts.combinedOrganiserRefundCents > 0
+        ? "There is nothing more to pay and nothing to come back to you."
+        : "There is nothing more to pay and nothing to come back.",
+    );
   }
   // WHAT THE POLICY KEPT, beside the figure it made smaller. A booking whose price
   // falls by $500 under a 50% tier returns $250, and without this sentence the
@@ -230,6 +245,21 @@ export function formatLinkedMoveMoneySentence(
       `The club's cancellation policy keeps ` +
         `${formatCents(facts.combinedPolicyRetainedCents, format)} of the reduction, so ` +
         `what comes back is less than the drop in price.`,
+    );
+  }
+  // #3949: A GROUP ORGANISER'S MONEY GOES BACK TO THEM, never to the member, so it
+  // is not in "comes back to you" above - but the member consenting to the move is
+  // told where it goes, by the way the organiser paid.
+  const organiserBankCents = facts.combinedOrganiserBankTransferRefundCents;
+  const organiserCardCents = facts.combinedOrganiserRefundCents - organiserBankCents;
+  if (facts.combinedOrganiserRefundCents > 0) {
+    const ways = [
+      ...(organiserBankCents > 0 ? [`${formatCents(organiserBankCents, format)} by bank transfer`] : []),
+      ...(organiserCardCents > 0 ? [`${formatCents(organiserCardCents, format)} to their card`] : []),
+    ];
+    parts.push(
+      `A group organiser paid for a booking in this move, so ${ways.join(" and ")} ` +
+        `goes back to the group organiser rather than to you.`,
     );
   }
   parts.push(linkedMoveChangeFeeSentence(facts, format));
@@ -243,7 +273,9 @@ export function formatLinkedMoveMoneySentence(
     parts.push(
       facts.combinedRefundCents > 0
         ? `You will be asked once whether that comes back to your card or as ` +
-            `account credit; the one choice covers ${all}.`
+            `account credit; the one choice covers ` +
+            // #3949: never a booking the group organiser paid for, whose refund is the organiser's.
+            `${facts.combinedOrganiserRefundCents > 0 ? "every booking you paid for" : all}.`
         : // AND THE ZERO ABOVE IS NOT "nothing comes back". This quote is priced as
           // a card refund, and the club's policy can return nothing that way while
           // returning real money as account credit — two tiers, two percentages,
@@ -362,6 +394,8 @@ export function readHostingCoverageLinkedMovePrompt(
     !isCents(record.combinedRefundCents) ||
     !isCents(record.combinedChangeFeeCents) ||
     !isCents(record.combinedPolicyRetainedCents) ||
+    !isCents(record.combinedOrganiserRefundCents ?? 0) ||
+    !isCents(record.combinedOrganiserBankTransferRefundCents ?? 0) ||
     !Array.isArray(record.linkedBookings) ||
     record.linkedBookings.length === 0
   ) {
@@ -380,11 +414,14 @@ export function readHostingCoverageLinkedMovePrompt(
     acceptStateKey: record.acceptStateKey,
     declineStateKey: record.declineStateKey,
     linkedMoveAvailable: record.linkedMoveAvailable,
+    unavailableBecauseGroupCancelInProgress: record.feasibility === "GROUP_CANCEL_IN_PROGRESS",
     linkedBookings,
     combinedAmountDueCents: record.combinedAmountDueCents,
     combinedRefundCents: record.combinedRefundCents,
     combinedChangeFeeCents: record.combinedChangeFeeCents,
     combinedPolicyRetainedCents: record.combinedPolicyRetainedCents,
+    combinedOrganiserRefundCents: (record.combinedOrganiserRefundCents as number | undefined) ?? 0,
+    combinedOrganiserBankTransferRefundCents: (record.combinedOrganiserBankTransferRefundCents as number | undefined) ?? 0,
     settlementMethodRequired: record.settlementMethodRequired,
     settlementMethodChosen: record.settlementMethodChosen,
     bothChangeFeesCharged: record.bothChangeFeesCharged,

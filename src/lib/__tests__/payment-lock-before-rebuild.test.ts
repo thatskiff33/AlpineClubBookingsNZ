@@ -8,6 +8,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { IntentLedgerRowOnAnotherPaymentError } from "@/lib/payment-intent-ledger-row-write";
 
 import {
+  applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed,
   markPaymentIntentTransactionSucceeded,
   reconcilePaymentAggregates,
@@ -177,6 +178,19 @@ describe("#4217: the Payment row is locked before any ledger row is written or t
     expect(log.filter((call) => call.client === "root" && (call.op === "$executeRaw" || isRowWrite(call)))).toEqual([]);
     const lockAt = log.findIndex(isPaymentRowLock);
     expect(log[lockAt]?.client).toBe("tx");
+  });
+
+  it("MUTATION (#4287, INV-ADDPAY-043): a hand-back's allocation takes the Payment row before it reads, so the completion's later note decision reads under it", async () => {
+    // The hand-back completion decides whether its Xero note stands on its own
+    // task only after this allocation, on the same transaction
+    // (`manual-refund-task.test.ts` pins that order); the lock taken here is
+    // what makes a second completion on the payment read after the first commits.
+    const log: Call[] = [];
+    const store = recordingClient(log, "tx", {}) as unknown as PaymentStore;
+
+    await expect(applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 3_000, store })).rejects.toThrow("Payment not found");
+
+    expect(log.findIndex(isPaymentRowLock)).toBe(0);
   });
 
   it("mark-failed leaves a row captured after its re-read alone: the FAILED write is status-guarded", async () => {

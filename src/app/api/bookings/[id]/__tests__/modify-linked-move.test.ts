@@ -116,6 +116,8 @@ function quote(
     combinedAmountDueCents: 3_500,
     combinedRefundCents: 200,
     combinedPolicyRetainedCents: 0,
+    combinedOrganiserRefundCents: 0,
+    combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: true,
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,

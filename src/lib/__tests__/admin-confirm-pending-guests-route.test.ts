@@ -1097,6 +1097,34 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.enqueueXero).not.toHaveBeenCalled();
   });
 
+  it("#4211: reports a charge KEPT for an admin accurately, with no second confirmation or invoice", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    mocks.chargePaymentMethod.mockResolvedValue({
+      id: "pi_dup",
+      status: "succeeded",
+      amount: 10000,
+      payment_method: "pm_1",
+    });
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "duplicate_capture_kept",
+      bookingId: "b1",
+      bumpedBookingIds: [],
+    });
+
+    const res = await POST(makeRequest(), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, status: "PAID", charged: true, duplicateChargeRefunded: false });
+    expect(body.message).toContain("nothing was refunded");
+    expect(body.message).not.toContain("#4211");
+    expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+    expect(mocks.enqueueXero).not.toHaveBeenCalled();
+    expect(mocks.createStructuredAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ outcome: "charged_duplicate_capture_kept" }) }),
+    );
+  });
+
   it("moves a no-card (request-origin) booking to payment-owed without charging or capacity gate", async () => {
     mocks.bookingFindUnique.mockResolvedValue(makeBooking({ payment: null }));
 

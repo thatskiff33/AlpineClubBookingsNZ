@@ -1589,7 +1589,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
 
     it("refuses a close that is not on the payment", async () => {
       mocks.readPaidAnotherWayCloseShare.mockResolvedValue(null);
-      await expect(enqueueClose()).rejects.toThrow(/close close_1 is not on this payment/);
+      await expect(enqueueClose()).rejects.toThrow(/bank record close_1 \(a paid-another-way close, a shortfall, a re-confirmed refund or a completed hand-back\) is not on this payment/);
       expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
     });
 

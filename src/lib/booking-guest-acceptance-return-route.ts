@@ -87,7 +87,9 @@ export async function fullReductionReturnRoute(
   // #3653 (composed by #3829): an organiser-paid child's cash goes back to the
   // organiser's card. Asked here, before anything is written, whether that card
   // can return it in full - else the refund plan or its reservation would refuse
-  // after the codes moved and fail the guest's whole acceptance.
+  // after the codes moved and fail the guest's whole acceptance. #3949: one the
+  // organiser paid by Internet Banking goes back by a hand-back instead, which
+  // has no card to ask (`organiserCardCanReturnInFull` answers true for it).
   if (
     settlementOptions?.returnsToOrganiser &&
     booking.payment &&

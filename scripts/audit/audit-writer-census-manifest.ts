@@ -689,7 +689,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // undo of a voided bank-transfer refund note) and `.void-answered` (a person's
   // answer on Stuck States), both awaited on their transaction under `payment`.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 511, // 507/501 -> 511 (central-server lane on thatskiff33/main, 20 Oct 2026): upstream's +10 and the fork's +4 (#62, #58 x2, #77) are disjoint. RE-MEASURED with `pnpm run audit:census` on the merged tree, never added together.
+  // 507 -> 508 (#4219): `xero.credit_note.spent_outside_app_converged`, the credit-ledger
+  // convergence written with the awaited `createAuditLog` inside its own transaction, under `xero`.
+  // 511 -> 512 (PR #4277 sync with main): central-server additions and the
+  // credit-note convergence are disjoint. RE-MEASURED with `pnpm run audit:census`
+  // on the composed source tree.
+  writeSites: 512,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -897,7 +902,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited on the ledger writer's transaction so the row commits with it.
     // 144 -> 145 (#4154): a capacity race's charge corrected before its hand-back,
     // awaited on the completion's transaction so the row commits with the correction.
-    createAuditLog: { total: 150, uncategorised: 0 }, // 147/142 -> 150 (central-server lane, 20 Oct 2026): #62, #58 and #77 are disjoint from upstream's. RE-MEASURED. // 145 -> 147 (#4162): the two voided-note writers.
+    // 145 -> 147 (#4162): the two voided-note writers.
+    // 147 -> 148 (#4219): the credit-note convergence's own row, in its transaction.
+    // 150 -> 151 (PR #4277 sync with main): the central-server writers and
+    // credit-note convergence compose. RE-MEASURED with `pnpm run audit:census`.
+    createAuditLog: { total: 151, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1361,7 +1370,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 38 -> 39 (#3792): `xero.allocation.restored-booking-change-refused`,
     // beside the inbound reconcile's other `xero` rows. Nobody's readership
     // changes.
-    xero: 39,
+    //
+    // 39 -> 40 (#4219): `xero.credit_note.spent_outside_app_converged`, beside the other
+    // `xero` rows. Nobody's readership changes.
+    xero: 40,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

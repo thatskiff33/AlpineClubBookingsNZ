@@ -36,6 +36,7 @@ function cancelledMarkedPaid(
     deletedAt: null,
     finalPriceCents: 10_000,
     organiserSettled: false,
+    parentBookingId: null,
     parentBooking: null,
     refundRequests: [],
     creditsApplied: [],

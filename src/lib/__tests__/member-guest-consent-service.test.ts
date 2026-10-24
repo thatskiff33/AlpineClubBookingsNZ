@@ -1346,16 +1346,17 @@ describe("expireMemberGuestConsent", () => {
     expect(h.removeGuest.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
   });
 
-  it("still elects credit when the organiser settled by Internet Banking (#3653)", async () => {
+  it("#3949 review round 5: elects nothing for one the organiser paid for by Internet Banking either - its money goes back to the organiser", async () => {
     Object.assign(world().bookings.get(BOOKING)!, {
       organiserSettled: true,
       parentBookingId: "organiser-booking",
       payment: { source: "INTERNET_BANKING" },
     });
 
-    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
 
-    expect(h.removeGuest.mock.calls[0][0]).toMatchObject({ settlementMethod: "credit" });
+    expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
+    expect(h.removeGuest.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
   });
 
   it("attributes the removal to the booking OWNER, never to the target", async () => {

@@ -118,8 +118,8 @@ describe("#4097: the Booking Cancelled refund line names the card's part and wha
       `${ownCardRefundPendingSentence("$30.00", "the member's").slice(0, -1)}, and the club will refund the remaining $15.00 to the member by bank transfer.`,
     );
     // The bank clause is Booking Modified's and the refund appeal's sentence.
-    expect(ownCardRefundWithShortfallSentence(0, { ...parts, bankCents: 4500 }, false)).toBe(bookingModifiedRefundSentence("$45.00", true, "own"));
-    expect(bookingModifiedRefundSentence("$45.00", true, "own")).toBe(refundRequestApprovedRefundSentence(4500, 4500, fmt));
+    expect(ownCardRefundWithShortfallSentence(0, { ...parts, bankCents: 4500 }, false)).toBe(bookingModifiedRefundSentence("$45.00", "member", "own"));
+    expect(bookingModifiedRefundSentence("$45.00", "member", "own")).toBe(refundRequestApprovedRefundSentence(4500, 4500, fmt));
     expect(ownCardRefundWithShortfallSentence(0, { ...parts, bankCents: 0, checkCents: 4500 }, false, "the member's")).toBe(
       "The club will be in touch about the $45.00 refund.",
     );

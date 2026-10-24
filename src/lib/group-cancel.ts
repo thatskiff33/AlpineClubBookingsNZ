@@ -50,7 +50,7 @@
  * their refund mirrors deferred, and executeGroupSettlementRefundPlan replays
  * the refund under the same `group_cancel_refund_<settlementId>` key, flips
  * the settlement, applies the per-child mirrors idempotently (only for
- * already-CANCELLED plan children whose mirror is still zero — ACTIVE
+ * already-CANCELLED plan children whose plan share is unwritten — ACTIVE
  * children stay owned by the reaper resume path), and enqueues their Xero
  * credit notes. Admins are alerted only when the recovery retries exhaust.
  *
@@ -109,6 +109,7 @@ import {
 } from "@/lib/payment-recovery";
 import { deserializeRefundPlan, isMirrorRefundPlan, mirrorPlanRefundedCents, organiserCancelJoinerEmailRefund } from "@/lib/group-settlement-refund-plan";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
+import { readGroupChildMirrorForPlanReplay } from "@/lib/group-settlement-mirror-hand-back";
 import { alertUnsentGroupOrganiserHandBacks, recordGroupOrganiserHandBackShare, type GroupOrganiserHandBack } from "@/lib/group-organiser-hand-back";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
@@ -790,8 +791,9 @@ export type GroupSettlementRefundReplayResult = {
  *   lands in the already_refunded branch and only completes the mirrors.
  * - Per-child refundedAmountCents mirrors are applied only to plan children
  *   whose booking is already CANCELLED (the inline loop is done with them)
- *   and whose mirror is still zero, via a conditional updateMany — so this
- *   can never double-apply against the inline loop or the #1236 reaper
+ *   and whose plan share is not yet written (#3949: net of paid-back edit and
+ *   appeal hand-backs, under the Payment row, `readGroupChildMirrorForPlanReplay`),
+ *   so this can never double-apply against the inline loop or the #1236 reaper
  *   resume path, which own ACTIVE children.
  * - Xero credit-note enqueues are deduplicated by the outbox (watermark /
  *   canonical-note logic), keyed off the mirror written just before.
@@ -881,41 +883,35 @@ export async function executeGroupSettlementRefundPlan(
     // ACTIVE children still belong to the inline loop / reaper resume path,
     // which cancel + mirror atomically; touching them here could double-apply.
     if (!child || child.status !== BookingStatus.CANCELLED || !child.payment) continue;
-    if (child.payment.refundedAmountCents > 0) {
-      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
-      await prisma.$transaction((tx) => postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild }));
-      continue;
-    }
-
-    const nextRefunded = mirrorPlanRefundedCents(child.payment, refundForChild);
-    // Conditional write: organiser-settled child payments receive refunds
-    // ONLY from this module, so refundedAmountCents === 0 means unmirrored.
-    // Mirror and durable Xero outbox insertion are one atomic unit.  Previously
-    // the mirror committed first and enqueue failures were swallowed, leaving a
-    // permanently stranded accounting operation that replay would skip because
-    // refundedAmountCents was already non-zero.
+    // #3949 (`INV-PAY-137`): written or not is asked under the Payment row, net of paid-back hand-backs.
+    // Mirror and durable Xero outbox insertion are one atomic unit (an enqueue
+    // failure rolls the mirror back, so the replay never skips a stranded note).
     const mirrorResult = await prisma.$transaction(async (tx) => {
+      const payment = await readGroupChildMirrorForPlanReplay(tx, { bookingId: child.id, paymentId: child.payment!.id });
+      // #3949 review round 3: a child its member cancelled was never the plan's to refund - nothing is written.
+      if (!payment.claimedByGroupCancel) return { applied: false, refundedCents: 0, queuedOperationId: null };
+      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
+      if (payment.planShareWritten) {
+        await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
+        return { applied: false, refundedCents: 0, queuedOperationId: null };
+      }
+      const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
       const applied = await tx.payment.updateMany({
-        where: { id: child.payment!.id, refundedAmountCents: 0 },
+        // The prior figure, under the row lock: a guard against any other writer, not the "mirrored" test.
+        where: { id: child.payment!.id, refundedAmountCents: payment.refundedAmountCents },
         data: {
           refundedAmountCents: nextRefunded,
-          status:
-            nextRefunded >= child.payment!.amountCents
-              ? PaymentStatus.REFUNDED
-              : PaymentStatus.PARTIALLY_REFUNDED,
+          status: nextRefunded >= payment.amountCents ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED,
         },
       });
       if (applied.count !== 1) {
-        return { applied: false, queuedOperationId: null };
+        return { applied: false, refundedCents: 0, queuedOperationId: null };
       }
-      const queued = await enqueueXeroRefundCreditNoteOperation(
-        child.payment!.id,
-        nextRefunded,
-        { store: tx }
-      );
+      const refundedCents = nextRefunded - payment.refundedAmountCents;
+      const queued = await enqueueXeroRefundCreditNoteOperation(child.payment!.id, refundedCents, { store: tx });
       // #3854: as the inline loop posts it, under the same key.
       await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
-      return { applied: true, queuedOperationId: queued.queueOperationId };
+      return { applied: true, refundedCents, queuedOperationId: queued.queueOperationId };
     });
     if (!mirrorResult.applied) continue;
     mirroredChildren += 1;
@@ -940,11 +936,11 @@ export async function executeGroupSettlementRefundPlan(
       severity: "critical",
       outcome: "success",
       summary: "Group settlement refund recovered",
-      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(nextRefunded, format)} (frozen plan replay).`,
+      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(mirrorResult.refundedCents, format)} (frozen plan replay).`,
       metadata: {
         settlementId,
         groupBookingId: settlement.groupBookingId,
-        refundForChild: nextRefunded,
+        refundForChild: mirrorResult.refundedCents,
         paymentId: child.payment.id,
         replayOutcome: outcome,
       },
@@ -954,7 +950,7 @@ export async function executeGroupSettlementRefundPlan(
       bookingId: child.id,
       type: BookingEventType.REFUNDED,
       actorMemberId: null,
-      amountCents: nextRefunded,
+      amountCents: mirrorResult.refundedCents,
       reason:
         "The organiser's settlement refund for this cancelled group booking was recovered and refunded to the organiser.",
     }).catch((eventErr) =>

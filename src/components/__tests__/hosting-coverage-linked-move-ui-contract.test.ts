@@ -34,6 +34,7 @@ function promptData(
     acceptStateKey: `v1:${"a".repeat(64)}`,
     declineStateKey: `v1:${"b".repeat(64)}`,
     linkedMoveAvailable: true,
+    unavailableBecauseGroupCancelInProgress: false,
     linkedBookings: [
       {
         bookingId: "bk-dependent-01",
@@ -52,6 +53,8 @@ function promptData(
     combinedRefundCents: 0,
     combinedChangeFeeCents: 2_000,
     combinedPolicyRetainedCents: 0,
+    combinedOrganiserRefundCents: 0,
+    combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: false,
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,
@@ -164,6 +167,36 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     ).not.toBeDisabled();
     // No proposed dates are shown for a move that cannot happen.
     expect(screen.queryByText(/would move to/)).toBeNull();
+  });
+
+  it("#3949 review round 7: names a group cancel part-way through as the reason, and says where an organiser's refund goes", () => {
+    render(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData({ linkedMoveAvailable: false, unavailableBecauseGroupCancelInProgress: true }),
+      }),
+    );
+    const moveBoth = screen.getByRole("radio", { name: /Move both bookings/ });
+    expect(moveBoth).toBeDisabled();
+    expect(moveBoth).toHaveAccessibleName(/group organiser is part-way through cancelling the group/);
+    expect(moveBoth).not.toHaveAccessibleName(/not enough beds/);
+    expect(screen.getByRole("radio", { name: /Move only this booking/ })).not.toBeDisabled();
+  });
+
+  it("#3949 review round 7: the organiser's refund is named apart from the member's", () => {
+    render(
+      createElement(HostingCoverageLinkedMovePrompt, {
+        ...BASE,
+        prompt: promptData({ combinedAmountDueCents: 0, combinedRefundCents: 900, combinedOrganiserRefundCents: 400, combinedOrganiserBankTransferRefundCents: 400, settlementMethodRequired: true }),
+      }),
+    );
+    const moveBoth = screen.getByRole("radio", { name: /Move both bookings/ });
+    expect(moveBoth).toHaveAccessibleName(/\$4\.00 by bank transfer goes back to the group organiser rather than to you/);
+    expect(moveBoth).toHaveAccessibleName(/the one choice covers every booking you paid for/);
+    // The edit panel's Return-method note says the same where an organiser's refund is in the move.
+    const panel = source("src/components/edit-booking-panel.tsx");
+    expect(panel).toContain("the same choice covers every booking you paid for. A group organiser's refund goes back to them.");
+    expect(panel).toContain("activeLinkedMoveState?.prompt.combinedOrganiserRefundCents");
   });
 
   it("disables both arms while the save is in flight, and neither becomes checked", () => {

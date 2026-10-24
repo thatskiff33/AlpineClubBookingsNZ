@@ -27,6 +27,7 @@ import { APPLIED_CREDIT_ALLOCATION_ROLE } from "./xero-applied-credit-link-roles
 import { sliceHeldInXero } from "./xero-applied-credit-slice-lookup";
 import { NOT_A_CONVERGENCE_ROW, writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
 import { lockMemberCreditLedger } from "./member-credit";
+import { convergedForNamedFailure } from "./xero-applied-credit-spent-outside-app";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
 import {
   buildXeroIdempotencyKey,
@@ -344,7 +345,7 @@ async function completeSkip(syncOperationId: string | undefined, reason: string)
  */
 export async function allocateAppliedCreditForBooking(
   bookingId: string,
-  options?: { createdByMemberId?: string; syncOperationId?: string },
+  options?: { createdByMemberId?: string; syncOperationId?: string; convergeAttempts?: number },
 ): Promise<void> {
   const format = await getClubFormat();
   const syncOperationId = options?.syncOperationId;
@@ -487,7 +488,7 @@ export async function allocateAppliedCreditForBooking(
           appliedToBookingId: bookingId,
         },
       },
-      select: { id: true },
+      select: { id: true, amountCents: true },
     });
     if (!joinRow) {
       continue;
@@ -495,17 +496,31 @@ export async function allocateAppliedCreditForBooking(
     if (await sliceHeldInXero(prisma, joinRow.id)) {
       continue;
     }
-    await allocateCreditNoteToInvoice(na.xeroCreditNoteId, invoiceId, na.amountCents, {
-      localModel: "MemberCreditNoteAllocation",
-      localId: joinRow.id,
-      role: APPLIED_CREDIT_ALLOCATION_ROLE,
-      createdByMemberId,
-      appliedCreditContext: {
-        parentOperationId: syncOperationId ?? null,
-        bookingId,
-        paymentId: payment.id,
-      },
-    });
+    try {
+      // The slice's current amount, not the plan's: a concurrent converge may have shrunk it (#4219).
+      await allocateCreditNoteToInvoice(na.xeroCreditNoteId, invoiceId, joinRow.amountCents, {
+        localModel: "MemberCreditNoteAllocation",
+        localId: joinRow.id,
+        role: APPLIED_CREDIT_ALLOCATION_ROLE,
+        createdByMemberId,
+        appliedCreditContext: {
+          parentOperationId: syncOperationId ?? null,
+          bookingId,
+          paymentId: payment.id,
+        },
+      });
+    } catch (error) {
+      // #4219: the note was confirmed spent in Xero outside the app. Bring the
+      // ledger into line, then plan again so the booking's other slices still
+      // allocate; a refusal to converge leaves the original failure standing.
+      if (await convergedForNamedFailure(error, bookingId, options?.convergeAttempts)) {
+        return allocateAppliedCreditForBooking(bookingId, {
+          ...options,
+          convergeAttempts: (options?.convergeAttempts ?? 0) + 1,
+        });
+      }
+      throw error;
+    }
   }
 
   // 3) Mint + allocate the noteless (admin / restored) remainder, if any.

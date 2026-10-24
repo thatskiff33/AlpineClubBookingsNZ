@@ -15,15 +15,16 @@
  *   detail the #4162 floor keeps, so a recount that rewrote them would erase
  *   the floor it is held to.
  *
- * CURRENT BEHAVIOUR, pinned on purpose (owner decision 22 Oct 2026): a later,
- * distinct refund on a bank-transfer payment that already has its canonical
- * note - a second cancellation hand-back, or a refund request's card part - is
- * ABSORBED by the single-note branch of `enqueueXeroRefundCreditNoteOperation`
- * and gets no note of its own. Xero is then genuinely short a note, so the
- * floor keeps the total and the alert is true; it names that cause and asks for
- * the note by hand. The recount deliberately does not add the absorbed cash
- * (that would silence the only signal). Giving each such refund its own note is
- * the subject of #4287; these cases change with it. Which void states reach
+ * A later cancellation hand-back on a bank-transfer payment that already has
+ * its canonical note is queued a note of its own, keyed on its task (#4287,
+ * owner decision 22 Oct 2026); `xero-bt-per-refund-notes` proves it through to
+ * Xero and the readers. CURRENT BEHAVIOUR, still pinned on purpose: a refund
+ * request's card part on such a payment is ABSORBED by the single-note branch
+ * of `enqueueXeroRefundCreditNoteOperation` and gets no note of its own - #4287
+ * stopped on the card writers for the owner (#4312). Xero is then genuinely short a
+ * note, so the floor keeps the total and the alert is true; it names that cause
+ * and asks for the note by hand. The recount deliberately does not add the
+ * absorbed cash (that would silence the only signal). Which void states reach
  * the alert is pinned too (only an answered void with its cash kept), and the
  * deploy note's read-only query is run here as an operator would run it.
  *
@@ -284,7 +285,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(await deployNoteListedPaymentIds()).toEqual([]);
     });
 
-    it("CURRENT BEHAVIOUR: a second cancellation hand-back is absorbed into the canonical note - the floor keeps it, the alert asks for its note, the deploy note lists it", async () => {
+    it("a second cancellation hand-back is queued its own note, keyed on its task - never absorbed into the canonical note (#4287)", async () => {
       await seedRefundedUnderCanonicalNote();
       await prisma.manualRefundTask.create({
         data: {
@@ -297,17 +298,21 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         { taskId: TASK_ID, resolution: "completed", note: null, actingMemberId: OFFICER_ID, confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null },
         CLUB_FORMAT_TEST,
       );
-      // Paid and recorded, but absorbed: the completion queued no note of its own, and the
-      // payment still points at its one canonical note.
+      // Paid and recorded, and queued a note of its own: keyed and sized on its task, while the
+      // payment still points at its one canonical note (#4287; flipped from the #4230 pin).
       expect(await paymentState(ORGANISER_PAYMENT_ID)).toEqual({ refundedAmountCents: 13_000, status: "PARTIALLY_REFUNDED" });
-      expect(await refundNoteRows()).toBe(0);
+      const [own] = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: ORGANISER_PAYMENT_ID, entityType: "CREDIT_NOTE" }, select: { id: true, status: true, correlationKey: true, requestPayload: true } });
+      expect(own).toMatchObject({ status: "PENDING", requestPayload: expect.objectContaining({ refundAmountCents: 3_000, paidAnotherWayTaskId: TASK_ID, handBackTaskId: TASK_ID }) });
+      expect(own!.correlationKey).toContain(`:paid-another-way:${TASK_ID}`);
+      expect(await refundNoteRows()).toBe(1);
       expect((await prisma.payment.findUniqueOrThrow({ where: { id: ORGANISER_PAYMENT_ID }, select: { xeroRefundCreditNoteId: true } })).xeroRefundCreditNoteId).toBe(CANONICAL_NOTE);
-      // The completion's own enqueue (`queueCancelledBookingHandBackNoteInTransaction`'s options), asked again: the single-note branch absorbs it.
+      // The completion's own enqueue (`queueCancelledBookingHandBackNoteInTransaction`'s options), asked again: the same row.
       const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
-      expect(await enqueueXeroRefundCreditNoteOperation(ORGANISER_PAYMENT_ID, 3_000, { createdByMemberId: OFFICER_ID, refundMethod: "internet-banking", handBackTaskId: TASK_ID })).toEqual(
-        expect.objectContaining({ queueOperationId: null, message: "Xero refund credit note already linked for this payment." }),
+      expect(await enqueueXeroRefundCreditNoteOperation(ORGANISER_PAYMENT_ID, 3_000, { createdByMemberId: OFFICER_ID, refundMethod: "internet-banking", handBackTaskId: TASK_ID, paidAnotherWayTaskId: TASK_ID })).toEqual(
+        expect.objectContaining({ queueOperationId: own!.id }),
       );
-      expect(await refundNoteRows()).toBe(0);
+      expect(await refundNoteRows()).toBe(1);
+      // Until that note is raised in Xero, the deploy note lists the payment and the floor's alert is true.
       expect(await deployNoteListedPaymentIds()).toEqual([ORGANISER_PAYMENT_ID]);
 
       const { BANK_TRANSFER_REFUND_SHORTFALL_ADVICE } = await import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
@@ -338,7 +343,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         },
       });
       await prisma.payment.update({ where: { id: ORGANISER_PAYMENT_ID }, data: { refundedAmountCents: 14_000 } });
-      // The approval's own call (`refund-requests/[id]`): no keyed options.
+      // The approval's own call (`refund-requests/[id]`): no keyed options. Still absorbed:
+      // #4287 stopped on the card writers for the owner (no record of its own sizes this note; #4312).
       const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
       expect(await enqueueXeroRefundCreditNoteOperation(ORGANISER_PAYMENT_ID, 4_000, { createdByMemberId: OFFICER_ID })).toEqual(
         expect.objectContaining({ queueOperationId: null, message: "Xero refund credit note already linked for this payment." }),

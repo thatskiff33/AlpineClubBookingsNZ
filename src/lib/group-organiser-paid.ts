@@ -67,9 +67,10 @@ export const ORGANISER_CARD_APPEAL_PENDING_MEMBER_NOTE =
  * organiser-settled child whose payment mirror came from the group's combined
  * Stripe payment. Its reductions and cancellation go back to the organiser's
  * card, never to the joiner as account credit. A child the organiser settled
- * by Internet Banking is not one: no card money moved, and its group-invoice
- * settlement belongs to #3642. The settle path writes the child's mirror with
- * the settlement's source, so the mirror's source is the answer here.
+ * by Internet Banking is not one - no card money moved; it is
+ * `paidByOrganiserInternetBanking`, and `paidByOrganiser` asks either. The
+ * settle path writes the child's mirror with the settlement's source, so the
+ * mirror's source is the answer here.
  */
 export function paidByOrganiserCard(booking: {
   organiserSettled: boolean;
@@ -81,4 +82,55 @@ export function paidByOrganiserCard(booking: {
     booking.parentBookingId != null &&
     booking.payment?.source === "STRIPE"
   );
+}
+
+/**
+ * #3949 (`INV-PAY-137`): a joiner's booking the organiser paid for BY INTERNET
+ * BANKING - an organiser-settled child whose payment mirror came from the
+ * group's one bank-transfer invoice. The settle writes the child's mirror with
+ * the settlement's source and no `PaymentTransaction` of its own, exactly as
+ * it does for a card settlement, so the mirror's source is the answer here too
+ * (`paidByOrganiserCard`'s sibling, `INV-SSOT`).
+ *
+ * The money a refund on such a booking returns was the ORGANISER's (owner
+ * decision on #3949, 21 Oct 2026): an edit's or an approved appeal's bank
+ * transfer goes back to the organiser, never to the joiner, and it is recorded
+ * on the child's mirror the way the group cancel records its own refunds.
+ */
+export function paidByOrganiserInternetBanking(booking: {
+  organiserSettled: boolean;
+  parentBookingId: string | null;
+  payment: { source: string } | null;
+}): boolean {
+  return (
+    booking.organiserSettled &&
+    booking.parentBookingId != null &&
+    booking.payment?.source === "INTERNET_BANKING"
+  );
+}
+
+/**
+ * #3949 review round 5 (`INV-PAY-114`, `INV-PAY-137`): a joiner's booking the
+ * group organiser paid for, by card or by Internet Banking - the one test for
+ * "its money back is the organiser's, never the joiner's account credit". A
+ * reduction's options then offer the organiser's one disposition
+ * (`returnsToOrganiser`), and the consent-expiry sweep elects no credit for it.
+ * HOW it goes back stays with the two predicates: the organiser's card
+ * (`paidByOrganiserCard`) or a bank-transfer hand-back
+ * (`paidByOrganiserInternetBanking`).
+ */
+export function paidByOrganiser(booking: Parameters<typeof paidByOrganiserInternetBanking>[0]): boolean {
+  return paidByOrganiserCard(booking) || paidByOrganiserInternetBanking(booking);
+}
+
+/**
+ * #3949: WHO a bank transfer the club owes on a booking is sent to - the
+ * member, or (`paidByOrganiserInternetBanking`) the group organiser who paid
+ * for it. The one answer the hand-back task's reason and the member's email
+ * name the payee by.
+ */
+export type BankTransferRefundPayee = "member" | "organiser";
+
+export function bankTransferRefundPayee(booking: Parameters<typeof paidByOrganiserInternetBanking>[0]): BankTransferRefundPayee {
+  return paidByOrganiserInternetBanking(booking) ? "organiser" : "member";
 }

@@ -34,3 +34,17 @@ export function isResolvedInXero(operation: {
 
 export const RESOLVED_IN_XERO_RETRY_REASON =
   "An officer marked this operation resolved in Xero; it is treated as done and is never re-run.";
+
+/**
+ * #4219: the reason a failure the app itself closed carries (a credit note spent
+ * in Xero outside the app, the credit ledger brought into line). It opens
+ * `manuallyResolvedReason`, so the panel can tell it from an officer's mark.
+ */
+export const CREDIT_SPENT_OUTSIDE_APP_REASON_PREFIX = "CREDIT_SPENT_OUTSIDE_APP";
+
+/** What the panel calls a closed row: an officer's mark says Xero, the app's own close says what happened. */
+export function resolutionLabel(reason: string | null | undefined): string {
+  return reason?.startsWith(CREDIT_SPENT_OUTSIDE_APP_REASON_PREFIX)
+    ? "Closed: credit used outside the app"
+    : "Resolved in Xero";
+}

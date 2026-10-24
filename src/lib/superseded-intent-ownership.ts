@@ -20,9 +20,9 @@
  *   real settlement (#4177). Never on a CANCELLED booking: there the new bank
  *   cash has nowhere to go, so every capture still counts.
  *
- * One home for the operation types and the refund's liveness. The two readers
- * fail safe in opposite directions, so they read a CANCEL_PAYMENT_INTENT
- * operation differently:
+ * One home for the operation types and the refund's liveness. Three readers
+ * fail safe in two directions, so they read a CANCEL_PAYMENT_INTENT operation
+ * differently:
  *
  * - guards (b′) and (c′) (`listLiveSupersededIntentIds`,
  *   `findLiveSupersededIntentOperation`) treat any operation not SUCCEEDED as
@@ -36,7 +36,13 @@
  *   still counts until it SUCCEEDED, dead or not: its machinery alerted the
  *   admins. So does a capture whose superseded refund succeeded, while open
  *   card refund rows owe back again, dead or not, at least all it holds after
- *   refunds Stripe failed later (`supersededRefundsOwedAgainCents`, #4221).
+ *   refunds Stripe failed later (`supersededRefundsOwedAgainCents`, #4221);
+ * - the duplicate-capture guard's check of the ARRIVING capture (#4283) reads
+ *   it the Xero conflict's way: a capture the machinery is still sending back
+ *   is never refunded on top as a duplicate, while one behind a dead cancel is
+ *   a duplicate like any other (wrongly keeping it would keep money twice with
+ *   nobody told). The guard's (b′) and (c′) add this reading's owed-back
+ *   captures to their own (#4227).
  *
  * Under (b′) and (c′) a superseded-machinery operation counts as LIVE while it
  * is not SUCCEEDED:
@@ -49,10 +55,10 @@
  * `status != SUCCEEDED` across both types covers the handoff window itself.
  * It does not cover what follows: when Stripe fails a SUCCEEDED refund later,
  * the capture holds net cash again with no live operation of these types, and
- * (b′) and (c′) count it as a settling capture. The Xero reader covers that
- * gap through the open row that owes the failed refund again - a failed-later
- * row, or a slice re-planned on an open card refund row (#4221); the two
- * readers differ there until #4227.
+ * (b′) and (c′) alone would count it as a settling capture. Every reader
+ * covers that gap through the open row that owes the failed refund again - a
+ * failed-later row, or a slice re-planned on an open card refund row (#4221,
+ * #4227) - through `listSupersededIntentIdsOwningCaptures` (`owedBackInFull`).
  */
 import {
   PaymentRecoveryOperationStatus,
@@ -228,8 +234,37 @@ function supersededRefundsOwedAgainCents(
   return owed;
 }
 
+/** The rows and payment `supersededRefundsOwedAgainCents` reads, under the caller's lock(1). */
+async function readSupersededRefundsOwedAgain(tx: OwnershipReader, paymentId: string, extraRows: Prisma.PaymentRecoveryOperationWhereInput[]) {
+  const operations: OwnershipRow[] = await tx.paymentRecoveryOperation.findMany({
+    where: { paymentId, OR: [...SUPERSEDED_REFUND_OWED_AGAIN_WHERE, ...extraRows] },
+    select: { id: true, type: true, status: true, paymentIntentId: true, paymentTransactionId: true, idempotencyKey: true },
+  });
+  // What each card refund row still owes, as the owed figure reads it.
+  const payment = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: { status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
+  });
+  return { operations, payment };
+}
+
+/** The captures open rows owe back again for at least all each still holds. */
+function owedBackInFull(
+  operations: readonly OwnershipRow[],
+  payment: CardRefundOwedPaymentRow | null,
+  captures: readonly OwnershipCapture[],
+): Set<string> {
+  const owned = new Set<string>();
+  for (const [intent, owedCents] of supersededRefundsOwedAgainCents(operations, payment)) {
+    const capture = captures.find((each) => each.stripePaymentIntentId === intent);
+    if (capture && owedCents >= capture.amountCents - capture.refundedAmountCents) owned.add(intent);
+  }
+  return owned;
+}
+
 /**
- * The Xero second-instrument conflict's reading (#4177): every intent id on
+ * The Xero second-instrument conflict's reading (#4177), and the
+ * duplicate-capture guard's for the arriving capture (#4283): every intent id on
  * this payment whose captured money a superseded-intent operation still holds
  * for the member - a REFUND_SUPERSEDED_PAYMENT not yet SUCCEEDED, a
  * CANCEL_PAYMENT_INTENT still in flight, or (#4221) one of `captures` whose
@@ -245,37 +280,10 @@ export async function listSupersededIntentIdsOwningCaptures(
   paymentId: string,
   captures: readonly OwnershipCapture[],
 ): Promise<string[]> {
-  const operations: OwnershipRow[] = await tx.paymentRecoveryOperation.findMany({
-    where: {
-      paymentId,
-      OR: [
-        ...SUPERSEDED_REFUND_OWED_AGAIN_WHERE,
-        {
-          type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
-          AND: [PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE],
-        },
-      ],
-    },
-    select: {
-      id: true,
-      type: true,
-      status: true,
-      paymentIntentId: true,
-      paymentTransactionId: true,
-      idempotencyKey: true,
-    },
-  });
-  // What each card refund row still owes, as the owed figure reads it, under
-  // the same lock(1).
-  const payment = await tx.payment.findUnique({
-    where: { id: paymentId },
-    select: { status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
-  });
-  const owned = new Set<string>();
-  for (const [intent, owedCents] of supersededRefundsOwedAgainCents(operations, payment)) {
-    const capture = captures.find((each) => each.stripePaymentIntentId === intent);
-    if (capture && owedCents >= capture.amountCents - capture.refundedAmountCents) owned.add(intent);
-  }
+  const { operations, payment } = await readSupersededRefundsOwedAgain(tx, paymentId, [
+    { type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT, AND: [PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE] },
+  ]);
+  const owned = owedBackInFull(operations, payment, captures);
   for (const operation of operations) {
     // A failed-later row counts only through `supersededRefundsOwedAgainCents`,
     // as does an open edit or cancel refund row, which no branch below matches.

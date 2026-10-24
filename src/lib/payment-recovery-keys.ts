@@ -117,12 +117,9 @@ export function buildCapacityClaimFailedRefundStripeKeyPrefix(bookingId: string,
 // residual #1967 window — an in-flight /pay link intent confirmed after the
 // auto-charge cron settled the split child, or vice versa). One row per
 // (booking, duplicate intent): a Stripe event redelivery for the same duplicate
-// upserts the same row, never a second refund debt. The key shape doubles as
-// the per-booking adjudication marker: markBookingPaymentSucceeded refuses to
-// open a second duplicate-capture refund for the SAME booking against a
-// DIFFERENT intent (that arriving intent is the settlement side of the pair the
-// first operation already adjudicated), which is what makes the refund
-// direction stable under webhook replays of both captures.
+// upserts the same row, never a second refund debt. A capture a key names is going
+// back to the member, so it is never the settlement another capture duplicates
+// (#4211): replays keep the refund direction stable, and a third capture is refunded.
 export function buildDuplicateCaptureRefundRecoveryIdempotencyKey(
   bookingId: string,
   paymentIntentId: string,
@@ -130,13 +127,19 @@ export function buildDuplicateCaptureRefundRecoveryIdempotencyKey(
   return `${buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(bookingId)}${paymentIntentId}`;
 }
 
-// The per-booking prefix of the duplicate-capture recovery key, used to ask
-// "has ANY duplicate-capture refund already been adjudicated for this booking?"
-// without knowing the other intent's id.
+// The per-booking prefix of the duplicate-capture recovery key: which of this
+// booking's captures a duplicate-capture refund owns, without knowing their intents.
 export function buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(
   bookingId: string,
 ) {
   return `${DUPLICATE_CAPTURE_REFUND_RECOVERY_PREFIX}${bookingId}_`;
+}
+
+// #4211: the duplicate intent a booking's duplicate-capture key names, or null. A booking id
+// plus `_` can begin a longer id, so a caller reads only that booking's rows.
+export function duplicateCaptureIntentIdForRecoveryKey(bookingId: string, idempotencyKey: string): string | null {
+  const prefix = buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(bookingId);
+  return idempotencyKey.startsWith(prefix) && idempotencyKey.length > prefix.length ? idempotencyKey.slice(prefix.length) : null;
 }
 
 // The Stripe idempotency-key prefix for the duplicate-capture auto-refund

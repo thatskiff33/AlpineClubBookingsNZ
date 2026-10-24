@@ -44,7 +44,9 @@
  *   ones off the mirror. Read from the close's persisted record, never the
  *   operation's wording. A close whose note waits for a late capture's receipt
  *   (#3924 round 6) counts as noted only once that receipt is in Xero; until
- *   then the legacy path takes it off the mirror too.
+ *   then the legacy path takes it off the mirror too. #4287
+ *   (`INV-ADDPAY-043`): a cancellation hand-back noted on its own task is a
+ *   noted record the same way; one under the canonical note is none.
  *
  * Stated limits. The first two are fail-safe: they can only UNDER-state cash,
  * so the pipeline under-flags a genuine refund note and can never mint one.

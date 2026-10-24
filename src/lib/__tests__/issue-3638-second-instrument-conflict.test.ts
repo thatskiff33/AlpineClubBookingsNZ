@@ -155,6 +155,7 @@ import {
   isManualSettlementMarkerEvent,
   settlementMarkerTimelineEntries,
 } from "@/lib/manual-settlement-reversal-event";
+import { duplicateCaptureRefundOperationWhere } from "@/lib/duplicate-capture-ownership";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { IB_RECEIPT_FROM_CASH_REASON } from "@/lib/xero-inbound/settle-from-cash";
 import {
@@ -586,6 +587,20 @@ describe("not a second instrument (#3638)", () => {
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
+  it("#4211: the bank receipt that settles the booking is recorded as its settler", async () => {
+    primePayment(switchedPayment(BookingStatus.CONFIRMED));
+    mocks.paymentTransactionFindMany.mockImplementation(async (args: { where?: { source?: unknown } }) =>
+      args.where?.source === PaymentSource.INTERNET_BANKING ? [{ id: "bank-row" }] : [],
+    );
+
+    await sync();
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment-1" },
+      data: { settledByTransactionId: "bank-row" },
+    });
+  });
+
   it("a booking still awaiting payment never runs the test", async () => {
     primePayment(switchedPayment(BookingStatus.CONFIRMED));
     mocks.paymentFindUnique.mockResolvedValue(
@@ -594,7 +609,13 @@ describe("not a second instrument (#3638)", () => {
 
     await sync();
 
-    expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+    // #4211: the settle reads its own bank receipt's row to record it as the
+    // settler; the second-instrument read (any non-bank row) never runs.
+    expect(
+      mocks.paymentTransactionFindMany.mock.calls.filter(
+        ([args]) => (args as { where?: { source?: unknown } }).where?.source !== PaymentSource.INTERNET_BANKING,
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -827,6 +848,28 @@ describe("card first, then cancelled, then bank (#3638)", () => {
       mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
     ).toMatchObject({ conflictKind: "cancelledAfterCard", cardPaymentIntentId: "pi_card_3638" });
   });
+
+  it("#4211: a recorded settler with #1765 history still ranks after a real card settlement on a cancelled booking", async () => {
+    const switchedAt = new Date("2026-07-10T00:00:00.000Z");
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED, settledByTransactionId: "old-row" })
+    );
+    mocks.paymentTransactionFindFirst.mockImplementation(
+      async ({ orderBy }: { orderBy?: unknown }) =>
+        orderBy ? { createdAt: switchedAt } : null
+    );
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, id: "old-row", stripePaymentIntentId: "pi_old", refundedAmountCents: 27000 },
+      { ...CARD_PRIMARY, id: "card-row", refundedAmountCents: 27000 },
+    ]);
+    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "old-row" }]);
+
+    await sync();
+
+    expect(
+      mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
+    ).toMatchObject({ conflictKind: "cancelledAfterCard", cardPaymentIntentId: "pi_card_3638" });
+  });
 });
 
 /**
@@ -905,10 +948,9 @@ describe("the opposite order belongs to #1992 (#3638)", () => {
 
     expect(result.secondInstrumentSettlementConflicts).toBe(0);
     expect(result.skippedAlreadyPaidBookings).toBe(1);
+    // #4211: the one reading guard (c) of the duplicate-capture refund uses.
     expect(mocks.paymentRecoveryOperationFindMany).toHaveBeenCalledWith({
-      where: {
-        idempotencyKey: { in: ["duplicate_capture_booking-1_pi_card_3638"] },
-      },
+      where: duplicateCaptureRefundOperationWhere("booking-1"),
       select: { idempotencyKey: true },
     });
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
@@ -982,6 +1024,20 @@ describe("the settling capture follows the shared ledger order (#4163)", () => {
     ).toMatchObject({
       cardPaymentIntentId: "pi_first_4163",
       cardHeldCents: 27000,
+    });
+  });
+
+  it("#4211: names the settler the card's PAID claim recorded, over an older capture", async () => {
+    primePayment(switchedPayment(BookingStatus.PAID, { settledByTransactionId: "second-capture" }));
+    answerLikeTheDatabase([SECOND_CAPTURE, FIRST_CAPTURE]);
+
+    await sync();
+
+    expect(
+      mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
+    ).toMatchObject({
+      cardPaymentIntentId: "pi_second_4163",
+      cardHeldCents: 31000,
     });
   });
 
@@ -1591,6 +1647,25 @@ describe("the settling capture skips one the superseded-intent machinery holds, 
       ).toMatchObject({ conflictKind: "cancelledAfterCard", cardPaymentIntentId: X.stripePaymentIntentId });
     },
   );
+
+  // #4211: the duplicate-capture refund's ownership counts on a cancelled
+  // booking too, unlike the superseded machinery's: that capture is going back
+  // to the member under its own refund, so it is never the card side.
+  it("cancelled: skips an older capture a duplicate-capture refund owns and names the next oldest", async () => {
+    primePayment(switchedPayment(BookingStatus.CANCELLED));
+    mocks.paymentTransactionFindMany.mockResolvedValue([X, S]);
+    mocks.paymentRecoveryOperationFindMany.mockResolvedValue([
+      { idempotencyKey: `duplicate_capture_booking-1_${X.stripePaymentIntentId}` },
+    ]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(1);
+    expect(mocks.supersededOperationFindMany).not.toHaveBeenCalled();
+    expect(
+      mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
+    ).toMatchObject({ conflictKind: "cancelledAfterCard", cardPaymentIntentId: S.stripePaymentIntentId });
+  });
 });
 
 describe("a replay on a completed booking (#3638)", () => {

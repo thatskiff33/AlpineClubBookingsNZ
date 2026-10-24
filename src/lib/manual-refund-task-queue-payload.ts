@@ -13,6 +13,8 @@ import {
 } from "@/lib/manual-refund-task-settlement-rules";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { isGroupSettlementMirrorHandBackKind, reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
 import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
@@ -53,6 +55,7 @@ export const OPEN_TASK_REFUND_PAYMENT_SELECT = {
 } as const;
 export const OPEN_TASK_BOOKING_PAYMENT_SELECT = {
   status: true,
+  organiserSettled: true, parentBookingId: true, // #3949: whether the group organiser paid for it
   payment: {
     select: { id: true, status: true, amountCents: true, refundedAmountCents: true, source: true },
   },
@@ -89,6 +92,9 @@ export type OpenManualRefundTaskRow = {
   booking: QueueBookingSummary & {
     /** #3536: `OPEN_TASK_BOOKING_PAYMENT_SELECT`. */
     status: string;
+    /** #3949: the same select - whether the group organiser paid for it (`paidByOrganiserInternetBanking`). */
+    organiserSettled: boolean;
+    parentBookingId: string | null;
     payment: {
       id: string;
       status: string;
@@ -170,6 +176,14 @@ export type OpenManualRefundTaskPayload = {
    * appeal's, so neither the cancellation nor the edit sentence fits it.
    */
   refundRequestHandBack: boolean;
+  /**
+   * #3949 (`INV-PAY-137`): either of those two, or the joiner's own cancellation's
+   * hand-back (`isGroupSettlementMirrorHandBackKind`), or a review whose refund
+   * the chooser sends there (`reviewRefundGoesToGroupOrganiser`), on a joiner's booking the
+   * group organiser paid for by Internet Banking, so the money goes back to the
+   * ORGANISER (`paidByOrganiserInternetBanking`), never to the joiner.
+   */
+  paidToGroupOrganiser: boolean;
   /**
    * #4042 (`INV-PAY-124`): an organiser cancelled a group paid by Internet
    * Banking, and the club repays the joiners' refunds to the organiser. The
@@ -282,6 +296,10 @@ export function toOpenManualRefundTaskPayload(
     partPaymentReview: isPartPaymentReviewTask(task),
     editRefundHandBack: isEditRefundHandBackTask(task),
     refundRequestHandBack: isRefundRequestHandBackTask(task),
+    paidToGroupOrganiser:
+      task.kind === "EDIT_FINANCIAL_REVIEW"
+        ? reviewRefundGoesToGroupOrganiser(task) // review round 3: the chooser's own test
+        : isGroupSettlementMirrorHandBackKind(task) && paidByOrganiserInternetBanking(task.booking),
     groupOrganiserHandBack: groupHandBack,
     cardShortfallHandBack: cancelCardShortfallPart(task) === "bank",
     cardShortfallCheck: cancelCardShortfallPart(task) === "check",

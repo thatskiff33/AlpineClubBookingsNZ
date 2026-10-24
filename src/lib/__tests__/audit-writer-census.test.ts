@@ -1464,7 +1464,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // suite on the sync with #4149/#4170 (505 sites minus 128 pinned).
     // 377 -> 379 unpinned (#4162): a voided bank-transfer refund note undone and
     // one answered by a person, unpinned `payment` (507 sites minus 128 pinned).
-    ).toEqual({ pinned: 130, unpinned: 381 }); // 128/128 -> 130, 379/373 -> 381 (central-server lane, 20 Oct 2026): disjoint; RE-MEASURED on the merged tree.
+    // 379 -> 380 unpinned (#4219): the credit-note convergence's `xero` row, unpinned.
+    // PR #4277 sync with main: pinned/unpinned union RE-MEASURED on the composed tree.
+    ).toEqual({ pinned: 130, unpinned: 382 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

@@ -32,6 +32,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
+import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner-name";
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
@@ -56,7 +57,8 @@ import {
   markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError,
 } from "@/lib/payment-recovery";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { cancellationHandBackReason } from "@/lib/manual-refund-task-copy";
 import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-executor";
 import {
   findGroupCancellationChildDebt,
@@ -104,7 +106,7 @@ import {
 } from "@/lib/booking-cancel-eligibility";
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
-import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
 import { ownCardRefundWithShortfallSentence, type OrganiserRefundMethod, type OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
 import { alertCancelCardShortfall, cancelRaisesCardShortfall, raiseCancelCardShortfallHandBack, type CancelCardShortfall } from "@/lib/cancel-card-refund-shortfall";
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
@@ -1060,7 +1062,7 @@ async function performBookingCancellation(
     // never-captured payments flip to FAILED. See paymentHasCaptureEvidence
     // for why the ledger decides, never the aggregate mirror alone.
     const paymentCaptured = booking.payment
-      ? await paymentHasCaptureEvidence(booking.payment)
+      ? await paymentHasCaptureEvidence({ ...booking, payment: booking.payment })
       : false;
 
     if (booking.payment) {
@@ -1136,7 +1138,7 @@ async function performBookingCancellation(
       }
 
       const freshPaymentCaptured = fresh.payment
-        ? await paymentHasCaptureEvidence(fresh.payment, tx)
+        ? await paymentHasCaptureEvidence({ ...fresh, payment: fresh.payment }, tx)
         : false;
 
       const paymentUpdateData: {
@@ -1569,8 +1571,13 @@ async function performBookingCancellation(
     const organiserCard = paidByOrganiserCard({ ...fresh, payment })
       ? await organiserChildCancelBasis(tx, fresh, payment)
       : null;
-    const forcedMethod = forcedCancelRefundMethod(payment.source, organiserCard !== null);
-    refundMethod = forcedMethod === "credit" ? "credit" : forcedMethod === "organiser_card" ? "card" : refundMethod;
+    // #3949 (owner decision, 22 Oct 2026): one the organiser paid for by Internet Banking is refunded to the organiser
+    // by bank transfer - a hand-back task (the manual branch), tiered as every refund to the organiser is. The method
+    // and disposition come from their one home, shared with the preview (`cancelRefundDisposition`).
+    const disposition = cancelRefundDisposition({ paymentSource: payment.source, organiserCard: organiserCard !== null,
+      organiserByBank: paidByOrganiserInternetBanking({ ...fresh, payment }), manuallyMarkedPaid: Boolean(payment.manuallyMarkedPaidAt), requested: refundMethod });
+    const organiserByHand = disposition.forced === "organiser_by_hand";
+    refundMethod = disposition.refundMethod;
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
     // capture ledger BEFORE executing new refunds. The inbound reconcile
@@ -1844,13 +1851,15 @@ async function performBookingCancellation(
         });
       }
     }
-    const manualDisposition = !organiserCard && Boolean(payment.manuallyMarkedPaidAt);
     const branch = paidCancellationBranch({
-      manualDisposition,
+      manualDisposition: disposition.manualDisposition,
       refundMethod,
       refundAmountCents,
     });
     let manualRefundTaskId: string | null = null;
+    // #3949 review round 4: the organiser it is repaid to, named in the task's reason and the admins' alert.
+    const organiserName = branch === "manual" && organiserByHand && fresh.parentBookingId
+      ? bookingOwnerName(await tx.booking.findUniqueOrThrow({ where: { id: fresh.parentBookingId }, select: BOOKING_OWNER_NAME_SELECT })) : null;
     if (branch === "manual") {
       const task = await tx.manualRefundTask.create({
         data: {
@@ -1863,10 +1872,7 @@ async function performBookingCancellation(
           // this task's amount is not admin-amendable — it was fixed at creation.
           kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
           raisedAmountCents: refundAmountCents,
-          reason: `Booking ${bookingId} cancelled — cash/manual settlement, refund by hand (${refundPercentage}% under the policy in effect at the time).`.slice(
-            0,
-            MANUAL_REFUND_TASK_REASON_MAX
-          ),
+          reason: cancellationHandBackReason({ bookingId, refundPercentage, payee: organiserByHand ? "organiser" : "member", organiserName }).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
         },
         select: { id: true },
       });
@@ -2008,6 +2014,7 @@ async function performBookingCancellation(
       plannedCardRefundCents,
       cardShortfall,
       manualRefundTaskId,
+      organiserName,
       clearingOperationId,
       branch,
       organiserChildDebtId,
@@ -2041,6 +2048,7 @@ async function performBookingCancellation(
     plannedCardRefundCents,
     cardShortfall,
     manualRefundTaskId,
+    organiserName,
     clearingOperationId,
     branch,
     organiserChildDebtId,
@@ -2101,6 +2109,8 @@ async function performBookingCancellation(
   // refund is planned — a cash settlement has no card slice to plan against.
   if (branch === "manual") {
     await cleanupPromoRedemption(bookingId);
+    // #3949 (owner decision, 22 Oct 2026): a joiner's place the organiser paid for by Internet Banking - the hand-back is the organiser's.
+    const toOrganiser = paidByOrganiserInternetBanking({ ...fresh, payment });
 
     logBookingCancellationAudit({
       booking: fresh,
@@ -2113,6 +2123,7 @@ async function performBookingCancellation(
       ipAddress,
       metadata: {
         refundMethod: "manual",
+        ...(toOrganiser ? { refundTo: "organiser" } : {}),
         refundAmountCents,
         refundPercentage,
         refundableBaseCents,
@@ -2136,7 +2147,7 @@ async function performBookingCancellation(
         fresh.checkOut,
         refundAmountCents,
         format,
-        "manual",
+        toOrganiser ? "organiser_by_hand" : "manual",
         creditRestoredCents,
         fresh.lodgeId
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
@@ -2144,14 +2155,20 @@ async function performBookingCancellation(
 
     // Admin audience, so exempt from the per-booking "No emails" switch (#2258
     // rule 2): the switch silences the MEMBER, and somebody still has to be
-    // told there is cash to hand back.
+    // told there is cash to hand back. #3949: a joiner's own cancel of a place
+    // the organiser paid for by Internet Banking names the organiser it repays
+    // in the Organiser row, as #4042's alert does, and the joiner in the reason.
+    const joinerName = `${bookingOwner(fresh).member.firstName} ${bookingOwner(fresh).member.lastName}`;
     sendAdminManualRefundTaskAlert({
-      memberName: `${bookingOwner(fresh).member.firstName} ${bookingOwner(fresh).member.lastName}`,
+      memberName: toOrganiser ? organiserName ?? "the group organiser" : joinerName,
       checkIn: fresh.checkIn,
       checkOut: fresh.checkOut,
       refundAmountCents,
       bookingId,
-      reason: `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
+      reason: toOrganiser
+        ? `${joinerName} cancelled their own place in the group ${days} day(s) before check-in; ${refundPercentage}% on the card refund tiers goes back to the group organiser by bank transfer.`
+        : `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
+      ...(toOrganiser ? { situation: "joiner-cancel-organiser" as const } : {}),
     }, format).catch((err) =>
       logger.error(
         { err, bookingId, manualRefundTaskId },
@@ -2169,9 +2186,12 @@ async function performBookingCancellation(
         refundAmountCents,
         refundPercentage,
         refundMethod: "manual",
+        ...(toOrganiser ? { organiserRefund: { method: "organiser_by_hand" as const, amountCents: refundAmountCents } } : {}),
         creditRestoredCents: creditRestoredCents || undefined,
         manualRefundTaskId: manualRefundTaskId ?? undefined,
-        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents, format)} has been raised for an admin to pay back by hand.`,
+        message: toOrganiser
+          ? `Booking cancelled. The group organiser paid for this booking, so the club will refund ${formatCents(refundAmountCents, format)} to the organiser by bank transfer.`
+          : `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents, format)} has been raised for an admin to pay back by hand.`,
       },
     };
   }
@@ -2685,7 +2705,7 @@ export async function paymentEligibleForPaidCancelPath(
   booking: {
     organiserSettled: boolean;
     parentBookingId: string | null;
-    payment: { id: string; status: string; source: string } | null | undefined;
+    payment: { id: string; status: string; source: string; refundedAmountCents: number } | null | undefined;
   },
   db: Prisma.TransactionClient | typeof prisma = prisma
 ) {
@@ -2711,7 +2731,9 @@ export async function paymentEligibleForPaidCancelPath(
     },
     select: { id: true },
   });
-  return Boolean(capturedTransaction);
+  // The one capture-evidence entry point, less the pre-ledger STRIPE mirror this gate never trusts. #3949 H1: it reads an
+  // IB organiser child's mirror (PARTIALLY_REFUNDED by a paid-back hand-back, no ledger row) as captured, never FAILED.
+  return paymentShowsCaptureEvidence(payment, Boolean(capturedTransaction), booking, { preLedgerStripeMirror: false });
 }
 
 // #1473/#1491: capture evidence for cancel-time decisions. Ledger truth
@@ -2721,14 +2743,14 @@ export async function paymentEligibleForPaidCancelPath(
 // FAILED); then the pre-ledger STRIPE mirror. The combination's one home is
 // `paymentShowsCaptureEvidence`.
 export async function paymentHasCaptureEvidence(
-  payment: {
-    id: string;
-    source: string;
-    status: string;
-    refundedAmountCents: number;
+  booking: {
+    organiserSettled: boolean;
+    parentBookingId: string | null;
+    payment: { id: string; source: string; status: string; refundedAmountCents: number };
   },
   db: Prisma.TransactionClient | typeof prisma = prisma
 ) {
+  const { payment } = booking;
   const capturedTransaction = await db.paymentTransaction.findFirst({
     where: {
       paymentId: payment.id,
@@ -2738,7 +2760,7 @@ export async function paymentHasCaptureEvidence(
     },
     select: { id: true },
   });
-  return paymentShowsCaptureEvidence(payment, Boolean(capturedTransaction));
+  return paymentShowsCaptureEvidence(payment, Boolean(capturedTransaction), booking); // #3949: an IB organiser child's mirror counts
 }
 
 // #1547: every cancel branch that restores applied credit appends this line to

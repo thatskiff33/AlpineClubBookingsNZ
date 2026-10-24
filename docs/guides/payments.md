@@ -249,6 +249,50 @@ made (being retried, or stopped and listed on
 made after the booking is cancelled, the cancellation never counted this task,
 and it can be dismissed (with a note) if the club settles it another way.
 
+**On a joiner's booking the group organiser paid for by internet banking
+(#3949).** Both tasks above can be raised on such a booking: a joiner's change
+that lowers the price, or an approved appeal on their place. A change that
+lowers the price offers no choice of card or account credit: the refund, at the
+card refund tier, always goes back to the organiser this way, and the joiner is
+never given account credit for it (a guest whose consent lapses is removed the
+same way, and a member's single card-or-credit choice for a linked move of two
+bookings does not apply to such a booking: the offer says how much goes back to
+the organiser instead, and while the organiser is cancelling the group the
+offer lets the member move only their own booking). The money came
+from the organiser's one group payment, so it goes back to the **organiser**,
+not the joiner: the task's reason says "to the group organiser by bank
+transfer", the paid-back dialog says the money goes back to the group
+organiser, and the joiner's email says the club will refund the group organiser
+directly. Send it to the organiser and mark it paid back as above; that records
+the refund against the joiner's share of the group payment, and the group's own
+settlement is left as it was. Until #4292 ships automatic notes, the app raises
+no Xero credit note for these (the joiner's booking has no invoice of its own;
+the money was taken on the group's combined invoice), so once you mark one paid
+back the finance contacts get a **Xero Sync Error** email naming the amount,
+the organiser and the invoice: in Xero, raise a credit note for that amount to
+the organiser against the group's invoice and record the bank refund against it.
+When the joiner cancels their own place with a refund due, the cancel raises
+one of these tasks too, for the policy's card-tier refund, to the organiser
+(never account credit for the joiner), and admins get the **Manual refund
+needed** email naming the organiser the refund goes to, and the task's reason
+names them too (a customised message
+shows that through `{{handBackNote}}`, as below). A price review on
+such a booking that the club settles as money owed back goes to the organiser
+the same way. One that finds the joiner owes the club is refused: the club
+cannot ask for that money from here, so agree it with the organiser, collect it
+another way and dismiss the review with a note. Once the joiner's booking is cancelled, by the joiner or by the
+organiser's cancellation of the group, such a review is refused and has to be
+settled by hand and dismissed. While the organiser's cancellation of the group
+is still part-way through, marking one of these paid back is refused: mark it
+once the cancellation has finished. Any change to the booking's price or that
+charges a change fee (adding a guest included), and an approved appeal that
+would raise a new one, is refused too - the member's edit screen says so before
+they save; once the booking shows as cancelled, decide whether anything more is
+owed. The rules above are unchanged: once the organiser has
+cancelled the group, a change's task can only be marked paid back, while an
+appeal's can still be dismissed with a note. Tasks raised before this change,
+which could not be marked paid back at all, now can.
+
 **The same task for a group paid by internet banking (#4042).** When the
 organiser of a group they paid for with one internet banking settlement
 cancels it, each joiner's refund is recorded in the app's ledger straight

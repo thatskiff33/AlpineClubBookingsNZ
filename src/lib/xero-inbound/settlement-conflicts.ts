@@ -46,7 +46,7 @@ import {
   type SecondInstrumentSettlementConflictEventSnapshot,
 } from "@/lib/manual-settlement-reversal-event";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { buildDuplicateCaptureRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { listDuplicateCaptureRefundIntentIds } from "@/lib/duplicate-capture-ownership";
 import type { ClubFormat } from "@/lib/club-format";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { listSupersededIntentIdsOwningCaptures } from "@/lib/superseded-intent-ownership";
@@ -261,17 +261,18 @@ export type SecondInstrumentSettlement = {
  *   receipt (`recordSecondInstrumentMarkerInTransaction`), so "receipt
  *   recorded and no marker" really does mean no conflict was ever raised.
  *
+ * The capture the booking's PAID claim recorded (`Payment.settledByTransactionId`,
+ * #4211) is named first when it qualifies; with none, the oldest-inserted.
  * Never a capture the #1992 duplicate-capture refund owns: the opposite order
  * (bank first, card second), whose durable refund operation already says which
  * side goes back (`INV-PAY-043`). On a PAID / COMPLETED booking, nor one the
  * superseded-intent machinery holds for the member
  * (`listSupersededIntentIdsOwningCaptures`, #4177), including one whose
  * superseded refund open rows owe back again, for all it holds, after a refund
- * Stripe failed later (#4221). The duplicate-capture
- * refund skips a capture a live superseded operation holds, but not yet one a
- * failed-later row holds, so after such a failure the two can name different
- * settling captures until #4227. A cancelled booking still counts it, because
- * the new bank cash has nowhere to go.
+ * Stripe failed later (#4221). Both readers skip a capture open rows owe back
+ * in full (`owedBackInFull`): the duplicate-capture guard reads this same
+ * function (#4227), so the two name the same settling capture. A cancelled
+ * booking still counts it, because the new bank cash has nowhere to go.
  *
  * Read under the lock(1) the settle loop already holds, which the card
  * settlement takes too, so the settlement it looks for has either committed or
@@ -350,53 +351,41 @@ export async function findSecondInstrumentSettlement(
       );
   if (holding.length === 0) return null;
   const history = await refundHistoryIds(tx, paymentId, holding);
-  // PAID / COMPLETED drop #1765 history; a cancelled booking keeps it (the new
-  // bank cash still has nowhere to go) and prefers a real card settlement.
-  const candidates = cancelled
-    ? [...holding].sort(
-        (a, b) => Number(history.has(a.id)) - Number(history.has(b.id)),
-      )
-    : holding.filter((transaction) => !history.has(transaction.id));
+  // #4211 (`INV-PAY-043`): the settlement the PAID claim recorded, if any.
+  const recordedId = (await tx.payment.findUnique({ where: { id: paymentId }, select: { settledByTransactionId: true } }))
+    ?.settledByTransactionId;
+  // ONE ordering for both rules: #1765 refund history last, then the recorded
+  // settler first among the rest, otherwise the ledger order above (a stable
+  // sort). PAID / COMPLETED drop history; a cancelled booking keeps it (the new
+  // bank cash still has nowhere to go) and prefers a real card settlement, so a
+  // recorded settler with refund history never outranks one without.
+  const rank = (transaction: (typeof holding)[number]) =>
+    (history.has(transaction.id) ? 2 : 0) + (transaction.id === recordedId ? 0 : 1);
+  const candidates = (cancelled ? [...holding] : holding.filter((transaction) => !history.has(transaction.id)))
+    .sort((a, b) => rank(a) - rank(b));
   if (candidates.length === 0) return null;
 
-  const duplicateKeys = candidates.flatMap((transaction) =>
-    transaction.stripePaymentIntentId
-      ? [
-          buildDuplicateCaptureRefundRecoveryIdempotencyKey(
-            bookingId,
-            transaction.stripePaymentIntentId,
-          ),
-        ]
-      : []
-  );
-  const duplicateRefunds =
-    duplicateKeys.length > 0
-      ? await tx.paymentRecoveryOperation.findMany({
-          where: { idempotencyKey: { in: duplicateKeys } },
-          select: { idempotencyKey: true },
-        })
-      : [];
+  // Only a card capture can be owned, so with none there is nothing to ask.
+  const anyCardCandidate = candidates.some((transaction) => transaction.stripePaymentIntentId);
+  // #4211: the one reading guard (c) of the duplicate-capture refund uses, so
+  // the two never disagree on which captures that refund owns. Paid or cancelled.
   const ownedByDuplicateRefund = new Set(
-    duplicateRefunds.map((operation) => operation.idempotencyKey)
+    anyCardCandidate
+      ? await listDuplicateCaptureRefundIntentIds({ bookingId, store: tx })
+      : []
   );
   // #4177: on a paid booking only. A cancelled booking's new bank cash has
   // nowhere to go, so a capture going back to the member still counts there.
   const ownedBySupersededMachinery = new Set(
-    !cancelled && duplicateKeys.length > 0
+    !cancelled && anyCardCandidate
       ? await listSupersededIntentIdsOwningCaptures(tx, paymentId, candidates)
       : []
   );
-  const settledBy = candidates.find(
-    (transaction) =>
-      !transaction.stripePaymentIntentId ||
-      (!ownedBySupersededMachinery.has(transaction.stripePaymentIntentId) &&
-        !ownedByDuplicateRefund.has(
-          buildDuplicateCaptureRefundRecoveryIdempotencyKey(
-            bookingId,
-            transaction.stripePaymentIntentId,
-          )
-        ))
-  );
+  const unowned = (transaction: (typeof candidates)[number]) =>
+    !transaction.stripePaymentIntentId ||
+    (!ownedBySupersededMachinery.has(transaction.stripePaymentIntentId) &&
+      !ownedByDuplicateRefund.has(transaction.stripePaymentIntentId));
+  const settledBy = candidates.find(unowned);
   if (!settledBy) return null;
   return {
     source: settledBy.source,

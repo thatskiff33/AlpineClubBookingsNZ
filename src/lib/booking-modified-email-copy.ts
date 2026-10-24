@@ -6,10 +6,11 @@
  * "Refund Appeal Approved" emails - HTML template and admin-editable body alike -
  * and for the cancel dialog's on-screen confirmation of an organiser-paid
  * refund (#3973) or an own-card refund not made yet (#4084). Pure, with no
- * imports, so a client component can read it. Every function takes the
+ * runtime imports (types only), so a client component can read it. Every function takes the
  * settlement's own answer of where the money went or is going; nothing here
  * decides it.
  */
+import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 
 /**
  * #3916, #3973: a refund on a joiner's booking the group organiser paid for by
@@ -57,26 +58,31 @@ export function organiserJoinerAppealRefundSentence(amount: string, joinerName: 
 
 /**
  * #3973: an organiser cancel of a group the organiser settled by Internet
- * Banking. There is no card to refund, so the club repays the organiser by
- * hand; it is promised, not reported, and never to the joiner.
+ * Banking, and (#3949) a joiner's own cancel of a place in one. There is no card
+ * to refund, so the club repays the organiser by hand; it is promised, not
+ * reported, and never to the joiner.
  */
 export function organiserByHandRefundSentence(amount: string): string {
   return `The club will refund ${amount} to the group organiser directly, because the group organiser paid for this booking.`;
 }
 
 /**
- * #3973: a refund on a joiner's booking the group organiser paid for by card,
- * which goes to the ORGANISER's card (#3653): made (`organiser_card`), still on
- * its way (`organiser_card_pending`), or carried by the organiser's earlier
- * cancellation of the group, still running (`group_cancel_refunding`) or made
- * (`group_cancel_refunded`). The cancel's result carries one, so the
+ * #3973: a refund on a joiner's booking that goes to the group ORGANISER, not
+ * the joiner. Paid by card, to the organiser's card (#3653): made
+ * (`organiser_card`), still on its way (`organiser_card_pending`), or carried by
+ * the organiser's earlier cancellation of the group, still running
+ * (`group_cancel_refunding`) or made (`group_cancel_refunded`). Paid by
+ * Internet Banking, repaid by the club by hand (`organiser_by_hand`): the
+ * organiser's cancel of the group (#3973), or a joiner's own cancel (#3949,
+ * owner decision, 22 Oct 2026). The cancel's result carries one, so the
  * confirmation screen says what the email says.
  */
 export type OrganiserRefundMethod =
   | "organiser_card"
   | "organiser_card_pending"
   | "group_cancel_refunding"
-  | "group_cancel_refunded";
+  | "group_cancel_refunded"
+  | "organiser_by_hand";
 
 /** #3956: an approved appeal's refund to the organiser's card - made, or on its way. */
 export type OrganiserCardAppealRefund = Extract<OrganiserRefundMethod, "organiser_card" | "organiser_card_pending">;
@@ -95,11 +101,11 @@ export type OwnCardRefundMethod = "card" | "card_pending";
  * is a cash / off-Xero settlement a person hands back, so it must never read as
  * "on its way to your card" (no card was charged) nor as account credit (none
  * was minted; a hand-back task was raised). #3973: the organiser's card
- * refunds (`OrganiserRefundMethod`), and "organiser_by_hand", an organiser's
- * Internet Banking settlement the club repays by hand. #4084: the member's own
- * card (`OwnCardRefundMethod`).
+ * refunds, and the organiser's Internet Banking settlement the club repays by
+ * hand (`OrganiserRefundMethod`). #4084: the member's own card
+ * (`OwnCardRefundMethod`).
  */
-export type BookingCancelledRefundMethod = OwnCardRefundMethod | "credit" | "manual" | "organiser_by_hand" | OrganiserRefundMethod;
+export type BookingCancelledRefundMethod = OwnCardRefundMethod | "credit" | "manual" | OrganiserRefundMethod;
 
 /**
  * #4097 (`INV-PAY-129`): the parts of an own-card cancel's refund its card
@@ -276,7 +282,8 @@ export type BookingModifiedRefundDestination =
  */
 export function bookingModifiedRefundSentence(
   amount: string,
-  refundByBankTransfer: boolean,
+  /** #3949: who the club's bank transfer goes to (`editRefundBankTransferPayee`), or null when none is sent by hand. */
+  refundByBankTransfer: BankTransferRefundPayee | null,
   refundDestination: BookingModifiedRefundDestination,
 ): string {
   switch (refundDestination) {
@@ -287,7 +294,9 @@ export function bookingModifiedRefundSentence(
     case "own_card_pending":
       return ownCardRefundPendingSentence(amount);
     case "own":
-      return refundByBankTransfer ? bankTransferRefundSentence(amount) : ownCardRefundSentence(amount);
+      // #3949 (`INV-PAY-137`): a joiner's booking the organiser paid by internet banking is refunded to the organiser.
+      if (refundByBankTransfer === "organiser") return organiserByHandRefundSentence(amount);
+      return refundByBankTransfer === "member" ? bankTransferRefundSentence(amount) : ownCardRefundSentence(amount);
   }
 }
 
@@ -320,6 +329,8 @@ export function refundRequestApprovedRefundSentence(
    * other booking.
    */
   organiserCardRefund: OrganiserCardAppealRefund | null = null,
+  /** #3949 (`INV-PAY-137`): who the bank-transfer part goes to - the group organiser who paid for the booking by internet banking, or the member. */
+  bankTransferPayee: BankTransferRefundPayee = "member",
 ): string {
   if (organiserCardRefund === "organiser_card") return organiserCardRefundSentence(formatAmount(approvedCents));
   if (organiserCardRefund === "organiser_card_pending") {
@@ -329,6 +340,9 @@ export function refundRequestApprovedRefundSentence(
   if (bankTransferCents <= 0) {
     return `${ownCardRefundPlannedClause(formatAmount(approvedCents))}.`;
   }
-  if (cardCents <= 0) return bankTransferRefundSentence(formatAmount(bankTransferCents));
+  if (cardCents <= 0) {
+    // #3949: an organiser's internet-banking payment has no card part, so all of it goes back to them.
+    return bankTransferPayee === "organiser" ? organiserByHandRefundSentence(formatAmount(bankTransferCents)) : bankTransferRefundSentence(formatAmount(bankTransferCents));
+  }
   return `${ownCardRefundPlannedClause(formatAmount(cardCents))}, and ${bankTransferRefundClause(`the remaining ${formatAmount(bankTransferCents)}`)}.`;
 }

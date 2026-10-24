@@ -25,14 +25,14 @@ describe("census purity (#3854)", () => {
     expect(plan.groupSettledChildKeptFrom({ amountCents: 4_500, refundedAmountCents: 0, openNonCancellationHandBackCents: 1_000 }, { kind: "per-child", committedRefundCents: 1_500 })).toBe(2_000);
     // #3854 sync lens F1: only the OPEN edit hand-backs are the cancel's; a paid appeal comes back out of the refunds.
     expect(plan.groupChildHandBacksFromRows("pay", [
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "edit-refund-hand-back:m1", paymentId: "pay", amountCents: 1_000 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: null, paymentId: "pay", amountCents: 7_000 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "edit-refund-hand-back:m0", paymentId: "pay", amountCents: 500 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "edit-refund-hand-back:m2", paymentId: "other", amountCents: 300 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "refund-request-hand-back:r1", paymentId: "pay", amountCents: 900 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "refund-request-hand-back:r2", paymentId: "pay", amountCents: 400 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "DISMISSED", occurrenceKey: "refund-request-hand-back:r3", paymentId: "pay", amountCents: 200 },
-      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "refund-request-hand-back:r4", paymentId: "other", amountCents: 100 },
-    ])).toEqual({ openEditRefundHandBackCents: 1_000, completedRefundRequestHandBackCents: 400 });
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "edit-refund-hand-back:m1", paymentId: "pay", amountCents: 1_000, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: null, paymentId: "pay", amountCents: 7_000, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "edit-refund-hand-back:m0", paymentId: "pay", amountCents: 500, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "edit-refund-hand-back:m2", paymentId: "other", amountCents: 300, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "refund-request-hand-back:r1", paymentId: "pay", amountCents: 900, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "refund-request-hand-back:r2", paymentId: "pay", amountCents: 400, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "DISMISSED", occurrenceKey: "refund-request-hand-back:r3", paymentId: "pay", amountCents: 200, settlementDirection: null },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "refund-request-hand-back:r4", paymentId: "other", amountCents: 100, settlementDirection: null },
+    ])).toEqual({ openEditRefundHandBackCents: 1_000, completedRefundRequestHandBackCents: 400, completedOtherMirrorWritesCents: 500 });
   });
 });

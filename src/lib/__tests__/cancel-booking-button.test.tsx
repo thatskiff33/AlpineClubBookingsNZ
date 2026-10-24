@@ -787,6 +787,34 @@ describe("CancelBookingButton — a refund the group organiser receives (#3973)"
     expect(screen.queryByText(/original payment method/i)).toBeNull();
   });
 
+  // #3949 (owner decision, 22 Oct 2026): a place the organiser paid for by internet banking.
+  it("names the organiser's bank transfer, in the dialog and the confirmation, never the joiner's cash or credit", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          String(url).endsWith("/cancel-preview")
+            ? { ...previewBody, refundMethodForced: "organiser_by_hand" }
+            : { refundAmountCents: 2500, refundMethod: "manual", organiserRefund: { method: "organiser_by_hand", amountCents: 2500 } },
+      })),
+    );
+    render(<CancelBookingButton bookingId="bk_child" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => expect(screen.getByTestId("cancel-organiser-by-hand-refund-note")).toBeTruthy());
+    expect(screen.getByTestId("cancel-organiser-by-hand-refund-note").textContent).toMatch(/to the group organiser directly/);
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText("The club will refund $25.00 to the group organiser directly, because the group organiser paid for this booking. You will receive a confirmation email shortly."),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/arrange your refund/i)).toBeNull();
+  });
+
   it("keeps the member's own card refund wording when the refund is theirs", async () => {
     stubOrganiserFetch({ refundAmountCents: 2500, refundMethod: "card" });
     render(<CancelBookingButton bookingId="bk_own" />);

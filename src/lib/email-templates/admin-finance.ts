@@ -27,12 +27,11 @@ import {
   lateCaptureAutoRefundOutcomeParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCapturePaymentLabel,
-  GROUP_HAND_BACK_ALERT_BODY, GROUP_HAND_BACK_ALERT_LEAD, manualRefundTaskAlertAmountLabel,
+  manualRefundTaskAlertAmountLabel, manualRefundTaskAlertLeadAndBody, manualRefundTaskAlertRecipientLabel,
   secondInstrumentConflictOutcomeParagraph,
   type ManualRefundTaskAlertSituation,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
-import { CARD_REFUND_SHORTFALL_ALERT_BODY, CARD_REFUND_SHORTFALL_ALERT_LEAD } from "@/lib/cancel-card-refund-shortfall-copy";
 import {
   emailCalendarDay,
   emailCalendarDayOrUnknown,
@@ -548,10 +547,10 @@ export function adminManualRefundTaskTemplate(data: {
 },
   format: ClubFormat,
 ): string {
-  const [group, shortfall] = [data.situation === "group-organiser-internet-banking", data.situation === "card-refund-shortfall"]; // #4042, #4097
+  const [situation, leadAndBody] = [data.situation ?? "cash-cancellation", manualRefundTaskAlertLeadAndBody(data.situation ?? "cash-cancellation")]; // #4042, #4097, #3949
   return layout(`
-    ${heading(group ? "Manual Refund Needed — Internet Banking Group Cancelled" : shortfall ? "Manual Refund Needed — Card Refund Short on a Cancelled Booking" : "Manual Refund Needed — Cash Booking Cancelled")}
-    ${group ? `${alertBox(GROUP_HAND_BACK_ALERT_LEAD, "warning")}${paragraph(GROUP_HAND_BACK_ALERT_BODY)}` : shortfall ? `${alertBox(CARD_REFUND_SHORTFALL_ALERT_LEAD, "warning")}${paragraph(CARD_REFUND_SHORTFALL_ALERT_BODY)}` : `${alertBox(
+    ${heading(situation === "group-organiser-internet-banking" ? "Manual Refund Needed — Internet Banking Group Cancelled" : situation === "card-refund-shortfall" ? "Manual Refund Needed — Card Refund Short on a Cancelled Booking" : situation === "joiner-cancel-organiser" ? "Manual Refund Needed — Group Joiner Cancelled, Refund to the Organiser" : "Manual Refund Needed — Cash Booking Cancelled")}
+    ${leadAndBody ? `${alertBox(leadAndBody[0], "warning")}${paragraph(leadAndBody[1])}` : `${alertBox(
       "A booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand — nothing was refunded automatically.",
       "warning"
     )}
@@ -562,11 +561,11 @@ export function adminManualRefundTaskTemplate(data: {
       "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. If the member declines it, or it was settled another way, dismiss the task with a note."
     )}`}
     ${infoTable([
-      { label: group ? "Organiser" : "Member", value: escapeHtml(data.memberName) },
+      { label: manualRefundTaskAlertRecipientLabel(situation), value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
-      { label: manualRefundTaskAlertAmountLabel(data.situation ?? "cash-cancellation"), value: formatCents(data.refundAmountCents, format) },
+      { label: manualRefundTaskAlertAmountLabel(situation), value: formatCents(data.refundAmountCents, format) },
       { label: "Reason", value: escapeHtml(data.reason) },
     ])}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}

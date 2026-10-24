@@ -223,7 +223,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-040` | A capacity failure refuses the mark-paid and records nothing |
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
-| `INV-PAY-043` | Duplicate capture on a cash-settled booking is auto-refunded, not silently kept |
+| `INV-PAY-043` | The recorded settler is kept; every other capture is refunded |
 | `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
@@ -342,6 +342,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-134` | A cancel's card refund is recorded once, by the close making it |
 | `INV-PAY-135` | A capacity race's unrefunded rest is a hand-back task to check |
 | `INV-PAY-136` | An edit racing the primary invoice create is refused or measured |
+| `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -434,7 +435,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; nothing persisted |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
-| `INV-MOD-028` | Historical nights value only from sold-price rows; else `NULL` and parked review |
+| `INV-MOD-028` | `valueStrandNights`: stored rows, else even split, always summing to guest total |
 | `INV-MOD-036` | A blank is filled only by a person, on four conditions |
 | `INV-MOD-037` | The repair is optional, and four things it deliberately does not repair |
 | `INV-MOD-038` | Three consumers read a re-based strand total; none restates a billed amount |
@@ -724,6 +725,7 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-040` | An unpaid review-raised request can be withdrawn; withdrawal retires every instrument, durably |
 | `INV-ADDPAY-041` | A voided refund note is never re-adopted or replayed by Xero |
 | `INV-ADDPAY-042` | A voided bank-transfer refund note is undone once, then asked once |
+| `INV-ADDPAY-043` | A later bank-transfer hand-back gets its own note, sized on its task |
 
 ## Analytics And Privacy
 

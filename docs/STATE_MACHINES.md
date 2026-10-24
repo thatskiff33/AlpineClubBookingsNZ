@@ -1707,17 +1707,38 @@ returns `already_paid` unchanged (webhook redelivery, confirm-payment racing
 the webhook, payment-link reconcile, a saved-card charge attempt replayed by
 the cron, charge-saved-method or confirm-pending-guests — since #3267 a replay
 retrieves the recorded attempt's own intent rather than re-sending a shared
-`pending_charge_` key, see "Saved-card charge attempt" above). A success
-carrying a DIFFERENT intent while
-another captured PRIMARY transaction still holds net cash is double money (the
-residual #1967 split-child link-vs-auto-charge window) and is auto-refunded:
-the duplicate's transaction goes `SUCCEEDED -> REFUNDED` via a durable
+`pending_charge_` key, see "Saved-card charge attempt" above).
+
+The PAID claim records which row settled the booking
+(`Payment.settledByTransactionId`, #4211): the card capture, or the cash or
+bank receipt's PRIMARY row. The manual mark-paid reversal clears it.
+
+```text
+recorded settler arrives again             -> already_paid, never refunded
+other capture arrives, settler holds cash  -> duplicate refund (below)
+no usable record, another capture holds    -> duplicate_capture_kept: kept,
+  cash (paid before #4211, by the draining    nothing refunded; unmuteable
+  colour, or a settler that no longer holds   admin-duplicate-capture-kept
+  money)                                      alert, once a day per capture
+recorded settler no longer holds money,    -> duplicate_capture_kept: kept,
+  nothing else does                            alert says this payment may now
+                                               pay for the booking (owned
+                                               duplicate: re-sends its refund;
+                                               settler the superseded
+                                               machinery holds: silent keep)
+```
+
+A success carrying a DIFFERENT intent while the recorded settler still holds
+net cash is double money (the residual #1967 split-child link-vs-auto-charge
+window, or a third capture from stale tabs) and is auto-refunded: the
+duplicate's transaction goes `SUCCEEDED -> REFUNDED` via a durable
 `duplicate_capture_<bookingId>_<pi>` recovery operation, the settlement
 transaction and the booking's PAID status are untouched, and
 `markBookingPaymentSucceeded` reports `duplicate_capture_refunded` /
 `duplicate_capture_refund_failed`. A fully `REFUNDED` prior capture is history
-(#1765), never a settlement a repay generation could "duplicate", and at most
-one side of a capture pair is ever refunded (adjudicated under `lock(1)`).
+(#1765), never a settlement a repay generation could "duplicate". All of it is
+decided under `lock(1)`; a capture a duplicate-capture refund already owns, at
+any status, re-sends only its own refund (`INV-PAY-043`).
 
 Audit trail (#2008): the auto-refund is recorded as a durable, ADMIN-ONLY
 `BookingEvent` once its recovery operation reaches `SUCCEEDED` — a `REFUNDED`
@@ -2201,6 +2222,27 @@ queues that request's own Xero refund credit note for the amount paid back
 though the booking is cancelled, because the cancel came first and never
 counted it. See
 [`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-118).
+
+**#3949 (owner decisions, 15 and 21 Oct 2026): on a joiner the organiser paid
+for by Internet Banking, both go back to the organiser.** The same OPEN ->
+COMPLETED or DISMISSED transitions, guarded the same way, but COMPLETED records
+the refund on the child's payment mirror (REFUNDED or PARTIALLY_REFUNDED) under
+`lock(1)` and then the `Payment` row, because that payment holds no captured
+transaction to allocate against; the group's settlement row does not move. It
+completes on a live child and after the organiser's group cancel alike, so the
+edit's task that the cancel netted is paid rather than stranded. A
+refund-direction edit financial review on a live child completes the same way,
+and so does the hand-back a joiner's own cancel of such a place raises (owner
+decision, 22 Oct 2026: the organiser is refunded, never the joiner's credit);
+on a cancelled one it is refused, task OPEN. While the organiser's group cancel
+is part-way through (the group CANCELLED, this child not yet claimed) a
+completion is refused, task OPEN, no edit or appeal raises a new one, and no
+edit (adding a guest included) changes the child's price or charges a change
+fee, whatever settlement it chose (the change is refused whole), so the
+organiser is never paid twice. No Xero
+note is queued until #4292: after the commit admins are alerted to credit the
+group's invoice by hand. See
+[`INV-PAY-137`](invariants/payment-and-settlement.md#inv-pay-137).
 
 **#4162 (owner decision 17 Oct 2026): a bank refund to re-confirm follows it
 too, raised by a void.** When Xero voids the credit note of a bank hand-back,
@@ -3573,7 +3615,16 @@ credit-note allocation refused by Xero as more than the note has left (#4218)
   replayable and the named code still counts as refused by Xero
   (xeroRefusedOperation); a retry sends the allocation again and should go
   through once the credit is restored in Xero. Applies to every credit-note
-  allocation, applied credit included
+  allocation; for an applied-credit allocation the next arm then converges and
+  closes the row instead
+applied-credit allocation raises that named failure (#4219) -> the worker
+  converges the credit ledger with Xero (write the lot down, release the
+  booking's applied credit, shrink or delete the unsent slice, close the slice's
+  failed allocation rows through the resolution fields and mark them
+  non-replayable), then plans again; the operation completes SUCCEEDED when
+  nothing is left to allocate. Only credit Xero shows spent on an invoice or
+  payment the app has no record of counts. Fails closed (original failure
+  stands) when it cannot account for the discrepancy
 queued retry (REQUEUE) RUNNING -> CANCELLED when its operation read as resolved
   in Xero (before the claim, or the claim lost to the resolve); nothing ran
 outbox copy RUNNING -> CANCELLED when a sibling for the same document was

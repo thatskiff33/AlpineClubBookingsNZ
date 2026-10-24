@@ -17,9 +17,9 @@ import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
-import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
 import { cancelPreviewCardShortfall } from "@/lib/cancel-card-refund-shortfall-preview";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import {
   findGroupCancellationChildDebt,
   groupCancellationRefundNote,
@@ -143,7 +143,7 @@ export async function GET(
       // tiered as the cancel tiers it - the same helper, so the two agree.
       const todayAtClub = (await clubTime()).today();
       const tiered =
-        booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence(booking.payment))
+        booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence({ ...booking, payment: booking.payment }))
           ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment },
               openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks), todayAtClub })
           : null;
@@ -170,9 +170,8 @@ export async function GET(
     // the organiser from what remains after refunds made AND owed - the base
     // the cancel itself tiers - and from nothing once the organiser's payment
     // no longer holds money.
-    const organiserCard = paidByOrganiserCard(booking)
-      ? await organiserChildCancelBasis(prisma, booking, booking.payment)
-      : null;
+    const organiserCard = paidByOrganiserCard(booking) ? await organiserChildCancelBasis(prisma, booking, booking.payment) : null;
+    const organiserByBank = paidByOrganiserInternetBanking(booking); // #3949: refunded to the organiser by hand, on the card tiers
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
@@ -226,7 +225,7 @@ export async function GET(
     return NextResponse.json({
       ...preview,
       ...groupCancellation,
-      ...(await cancelPreviewCardShortfall(prisma, { payment: booking.payment, organiserCard: organiserCard !== null, refundAmountCents: preview.refundAmountCents })), // #4119: the card's part as the cancel plans it
+      ...(await cancelPreviewCardShortfall(prisma, { payment: booking.payment, organiserCard: organiserCard !== null, organiserByBank, refundAmountCents: preview.refundAmountCents })), // #4119: the card's part as the cancel plans it
       hasPayment: true,
       // B5 (#2262): this booking was settled in cash / by an off-Xero bank
       // transfer, so cancelling raises a hand-back task an admin pays by hand —
@@ -238,7 +237,7 @@ export async function GET(
       // The method the cancel will use whatever is chosen (an internet banking
       // payment refunds as account credit), from the cancel path's own home,
       // so the dialog offers only that option.
-      refundMethodForced: forcedCancelRefundMethod(booking.payment.source, organiserCard !== null),
+      refundMethodForced: cancelRefundDisposition({ paymentSource: booking.payment.source, organiserCard: organiserCard !== null, organiserByBank, manuallyMarkedPaid: booking.payment.manuallyMarkedPaidAt !== null, requested: "card" }).forced, // #3949: the cancel's own helper
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");

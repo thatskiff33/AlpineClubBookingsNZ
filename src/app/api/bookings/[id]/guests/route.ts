@@ -52,6 +52,7 @@ import {
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { ApiError as SharedApiError } from "@/lib/api-error";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
@@ -959,6 +960,8 @@ export async function POST(
             promoAdjustmentCents: newPromoAdjustmentCents,
           });
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+      // #3949 review round 6: settling itself (not through `applyPaymentAdjustments`), it asks the same refusal here.
+      await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents: 0 });
 
       // Update hasNonMembers
       const addingNonMembers = normalizedNewGuests.some((g) => !g.isMember);
@@ -1495,7 +1498,7 @@ export async function POST(
         changeFeeCents: 0,
         refundAmountCents: 0,
         // Guest adds never decrease the price, so nothing is refunded.
-        refundByBankTransfer: false,
+        refundByBankTransfer: null,
         appliedCreditGivenBackCents: 0,
         additionalAmountCents: namedAdditionalCents,
         // A guest add only raises a price.

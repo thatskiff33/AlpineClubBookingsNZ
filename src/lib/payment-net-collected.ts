@@ -151,6 +151,9 @@ export interface NetCollectedBookingScopeFields {
  */
 export interface NetCollectedBookingFields extends NetCollectedBookingScopeFields {
   status: string;
+  /** #3949: whose payment it is, for the capture evidence (`paymentShowsCaptureEvidence`). */
+  organiserSettled: boolean;
+  parentBookingId: string | null;
   creditsApplied: ReadonlyArray<BookingCreditAmountRow>;
   creditsFromCancellation: ReadonlyArray<BookingCreditAmountRow & CreditRestoreEvidence>;
   manualRefundTasks: ReadonlyArray<HandBackTaskRow>;
@@ -235,18 +238,22 @@ export interface NetCollectedPaymentParts {
  * never shows a payment as taken that its retained line counts as nothing.
  */
 export function netCollectedPaymentTookMoney(
-  payment: Omit<NetCollectedPaymentRow, "booking"> & { status: string },
+  payment: Omit<NetCollectedPaymentRow, "booking"> & {
+    status: string;
+    booking: Pick<NetCollectedBookingFields, "organiserSettled" | "parentBookingId">;
+  },
 ): boolean {
   if (!isCapturedPaymentStatus(payment.status)) return false;
   if (payment.status === "SUCCEEDED") return true;
-  return paymentShowsCaptureEvidence(payment, payment._count.transactions > 0);
+  // #3949: an Internet Banking organiser child's settle mirror is money taken too.
+  return paymentShowsCaptureEvidence(payment, payment._count.transactions > 0, payment.booking);
 }
 
 /** A payment as the CASH half of the per-payment rule reads it: no applied-credit rows. */
 export type NetCollectedCashRow = Omit<NetCollectedPaymentRow, "booking"> & {
   booking: Pick<
     NetCollectedBookingFields,
-    "status" | "deletedAt" | "manualRefundTasks" | "creditsFromCancellation"
+    "status" | "deletedAt" | "manualRefundTasks" | "creditsFromCancellation" | "organiserSettled" | "parentBookingId"
   >;
 };
 

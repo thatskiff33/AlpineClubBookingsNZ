@@ -17,6 +17,7 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { MEMBER_GUEST_MODULE_KEY } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
 
 /**
  * Answer one member-guest consent request ("+ Add Member Guest", epic #2305,
@@ -161,6 +162,11 @@ export async function POST(
     // was saved. Nothing was recorded; the member's answer goes through on retry.
     if (err instanceof AdditionalAskChangedDuringReductionError) {
       return NextResponse.json({ error: CONSENT_ANSWER_RACED_MESSAGE }, { status: err.status });
+    }
+    // #3949 review round 5: the group organiser is cancelling the group and has not reached this booking yet.
+    // Nothing was recorded; the answer is refused in the refusal's own words, with its own status (409).
+    if (err instanceof GroupCancelInProgressError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
     }
     logger.error(
       { err, bookingId, guestId },

@@ -173,6 +173,9 @@ async function assertSliceFitsFundingLot(params: {
     _sum: { amountCents: true },
   });
   // #4219: credit written down because its note was used outside the app is gone.
+  // The write-down is per note, not per lot. The converge only writes one for a
+  // note with a single funding lot, so on this path it is exact; a note that
+  // later grew a second lot could only be refused here, never over-allocated.
   const writtenDown = await writtenDownCentsByCreditNote(params.db, params.memberId, [params.xeroCreditNoteId]);
   const remainingCents = Math.max(
     0,

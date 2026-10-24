@@ -95,6 +95,15 @@ export const REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE =
   "That is more than this booking's payment still holds once the refunds already promised back by hand are counted - settle or dismiss those refund tasks first, or confirm a smaller amount.";
 
 /**
+ * #3949 (`INV-PAY-137`): the cap of a hand-back paid back to the group
+ * organiser out of the group's internet-banking payment. The joiner's share of
+ * that payment, less what has already gone back on it and the other refunds
+ * still promised on it, is all this task can record.
+ */
+export const GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE =
+  "That is more than the group organiser's payment still holds for this booking once its earlier refunds and the other refunds promised back on it are counted - check the booking's payment, then settle or dismiss the other refund tasks first.";
+
+/**
  * #3791 (owner decision 2): a review completed after the booking was cancelled
  * nets its share against the credit the cancellation already restored, which
  * means re-running the cancellation's tier on what would have been applied had
@@ -141,3 +150,11 @@ export function reviewRefundOverPromisedMessage({
  */
 export const REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE =
   "This booking was paid for by the group organiser and has been cancelled, so its share cannot be netted against what the organiser was refunded automatically. Work out what is still owed to the organiser, hand it back another way, then dismiss this task with a note saying what was done.";
+
+/**
+ * #3949 (`INV-PAY-137`): the same refusal on one the group organiser paid for by Internet Banking. Nothing was
+ * refunded automatically: the cancellation's own refund to the organiser is paid by bank transfer from its own task
+ * (the joiner's cancel's hand-back, or the group cancel's organiser hand-back).
+ */
+export const REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE =
+  "This booking was paid for by the group organiser by internet banking and has been cancelled, so its share cannot be netted against the cancellation's own refund to the organiser, which is paid by bank transfer from its own task. Work out what is still owed to the organiser beyond that, pay it to them by bank transfer, then dismiss this task with a note saying what was done.";

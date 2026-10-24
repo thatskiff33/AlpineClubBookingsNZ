@@ -36,6 +36,7 @@ import {
   shareOwedAfterCancellationCents,
 } from "@/lib/edit-financial-review-cancel-netting";
 import {
+  REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE,
   REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE,
   REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
@@ -462,6 +463,15 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
     rows.owner = { organiserSettled: true, parentBookingId: "parent-1", payment: { source: "STRIPE" } };
 
     await expect(owed()).rejects.toMatchObject({ message: REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE, status: 409 });
+    expect(store.bookingEvent.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: #3949 - one the organiser paid by internet banking is refused with its own sentence, never 'refunded automatically'", async () => {
+    cancelledAt(20_000, 0, TIERS[1]!.rule);
+    rows.owner = { organiserSettled: true, parentBookingId: "parent-1", payment: { source: "INTERNET_BANKING" } };
+
+    await expect(owed()).rejects.toMatchObject({ message: REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE, status: 409 });
+    expect(REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE).not.toMatch(/automatically/);
     expect(store.bookingEvent.findFirst).not.toHaveBeenCalled();
   });
 

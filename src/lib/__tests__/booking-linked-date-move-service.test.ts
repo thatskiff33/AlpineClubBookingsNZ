@@ -577,6 +577,58 @@ describe("the linked move is one transaction (#3232, INV-HOST-051)", () => {
     expect(offer?.quote.linked).toHaveLength(1);
   });
 
+  it("#3949 review round 6: leaves the choice off a dependent the group organiser paid for, and never counts its refund as the member's", async () => {
+    const owned = { lodgeId: LODGE, checkIn: HELD.checkIn, checkOut: HELD.checkOut, memberId: OWNER };
+    h.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === DEPENDENT
+        ? { ...owned, organiserSettled: true, parentBookingId: "organiser-booking", payment: { source: "INTERNET_BANKING" } }
+        : owned,
+    );
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      const money =
+        call.bookingId === PRIMARY
+          ? { ...PRIMARY_MONEY, additionalAmountCents: 0, refundAmountCents: 900 }
+          : { ...DEPENDENT_MONEY, refundAmountCents: 400, accountCreditAmountCents: 0 };
+      return batchResult(call.bookingId, money, MOVED, call.waiveChangeFee === true);
+    });
+
+    const offer = await offerLinkedDateMove({ ...args(), input: { ...args().input, settlementMethod: "credit" } }).then(
+      () => null,
+      (thrown: unknown) => thrown as SameOwnerCoverageLinkedMoveRequiredError,
+    );
+
+    const calls = h.modifyBookingBatch.mock.calls.map(([call]) => call as BatchArgs);
+    expect(calls.find((call) => call.bookingId === PRIMARY)?.input.settlementMethod).toBe("credit");
+    expect(calls.find((call) => call.bookingId === DEPENDENT)?.input).not.toHaveProperty("settlementMethod");
+    // The dependent's $4 goes back to the organiser by bank transfer, so only the primary's $9 "comes back to you".
+    expect(offer?.quote.combinedRefundCents).toBe(900);
+    // Review round 7: and the offer says where the $4 goes instead.
+    expect(offer?.quote).toMatchObject({ combinedOrganiserRefundCents: 400, combinedOrganiserBankTransferRefundCents: 400 });
+    expect(offer?.message).toContain("$4.00 by bank transfer goes back to the group organiser rather than to you");
+  });
+
+  it("#3949 review round 7: a dependent mid group cancel is the offer's unavailable arm - move only this booking - not a bare 409", async () => {
+    const { GroupCancelInProgressError } = await import("@/lib/group-cancel-in-progress");
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      if (call.bookingId === DEPENDENT) throw new GroupCancelInProgressError();
+      return batchResult(call.bookingId, PRIMARY_MONEY, MOVED, call.waiveChangeFee === true);
+    });
+
+    const offer = await offerLinkedDateMove(args()).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(offer).toBeInstanceOf(SameOwnerCoverageLinkedMoveRequiredError);
+    const raised = offer as SameOwnerCoverageLinkedMoveRequiredError;
+    expect(raised.quote.feasibility).toBe("GROUP_CANCEL_IN_PROGRESS");
+    expect(raised.quote.linked).toHaveLength(1);
+    expect(raised.message).toContain("group organiser is part-way through cancelling its group, so its place cannot be moved right now");
+    expect(raised.message).toContain("You can still move this booking");
+  });
+
   it("re-asserts the rule over the primary using the window it vacated", async () => {
     await acceptOffer(await raiseOffer());
 
@@ -826,6 +878,8 @@ describe("what the member is charged, once, for both (#3232 D2)", () => {
         // booking that has taken no money yet they are all 0 whatever its price
         // does.
         combinedPriceDiffCents: 1_300,
+        combinedOrganiserRefundCents: 0,
+        combinedOrganiserBankTransferRefundCents: 0,
       }),
     );
     // Declining carries no price, so it is bound to the stranded set alone — the

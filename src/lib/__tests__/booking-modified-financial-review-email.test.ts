@@ -71,7 +71,7 @@ function params(overrides: Record<string, unknown> = {}) {
     // explicitly: this is the "no review is open" email every case below is
     // measured against, not an absence the compiler filled in.
     financialReviewPending: false,
-    refundByBankTransfer: false,
+    refundByBankTransfer: null,
     appliedCreditGivenBackCents: 0,
     unpaidAskCancelled: false,
     refundDestination: "own" as const,
@@ -298,7 +298,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
 
 describe("an internet-banking refund is promised, not reported (#3827, D-3813-6)", () => {
   it("both the HTML and the editable body say the club WILL refund by bank transfer", async () => {
-    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true };
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: "member" as const };
     const note = await paymentNoteFromSender(overrides);
     expect(note).toBe("The club will refund $60.00 to you by bank transfer.");
     const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
@@ -339,7 +339,7 @@ describe("#3809: applied credit given back is named in the Booking Modified emai
   });
 
   it("composes with an internet-banking refund promised by bank transfer (#3829: #3827 with #3809)", async () => {
-    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true, appliedCreditGivenBackCents: 5000 };
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: "member" as const, appliedCreditGivenBackCents: 5000 };
     const note = await paymentNoteFromSender(overrides);
     expect(note).toContain("The club will refund $60.00 to you by bank transfer.");
     expect(note).toContain(SENTENCE);
@@ -400,12 +400,12 @@ describe("#3916, #4057, #4070: the Booking Modified refund sentence names where 
   });
 
   it("the pending sentence is #3973's, from its one home", () => {
-    expect(bookingModifiedRefundSentence("$45.00", false, "organiser_card_pending")).toBe(
+    expect(bookingModifiedRefundSentence("$45.00", null, "organiser_card_pending")).toBe(
       organiserCardRefundPendingSentence("$45.00"),
     );
     // An organiser-card refund is a Stripe one: never by hand, made or not.
-    expect(bookingModifiedRefundSentence("$45.00", true, "organiser_card_pending")).toBe(ORGANISER_CARD_PENDING);
-    expect(bookingModifiedRefundSentence("$45.00", true, "organiser_card")).toBe(ORGANISER_CARD);
+    expect(bookingModifiedRefundSentence("$45.00", "member", "organiser_card_pending")).toBe(ORGANISER_CARD_PENDING);
+    expect(bookingModifiedRefundSentence("$45.00", "member", "organiser_card")).toBe(ORGANISER_CARD);
   });
 
   // #4070: the member's own-card refund Stripe did not make, queued for retry.
@@ -420,7 +420,7 @@ describe("#3916, #4057, #4070: the Booking Modified refund sentence names where 
     expect(html).not.toMatch(/has been processed|bank transfer/);
     expect(note).toBe(OWN_CARD_PENDING);
     // A card refund the club did not send by hand: the card's pending wording, whatever the flag says.
-    expect(bookingModifiedRefundSentence("$45.00", true, "own_card_pending")).toBe(OWN_CARD_PENDING);
+    expect(bookingModifiedRefundSentence("$45.00", "member", "own_card_pending")).toBe(OWN_CARD_PENDING);
   });
 
   it("own card: the member's original payment method, byte-identical to before", async () => {
@@ -433,7 +433,7 @@ describe("#3916, #4057, #4070: the Booking Modified refund sentence names where 
   it("bank transfer: an Internet Banking reduction keeps the D-3813-6 bank-transfer promise", async () => {
     // An organiser who settled by Internet Banking is not `paidByOrganiserCard`,
     // so its door answers "own" and the bank-transfer sentence stands.
-    const overrides = { refundAmountCents: 4500, refundByBankTransfer: true };
+    const overrides = { refundAmountCents: 4500, refundByBankTransfer: "member" as const };
     const bank = "The club will refund $45.00 to you by bank transfer.";
     const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
     expect(html).toContain(bank);

@@ -63,6 +63,8 @@ function quote(overrides: Partial<LinkedMoveQuote> = {}): LinkedMoveQuote {
     combinedAmountDueCents: 6500,
     combinedRefundCents: 0,
     combinedPolicyRetainedCents: 0,
+    combinedOrganiserRefundCents: 0,
+    combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: false,
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,
@@ -248,6 +250,8 @@ describe("what binds the member's answer (#3232, INV-HOST-050)", () => {
     combinedRefundCents: 0,
     combinedChangeFeeCents: 5000,
     combinedPriceDiffCents: 1500,
+    combinedOrganiserRefundCents: 0,
+    combinedOrganiserBankTransferRefundCents: 0,
   };
 
   it("represents a SET of moves, not the order they came back in", () => {
@@ -274,6 +278,11 @@ describe("what binds the member's answer (#3232, INV-HOST-050)", () => {
     expect(
       linkedMoveStateKey({ ...base, combinedRefundCents: 1000 }),
     ).not.toBe(linkedMoveStateKey(base));
+    // #3949 review round 7: what goes back to a group organiser is shown, so it is accepted too.
+    expect(linkedMoveStateKey({ ...base, combinedOrganiserRefundCents: 400 })).not.toBe(linkedMoveStateKey(base));
+    expect(linkedMoveStateKey({ ...base, combinedOrganiserRefundCents: 400, combinedOrganiserBankTransferRefundCents: 400 })).not.toBe(
+      linkedMoveStateKey({ ...base, combinedOrganiserRefundCents: 400 }),
+    );
     // THE FIGURE THE OTHER THREE CANNOT SEE. `applyPaymentAdjustments` is inert
     // for a booking that has taken no money yet, so a `PAYMENT_PENDING` dependent
     // quotes 0 due, 0 refund and 0 fee whatever its price does. Without this

@@ -520,7 +520,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
 
         const { cancelPreviewCardShortfall } = await import("@/lib/cancel-card-refund-shortfall-preview");
         const fresh = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { id: true, source: true, manuallyMarkedPaidAt: true } });
-        const quoted = await cancelPreviewCardShortfall(prisma, { payment: fresh, organiserCard: false, refundAmountCents: due });
+        const quoted = await cancelPreviewCardShortfall(prisma, { payment: fresh, organiserCard: false, organiserByBank: false, refundAmountCents: due });
         expect(quoted.cardShortfall ?? null).toEqual(split);
         // The preview wrote nothing: no backfill, no fold.
         expect(await ledgerNow()).toEqual(before);

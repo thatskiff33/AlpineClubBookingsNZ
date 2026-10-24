@@ -18,12 +18,13 @@ import { CLAIMABLE_PAYMENT_RECOVERY_STATUSES, NON_TERMINAL_PAYMENT_RECOVERY_STAT
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import {
+  REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE,
   REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE,
   REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
   reviewRefundOverPromisedMessage,
 } from "@/lib/edit-financial-review-refund-refusals";
 import { editReviewHandBackLinesWhere } from "@/lib/edit-financial-review-charge-shape";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import type { ClubFormat } from "@/lib/club-format";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
@@ -269,7 +270,10 @@ export async function capturedShareOwedAfterCancellation({
     where: { id: bookingId },
     select: { organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } },
   });
+  // #3949 review: so is one the organiser paid for by Internet Banking - its cancellation froze no figures to net
+  // against, and no part of its share may become the joiner's credit (`INV-PAY-137`).
   if (paidByOrganiserCard(owner)) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE, 409);
+  if (paidByOrganiserInternetBanking(owner)) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE, 409);
   const cancelled = await store.bookingEvent.findFirst({
     where: { bookingId, type: BookingEventType.CANCELLED },
     orderBy: { occurredAt: "desc" },

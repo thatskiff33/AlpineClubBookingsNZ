@@ -180,7 +180,7 @@ const h = vi.hoisted(() => {
             j.memberCreditId === key.memberCreditId &&
             j.appliedToBookingId === key.appliedToBookingId,
         );
-        return row ? { id: row.id } : null;
+        return row ? { id: row.id, amountCents: row.amountCents } : null;
       },
     },
     xeroObjectLink: {
@@ -206,6 +206,8 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaStub }));
 vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: vi.fn() }));
 vi.mock("@/lib/xero-credit-notes", () => ({ allocateCreditNoteToInvoice: vi.fn() }));
+// #4219: the converge routine is proved against real PostgreSQL; here only whether the worker calls it.
+vi.mock("@/lib/xero-applied-credit-spent-outside-app", () => ({ convergedForNamedFailure: vi.fn(async () => false) }));
 vi.mock("@/lib/xero-sync", () => ({
   completeXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
@@ -228,6 +230,8 @@ import {
   assertPlanKeepsCommittedSlices,
 } from "@/lib/xero-applied-credit-plan";
 import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
+import { convergedForNamedFailure } from "@/lib/xero-applied-credit-spent-outside-app";
+import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 
 const TEST_FORMAT = { currencyCode: "NZD", locale: "en-NZ" };
@@ -671,5 +675,33 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     } finally {
       groupBy.mockRestore();
     }
+  });
+
+  describe("a credit note spent outside the app (#4219)", () => {
+    const named = () => new CreditNoteSpentOutsideAppError("spent", "cn1", 0, 3000);
+
+    it("rethrows the named failure when the converge declines, so the operation fails as before", async () => {
+      vi.mocked(allocateCreditNoteToInvoice).mockRejectedValue(named());
+      vi.mocked(convergedForNamedFailure).mockResolvedValue(false);
+
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toBeInstanceOf(
+        CreditNoteSpentOutsideAppError,
+      );
+      expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
+      expect(convergedForNamedFailure).toHaveBeenCalledWith(expect.any(CreditNoteSpentOutsideAppError), "b1", undefined);
+    });
+
+    it("plans again after a converge, and stops after three converges in one run", async () => {
+      vi.mocked(allocateCreditNoteToInvoice).mockRejectedValue(named());
+      vi.mocked(convergedForNamedFailure).mockImplementation(async (_error, _bookingId, attempts = 0) => attempts < 3);
+
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toBeInstanceOf(
+        CreditNoteSpentOutsideAppError,
+      );
+
+      // The first attempt and three re-plans; the counter reaches the routine as 0, 1, 2, 3.
+      expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(4);
+      expect(vi.mocked(convergedForNamedFailure).mock.calls.map((call) => call[2])).toEqual([undefined, 1, 2, 3]);
+    });
   });
 });

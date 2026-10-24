@@ -2958,6 +2958,16 @@ model Payment {
   // the reversal so it can restore what it replaced. Lives on Payment so all
   // manual provenance is written and cleared as one unit.
   manuallyMarkedPaidPreviousStatus BookingStatus?
+  // #4211 (owner decision 17 Oct 2026, "Record the settler"): the
+  // PaymentTransaction on this payment whose settlement moved the booking to
+  // PAID - the card capture, or the cash / bank receipt's PRIMARY row. Written
+  // by the settle's PAID claim under lock(1), cleared by the manual reversal.
+  // The duplicate-capture guard never refunds it and refunds any other card
+  // capture that arrives. NULL = not recorded: paid before this column, by a
+  // draining old colour, or by a path no transaction settles (zero cash, an
+  // organiser's group settlement). No foreign key: the two tables already
+  // reference each other the other way, and the guard re-reads the row.
+  settledByTransactionId        String?
   createdAt                     DateTime      @default(now())
   updatedAt                     DateTime      @updatedAt
 

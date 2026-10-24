@@ -10,6 +10,7 @@
  * every answer to that ask), and `@/lib/booking-money-lines` (the money rows, shared
  * with the admin alerts about the same booking).
  */
+import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import {
   type AppliedCreditSummary, type BookingModificationAddedGuest,
   appliedCreditSummaryRows,
@@ -485,8 +486,10 @@ export function bookingModifiedTemplate(params: {
   financialReviewPending: boolean;
   refundDestination: BookingModifiedRefundDestination; // #3916, #4057: see `sendBookingModifiedEmail`
   /** #3827 (D-3813-6, `INV-PAY-117`): a bank transfer the club must still send.
-   * REQUIRED, as `financialReviewPending` is (`bookingModifiedRefundSentence`). */
-  refundByBankTransfer: boolean;
+   * REQUIRED, as `financialReviewPending` is (`bookingModifiedRefundSentence`).
+   * #3949: WHO it goes to - the member, or the group organiser who paid by
+   * internet banking (`editRefundBankTransferPayee`); null when none is sent. */
+  refundByBankTransfer: BankTransferRefundPayee | null;
 },
   format: ClubFormat,
 ): string {

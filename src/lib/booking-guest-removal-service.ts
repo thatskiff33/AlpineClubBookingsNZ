@@ -1235,7 +1235,7 @@ export async function removeBookingGuestInTransaction({
     paymentId: booking.payment?.id ?? null,
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
-    editLabel: "guest removal",
+    editLabel: "guest removal", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
   });
   // #3954: a smaller re-issued ask, and the note for an offset Xero had
   // already billed, are durable from this commit, not from after it.

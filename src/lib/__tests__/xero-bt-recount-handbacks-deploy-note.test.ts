@@ -21,8 +21,9 @@ import { recoverRefundCreditNoteLinkAmountCents } from "@/lib/xero-sync";
  * because an operator runs it in psql. This pins each literal to the code, so
  * a drift fails here rather than leaving a query that quietly lists nothing.
  * The real-PostgreSQL proof (`xero-bt-recount-handbacks`) runs the same query.
- * It also pins that the absorbing writers the doc names still enqueue unkeyed
- * (#4287 changes that), and that the Xero guide quotes the alert's advice.
+ * It also pins how the writers the doc names enqueue - a refund request's card
+ * part still unkeyed, a later cancellation hand-back on its own record (#4287) -
+ * and that the Xero guide quotes the alert's advice.
  */
 const REPO_ROOT = resolve(__dirname, "../../..");
 const read = (path: string) => readFileSync(resolve(REPO_ROOT, path), "utf8");
@@ -93,15 +94,16 @@ describe("the #4230 deploy note's SQL matches the code's one definition", () => 
   });
 });
 
-describe("the writers the deploy note names still enqueue a bank-transfer refund note unkeyed (#4287 changes them)", () => {
+describe("how the writers the deploy note names enqueue a bank-transfer refund note (#4287)", () => {
   it("a refund request's card part: no keyed option, so the single-note branch absorbs it", () => {
     const route = read("src/app/api/admin/refund-requests/[id]/route.ts");
     expect(route).toMatch(/enqueueXeroRefundCreditNoteOperation\(payment\.id, cardNoteCents, \{\s*createdByMemberId: session\.user\.id,\s*\}\)/);
   });
 
-  it("a cancellation hand-back's completion: keyed by nothing that steps it (`handBackTaskId` is payload only)", () => {
+  it("a cancellation hand-back's completion: a later one is keyed and sized on its own task, never absorbed", () => {
     const leg = read("src/lib/edit-financial-review-xero-leg.ts");
-    expect(leg).toContain('await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", handBackTaskId: task.id, store });');
+    expect(leg).toContain("const ownRecord = (await cancellationHandBackNotedOnItsOwnRecord(store, route.paymentId, task.id)) ? { paidAnotherWayTaskId: task.id } : {};");
+    expect(leg).toContain('await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", handBackTaskId: task.id, ...ownRecord, store });');
   });
 });
 

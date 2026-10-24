@@ -217,6 +217,7 @@ function payment(operation = deadOperation(), overrides: Record<string, unknown>
       creditsApplied: [],
       creditsFromCancellation: [],
       manualRefundTasks: [],
+      organiserSettled: false, parentBookingId: null,
     },
     ...overrides,
   };

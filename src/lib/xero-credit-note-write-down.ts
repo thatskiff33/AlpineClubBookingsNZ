@@ -1,18 +1,25 @@
 /**
  * #4219 — the ledger record that a credit note was spent in Xero outside the app.
  *
- * A written-down lot must not look free again, and the row that releases a
- * booking's applied credit must not look like a lot. A lot's remaining balance is
- * its amount less the slices drawn from it (`MemberCreditNoteAllocation`); an
- * outside spend draws no slice for any booking, so it is recorded as a negative
- * `ADMIN_ADJUSTMENT` row for the member, stamped with the note's id. Both rows the
- * convergence writes carry `MemberCredit.outsideSpendConvergedAt`. This module is
- * the one definition of such a row for the readers: `gatherAppliedCreditLots`, the
- * funding-lot finder and the slice-fit check read through it (`INV-SSOT`). The
- * writer that creates the rows ships in a later release than these readers, so a
- * previous app version never meets a marked row it cannot read.
+ * A written-down lot must not look free again. A lot's remaining balance is its
+ * amount less the slices drawn from it (`MemberCreditNoteAllocation`); an outside
+ * spend draws no slice for any booking, so it is recorded as a negative
+ * `ADMIN_ADJUSTMENT` row for the member, stamped with the note's id. This module
+ * is the one definition of such a row: the converge routine writes it and
+ * `gatherAppliedCreditLots` subtracts it (`INV-SSOT`).
  */
 import { CreditType, Prisma } from "@prisma/client";
+
+export const CREDIT_NOTE_WRITE_DOWN_TYPE = CreditType.ADMIN_ADJUSTMENT;
+
+/**
+ * `XeroObjectLink.localModel` values of the invoices the app raises for bookings
+ * (a booking's own, a modification's supplementary invoice, a group settlement's).
+ * Credit allocated to one of them is the app's own, mirrored by the inbound sync. An
+ * invoice linked to anything else (a subscription, an entrance fee, a member) is
+ * not a booking's: credit offset against it is gone and nothing else records it.
+ */
+export const BOOKING_INVOICE_LINK_MODELS = ["Payment", "Booking", "BookingModification", "GroupBookingSettlement"] as const;
 
 /**
  * Rows the convergence writes carry `outsideSpendConvergedAt`: the booking's
@@ -24,10 +31,13 @@ import { CreditType, Prisma } from "@prisma/client";
 export const NOT_A_CONVERGENCE_ROW = { outsideSpendConvergedAt: null } satisfies Prisma.MemberCreditWhereInput;
 
 /** The member's write-down rows for these notes: marked, negative, stamped with a note id. */
-function creditNoteWriteDownWhere(memberId: string, creditNoteIds: string[]): Prisma.MemberCreditWhereInput {
+export function creditNoteWriteDownWhere(
+  memberId: string,
+  creditNoteIds: string[],
+): Prisma.MemberCreditWhereInput {
   return {
     memberId,
-    type: CreditType.ADMIN_ADJUSTMENT,
+    type: CREDIT_NOTE_WRITE_DOWN_TYPE,
     amountCents: { lt: 0 },
     outsideSpendConvergedAt: { not: null },
     xeroCreditNoteId: { in: creditNoteIds },
@@ -51,4 +61,12 @@ export async function writtenDownCentsByCreditNote(
       row.xeroCreditNoteId ? [[row.xeroCreditNoteId, -(row._sum.amountCents ?? 0)] as const] : [],
     ),
   );
+}
+
+export function creditNoteWriteDownDescription(bookingId: string): string {
+  return `Automatic adjustment: credit used in Xero outside the app, removed (booking ${bookingId.slice(0, 8)})`;
+}
+
+export function creditNoteReleaseDescription(bookingId: string): string {
+  return `Automatic adjustment: credit no longer applied to booking ${bookingId.slice(0, 8)} because it was used in Xero outside the app`;
 }

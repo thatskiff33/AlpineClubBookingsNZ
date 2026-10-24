@@ -89,7 +89,7 @@ export function resolveBookingDetailPayment({
   const originalPaymentCaptured =
     booking.payment !== null &&
     hasCapturedPayment(booking.payment) &&
-    netCollectedPaymentTookMoney(booking.payment);
+    netCollectedPaymentTookMoney({ ...booking.payment, booking }); // #3949: whose payment, for an organiser's settle mirror
   // #3811: what the club kept of what was paid is this booking's cash part of
   // Net Collected (`getNetCollectedCashParts`), so it can never read higher
   // than Net Collected counts: an open hand-back refund is taken off straight

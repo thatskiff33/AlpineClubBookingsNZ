@@ -312,6 +312,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Bank transfer amount needs checking: {{memberName}}",
     "defaultBody": "Bank Transfer Amount Needs Checking\n\nXero reports this booking's bank-transfer invoice paid, and the payment has been recorded. The amount needs a person to check it.\n\n{{settlementFigureNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount recorded: {{amount}}\nCash Xero shows: {{paidAmount}}\nBooking owes: {{amountOwing}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
   },
+  // #4211 (`INV-PAY-043`): a card capture kept on a paid booking with no usable
+  // record of which payment settled it; nothing refunded, a person decides.
+  "admin-duplicate-capture-kept": {
+    "defaultSubject": "Booking may have been paid twice — check by hand: {{memberName}}",
+    "defaultBody": "Booking May Have Been Paid Twice — Check By Hand\n\nA card payment was kept on a booking that was already paid. Nothing was refunded automatically — please check.\n\n{{duplicateCaptureKeptNote}}\n\n{{duplicateCaptureKeptAction}}\n\nBefore you refund by hand, check in Stripe that neither payment has already been refunded: while an upgrade is switching over, the previous app version can still refund one automatically.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nPayment kept: {{amount}}\nStripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
+  },
   "admin-manual-refund-task": {
     "defaultSubject": "Manual refund needed - {{handBackLabel}}: {{memberName}}",
     "defaultBody": "{{handBackHeading}}\n\n{{handBackNote}}\n\n{{handBackRecipientLabel}}: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\n{{handBackAmountLabel}}: {{refundAmount}}\nReason: {{reason}}\n\nView Payments: {{reviewUrl}}"

@@ -18,6 +18,7 @@ import {
 } from "@/lib/booking-guest-removal-service";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
+import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
 import {
   familyAdultDelegateResolver,
   resolveDelegateAnswerRecipients,
@@ -39,7 +40,7 @@ import type {
   MemberGuestDelegateAnswer,
   MemberGuestStillOnBookingReason,
 } from "@/lib/member-guest-email-notes";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiser } from "@/lib/group-organiser-paid";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -234,10 +235,10 @@ export function classifyConsentRemovalRefusal(
  * its mint - and a moment later the same removal goes through. Read as a
  * refusal it would mark the row BLOCKED for good and hold the bed for an
  * operator; propagated, the claim rolls back to PENDING and the member's
- * retry, or the next sweep, removes the guest.
+ * retry, or the next sweep, removes the guest. #3949: so is a group cancel part-way through (`GroupCancelInProgressError`).
  */
 function consentRemovalRefusalMessage(err: unknown): string | null {
-  if (err instanceof AdditionalAskChangedDuringReductionError) return null;
+  if (err instanceof AdditionalAskChangedDuringReductionError || err instanceof GroupCancelInProgressError) return null;
   if (
     err instanceof BookingGuestRemovalError ||
     err instanceof ApiError ||
@@ -790,11 +791,10 @@ export async function expireMemberGuestConsent(params: {
         // writing it here would attribute to them an act they did not take.
         actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
-        // #3653: D-15's credit election is the OWNER's account. A booking the
-        // group organiser paid for by card has one disposition instead - the
-        // organiser's card - and electing credit there is refused, which would
-        // leave the lapsed guest on the booking for ever. It falls through.
-        ...(paidByOrganiserCard(guest.booking) ? {} : { settlementMethod: "credit" as const }),
+        // #3653: D-15's credit election is the OWNER's account. One the group organiser paid for, by card or (#3949)
+        // Internet Banking, has one disposition instead - back to the organiser - and electing credit there is
+        // refused, which would leave the lapsed guest on the booking for ever. It falls through.
+        ...(paidByOrganiser(guest.booking) ? {} : { settlementMethod: "credit" as const }),
         today: clubTodayDateOnly,
         format,
       });

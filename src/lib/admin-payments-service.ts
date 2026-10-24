@@ -179,7 +179,7 @@ type PaymentCandidate = {
     creditsFromCancellation: Array<
       NetCollectedBookingFields["creditsFromCancellation"][number] & { description: string | null }
     >;
-  } & Pick<NetCollectedBookingFields, "creditsApplied" | "manualRefundTasks">;
+  } & Pick<NetCollectedBookingFields, "creditsApplied" | "manualRefundTasks" | "organiserSettled" | "parentBookingId">;
 };
 
 type EnrichedPaymentCandidate = PaymentCandidate & {

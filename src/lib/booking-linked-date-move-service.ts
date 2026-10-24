@@ -33,6 +33,8 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { ApiError } from "@/lib/api-error";
+import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
@@ -48,6 +50,9 @@ import {
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+
+/** #3949: what `paidByOrganiser` reads of a booking. */
+const ORGANISER_PAID_SELECT = { organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } } as const;
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -215,7 +220,7 @@ async function runLinkedDateMove(
     // dependent's shift is measured from, and a proposal is not evidence.
     const before = await tx.booking.findUnique({
       where: { id: args.bookingId },
-      select: { checkIn: true, checkOut: true, memberId: true },
+      select: { checkIn: true, checkOut: true, memberId: true, ...ORGANISER_PAID_SELECT },
     });
     if (!before) throw new Error("Booking not found");
 
@@ -245,10 +250,17 @@ async function runLinkedDateMove(
       );
     }
 
+    // #3949 review round 6: ONE settlement choice covers every booking, but a booking the group organiser paid for
+    // (`paidByOrganiser`) has one disposition - back to the organiser - and refuses a credit choice, so the choice is
+    // not passed to it; its refund is the organiser's, never counted as coming back to the member.
+    const organiserPaidIds = new Set(paidByOrganiser(before) ? [args.bookingId] : []), organiserBankIds = new Set(paidByOrganiserInternetBanking(before) ? [args.bookingId] : []);
+    const choiceFor = (bookingId: string, method: typeof args.input.settlementMethod) =>
+      method && !organiserPaidIds.has(bookingId) ? { settlementMethod: method } : {};
+    const { settlementMethod: memberChoice, ...inputWithoutChoice } = args.input;
     const primary = await modifyBookingBatch({
       bookingId: args.bookingId,
       actor: args.actor,
-      input: args.input,
+      input: { ...inputWithoutChoice, ...choiceFor(args.bookingId, memberChoice) },
       ipAddress: args.ipAddress,
       todayAtClub: args.todayAtClub,
       format: args.format,
@@ -292,6 +304,9 @@ async function runLinkedDateMove(
 
     for (const dependent of stranded) {
       const target = targetOf(dependent);
+      const dependentPaidBy = await tx.booking.findUnique({ where: { id: dependent.bookingId }, select: ORGANISER_PAID_SELECT });
+      if (dependentPaidBy && paidByOrganiser(dependentPaidBy)) organiserPaidIds.add(dependent.bookingId);
+      if (dependentPaidBy && paidByOrganiserInternetBanking(dependentPaidBy)) organiserBankIds.add(dependent.bookingId);
       try {
         const result = await modifyBookingBatch({
           bookingId: dependent.bookingId,
@@ -321,9 +336,7 @@ async function runLinkedDateMove(
             // with the true figures rather than a silent substitution — the accept
             // key covers the combined money. One extra confirmation on that
             // branch, and never a figure they were not shown.
-            ...(settlementMethodForDependent
-              ? { settlementMethod: settlementMethodForDependent }
-              : {}),
+            ...choiceFor(dependent.bookingId, settlementMethodForDependent),
           },
           ipAddress: args.ipAddress,
           todayAtClub: args.todayAtClub,
@@ -356,6 +369,9 @@ async function runLinkedDateMove(
           result,
         });
       } catch (error) {
+        // #3949 review round 7: a dependent mid group cancel cannot move; that is the offer's unavailable arm (move
+        // only this booking), not a bare 409 about a booking the member did not touch.
+        if (error instanceof GroupCancelInProgressError) { feasibility = "GROUP_CANCEL_IN_PROGRESS"; break; }
         if (!isCapacityRefusal(error)) throw error;
         // THE "CANNOT" ARM. There are not beds for both, so the linked move is
         // not offered — but the member is not failed either: the quote comes back
@@ -384,7 +400,7 @@ async function runLinkedDateMove(
     // refusal — leaving the member refused with no door, which is the deadlock this
     // whole issue exists to remove. With one dependent, which is the ordinary case,
     // that was every single time.
-    if (feasibility === "NO_CAPACITY") {
+    if (feasibility !== "AVAILABLE") {
       linked.length = 0;
       for (const dependent of stranded) {
         linked.push({
@@ -469,17 +485,23 @@ async function runLinkedDateMove(
       }
     }
 
+    const memberMoney = <R extends { refundAmountCents: number }>(bookingId: string, result: R): R =>
+      organiserPaidIds.has(bookingId) ? { ...result, refundAmountCents: 0 } : result;
+    // #3949 review round 7: what those bookings refund to their organisers instead, told to the member apart.
+    const moved = [{ bookingId: args.bookingId, result: primary }, ...linked.flatMap((e) => (e.result ? [{ bookingId: e.stranded.bookingId, result: e.result }] : []))];
+    const organiserCents = (ids: Set<string>) => moved.reduce((cents, m) => cents + (ids.has(m.bookingId) ? m.result.refundAmountCents : 0), 0);
     const quote = combineLinkedMoveQuote({
-      primary,
+      primary: memberMoney(args.bookingId, primary),
       primaryId: args.bookingId,
       primaryRange,
-      linked,
+      linked: linked.map((entry) => (entry.result ? { ...entry, result: memberMoney(entry.stranded.bookingId, entry.result) } : entry)),
       bothChangeFeesCharged,
       // Whether a card-or-credit choice ALREADY travelled with this request, which
       // decides whether the offer's money sentence promises a question. In
       // `"quote"` mode without one the dependents were priced on card above.
       settlementMethodChosen: Boolean(args.input.settlementMethod),
       feasibility,
+      organiserRefunds: { totalCents: organiserCents(organiserPaidIds), bankTransferCents: organiserCents(organiserBankIds) },
     });
     const acceptStateKey = linkedMoveStateKey({
       stranded,
@@ -497,6 +519,7 @@ async function runLinkedDateMove(
       // The figure the other three cannot see: on a booking that has taken no
       // money yet all three are 0 whatever its price does.
       combinedPriceDiffCents: quote.combinedPriceDiffCents,
+      combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     });
     // The DECLINE key, derived the way the hosting engine will re-derive it when it
     // honours the answer — from the stranded set alone, because declining carries
