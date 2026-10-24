@@ -50,4 +50,6 @@ export const prisma: PrismaClient =
   globalForPrisma.prisma ??
   (createApplicationPrismaClient() as unknown as PrismaClient);
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+// Cache in every environment: independent production module instances must share
+// the same application client and adapter within this JavaScript process/global.
+globalForPrisma.prisma = prisma;

@@ -1,0 +1,1 @@
+- **Production reuses one application database pool per process (#4269).** Independently loaded server modules now share the application database client, avoiding duplicate pools during a deployment warm-up. Connection-budget guidance distinguishes the primary pools from optional archive and diagnostics pools.

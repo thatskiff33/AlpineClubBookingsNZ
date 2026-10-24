@@ -36,14 +36,18 @@ x-app-environment: &app-environment
   # exactly what is missing on /admin/setup rather than guessing.
   APP_ENVIRONMENT_ROLE: ${APP_ENVIRONMENT_ROLE}
   # Default DATABASE_URL for the WEB slots (app_blue / app_green). Prisma's
-  # connection_limit is the hard pool ceiling per container. Advisory-lock
+  # connection_limit is the hard ceiling per primary application pool. The
+  # client/adapter is cached per JavaScript process/global in production too
+  # (#4269); separate Node processes need separate budgets. Advisory-lock
   # waiters hold their connection while blocked, so a single-lodge booking
   # burst on a 5-conn pool exhausts it and stalls every other request
   # (#1884, F17). Raised to 10 for headroom under ~100 concurrent users.
   #
   # Postgres runs max_connections=40 (see the postgres service). The Prisma
-  # pools sum to blue(10) + green(10) + cron(5) = 25 steady, + migrate(2) in a
-  # deploy window = 27. Raised from 30 after production transiently hit `FATAL:
+  # primary pools sum to blue(10) + green(10) + cron(5) = 25, + migrate(2) in a
+  # deploy window = 27 configured slots, not measured usage. Optional archive
+  # and diagnostics-role pools are separate and must be budgeted when enabled.
+  # Raised from 30 after production transiently hit `FATAL:
   # sorry, too many clients`: at 30 the worst case (27) sat one slot under the
   # ceiling, so a nightly pg_dump, the deploy-time shadow DB, a pg_isready
   # probe, or an operator psql tipped it over.
@@ -52,9 +56,9 @@ x-app-environment: &app-environment
   # superuser_reserved_connections does NOT hold slots back from the app's own
   # pools — once the pools fill the ceiling even an admin psql is refused (which
   # is why the "reserved" slots gave no emergency headroom at 30). Accepted here:
-  # the pools are hard-capped (27) well under 40, so the margin covers admin in
-  # practice; a dedicated NOSUPERUSER app role would restore a truly protected
-  # slot if a future change ever makes the margin tight.
+  # the default primary pools are capped at 27 under 40; budget auxiliary pools
+  # and non-pool consumers within that margin. A dedicated NOSUPERUSER app role
+  # would restore a protected slot if a future change makes the margin tight.
   # So the 40 ceiling is raw headroom, not a reservation: budget EVERY consumer,
   # not just the Prisma pools —
   #   sum(pools) + pg_dump + shadow DB + probes + admin psql <= max_connections.
@@ -383,10 +387,10 @@ services:
       - "-c"
       - "effective_cache_size=256MB"
       - "-c"
-      # Sized so the deploy-window pool worst case (blue+green web + cron +
-      # migrate = 27) clears with headroom for the NON-pool consumers (pg_dump,
-      # shadow DB, probes, admin psql). The app role is a superuser, so the 3
-      # superuser-reserved slots do NOT protect admin access — see the
+      # Sized so the deploy-window primary pools (blue+green web + cron +
+      # migrate = 27) leave room for optional auxiliary pools and non-pool
+      # consumers (pg_dump, shadow DB, probes, admin psql). The app role is a
+      # superuser, so the 3 superuser-reserved slots do NOT protect admin access — see the
       # connection-budget note on x-app-environment and DEPLOYMENT.md.
       - "max_connections=40"
     volumes:
@@ -487,8 +491,8 @@ services:
       # Bound the deploy-window migrate pool to 2 so a blue/green overlap that
       # also runs migrations still fits: blue(10)+green(10)+cron(5)+migrate(2)
       # = 27, within the max_connections=40 ceiling. The headroom above 27 is
-      # for non-pool consumers (pg_dump / shadow DB / probes / psql), not a
-      # reserved admin slot — see the budget note on x-app-environment
+      # for auxiliary pools and non-pool consumers (pg_dump / shadow DB / probes /
+      # psql), not a reserved admin slot — see the budget note on x-app-environment
       # (#1884, F17). migrate only needs a couple of connections for
       # `prisma migrate deploy`.
       #

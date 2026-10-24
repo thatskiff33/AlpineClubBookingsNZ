@@ -26,10 +26,14 @@ Production Compose services:
 
 ## Connection pool sizing
 
-Each app container's Prisma pool size is the `connection_limit` in its
-`DATABASE_URL` (in `docker-compose.yml`). Prisma treats it as a hard ceiling,
-and advisory-lock waiters hold their connection while blocked — so an
-undersized web pool lets a single-lodge booking burst exhaust it and stall
+The application Prisma client and its adapter are cached on the JavaScript
+process global in every environment, including production (#4269). Independent
+module evaluations in that global reuse the same client and pool. The shipped
+container starts one Node server; separate Node processes or JavaScript globals
+each need their own pool budget. Each primary application pool's size is the
+`connection_limit` in its `DATABASE_URL` (in `docker-compose.yml`). The adapter
+treats it as a hard ceiling, and advisory-lock waiters hold their connection
+while blocked — so an undersized web pool lets a single-lodge booking burst exhaust it and stall
 unrelated requests. The defaults are sized for ~100 concurrent users against
 Postgres `max_connections=40`:
 
@@ -39,16 +43,22 @@ Postgres `max_connections=40`:
 | `app` | cron leader + warm fallback web | 5 |
 | `migrate` | deploy-window migrations | 2 |
 
-The worst case is a blue/green handover (both web slots briefly live) that
-overlaps a migration:
+The primary-pool ceiling for a blue/green handover (both web slots briefly live)
+that overlaps a migration is:
 
 ```
-app_blue(10) + app_green(10) + app(5) = 25 steady
+app_blue(10) + app_green(10) + app(5) = 25
                                  + migrate(2) = 27
 ```
 
-That leaves the pools **13 slots** under the 40 ceiling — but those slots are
-**not** a protected admin reservation. The app connects as role `tac`, which the
+This 27-slot primary-pool budget excludes the optional audit-archive Prisma
+client (`AUDIT_ARCHIVE_DATABASE_URL`) and the diagnostics role's separate bounded
+pg pool. Budget those pools separately when enabled; the archive client remains
+separate and disconnects when its job finishes. These are configured ceilings,
+not a measurement of actual connection use.
+
+That leaves the primary pools **13 slots** under the 40 ceiling — but those slots
+are **not** a protected admin reservation. The app connects as role `tac`, which the
 `postgres` image creates as a **superuser** (`POSTGRES_USER`), so
 `superuser_reserved_connections` (the 3 slots Postgres nominally holds back) does
 **not** fence the app's own pools off: once the pools reach the ceiling, even a
@@ -90,9 +100,9 @@ negligible above ~1 GiB free).
 
 A true protected admin slot would need a dedicated **`NOSUPERUSER`** application
 role (so `superuser_reserved_connections` can hold slots back from it). This is a
-**consciously accepted limitation**: because the pools are hard-capped at 27 well
-under the 40 ceiling, the ~13-slot margin covers the non-pool consumers in
-practice, so the simpler single-superuser model is retained. Revisit the
+**consciously accepted limitation**: the default primary pools are capped at 27
+under the 40 ceiling, leaving 13 slots to budget for auxiliary pools and non-pool
+consumers; the simpler single-superuser model is retained. Revisit the
 `NOSUPERUSER` split only if a future change makes the margin tight (a new pooled
 consumer, a much larger replica count, or enabling the audit-archive client via
 `AUDIT_ARCHIVE_DATABASE_URL`, which opens its own pool). A constrained-VPS fork
