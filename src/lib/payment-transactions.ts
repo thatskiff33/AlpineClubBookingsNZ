@@ -922,8 +922,10 @@ export async function foldIntoTransactionRefundedAmount({
 export const sumRecordedRefundsForTransaction = (store: RefundRowStore, paymentTransactionId: string) => sumRecordedRefundRows(store, { paymentTransactionId });
 /** #4154 review (M2): the same, over every charge on one payment. */
 export const sumRecordedRefundsForPayment = (store: RefundRowStore, paymentId: string) => sumRecordedRefundRows(store, { paymentId });
+/** #4285 review: the same, on one capture by row OR intent. What its CARD still holds is its amount less this: `refundedAmountCents` also counts account credit and by-hand refunds. */
+export const sumRecordedRefundsForCapture = (store: RefundRowStore, capture: { id: string; paymentIntentId: string }) => sumRecordedRefundRows(store, { OR: [{ paymentTransactionId: capture.id }, { stripePaymentIntentId: capture.paymentIntentId }] });
 type RefundRowStore = Pick<PaymentStore, "paymentRefund">;
-async function sumRecordedRefundRows(store: RefundRowStore, where: { paymentTransactionId: string } | { paymentId: string }): Promise<number> {
+async function sumRecordedRefundRows(store: RefundRowStore, where: Prisma.PaymentRefundWhereInput): Promise<number> {
   const recorded = await store.paymentRefund.aggregate({ where: { ...where, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } }, _sum: { amountCents: true } });
   return recorded._sum.amountCents ?? 0;
 }

@@ -36,7 +36,7 @@
  * an owner who changed) writes nothing and says why; the caller keeps the
  * original failure.
  */
-import { BookingStatus, CreditType } from "@prisma/client";
+import { BookingStatus, CreditType, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { createAuditLog } from "./audit";
@@ -56,6 +56,7 @@ import {
   BOOKING_INVOICE_LINK_MODELS,
   creditNoteReleaseDescription,
   creditNoteWriteDownDescription,
+  creditNoteWriteDownWhere,
   writtenDownCentsByCreditNote,
 } from "./xero-credit-note-write-down";
 
@@ -89,6 +90,65 @@ export interface ConvergeInput {
   /** The note's total and remaining credit in Xero, from the same read. */
   noteTotalCents: number | null;
   remainingCents: number;
+  /**
+   * The caller's own allocation operation that failed (#4338). When a concurrent
+   * run already converged the booking, its close ran before this row failed, so
+   * this run closes it.
+   */
+  failedOperationId?: string | null;
+}
+
+/**
+ * Close failed allocation attempts through the resolution fields an officer's
+ * mark uses (`INV-INT-025`): done, never re-run, off the Active list.
+ * Status-guarded, so a retry's claim and this close cannot both win.
+ */
+function closeFailedAllocations(tx: Prisma.TransactionClient, match: Prisma.XeroSyncOperationWhereInput, at: Date) {
+  return tx.xeroSyncOperation.updateMany({
+    where: {
+      ...match,
+      entityType: "ALLOCATION",
+      localModel: "MemberCreditNoteAllocation",
+      status: { in: ["FAILED", "PARTIAL"] },
+      manuallyResolvedAt: null,
+    },
+    data: {
+      manuallyResolvedAt: at,
+      manuallyResolvedReason: CREDIT_SPENT_OUTSIDE_APP_RESOLUTION_REASON,
+      // Done: nothing is left to retry, so no Retry is offered.
+      replayable: false,
+    },
+  });
+}
+
+/**
+ * Did a converge run for this booking and note (#4338)? Its release (a marked
+ * positive application to the booking) and its write-down (a marked negative row
+ * stamped with the note) carry the same `outsideSpendConvergedAt`.
+ */
+async function convergeEvidenceExists(
+  tx: Prisma.TransactionClient,
+  memberId: string,
+  bookingId: string,
+  creditNoteId: string,
+): Promise<boolean> {
+  const releases = await tx.memberCredit.findMany({
+    where: {
+      memberId,
+      appliedToBookingId: bookingId,
+      type: CreditType.BOOKING_APPLIED,
+      amountCents: { gt: 0 },
+      outsideSpendConvergedAt: { not: null },
+    },
+    select: { outsideSpendConvergedAt: true },
+  });
+  const releasedAt = releases.flatMap((r) => (r.outsideSpendConvergedAt ? [r.outsideSpendConvergedAt] : []));
+  if (releasedAt.length === 0) return false;
+  const writeDown = await tx.memberCredit.findFirst({
+    where: { ...creditNoteWriteDownWhere(memberId, [creditNoteId]), outsideSpendConvergedAt: { in: releasedAt } },
+    select: { id: true },
+  });
+  return writeDown !== null;
 }
 
 /**
@@ -166,18 +226,47 @@ export async function convergeCreditNoteSpentOutsideApp(input: ConvergeInput): P
     }
     await assertNoAppliedCreditDeallocationFence(paymentId, tx);
 
+    // A concurrent run converged first. Its close ran before this caller's own
+    // attempt failed, so that row is closed here or it stays on the Active list.
+    // Only on that run's evidence: its release for this booking and its write-down
+    // for this note, minted together. Without it the row stays FAILED.
+    const alreadyConverged = async (): Promise<ConvergeResult> => {
+      if (input.failedOperationId && (await convergeEvidenceExists(tx, lockedOwnerId, bookingId, creditNoteId))) {
+        const closedAt = new Date();
+        const closed = await closeFailedAllocations(tx, { id: input.failedOperationId }, closedAt);
+        if (closed.count > 0) {
+          await createAuditLog(
+            {
+              action: "xero.credit_note.spent_outside_app_attempt_closed",
+              subjectMemberId: lockedOwnerId,
+              targetId: bookingId,
+              entityType: "Booking",
+              entityId: bookingId,
+              category: "xero",
+              severity: "info",
+              outcome: "success",
+              summary: "Credit note used outside the app: a concurrent attempt's failed allocation closed",
+              details: CREDIT_SPENT_OUTSIDE_APP_RESOLUTION_REASON,
+              metadata: { creditNoteId, operationId: input.failedOperationId },
+            },
+            tx,
+          );
+        }
+      }
+      return { converged: false, reason: "already-converged" };
+    };
     const slices = await tx.memberCreditNoteAllocation.findMany({
       where: { appliedToBookingId: bookingId, xeroCreditNoteId: creditNoteId },
     });
     const [slice, ...otherSlices] = slices;
     if (!slice && (await unallocatedAppliedCents(bookingId, tx)) === 0) {
-      // A concurrent run converged this booking first: nothing is left to allocate.
-      return { converged: false, reason: "already-converged" };
+      // Nothing is left to allocate.
+      return alreadyConverged();
     }
     if (!slice || otherSlices.length > 0) return { converged: false, reason: "no-single-slice" };
     if (slice.amountCents < requestedCents) {
       // A concurrent partial converge already shrank this slice below what was refused.
-      return { converged: false, reason: "already-converged" };
+      return alreadyConverged();
     }
     const heldInXero = await sliceHeldInXero(tx, slice.id);
     if (heldInXero) return { converged: false, reason: "slice-already-in-xero" };
@@ -253,23 +342,8 @@ export async function convergeCreditNoteSpentOutsideApp(input: ConvergeInput): P
       data: { creditAppliedCents: await deriveBookingAppliedCreditCents(bookingId, tx) },
     });
 
-    // Close this slice's failed allocation attempts through the resolution fields
-    // an officer's mark uses (`INV-INT-025`): done, never re-run, off the Active list.
-    const closed = await tx.xeroSyncOperation.updateMany({
-      where: {
-        entityType: "ALLOCATION",
-        localModel: "MemberCreditNoteAllocation",
-        localId: slice.id,
-        status: { in: ["FAILED", "PARTIAL"] },
-        manuallyResolvedAt: null,
-      },
-      data: {
-        manuallyResolvedAt: convergedAt,
-        manuallyResolvedReason: CREDIT_SPENT_OUTSIDE_APP_RESOLUTION_REASON,
-        // Done: nothing is left to retry, so no Retry is offered.
-        replayable: false,
-      },
-    });
+    // Close this slice's failed allocation attempts.
+    const closed = await closeFailedAllocations(tx, { localId: slice.id }, convergedAt);
 
     await createAuditLog(
       {
@@ -338,6 +412,7 @@ export async function convergedForNamedFailure(
     xeroPayments: error.xeroPayments,
     noteTotalCents: error.totalCents,
     remainingCents: error.remainingCents,
+    failedOperationId: error.operationId,
   });
   return result.converged || result.reason === "already-converged";
 }

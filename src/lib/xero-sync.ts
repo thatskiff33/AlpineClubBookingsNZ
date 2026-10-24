@@ -22,6 +22,7 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
 import { xeroSyncErrorFields } from "@/lib/xero-sync-error-text";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
+import { isClosedByCreditSpentOutsideApp } from "@/lib/xero-operation-resolution";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -478,6 +479,9 @@ function getAttemptWhere(
   return { OR: or };
 }
 
+/** Inserts `startXeroSyncOperation` makes at most when each lost race finds the winner FAILED (#4338). */
+const START_OPERATION_INSERT_ATTEMPTS = 3;
+
 export async function startXeroSyncOperation(
   input: XeroSyncOperationInput & { store?: Prisma.TransactionClient }
 ) {
@@ -487,9 +491,6 @@ export async function startXeroSyncOperation(
   // unchanged. `store` is never part of the `create` payload.
   const db = input.store ?? prisma;
   const attemptWhere = getAttemptWhere(input);
-  const attemptCount = attemptWhere
-    ? (await db.xeroSyncOperation.count({ where: attemptWhere })) + 1
-    : 1;
 
   // Denormalized copy of the outbox queue type (#1271, item 3 of #1208),
   // captured once here at enqueue and never updated afterward. Derive it from
@@ -506,48 +507,60 @@ export async function startXeroSyncOperation(
   const queueType =
     (payloadRecord ? readString(payloadRecord.queueType) : null) ?? input.queueType ?? null;
 
-  try {
-    return await db.xeroSyncOperation.create({
-      data: {
-        direction: input.direction,
-        entityType: input.entityType,
-        operationType: input.operationType,
-        localModel: input.localModel ?? null,
-        localId: input.localId ?? null,
-        status: input.status ?? "RUNNING",
-        idempotencyKey: input.idempotencyKey ?? null,
-        correlationKey: input.correlationKey ?? null,
-        attemptCount,
-        replayable: input.replayable ?? true,
-        requestPayload,
-        queueType,
-        // #2929: immutable after enqueue, exactly like `queueType` above and
-        // for the same reason — the booking-invoice handler rewrites
-        // `requestPayload` wholesale before its first provider call, so the
-        // instruction cannot live there and survive a retry.
-        invoiceEmailDelivery: input.invoiceEmailDelivery ?? null,
-        createdByMemberId: input.createdByMemberId ?? null,
-        startedAt: input.status === "PENDING" ? null : new Date(),
-      },
-    });
-  } catch (error) {
-    // #1354: the partial unique index (one ACTIVE operation per correlation
-    // key) turns a lost concurrent-enqueue race into a unique violation here.
-    // Resolve it the same way the findFirst fast-path dedup would have:
-    // return the winner's active row so the caller's enqueue is idempotent.
-    if (isPrismaUniqueConstraintError(error) && input.correlationKey) {
-      const existing = await db.xeroSyncOperation.findFirst({
-        where: {
-          correlationKey: input.correlationKey,
-          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+  for (let insert = 1; ; insert += 1) {
+    const attemptCount = attemptWhere ? (await db.xeroSyncOperation.count({ where: attemptWhere })) + 1 : 1;
+    try {
+      return await db.xeroSyncOperation.create({
+        data: {
+          direction: input.direction,
+          entityType: input.entityType,
+          operationType: input.operationType,
+          localModel: input.localModel ?? null,
+          localId: input.localId ?? null,
+          status: input.status ?? "RUNNING",
+          idempotencyKey: input.idempotencyKey ?? null,
+          correlationKey: input.correlationKey ?? null,
+          attemptCount,
+          replayable: input.replayable ?? true,
+          requestPayload,
+          queueType,
+          // #2929: immutable after enqueue, exactly like `queueType` above and
+          // for the same reason — the booking-invoice handler rewrites
+          // `requestPayload` wholesale before its first provider call, so the
+          // instruction cannot live there and survive a retry.
+          invoiceEmailDelivery: input.invoiceEmailDelivery ?? null,
+          createdByMemberId: input.createdByMemberId ?? null,
+          startedAt: input.status === "PENDING" ? null : new Date(),
         },
+      });
+    } catch (error) {
+      // #1354: the partial unique index (one ACTIVE operation per correlation key)
+      // turns a lost concurrent-enqueue race into a unique violation here. Resolve
+      // it as the findFirst fast-path dedup would: return the winner's active row.
+      // Not on a caller's transaction (the root client is none): the violation has
+      // aborted it, so no read can follow (#4338).
+      if (!isPrismaUniqueConstraintError(error) || !input.correlationKey || db !== prisma) throw error;
+      const { correlationKey } = input;
+      const existing = await db.xeroSyncOperation.findFirst({
+        where: { correlationKey, status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] } },
         orderBy: { createdAt: "desc" },
       });
-      if (existing) {
-        return existing;
-      }
+      if (existing) return existing;
+      // #4338: the winner finished in between. Only a FAILED one leaves work to
+      // do, so only then insert again, as a retry a moment later would: while it
+      // is unresolved, or when the converge closed it itself. A PARTIAL winner's
+      // Xero object exists, and an officer's mark is done and never re-minted
+      // beside (`INV-INT-025`); those, like a SUCCEEDED or CANCELLED winner, keep
+      // the error: the caller's own pre-checks never saw it.
+      const newest = await db.xeroSyncOperation.findFirst({
+        where: { correlationKey },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { status: true, manuallyResolvedAt: true, manuallyResolvedById: true, manuallyResolvedReason: true },
+      });
+      const winnerLeftWork =
+        newest?.status === "FAILED" && (newest.manuallyResolvedAt === null || isClosedByCreditSpentOutsideApp(newest));
+      if (!winnerLeftWork || insert >= START_OPERATION_INSERT_ATTEMPTS) throw error;
     }
-    throw error;
   }
 }
 

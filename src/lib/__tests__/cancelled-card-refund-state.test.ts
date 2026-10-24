@@ -23,7 +23,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { readCancelledCardRefund, readCardShortfallTaskStatuses } from "@/lib/cancel-card-refund-shortfall-status";
+import { readCancelledCardRefund, readCardShortfallTaskStatuses, readOrganiserChildCancelledCardRefund } from "@/lib/cancel-card-refund-shortfall-status";
 
 const readCancelledCardRefundState = async (bookingId: string) => (await readCancelledCardRefund(bookingId)).cardRefundState;
 
@@ -206,5 +206,47 @@ describe("readCardShortfallTaskStatuses reads a dead card part as stalled (#4125
     db.findUnique.mockResolvedValue(found);
 
     expect(await readCardShortfallTaskStatuses("booking-1")).toEqual({ bank: "OPEN", card });
+  });
+});
+
+// #4285 review 8: the kept-capture alert's drain reads the same rows inside its
+// one snapshot - every read through the store it passes, none on the app's client.
+describe("the cancel's card refund read through a caller's store (#4285 review 8)", () => {
+  /** A store whose reads are separate fakes: the app's client (`db`) must never be asked. */
+  function separateStore(rows: Row[], debt: Row | null = null) {
+    return {
+      paymentRecoveryOperation: { findMany: vi.fn().mockResolvedValueOnce(rows).mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(debt) },
+      manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([{ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "cancel-card-shortfall:booking-1", status: "COMPLETED" }]) },
+      payment: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("readCancelledCardRefund and readCardShortfallTaskStatuses read only through the store", async () => {
+    const closed = row({ idempotencyKey: "booking_cancel_refund_recovery_booking-1", status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null });
+    const store = separateStore([closed], closed);
+
+    expect(await readCancelledCardRefund("booking-1", store as never)).toEqual({ cardRefundState: "settled" });
+    expect(await readCardShortfallTaskStatuses("booking-1", store as never)).toEqual({ bank: "COMPLETED", card: "settled" });
+
+    // The member's cancel rows, then (a row closed) the rows owing a refund Stripe failed later; the close record on the store too.
+    expect(store.paymentRecoveryOperation.findMany).toHaveBeenCalledTimes(2);
+    expect(store.manualRefundTask.findFirst).toHaveBeenCalled();
+    for (const fake of [db.findMany, db.findUnique, db.findClose, db.tasks, db.payments]) expect(fake).not.toHaveBeenCalled();
+  });
+
+  it("readOrganiserChildCancelledCardRefund reads the child's debt to the organiser's card by its key, as a member's row is read", async () => {
+    const debt = row({ id: "op-debt", idempotencyKey: "organiser_child_refund_cancel_settlement-1_booking-1", status: PaymentRecoveryOperationStatus.FAILED, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, nextRetryAt: null });
+    const store = separateStore([], { ...debt, amountCents: 8_000 } as Row);
+
+    expect(await readOrganiserChildCancelledCardRefund("booking-1", "settlement-1", store as never)).toEqual({ cardRefundState: "stalled", amountCents: 8_000 });
+    expect(store.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { idempotencyKey: "organiser_child_refund_cancel_settlement-1_booking-1" } }),
+    );
+
+    // No debt: nothing recorded.
+    expect(await readOrganiserChildCancelledCardRefund("booking-1", "settlement-1", separateStore([]) as never)).toEqual({});
+    expect(db.findUnique).not.toHaveBeenCalled();
   });
 });

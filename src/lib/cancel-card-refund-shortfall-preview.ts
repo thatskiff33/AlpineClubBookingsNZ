@@ -8,6 +8,7 @@ import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { paidCancellationBranch } from "@/lib/paid-cancellation-event";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import {
   legacyBackfillRows,
   loadPaymentWithTransactions,
@@ -106,12 +107,6 @@ export async function cancelPreviewCardShortfall(
   });
   const branch = paidCancellationBranch({ manualDisposition, refundMethod, refundAmountCents });
   if (!cancelRaisesCardShortfall({ branch, organiserCard })) return {};
-  const cardShortfall = await client.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-      return previewCancelCardRefundSplit(tx, { paymentId: payment.id, refundAmountCents });
-    },
-    { isolationLevel: "RepeatableRead" },
-  );
+  const cardShortfall = await withReadOnlySnapshot(client, (tx) => previewCancelCardRefundSplit(tx, { paymentId: payment.id, refundAmountCents }));
   return cardShortfall ? { cardShortfall } : {};
 }

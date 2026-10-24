@@ -25,16 +25,45 @@ export const changeRequestDeltaSchema = z.object({
   requestedEffectiveDate: z.string().optional(),
 });
 
-/** Preserve editor-first ordering at both quote and submission (INV-SSOT-001). */
-export function mergeChangeRequestGuests(
-  editorChanges: Record<string, unknown>,
+/** The merged editor-and-card proposal, as both routes parse it. */
+export type ChangeRequestDelta = z.infer<typeof changeRequestDeltaSchema>;
+
+/**
+ * Preserve editor-first ordering at quote, estimate and submission
+ * (INV-SSOT-001): the editor's added guests, then the card's.
+ */
+export function mergeChangeRequestGuests<Changes extends { addGuests?: readonly ChangeRequestAddGuest[] }>(
+  editorChanges: Changes,
   cardGuests: readonly ChangeRequestAddGuest[],
-): Record<string, unknown> {
+): Changes {
   if (cardGuests.length === 0) return editorChanges;
   return {
     ...editorChanges,
-    addGuests: [...((editorChanges.addGuests as readonly ChangeRequestAddGuest[] | undefined) ?? []), ...cardGuests],
+    addGuests: [...(editorChanges.addGuests ?? []), ...cardGuests],
   };
+}
+
+export const CHANGE_REQUEST_UNKNOWN_REMOVED_GUEST_MESSAGE = "One or more guests were not found on this booking";
+export const CHANGE_REQUEST_UNKNOWN_RANGE_GUEST_MESSAGE =
+  "One or more guest stay ranges referenced a guest not found on this booking";
+
+/**
+ * #4203: a removal or a stay range naming a guest who is not on this booking,
+ * refused the same way at submission and at the estimate, so neither reads (or
+ * counts) a guest of another booking.
+ */
+export function unknownChangeRequestGuestRefusal(
+  guests: ReadonlyArray<{ id: string }>,
+  input: Pick<ChangeRequestDelta, "removeGuestIds" | "guestStayRanges">,
+): string | null {
+  const onBooking = new Set(guests.map((guest) => guest.id));
+  if ((input.removeGuestIds ?? []).some((guestId) => !onBooking.has(guestId))) {
+    return CHANGE_REQUEST_UNKNOWN_REMOVED_GUEST_MESSAGE;
+  }
+  if ((input.guestStayRanges ?? []).some((range) => !onBooking.has(range.guestId))) {
+    return CHANGE_REQUEST_UNKNOWN_RANGE_GUEST_MESSAGE;
+  }
+  return null;
 }
 
 function normalizeOptionalDateOnly(value: string | undefined) {

@@ -467,9 +467,9 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
   "src/app/api/bookings/[id]/cancel-preview/route.ts:76",
-  "src/app/api/bookings/[id]/change-requests/quote/route.ts:71",
-  "src/app/api/bookings/[id]/change-requests/route.ts:171",
-  "src/app/api/bookings/[id]/change-requests/route.ts:507",
+  "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
+  "src/app/api/bookings/[id]/change-requests/route.ts:175",
+  "src/app/api/bookings/[id]/change-requests/route.ts:485",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:175",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:96",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:70",
@@ -507,7 +507,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/waitlist-cross-lodge.ts:531",
   "src/lib/waitlist.ts:1091",
   "src/lib/waitlist.ts:949",
-  "src/lib/xero-applied-credit-spent-outside-app.ts:158",
+  "src/lib/xero-applied-credit-spent-outside-app.ts:218",
   "src/lib/xero-period-lock-guard.ts:569",
 ];
 
@@ -809,7 +809,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:102",
+  "src/lib/payment-reconciliation.ts:103",
   "src/lib/stuck-state-dashboard.ts:620",
   "src/lib/xero-booking-repair-types.ts:230",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",

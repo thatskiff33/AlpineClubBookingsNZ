@@ -52,6 +52,8 @@ export class CreditNoteSpentOutsideAppError extends Error {
       xeroPayments?: readonly XeroNotePayment[];
       /** The note's total in Xero, from the same read; null when it was not an exact cent figure. */
       totalCents?: number | null;
+      /** The allocation operation this failure was recorded on, so a converge can close it (#4338). */
+      operationId?: string | null;
     },
   ) {
     super(message, options?.cause === undefined ? undefined : { cause: options.cause });
@@ -59,11 +61,13 @@ export class CreditNoteSpentOutsideAppError extends Error {
     this.xeroAllocations = options?.xeroAllocations ?? [];
     this.xeroPayments = options?.xeroPayments ?? [];
     this.totalCents = options?.totalCents ?? null;
+    this.operationId = options?.operationId ?? null;
   }
 
   readonly xeroAllocations: readonly XeroNoteAllocation[];
   readonly xeroPayments: readonly XeroNotePayment[];
   readonly totalCents: number | null;
+  readonly operationId: string | null;
 }
 
 export function isCreditNoteSpentOutsideAppError(

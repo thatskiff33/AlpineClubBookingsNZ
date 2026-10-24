@@ -119,6 +119,13 @@ export interface SettledSavedCardChargeAttempt {
    * did that).
    */
   moved: boolean;
+  /**
+   * #4285 review: true when this call wrote a capture over a row that held none
+   * (not SUCCEEDED before): the money is new to the ledger. The caller passes it
+   * to `markBookingPaymentSucceeded` as `recordedByCaller`, so the settle does
+   * not read the row this call just wrote as an earlier delivery's replay.
+   */
+  newlyCaptured: boolean;
 }
 
 /**
@@ -248,6 +255,7 @@ async function settleSavedCardChargeAttemptUnderLock(
     return keepExistingRow(store, { attemptRowId, paymentId, paymentIntentId: paymentIntent.id, existing, answer });
   }
 
+  const before = await store.paymentTransaction.findUnique({ where: { id: attemptRowId }, select: { status: true } });
   const moved = await store.paymentTransaction.updateMany({
     where: { id: attemptRowId, status: forwardOnlyStatusGuard(ledgerStatus) },
     data: {
@@ -276,10 +284,12 @@ async function settleSavedCardChargeAttemptUnderLock(
       ledgerStatus: current?.status ?? ledgerStatus,
       keptExistingRow: false,
       moved: false,
+      newlyCaptured: false,
     };
   }
   await reconcilePaymentAggregates({ paymentId, store });
-  return { transactionId: attemptRowId, ledgerStatus, keptExistingRow: false, moved: true };
+  const newlyCaptured = ledgerStatus === PaymentStatus.SUCCEEDED && before?.status !== PaymentStatus.SUCCEEDED;
+  return { transactionId: attemptRowId, ledgerStatus, keptExistingRow: false, moved: true, newlyCaptured };
 }
 
 async function keepExistingRow(
@@ -302,6 +312,7 @@ async function keepExistingRow(
   if (existing.paymentId !== params.paymentId) {
     throw new IntentLedgerRowOnAnotherPaymentError(params.paymentIntentId, params.paymentId, existing.paymentId);
   }
+  const before = await store.paymentTransaction.findUnique({ where: { id: existing.id }, select: { status: true } });
   const moved = await store.paymentTransaction.updateMany({
     where: { id: existing.id, status: forwardOnlyStatusGuard(answer.ledgerStatus) },
     data: {
@@ -338,6 +349,7 @@ async function keepExistingRow(
     ledgerStatus: current?.status ?? answer.ledgerStatus,
     keptExistingRow: true,
     moved: moved.count > 0,
+    newlyCaptured: moved.count > 0 && answer.ledgerStatus === PaymentStatus.SUCCEEDED && before?.status !== PaymentStatus.SUCCEEDED,
   };
 }
 

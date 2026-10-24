@@ -135,6 +135,20 @@ describe("ChangeRequestCard — structured guests (#4030)", () => {
     });
   });
 
+  it("sends the editor's added and removed guests with the card's, so the estimate counts the proposed party (#4203)", async () => {
+    const editorChanges = {
+      removeGuestIds: ["existing"],
+      addGuests: [{ firstName: "Cam", lastName: "Owner", ageTier: "CHILD", isMember: true, memberId: "m-2" }],
+    };
+    renderCard({ editorChanges });
+    addNonMember("Ari", "Example");
+    await screen.findByText(/Estimated price for these guests/);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body))).toEqual({
+      editorChanges,
+      addGuests: [expect.objectContaining({ firstName: "Ari" })],
+    });
+  });
+
   it("retires an estimate and refusal when only the editor proposal changes (#4090)", async () => {
     const { rerender } = renderCard();
     addNonMember("Ari", "Example");

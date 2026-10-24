@@ -27,6 +27,7 @@ import {
 } from "@/lib/cancel-card-refund-event-reason";
 import type { ClubFormat } from "@/lib/club-format";
 import type { CancellationLedgerSnapshot } from "@/lib/paid-cancellation-event";
+import { parsePaidCancellationDecisionSnapshot } from "@/lib/cancellation-settled-money";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -235,11 +236,11 @@ export async function recordCancelCardRefundEvent(
   });
   if (events.some(isCancelCardRefundEvent)) return false;
   const snapshot = events
-    .map((event) => (event.type === BookingEventType.CANCELLED ? (event.snapshot as Partial<CancellationEventSnapshot> | null) : null))
-    .find((each) => each?.refundMethod === "card" && typeof each.refundPercentage === "number" && typeof each.settledAmountCents === "number");
+    .map((event) => (event.type === BookingEventType.CANCELLED ? parsePaidCancellationDecisionSnapshot(event.snapshot) : null))
+    .find((each) => each?.refundMethod === "card");
   const reason = cancelCardRefundEventReason({
     cardRefundCents: input.amountCents,
-    policy: snapshot ? { refundPercentage: snapshot.refundPercentage as number, refundAmountCents: snapshot.settledAmountCents as number } : null,
+    policy: snapshot ? { refundPercentage: snapshot.refundPercentage, refundAmountCents: snapshot.settledAmountCents } : null,
     shortfall: input.madeBeforePaidAnotherWay || Boolean(snapshot?.cardShortfall),
     format: input.format,
   });

@@ -20,6 +20,7 @@ import {
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
 import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-waiting-invoice-reaper";
 import { reannounceHeldLateCaptures } from "@/lib/late-capture-refund-hold";
+import { drainOwedNewCaptureAlerts } from "@/lib/duplicate-capture-kept-alert-drain";
 import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import { reportCronError } from "@/lib/observability-bridge";
 
@@ -27,7 +28,8 @@ export type PaymentsCronJobName =
   | "payment-recovery"
   | "internet-banking-hold-release"
   | "xero-waiting-invoice-reaper"
-  | "late-capture-held-alert";
+  | "late-capture-held-alert"
+  | "duplicate-capture-kept-alert";
 
 /** A task's result, or `null` when that task failed (its FAILURE row says why). */
 export interface PaymentsCronCycleResult {
@@ -40,6 +42,8 @@ export interface PaymentsCronCycleResult {
   > | null;
   /** #3635: the held late-capture alert's re-selecting run. */
   lateCaptureHeldAlert: Awaited<ReturnType<typeof reannounceHeldLateCaptures>> | null;
+  /** #4285 review: the owed new-capture alert's drain. */
+  duplicateCaptureKeptAlert: Awaited<ReturnType<typeof drainOwedNewCaptureAlerts>> | null;
 }
 
 export interface PaymentsCronFailure {
@@ -117,6 +121,7 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     internetBankingHoldRelease: null,
     xeroOutboxReap: null,
     lateCaptureHeldAlert: null,
+    duplicateCaptureKeptAlert: null,
   };
   const failures: PaymentsCronFailure[] = [];
 
@@ -145,6 +150,12 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     resultKey: "lateCaptureHeldAlert",
     failureMessage: "Failed to re-announce held late-capture payments",
     work: () => reannounceHeldLateCaptures(),
+  });
+  await runRecordedTask(result, failures, {
+    jobName: "duplicate-capture-kept-alert",
+    resultKey: "duplicateCaptureKeptAlert",
+    failureMessage: "Failed to deliver owed kept-capture alerts",
+    work: () => drainOwedNewCaptureAlerts(),
   });
 
   if (failures.length > 0) {

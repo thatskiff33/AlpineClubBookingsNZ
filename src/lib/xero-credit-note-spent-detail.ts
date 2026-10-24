@@ -62,6 +62,8 @@ export async function describeCreditNoteSpentOutsideApp(
   invoiceId: string,
   amountCents: number,
   cause: unknown,
+  /** The allocation operation the failure is recorded on (#4338). */
+  operationId: string | null = null,
 ): Promise<CreditNoteSpentOutsideAppError | null> {
   let remainingCents: number | null;
   let allocatedToInvoiceCents: number[];
@@ -116,7 +118,7 @@ export async function describeCreditNoteSpentOutsideApp(
     creditNoteId,
     remainingCents,
     amountCents,
-    { cause, xeroAllocations, xeroPayments, totalCents },
+    { cause, xeroAllocations, xeroPayments, totalCents, operationId },
   );
 }
 
@@ -135,7 +137,7 @@ export async function failAllocation(
   const named =
     !isCreditNoteSpentOutsideAppError(error) &&
     isCreditNoteOverAllocationText(getXeroErrorSearchText(error))
-      ? await describeCreditNoteSpentOutsideApp(creditNoteId, invoiceId, amountCents, error)
+      ? await describeCreditNoteSpentOutsideApp(creditNoteId, invoiceId, amountCents, error, operationId)
       : null;
   const failure = named ?? error;
   await failXeroSyncOperation(operationId, failure);

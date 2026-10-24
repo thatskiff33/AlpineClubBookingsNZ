@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { duplicateCaptureKeptAction } from "@/lib/duplicate-capture-kept-note";
 import {
   EMAIL_TEMPLATE_DEFINITIONS,
   SENSITIVE_EMAIL_SUBJECT_TOKEN_SET,
@@ -499,7 +500,12 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     expect(definition.deliveryEditable).toBe(false);
     expect(getDefaultDeliveryMode("admin-duplicate-capture-kept")).toBe("always");
     expect(definition.defaultSubject).toBe("Booking may have been paid twice — check by hand: {{memberName}}");
-    expect(definition.defaultBody).toContain("check in Stripe that neither payment has already been refunded");
+    // #4285 review: the Stripe check now travels in the action token, which leaves
+    // it out for a `new-capture` payment that stands alone ("neither payment" would be untrue).
+    expect(definition.defaultBody).not.toContain("check in Stripe that neither payment has already been refunded");
+    expect(duplicateCaptureKeptAction({ otherHoldsMoney: true, reason: "not-recorded" })).toContain("check in Stripe that neither payment has already been refunded");
+    expect(duplicateCaptureKeptAction({ otherHoldsMoney: false, reason: "settler-released" })).toContain("check in Stripe that neither payment has already been refunded");
+    expect(duplicateCaptureKeptAction({ otherHoldsMoney: false, reason: "new-capture" })).not.toContain("neither payment");
     expect(definition.requiredTokens).toEqual(
       expect.arrayContaining(["duplicateCaptureKeptNote", "duplicateCaptureKeptAction", "memberName", "reviewUrl"]),
     );

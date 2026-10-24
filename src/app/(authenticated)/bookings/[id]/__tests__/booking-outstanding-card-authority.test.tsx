@@ -62,9 +62,10 @@ describe("composed card and outstanding-banner authority (INV-ADDPAY-023)", () =
     fetchMock.mockImplementationOnce(() => { replacementStart = document.body.textContent; return new Promise((done) => { resolve = done; }); });
     fireEvent.click(screen.getByRole("button", { name: "Check more invoices" }));
     await screen.findByText("Checking current additional card payment details…");
-    // The "Checking…" text can render before the continuation fetch fires, so
-    // wait for the fetch (which captures the page) rather than racing it.
-    await waitFor(() => expect(replacementStart).not.toBeNull());
+    // The replacement card mints from a passive effect that can flush after the
+    // "Checking" commit (#4352): wait for the mint itself to start.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(replacementStart).toEqual(expect.any(String));
     expect(replacementStart).not.toContain("$365.00");
     expect(screen.queryByRole("button", { name: /^Pay / })).not.toBeInTheDocument();
     expect(screen.queryByText(/\$(300|365|400)\.00/)).not.toBeInTheDocument();

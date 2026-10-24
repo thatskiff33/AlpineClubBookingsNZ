@@ -133,8 +133,10 @@ describe("booking money reconciliation store", () => {
     // #4317 review M3: the guests and the charge lines, from the same snapshot.
     const guestFindMany = vi.fn().mockResolvedValue([]);
     const lineFindMany = vi.fn().mockResolvedValue([]);
+    const executeRaw = vi.fn();
     const transaction = vi.fn(async (callback) =>
       callback({
+        $executeRaw: executeRaw,
         booking: { findMany },
         manualRefundTask: { findMany: reviewFindMany },
         bookingGuest: { findMany: guestFindMany },
@@ -149,6 +151,9 @@ describe("booking money reconciliation store", () => {
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: "RepeatableRead",
     });
+    // #4285 review: read-only before its first read (`withReadOnlySnapshot`).
+    expect(String((executeRaw.mock.calls[0] as unknown[])[0])).toContain("SET TRANSACTION READ ONLY");
+    expect(executeRaw.mock.invocationCallOrder[0]).toBeLessThan(findMany.mock.invocationCallOrder[0]!);
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { id: "asc" },

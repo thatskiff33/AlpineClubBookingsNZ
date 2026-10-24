@@ -1,12 +1,13 @@
 /**
  * THE DUPLICATE-CAPTURE GUARD (#1992, #4211, `INV-PAY-043`): what a card
- * capture arriving on an already-PAID booking is.
+ * capture arriving on an already-PAID booking is - or (#4285) a COMPLETED one,
+ * a paid booking whose stay has ended (`isPaidLikeBookingStatus`).
  *
  * `already_paid` is the exactly-once replay outcome for a success that carries
  * the intent that settled the booking: webhook redelivery, the confirm-payment
  * route racing the webhook, payment-link reconcile, charge-saved-method and
  * cron-confirm-pending reruns replaying the attempt row's OWN intent (#3267),
- * confirm-pending-guests retries. A DIFFERENT capture on a PAID booking is
+ * confirm-pending-guests retries. A DIFFERENT capture on a PAID (or COMPLETED) booking is
  * double money - the residual #1967 split-child window, where the /pay link
  * intent and the settlement cron's saved-card charge both capture, or a member
  * paying from three stale tabs (#4211) - and is refunded automatically.
@@ -18,8 +19,10 @@
  * Xero bank receipt recorded after the card paid (#3638), and a superseded
  * capture whose refund failed later (#4227) each looked like "another capture
  * holding money", so a REPLAY of the real settlement was refunded. Nor does
- * "the arriving row was already SUCCEEDED" tell a replay apart: every
- * saved-card path writes its attempt row SUCCEEDED before it settles.
+ * "the arriving row was already SUCCEEDED" alone tell a replay apart: every
+ * saved-card path writes its attempt row SUCCEEDED before it settles, so those
+ * callers say they did (`recordedByCaller`, #4285 review), and the guard reads
+ * that answer only where no other payment holds money (rule 3).
  *
  * 1. **The recorded settler is never refunded.** Its replay is kept whatever
  *    else holds money on the booking.
@@ -39,7 +42,18 @@
  *    Nothing is refunded automatically, because nothing says which side is
  *    the settlement. A capture a duplicate-capture refund already owns still
  *    re-sends its own refund, which an earlier delivery decided; a released
- *    settler a live superseded-intent operation holds keeps silently.
+ *    settler a live superseded-intent operation holds keeps silently. With no
+ *    record and nothing else holding money, the arriving capture keeps silently
+ *    only as a replay of a capture already recorded (the booking's only
+ *    capture) whose alert is not still owed; one never recorded before is kept
+ *    and the admins told (#4285, `new-capture`). The caller records that alert
+ *    as owed in the same transaction (`recordNewCaptureAlertOwed`), so a crash
+ *    or a failed send is retried by a replay or the payments cron's drain until
+ *    an alert is delivered. Every such alert names the other payment by the
+ *    telling reading (`readTellingWhere`, #4285 review) and shows what the
+ *    kept capture's card still holds; the verdict never reads either. Limit:
+ *    a saved-card capture whose caller crashed or threw between its
+ *    pre-record and the settle reads as a replay on its next arrival.
  *
  * Every read runs under the lock(1) every caller of `markBookingPaymentSucceeded`
  * holds, so the check-then-enqueue cannot interleave with another settlement,
@@ -54,15 +68,18 @@ import {
 import { claimAlertCooldownFailOpen, SETTLEMENT_MONEY_ALERT_REPEAT_MS } from "@/lib/alert-cooldown-fail-open";
 import type { ClubFormat } from "@/lib/club-format";
 import { listDuplicateCaptureRefundIntentIds } from "@/lib/duplicate-capture-ownership";
-import { releaseAlertCooldown } from "@/lib/alert-cooldown";
-import type { DuplicateCaptureKeptReason } from "@/lib/duplicate-capture-kept-note";
+import { releaseAlertCooldown, settleOwedAlert } from "@/lib/alert-cooldown";
+import type { CancellationRefundNote, DuplicateCaptureKeptReason } from "@/lib/duplicate-capture-kept-note";
 import { sendAdminDuplicateCaptureKeptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import { findPaymentTransactionByIntentId, sumRecordedRefundsForCapture } from "@/lib/payment-transactions";
 import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
-import { readSupersededOwnership } from "@/lib/superseded-capture-ownership";
-import { listLiveSupersededIntentIds } from "@/lib/superseded-intent-ownership";
+import { heldStripeCapturesWhere, readSupersededOwnership } from "@/lib/superseded-capture-ownership";
+import {
+  listDuplicateRefundIntentIdsOwningCaptures,
+  listLiveSupersededIntentIds,
+} from "@/lib/superseded-intent-ownership";
 
 /**
  * Which captures could be the settlement an arriving capture duplicates:
@@ -110,8 +127,10 @@ export type ArrivingCaptureVerdict =
       verdict: "keep_unrecorded_settler";
       otherPaymentIntentId: string | null;
       reason: DuplicateCaptureKeptReason;
-      /** False: a recorded settler released and nothing else holds money. */
+      /** False: nothing else holds money, read the way an admin is told (`readTellingWhere`). */
       otherHoldsMoney: boolean;
+      /** #4285 review: what the kept capture's CARD still holds (`sumRecordedRefundsForCapture`). */
+      heldCents: number;
     }
   | {
       verdict: "refund";
@@ -122,7 +141,91 @@ export type ArrivingCaptureVerdict =
     };
 
 /**
- * Judge a card capture arriving on a booking already PAID. The caller has
+ * WHAT "ANOTHER CAPTURE HOLDING MONEY" IS, for one arriving capture - the
+ * guard's one reading, shared with the owed-alert drain
+ * (`duplicate-capture-kept-alert-drain.ts`, #4285 review) so the two can never
+ * disagree about which payment holds money. Read-only.
+ *
+ * - `ownership`: the payment's superseded-machinery reading, read once in its
+ *   one home (`readSupersededOwnership`, #4300) - the guard's (c′) test of a
+ *   settlement (`owns`).
+ * - `holdsForMember`: its Xero conflict's reading
+ *   (`listSupersededIntentIdsOwningCaptures`) - a cancel only while in flight,
+ *   a superseded refund until it SUCCEEDED, and (#4227) a capture whose
+ *   failed-later refund open rows owe back in full.
+ * - `supersededOwned`: (b′) and (c′) as the OTHER capture fail safe the
+ *   opposite way - any operation not SUCCEEDED counts (wrongly skipping costs
+ *   nothing; wrongly counting refunds the real settlement), plus #4227's
+ *   owed-back captures.
+ * - `duplicateRefundIntentIds`: captures a duplicate-capture refund owns, at any status.
+ * - `where`: `otherSettledCaptureWhere` over all three - the refund-safety reading.
+ * - `readTellingWhere()` (#4285 review): what an admin is TOLD holds money - the
+ *   Xero conflict's reading, excluding only `holdsForMember` and the captures a
+ *   duplicate-capture refund still holds (`listDuplicateRefundIntentIdsOwningCaptures`:
+ *   one that succeeded and that Stripe failed later, where open rows owe back
+ *   less than all it holds, stays in). A capture behind a dead cancel stays in too: that cancel handed its
+ *   money to nobody. Read only by an alert's words, never by a verdict. Both
+ *   readings count PRIMARY rows by ledger status: they say which payments the app
+ *   counts as settling the booking, never every charge a card still holds.
+ */
+export async function readOtherSettledCaptureWhere(
+  tx: Prisma.TransactionClient,
+  input: { bookingId: string; paymentId: string; paymentIntentId: string },
+) {
+  // #4300: the Xero reading and (c′) come from the one home, read once.
+  const ownership = await readSupersededOwnership(tx, input.paymentId);
+  const holdsForMember = ownership.holdsForMember;
+  const supersededOwned = [...(await listLiveSupersededIntentIds(tx, input.paymentId)), ...holdsForMember];
+  const duplicateRefundIntentIds = await listDuplicateCaptureRefundIntentIds({ bookingId: input.bookingId, store: tx });
+  const reading = (owned: string[], duplicateOwned: string[]) =>
+    otherSettledCaptureWhere({
+      paymentId: input.paymentId,
+      arrivingPaymentIntentId: input.paymentIntentId,
+      liveSupersededIntentIds: owned,
+      duplicateRefundIntentIds: duplicateOwned,
+    });
+  // Read only when an alert is worded, so the verdict's work under lock(1) stays small.
+  const readTellingWhere = async () => {
+    const captures = await tx.paymentTransaction.findMany({
+      orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+      where: heldStripeCapturesWhere(input.paymentId),
+      select: { id: true, stripePaymentIntentId: true, amountCents: true, refundedAmountCents: true },
+    });
+    return reading(
+      [...holdsForMember],
+      await listDuplicateRefundIntentIdsOwningCaptures(tx, { bookingId: input.bookingId, paymentId: input.paymentId, captures }),
+    );
+  };
+  return { ownership, holdsForMember, supersededOwned, duplicateRefundIntentIds, where: reading(supersededOwned, duplicateRefundIntentIds), readTellingWhere };
+}
+
+/**
+ * #4285 review: the other payment an alert about a KEPT capture names - read
+ * the way an admin is told (`readTellingWhere`), so a capture behind a dead
+ * cancel, or one whose duplicate-capture refund failed later with nothing
+ * owing it again, is named rather than "no other payment" - and what the kept
+ * capture's card still holds. Words only: the verdict stays on `where`.
+ */
+async function keptCaptureAlert(
+  tx: Prisma.TransactionClient,
+  readTellingWhere: () => Promise<Prisma.PaymentTransactionWhereInput>,
+  arriving: { id: string; amountCents: number; paymentIntentId: string },
+): Promise<{ otherPaymentIntentId: string | null; otherHoldsMoney: boolean; heldCents: number }> {
+  const other = await tx.paymentTransaction.findFirst({
+    where: await readTellingWhere(),
+    orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+    select: { stripePaymentIntentId: true },
+  });
+  return { otherPaymentIntentId: other?.stripePaymentIntentId ?? null, otherHoldsMoney: !!other, heldCents: await heldOnCard(tx, arriving) };
+}
+
+/** What a kept capture's card still holds: its amount less the card refunds recorded against it. */
+async function heldOnCard(tx: Prisma.TransactionClient, arriving: { id: string; amountCents: number; paymentIntentId: string }): Promise<number> {
+  return Math.max(0, arriving.amountCents - (await sumRecordedRefundsForCapture(tx, arriving)));
+}
+
+/**
+ * Judge a card capture arriving on a booking already PAID or COMPLETED. The caller has
  * already recorded the capture on its own row and ruled out refund history
  * (#1765); this only reads.
  */
@@ -135,6 +238,12 @@ export async function judgeCaptureOnPaidBooking(
     recordedSettlerId: string | null;
     paymentIntentId: string;
     amountCents: number;
+    /**
+     * #4285 review: the arriving capture's row was SUCCEEDED before this delivery
+     * - a replay of a capture already recorded - rather than new money. Read by
+     * the caller before it wrote the row.
+     */
+    arrivingAlreadyCaptured: boolean;
   },
 ): Promise<ArrivingCaptureVerdict> {
   const arriving = await findPaymentTransactionByIntentId({
@@ -144,33 +253,17 @@ export async function judgeCaptureOnPaidBooking(
   // Rule 1.
   if (!arriving || arriving.id === input.recordedSettlerId) return { verdict: "keep" };
 
-  // The Xero conflict's reading (`listSupersededIntentIdsOwningCaptures`): a
-  // cancel only while in flight, a superseded refund until it SUCCEEDED, and
-  // (#4227) a capture whose failed-later refund open rows owe back in full -
-  // read once with (c′) in the one home (`readSupersededOwnership`, #4300).
-  const ownership = await readSupersededOwnership(tx, input.paymentId);
-  const holdsForMember = ownership.holdsForMember;
+  const { ownership, holdsForMember, duplicateRefundIntentIds, where, readTellingWhere } = await readOtherSettledCaptureWhere(tx, input);
+  const kept = { id: arriving.id, amountCents: arriving.amountCents, paymentIntentId: input.paymentIntentId };
   // #4283: the ARRIVING capture is refunded on top only if nothing is already
   // sending its money back - read the Xero way, so a DEAD cancel (one that
   // handed the money to nobody) leaves it a duplicate like any other. Held:
   // no duplicate refund, no re-send, no alert.
   if (holdsForMember.has(input.paymentIntentId)) return { verdict: "keep" };
-  // (b′) and (c′) as the OTHER capture fail safe the opposite way: any
-  // operation not SUCCEEDED counts (wrongly skipping costs nothing; wrongly
-  // counting refunds the real settlement), plus #4227's owed-back captures.
-  const supersededOwned = [...(await listLiveSupersededIntentIds(tx, input.paymentId)), ...holdsForMember];
+  // (c′) for a settlement: `holdsForMember`, or a superseded-intent row on its
+  // intent not SUCCEEDED - read in the one home (`readSupersededOwnership`, #4300).
   const supersededOwns = (paymentIntentId: string) => ownership.owns(paymentIntentId);
 
-  const duplicateRefundIntentIds = await listDuplicateCaptureRefundIntentIds({
-    bookingId: input.bookingId,
-    store: tx,
-  });
-  const where = otherSettledCaptureWhere({
-    paymentId: input.paymentId,
-    arrivingPaymentIntentId: input.paymentIntentId,
-    liveSupersededIntentIds: supersededOwned,
-    duplicateRefundIntentIds,
-  });
   const select = { id: true, stripePaymentIntentId: true } as const;
   // Rule 2's settlement: the recorded settler, while it still qualifies.
   const recordedSettler = input.recordedSettlerId
@@ -191,9 +284,20 @@ export async function judgeCaptureOnPaidBooking(
   const arrivingOwned = duplicateRefundIntentIds.includes(input.paymentIntentId);
 
   if (!settlement) {
-    // No record and nothing else holding money: a replay of the booking's only
-    // capture, or a stray capture the stated limit covers - a silent keep.
-    if (!input.recordedSettlerId) return { verdict: "keep" };
+    // No record and nothing else holding money. #4285 review: a replay of a
+    // capture already recorded (the booking's only capture) is a silent keep;
+    // a capture never recorded before is new money on a booking nothing else
+    // holds money for (zero cash, full credit, the $0 auto-pay, a group child) -
+    // kept whatever its amount, and the admins told.
+    if (!input.recordedSettlerId) {
+      const alertOwed = await tx.alertCooldown.findUnique({
+        where: { key: newCaptureAlertOwedKey(input.bookingId, input.paymentIntentId) },
+        select: { key: true },
+      });
+      return input.arrivingAlreadyCaptured && !alertOwed
+        ? { verdict: "keep" }
+        : { verdict: "keep_unrecorded_settler", reason: "new-capture", ...(await keptCaptureAlert(tx, readTellingWhere, kept)) };
+    }
     // #4211 review: a RECORDED settler that no longer qualifies and nothing else
     // holding money. Its own intent first: a duplicate-capture refund that owns
     // the arriving capture re-sends its own refund, as under rule 3; and a
@@ -208,7 +312,7 @@ export async function judgeCaptureOnPaidBooking(
     if (settlerIntent && (await supersededOwns(settlerIntent))) return { verdict: "keep" };
     // Otherwise the arriving capture may now pay for the booking or be a
     // duplicate, and only a person can say.
-    return { verdict: "keep_unrecorded_settler", otherPaymentIntentId: null, reason: "settler-released", otherHoldsMoney: false };
+    return { verdict: "keep_unrecorded_settler", reason: "settler-released", ...(await keptCaptureAlert(tx, readTellingWhere, kept)) };
   }
 
   // (c′) belt and braces: the settlement's own intent re-checked against the
@@ -220,28 +324,57 @@ export async function judgeCaptureOnPaidBooking(
 
   if (!recordedSettler && !arrivingOwned) {
     // Rule 3.
+    // The settlement `where` found is in the telling reading too, so it is the payment named:
+    // only what the card holds is read, keeping the work under lock(1) small.
     return {
       verdict: "keep_unrecorded_settler",
       otherPaymentIntentId: settlement.stripePaymentIntentId,
       otherHoldsMoney: true,
       reason: input.recordedSettlerId ? "settler-released" : "not-recorded",
+      heldCents: await heldOnCard(tx, kept),
     };
   }
 
   return refundArriving(settlement.stripePaymentIntentId);
 }
 
+/** #4285 review: the namespace of the durable "a new-capture alert is owed" markers. */
+export const NEW_CAPTURE_ALERT_OWED_PREFIX = "duplicate-capture-new-capture-owed:";
+
+/** The owed marker of one capture's new-capture alert (`AlertCooldown`, the `markAlertOwed` family). */
+export function newCaptureAlertOwedKey(bookingId: string, paymentIntentId: string): string {
+  return `${NEW_CAPTURE_ALERT_OWED_PREFIX}${bookingId}:${paymentIntentId}`;
+}
+
 /**
- * Rule 3's alert, after the commit: a card capture was kept on a PAID booking
+ * #4285 review: record, inside the settle's transaction, that a new-capture
+ * alert is owed - so a crash before the alert, or a send that throws, still
+ * leaves a trigger: the capture's next arrival re-alerts while the marker
+ * stands (rule 3), and the payments cron drains what nothing re-delivers
+ * (`drainOwedNewCaptureAlerts`). Cleared only once an alert is delivered.
+ * Under the caller's lock(1), so a plain upsert cannot race.
+ */
+export async function recordNewCaptureAlertOwed(
+  tx: Pick<Prisma.TransactionClient, "alertCooldown">,
+  { bookingId, paymentIntentId, now = new Date() }: { bookingId: string; paymentIntentId: string; now?: Date },
+): Promise<void> {
+  const key = newCaptureAlertOwedKey(bookingId, paymentIntentId);
+  await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: now }, update: {} });
+}
+
+/**
+ * Rule 3's alert, after the commit: a card capture was kept on a PAID (or COMPLETED) booking
  * with no usable record of which payment settled it - while another payment on
- * it still holds money, or beside a released settler and nothing else. Its own unmuteable, delivery-locked template
+ * it still holds money, beside a released settler and nothing else, or (#4285) alone
+ * and never recorded before. Its own unmuteable, delivery-locked template
  * (`admin-duplicate-capture-kept`): the duplicate-capture refund's alert says a
  * refund was made or queued, and the generic payment alert says "Payment Failed"
  * and can be muted. Once a day per (booking, capture) while repeats arrive (a
  * Stripe redelivery, a reconcile or cron re-run), sent anyway if the claim
  * cannot be read (`claimAlertCooldownFailOpen`), and the claim is given back if
  * the send throws so the next repeat tries again (`releaseAlertCooldown`, as
- * `internet-banking-hold-kept.ts`).
+ * `internet-banking-hold-kept.ts`). Any delivered alert for the capture clears
+ * its owed `new-capture` marker (#4285 review). Never throws; says what happened.
  */
 export async function alertCaptureKeptWithoutRecordedSettler({
   booking,
@@ -251,6 +384,7 @@ export async function alertCaptureKeptWithoutRecordedSettler({
   otherPaymentIntentId,
   otherHoldsMoney = true,
   reason,
+  cancellationRefund = null,
   format,
 }: {
   booking: { id: string; checkIn: Date; checkOut: Date };
@@ -260,9 +394,12 @@ export async function alertCaptureKeptWithoutRecordedSettler({
   otherPaymentIntentId: string | null;
   otherHoldsMoney?: boolean;
   reason: DuplicateCaptureKeptReason;
+  /** `new-capture-closed`: the cancellation's recorded refund, from the drain. */
+  cancellationRefund?: CancellationRefundNote | null;
   format: ClubFormat;
-}) {
-  const context = { bookingId: booking.id, paymentIntentId, otherPaymentIntentId, reason };
+}): Promise<"sent" | "cooldown" | "send-threw"> {
+  // What the capture still holds and (closed) the cancellation's recorded refund travel in the log too.
+  const context = { bookingId: booking.id, paymentIntentId, otherPaymentIntentId, reason, amountCents, ...(cancellationRefund ? { cancellationRefund } : {}) };
   const key = `duplicate-capture-unrecorded-settler:${booking.id}:${paymentIntentId}`;
   const claimedAt = new Date();
   const send = await claimAlertCooldownFailOpen({
@@ -273,7 +410,7 @@ export async function alertCaptureKeptWithoutRecordedSettler({
     logMessage: "Could not claim the kept-capture alert's cooldown; alerting anyway (#4211)",
   });
   logger.error(context, "A card capture on a paid booking with no usable settlement record was kept for an admin to check (#4211)");
-  if (!send) return;
+  if (!send) return "cooldown";
   try {
     await sendAdminDuplicateCaptureKeptAlert({
       memberName,
@@ -285,11 +422,19 @@ export async function alertCaptureKeptWithoutRecordedSettler({
       paymentIntentId,
       otherPaymentIntentId,
       otherHoldsMoney,
+      ...(cancellationRefund ? { cancellationRefund } : {}),
     }, format);
   } catch (err) {
     logger.error({ err, ...context }, "Failed to alert admins about a kept capture; giving the claim back so a repeat tries again (#4211)");
     await releaseAlertCooldown({ key, claimedAt }).catch((releaseErr) =>
       logger.error({ err: releaseErr, ...context }, "Failed to give back the kept-capture alert's claim (#4211)"),
     );
+    return "send-threw";
   }
+  // #4285 review: ANY delivered alert for this capture answers an owed one, so
+  // the drain never later sends "no other payment holds money" once untrue.
+  await settleOwedAlert({ key: newCaptureAlertOwedKey(booking.id, paymentIntentId) }).catch((err) =>
+    logger.error({ err, ...context }, "Failed to clear a delivered kept-capture alert's owed marker; it may be sent again (#4285)"),
+  );
+  return "sent";
 }

@@ -95,6 +95,8 @@ import {
 } from "@/lib/xero-sync";
 // The real builder — the mock above only replaces `buildXeroObjectUrl`.
 import { buildXeroContactUrl } from "@/lib/xero-links";
+import { prisma } from "@/lib/prisma";
+import { CREDIT_SPENT_OUTSIDE_APP_REASON_PREFIX } from "@/lib/xero-operation-resolution";
 
 describe("sumCoveredRefundCreditNoteCents (#1162)", () => {
   beforeEach(() => {
@@ -1150,6 +1152,7 @@ describe("upsertXeroObjectLink", () => {
 describe("startXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.operationFindFirst.mockReset();
     mocks.operationCount.mockResolvedValue(0);
     mocks.operationCreate.mockImplementation(async ({ data }: { data: unknown }) => ({
       id: "op_started_1",
@@ -1187,21 +1190,129 @@ describe("startXeroSyncOperation", () => {
     );
   });
 
-  it("rethrows a unique violation with no surviving active row (or no correlation key)", async () => {
+  // #4338: the active lookup finds nothing, then the newest-row read names the winner's outcome.
+  const lostRaceInput = {
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: "payment_1",
+    status: "PENDING",
+    correlationKey: "key-x",
+  } as const;
+  type WinnerResolution = { manuallyResolvedAt: Date; manuallyResolvedById: string | null; manuallyResolvedReason: string };
+  const unresolved = { manuallyResolvedAt: null, manuallyResolvedById: null, manuallyResolvedReason: null };
+  const resolvedAt = new Date("2026-07-01T00:00:00.000Z");
+  // The converge's own close: no officer, the #4219 reason.
+  const convergeClose: WinnerResolution = {
+    manuallyResolvedAt: resolvedAt,
+    manuallyResolvedById: null,
+    manuallyResolvedReason: `${CREDIT_SPENT_OUTSIDE_APP_REASON_PREFIX}: the ledger was brought into line`,
+  };
+  // An officer's "resolved in Xero" mark.
+  const officerMark: WinnerResolution = {
+    manuallyResolvedAt: resolvedAt,
+    manuallyResolvedById: "member_officer",
+    manuallyResolvedReason: "Fixed by hand in Xero",
+  };
+  const winnerFinished =
+    (status: string, resolution: WinnerResolution | typeof unresolved = unresolved) =>
+    (args: { where: { status?: unknown } }) =>
+      Promise.resolve(args.where.status ? null : { status, ...resolution });
+
+  // A FAILED row a converge already closed still re-inserts: the loser's converge closes its own.
+  it.each([
+    ["unresolved", unresolved],
+    ["closed by the converge", convergeClose],
+  ] as const)(
+    "inserts again when the winner ended FAILED (%s) before the lookup, as a retry a moment later would (#4338)",
+    async (_label, resolution) => {
+      const status = "FAILED";
+      mocks.operationCreate
+        .mockRejectedValueOnce({ code: "P2002" })
+        .mockImplementationOnce(async ({ data }: { data: unknown }) => ({ id: "op_started_1", data }));
+      mocks.operationFindFirst.mockImplementation(winnerFinished(status, resolution));
+      // The winner's finished row now counts as an earlier attempt.
+      mocks.operationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+
+      const result = await startXeroSyncOperation(lostRaceInput);
+
+      expect(result).toMatchObject({ id: "op_started_1" });
+      expect(mocks.operationCreate).toHaveBeenCalledTimes(2);
+      expect(mocks.operationCreate.mock.calls[1][0].data.attemptCount).toBe(2);
+      expect(mocks.operationFindFirst).toHaveBeenLastCalledWith({
+        where: { correlationKey: "key-x" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { status: true, manuallyResolvedAt: true, manuallyResolvedById: true, manuallyResolvedReason: true },
+      });
+    }
+  );
+
+  // PARTIAL: the Xero object exists. An officer's mark is done (`INV-INT-025`), never re-minted beside.
+  it.each([
+    ["SUCCEEDED", "unresolved", unresolved],
+    ["CANCELLED", "unresolved", unresolved],
+    ["PARTIAL", "unresolved", unresolved],
+    ["PARTIAL", "closed by the converge", convergeClose],
+    ["FAILED", "marked by an officer", officerMark],
+    // An officer who wrote the converge's reason by hand is still an officer.
+    ["FAILED", "marked by an officer with the converge's reason", { ...convergeClose, manuallyResolvedById: "member_officer" }],
+  ] as const)(
+    "rethrows the unique violation, without a second insert, when the winner ended %s (%s) (#4338)",
+    async (status, _label, resolution) => {
+      mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
+      mocks.operationFindFirst.mockImplementation(winnerFinished(status, resolution));
+
+      await expect(startXeroSyncOperation(lostRaceInput)).rejects.toMatchObject({ code: "P2002" });
+      expect(mocks.operationCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.operationFindFirst).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it("rethrows the unique violation once its bounded re-inserts all lose to a winner that FAILED (#4338)", async () => {
+    mocks.operationCreate.mockRejectedValue({ code: "P2002" });
+    mocks.operationFindFirst.mockImplementation(winnerFinished("FAILED"));
+
+    await expect(startXeroSyncOperation(lostRaceInput)).rejects.toMatchObject({ code: "P2002" });
+    expect(mocks.operationCreate).toHaveBeenCalledTimes(3);
+  });
+
+  it("rethrows a unique violation with no correlation key, without a lookup or a second insert", async () => {
     mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
-    mocks.operationFindFirst.mockResolvedValue(null);
 
     await expect(
-      startXeroSyncOperation({
-        direction: "OUTBOUND",
-        entityType: "CREDIT_NOTE",
-        operationType: "CREATE",
-        localModel: "Payment",
-        localId: "payment_1",
-        status: "PENDING",
-        correlationKey: "key-x",
-      })
+      startXeroSyncOperation({ ...lostRaceInput, correlationKey: undefined })
     ).rejects.toMatchObject({ code: "P2002" });
+    expect(mocks.operationFindFirst).not.toHaveBeenCalled();
+    expect(mocks.operationCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rethrows on a caller's transaction before any lookup, since the violation has aborted it (#4338)", async () => {
+    const txCreate = vi.fn().mockRejectedValue({ code: "P2002" });
+    const txFindFirst = vi.fn().mockImplementation(winnerFinished("FAILED"));
+    const store = {
+      xeroSyncOperation: { count: vi.fn().mockResolvedValue(0), create: txCreate, findFirst: txFindFirst },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(startXeroSyncOperation({ ...lostRaceInput, store })).rejects.toMatchObject({ code: "P2002" });
+    expect(txCreate).toHaveBeenCalledTimes(1);
+    // A read on an aborted transaction throws 25P02 and would replace the violation.
+    expect(txFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("treats the root client passed as `store` as no transaction: it looks up and inserts again (#4338)", async () => {
+    mocks.operationCreate
+      .mockRejectedValueOnce({ code: "P2002" })
+      .mockImplementationOnce(async ({ data }: { data: unknown }) => ({ id: "op_started_1", data }));
+    mocks.operationFindFirst.mockImplementation(winnerFinished("FAILED"));
+
+    const result = await startXeroSyncOperation({
+      ...lostRaceInput,
+      store: prisma as unknown as Prisma.TransactionClient,
+    });
+
+    expect(result).toMatchObject({ id: "op_started_1" });
+    expect(mocks.operationCreate).toHaveBeenCalledTimes(2);
   });
 
   it("writes via the global prisma client when no store is supplied and never leaks store into the payload", async () => {

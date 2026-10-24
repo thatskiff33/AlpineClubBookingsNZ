@@ -31,10 +31,14 @@ import {
   changeRequestValidationMessage,
   isAppliedChangeRequestRange,
   namesStayRangeChange,
-  storedGuestNightsAsDays,
   CHANGE_REQUEST_DEPENDANT_TYPED_MESSAGE,
 } from "@/lib/booking-change-request-guests";
-import { changeRequestDeltaSchema, validateChangeRequestDatesAndNights } from "@/lib/booking-change-request-input";
+import {
+  changeRequestDeltaSchema,
+  unknownChangeRequestGuestRefusal,
+  validateChangeRequestDatesAndNights,
+} from "@/lib/booking-change-request-input";
+import { changeRequestStoredProposal } from "@/lib/booking-change-request-stored";
 import {
   checkOwnDependantIdentityForParty,
   claimedMemberPathIds,
@@ -317,14 +321,9 @@ export async function POST(
   }
 
   const removeSet = new Set(removeGuestIds ?? []);
-  const invalidRemoveGuestIds = [...removeSet].filter(
-    (guestId) => !booking.guests.some((guest) => guest.id === guestId)
-  );
-  if (invalidRemoveGuestIds.length > 0) {
-    return NextResponse.json(
-      { error: "One or more guests were not found on this booking" },
-      { status: 400 }
-    );
+  const unknownRemoved = unknownChangeRequestGuestRefusal(booking.guests, { removeGuestIds });
+  if (unknownRemoved) {
+    return NextResponse.json({ error: unknownRemoved }, { status: 400 });
   }
 
   const lodgeCapacity = await getLodgeCapacity(
@@ -339,28 +338,24 @@ export async function POST(
     );
   }
 
-  const invalidRangeGuestIds = (sentGuestStayRanges ?? [])
-    .map((range) => range.guestId)
-    .filter((guestId) => !booking.guests.some((guest) => guest.id === guestId));
-  if (invalidRangeGuestIds.length > 0) {
-    return NextResponse.json(
-      { error: "One or more guest stay ranges referenced a guest not found on this booking" },
-      { status: 400 }
-    );
+  const unknownRanged = unknownChangeRequestGuestRefusal(booking.guests, { guestStayRanges: sentGuestStayRanges });
+  if (unknownRanged) {
+    return NextResponse.json({ error: unknownRanged }, { status: 400 });
   }
 
-  const removedGuests = booking.guests
-    .filter((guest) => removeSet.has(guest.id))
-    .map((guest) => ({
-      id: guest.id,
+  // #4203: the approval-relevant record, from the builder the card's estimate reads too (`INV-SSOT-001`).
+  const stored = changeRequestStoredProposal(
+    booking,
+    { checkIn, checkOut, addGuests, removeGuestIds, guestStayRanges: sentGuestStayRanges },
+    (guest) => ({
       firstName: guest.firstName,
       lastName: guest.lastName,
       ageTier: guest.ageTier,
       isMember: guest.isMember,
       memberId: guest.memberId,
-      stayStart: formatBookingDate(guest.stayStart),
-      stayEnd: formatBookingDate(guest.stayEnd),
-    }));
+    }),
+  );
+  const removedGuests = stored.requested.removeGuests;
   const requestedSummary = buildChangeRequestSummary({
     checkIn,
     checkOut,
@@ -375,26 +370,9 @@ export async function POST(
       bookingId,
       requestedByMemberId: session.user.id,
       requestedChanges: {
-        original: {
-          checkIn: formatBookingDate(booking.checkIn),
-          checkOut: formatBookingDate(booking.checkOut),
-          guests: booking.guests.map((guest) => ({
-            id: guest.id,
-            firstName: guest.firstName,
-            lastName: guest.lastName,
-            ageTier: guest.ageTier,
-            isMember: guest.isMember,
-            memberId: guest.memberId,
-            // `stayStart`, `stayEnd` and (#4088) the night rows approval's drift check compares.
-            ...storedGuestNightsAsDays(guest),
-          })),
-        },
+        original: stored.original,
         requested: {
-          checkIn: checkIn ?? null,
-          checkOut: checkOut ?? null,
-          addGuests: addGuests ?? [],
-          guestStayRanges: guestStayRanges ?? [],
-          removeGuests: removedGuests,
+          ...stored.requested,
           requestedEffectiveDate: requestedEffectiveDate ?? null,
           summary: requestedSummary,
         },

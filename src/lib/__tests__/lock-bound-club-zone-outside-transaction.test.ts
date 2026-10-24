@@ -503,6 +503,8 @@ const TRANSACTION_OPENERS = [
   "closeRefundRowRecordingEvent(",
   "closeCapacityRaceRefundRecordingEvent(",
   "closeCancellationRefundAfterReplay(",
+  // #4285 review 7: one read-only snapshot, run around its caller's reads.
+  "withReadOnlySnapshot(",
 ] as const;
 
 /**

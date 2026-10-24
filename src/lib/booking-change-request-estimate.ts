@@ -2,7 +2,10 @@ import type { AgeTier } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
+import type { NormalizedBookingGuestStayRange } from "@/lib/booking-guest-stay-range-input";
+import { resolveModificationStayRanges, resolvedAddedGuestRange } from "@/lib/booking-modification-stay-ranges";
+import { changeRequestProposalBatchInput } from "@/lib/booking-change-request-stored";
+import { mergeChangeRequestGuests, type ChangeRequestDelta } from "@/lib/booking-change-request-input";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { calculateBookingPrice, getStayNights, type GuestInput } from "@/lib/pricing";
 import { loadActiveSeasonRates } from "@/lib/booking-modify-plan";
@@ -24,9 +27,10 @@ import type {
  * WHAT IT IS. The added NON-MEMBER guests priced night by night at the stay's
  * own active season rates by the canonical pricing engine
  * (`calculateBookingPrice`, with the canonical rate resolver and the club's
- * edit-time group discount), with every guest already on the booking counted
- * on the nights they hold — so a party that crosses the group-discount size is
- * priced as one. That is the same arithmetic the finished-stay approval's
+ * edit-time group discount), with the whole party the proposal leaves counted
+ * on the nights it gives them — the booking's guests less the main editor's
+ * removals, plus the editor's added guests (#4203) — so a party that crosses
+ * the group-discount size is priced as one. That is the same arithmetic the finished-stay approval's
  * ordinary pricing pass uses for an added guest (#3750), so on an unchanged
  * season it is the price approving charges. Adding guests carries no change fee.
  *
@@ -38,8 +42,8 @@ import type {
  *    for any id it was handed would answer "is this person a paid-up member" for
  *    anyone (the D-8 boundary the member-guest finder exists to hold). A member
  *    guest's line is "priced at their membership rate when approved".
- *  - Guests already on the booking AND added member guests are COUNTED, never
- *    priced (#4030 review M5): each holds its nights as count-only locked entries
+ *  - Guests already on the booking, the editor's added guests AND added member
+ *    guests are COUNTED, never priced (#4030 review M5, #4203): each holds its nights as count-only locked entries
  *    at zero, so no rate is looked up for them, nothing about their price is read
  *    or returned, and the party size on each night — which decides the group
  *    discount — is the party the approval will price.
@@ -53,6 +57,7 @@ interface EstimateBooking {
   checkOut: Date;
   lodgeId: string | null;
   guests: Array<{
+    id: string;
     stayStart: Date;
     stayEnd: Date;
     ageTier: AgeTier;
@@ -64,8 +69,9 @@ interface EstimateBooking {
 /** Count-only party entries for a run of nights: locked at zero, never priced. */
 function countOnly(
   guest: { ageTier: AgeTier; isMember: boolean },
-  nights: Date[],
+  range: NormalizedBookingGuestStayRange,
 ): GuestInput {
+  const nights = range.nights ?? getStayNights(range.stayStart, range.stayEnd);
   return {
     ageTier: guest.ageTier,
     isMember: guest.isMember,
@@ -76,31 +82,39 @@ function countOnly(
 }
 
 /**
- * A guest already on the booking, as a party member for the night count only:
- * every night they hold is a locked entry, so `calculateBookingPrice` never
- * looks a rate up for them (`lockedNightPrices` short-circuits the lookup).
+ * The card's added guests priced inside the party the whole proposal would
+ * leave on each night (#4203): the booking's guests minus the editor's
+ * removals, on the nights the proposal gives them, plus the editor's added
+ * guests, plus the card's. `editorChanges` is the main editor's part of the
+ * proposal, already validated by the route (`INV-REQ-011`) with every named
+ * guest on this booking; the party is read through approval's own mapping
+ * (`changeRequestProposalBatchInput`, so repeated ranges keep their nights,
+ * `INV-REQ-012`) and the planner's range resolver. Only card guests are
+ * returned; every other guest is count-only.
  */
-function countOnlyExistingGuest(guest: EstimateBooking["guests"][number]): GuestInput {
-  const nights =
-    guest.nights.length > 0
-      ? guest.nights.map((night) => night.stayDate)
-      : getStayNights(guest.stayStart, guest.stayEnd);
-  return countOnly(guest, nights);
-}
-
 export async function estimateChangeRequestAddedGuests(
   booking: EstimateBooking,
   addGuests: ReadonlyArray<ChangeRequestAddGuest>,
+  editorChanges: ChangeRequestDelta = {},
 ): Promise<ChangeRequestEstimate> {
-  const checkIn = booking.checkIn;
-  const checkOut = booking.checkOut;
+  const editorAdded = editorChanges.addGuests ?? [];
+  const proposal = mergeChangeRequestGuests(editorChanges, addGuests);
+  const resolved = resolveModificationStayRanges({
+    booking,
+    guests: booking.guests,
+    input: changeRequestProposalBatchInput(booking, proposal) ?? {},
+  });
+  const { checkIn, checkOut } = resolved;
+  // Each added guest's nights as the planner would write them — the editor's,
+  // then the card's: the grid's night set (#713, #4088), else the two bounds,
+  // else the whole stay, by the canonical range rule (`INV-SSOT`). Refused,
+  // never invented, if the resolver's list is out of step (#2800).
+  const addedCount = editorAdded.length + addGuests.length;
+  const addedRange = (index: number) => resolvedAddedGuestRange(resolved.added, index, addedCount);
+  const cardRange = (index: number) => addedRange(editorAdded.length + index);
   const nonMembers = addGuests
     .map((guest, index) => ({ guest, index }))
     .filter(({ guest }) => !guest.isMember);
-  // Each added guest's nights as the pricing engine reads them: the editor
-  // grid's night set (#713, #4088), else the two bounds, else the whole stay,
-  // by the canonical range rule (`INV-SSOT`); the route refused anything else.
-  const addedGuestRanges = addGuests.map((guest, index) => normalizeGuestStayRange(guest, booking, index));
   const seasonYear = seasonYearOfStoredDate(checkIn);
   const lodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
   const [seasons, groupDiscountSetting, subscriptionLockoutMode] = await Promise.all([
@@ -117,7 +131,7 @@ export async function estimateChangeRequestAddedGuests(
     seasonYear,
     subscriptionLockoutMode,
     guests: nonMembers.map(({ guest, index }) => {
-      const range = addedGuestRanges[index] ?? { stayStart: checkIn, stayEnd: checkOut };
+      const range = cardRange(index);
       return {
         ageTier: guest.ageTier as AgeTier,
         isMember: false,
@@ -135,18 +149,24 @@ export async function estimateChangeRequestAddedGuests(
   const addedEntries = addGuests.map((guest, index) => {
     const ratedEntry = ratedByIndex.get(index);
     if (ratedEntry) return ratedEntry;
-    const range = addedGuestRanges[index] ?? { stayStart: checkIn, stayEnd: checkOut };
     return countOnly(
       { ageTier: guest.ageTier as AgeTier, isMember: true },
-      range.nights ?? getStayNights(range.stayStart, range.stayEnd),
+      cardRange(index),
     );
   });
+  // Everyone else in the proposed party: counted on their nights, never priced.
+  const countedParty = [
+    ...resolved.remaining.map(({ guest, ...range }) => countOnly(guest, range)),
+    ...editorAdded.map((guest, index) =>
+      countOnly({ ageTier: guest.ageTier as AgeTier, isMember: guest.isMember }, addedRange(index)),
+    ),
+  ];
   let priced;
   try {
     priced = calculateBookingPrice(
       checkIn,
       checkOut,
-      [...booking.guests.map(countOnlyExistingGuest), ...addedEntries],
+      [...countedParty, ...addedEntries],
       seasons,
       groupDiscount,
     );
@@ -154,7 +174,7 @@ export async function estimateChangeRequestAddedGuests(
     // The engine's only throw here is a night no active season prices.
     return { outcome: "unpriced", message: CHANGE_REQUEST_ESTIMATE_NO_RATE_MESSAGE };
   }
-  const addedRows = priced.guests.slice(booking.guests.length);
+  const addedRows = priced.guests.slice(countedParty.length);
   const guests = addGuests.map((_guest, index) => {
     const row = addedRows[index];
     return {

@@ -12,6 +12,7 @@ import {
   storedGuestNightsAsDays,
   type GuestNightsAsDays,
 } from "@/lib/booking-change-request-guests";
+import type { ChangeRequestDelta } from "@/lib/booking-change-request-input";
 import { guestName } from "@/lib/bed-allocation-display-names";
 import { collapseNightRuns } from "@/lib/bed-allocation-board-window";
 import { guestNightListSchema } from "@/lib/booking-guest-stay-range-input";
@@ -336,6 +337,71 @@ export function lockedPeriodRequestToBatchInput(
     ...(removeGuestIds.length > 0 ? { removeGuestIds } : {}),
     ...(guestStayRanges.length > 0 ? { guestStayRanges } : {}),
   };
+}
+
+/**
+ * #4203 (`INV-SSOT-001`): the approval-relevant `original` and `requested`
+ * parts of a change request, as submission stores them and as the card's
+ * estimate reads a proposal not yet stored. One builder, so the estimate sees
+ * the same removals (only guests on the booking, each once, in booking order),
+ * applied ranges (`isAppliedChangeRequestRange`) and snapshot nights approval
+ * will. `describe` adds the officer-facing fields submission keeps beside each
+ * booking guest (names, tier, member); the estimate needs none. Unknown guest
+ * ids are the caller's to refuse first (`unknownChangeRequestGuestRefusal`).
+ */
+export function changeRequestStoredProposal<
+  G extends LiveRequestGuestRow,
+  // The builder's own keys stay the builder's: a `describe` that returned one
+  // would silently overwrite it in the stored row (#4203 review).
+  D extends object & Partial<Record<"id" | "stayStart" | "stayEnd" | "nights", never>> = Record<never, never>,
+>(
+  booking: { checkIn: Date; checkOut: Date; guests: ReadonlyArray<G> },
+  delta: Pick<ChangeRequestDelta, "checkIn" | "checkOut" | "addGuests" | "removeGuestIds" | "guestStayRanges">,
+  describe: (guest: G) => D = () => ({}) as D,
+) {
+  const removeSet = new Set(delta.removeGuestIds ?? []);
+  return {
+    original: {
+      checkIn: calendarDateOfDateOnlyInstant(booking.checkIn),
+      checkOut: calendarDateOfDateOnlyInstant(booking.checkOut),
+      guests: booking.guests.map((guest) => {
+        // `stayStart`, `stayEnd` and (#4088) the night rows approval's drift check compares.
+        const { stayStart, stayEnd, nights } = storedGuestNightsAsDays(guest);
+        return { id: guest.id, ...describe(guest), stayStart, stayEnd, nights };
+      }),
+    },
+    requested: {
+      checkIn: delta.checkIn ?? null,
+      checkOut: delta.checkOut ?? null,
+      addGuests: delta.addGuests ?? [],
+      // #4157: only what approval applies is stored.
+      guestStayRanges: (delta.guestStayRanges ?? []).filter(isAppliedChangeRequestRange),
+      removeGuests: booking.guests
+        .filter((guest) => removeSet.has(guest.id))
+        .map((guest) => ({
+          id: guest.id,
+          ...describe(guest),
+          stayStart: calendarDateOfDateOnlyInstant(guest.stayStart),
+          stayEnd: calendarDateOfDateOnlyInstant(guest.stayEnd),
+        })),
+    },
+  };
+}
+
+/**
+ * #4203: the batch input a proposal not yet stored asks for — the merged
+ * editor-and-card delta submission is about to write (`INV-REQ-011`) — built by
+ * submission's own builder and read through the one mapping approval applies
+ * to the stored row, so a pre-approval surface (the card's estimate) sees what
+ * approval will, kept nights included (`INV-REQ-012`). `null` when it names
+ * no change.
+ */
+export function changeRequestProposalBatchInput(
+  booking: { checkIn: Date; checkOut: Date; guests: ReadonlyArray<LiveRequestGuestRow> },
+  proposal: Parameters<typeof changeRequestStoredProposal>[1],
+): ReturnType<typeof lockedPeriodRequestToBatchInput> {
+  const { original, requested } = changeRequestStoredProposal(booking, proposal);
+  return lockedPeriodRequestToBatchInput({ original, requested }, booking);
 }
 
 /**

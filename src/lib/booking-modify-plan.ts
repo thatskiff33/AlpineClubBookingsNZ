@@ -161,6 +161,7 @@ import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
+import { resolvedAddedGuestRange } from "@/lib/booking-modification-stay-ranges";
 import {
   BookingModifyReviewJustificationRequiredError,
   isBookingFullyPaidForGuestNameEdits,
@@ -1057,12 +1058,7 @@ export async function prepareGuestPlan(
   // asked for. So it refuses rather than guessing (#2800, INV-MOD).
   const normalizedAddGuestsWithRanges = normalizedAddGuests
     ? normalizedAddGuests.map((guest, index) => {
-        const range = resolvedRanges.added[index];
-        if (range === undefined) {
-          throw new Error(
-            `Added guest ${index + 1} of ${normalizedAddGuests.length} has no resolved stay range (${resolvedRanges.added.length} resolved).`,
-          );
-        }
+        const range = resolvedAddedGuestRange(resolvedRanges.added, index, normalizedAddGuests.length);
         return {
           ...guest,
           stayStart: range.stayStart,

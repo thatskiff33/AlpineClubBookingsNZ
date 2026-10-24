@@ -10,7 +10,12 @@ import {
   changeRequestAddGuestsSchema,
   changeRequestValidationMessage,
 } from "@/lib/booking-change-request-guests";
-import { changeRequestDeltaSchema, mergeChangeRequestGuests, validateChangeRequestDatesAndNights } from "@/lib/booking-change-request-input";
+import {
+  changeRequestDeltaSchema,
+  mergeChangeRequestGuests,
+  unknownChangeRequestGuestRefusal,
+  validateChangeRequestDatesAndNights,
+} from "@/lib/booking-change-request-input";
 import { estimateChangeRequestAddedGuests } from "@/lib/booking-change-request-estimate";
 import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
 
@@ -121,6 +126,19 @@ export async function POST(
     return NextResponse.json({ error: validated.error }, { status: 400 });
   }
 
-  const estimate = await estimateChangeRequestAddedGuests(booking, parsed.data.addGuests);
+  // #4203: the editor's removals and ranges name guests of THIS booking only,
+  // as submission requires, before they shape the party the estimate counts.
+  const unknownGuest = unknownChangeRequestGuestRefusal(booking.guests, proposal.data);
+  if (unknownGuest) {
+    return NextResponse.json({ error: unknownGuest }, { status: 400 });
+  }
+
+  // The card's guests are priced inside the whole proposed party (#4203);
+  // everyone else is counted, never priced.
+  const estimate = await estimateChangeRequestAddedGuests(
+    booking,
+    parsed.data.addGuests,
+    parsed.data.editorChanges,
+  );
   return NextResponse.json({ estimate });
 }

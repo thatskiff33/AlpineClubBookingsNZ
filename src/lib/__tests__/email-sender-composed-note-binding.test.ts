@@ -663,12 +663,125 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       CLUB_FORMAT_TEST,
     );
     const alone = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
-    expect(alone).toContain("no other payment on it still holds money");
+    expect(alone).toContain("the app counts no other payment on it as settling it");
     expect(alone).toContain("whether this payment now pays for the booking or is a duplicate");
     expect(alone).not.toContain("a cash or bank payment");
     // #4211 review: never "refund the other one" when there is no other one.
     expect(alone).not.toContain("refund the other one");
     expect(alone).toContain("refund it by hand only if the booking should not be paid by it");
+
+    // #4285 review: a lone capture the app had never recorded, on a booking paid some other way.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminDuplicateCaptureKeptAlert(
+      { ...alert, reason: "new-capture", otherPaymentIntentId: null, otherHoldsMoney: false },
+      CLUB_FORMAT_TEST,
+    );
+    const stray = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
+    expect(stray).toContain("A new card payment was recorded on this booking after it was already paid, and the app counts no other payment on it as settling it");
+    // #4285 review 7 F5: never "no other card or bank payment holds money", which the ledger reading cannot prove.
+    expect(stray).not.toContain("card or bank payment on it hold");
+    expect(stray).toContain("the booking was paid some other way");
+    expect(stray).not.toContain("no record of which payment settled");
+    // Only one payment: no "neither payment" Stripe check (#4285 review).
+    expect(stray).not.toContain("neither payment");
+
+    // #4285 review F3: the same payment's owed alert, after the booking was cancelled.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminDuplicateCaptureKeptAlert(
+      { ...alert, reason: "new-capture-closed", otherPaymentIntentId: null, otherHoldsMoney: false },
+      CLUB_FORMAT_TEST,
+    );
+    const closed = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
+    expect(closed).toContain("the booking has since been cancelled or closed");
+    expect(closed).toContain("A cancellation refunds at most what the booking was worth");
+    expect(closed).toContain("refund by hand what the booking no longer needs");
+    expect(closed).not.toContain("should pay for the booking");
+    expect(closed).not.toContain("neither payment");
+    // #4285 review F2: the figure is what the CARD payment still holds; a credit or by-hand refund never touches it.
+    expect(closed).toContain("the amount shown is what this card payment still holds after any card refund taken from it");
+    expect(closed).toContain("A refund made as account credit or by hand never touches this card payment, so part of what it holds may already have been refunded another way.");
+    expect(closed).toContain("Check the cancellation's refund in the booking's history");
+    expect(closed).toContain("Still held by this payment: ");
+    expect(closed).not.toContain("Payment kept:");
+    expect(closed).not.toContain("The cancellation's record shows");
+    expect(closed).not.toContain("in full");
+    expect(closed).not.toContain("Nothing was refunded");
+
+    // #4285 review F2: the cancellation's recorded refund is named when the drain read one.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminDuplicateCaptureKeptAlert(
+      { ...alert, reason: "new-capture-closed", otherPaymentIntentId: null, otherHoldsMoney: false, cancellationRefund: { method: "credit", amount: "$100.00" } },
+      CLUB_FORMAT_TEST,
+    );
+    expect(renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData())).toContain(
+      "The cancellation's record shows it refunded $100.00 as account credit.",
+    );
+
+    // #4285 review 7 F1: a card refund is said as its row stands - never "refunded to card" before it was sent -
+    // and a card refund shortfall's parts beside it.
+    // #4285 review 8: to the group organiser's card where it went there, and each shortfall part as its hand-back task stands.
+    const owed = { byBank: { amount: "$30.00", standing: "owed" }, toCheck: { amount: "$10.00", standing: "owed" } } as const;
+    for (const [card, said, parts = owed] of [
+      [{ amount: "$60.00", standing: "not-sent" }, "a card refund of $60.00 was planned but has not been sent in full, $30.00 is owed back by bank transfer and $10.00 is for the club to check before paying it back."],
+      [{ amount: "$60.00", standing: "sent" }, "it refunded $60.00 to card, $30.00 is owed back by bank transfer and $10.00 is for the club to check before paying it back."],
+      [
+        { amount: "$60.00", standing: "sent" },
+        "it refunded $60.00 to card, $30.00 was paid back by bank transfer and $10.00 was paid back by bank transfer after the club checked it.",
+        { byBank: { amount: "$30.00", standing: "paid" }, toCheck: { amount: "$10.00", standing: "paid" } },
+      ],
+      [
+        { amount: "$60.00", standing: "sent" },
+        "it refunded $60.00 to card, the club recorded the $30.00 owed by bank transfer as settled and the club checked the $10.00 and closed it.",
+        { byBank: { amount: "$30.00", standing: "closed" }, toCheck: { amount: "$10.00", standing: "closed" } },
+      ],
+      [{ amount: "$60.00", standing: "sent", organiserCard: true }, "it refunded $60.00 to the group organiser's card.", { byBank: null, toCheck: null }],
+      [{ amount: "$60.00", standing: "not-sent", organiserCard: true }, "a refund of $60.00 to the group organiser's card was planned but has not been sent in full.", { byBank: null, toCheck: null }],
+      // #4285 review 9 F1: a part close names what it left unpaid; F2: a refund made, of which a part failed later and was closed another way, names that part.
+      [{ amount: "$60.00", standing: "paid-another-way" }, "its card refund of $60.00 was closed as paid another way.", { byBank: null, toCheck: null }],
+      [{ amount: "$60.00", standing: "paid-another-way", unpaid: "$25.00" }, "its card refund of $60.00 was closed as paid another way, with $25.00 of it left unpaid.", { byBank: null, toCheck: null }],
+      [
+        { amount: "$60.00", standing: "sent", closedAnotherWay: "$20.00", unpaid: "$5.00" },
+        "it refunded $60.00 to card, but $20.00 of that failed later and was closed as paid another way, with $5.00 of it left unpaid.",
+        { byBank: null, toCheck: null },
+      ],
+    ] as const) {
+      mocks.sendUnmuteableAdminAlert.mockClear();
+      await sendAdminDuplicateCaptureKeptAlert(
+        { ...alert, reason: "new-capture-closed", otherPaymentIntentId: null, otherHoldsMoney: false, cancellationRefund: { method: "card", card, ...parts } },
+        CLUB_FORMAT_TEST,
+      );
+      expect(renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData())).toContain(`The cancellation's record shows ${said}`);
+    }
+
+    // #4285 review 7 F2: the settle's new-capture alert beside a payment the app no longer counts (a dead cancel's capture) names it.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminDuplicateCaptureKeptAlert(
+      { ...alert, reason: "new-capture", otherPaymentIntentId: "pi_dead_cancel", otherHoldsMoney: true },
+      CLUB_FORMAT_TEST,
+    );
+    const strayBeside = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
+    expect(strayBeside).toContain("Card payment pi_dead_cancel on it also holds money, so one or both of them may be extra.");
+    expect(strayBeside).not.toContain("so this payment may be extra");
+    expect(strayBeside).toContain("refund by hand any the booking does not need");
+
+    // #4285 review F3: the same owed alert once a later payment holds money too.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminDuplicateCaptureKeptAlert(
+      { ...alert, reason: "new-capture-later-payment", otherPaymentIntentId: "pi_later", otherHoldsMoney: true },
+      CLUB_FORMAT_TEST,
+    );
+    const later = renderDefaultBody("admin-duplicate-capture-kept", capturedUnmuteableTemplateData());
+    // #4285 review F5: the same two causes as new-capture, and the other payment holds money NOW.
+    expect(later).toContain("the booking was paid some other way (with account credit, at a zero total, or by a group organiser), or its earlier payment was refunded");
+    expect(later).toContain("Card payment pi_later on it also holds money");
+    expect(later).toContain("while the app counted no other payment on it as settling it");
+    expect(later).not.toContain("recorded on it since");
+    // #4285 review F6: either or both may be extra.
+    expect(later).toContain("refund by hand any the booking does not need — both, if it was paid another way.");
+    expect(later).not.toContain("no record of which payment settled");
+    expect(later).not.toContain("previous app version");
+    expect(stray).not.toContain("refund the other one");
+    expect(stray).toContain("refund it by hand only if the booking should not be paid by it");
   });
 
   it("admin-superseded-capture-refused: {{supersededCaptureNote}} says it was not applied, worded by the booking's status (#4300)", async () => {

@@ -12,6 +12,7 @@ import { supersededCaptureRefusedAction, supersededCaptureRefusedParagraph } fro
 import {
   duplicateCaptureKeptAction,
   duplicateCaptureKeptParagraph,
+  type CancellationRefundNote,
   type DuplicateCaptureKeptReason,
 } from "@/lib/duplicate-capture-kept-note";
 import { ibSettlementFigureParagraph, type IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
@@ -178,6 +179,7 @@ export async function sendAdminDuplicateCaptureKeptAlert(data: {
   paymentIntentId: string;
   otherPaymentIntentId: string | null;
   otherHoldsMoney?: boolean;
+  cancellationRefund?: CancellationRefundNote | null;
 },
   format: ClubFormat,
 ) {
@@ -205,10 +207,11 @@ export async function sendAdminDuplicateCaptureKeptAlert(data: {
         reason: data.reason,
         otherPaymentIntentId: data.otherPaymentIntentId,
         otherHoldsMoney: data.otherHoldsMoney,
+        cancellationRefund: data.cancellationRefund,
       }),
       // What to do differs too: with nothing else holding money this payment
       // may be the one paying for the booking (#4211 review).
-      duplicateCaptureKeptAction: duplicateCaptureKeptAction({ otherHoldsMoney: data.otherHoldsMoney }),
+      duplicateCaptureKeptAction: duplicateCaptureKeptAction({ otherHoldsMoney: data.otherHoldsMoney, reason: data.reason }),
     },
     requirement: { area: "finance", level: "edit" },
   });

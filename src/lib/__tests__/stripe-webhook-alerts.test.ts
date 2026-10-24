@@ -658,6 +658,8 @@ describe("Stripe webhook Xero alerting", () => {
       paymentIntentId: "pi_primary",
       amountCents: 5000,
       paymentMethodId: "pm_123",
+      // #4285 review: found by its intent, not adopted - nothing this delivery wrote.
+      recordedByCaller: false,
     });
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "INVOICE_CREATION",
@@ -813,10 +815,10 @@ describe("Stripe webhook Xero alerting", () => {
       discountCents: 0,
       guests: [{ id: "g1" }],
       member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
-      payment: { status: "SUCCEEDED", stripePaymentIntentId: "pi_settled", changeFeeCents: 2500 },
+      payment: { id: "payment-1", status: "SUCCEEDED", stripePaymentIntentId: "pi_settled", changeFeeCents: 2500 },
       promoRedemption: null,
     });
-    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", booking: { id: "booking-1" } });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", bookingId: "booking-1", bumpedBookingIds: [] });
 
     const response = await POST(makeRequest());
 
@@ -829,63 +831,85 @@ describe("Stripe webhook Xero alerting", () => {
 
   // #4211 review: captured at 15000; a later correction recorded a 2500 fee, so
   // the booking now owes 17500. Which captures skip the stale-amount check.
+  // `outcome` is mocked here: it is the value the REAL settle returns for that
+  // capture (#4285: on a COMPLETED booking as on a PAID one, `INV-PAY-043`), as
+  // `issue-1992-duplicate-capture-refund.test.ts` and, on PostgreSQL,
+  // `completed-redelivery.realdb.test.ts` prove.
   const SETTLER = "txn-1";
   it.each([
     {
       label: "the recorded settler, the intent pointer since moved to a later row",
       bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
       payment: { stripePaymentIntentId: "pi_later_row", settledByTransactionId: SETTLER },
-      handed: true,
+      handed: true, outcome: "already_paid",
     },
     {
       label: "the recorded settler, partly refunded since",
       bookingStatus: "COMPLETED", rowStatus: "PARTIALLY_REFUNDED", rowPaymentId: "payment-1",
       payment: { stripePaymentIntentId: "pi_later_row", settledByTransactionId: SETTLER },
-      handed: true,
+      handed: true, outcome: "already_paid",
     },
     {
       label: "F1: a kept or refund-queued duplicate replayed on a PAID booking edited since",
       bookingStatus: "PAID", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
       payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: "txn-other" },
-      handed: true,
+      handed: true, outcome: "duplicate_capture_refunded",
     },
     {
       label: "F2: a duplicate's FIRST delivery at a stale amount on a PAID booking",
       bookingStatus: "PAID", rowStatus: "PENDING", rowPaymentId: "payment-1",
       payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: "txn-other" },
-      handed: true,
+      handed: true, outcome: "duplicate_capture_refunded",
+    },
+    {
+      label: "#4285: a duplicate's FIRST delivery at a stale amount on a COMPLETED booking",
+      bookingStatus: "COMPLETED", rowStatus: "PENDING", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: "txn-other" },
+      handed: true, outcome: "duplicate_capture_refunded",
+    },
+    {
+      label: "#4285: not the settler on a COMPLETED booking, settled before the fee",
+      bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: "txn-other" },
+      handed: true, outcome: "duplicate_capture_refunded",
+    },
+    {
+      label: "#4285 review F7: off a paid-like booking, not the intent pointer naming this SUCCEEDED row (no settler)",
+      bookingStatus: "CONFIRMED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: null },
+      handed: false, outcome: null,
+    },
+    {
+      label: "#4285 review F7: off a paid-like booking, not this row recorded as the settler",
+      bookingStatus: "CONFIRMED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
+      payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: SETTLER },
+      handed: false, outcome: null,
     },
     {
       label: "not widened to an unpaid booking: a stale intent there is refused (#1161)",
       bookingStatus: "PAYMENT_PENDING", rowStatus: "PENDING", rowPaymentId: "payment-1",
       payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: null },
-      handed: false,
-    },
-    {
-      label: "not the settler on a booking that is not PAID",
-      bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
-      payment: { stripePaymentIntentId: "pi_settled", settledByTransactionId: "txn-other" },
-      handed: false,
+      handed: false, outcome: null,
     },
     {
       label: "no settler recorded and the intent pointer names another intent, on an unpaid booking",
       bookingStatus: "PAYMENT_PENDING", rowStatus: "SUCCEEDED", rowPaymentId: "payment-1",
       payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: null },
-      handed: false,
+      handed: false, outcome: null,
     },
     {
       label: "the settler's id, but on a row of another payment",
       bookingStatus: "COMPLETED", rowStatus: "SUCCEEDED", rowPaymentId: "payment-elsewhere",
       payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: SETTLER },
-      handed: false,
+      handed: false, outcome: null,
     },
     {
       label: "a PAID booking, but the capture's row is on another payment",
       bookingStatus: "PAID", rowStatus: "SUCCEEDED", rowPaymentId: "payment-elsewhere",
       payment: { stripePaymentIntentId: "pi_other", settledByTransactionId: "txn-other" },
-      handed: false,
+      handed: false, outcome: null,
     },
-  ])("#4211: the stale-amount check skips $label: $handed", async ({ bookingStatus, rowStatus, rowPaymentId, payment, handed }) => {
+  ])("#4211: the stale-amount check skips $label: $handed", async ({ bookingStatus, rowStatus, rowPaymentId, payment, handed, outcome }) => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_redelivered_4211",
       type: "payment_intent.succeeded",
@@ -911,7 +935,7 @@ describe("Stripe webhook Xero alerting", () => {
       payment: { id: "payment-1", status: "SUCCEEDED", changeFeeCents: 2500, ...payment },
       promoRedemption: null,
     });
-    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", booking: { id: "booking-1" } });
+    if (outcome) mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome, bookingId: "booking-1", bumpedBookingIds: [] });
 
     const response = await POST(makeRequest());
 
@@ -1414,6 +1438,8 @@ describe("Stripe webhook Xero alerting", () => {
         paymentIntentId: "pi_lost",
         amountCents: 5000,
         paymentMethodId: "pm_123",
+        // #4285 review: the adoption wrote the capture just now - new money, not a replay.
+        recordedByCaller: true,
       });
     });
 

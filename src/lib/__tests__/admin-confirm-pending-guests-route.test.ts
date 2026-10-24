@@ -446,6 +446,8 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       mocks.markBookingPaymentSucceeded.mock.invocationCallOrder[0]
     );
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    // #4285 review: that pre-record wrote the capture just now - the settle is told it is new money.
+    expect(mocks.markBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_1", recordedByCaller: true }));
     expect(mocks.createStructuredAuditLog).toHaveBeenCalled();
     // The booking's OWN saved card is charged; the claim writes only the
     // customer onto its row (#3269 — a pm write-back would race the

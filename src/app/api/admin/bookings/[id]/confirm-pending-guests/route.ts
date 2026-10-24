@@ -755,21 +755,20 @@ export async function POST(
 
     const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
 
-    // Durably record the captured charge BEFORE reconciliation (#1418).
-    // markBookingPaymentSucceeded writes this same PRIMARY transaction inside
-    // its own transaction, so a throw there rolls the row back — and the
-    // payment_intent.succeeded webhook refuses to act without it ("no primary
-    // payment transaction"), which is exactly how captured money used to go
-    // silent. With the row committed here, the webhook can always finish the
-    // promotion (or route a cancelled booking through the #1350 refund guard).
-    // Since #3267 the row already exists (the attempt); this stamps the intent
-    // and SUCCEEDED onto it.
+    // Durably record the captured charge BEFORE reconciliation (#1418). markBookingPaymentSucceeded writes this
+    // same PRIMARY transaction inside its own transaction, so a throw there rolls the row back — and the
+    // payment_intent.succeeded webhook refuses to act without it ("no primary payment transaction"), which is
+    // exactly how captured money used to go silent. With the row committed here, the webhook can always finish
+    // the promotion (or route a cancelled booking through the #1350 refund guard). Since #3267 the row already
+    // exists (the attempt); this stamps the intent and SUCCEEDED onto it, and (#4285 review) `newlyCaptured`
+    // tells the settle it is new money, not a replay.
+    let recordedByCaller = false;
     try {
-      await settleSavedCardChargeAttempt({
+      ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({
         attemptRowId: claim.attempt.attemptRowId,
         paymentId: claim.paymentId,
         paymentIntent,
-      });
+      }));
     } catch (recordErr) {
       // Non-fatal: reconciliation below upserts the identical row.
       logger.error(
@@ -782,7 +781,7 @@ export async function POST(
     try {
       reconciliation = await markBookingPaymentSucceeded({
         format,
-        bookingId,
+        bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId,

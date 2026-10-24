@@ -90,6 +90,7 @@ const paymentsCycleTasks = vi.hoisted(() => ({
   releaseExpiredInternetBankingHolds: vi.fn(),
   reapStaleWaitingPaymentXeroOutboxOperations: vi.fn(),
   reannounceHeldLateCaptures: vi.fn(),
+  drainOwedNewCaptureAlerts: vi.fn(),
 }));
 
 vi.mock("@/lib/payment-recovery", () => ({
@@ -102,6 +103,9 @@ vi.mock("@/lib/internet-banking-payment-cron", () => ({
 
 vi.mock("@/lib/late-capture-refund-hold", () => ({
   reannounceHeldLateCaptures: paymentsCycleTasks.reannounceHeldLateCaptures,
+}));
+vi.mock("@/lib/duplicate-capture-kept-alert-drain", () => ({
+  drainOwedNewCaptureAlerts: paymentsCycleTasks.drainOwedNewCaptureAlerts,
 }));
 vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
   reapStaleWaitingPaymentXeroOutboxOperations:
@@ -446,6 +450,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       new Error("hold release unavailable")
     );
     paymentsCycleTasks.reannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
+    paymentsCycleTasks.drainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
     paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -475,6 +480,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
       }),
       expect.objectContaining({ jobName: "xero-waiting-invoice-reaper", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "late-capture-held-alert", status: "SUCCESS" }),
+      expect.objectContaining({ jobName: "duplicate-capture-kept-alert", status: "SUCCESS" }),
     ]);
   });
 

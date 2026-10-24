@@ -954,9 +954,9 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-duplicate-capture-kept": {
     triggerSummary:
-      "A card payment arrived on a booking that was already paid and the app had no usable record of which payment settled it - while another payment on it still held money, or because the recorded payment no longer holds money - so it kept the payment and refunded nothing",
+      "A card payment arrived on a booking that was already paid and the app had no usable record of which payment settled it - while another payment on it still held money, because the recorded payment no longer holds money, or (a payment the app had never recorded) with no other payment holding money - so it kept the payment and refunded nothing. The last kind is sent again if undelivered, then saying if the booking was cancelled since (with what the payment still holds) or another payment has arrived",
     frequency:
-      "On a payment or a repeat of it reaching such a booking - rare; at most once a day per booking and payment, by a cross-instance cooldown given back when the send throws",
+      "On a payment or a repeat of it reaching such a booking - rare; at most once a day per booking and payment, by a cross-instance cooldown given back when the send throws. One for a payment the app had never recorded is owed until delivered, and the 15-minute payments cron sends it an hour on if nothing else does (about a day at worst)",
   },
   "admin-superseded-capture-refused": {
     triggerSummary:
@@ -1597,7 +1597,7 @@ export function sampleValue(token: string): string {
   if (token === "duplicateCaptureKeptNote") {
     return duplicateCaptureKeptParagraph({ reason: "not-recorded", otherPaymentIntentId: "pi_example" });
   }
-  if (token === "duplicateCaptureKeptAction") return duplicateCaptureKeptAction({ otherHoldsMoney: true });
+  if (token === "duplicateCaptureKeptAction") return duplicateCaptureKeptAction({ otherHoldsMoney: true, reason: "not-recorded" });
   // #4300: previewed as the still-owing arm, the case a live booking meets.
   if (token === "supersededCaptureNote") return supersededCaptureRefusedParagraph({ bookingCancelled: false });
   if (token === "supersededCaptureAction") return supersededCaptureRefusedAction({ bookingCancelled: false });

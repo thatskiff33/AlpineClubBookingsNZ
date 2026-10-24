@@ -173,13 +173,32 @@ export function isCancellationRefundDecisionRecorded(
  * `payment-reconciliation.ts`, and before #3639 the post-commit writer).
  */
 export function isPaidCancellationDecisionSnapshot(snapshot: unknown): boolean {
-  if (snapshot === null || typeof snapshot !== "object") return false;
+  return parsePaidCancellationDecisionSnapshot(snapshot) !== null;
+}
+
+/** #4285 review: what a paid-path decision snapshot says, typed (`CancellationEventSnapshot`'s figures). */
+export type PaidCancellationDecision = {
+  refundMethod: string;
+  refundPercentage: number;
+  /** What the cancellation returned, by every part of its method. */
+  settledAmountCents: number;
+  /** #4097 (`INV-PAY-129`): a card cancel's card part and the two parts beside it; null otherwise. */
+  cardShortfall: { cardCents: number; bankCents: number; checkCents: number } | null;
+};
+
+/** The one parser of that snapshot (`isPaidCancellationDecisionSnapshot`'s rule); null where it is not one. */
+export function parsePaidCancellationDecisionSnapshot(snapshot: unknown): PaidCancellationDecision | null {
+  if (snapshot === null || typeof snapshot !== "object") return null;
   const s = snapshot as Record<string, unknown>;
-  return (
-    typeof s.refundMethod === "string" &&
-    typeof s.refundPercentage === "number" &&
-    typeof s.settledAmountCents === "number"
-  );
+  if (typeof s.refundMethod !== "string" || typeof s.refundPercentage !== "number" || typeof s.settledAmountCents !== "number") return null;
+  const parts = s.cardShortfall !== null && typeof s.cardShortfall === "object" ? (s.cardShortfall as Record<string, unknown>) : null;
+  const cents = (value: unknown) => (typeof value === "number" ? value : 0);
+  return {
+    refundMethod: s.refundMethod,
+    refundPercentage: s.refundPercentage,
+    settledAmountCents: s.settledAmountCents,
+    cardShortfall: parts ? { cardCents: cents(parts.cardCents), bankCents: cents(parts.bankCents), checkCents: cents(parts.checkCents) } : null,
+  };
 }
 
 /**

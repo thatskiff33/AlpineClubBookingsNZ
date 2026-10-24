@@ -92,6 +92,10 @@ regexes = [
 ]
 
 [[allowlists]]
+description = "The readable idempotency-key label the #4285 race test gives its fabricated unplanned card-refund recovery row in `completed-redelivery.realdb.test.ts`. A test's own label for a row it created: it authorises nothing and names no credential. This exact literal is forgiven, including its existing historical commit, without exempting any path or shape."
+regexes = ['''^race-4285-unplanned-refund$''']
+
+[[allowlists]]
 description = "A readable snake_case fixture id used as the idempotency key in the pending-charge confirmation tests. Not a UUID and not a credential — it is a test's own label for a row it created."
 regexes = ['''^pending_charge_b1$''']
 

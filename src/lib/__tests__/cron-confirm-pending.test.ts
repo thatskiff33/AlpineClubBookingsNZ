@@ -3455,7 +3455,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         },
       });
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
-        expect.objectContaining({ paymentIntentId: "pi_admin" })
+        // #4285 review: the cron's pre-record wrote the capture just now - new money, not a replay.
+        expect.objectContaining({ paymentIntentId: "pi_admin", recordedByCaller: true })
       );
     });
 

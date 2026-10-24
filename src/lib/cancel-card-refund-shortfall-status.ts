@@ -1,4 +1,4 @@
-import { PaymentRecoveryOperationStatus } from "@prisma/client";
+import { PaymentRecoveryOperationStatus, type Prisma } from "@prisma/client";
 
 import {
   CANCEL_CARD_SHORTFALL_KEY_PREFIX,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/manual-refund-task-settlement-rules";
 import {
   buildBookingCancellationRefundIdempotencyKey,
+  buildOrganiserChildCancellationRefundKey,
   bookingCancelCardRefundRecoveryWhere,
   buildCapacityClaimFailedRefundRecoveryKeyPrefixForBooking,
   CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX,
@@ -24,6 +25,18 @@ import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { cardRefundMadeForOperation, cardRefundPaymentBeforeFailure, cardRefundSliceFilledBy, parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 
 type CardRefundRow = { id: string; status: PaymentRecoveryOperationStatus; attempts: number; nextRetryAt: Date | null };
+/**
+ * #4285 review: where these reads run - the app's client (the booking and
+ * payment-link pages), or a caller's transaction, so the kept-capture alert's
+ * drain reads the cancel's refund inside its one snapshot (`INV-SSOT`: one
+ * reading, never a copy of it).
+ */
+type CardRefundStore = Pick<Prisma.TransactionClient, "paymentRecoveryOperation" | "manualRefundTask" | "payment">;
+/** A cancel's card refund row, as these reads select it. */
+const CANCEL_CARD_REFUND_ROW_SELECT = {
+  id: true, idempotencyKey: true, paymentId: true, amountCents: true, allocationPlan: true, status: true, attempts: true, nextRetryAt: true, succeededAt: true,
+} as const satisfies Prisma.PaymentRecoveryOperationSelect;
+type CancelCardRefundRow = Prisma.PaymentRecoveryOperationGetPayload<{ select: typeof CANCEL_CARD_REFUND_ROW_SELECT }>;
 /** A "Paid another way" close's record: what it paid back, and what the row still owed. */
 type CloseRecord = { amountCents: number | null; raisedAmountCents: number | null };
 
@@ -51,9 +64,12 @@ export interface CancelledCardRefund {
  * runner will still send is on its way (`isPaymentRecoveryOperationInFlight`);
  * any other is dead - stalled until the club acts.
  */
-async function cardRefundRowState(row: CardRefundRow): Promise<{ state: CardRefundState; record?: CloseRecord }> {
+async function cardRefundRowState(
+  row: CardRefundRow,
+  store: Pick<Prisma.TransactionClient, "manualRefundTask">,
+): Promise<{ state: CardRefundState; record?: CloseRecord }> {
   if (row.status === PaymentRecoveryOperationStatus.SUCCEEDED) {
-    const record = await prisma.manualRefundTask.findFirst({
+    const record = await store.manualRefundTask.findFirst({
       where: { occurrenceKey: { in: closeKeysOf(row.id) } },
       select: { amountCents: true, raisedAmountCents: true },
     });
@@ -71,10 +87,12 @@ async function cardRefundRowState(row: CardRefundRow): Promise<{ state: CardRefu
  *
  * No `server-only` and no heavier import than Prisma: the payment-link page's
  * context module must stay importable outside a React server
- * (`cli-server-only-reach-census.test.ts`).
+ * (`cli-server-only-reach-census.test.ts`). #4285 review: the kept-capture
+ * alert's drain reads it inside its snapshot (`store`), so a part paid since is
+ * never said to be owed.
  */
-export async function readCardShortfallTaskStatuses(bookingId: string): Promise<CardShortfallTaskStatuses> {
-  const tasks = await prisma.manualRefundTask.findMany({
+export async function readCardShortfallTaskStatuses(bookingId: string, store: CardRefundStore = prisma): Promise<CardShortfallTaskStatuses> {
+  const tasks = await store.manualRefundTask.findMany({
     where: { bookingId, occurrenceKey: { startsWith: CANCEL_CARD_SHORTFALL_KEY_PREFIX } },
     select: { kind: true, occurrenceKey: true, status: true },
   });
@@ -84,11 +102,11 @@ export async function readCardShortfallTaskStatuses(bookingId: string): Promise<
     if (part) statuses[part] = task.status;
   }
   if (Object.keys(statuses).length === 0) return statuses;
-  const cardRefund = await prisma.paymentRecoveryOperation.findUnique({
+  const cardRefund = await store.paymentRecoveryOperation.findUnique({
     where: { idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId) },
     select: { id: true, status: true, attempts: true, nextRetryAt: true },
   });
-  if (cardRefund) statuses.card = (await cardRefundRowState(cardRefund)).state;
+  if (cardRefund) statuses.card = (await cardRefundRowState(cardRefund, store)).state;
   return statuses;
 }
 
@@ -103,23 +121,50 @@ export async function readCardShortfallTaskStatuses(bookingId: string): Promise<
  * refunds recorded on it, by the rule the close used (`cardRefundMadeForOperation`). No row reads as absent (`undefined`), which the narrative
  * takes as on its way. Several rows (a second intent's capacity race) read as
  * the one furthest from done: a dead one first, then one still being sent.
+ * #4285 review: read through `store`, a caller's transaction where it passes one.
  */
-export async function readCancelledCardRefund(bookingId: string): Promise<CancelledCardRefund> {
-  const rows = await prisma.paymentRecoveryOperation.findMany({
+export async function readCancelledCardRefund(bookingId: string, store: CardRefundStore = prisma): Promise<CancelledCardRefund> {
+  const rows = await store.paymentRecoveryOperation.findMany({
     // On `@@index([bookingId])`, so the prefix match never scans the table.
     where: bookingCancelCardRefundRecoveryWhere(bookingId),
-    select: { id: true, idempotencyKey: true, paymentId: true, amountCents: true, allocationPlan: true, status: true, attempts: true, nextRetryAt: true, succeededAt: true },
+    select: CANCEL_CARD_REFUND_ROW_SELECT,
   });
   // `startsWith` is SQL LIKE, where `_` matches any one character, so the query alone
   // would let booking `ab`'s read take booking `abc`'s rows: the exact rule decides (#4147).
   const own = rows.filter((row) => isBookingCancelCardRefundRecoveryKey(bookingId, row.idempotencyKey));
-  const standings = await Promise.all(own.map(async (row) => ({ row, ...(await cardRefundRowState(row)) })));
+  return cancelledCardRefundOf(bookingId, own, store);
+}
+
+/**
+ * #4285 review: WHERE AN ORGANISER-CARD CHILD'S CANCEL REFUND STANDS - its debt
+ * to the ORGANISER's card out of the combined payment (#3653,
+ * `buildOrganiserChildCancellationRefundKey`), which the joiner's cancel and the
+ * group's share. Read as `readCancelledCardRefund` reads a member's row; a
+ * refund Stripe failed later reopens that debt itself, so its row says so. For
+ * the kept-capture alert's drain, which names whose card it went to.
+ */
+export async function readOrganiserChildCancelledCardRefund(
+  childBookingId: string,
+  settlementId: string,
+  store: CardRefundStore = prisma,
+): Promise<CancelledCardRefund & { amountCents?: number }> {
+  const debt = await store.paymentRecoveryOperation.findUnique({
+    where: { idempotencyKey: buildOrganiserChildCancellationRefundKey(settlementId, childBookingId) },
+    select: CANCEL_CARD_REFUND_ROW_SELECT,
+  });
+  if (!debt) return {};
+  return { ...(await cancelledCardRefundOf(childBookingId, [debt], store)), amountCents: debt.amountCents };
+}
+
+/** The cancel's card refund rows, read as one: where they stand, and what Stripe failed later. */
+async function cancelledCardRefundOf(bookingId: string, own: CancelCardRefundRow[], store: CardRefundStore): Promise<CancelledCardRefund> {
+  const standings = await Promise.all(own.map(async (row) => ({ row, ...(await cardRefundRowState(row, store)) })));
   const cardRefundState = FURTHEST_FROM_DONE_FIRST.find((state) => standings.some((each) => each.state === state));
-  const failedLater = await readFailedLaterCardRefunds(bookingId, standings);
+  const failedLater = await readFailedLaterCardRefunds(bookingId, standings, store);
   const planned = { ...capacityRacePlanCents(bookingId, own), ...(failedLater.parts.length > 0 ? { cardRefundFailedLater: failedLater.parts } : {}) };
   if (cardRefundState !== "paid-another-way") return { cardRefundState, ...planned };
   const closed = standings.flatMap(({ row, record }) => (record ? [{ row, record }] : []));
-  const payments = await prisma.payment.findMany({
+  const payments = await store.payment.findMany({
     where: { id: { in: [...new Set(closed.map(({ row }) => row.paymentId))] } },
     select: { id: true, status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
   });
@@ -159,21 +204,22 @@ export async function readCancelledCardRefund(bookingId: string): Promise<Cancel
 async function readFailedLaterCardRefunds(
   bookingId: string,
   standings: ReadonlyArray<{ row: { id: string; succeededAt: Date | null }; state: CardRefundState }>,
+  store: CardRefundStore,
 ): Promise<{ parts: FailedLaterCardRefund[]; madeByRow: Map<string, number> }> {
   const none = { parts: [], madeByRow: new Map<string, number>() };
   const closed = standings.filter(({ state }) => state === "settled" || state === "paid-another-way");
   if (closed.length === 0) return none;
-  const rows = await prisma.paymentRecoveryOperation.findMany({
+  const rows = await store.paymentRecoveryOperation.findMany({
     // On `@@index([bookingId])`; exact, and the key's own rule decides (#4146).
     where: { bookingId, idempotencyKey: exactPrefix(CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX) },
-    select: { id: true, idempotencyKey: true, paymentId: true, amountCents: true, allocationPlan: true, status: true, attempts: true, nextRetryAt: true, succeededAt: true },
+    select: CANCEL_CARD_REFUND_ROW_SELECT,
   });
   const failed = (rows ?? []).flatMap((row) => {
     const refundId = cardRefundFailedLaterRefundId(row.idempotencyKey);
     return refundId ? [{ row, refundId }] : [];
   });
   if (failed.length === 0) return none;
-  const payments = await prisma.payment.findMany({
+  const payments = await store.payment.findMany({
     where: { id: { in: [...new Set(failed.map(({ row }) => row.paymentId))] } },
     select: { id: true, status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
   });
@@ -217,7 +263,7 @@ async function readFailedLaterCardRefunds(
       dated = refund.createdAt.getTime() <= closedAt;
       madeByRow.set(root, (madeByRow.get(root) ?? 0) + head.row.amountCents);
     }
-    const { state, record } = await cardRefundRowState(row);
+    const { state, record } = await cardRefundRowState(row, store);
     parts.push({
       amountCents: row.amountCents,
       state,

@@ -1952,6 +1952,9 @@ describe("#2563 exactly one stay-range resolution exists, and the route calls it
     // `resolveModificationStayRanges<Guest ...`, so only callers match.
     expect(sourceFilesNaming("resolveModificationStayRanges(")).toEqual([
       ROUTE_FILE,
+      // #4203: the change-request card's estimate counts the party on the
+      // nights the whole proposal gives each guest, as approval's planner would.
+      "src/lib/booking-change-request-estimate.ts",
       // #4030 round 7 (F2): a change request that moves a date the named nights
       // do not reach is refused, by asking this resolution where the nights put
       // the stay rather than restating range mode.

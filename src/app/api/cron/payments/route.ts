@@ -13,9 +13,10 @@ const cronTaskQuerySchema = z.object({
 
 /**
  * POST /api/cron/payments?task=recovery
- * Secured manual trigger for the 15-minute payments cycle: Stripe payment
- * recovery, expired Internet Banking hold release and the waiting-invoice
- * reaper. The cron leader runs the SAME cycle on its own schedule (#3663), so
+ * Secured manual trigger for the 15-minute payments cycle's five tasks: Stripe
+ * payment recovery, expired Internet Banking hold release, the waiting-invoice
+ * reaper, the held late-capture alert's retry (#3635) and the owed kept-capture
+ * alert's drain (#4285). The cron leader runs the SAME cycle on its own schedule (#3663), so
  * this route is a manual/external trigger, not what keeps the jobs running.
  */
 export async function POST(request: NextRequest) {

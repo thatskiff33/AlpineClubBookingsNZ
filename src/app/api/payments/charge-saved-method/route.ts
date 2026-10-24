@@ -427,16 +427,15 @@ export async function POST(request: NextRequest) {
         checkOut: booking.checkOut,
         amountCents: paymentIntent.amount,
       };
-      // Record the capture on the attempt row BEFORE reconciliation, so a
-      // promotion failure can always be finished by the Stripe webhook, which
-      // finds the row by intent id. Non-fatal: reconciliation upserts the
-      // identical row.
+      // Record the capture BEFORE reconciliation, so the webhook (finding the row by intent id) can always finish a failed
+      // promotion; non-fatal, reconciliation upserts the same row. #4285 review: `newlyCaptured` means new money, not a replay.
+      let recordedByCaller = false;
       try {
-        await settleSavedCardChargeAttempt({
+        ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({
           attemptRowId: claim.attempt.attemptRowId,
           paymentId,
           paymentIntent,
-        });
+        }));
       } catch (recordError) {
         logger.error(
           { err: recordError, bookingId, paymentIntentId: paymentIntent.id },
@@ -445,7 +444,7 @@ export async function POST(request: NextRequest) {
       }
       const reconciliation = await markBookingPaymentSucceeded({
         format,
-        bookingId,
+        bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId:

@@ -403,12 +403,196 @@ let observerClient: import("@prisma/client").PrismaClient;
       const settled = await Promise.allSettled([runEngine(), runEngine()]);
 
       // Neither run fails: the one that lost the race finds nothing left to allocate.
-      expect(settled.map((run) => run.status)).toEqual(["fulfilled", "fulfilled"]);
+      // Asserted with the reason (#4338), so a rejection names its cause.
+      expect(settled.map((run) => (run.status === "rejected" ? `rejected: ${String(run.reason)}` : run.status))).toEqual(["fulfilled", "fulfilled"]);
       expect(await writeDowns()).toHaveLength(1);
       expect(await prisma.memberCredit.count({ where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED", amountCents: { gt: 0 } } })).toBe(1);
       expect(await convergedAudits()).toBe(1);
       expect(await applied()).toBe(0);
       expect(await balance()).toBe(0);
+    });
+
+    const ACTIVE_STATUSES = ["PENDING", "RUNNING", "WAITING_PAYMENT"] as const;
+    const RACE_POLL_LIMIT_MS = 10_000;
+    /** Above the poll's limit, so a held loser fails the poll's assertion rather than the test's clock. */
+    const LOST_START_TEST_TIMEOUT_MS = 30_000;
+    const describeRun = (run: PromiseSettledResult<unknown>) => (run.status === "rejected" ? `rejected: ${String(run.reason)}` : run.status);
+    const bookingOperations = () =>
+      prisma.xeroSyncOperation.findMany({ where: { requestPayload: { path: ["appliedCreditContext", "bookingId"], equals: BOOKING_ID } }, orderBy: { attemptCount: "asc" } });
+
+    /** Poll on a separate connection until `check` holds, or fail naming `what`. */
+    async function waitUntil(what: string, check: () => Promise<boolean>) {
+      const startedAt = process.hrtime.bigint();
+      let held = await check();
+      while (!held && realElapsedMs(startedAt) < RACE_POLL_LIMIT_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        held = await check();
+      }
+      expect(held, what).toBe(true);
+    }
+    const noActiveRow = (correlationKey: string) => async () =>
+      (await observerClient.xeroSyncOperation.count({ where: { correlationKey, status: { in: [...ACTIVE_STATUSES] } } })) === 0;
+
+    /**
+     * #4338, forced: two engine runs, where the loser's operation insert meets the
+     * winner's RUNNING row. The winner pauses inside its Xero call; the loser's
+     * lookup of the active row releases it and is then held by `holdLoserLookup`.
+     */
+    async function raceWithLostStart(holdLoserLookup: (correlationKey: string) => Promise<void>) {
+      const api = fakeXero.client.accountingApi;
+      const realAllocate = api.createCreditNoteAllocation;
+      const realFindFirst = prisma.xeroSyncOperation.findFirst.bind(prisma.xeroSyncOperation);
+      const winnerInXero = deferred();
+      const releaseWinner = deferred();
+      let allocateCalls = 0;
+      let lostStarts = 0;
+      api.createCreditNoteAllocation = async (...args: Parameters<typeof realAllocate>) => {
+        allocateCalls += 1;
+        if (allocateCalls === 1) {
+          winnerInXero.resolve();
+          await releaseWinner.promise;
+        }
+        return realAllocate(...args);
+      };
+      const findFirst = vi.spyOn(prisma.xeroSyncOperation, "findFirst").mockImplementation((async (args: Parameters<typeof realFindFirst>[0]) => {
+        const where = args?.where as { correlationKey?: unknown; status?: { in?: unknown } } | undefined;
+        if (typeof where?.correlationKey === "string" && Array.isArray(where.status?.in) && lostStarts === 0) {
+          lostStarts += 1;
+          releaseWinner.resolve();
+          await holdLoserLookup(where.correlationKey);
+        }
+        return realFindFirst(args);
+      }) as unknown as typeof prisma.xeroSyncOperation.findFirst);
+      try {
+        const winner = runEngine();
+        await winnerInXero.promise;
+        const loser = runEngine();
+        const settled = await Promise.allSettled([winner, loser]);
+        expect(lostStarts, "the loser's insert lost to the winner's running row").toBe(1);
+        return { settled, allocateCalls };
+      } finally {
+        api.createCreditNoteAllocation = realAllocate;
+        releaseWinner.resolve();
+        findFirst.mockRestore();
+      }
+    }
+
+    it("FORCES the lost start: the loser's operation insert meets the winner's running row, which fails before the loser looks for it, and neither run fails (#4338)", async () => {
+      await seed();
+
+      const { settled } = await raceWithLostStart((correlationKey) =>
+        waitUntil("the winner's row finished before the loser's lookup", noActiveRow(correlationKey)),
+      );
+
+      expect(settled.map(describeRun)).toEqual(["fulfilled", "fulfilled"]);
+      expect(await writeDowns()).toHaveLength(1);
+      expect(await convergedAudits()).toBe(1);
+      expect(await applied()).toBe(0);
+      expect(await balance()).toBe(0);
+      // The loser started its own attempt rather than failing; none is left active or open.
+      const operations = await bookingOperations();
+      expect(operations.map((operation) => [operation.attemptCount, operation.status])).toEqual([[1, "FAILED"], [2, "FAILED"]]);
+      expect(operations.every((operation) => operation.manuallyResolvedAt !== null)).toBe(true);
+    }, LOST_START_TEST_TIMEOUT_MS);
+
+    it("closes the loser's own failed allocation when the winner converged before that attempt failed (#4338)", async () => {
+      await seed();
+
+      // Held until the winner has converged and closed the slice's failed rows, so the
+      // loser's attempt fails afterwards and its converge finds the work already done.
+      const { settled } = await raceWithLostStart(async (correlationKey) => {
+        await waitUntil("the winner's row finished before the loser's lookup", noActiveRow(correlationKey));
+        await waitUntil("the winner converged before the loser's attempt", async () =>
+          (await observerClient.auditLog.count({ where: { action: "xero.credit_note.spent_outside_app_converged", targetId: BOOKING_ID } })) > 0,
+        );
+      });
+
+      expect(settled.map(describeRun)).toEqual(["fulfilled", "fulfilled"]);
+      expect(await writeDowns()).toHaveLength(1);
+      expect(await convergedAudits()).toBe(1);
+      const operations = await bookingOperations();
+      expect(operations.map((operation) => [operation.attemptCount, operation.status])).toEqual([[1, "FAILED"], [2, "FAILED"]]);
+      // Both off the Active list and out of the repeated-failure count, not only the winner's.
+      expect(operations.map((operation) => [operation.attemptCount, operation.manuallyResolvedAt !== null, operation.replayable])).toEqual([
+        [1, true, false],
+        [2, true, false],
+      ]);
+      // The loser's close is audited once, naming its own row.
+      const closeAudits = await prisma.auditLog.findMany({ where: { action: "xero.credit_note.spent_outside_app_attempt_closed", targetId: BOOKING_ID } });
+      expect(closeAudits.map((audit) => [audit.category, (audit.metadata as { operationId?: string }).operationId])).toEqual([["xero", operations[1].id]]);
+    }, LOST_START_TEST_TIMEOUT_MS);
+
+    it("leaves the caller's failed row FAILED when nothing shows a converge ran for this booking and note (#4338)", async () => {
+      await seed();
+      // A slice smaller than the refused amount reads as "already shrunk", but no converge wrote it.
+      await prisma.memberCreditNoteAllocation.create({
+        data: { memberCreditId: SPENT_LOT_ID, xeroCreditNoteId: SPENT_NOTE_ID, appliedToBookingId: BOOKING_ID, amountCents: 1_000 },
+      });
+      // Half the evidence only: a marked release for the booking, with no write-down for the note beside it.
+      await prisma.memberCredit.create({
+        data: { memberId: MEMBER_ID, amountCents: 1_000, type: "BOOKING_APPLIED", description: "race 4338 release without a write-down", appliedToBookingId: BOOKING_ID, outsideSpendConvergedAt: new Date("2026-07-01T00:00:00.000Z") },
+      });
+      const failed = await prisma.xeroSyncOperation.create({
+        data: { direction: "OUTBOUND", entityType: "ALLOCATION", operationType: "CREATE", localModel: "MemberCreditNoteAllocation", localId: "race-4338-no-evidence", status: "FAILED",
+          // Found by booking, so the fixtures sweep removes it.
+          requestPayload: { appliedCreditContext: { bookingId: BOOKING_ID } } },
+      });
+      const { convergeCreditNoteSpentOutsideApp } = await import("@/lib/xero-applied-credit-spent-outside-app");
+
+      const result = await convergeCreditNoteSpentOutsideApp({
+        bookingId: BOOKING_ID, creditNoteId: SPENT_NOTE_ID, requestedCents: CREDIT_CENTS,
+        xeroAllocations: [{ invoiceId: OUTSIDE_INVOICE_ID, cents: CREDIT_CENTS }], xeroPayments: [], noteTotalCents: CREDIT_CENTS, remainingCents: 0,
+        failedOperationId: failed.id,
+      });
+
+      expect(result).toEqual({ converged: false, reason: "already-converged" });
+      const after = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: failed.id } });
+      expect([after.status, after.manuallyResolvedAt, after.replayable]).toEqual(["FAILED", null, true]);
+      expect(await prisma.auditLog.count({ where: { action: "xero.credit_note.spent_outside_app_attempt_closed" } })).toBe(0);
+      expect(await writeDowns()).toHaveLength(0);
+    });
+
+    it("keeps main's error when the winner SUCCEEDED before the loser looked: no second row and no second Xero call (#4338)", async () => {
+      // A healthy note: the winner's allocation goes through.
+      await seed({ outsideSpentCents: 0 });
+      const { isPrismaUniqueConstraintError } = await import("@/lib/prisma-errors");
+
+      const { settled, allocateCalls } = await raceWithLostStart((correlationKey) =>
+        waitUntil("the winner's row finished before the loser's lookup", noActiveRow(correlationKey)),
+      );
+
+      expect(settled[0].status, describeRun(settled[0])).toBe("fulfilled");
+      expect(settled[1].status).toBe("rejected");
+      expect(isPrismaUniqueConstraintError((settled[1] as PromiseRejectedResult).reason), describeRun(settled[1])).toBe(true);
+      expect(allocateCalls).toBe(1);
+      expect(fakeXero.state.acceptedAllocations).toBe(1);
+      expect((await bookingOperations()).map((operation) => [operation.attemptCount, operation.status])).toEqual([[1, "SUCCEEDED"]]);
+      expect(await ledgerState.unallocatedAppliedCents(BOOKING_ID)).toBe(0);
+      expect(await writeDowns()).toHaveLength(0);
+    }, LOST_START_TEST_TIMEOUT_MS);
+
+    it("on a caller's transaction a lost start rethrows the unique violation, not the aborted transaction's error; the root client passed as `store` finds the winner (#4338)", async () => {
+      await seed();
+      const { startXeroSyncOperation } = await import("@/lib/xero-sync");
+      const { isPrismaUniqueConstraintError } = await import("@/lib/prisma-errors");
+      const input = {
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: PAYMENT_ID,
+        status: "PENDING",
+        correlationKey: "race-4338-lost-start-on-a-transaction",
+      } as const;
+      const winner = await startXeroSyncOperation(input);
+
+      const onTransaction = await prisma
+        .$transaction((tx) => startXeroSyncOperation({ ...input, store: tx }))
+        .then(() => null, (error: unknown) => error);
+
+      expect(isPrismaUniqueConstraintError(onTransaction), String(onTransaction)).toBe(true);
+      expect((await startXeroSyncOperation({ ...input, store: prisma })).id).toBe(winner.id);
+      expect(await prisma.xeroSyncOperation.count({ where: { correlationKey: input.correlationKey } })).toBe(1);
     });
 
     it("counts only what the app has no record of: an allocation to an invoice the app tracks is the app's own and converges nothing", async () => {
@@ -485,7 +669,7 @@ let observerClient: import("@prisma/client").PrismaClient;
 
       const settled = await Promise.allSettled([runEngine(), runEngine()]);
 
-      expect(settled.map((run) => run.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(settled.map((run) => (run.status === "rejected" ? `rejected: ${String(run.reason)}` : run.status))).toEqual(["fulfilled", "fulfilled"]);
       expect(await writeDowns()).toHaveLength(1);
       expect(fakeXero.state.acceptedAllocations).toBe(1);
       expect(fakeXero.remainingCents(SPENT_NOTE_ID)).toBe(0);

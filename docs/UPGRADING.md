@@ -119,6 +119,117 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Check finished stays for a second card payment that was never refunded (#4285)
+
+No migration runs.
+
+**What changes.** Before this release, Stripe's success message for a card
+payment that arrived after a stay had ended (the booking moved to completed)
+was refused with an error and retried by Stripe for up to three days. For the
+payment that paid for the stay that was only noise, but a real second payment
+(a member paying again from an old tab) was never refunded automatically. Now a
+completed booking is treated like a paid one: the extra payment is refunded
+automatically, or kept and sent to the admins to check when the app has no
+record of which payment settled the booking.
+
+**After upgrading.** Payments whose retries ran out before the upgrade are not
+replayed by anything. Run this read-only query against the live database (it
+writes nothing) and check each listed booking with the treasurer. Every booking
+it lists was paid before this release, so the app has no record of which
+payment settled it.
+
+**Deploy query (#4285).** Completed bookings holding a card payment beside
+another payment that holds money, holding one when no payment on the booking
+holds money, or holding any card payment at all when the booking was paid
+another way: its recorded account credit covers its price (a zero total
+included) or a group organiser settled it. That last case catches a lone stray
+card payment the previous version kept without a word. A card payment counts
+unless it is fully refunded, a duplicate-capture refund is still sending it
+back, the superseded-payment refund owns it, or Stripe cancelled its intent:
+
+```sql
+SELECT b.id AS "bookingId", b."checkOut", p.id AS "paymentId",
+       string_agg(t.source || ' ' || coalesce(t."stripePaymentIntentId", t.id) || ' ' || t.status, ', ' ORDER BY t."createdAt") AS "payments"
+FROM "Booking" b
+JOIN "Payment" p ON p."bookingId" = b.id
+JOIN "PaymentTransaction" t ON t."paymentId" = p.id
+WHERE b.status = 'COMPLETED'
+  AND t.kind = 'PRIMARY'
+  AND (
+    t.status IN ('SUCCEEDED', 'PARTIALLY_REFUNDED')
+    OR (
+      t.source = 'STRIPE'
+      AND t."stripePaymentIntentId" IS NOT NULL
+      AND t.status IN ('PENDING', 'PROCESSING', 'FAILED')
+      AND NOT EXISTS (
+        SELECT 1 FROM "PaymentRecoveryOperation" c
+        WHERE c."paymentIntentId" = t."stripePaymentIntentId"
+          AND c.type = 'CANCEL_PAYMENT_INTENT'
+          AND c.status = 'SUCCEEDED'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "AuditLog" a
+        WHERE a."targetId" = b.id
+          AND a.action = 'booking.payment.canceled'
+          AND position('"paymentIntentId":"' || t."stripePaymentIntentId" || '"' IN a.details) > 0
+      )
+    )
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "PaymentRecoveryOperation" o
+    WHERE o."bookingId" = b.id
+      AND o."idempotencyKey" = 'duplicate_capture_' || b.id || '_' || t."stripePaymentIntentId"
+      AND (
+        o.status = 'PROCESSING'
+        OR (o.status = 'PENDING' AND o.attempts < 5)
+        OR (o.status = 'FAILED' AND o."nextRetryAt" IS NOT NULL AND o.attempts < 5)
+      )
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "PaymentRecoveryOperation" s
+    WHERE s."paymentIntentId" = t."stripePaymentIntentId"
+      AND s.type = 'REFUND_SUPERSEDED_PAYMENT'
+  )
+GROUP BY b.id, b."checkOut", b."finalPriceCents", b."organiserSettled", p.id, p."creditAppliedCents", p."changeFeeCents"
+HAVING count(*) FILTER (WHERE t.source = 'STRIPE') >= 1
+   AND (
+     count(*) > least(count(*) FILTER (WHERE t.status IN ('SUCCEEDED', 'PARTIALLY_REFUNDED')), 1)
+     OR p."creditAppliedCents" >= b."finalPriceCents" + p."changeFeeCents"
+     OR b."organiserSettled"
+   )
+ORDER BY b."checkOut";
+```
+
+**Reading it.** A refused success never reached the app's records, so the
+second payment usually shows as `PENDING`, `PROCESSING` or `FAILED`, exactly
+like a tab the member opened and abandoned. Look each listed card payment up in
+Stripe. One that Stripe shows as not paid needs nothing. One that Stripe shows
+as paid, beyond the payment that paid for the stay, is the member's extra
+payment:
+
+1. If Stripe still offers to resend its `payment_intent.succeeded` event
+   (Stripe keeps events for about 30 days; check in Stripe), you may resend it.
+   The app then records the payment and, because it has no record of which
+   payment settled the booking, keeps it and sends the admins its *"Booking may
+   have been paid twice — check by hand"* alert. It does not refund it.
+   Most affected events will be older than that, so step 2 is the usual path.
+2. Refund it by hand in the Stripe dashboard. The app records that refund from
+   Stripe's `charge.refunded` event and queues a Xero refund credit note for
+   it, so do not enter anything in Xero by hand; check Xero instead.
+
+For any extra payment you find this way, whether or not you resent its event,
+the queued credit note is wrong until #4322 is fixed: a kept payment is
+recorded by the app, but Xero never held that money. Once the note reaches Xero, delete it there if it is still a draft, or
+void it.
+
+**Limit.** The query cannot see whether Stripe captured a payment it shows as
+`PENDING`, `PROCESSING` or `FAILED`, so abandoned tabs are listed too, as is
+an intent Stripe cancelled without the app recording it. An audit entry older
+than the club's audit retention is gone, so an intent cancelled that long ago
+is listed too. "Paid another way" reads the
+credit recorded on the payment (`creditAppliedCents`), so a booking whose credit
+changed after it was paid may be listed with nothing to do, or missed.
+
 ### The app records which payment settled each booking (#4211)
 
 `20261121010000_payment_settled_by_transaction` adds one nullable column,

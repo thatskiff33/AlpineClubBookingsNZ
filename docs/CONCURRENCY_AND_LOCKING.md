@@ -4189,7 +4189,7 @@ status and can release capacity.
 `duplicate-capture-guard.ts`). The PAID claim that wins under `lock(1)` writes
 `Payment.settledByTransactionId` in its own transaction (#4211), so exactly one
 settlement is ever recorded, and the reversal that clears it holds the same
-lock. When a Stripe success arrives for an already-PAID booking,
+lock. When a Stripe success arrives for an already-PAID (or, #4285, COMPLETED) booking,
 `markBookingPaymentSucceeded` keeps the recorded settler, and refunds any other
 arriving capture with no refund history (#1765) only while the recorded settler
 still holds net cash, is a card capture that neither the superseded-intent

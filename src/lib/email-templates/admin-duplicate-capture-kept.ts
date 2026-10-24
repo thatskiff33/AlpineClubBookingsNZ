@@ -11,9 +11,9 @@
 import { escapeHtml } from "./escape";
 import { alertBox, button, formatCents, heading, infoTable, layout, paragraph } from "./layout";
 import {
-  DUPLICATE_CAPTURE_KEPT_STRIPE_CHECK,
   duplicateCaptureKeptAction,
   duplicateCaptureKeptParagraph,
+  type CancellationRefundNote,
   type DuplicateCaptureKeptReason,
 } from "@/lib/duplicate-capture-kept-note";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
@@ -30,13 +30,20 @@ export function adminDuplicateCaptureKeptTemplate(data: {
   checkOut: Date;
   bookingId: string;
   reason: DuplicateCaptureKeptReason;
-  /** The capture that arrived and was kept. */
+  /**
+   * What the kept card capture still holds (#4285 review): its amount less the
+   * card refunds recorded against it (`sumRecordedRefundsForCapture`), read by
+   * the settle and the owed alert's drain alike - never its ledger refunded
+   * figure, which account credit also fills.
+   */
   amountCents: number;
   paymentIntentId: string;
   /** The other payment holding money; null for a cash or bank payment. */
   otherPaymentIntentId: string | null;
   /** False when nothing else holds money (a released settler, this payment alone). */
   otherHoldsMoney?: boolean;
+  /** `new-capture-closed` only: the cancellation's recorded refund (#4285 review). */
+  cancellationRefund?: CancellationRefundNote | null;
   bookingUrl: string;
   reviewUrl: string;
 },
@@ -45,7 +52,7 @@ export function adminDuplicateCaptureKeptTemplate(data: {
   return layout(`
     ${heading("Booking May Have Been Paid Twice — Check By Hand")}
     ${alertBox(
-      "A card payment was kept on a booking that was already paid. Nothing was refunded automatically — please check.",
+      "A card payment was kept on a booking that was already paid — please check it by hand.",
       "warning"
     )}
     ${
@@ -55,17 +62,17 @@ export function adminDuplicateCaptureKeptTemplate(data: {
           reason: data.reason,
           otherPaymentIntentId: data.otherPaymentIntentId,
           otherHoldsMoney: data.otherHoldsMoney,
+          cancellationRefund: data.cancellationRefund,
         }),
       )
     }
-    ${paragraph(duplicateCaptureKeptAction({ otherHoldsMoney: data.otherHoldsMoney }))}
-    ${paragraph(DUPLICATE_CAPTURE_KEPT_STRIPE_CHECK)}
+    ${paragraph(duplicateCaptureKeptAction({ otherHoldsMoney: data.otherHoldsMoney, reason: data.reason }))}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
-      { label: "Payment kept", value: formatCents(data.amountCents, format) },
+      { label: "Still held by this payment", value: formatCents(data.amountCents, format) },
       { label: "Stripe PI", value: escapeHtml(data.paymentIntentId) },
     ])}
     ${button("Open Booking", data.bookingUrl, { sameOrigin: true })}

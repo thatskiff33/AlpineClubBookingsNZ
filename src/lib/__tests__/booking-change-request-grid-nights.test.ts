@@ -57,7 +57,9 @@ import {
   CHANGE_REQUEST_DUPLICATE_GUEST_RANGE_MESSAGE,
 } from "@/lib/booking-change-request-guests";
 import { GUEST_NIGHT_INVALID_MESSAGE } from "@/lib/booking-guest-stay-range-input";
+import { changeRequestDeltaSchema } from "@/lib/booking-change-request-input";
 import {
+  changeRequestProposalBatchInput,
   describeRequestedGuestNights,
   lockedPeriodRequestToBatchInput,
   storedLockedPeriodRequestSchema,
@@ -528,5 +530,49 @@ describe("each guest's requested nights, for the officer's card (#4088)", () => 
       requested: { guestStayRanges: [{ guestId: "guest-1", stayStart: "2026-07-02", stayEnd: "2026-07-03" }] },
     };
     expect(describeRequestedGuestNights(narrow, { status: "REQUESTED" })[0]).toMatchObject({ fillsGaps: false, unchanged: false });
+  });
+});
+
+describe("the card's estimate reads a proposal as submission stores it (#4203, INV-SSOT-001)", () => {
+  it("maps the route's stored row and the unstored proposal onto the same batch input", async () => {
+    const base = booking();
+    const gapped = ["2026-06-30", "2026-07-02"];
+    const party = {
+      ...base,
+      guests: [
+        base.guests[0],
+        { ...base.guests[0], id: "guest-2", firstName: "Bo", memberId: null, isMember: false },
+        {
+          ...base.guests[0],
+          id: "guest-3",
+          firstName: "Cy",
+          memberId: null,
+          isMember: false,
+          nights: gapped.map((night) => ({ stayDate: day(night) })),
+        },
+      ],
+    };
+    mocks.bookingFindUnique.mockResolvedValue(party);
+    const proposal = {
+      checkOut: "2026-07-04",
+      addGuests: [{ ...grandchild, nights: ["2026-07-01", "2026-07-03"] }],
+      // Named twice: stored once, in booking order.
+      removeGuestIds: ["guest-2", "guest-2"],
+      guestStayRanges: [
+        // A dateless entry approval ignores, and a repeat of a gapped guest's bounds (kept nights, #4157).
+        { guestId: "guest-1" },
+        { guestId: "guest-3", stayStart: "2026-06-30", stayEnd: "2026-07-03" },
+      ],
+    };
+    const response = await post(proposal);
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201);
+    const stored = storedLockedPeriodRequestSchema.parse(storedChanges());
+    expect(stored.requested.removeGuests).toEqual([expect.objectContaining({ id: "guest-2" })]);
+    const fromRoute = lockedPeriodRequestToBatchInput(stored, party);
+    expect(fromRoute?.guestStayRanges).toEqual([
+      { guestId: "guest-3", stayStart: "2026-06-30", stayEnd: "2026-07-03", nights: gapped },
+    ]);
+    // Parsed as the estimate's route parses it.
+    expect(changeRequestProposalBatchInput(party, changeRequestDeltaSchema.parse(proposal))).toEqual(fromRoute);
   });
 });

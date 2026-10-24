@@ -462,6 +462,12 @@ import "./settled-capture-order.realdb.test";
 // the real settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4211-` fixtures.
 import "./third-duplicate-capture.realdb.test";
+// #4285 reuses it to prove a card capture's success arriving on a COMPLETED
+// booking is judged as on a PAID one: settled by card through the webhook,
+// completed by the real cron, the settler's redelivery answers 200 and changes
+// nothing, and another capture is refunded as a duplicate. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4285-` fixtures.
+import "./completed-redelivery.realdb.test";
 // #4146 reuses it to prove a key-prefix lookup built from an id matches only
 // its own rows: Prisma's `startsWith` is SQL `LIKE`, whose `_` no mock reads as
 // a wildcard. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans

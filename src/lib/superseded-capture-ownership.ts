@@ -21,6 +21,20 @@ import {
   type OwnershipReader,
 } from "@/lib/superseded-intent-ownership";
 
+/**
+ * The payment's held PRIMARY Stripe captures - the captures both this reading
+ * and the duplicate-capture guard's telling reading (`readOtherSettledCaptureWhere`)
+ * run over, so the two never read different populations.
+ */
+export function heldStripeCapturesWhere(paymentId: string): Prisma.PaymentTransactionWhereInput {
+  return {
+    paymentId,
+    kind: PaymentTransactionKind.PRIMARY,
+    source: PaymentSource.STRIPE,
+    status: { in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST] },
+  };
+}
+
 /** What `readSupersededOwnership` reads besides the rows: the payment's held Stripe captures. */
 type PaymentOwnershipReader = OwnershipReader & Pick<Prisma.TransactionClient, "paymentTransaction">;
 
@@ -69,12 +83,7 @@ export async function readSupersededOwnership(
         paymentId,
         await tx.paymentTransaction.findMany({
           orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
-          where: {
-            paymentId,
-            kind: PaymentTransactionKind.PRIMARY,
-            source: PaymentSource.STRIPE,
-            status: { in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST] },
-          },
+          where: heldStripeCapturesWhere(paymentId),
           select: { stripePaymentIntentId: true, amountCents: true, refundedAmountCents: true },
         }),
       )

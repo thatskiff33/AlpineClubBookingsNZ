@@ -411,6 +411,8 @@ describe("POST /api/payments/charge-saved-method", () => {
       amountCents: 12500,
       paymentMethodId: null,
       format: CLUB_FORMAT_TEST,
+      // #4285 review: the pre-record wrote the capture over the PENDING attempt - new money.
+      recordedByCaller: true,
     });
     // The capacity re-check consumes the post-lock snapshot on the tx client.
     expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(

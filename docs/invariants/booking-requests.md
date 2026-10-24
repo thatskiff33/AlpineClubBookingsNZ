@@ -284,8 +284,8 @@ a moved date the nights do not reach is refused. A typed guest named like
 one of the owner's dependants is refused at submit and in the officer's entry by
 `checkOwnDependantIdentityForParty` (`INV-GUEST-019`). The member's
 in-progress request card adds guests with the guest editor's fields, each guest's
-nights inside the stay, and shows an estimate that prices only non-member guests
-(a member-reachable route never resolves another member's rate).
+nights inside the stay, and estimates only its non-member guests, counting the
+whole proposed party (never resolving another member's rate).
 
 For an older free-text request on a finished stay, the officer enters the
 described guests. The entry is accepted only
@@ -300,7 +300,8 @@ produces others under the locks it is refused and rolled back. It then runs thro
 approval's audit row lists the guests entered. Guarded by
 `booking-change-request-structured.test.ts`,
 `booking-change-request-grid-nights.test.ts`,
-`booking-change-request-officer-entry.test.ts` and the realdb cases in
+`booking-change-request-officer-entry.test.ts`,
+`booking-change-request-estimate.test.ts` and
 `booking-change-request-execution.realdb.test.ts`.
 
 ### INV-REQ-012

@@ -89,8 +89,10 @@ import { isPaymentRecoveryOperationInFlight, PAYMENT_RECOVERY_OPERATION_IN_FLIGH
 import {
   CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX,
   cardRefundFailedLaterRefundId,
+  duplicateCaptureIntentIdForRecoveryKey,
 } from "@/lib/payment-recovery-keys";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
+import { duplicateCaptureRefundOperationWhere } from "@/lib/duplicate-capture-ownership";
 
 export const SUPERSEDED_INTENT_OPERATION_TYPES = [
   PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
@@ -224,10 +226,25 @@ function supersededRefundsOwedAgainCents(
   payment: CardRefundOwedPaymentRow | null,
 ): Map<string, number> {
   const supersededRefunds = rows.filter((row) => row.type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT);
-  const superseded = new Set(supersededRefunds.map((row) => row.paymentIntentId));
-  const intentOfTransaction = new Map(
-    supersededRefunds.flatMap((row) => (row.paymentTransactionId === null ? [] : [[row.paymentTransactionId, row.paymentIntentId] as const])),
-  );
+  return refundsOwedAgainCents(rows, payment, {
+    intents: new Set(supersededRefunds.map((row) => row.paymentIntentId)),
+    intentOfTransaction: new Map(
+      supersededRefunds.flatMap((row) => (row.paymentTransactionId === null ? [] : [[row.paymentTransactionId, row.paymentIntentId] as const])),
+    ),
+  });
+}
+
+/**
+ * The cents rule behind `supersededRefundsOwedAgainCents`, for any refund
+ * machinery: `intents` are the captures its refunds were made on, and
+ * `intentOfTransaction` names each by its ledger row. #4285 review: the
+ * duplicate-capture refunds read it too (`listDuplicateRefundIntentIdsOwningCaptures`).
+ */
+function refundsOwedAgainCents(
+  rows: readonly OwnershipRow[],
+  payment: CardRefundOwedPaymentRow | null,
+  { intents: superseded, intentOfTransaction }: { intents: ReadonlySet<string>; intentOfTransaction: ReadonlyMap<string, string> },
+): Map<string, number> {
   const slicesOf = new Map(
     (payment ? cardRefundSlicesByOperation(payment) : []).map(({ operation, slices }) => [operation.id, slices] as const),
   );
@@ -262,6 +279,11 @@ async function readSupersededRefundsOwedAgain(tx: OwnershipReader, paymentId: st
   return { operations, payment };
 }
 
+/** Whether open rows owe a capture back again for at least all it still holds. */
+function isOwedBackInFull(owedCents: number, capture: OwnershipCapture): boolean {
+  return owedCents >= capture.amountCents - capture.refundedAmountCents;
+}
+
 /** The captures open rows owe back again for at least all each still holds. */
 function owedBackInFull(
   operations: readonly OwnershipRow[],
@@ -271,9 +293,46 @@ function owedBackInFull(
   const owned = new Set<string>();
   for (const [intent, owedCents] of supersededRefundsOwedAgainCents(operations, payment)) {
     const capture = captures.find((each) => each.stripePaymentIntentId === intent);
-    if (capture && owedCents >= capture.amountCents - capture.refundedAmountCents) owned.add(intent);
+    if (capture && isOwedBackInFull(owedCents, capture)) owned.add(intent);
   }
   return owned;
+}
+
+/**
+ * #4285 review: of this booking's duplicate-capture refunds, the captures each
+ * still holds for the member - what an admin is told is NOT another payment
+ * (the guard's `readTellingWhere`). A refund operation not yet SUCCEEDED owns its
+ * capture (still being sent, or dead and alerted to the treasurer), as does a
+ * capture its refund left nothing in. One SUCCEEDED whose refund Stripe failed
+ * later owns it only while open rows owe it back again for at least all it
+ * holds - #4221's cents check, by the same rule (`refundsOwedAgainCents`). A
+ * failure nothing re-sends (`not-resent`) leaves money nothing will return, so
+ * that capture is told as another payment holding money. `captures` are the
+ * payment's captured PRIMARY Stripe rows with net cash. Read-only.
+ */
+export async function listDuplicateRefundIntentIdsOwningCaptures(
+  tx: OwnershipReader,
+  input: { bookingId: string; paymentId: string; captures: readonly (OwnershipCapture & { id: string })[] },
+): Promise<string[]> {
+  const { operations, payment } = await readSupersededRefundsOwedAgain(tx, input.paymentId, [duplicateCaptureRefundOperationWhere(input.bookingId)]);
+  const refunds = operations.flatMap((operation) => {
+    const intent = duplicateCaptureIntentIdForRecoveryKey(input.bookingId, operation.idempotencyKey);
+    return intent === null ? [] : [{ operation, intent }];
+  });
+  const intents = new Set(refunds.map(({ intent }) => intent));
+  // Its row is on the payment's newest capture's intent, so its capture is named by the ledger row.
+  const intentOfTransaction = new Map(
+    input.captures.flatMap((capture) =>
+      capture.stripePaymentIntentId !== null && intents.has(capture.stripePaymentIntentId) ? [[capture.id, capture.stripePaymentIntentId] as const] : [],
+    ),
+  );
+  const owedAgain = refundsOwedAgainCents(operations, payment, { intents, intentOfTransaction });
+  return [...new Set(refunds.flatMap(({ operation, intent }) => {
+    const capture = input.captures.find((each) => each.stripePaymentIntentId === intent);
+    const holding =
+      operation.status !== PaymentRecoveryOperationStatus.SUCCEEDED || !capture || isOwedBackInFull(owedAgain.get(intent) ?? 0, capture);
+    return holding ? [intent] : [];
+  }))];
 }
 
 /**

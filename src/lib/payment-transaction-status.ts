@@ -206,10 +206,20 @@ export function ownCardRefundMade(refunds: ReadonlyArray<{ status: string | null
 }
 
 /**
- * #3639: HOW MUCH OF ONE CAPTURE HAS GONE BACK, and how much Stripe still holds
- * - one home for every late-capture reader that must not refund, approve or
- * record a hand-back twice (the webhook's verdict, the treasurer's approval,
- * the #2700 hand-back and its raise).
+ * #3639: HOW MUCH OF ONE CAPTURE HAS GONE BACK TO THE MEMBER, in any form, and
+ * how much the club may still hand back from it - one home for every
+ * late-capture reader that must not refund, approve or record a hand-back twice
+ * (the webhook's verdict, the treasurer's approval, the #2700 hand-back and its
+ * raise).
+ *
+ * It measures LEDGER headroom, not what Stripe still holds: `refundedAmountCents`
+ * also counts a refund made as account credit or by hand
+ * (`applyLocalRefundAllocation`), which leaves the money on the card. Every
+ * reader uses it as a cap or a refusal on handing more back, where money
+ * already returned another way must count, or the member is paid twice; so a
+ * credit-filled row makes them hand back less, never more. A reader that must
+ * say what the CARD still holds subtracts the card refunds recorded against it
+ * instead (`sumRecordedRefundsForCapture`, #4285 review).
  *
  * `refundedAmountCents` is load-bearing, not `status`:
  * `markPaymentIntentTransactionSucceeded` rewrites a refunded row's status to

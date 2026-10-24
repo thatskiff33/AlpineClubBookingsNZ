@@ -20,6 +20,7 @@ import {
   type EditFinancialReviewCensus,
   type NightPriceProvenanceCensus,
 } from "@/lib/night-price-provenance-census";
+import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 
 export const BOOKING_MONEY_RECONCILIATION_SELECT = {
   id: true,
@@ -98,9 +99,9 @@ export type BookingMoneyReconciliationCensus = BookingMoneyReconciliationSummary
 };
 
 /**
- * Reproducible whole-table classification from one repeatable-read snapshot.
- * The transaction contains only the ordered reads; this function has no repair
- * or write path.
+ * Reproducible whole-table classification from one read-only repeatable-read
+ * snapshot (`withReadOnlySnapshot`). The transaction contains only the ordered
+ * reads; this function has no repair or write path, and the server refuses one.
  */
 export async function censusBookingMoneyReconciliation(
   client: Pick<PrismaClient, "$transaction">,
@@ -110,56 +111,54 @@ export async function censusBookingMoneyReconciliation(
   // imports the store.
   zone: ClubTimeZone,
 ): Promise<BookingMoneyReconciliationCensus> {
-  return client.$transaction(
-    async (tx) => {
-      const bookings = await tx.booking.findMany({
-        orderBy: { id: "asc" },
-        // #4317 review round 2: status and deletedAt, so `ledgerNightValues`
-        // counts only bookings an edit can still reach.
-        select: { ...BOOKING_MONEY_RECONCILIATION_SELECT, createdAt: true, status: true, deletedAt: true },
-      });
-      const reviews = await tx.manualRefundTask.findMany({
-        where: { kind: "EDIT_FINANCIAL_REVIEW" },
-        orderBy: { id: "asc" },
-        select: { createdAt: true, status: true, reviewContext: true },
-      });
-      // #4317 review M3: the guests as an edit values them, and every guest-night
-      // ledger line with its reversals, from the same snapshot.
-      const guests = await tx.bookingGuest.findMany({
-        orderBy: { id: "asc" },
-        select: {
-          id: true,
-          bookingId: true,
-          priceCents: true,
-          stayStart: true,
-          stayEnd: true,
-          nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-        },
-      });
-      const lines = await tx.bookingLedgerLine.findMany({
-        where: { side: "CHARGE" },
-        orderBy: { id: "asc" },
-        select: {
-          id: true,
-          bookingId: true,
-          kind: true,
-          sign: true,
-          quantity: true,
-          unitCents: true,
-          bookingGuestId: true,
-          nightStart: true,
-          nightEndExclusive: true,
-          reversesLineId: true,
-          anchorKind: true,
-        },
-      });
-      return {
-        ...summarizeBookingMoneyReconciliations(bookings),
-        nightPriceProvenance: summarizeNightPriceProvenance(bookings, zone),
-        editFinancialReviews: summarizeEditFinancialReviews(reviews, zone),
-        ledgerNightValues: summarizeLedgerNightValues({ bookings, guests, lines }),
-      };
-    },
-    { isolationLevel: "RepeatableRead" },
-  );
+  // #4285 review: the one read-only snapshot opener - the server refuses a write in it.
+  return withReadOnlySnapshot(client, async (tx) => {
+    const bookings = await tx.booking.findMany({
+      orderBy: { id: "asc" },
+      // #4317 review round 2: status and deletedAt, so `ledgerNightValues`
+      // counts only bookings an edit can still reach.
+      select: { ...BOOKING_MONEY_RECONCILIATION_SELECT, createdAt: true, status: true, deletedAt: true },
+    });
+    const reviews = await tx.manualRefundTask.findMany({
+      where: { kind: "EDIT_FINANCIAL_REVIEW" },
+      orderBy: { id: "asc" },
+      select: { createdAt: true, status: true, reviewContext: true },
+    });
+    // #4317 review M3: the guests as an edit values them, and every guest-night
+    // ledger line with its reversals, from the same snapshot.
+    const guests = await tx.bookingGuest.findMany({
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        bookingId: true,
+        priceCents: true,
+        stayStart: true,
+        stayEnd: true,
+        nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
+      },
+    });
+    const lines = await tx.bookingLedgerLine.findMany({
+      where: { side: "CHARGE" },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        bookingId: true,
+        kind: true,
+        sign: true,
+        quantity: true,
+        unitCents: true,
+        bookingGuestId: true,
+        nightStart: true,
+        nightEndExclusive: true,
+        reversesLineId: true,
+        anchorKind: true,
+      },
+    });
+    return {
+      ...summarizeBookingMoneyReconciliations(bookings),
+      nightPriceProvenance: summarizeNightPriceProvenance(bookings, zone),
+      editFinancialReviews: summarizeEditFinancialReviews(reviews, zone),
+      ledgerNightValues: summarizeLedgerNightValues({ bookings, guests, lines }),
+    };
+  });
 }

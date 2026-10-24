@@ -93,6 +93,27 @@ export interface ResolvedModificationStayRanges<Guest extends LiveGuestStayRow> 
   added: NormalizedBookingGuestStayRange[];
 }
 
+/**
+ * The resolved range of the added guest at `index` of `expected` (#2800,
+ * `INV-MOD`). `added` lists every added guest in input order; if a caller's
+ * list falls out of step with it there is nothing safe to put in its place —
+ * an invented envelope would write, or price, nights the request never asked
+ * for — so it refuses rather than guessing.
+ */
+export function resolvedAddedGuestRange(
+  added: ReadonlyArray<NormalizedBookingGuestStayRange>,
+  index: number,
+  expected: number,
+): NormalizedBookingGuestStayRange {
+  const range = added[index];
+  if (range === undefined) {
+    throw new Error(
+      `Added guest ${index + 1} of ${expected} has no resolved stay range (${added.length} resolved).`,
+    );
+  }
+  return range;
+}
+
 function hasStayRangeValue(value: Date | string | null | undefined): boolean {
   if (value instanceof Date) return true;
   if (typeof value === "string") return value.trim() !== "";

@@ -30,6 +30,7 @@ import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-bank
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
+import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import { readApprovedAppealOutcomes } from "@/lib/refund-appeal-outcome";
 import { approvedAppealRefundedCents } from "@/lib/refund-request-card-refund-copy";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
@@ -515,14 +516,14 @@ export async function censusBookingLedgerProjection(
   client: Pick<PrismaClient, "$transaction">,
   options: { acknowledgements?: readonly BookingLedgerAcknowledgement[]; pageSize?: number } = {},
 ): Promise<BookingLedgerCensusReport> {
-  const { evaluations, tableStatistics } = await client.$transaction(
+  const { evaluations, tableStatistics } = await withReadOnlySnapshot(
+    client,
     async (tx) => {
-      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
       const evaluations = await evaluateBookingLedgerPages(tx, options.pageSize);
       return { evaluations, tableStatistics: await readLedgerTableStatistics(tx) };
     },
     // A whole-history read: give it room, and fail rather than queue forever.
-    { isolationLevel: "RepeatableRead", maxWait: 10_000, timeout: 600_000 },
+    { maxWait: 10_000, timeout: 600_000 },
   );
   return summarizeBookingLedgerCensus(evaluations, tableStatistics, options.acknowledgements ?? []);
 }

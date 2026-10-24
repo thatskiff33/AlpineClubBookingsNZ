@@ -46,7 +46,12 @@ vi.mock("@/lib/membership-type-policy", () => ({
 }));
 
 import { estimateChangeRequestAddedGuests } from "@/lib/booking-change-request-estimate";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE } from "@/lib/booking-change-request-guests";
+import {
+  CHANGE_REQUEST_UNKNOWN_RANGE_GUEST_MESSAGE,
+  CHANGE_REQUEST_UNKNOWN_REMOVED_GUEST_MESSAGE,
+} from "@/lib/booking-change-request-input";
 import { POST } from "@/app/api/bookings/[id]/change-requests/quote/route";
 
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
@@ -191,6 +196,111 @@ describe("estimateChangeRequestAddedGuests (#4030)", () => {
     });
   });
 
+  describe("the whole proposed party decides the group discount (#4203)", () => {
+    const GROUP_OF_THREE = {
+      enabled: true,
+      applyToEdits: true,
+      minGroupSize: 3,
+      summerOnly: false,
+      rateMembershipTypeId: "FULL",
+    };
+    const editorMember = { ...child("Cam"), isMember: true, memberId: "member-9" };
+
+    beforeEach(() => {
+      mocks.groupDiscountFindUnique.mockResolvedValue(GROUP_OF_THREE);
+    });
+
+    it("counts the editor's added member toward the threshold without pricing them", async () => {
+      // Stored guest + card child = 2: below the size, the non-member rate.
+      const without = await estimateChangeRequestAddedGuests(booking(1), [child("Ari")]);
+      expect(without).toMatchObject({ outcome: "priced", guests: [{ priceCents: 6000, nights: 3 }], totalCents: 6000 });
+      mocks.resolveGuestRateMembershipTypes.mockClear();
+      // + the editor's added member = 3: the child gets the FULL rate.
+      const estimate = await estimateChangeRequestAddedGuests(booking(1), [child("Ari")], {
+        addGuests: [editorMember],
+      });
+      expect(estimate).toEqual({
+        outcome: "priced",
+        guests: [{ priceCents: 3000, nights: 3 }],
+        totalCents: 3000,
+        excludesMemberGuests: false,
+      });
+      // Only the card's non-member reached the rate resolver: the editor's
+      // member was never resolved.
+      const resolved = mocks.resolveGuestRateMembershipTypes.mock.calls[0][1] as {
+        guests: Array<{ memberId: unknown; isMember: boolean }>;
+      };
+      expect(resolved.guests).toEqual([expect.objectContaining({ isMember: false, memberId: null })]);
+    });
+
+    it("counts an editor-added non-member without pricing or returning them", async () => {
+      const estimate = await estimateChangeRequestAddedGuests(booking(1), [child("Ari")], {
+        addGuests: [child("Editor")],
+      });
+      expect(estimate).toMatchObject({ guests: [{ priceCents: 3000, nights: 3 }], totalCents: 3000 });
+      expect(mocks.resolveGuestRateMembershipTypes.mock.calls[0][1].guests).toHaveLength(1);
+    });
+
+    it("an editor removal drops the party below the threshold", async () => {
+      const full = await estimateChangeRequestAddedGuests(booking(2), [child("Ari")]);
+      expect(full).toMatchObject({ totalCents: 3000 });
+      const removed = await estimateChangeRequestAddedGuests(booking(2), [child("Ari")], {
+        removeGuestIds: ["guest-1"],
+      });
+      expect(removed).toMatchObject({ guests: [{ priceCents: 6000, nights: 3 }], totalCents: 6000 });
+    });
+
+    it("an editor's changed nights move the threshold only on the nights they change", async () => {
+      // guest-1 now holds only the first night: three on 30 Jun, two after.
+      const estimate = await estimateChangeRequestAddedGuests(booking(2), [child("Ari")], {
+        guestStayRanges: [{ guestId: "guest-1", nights: ["2026-06-30"] }],
+      });
+      expect(estimate).toMatchObject({ guests: [{ priceCents: 1000 + 2000 + 2000, nights: 3 }] });
+    });
+
+    it("INV-REQ-012: a repeated range keeps a gapped guest's nights in the count", async () => {
+      const gapped = booking(2);
+      gapped.guests[1].nights = [{ stayDate: day("2026-06-30") }, { stayDate: day("2026-07-02") }];
+      // The form sends the gapped guest's own Date In and Date Out back: they
+      // keep their two nights, so the party is three on those nights only.
+      const estimate = await estimateChangeRequestAddedGuests(gapped, [child("Ari")], {
+        guestStayRanges: [{ guestId: "guest-1", stayStart: "2026-06-30", stayEnd: "2026-07-03" }],
+      });
+      expect(estimate).toMatchObject({ guests: [{ priceCents: 1000 + 2000 + 1000, nights: 3 }] });
+    });
+
+    it("a moved check-out with no ranges counts the guests on the new nights too", async () => {
+      // Check-out moves a night later and no guest names a range: the staying
+      // guests stretch to the new stay, as the planner writes them, so the party
+      // is three on all four nights and the card child is priced on all four.
+      const estimate = await estimateChangeRequestAddedGuests(booking(2), [child("Ari")], {
+        checkOut: "2026-07-04",
+      });
+      expect(estimate).toMatchObject({ guests: [{ priceCents: 4 * 1000, nights: 4 }], totalCents: 4000 });
+    });
+
+    it("resolves the card guest's rate in the season year of the proposed check-in", async () => {
+      const moved = booking(1);
+      moved.checkIn = day("2026-04-01");
+      moved.checkOut = day("2026-04-03");
+      moved.guests[0].stayStart = day("2026-04-01");
+      moved.guests[0].stayEnd = day("2026-04-03");
+      moved.guests[0].nights = [{ stayDate: day("2026-04-01") }, { stayDate: day("2026-04-02") }];
+      // The premise: the proposal crosses a season-year boundary.
+      expect(seasonYearOfStoredDate(day("2026-03-30"))).not.toBe(seasonYearOfStoredDate(moved.checkIn));
+      await estimateChangeRequestAddedGuests(moved, [child("Ari")], { checkIn: "2026-03-30" });
+      expect(mocks.resolveGuestRateMembershipTypes.mock.calls[0][1]).toMatchObject({
+        seasonYear: seasonYearOfStoredDate(day("2026-03-30")),
+      });
+    });
+
+    it("no editor change leaves the estimate as it was", async () => {
+      const before = await estimateChangeRequestAddedGuests(booking(1), [child("Ari")]);
+      const empty = await estimateChangeRequestAddedGuests(booking(1), [child("Ari")], {});
+      expect(empty).toEqual(before);
+    });
+  });
+
   it("says the nights can't be priced when no active season covers them", async () => {
     mocks.loadActiveSeasonRates.mockResolvedValue([]);
     const estimate = await estimateChangeRequestAddedGuests(booking(), [child("Ari")]);
@@ -272,6 +382,48 @@ describe("POST /api/bookings/[id]/change-requests/quote (#4030)", () => {
     const response = await post({ ...input, editorChanges: { checkOut: "2026-07-02" } });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE });
+    expect(mocks.loadActiveSeasonRates).not.toHaveBeenCalled();
+  });
+
+  it("prices the card guest inside the editor's proposed party (#4203)", async () => {
+    mocks.groupDiscountFindUnique.mockResolvedValue({
+      enabled: true,
+      applyToEdits: true,
+      minGroupSize: 3,
+      summerOnly: false,
+      rateMembershipTypeId: "FULL",
+    });
+    // The canonical non-member rate source, which the group discount re-rates.
+    mocks.resolveGuestRateMembershipTypes.mockImplementation(
+      async (_db: unknown, params: { guests: Array<Record<string, unknown>> }) =>
+        params.guests.map((guest) => ({ ...guest, rateMembershipTypeId: "NON_MEMBER", rateSource: "NON_MEMBER_DEFAULT" })),
+    );
+    const response = await post({
+      editorChanges: { addGuests: [{ ...child("Cam"), isMember: true, memberId: "member-9" }] },
+      addGuests: [child("Ari")],
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).estimate).toEqual({
+      outcome: "priced",
+      guests: [{ priceCents: 3000, nights: 3 }],
+      totalCents: 3000,
+      excludesMemberGuests: false,
+    });
+    expect(mocks.resolveGuestRateMembershipTypes.mock.calls[0][1].guests).toEqual([
+      expect.objectContaining({ isMember: false, memberId: null }),
+    ]);
+  });
+
+  it.each([
+    [{ removeGuestIds: ["guest-of-another-booking"] }, CHANGE_REQUEST_UNKNOWN_REMOVED_GUEST_MESSAGE],
+    [
+      { guestStayRanges: [{ guestId: "guest-of-another-booking", nights: ["2026-07-01"] }] },
+      CHANGE_REQUEST_UNKNOWN_RANGE_GUEST_MESSAGE,
+    ],
+  ])("refuses editor changes naming a guest not on this booking (#4203) %j", async (editorChanges, message) => {
+    const response = await post({ editorChanges, addGuests: [child("Ari")] });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: message });
     expect(mocks.loadActiveSeasonRates).not.toHaveBeenCalled();
   });
 
