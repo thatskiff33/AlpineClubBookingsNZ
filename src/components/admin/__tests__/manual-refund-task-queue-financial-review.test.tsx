@@ -431,6 +431,42 @@ describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
     ).toHaveTextContent(/cannot be read/);
   });
 
+  it("warns, naming the guest, when a guest whose nights the review moved was removed after it was raised (#4317)", async () => {
+    // The removal credited that guest's stored total, which a parked edit never
+    // changed: settling could credit given-back nights again, or charge for
+    // added ones the guest no longer holds. It asks for a check, not a
+    // dismissal: the review may still hold money owed for another guest.
+    await renderQueue({
+      tasks: [
+        {
+          ...REVIEW_TASK,
+          reviewGuestsRemovedSinceRaised: [
+            { strandIndex: 0, strandCount: 2, guestTotalCents: 30_000, gaveNightsBack: true, addedNights: false },
+            { strandIndex: 1, strandCount: 2, guestTotalCents: 20_000, gaveNightsBack: false, addedNights: true },
+          ],
+        },
+      ],
+      viewerCanViewBookings: true,
+    });
+
+    const [credit, charge] = screen.getAllByTestId("manual-refund-task-review-guest-removed");
+    expect(credit).toHaveTextContent("Guest 1 of 2, stored at $300.00, was removed from the booking after this review was raised.");
+    expect(credit).toHaveTextContent("Check Xero and the booking before settling");
+    expect(credit).toHaveTextContent("could credit those nights again");
+    expect(credit).not.toHaveTextContent(/dismiss/i);
+    expect(charge).toHaveTextContent("Guest 2 of 2, stored at $200.00, was removed");
+    expect(charge).toHaveTextContent("could charge for nights this guest no longer holds");
+  });
+
+  it("says nothing about a removed guest on a review whose guests are all still there", async () => {
+    await renderQueue({
+      tasks: [{ ...REVIEW_TASK, reviewGuestsRemovedSinceRaised: [] }],
+      viewerCanViewBookings: true,
+    });
+
+    expect(screen.queryByTestId("manual-refund-task-review-guest-removed")).not.toBeInTheDocument();
+  });
+
   it("prints the identifier instead of a link the viewer cannot follow", async () => {
     // This card is gated on finance:view, which a Finance Viewer holds with no
     // bookings access at all. The route says which it is; absent, the card fails

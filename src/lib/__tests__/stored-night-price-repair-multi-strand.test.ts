@@ -23,7 +23,9 @@ import { ManualRefundTaskKind } from "@prisma/client";
  * touched - and making their blanks come to their stored total PLUS the charge
  * for two newly-added guests writes the new party's money onto an old strand's
  * nights. Where two or more strands DO move, the edit fans out into one item
- * each (`parkedEditWorkItems`) so no item ever has two claims on one amount.
+ * each (the grain `parkedEditWorkItems` composed until #4317 retired the parked
+ * raise; items already stored keep that shape and are what the settle reads) so
+ * no item ever has two claims on one amount.
  *
  * MUTATION PROOF. Derive `absorbsSettlement` as "the first repairable strand""
  * instead of "the lead strand, if it is repairable", and
@@ -32,10 +34,10 @@ import { ManualRefundTaskKind } from "@prisma/client";
  * "every other strand reconciles to its own stored total" fails. Drop the
  * length check and "refuses a stale screen rather than matching as far as it
  * goes" fails. Drop the `editFinancialReviewStrandMovesNights` condition and
- * "a lead the edit never moved absorbs nothing" fails. Change the fan-out
- * threshold from two movers to three and "two moving strands are two work
- * items" fails. All five were applied, all five failed this file, and all five
- * were restored (`docs/TESTING.md`).
+ * "a lead the edit never moved absorbs nothing" fails. All four were applied,
+ * all four failed this file, and all four were restored (`docs/TESTING.md`).
+ * (A fifth, the fan-out threshold in `parkedEditWorkItems`, went with that
+ * builder in #4317.)
  */
 
 const mocks = vi.hoisted(() => ({ findMany: vi.fn() }));
@@ -48,7 +50,6 @@ import {
   reviewTaskStrands,
 } from "@/lib/stored-night-price-repair-plan";
 import { requireCalendarDate } from "@/lib/club-time";
-import { parkedEditWorkItems } from "@/lib/parked-edit-occurrence";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const store = {
@@ -455,59 +456,8 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
   });
 });
 
-describe("how many work items one parked edit raises (#3498 fix round)", () => {
-  it("keeps ONE item while at most one strand's nights move", () => {
-    // The shape the whole issue is about: removing one guest from a party moves
-    // that guest's nights and nobody else's, so the six guests the writer merely
-    // rewrote ride along as supporting detail on one card.
-    const items = parkedEditWorkItems({
-      bookingId: "booking-1",
-      strands: [
-        strandRecord("departing", { surrendered: ["2026-08-10"] }),
-        strandRecord("stayer-a"),
-        strandRecord("stayer-b"),
-      ],
-    });
-    expect(items).toHaveLength(1);
-    expect(items[0].bookingGuestId).toBe("departing");
-    expect(items[0].otherStrands).toHaveLength(2);
-  });
-
-  it("MUTATION: two moving strands are two work items, each keeping its own amount", () => {
-    /*
-      The owner's 17 September decision. An item carries ONE `amountCents`, so
-      two strands whose night sets both move cannot share one: the lead would
-      absorb the whole settlement and the other would be handed
-      `stored + 0 - known` as the total its blanks must come to - which only
-      $0.00 satisfies, so closing the review would record sold nights as comped.
-      Where the settlement exceeds the lead's blanks that target goes NEGATIVE
-      and the review cannot be closed at all.
-
-      A fan-out item carries NO `otherStrands`: the boxes an item offers are the
-      blanks of every strand it names, so two items each naming both strands
-      would offer every blank twice and let them fight over one night.
-    */
-    const items = parkedEditWorkItems({
-      bookingId: "booking-1",
-      strands: [
-        strandRecord("mover-a", { surrendered: ["2026-08-10"] }),
-        strandRecord("mover-b", { added: ["2026-08-12"] }),
-        strandRecord("stayer"),
-      ],
-    });
-    expect(items).toHaveLength(3);
-    for (const item of items) {
-      expect(item.otherStrands).toBeUndefined();
-      expect(item.bookingId).toBe("booking-1");
-    }
-    expect(items.map((item) => item.bookingGuestId).sort()).toEqual([
-      "mover-a",
-      "mover-b",
-      "stayer",
-    ]);
-  });
-
-  it("and each fanned item settles only its own strand, absorbing only if that strand moved", async () => {
+describe("how a single-strand item settles (#3498 fix round)", () => {
+  it("each single-strand item settles only its own strand, absorbing only if that strand moved", async () => {
     /*
       The settle side of the same decision, which is where the money is. Each
       item names ONE strand, so the officer is offered one column per card and

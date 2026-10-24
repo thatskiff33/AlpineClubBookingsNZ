@@ -378,6 +378,11 @@ vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (...args: unknown[]) =>
     mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent(...args),
 }));
+// #3953: a change's capture recorded by its own receipt names that receipt's invoice; none here unless a case says so.
+const mockFindAdditionalCaptureReceiptInvoiceId = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<string | null>>(async () => null));
+vi.mock("@/lib/additional-capture-receipt-link", () => ({
+  findAdditionalCaptureReceiptInvoiceId: (...args: unknown[]) => mockFindAdditionalCaptureReceiptInvoiceId(...args),
+}));
 
 vi.mock("@/lib/xero-error-alert", () => ({
   notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
@@ -754,6 +759,36 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  it("#4300: a capture the settle refuses as superseded sends no confirmation and queues no invoice", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_superseded_raced",
+      type: "payment_intent.succeeded",
+      data: { object: { id: "pi_raced", amount: 15000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" } },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({ id: "txn-1", paymentId: "payment-1", bookingId: "booking-1", kind: "PRIMARY", amountCents: 15000, status: "PENDING" });
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      status: "PAYMENT_PENDING",
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+      finalPriceCents: 15000,
+      discountCents: 0,
+      guests: [{ id: "g1" }],
+      member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      payment: { status: "PENDING", stripePaymentIntentId: "pi_raced", changeFeeCents: null },
+      promoRedemption: null,
+    });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "superseded_capture", bookingId: "booking-1", bumpedBookingIds: [] });
+
+    const response = await POST(makeRequest());
+
+    // Answered 200: the refusal is final, so Stripe is not sent back to retry for days.
+    expect(response.status).toBe(200);
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_raced" }));
+    expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
   it("#3955 F5: a redelivered capture the booking already settled with is not re-checked against a later fee", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_redelivered",
@@ -1011,6 +1046,30 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  // #3953 (`INV-PAY-139`): a change's capture its own receipt recorded against
+  // the gap invoice - its refund's note names that invoice, not the primary.
+  it("names the invoice a change capture's own receipt paid on that capture's refund note", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_refund_receipt",
+      type: "charge.refunded",
+      data: { object: { id: "ch_receipt", payment_intent: "pi_change", amount_refunded: 8000 } },
+    } as any);
+    mockListRefundsForCharge.mockResolvedValue([]);
+    mockSyncRefundsFromStripeCharge.mockResolvedValue({
+      paymentId: "payment-3",
+      refundDeltaCents: 8000,
+      payment: { id: "payment-3", amountCents: 38000, refundedAmountCents: 8000 },
+    });
+    mockIsXeroConnected.mockResolvedValue(false);
+    mockFindAdditionalCaptureReceiptInvoiceId.mockResolvedValueOnce("inv_gap");
+
+    expect((await POST(makeRequest())).status).toBe(200);
+    expect(mockFindAdditionalCaptureReceiptInvoiceId).toHaveBeenCalledWith("pi_change");
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-3", 8000, {
+      creditsInvoiceId: "inv_gap",
+    });
+  });
+
   // #3635 round-3 R1/R4: a refund of a LATE capture is noted per capture, and
   // only once the app recorded that capture's receipt - never by the
   // payment-wide delta, which would note a capture Xero never received.
@@ -1251,11 +1310,10 @@ describe("Stripe webhook Xero alerting", () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockQueueSupersededPaymentIntentRefundRecovery).toHaveBeenCalledWith({
-      paymentIntentId: "pi_superseded_succeeded",
-      amountCents: 6000,
-      paymentMethodId: "pm_superseded",
-    });
+    // #4300: the check takes the intent itself.
+    expect(mockQueueSupersededPaymentIntentRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "pi_superseded_succeeded", amount: 6000, payment_method: "pm_superseded" }),
+    );
     expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();

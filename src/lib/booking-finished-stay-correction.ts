@@ -23,8 +23,11 @@
  *    than the club's own same-day tier, and not what the owner decided.
  */
 
+import type { BookingGuestNightPriceSource } from "@prisma/client";
+
 import { ApiError } from "@/lib/api-error";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
+import { valueEditStrand } from "@/lib/edit-night-valuation";
 import {
   calendarDateOfDateOnlyInstant,
   eachCalendarDate,
@@ -174,15 +177,22 @@ export function classifyFinishedStayChangeFeeRule(plan: {
  * not, the booking's promotion is shared over the removed portion in proportion
  * to its price, which is the most any record supports.
  *
- * A removed night whose sold price is NOT KNOWN (`null`, #3170) cannot be
- * valued, and the correction is refused rather than priced on a guess.
+ * #4317 review M1: each removed night is valued as every edit values it
+ * (`valueEditStrand`, `INV-MOD-028`), and a removed guest's nights together are
+ * its stored `priceCents` (T2). A night with no recorded price is valued from
+ * the guest's stored total like any other, so the correction is no longer
+ * refused for one, and no proportional split of a total is taken here.
  */
 export interface StoredGuestForRemoval {
   readonly id: string;
   readonly priceCents: number;
   readonly stayStart: Date;
   readonly stayEnd: Date;
-  readonly nights?: ReadonlyArray<{ readonly stayDate: Date; readonly priceCents?: number | null }>;
+  readonly nights?: ReadonlyArray<{
+    readonly stayDate: Date;
+    readonly priceCents?: number | null;
+    readonly priceSource: BookingGuestNightPriceSource;
+  }>;
 }
 
 export interface ProposedStay {
@@ -202,8 +212,6 @@ export interface RemovalPromoRows {
 export const FINISHED_STAY_INVOICE_RAISED_MESSAGE =
   "This booking's invoice was raised while the change was being applied. Nothing has been applied; the request is still pending — approve it again.";
 
-export const FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE =
-  "A night this change removes has no recorded price, so the same-day charge on it cannot be worked out. Nothing has been applied; the request is still pending.";
 
 /**
  * Owner decision (7 Oct 2026, "Add fee to amount owed"): a correction's fee on a
@@ -287,41 +295,39 @@ export function finishedStayRemovedPortion(args: {
   readonly storedGuests: ReadonlyArray<StoredGuestForRemoval>;
   /** The proposed stay of every guest the correction KEEPS; a guest absent here is removed. */
   readonly keptStays: ReadonlyMap<string, ProposedStay>;
-  readonly booking: { readonly totalPriceCents: number; readonly promoAdjustmentCents: number };
+  readonly booking: {
+    readonly checkIn: Date;
+    readonly checkOut: Date;
+    readonly totalPriceCents: number;
+    readonly promoAdjustmentCents: number;
+  };
   readonly promoRows: RemovalPromoRows;
 }): { grossCents: number; netCents: number } {
   const { booking, promoRows } = args;
   let gross = 0;
   let rowPromo = 0;
-  const day = (value: Date) => calendarDateOfDateOnlyInstant(storedDateOnly(value));
   for (const guest of args.storedGuests) {
     const kept = args.keptStays.get(guest.id);
-    const storedKeys = nightKeys(
-      guest.stayStart,
-      guest.stayEnd,
-      guest.nights?.map((night) => night.stayDate),
-    );
-    if (storedKeys.length === 0) continue;
+    // #4317 review M1: what each held night is worth, by the one rule every
+    // edit prices with (`INV-SSOT-001`) — a blank or a row that does not add up
+    // is valued from the guest's stored total rather than refused or split here.
+    const valued = valueEditStrand(guest, booking);
+    const storedKeys = valued.nights.map((night) => night.date);
     const keptKeys = kept ? new Set(nightKeys(kept.stayStart, kept.stayEnd, kept.nights)) : new Set<string>();
-    const removedKeys = storedKeys.filter((key) => !keptKeys.has(key));
-    if (removedKeys.length === 0) continue;
-    if (guest.nights && guest.nights.length > 0) {
-      for (const night of guest.nights) {
-        const key = day(night.stayDate);
-        if (!removedKeys.includes(key)) continue;
-        if (night.priceCents === null || night.priceCents === undefined) {
-          throw new ApiError(FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE, 409);
-        }
-        gross += night.priceCents;
-        rowPromo += promoRows.byNight.get(`${guest.id}|${key}`) ?? 0;
-      }
-    } else {
-      // A pre-#713 guest with no night rows: their stored price over their nights.
-      gross += Math.round((guest.priceCents * removedKeys.length) / storedKeys.length);
+    const removedNights = valued.nights.filter((night) => !keptKeys.has(night.date));
+    if (kept && removedNights.length === 0) continue;
+    // A removed guest gives back its whole stored total (T2), money on no night
+    // included; a kept guest gives back the values of the nights it drops.
+    gross += kept
+      ? removedNights.reduce((sum, night) => sum + night.valueCents, 0)
+      : guest.priceCents;
+    for (const night of removedNights) {
+      rowPromo += promoRows.byNight.get(`${guest.id}|${night.date}`) ?? 0;
     }
+    if (storedKeys.length === 0) continue;
     const guestScope = promoRows.byGuest.get(guest.id);
     if (typeof guestScope === "number") {
-      rowPromo += Math.round((guestScope * removedKeys.length) / storedKeys.length);
+      rowPromo += Math.round((guestScope * removedNights.length) / storedKeys.length);
     }
   }
   if (gross === 0) return { grossCents: 0, netCents: 0 };

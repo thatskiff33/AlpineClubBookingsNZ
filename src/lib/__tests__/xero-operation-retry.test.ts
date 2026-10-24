@@ -50,6 +50,14 @@ const mocks = vi.hoisted(() => ({
   createXeroMembershipCancellationCreditNote: vi.fn(),
   allocateAppliedCreditForBooking: vi.fn(),
   deallocateExcessAppliedCreditForBooking: vi.fn(),
+  // #3953 round 9: the replay's recordPayment, asked again under the change's anchor lock.
+  supplementaryReplayMayRecordPayment: vi.fn(),
+}));
+
+vi.mock("@/lib/additional-capture-receipt-gate", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/additional-capture-receipt-gate")),
+  supplementaryReplayMayRecordPayment: async (...args: unknown[]) =>
+    (await mocks.supplementaryReplayMayRecordPayment(...args)) ?? { recordPayment: true, raisedUnpaid: false },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -1505,6 +1513,97 @@ describe("retryXeroSyncOperation", () => {
     );
   });
 
+  it("MUTATION #3953 round 9: a replay asked to record the payment asks again under the change's lock, and replays unpaid where a capture's receipt records it", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_receipt",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          paymentIntentId: "pi_change",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+    mocks.supplementaryReplayMayRecordPayment.mockResolvedValueOnce({ recordPayment: false, raisedUnpaid: true });
+
+    // Round 11: the officer is told it was raised unpaid, and why.
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })).resolves.toEqual({
+      message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt.",
+    });
+
+    expect(mocks.supplementaryReplayMayRecordPayment).toHaveBeenCalledWith({
+      operationId: "op_123",
+      bookingId: "book_123",
+      bookingModificationId: "mod_receipt",
+    });
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ recordPayment: false })
+    );
+  });
+
+  // #3953 round 10: a #3980 gap invoice's coverage record (`primaryInvoiceGap`,
+  // `coveredPaymentIntentIds`, `coveredCaptureCents`) is never an input to the
+  // create - the outbox dispatch passes none either; it lives on the QUEUED
+  // row, which the replay never rewrites and which stays FAILED (not
+  // CANCELLED), so the readers that filter on `queueType` keep finding it. The
+  // replay's own row is a direct call's, with no `queueType`, invisible to them.
+  it("replays a #3980 gap invoice with its queued amounts and payment, leaving its coverage record on the queued row (#3953)", async () => {
+    const gapPayload = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "book_123",
+      bookingModificationId: "mod_gap",
+      priceDiffCents: 0,
+      changeFeeCents: 2500,
+      recordPayment: true,
+      primaryInvoiceGap: true,
+      coveredPaymentIntentIds: ["pi_change"],
+      coveredCaptureCents: { pi_change: 2500 },
+    };
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_gap",
+        requestPayload: gapPayload,
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 9999,
+      changeFeeCents: 9999,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "book_123",
+        bookingModificationId: "mod_gap",
+        priceDiffCents: 0,
+        changeFeeCents: 2500,
+        recordPayment: true,
+      })
+    );
+    expect(mocks.createXeroSupplementaryInvoice.mock.calls[0]![0]).not.toHaveProperty("syncOperationId");
+    // The queued row - the coverage record - is never rewritten by the replay.
+    expect(
+      mocks.updateManyOperation.mock.calls.filter(([args]) => "requestPayload" in ((args as { data?: object }).data ?? {}))
+    ).toEqual([]);
+  });
+
   it("defaults a stored payload without the flag to recordPayment=true like the outbox dispatch (#1882)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -2750,10 +2849,53 @@ describe("retryXeroSyncOperation", () => {
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
       where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
-      // The whole payload: the intent the note step reads, and the charge day.
-      data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
+      // #3953 round 11: the stored payload - the intent the note step reads,
+      // and the charge day - is kept as it stands, never written back.
+      data: expect.objectContaining({ status: "PENDING" }),
     });
+    expect(mocks.updateManyOperation.mock.calls[0]![0].data).not.toHaveProperty("requestPayload");
     expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION #3953 round 11: decides the late charge's change invoice again under the change's lock before requeueing it, and never writes back the payload it read", async () => {
+    const queued = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "book_123",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      paymentIntentId: "pi_late",
+    };
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        requestPayload: queued,
+      }),
+    );
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.findUniqueManualRefundTask.mockResolvedValueOnce({ id: "task_late" });
+    // A receipt's switch (or this check) set the row unpaid since it was read.
+    mocks.supplementaryReplayMayRecordPayment.mockResolvedValueOnce({ recordPayment: false, raisedUnpaid: true });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+    expect(mocks.supplementaryReplayMayRecordPayment).toHaveBeenCalledWith({
+      operationId: "op_123",
+      bookingId: "book_123",
+      bookingModificationId: "mod_123",
+    });
+    expect(mocks.supplementaryReplayMayRecordPayment.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.updateManyOperation.mock.invocationCallOrder[0]!,
+    );
+    for (const [args] of mocks.updateManyOperation.mock.calls) {
+      expect((args as { data: object }).data).not.toHaveProperty("requestPayload");
+    }
   });
 
   // #3924 round 10 (finding 2): one whose change is already linked to its

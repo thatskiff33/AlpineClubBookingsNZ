@@ -171,8 +171,8 @@ const EXISTENCE_READS: Record<string, string> = {
  * fails closed even if its TypeScript spelling looks like a string id.
  */
 const UNIQUE_EXPRESSION_READS: Record<string, string> = {
-  "src/lib/booking-cancel.ts > performBookingCancellation > additionalTransaction":
-    "stripePaymentIntentId uses payment.additionalPaymentIntentId inside if (payment.additionalPaymentIntentId), excluding null.",
+  "src/lib/booking-payment-cleanup.ts > failOutstandingAdditionalAskInClaim > additionalTransaction":
+    "stripePaymentIntentId uses paymentIntentId after the !paymentIntentId branch returns, excluding null (#4316: moved from the cancel's claim).",
   "src/lib/card-refund-paid-another-way-xero.ts > paidAnotherWayXeroRoute > capture":
     "stripePaymentIntentId uses lateCaptureIntent after the lateCaptureIntent === null branch returns.",
   "src/lib/duplicate-capture-guard.ts > judgeCaptureOnPaidBooking > recordedSettler":

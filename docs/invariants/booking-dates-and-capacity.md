@@ -972,9 +972,9 @@ owner decisions on #3820):
   bookings.** Standard edits refuse a booking-request booking
   (`assertBookingNotQuotePriced`, #1032); of the three shapes
   `booking-batch-modification-service.ts` exempts, only the link-only #2337
-  placeholder→member path prices, passing
-  `link ? [] : lockedNightPricesForGuest(guest)`: the LINKED row re-rates at the
-  member rate, every UNLINKED placeholder keeps its negotiated price
+  placeholder→member path prices, passing `editedGuestPricingLocks`, which
+  re-rates the LINKED row at the member rate; every UNLINKED placeholder keeps
+  its negotiated price
   (`src/lib/__tests__/school-booking-request.test.ts`). **This is a real change to what that path charges, and it needs the owner's approval before it ships** — it is not an incidental consequence to be waved through as part of a bed-board fix. Backfill and operator facts: `INV-CAP-035`.
 
 ### INV-CAP-035

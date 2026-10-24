@@ -29,7 +29,7 @@ import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 
 type CancelResult = {
-  paymentIntent: Pick<Stripe.PaymentIntent, "id" | "status">;
+  paymentIntent: Pick<Stripe.PaymentIntent, "id" | "status" | "amount" | "payment_method">;
   canceled: boolean;
 };
 
@@ -78,9 +78,12 @@ export async function isRefundedPaymentIntentHistory({
 /**
  * The card intent can never take money again, so an Internet Banking invoice
  * may exist beside it: Stripe confirmed it cancelled, or it `succeeded` and
- * the local ledger shows it refunded (#1765's repay-after-refund booking). A
- * succeeded intent with no refund history is a live capture and is NOT
- * retired, whatever the local Payment row says.
+ * the local ledger shows it refunded (#1765's repay-after-refund booking), or
+ * (#4300, `INV-PAY-138`) its capture is the superseded machinery's, going
+ * back to the card. That last is the doors' own check, so a capture a dead or
+ * waiting cancel row names is handed to its refund here, never left with
+ * nothing sending it back. Any other succeeded intent is a live capture and is
+ * NOT retired, whatever the local Payment row says.
  */
 export async function isCardIntentRetired({
   result,
@@ -91,10 +94,10 @@ export async function isCardIntentRetired({
 }): Promise<boolean> {
   if (isPaymentIntentCancelConfirmed(result)) return true;
   if (result.paymentIntent.status !== "succeeded") return false;
-  return isRefundedPaymentIntentHistory({
-    paymentIntentId: result.paymentIntent.id,
-    paymentStatus,
-  });
+  if (await isRefundedPaymentIntentHistory({ paymentIntentId: result.paymentIntent.id, paymentStatus })) return true;
+  // Dynamic: payment-recovery imports this module.
+  const { queueSupersededPaymentIntentRefundRecovery } = await import("@/lib/payment-recovery");
+  return queueSupersededPaymentIntentRefundRecovery(result.paymentIntent);
 }
 
 /**

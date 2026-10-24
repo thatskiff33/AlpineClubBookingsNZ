@@ -117,7 +117,6 @@ vi.mock("@/lib/booking-modify", () => ({
   assertBookingNotQuotePriced: h.assertNotQuotePriced,
   applyPaymentAdjustments: vi.fn(),
   calculateModificationSettlementOptions: vi.fn(),
-  lockedNightPricesForGuest: vi.fn(),
   // #3531: the wrapper the route reaches the reader through; answers as the reader stub does.
   editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: [] }),
 }));

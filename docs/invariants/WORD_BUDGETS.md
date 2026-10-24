@@ -64,13 +64,18 @@ so `main` grew it where no register was watching, and the merge took that side
 cleanly without a conflict. The number is therefore re-measured rather than
 enforced downward, for the same reason nothing was reworded to fit above. What
 the shrink-only rule protects is this branch's own edits, and it still does:
-every row an epic child touches may only go down. When the last row goes,
+every row an epic child touches may only go down — with one owner-decided
+exception: `INV-MONEY-029` went 655 to 808 on #4317, because the owner amended
+the rule itself (24 Oct 2026, on #4302: a capped carried promotion's night rows
+are scaled, the one rule-derived amount it allows, with every case that writes
+none listed), and an amendment the owner decides is new rule text, not drift to
+be compacted. When the last row goes,
 delete this section — and when the exceptions table is also empty, delete this
 file; the checker treats an absent register as "no exceptions, no debt".
 
 | ID | Words |
 | --- | ---: |
-| `INV-MOD-025` | 4650 |
+| `INV-MOD-025` | 4579 |
 | `INV-ADDPAY-037` | 2705 |
 | `INV-SSOT-004` | 2653 |
 | `INV-HOST-050` | 2220 |
@@ -87,7 +92,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1219 |
 | `INV-PAY-047` | 1164 |
-| `INV-MOD-055` | 1157 |
+| `INV-MOD-055` | 1048 |
 | `INV-ADDPAY-036` | 1137 |
 | `INV-SSOT-003` | 1094 |
 | `INV-ADDPAY-038` | 1025 |
@@ -105,7 +110,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-049` | 715 |
 | `INV-HOST-029` | 707 |
 | `INV-MOD-021` | 672 |
-| `INV-MONEY-029` | 655 |
+| `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
 | `INV-ADDPAY-017` | 637 |
 | `INV-PRIV-013` | 627 |
@@ -133,7 +138,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-028` | 404 |
 | `INV-HOST-033` | 396 |
 | `INV-REQ-007` | 391 |
-| `INV-MOD-005` | 381 |
+| `INV-MOD-005` | 330 |
 | `INV-ADDPAY-011` | 380 |
 | `INV-CAP-023` | 360 |
 | `INV-PAY-058` | 363 |
@@ -149,12 +154,11 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-LIFE-018` | 338 |
 | `INV-CAP-030` | 337 |
 | `INV-ADDPAY-009` | 333 |
-| `INV-CAP-032` | 332 |
+| `INV-CAP-032` | 331 |
 | `INV-LIFE-065` | 325 |
 | `INV-MONEY-017` | 323 |
 | `INV-MOD-016` | 319 |
 | `INV-DATE-027` | 316 |
-| `INV-PAY-066` | 316 |
 | `INV-HOST-004` | 310 |
 | `INV-PAY-046` | 308 |
 | `INV-CAP-027` | 303 |

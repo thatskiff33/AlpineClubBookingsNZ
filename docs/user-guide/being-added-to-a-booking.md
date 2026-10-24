@@ -78,7 +78,9 @@ says so before you click and tells you who *can* act — usually the person who
 made the booking, or the club. One case is only knowable when you try: a
 booking that has already been paid may need the owner or the club to choose
 between a refund and account credit, and if the club's system refuses your
-"No thanks" for that reason, the card shows you the exact explanation.
+"No thanks" for that reason, the card shows you the exact explanation. That is
+now true of every paid booking: one whose amounts the club used to work out by
+hand after a change is priced like any other, so the same choice is needed.
 
 ### Answering for a family member
 

@@ -36,6 +36,19 @@ export const PAYMENT_PROCESSING_BODY = Object.freeze({
   error: PAYMENT_PROCESSING_MESSAGE,
 });
 
+/**
+ * #4300 (`INV-PAY-138`): the same refusal as `PAYMENT_PROCESSING_BODY` (same
+ * code, so every page already handles it), for an intent an edit superseded:
+ * if it completes, it is going back, not confirming the booking.
+ */
+export const SUPERSEDED_PAYMENT_PROCESSING_MESSAGE =
+  "An earlier payment for an out-of-date amount is still processing; if it completes, it will be returned to your card.";
+
+export const SUPERSEDED_PAYMENT_PROCESSING_BODY = Object.freeze({
+  code: PAYMENT_PROCESSING_CODE,
+  error: SUPERSEDED_PAYMENT_PROCESSING_MESSAGE,
+});
+
 export function isPaymentProcessing(value: unknown): value is { code: typeof PAYMENT_PROCESSING_CODE; error: string } {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -107,6 +120,72 @@ export const REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY = Object.freeze({
   paymentRefunded: true as const,
   repaymentRequired: true as const,
 });
+
+/**
+ * #4300 (`INV-PAY-138`): the card payment the member just made was on an intent
+ * an edit had superseded, so the superseded-intent machinery is sending it back
+ * and the booking still waits for its money. Not a failure, and not "payment
+ * received" either: the member pays the amount the booking shows now. Worded
+ * so it never promises a refund the machinery might not complete by itself.
+ */
+export const SUPERSEDED_CARD_PAYMENT_REFUNDING_CODE =
+  "SUPERSEDED_CARD_PAYMENT_REFUNDING" as const;
+
+export const SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE =
+  "This card payment was for an earlier version of the booking, so it will be returned to your card; the club will contact you if it cannot be. Reload the booking and pay the amount it shows now.";
+
+/** #4300: the `/pay` link's wording of the same refusal, matching its "Reload payment status" button. */
+export const SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE =
+  "This card payment was for an earlier version of the booking, so it will be returned to your card; the club will contact you if it cannot be. Reload the payment status to pay the amount the booking shows now.";
+
+/**
+ * #4300: what a saved-card door (an admin's or the cron's charge) answers when
+ * the settle refused its capture as superseded: taken, going back, not paid.
+ */
+export const SUPERSEDED_CHARGE_NOT_SETTLED_CODE = "SUPERSEDED_CHARGE_NOT_SETTLED" as const;
+
+export const SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE =
+  "The charge was taken on a payment a later change had replaced, so it is being returned to the card and the booking is not paid: it still owes, and it is back to waiting for payment. Admins have been alerted.";
+
+/**
+ * Deliberately WITHOUT `paymentReceived`/`finalisationPending`: those say
+ * "money arrived, do not charge again", and this money is going back.
+ */
+export const SUPERSEDED_CHARGE_NOT_SETTLED_BODY = Object.freeze({
+  code: SUPERSEDED_CHARGE_NOT_SETTLED_CODE,
+  error: SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE,
+  chargeReturning: true as const,
+});
+
+export function isSupersededChargeNotSettled(value: unknown): value is typeof SUPERSEDED_CHARGE_NOT_SETTLED_BODY {
+  return !!value && typeof value === "object" && (value as Record<string, unknown>).code === SUPERSEDED_CHARGE_NOT_SETTLED_CODE;
+}
+
+/**
+ * #4300: the `/pay` link's notice beside a fresh payment, when the payer's
+ * earlier payment was superseded (`previousPaymentRefunding`).
+ */
+export const PREVIOUS_PAYMENT_REFUNDING_NOTICE =
+  "Your earlier card payment was for an out-of-date amount, so it will be returned to your card; the club will contact you if it cannot be. Pay the amount below to complete the booking.";
+
+export const SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY = Object.freeze({
+  code: SUPERSEDED_CARD_PAYMENT_REFUNDING_CODE,
+  error: SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE,
+  paymentRefunding: true as const,
+  repaymentRequired: true as const,
+});
+
+export function isSupersededCardPaymentRefunding(
+  value: unknown,
+): value is typeof SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.code === SUPERSEDED_CARD_PAYMENT_REFUNDING_CODE &&
+    candidate.paymentRefunding === true &&
+    candidate.repaymentRequired === true
+  );
+}
 
 export type PaymentReceivedFinalisationPending = Readonly<{
   paymentReceived: true;

@@ -8,6 +8,7 @@ import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement
 import type { PaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
 import type { PaidBackRefundRequest } from "@/lib/xero-inbound/refund-request-paid-back";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import type { AdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",
@@ -22,6 +23,8 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // #3635: a late capture a treasurer kept on a cancelled booking, whose
   // booking payment Xero has no invoice for.
   "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+  // #3953 (`INV-PAY-139`): a change's card capture no Xero invoice records.
+  "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO",
   // #3635 round-3 R5: a kept capture an officer recorded by hand in Xero was
   // refunded; the app raises no note for it, so an officer records the refund
   // by hand too. Report-only, never actionable.
@@ -92,6 +95,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
   // #3635: the invoice, paid from Stripe, recording a kept late capture.
   "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+  // #3953: that capture's receipt, which reads Xero before it records anything.
+  "QUEUE_ADDITIONAL_CAPTURE_RECEIPT",
   // #3924 round 8: a paid-another-way close's note, once its receipt is in Xero.
   "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE",
   // #3548: operator-applied only (`--apply-action`), through the one settle.
@@ -277,6 +282,8 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
           reason: true,
           // #3528: a withdrawn charge request must not plan a new invoice.
           withdrawnAt: true,
+          // #3953: the change a captured ask pays for, which its receipt reads.
+          bookingModificationId: true,
           createdAt: true,
           insertionSeq: true,
           updatedAt: true,
@@ -483,6 +490,8 @@ export interface BookingClassificationContext {
    * the late-capture finding must not offer to refund it.
    */
   lateCaptureApprovalIntentIds: Set<string>;
+  /** #3953: this booking's change captures in Xero (`loadAdditionalCaptureReceiptEvidence`); absent, none to check. */
+  additionalCaptureReceipts?: AdditionalCaptureReceiptEvidence;
   /**
    * #4104 (#4128 review C5): by charge, the cents a card refund Stripe failed
    * later is still owed by a row of its own. The late-capture finding leaves

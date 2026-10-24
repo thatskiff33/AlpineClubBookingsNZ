@@ -83,6 +83,37 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     expect(factValue(summary!, "Payment intent")).toBe("pi_kept");
   });
 
+  it("summarizes a change capture's receipt, and the invoice its stored decision names (#3953)", () => {
+    const queued = {
+      queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+      bookingId: "booking-abcdefghijklmno",
+      paymentId: "payment-1",
+      paymentTransactionId: "ptx-1",
+      paymentIntentId: "pi_change",
+    };
+    const before = summarizeXeroOperation(
+      { entityType: "PAYMENT", operationType: "CREATE", requestPayload: queued, responsePayload: null },
+      CLUB_FORMAT_TEST,
+    );
+    expect(before?.title).toBe("Queued: record a booking change's card payment");
+    expect(factValue(before!, "Payment intent")).toBe("pi_change");
+    const planned = summarizeXeroOperation(
+      {
+        entityType: "PAYMENT",
+        operationType: "CREATE",
+        requestPayload: {
+          ...queued,
+          plan: { target: "GAP_INVOICE", invoiceId: "inv-abcdefghijklmno", amountCents: 8000, capturedCents: 8000, date: "2026-06-30" },
+        },
+        responsePayload: null,
+      },
+      CLUB_FORMAT_TEST,
+    );
+    expect(factValue(planned!, "Recorded against")).toBe("Supplementary invoice for the change");
+    expect(factValue(planned!, "Amount")).toBe("$80.00");
+    expect(factValue(planned!, "Payment date")).toBe("2026-06-30");
+  });
+
   it("summarizes a queued group-settlement invoice void", () => {
     const summary = summarizeXeroOperation({
       entityType: "INVOICE",

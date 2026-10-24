@@ -39,6 +39,14 @@ Postgres `max_connections=40`:
 | `app` | cron leader + warm fallback web | 5 |
 | `migrate` | deploy-window migrations | 2 |
 
+The ceiling holds per container because `src/lib/prisma.ts` shares one client
+through `globalThis` (#4269). Before that, each of Next's server bundles built its
+own client and pool: one container with `connection_limit=10` was measured at 22
+backends under load, which made the 27-connection budget below an undercount by
+about a factor of two. The same measurement after the change reads 10. A pool you
+add elsewhere (the audit-archive client, the diagnostics pool) is extra and is
+opened only when that feature is configured.
+
 The worst case is a blue/green handover (both web slots briefly live) that
 overlaps a migration:
 

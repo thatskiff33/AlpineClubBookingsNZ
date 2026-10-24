@@ -30,6 +30,7 @@ import {
   type EditReviewChargeShareRow,
 } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
+import { loadAdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {
@@ -592,8 +593,12 @@ export async function loadAuditData(
     operationsByLocalKey.set(key, list);
   }
 
+  // #3953: the change captures each booking's Xero records hold, or do not.
+  const additionalCaptureReceipts = await loadAdditionalCaptureReceiptEvidence(deps.prisma, bookings);
+
   return bookings.map<BookingClassificationContext>((booking) => ({
     booking,
+    additionalCaptureReceipts: additionalCaptureReceipts.get(booking.id),
     paymentLinks: booking.payment
       ? linksByLocalKey.get(makeLocalKey("Payment", booking.payment.id)) ?? []
       : [],

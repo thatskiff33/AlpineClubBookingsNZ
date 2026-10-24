@@ -62,6 +62,7 @@ import {
   sendAdminBankTransferSettlementFigureAlert,
   sendAdminSecondInstrumentSettlementConflictAlert,
   sendAdminDuplicateCaptureKeptAlert,
+  sendAdminSupersededCaptureRefusedAlert,
 } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
@@ -668,6 +669,33 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     // #4211 review: never "refund the other one" when there is no other one.
     expect(alone).not.toContain("refund the other one");
     expect(alone).toContain("refund it by hand only if the booking should not be paid by it");
+  });
+
+  it("admin-superseded-capture-refused: {{supersededCaptureNote}} says it was not applied, worded by the booking's status (#4300)", async () => {
+    const alert = {
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      bookingId: "booking-9",
+      bookingCancelled: false,
+      amountCents: 27000,
+      paymentIntentId: "pi_superseded",
+    };
+    await sendAdminSupersededCaptureRefusedAlert(alert, CLUB_FORMAT_TEST);
+    const owing = renderDefaultBody("admin-superseded-capture-refused", capturedUnmuteableTemplateData());
+    expect(owing).toContain("It did not mark the booking paid");
+    expect(owing).toContain("The booking still owes its payment.");
+    expect(owing).toContain("Stripe PI: pi_superseded");
+    const [args] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [{ subject: string; templateName: string }];
+    expect(args.subject).toBe("Card payment on a replaced payment — not applied: Alice Example");
+    expect(args.templateName).toBe("admin-superseded-capture-refused");
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSupersededCaptureRefusedAlert({ ...alert, bookingCancelled: true }, CLUB_FORMAT_TEST);
+    const cancelled = renderDefaultBody("admin-superseded-capture-refused", capturedUnmuteableTemplateData());
+    expect(cancelled).toContain("The booking has been cancelled");
+    expect(cancelled).not.toContain("still owes");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

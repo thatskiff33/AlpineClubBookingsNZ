@@ -17,10 +17,17 @@
  * the primary invoice (`markedModificationIdsAtBuild`): an edit marked after it
  * is one that landed while the create was in flight, which is what the
  * treasurer's task describes (review M5).
+ *
+ * #3953 (`INV-PAY-139`): and the card captures the payment's cash figure holds,
+ * oldest first with their net cash (`capturesAtBuild`). The link's save keeps
+ * those the cash it recorded covers (`paymentIntentIdsRecordedAtLink`); every
+ * other change capture is recorded by its own receipt.
  */
 import { prisma } from "@/lib/prisma";
 import { FEE_ON_PRIMARY_INVOICE_PATH } from "@/lib/booking-finished-stay-correction";
 import { SETTLED_AGAINST_PRIMARY_INVOICE_PATH } from "@/lib/booking-primary-invoice-claim";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 /**
  * The edits that settled against the primary invoice: an ordinary edit's #3980
@@ -58,7 +65,27 @@ export async function readBookingForPrimaryInvoice(bookingId: string) {
       const marked = booking
         ? await tx.bookingModification.findMany({ where: markedPrimaryInvoiceEditsWhere(bookingId), select: { id: true } })
         : [];
-      return { booking, markedModificationIdsAtBuild: marked.map((row) => row.id) };
+      const captured = booking?.payment
+        ? await tx.paymentTransaction.findMany({
+            where: {
+              paymentId: booking.payment.id,
+              source: "STRIPE",
+              status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] },
+              stripePaymentIntentId: { not: null },
+            },
+            orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+            select: { stripePaymentIntentId: true, amountCents: true, refundedAmountCents: true },
+          })
+        : [];
+      return {
+        booking,
+        markedModificationIdsAtBuild: marked.map((row) => row.id),
+        capturesAtBuild: captured.flatMap((row) =>
+          row.stripePaymentIntentId
+            ? [{ paymentIntentId: row.stripePaymentIntentId, netCents: Math.max(0, row.amountCents - row.refundedAmountCents) }]
+            : [],
+        ),
+      };
     },
     { isolationLevel: "RepeatableRead" },
   );

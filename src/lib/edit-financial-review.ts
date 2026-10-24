@@ -227,8 +227,9 @@ export async function raiseEditFinancialReviewTask({
    * `bookingModificationId` beside it gives: a caller that quietly inherited
    * `null` would have its refund silently re-routed to credit, and the failure
    * would surface only when an admin closed the task. Derive it through
-   * `editReviewSettlementPaymentId`; `raiseParkedEditFinancialReviewTask` below
-   * does that and is what every production caller uses.
+   * `editReviewSettlementPayment` (`booking-payment-state.ts`). No production
+   * path raises a task since #4317; tests building open tasks for the settle
+   * path still call this.
    */
   paymentId: string | null;
   /**

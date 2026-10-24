@@ -269,9 +269,9 @@ export type RepairableStrand = {
    * with both variable parts at zero.
    *
    * "At most one" is a property of the GRAIN rather than a rule policed here:
-   * `parkedEditWorkItems` fans an edit out into one item per strand the moment
-   * two strands' night sets move, precisely so that one item never has two
-   * strands with a claim on one settled amount.
+   * the raise (retired by #4317) fanned an edit out into one item per strand the
+   * moment two strands' night sets moved, precisely so that one item never has
+   * two strands with a claim on one settled amount.
    *
    * IT IS NOT "the first strand with blanks", and the difference is money. The
    * shape that separates them is the ordinary parked removal: the departing

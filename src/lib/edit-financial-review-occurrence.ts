@@ -146,8 +146,8 @@ export function editFinancialReviewOccurrenceKey(
 
       SORTED BY STRAND, so the order the planner happened to walk the booking's
       guests in cannot change the identity - the same rule the night prices below
-      already follow, and the reason `parkedEditOccurrence` sorts them is
-      presentation rather than identity. An ABSENT list and an EMPTY one hash
+      already follow, and the reason the raise (retired by #4317) sorted them
+      was presentation rather than identity. An ABSENT list and an EMPTY one hash
       identically on purpose: they mean the same thing, and a parked edit with
       one recorded strand must not depend on which spelling built it.
     */

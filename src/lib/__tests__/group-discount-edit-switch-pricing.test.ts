@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import type { SeasonRateData } from "@/lib/policies/pricing";
-import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 
 /**
  * #2770 (INV-MOD-026): what the club's `applyToEdits` switch actually does to
@@ -195,27 +194,18 @@ interface PartyGuest {
   }>;
 }
 
-/** What a guest's stored night rows say they have paid so far. */
 /**
- * The pricing result, insisting it priced (#3031).
+ * The pricing result, narrowed to the priced shape (#4317).
  *
- * `calculateModifiedPricing` answers with a discriminated result now, so a
- * fixture whose stored rows stop reconciling fails HERE, naming the causes,
- * rather than later on an expectation about a number that was never produced.
+ * `calculateModifiedPricing` answers `{ kind: "priced" }` only now - no edit
+ * parks its money for an officer - so there is no unpriceable case left to
+ * assert away. The helper stays so the call sites keep one place that names the
+ * result they are reading.
  */
 async function pricedPricing(
   ...args: Parameters<typeof calculateModifiedPricing>
 ) {
-  const result = await calculateModifiedPricing(...args);
-  if (result.kind !== "priced") {
-    throw new Error(
-      `Expected a priced modification, got financial review: ${result.occurrences
-        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
-        .map((strand) => strand.cause)
-        .join(", ")}`,
-    );
-  }
-  return result;
+  return calculateModifiedPricing(...args);
 }
 
 function storedPriceOf(guest: PartyGuest): number {
@@ -315,7 +305,7 @@ describe.each(SEASON_SHAPES)(
     async function extendByOneNight(state: "disabled" | "on" | "off") {
       const party = FIVE_NON_MEMBERS;
       const result = await pricedPricing(txFor(state, summerOnly), {
-        booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
+        booking: bookingOf(party, D("2026-09-10"), D("2026-09-12")),
         bookingId: "b1",
         isInProgressEdit: false,
         editableFrom: null,
@@ -401,7 +391,7 @@ describe.each(SEASON_SHAPES)(
 
       const run = (state: "disabled" | "on" | "off") =>
         pricedPricing(txFor(state, summerOnly), {
-          booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
+          booking: bookingOf(party, D("2026-09-10"), D("2026-09-12")),
           bookingId: "b1",
           isInProgressEdit: false,
           editableFrom: null,
@@ -443,7 +433,7 @@ describe.each(SEASON_SHAPES)(
       }));
       const run = (state: "disabled" | "on" | "off") =>
         pricedPricing(txFor(state, summerOnly), {
-          booking: bookingOf(party, D("2026-09-10"), D("2026-09-12"), 0),
+          booking: bookingOf(party, D("2026-09-10"), D("2026-09-12")),
           bookingId: "b1",
           isInProgressEdit: false,
           editableFrom: null,

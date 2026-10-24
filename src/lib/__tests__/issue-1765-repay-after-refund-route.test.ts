@@ -27,6 +27,15 @@ vi.mock("@/lib/prisma", () => {
         findUnique: vi.fn(),
       },
       payment,
+      // #4300: the superseded-intent check before a succeeded intent settles
+      // anything; no superseded-intent row owns these intents.
+      paymentRecoveryOperation: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      // ...and the intent's own ledger row, which names its payment; none here.
+      paymentTransaction: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
       // #3638: the mint attaches its intent under lock(1), re-reading the
       // payment's source first; nothing here has switched to Internet Banking.
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
@@ -110,6 +119,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn> };
   payment: { upsert: ReturnType<typeof vi.fn> };
+  paymentRecoveryOperation: { findFirst: ReturnType<typeof vi.fn> };
 };
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
@@ -180,6 +190,8 @@ beforeEach(() => {
     user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
   });
   mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
+  // #4300: by default no superseded-intent row owns the pointed intent.
+  mockPrisma.paymentRecoveryOperation.findFirst.mockReset().mockResolvedValue(null);
   mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
   mocks.queueSupersededPrimaryIntentCancellations.mockResolvedValue([]);
   mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-1" });
@@ -221,7 +233,7 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
     expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({
         amountCents: REPRICED_FINAL,
-        idempotencyKey: "pi_booking-1_repay_pi_refunded",
+        idempotencyKey: "pi_booking-1_repay_pi_refunded_9000_nzd",
       })
     );
     // The fresh PRIMARY transaction lands on the SAME payment row; the
@@ -327,6 +339,41 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
       createdByMemberId: "member-1",
     });
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("(c3) #4300: a capture the superseded machinery owns is repaid like refund history, never reconciled", async () => {
+    // The edit superseded this intent; its capture was handed to its refund
+    // (cancel row SUCCEEDED, refund row not yet), and the price came back to
+    // its amount - so without the check it would settle the booking.
+    mockPrisma.booking.findUnique.mockResolvedValue(
+      makeRepayBooking({ status: "PROCESSING", stripePaymentIntentId: "pi_superseded" })
+    );
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_superseded",
+      amount: REPRICED_FINAL,
+      status: "succeeded",
+      client_secret: "cs_superseded",
+      payment_method: "pm_123",
+    });
+    mocks.findPaymentTransactionByIntentId.mockResolvedValue({ id: "txn-superseded", status: "SUCCEEDED" });
+    mockPrisma.paymentRecoveryOperation.findFirst.mockImplementation((args: { where: { type: unknown } }) =>
+      Promise.resolve(args.where.type === "CANCEL_PAYMENT_INTENT" ? null : { id: "op-superseded-refund" })
+    );
+
+    const res = await createPaymentIntentRoute(makeRequest());
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.clientSecret).toBe("cs_fresh");
+    expect(data.paymentIntentId).toBe("pi_fresh");
+    expect(data.alreadyPaid).toBeUndefined();
+    // #4300: the member is told the earlier payment is going back.
+    expect(data.previousPaymentRefunding).toBe(true);
+    expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+    expect(mocks.queueXeroInvoiceForPaidBooking).not.toHaveBeenCalled();
+    expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: REPRICED_FINAL, idempotencyKey: "pi_booking-1_repay_pi_superseded_9000_nzd" })
+    );
   });
 
   it("(c2) legacy pre-ledger recovery (no transaction row, payment PROCESSING) still reconciles", async () => {
@@ -435,9 +482,9 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
     await createPaymentIntentRoute(makeRequest());
     const keyGen2 = mockStripeCreatePaymentIntent.mock.calls[0][0].idempotencyKey;
 
-    expect(keyGen1Attempt1).toBe("pi_booking-1_repay_pi_refunded");
+    expect(keyGen1Attempt1).toBe("pi_booking-1_repay_pi_refunded_9000_nzd");
     expect(keyGen1Attempt2).toBe(keyGen1Attempt1);
-    expect(keyGen2).toBe("pi_booking-1_repay_pi_repay_gen1");
+    expect(keyGen2).toBe("pi_booking-1_repay_pi_repay_gen1_9000_nzd");
     expect(keyGen2).not.toBe(keyGen1Attempt1);
     expect([keyGen1Attempt1, keyGen2]).not.toContain("pi_booking-1_initial");
     // Disjoint from the non-repay scheme for the same pointers.

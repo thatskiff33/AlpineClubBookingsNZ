@@ -61,11 +61,8 @@ import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
 import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
-import {
-  findLiveSupersededIntentOperation,
-  listLiveSupersededIntentIds,
-  listSupersededIntentIdsOwningCaptures,
-} from "@/lib/superseded-intent-ownership";
+import { readSupersededOwnership } from "@/lib/superseded-capture-ownership";
+import { listLiveSupersededIntentIds } from "@/lib/superseded-intent-ownership";
 
 /**
  * Which captures could be the settlement an arriving capture duplicates:
@@ -149,23 +146,10 @@ export async function judgeCaptureOnPaidBooking(
 
   // The Xero conflict's reading (`listSupersededIntentIdsOwningCaptures`): a
   // cancel only while in flight, a superseded refund until it SUCCEEDED, and
-  // (#4227) a capture whose failed-later refund open rows owe back in full.
-  const holdsForMember = new Set(
-    await listSupersededIntentIdsOwningCaptures(
-      tx,
-      input.paymentId,
-      await tx.paymentTransaction.findMany({
-        orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
-        where: {
-          paymentId: input.paymentId,
-          kind: PaymentTransactionKind.PRIMARY,
-          source: PaymentSource.STRIPE,
-          status: { in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST] },
-        },
-        select: { stripePaymentIntentId: true, amountCents: true, refundedAmountCents: true },
-      }),
-    ),
-  );
+  // (#4227) a capture whose failed-later refund open rows owe back in full -
+  // read once with (c′) in the one home (`readSupersededOwnership`, #4300).
+  const ownership = await readSupersededOwnership(tx, input.paymentId);
+  const holdsForMember = ownership.holdsForMember;
   // #4283: the ARRIVING capture is refunded on top only if nothing is already
   // sending its money back - read the Xero way, so a DEAD cancel (one that
   // handed the money to nobody) leaves it a duplicate like any other. Held:
@@ -175,8 +159,7 @@ export async function judgeCaptureOnPaidBooking(
   // operation not SUCCEEDED counts (wrongly skipping costs nothing; wrongly
   // counting refunds the real settlement), plus #4227's owed-back captures.
   const supersededOwned = [...(await listLiveSupersededIntentIds(tx, input.paymentId)), ...holdsForMember];
-  const supersededOwns = async (paymentIntentId: string) =>
-    holdsForMember.has(paymentIntentId) || !!(await findLiveSupersededIntentOperation(tx, paymentIntentId));
+  const supersededOwns = (paymentIntentId: string) => ownership.owns(paymentIntentId);
 
   const duplicateRefundIntentIds = await listDuplicateCaptureRefundIntentIds({
     bookingId: input.bookingId,

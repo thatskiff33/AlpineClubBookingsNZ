@@ -52,14 +52,14 @@ function jsonResponse(data: unknown, status = 200) {
 // is always held.
 const PROMO_CHANGE_PREVIEW = promoChangeNotAppliedMessage({
   requested: "apply",
-  reason: "AMOUNT_UNDER_REVIEW",
+  reason: "STAY_IN_PROGRESS",
   promoCode: "SUMMER25",
   phase: "preview",
   guestRemovalsRequested: false,
 });
 const PROMO_CHANGE_SAVED = promoChangeNotAppliedMessage({
   requested: "apply",
-  reason: "AMOUNT_UNDER_REVIEW",
+  reason: "STAY_IN_PROGRESS",
   promoCode: "SUMMER25",
   phase: "saved",
   guestRemovalsRequested: false,
@@ -97,7 +97,7 @@ function quotePayload(
     promoChangeNotApplied: promoChangeMessage
       ? {
           requested: "apply" as const,
-          reason: "AMOUNT_UNDER_REVIEW" as const,
+          reason: "STAY_IN_PROGRESS" as const,
           promoCode: "SUMMER25",
           message: promoChangeMessage,
         }
@@ -317,7 +317,7 @@ describe("EditBookingPanel — a promo-code change the edit could not carry (#31
   it("holds the panel open after the save EVEN THOUGH the preview said the same thing", async () => {
     // This is the whole difference from the coverage notice above, which the
     // panel deliberately suppresses when the save repeats what the preview
-    // already said. Here the edit parks for the same reason both times, so a
+    // already said. Here the edit drops the change for the same reason both times, so a
     // suppression rule would suppress this notice essentially always and close
     // the member out on a partial save with nothing on screen.
     //
@@ -334,7 +334,7 @@ describe("EditBookingPanel — a promo-code change the edit could not carry (#31
       jsonResponse({
         promoChangeNotApplied: {
           requested: "apply",
-          reason: "AMOUNT_UNDER_REVIEW",
+          reason: "STAY_IN_PROGRESS",
           promoCode: "SUMMER25",
           message: PROMO_CHANGE_SAVED,
         },

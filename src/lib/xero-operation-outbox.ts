@@ -67,6 +67,10 @@ import {
 } from "@/lib/xero-resolved-in-xero-fences";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
+import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
+import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
+import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
+import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
@@ -98,6 +102,7 @@ import {
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+  XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -1455,6 +1460,8 @@ interface XeroSupplementaryInvoiceEnqueueOptions {
   paymentIntentId?: string | null;
   waitForConfirmedAdditionalPayment?: boolean;
   recordPayment?: boolean;
+  /** #3953 (`INV-PAY-139`): a #3980 gap invoice, and the captures its own payment takes (none when unpaid). */
+  primaryInvoiceGap?: { coveredCaptures: ReadonlyArray<{ paymentIntentId: string; cents: number }> };
 }
 
 /**
@@ -1501,6 +1508,7 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     paymentIntentId: options?.paymentIntentId,
     waitForConfirmedAdditionalPayment: options?.waitForConfirmedAdditionalPayment,
     recordPayment: options?.recordPayment,
+    primaryInvoiceGap: options?.primaryInvoiceGap,
   });
 }
 
@@ -1621,6 +1629,8 @@ async function enqueueSupplementaryInvoiceForAnchor(
    * stale, smaller total arriving second changes nothing.
    */
   const decide = async (tx: Prisma.TransactionClient) => {
+    // #3953 round 7: where the booking has a change capture no change can be read from, its receipt decides under the BOOKING's key, so this takes that key first (booking, then anchor - the one order; nothing takes them the other way). Round 9: only for an invoice naming no capture, the one kind that might record such a capture.
+    if (localId !== bookingId && (options?.recordPayment ?? true) && !options?.primaryInvoiceGap && !options?.paymentIntentId && (await bookingHasUnattributedCaptures(tx, bookingId))) await lockSupplementaryInvoiceAnchor(tx, bookingId);
     await lockSupplementaryInvoiceAnchor(tx, localId);
 
     const existingLink = await tx.xeroObjectLink.findFirst({
@@ -1699,6 +1709,8 @@ async function enqueueSupplementaryInvoiceForAnchor(
       };
     }
 
+    // #3953 round 6: a capture its own receipt records (or is recording) is never recorded again here; a gap invoice decides its own cash.
+    const recordPayment = (options?.recordPayment ?? true) && (Boolean(options?.primaryInvoiceGap) || !(await anchorCaptureHasReceipt(tx, { bookingId, bookingModificationId: localModel === "BookingModification" ? localId : null, paymentIntentId: options?.paymentIntentId ?? null })));
     const queuedOperation = await startXeroSyncOperation({
       direction: "OUTBOUND",
       entityType: "INVOICE",
@@ -1714,13 +1726,14 @@ async function enqueueSupplementaryInvoiceForAnchor(
         priceDiffCents,
         changeFeeCents,
         bookingModificationId: bookingModificationId ?? null,
-        recordPayment: options?.recordPayment ?? true,
+        recordPayment,
         paymentIntentId: options?.paymentIntentId ?? null,
         waitForConfirmedAdditionalPayment:
           options?.waitForConfirmedAdditionalPayment ?? false,
         // #3193: the handler reads this to anchor the link, scope the Xero
         // idempotency key and tell the member why they are being asked twice.
         shortfallReviewTaskId,
+        ...primaryInvoiceGapPayload(options?.primaryInvoiceGap),
       },
       createdByMemberId: options?.createdByMemberId ?? null,
       store: tx,
@@ -2877,7 +2890,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
       },
       // #3954 round 8: a billed-offset note waiting for its edit's own note
       // is looked at again only every few minutes, not on every kick.
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date())],
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
     },
     orderBy: {
       createdAt: "asc",
@@ -3088,6 +3101,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
           syncOperationId: queuedOperation.id,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
         });
+      } else if (payload?.queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) {
+        // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
+        await recordAdditionalCaptureReceipt({ syncOperationId: queuedOperation.id, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
           bookingId: payload.bookingId,

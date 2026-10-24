@@ -5,8 +5,10 @@ import {
   isPaymentReceivedFinalisationPending,
   isPaymentReceivedStatusUnconfirmed,
   isRefundedCardTransactionRepaymentRequired,
+  isSupersededCardPaymentRefunding,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
 } from "@/lib/payment-recovery-contract";
 
 describe("ordinary post-capture payment recovery contract", () => {
@@ -96,5 +98,15 @@ describe("ordinary post-capture payment recovery contract", () => {
     expect(REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY).not.toHaveProperty(
       "paymentIntentId",
     );
+  });
+
+  it("#4300: recognises only the paired refunding and repayment-required facts of a superseded payment", () => {
+    expect(isSupersededCardPaymentRefunding(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY)).toBe(true);
+    expect(isSupersededCardPaymentRefunding({ ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, repaymentRequired: false })).toBe(false);
+    expect(isSupersededCardPaymentRefunding({ ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, paymentRefunding: false })).toBe(false);
+    expect(isSupersededCardPaymentRefunding(REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY)).toBe(false);
+    // Never a claim that the booking was paid, and no provider id.
+    expect(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY).not.toHaveProperty("paymentReceived");
+    expect(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY).not.toHaveProperty("paymentIntentId");
   });
 });

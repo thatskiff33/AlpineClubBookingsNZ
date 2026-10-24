@@ -10,59 +10,47 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  *
  * ## The rule this guard enforces: `INV-MOD-028`
  *
- * Cited by id rather than by issue number, per `AGENTS.md`. It is INV-MOD-028
- * and not a new id of its own, deliberately: this obligation is a clause of
- * "what every parked path does, identically" and is documented inside that
- * rule's own section in `docs/invariants/booking-modifications.md`, where the
- * parked-edit contract already lives. Minting a second id would split one
- * contract across two homes, which is the opposite of what the invariant docs
- * are for. The `STAY_IN_PROGRESS` arm is defence in depth for a refusal that
- * holds (`INV-MOD-019`), not an independently live rule.
+ * Cited by id rather than by issue number, per `AGENTS.md`. The obligation is a
+ * clause of `INV-MOD-028`, documented in its section of
+ * `docs/invariants/booking-modifications.md`. The `STAY_IN_PROGRESS` arm is
+ * defence in depth for a refusal that holds (`INV-MOD-019`): both surfaces
+ * refuse a promo change on a stay already under way with a 400 - the
+ * modify-quote route in its `isInProgressEdit` block, and the save in
+ * `resolveTargetDates` - so `applyPromoCodeChanges`' in-progress stub is never
+ * reached carrying one.
  *
- * ## What was actually wrong, which is not quite what the issue said
- *
- * The issue reported the silent drop on the IN-PROGRESS edit path. Measured
- * against the code, that path is not silent: both surfaces refuse a promo change
- * on a stay already under way with a 400 — the modify-quote route in its
- * `isInProgressEdit` block, and the save in `resolveTargetDates` — so
- * `applyPromoCodeChanges`' in-progress stub is never reached carrying one.
- *
- * The drop that IS real and IS silent is the PARKED edit (#3166/#3170,
- * `INV-MOD-028`): a booking whose stored night prices cannot be read commits its
- * structural change and holds the money for a person, and on that branch no
- * promotion is re-run. That branch is reached from the ordinary member edit
- * panel on a stay that has NOT started — which is exactly where the panel does
- * show the promo card. The member got an HTTP 200, a changed booking, and no
- * word about the code.
+ * #4317 (epic #4302) retired the other reason this sentence once had,
+ * `AMOUNT_UNDER_REVIEW` (an edit that parked its money for an officer and
+ * re-ran no promotion): every edit is now priced automatically and none parks,
+ * so the parked branch, its preview response and its wording are gone. What is
+ * left is the one reason above, wired so relaxing either refusal cannot
+ * re-open the silence.
  *
  * ## What is pinned here
  *
- * 1. the sentence itself, including the two reasons and both tenses;
+ * 1. the sentence itself, in both tenses;
  * 2. the email carrying it, on BOTH composed bodies (the hand-built HTML and the
  *    admin-editable flat body), which is the durable copy for a member who
  *    closed the panel; and
- * 3. the WIRING, by reading THREE call sites off disk - the save's gate, the
- *    parked preview and the in-progress preview - plus a fourth assertion on the
- *    plan module. Each must build the notice from the one shared function, or a
- *    future edit can make the drop silent again without any test noticing.
+ * 3. the WIRING, by reading the call sites off disk - the save's gate and the
+ *    in-progress preview - plus a further assertion on the plan module. Each
+ *    must build the notice from the one shared function, or a future edit can
+ *    make the drop silent again without any test noticing.
  *
  *    NOTE the save's gate is on `promo.promoEngineRan`, NOT on the caller's own
- *    stub branch. Gating it on the branch is the pre-fix shape and it is worth
- *    knowing why it was wrong: the notice was built only where the FIGURES were
- *    stubbed, so an in-progress PRICED edit — the one a future relaxation of the
- *    refusal would create — would have dropped the change with no notice
- *    anywhere.
+ *    stub branch: `applyPromoCodeChanges` stubs the figures itself on an
+ *    in-progress priced edit, so gating on the caller's branch would miss it.
  *
- *    That third block has no import edge to what it scans — the known blind spot
- *    of source-scanning contracts here — so it is written to name the file and
- *    the missing text in its failure message.
+ *    That block has no import edge to what it scans - the known blind spot of
+ *    source-scanning contracts here - so it is written to name the file and the
+ *    missing text in its failure message.
  *
  * MUTATION PROOF (each verified by breaking it, watching the named test fail,
  * and restoring):
  *  - delete the `describePromoChangeNotApplied` call from the save service and
  *    "the SAVE builds the notice on the branch that drops the change" fails;
- *  - delete it from `parkedQuoteResponse` and "the PREVIEW says it before the
- *    member presses Save" fails;
+ *  - delete it from the quote route's in-progress branch and "the PREVIEW says
+ *    it before the member presses Save" fails;
  *  - gate the save's notice on the caller's own stub predicate instead of
  *    `promo.promoEngineRan` and "the notice is gated on whether the promotion
  *    engine RAN, not on which branch priced" fails;
@@ -119,7 +107,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: null,
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -128,7 +116,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
     expect(notice?.promoCode).toBe("SPRING24");
     expect(notice?.requested).toBe("apply");
     expect(notice?.message).toContain("SPRING24 was not applied");
-    expect(notice?.message).toMatch(/with the club to price/i);
+    expect(notice?.message).toMatch(/stay that has already started/i);
     expect(notice?.message).toMatch(/does not include a discount/i);
     // The code is not burnt: a member who was refused the discount must know
     // they can still use it, or they will not try again.
@@ -137,7 +125,11 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
     expect(notice?.message).toMatch(/contact the club/i);
   });
 
-  it("says the stay has already started when THAT is the reason, and never the other way round", () => {
+  it("says the stay has already started, and nothing about an officer pricing it", () => {
+    // #4317 retired the second reason (an edit parking its money for an
+    // officer): every edit is priced automatically, so STAY_IN_PROGRESS is the
+    // only wording and must never promise an officer review that no longer
+    // exists.
     const inProgress = promoChangeNotAppliedMessage({
       requested: "apply",
       reason: "STAY_IN_PROGRESS",
@@ -145,20 +137,10 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       phase: "saved",
       guestRemovalsRequested: false,
     });
-    const parked = promoChangeNotAppliedMessage({
-      requested: "apply",
-      reason: "AMOUNT_UNDER_REVIEW",
-      promoCode: "SPRING24",
-      phase: "saved",
-      guestRemovalsRequested: false,
-    });
 
     expect(inProgress).toMatch(/stay that has already started/i);
     expect(inProgress).not.toMatch(/with the club to price/i);
-    // A parked edit can be on a stay that has not started at all, so telling
-    // that member their stay has begun would simply be false.
-    expect(parked).not.toMatch(/already started/i);
-    expect(parked).toMatch(/with the club to price/i);
+    expect(inProgress).not.toMatch(/under review/i);
   });
 
   it("tells a REMOVAL the truth about the code it did not release", () => {
@@ -167,7 +149,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: true,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -182,7 +164,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
   it("uses the future tense on the PREVIEW and the past tense on the SAVE", () => {
     const shared = {
       requested: "apply" as const,
-      reason: "AMOUNT_UNDER_REVIEW" as const,
+      reason: "STAY_IN_PROGRESS" as const,
       promoCode: "SPRING24",
       guestRemovalsRequested: false,
     };
@@ -198,14 +180,14 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
   });
 
   it("says nothing when the member's request was not dropped — the CONTROL", () => {
-    // No promo instruction at all: an ordinary parked date change.
+    // No promo instruction at all: an ordinary date change.
     expect(
       describePromoChangeNotApplied({
         requestedPromoCode: null,
         removePromoCodeRequested: false,
         currentPromoCode: "SPRING24",
         guestRemovalsRequested: false,
-        reason: "AMOUNT_UNDER_REVIEW",
+        reason: "STAY_IN_PROGRESS",
         phase: "saved",
       }),
     ).toBeNull();
@@ -219,7 +201,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
         removePromoCodeRequested: true,
         currentPromoCode: null,
         guestRemovalsRequested: false,
-        reason: "AMOUNT_UNDER_REVIEW",
+        reason: "STAY_IN_PROGRESS",
         phase: "saved",
       }),
     ).toBeNull();
@@ -238,11 +220,11 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
   });
 
   it("never tells a member holding a live discount that their code is unused", () => {
-    // REACHABLE THROUGH THE ORDINARY PANEL. On a stay that has not started the
-    // member presses Remove, then re-enters the SAME code to change who it
-    // covers: `promoAction.type === "new"` sends `promoCode` with no
-    // `removePromoCode`. The priced path treats that as remove-then-reapply. If
-    // that edit parks, this is the sentence they read — and the fixed wording
+    // The panel's Remove-then-re-enter-the-SAME-code gesture (to change who it
+    // covers) sends `promoCode` with no `removePromoCode`, and the priced path
+    // treats that as remove-then-reapply. Should such a request ever be
+    // dropped (today both surfaces refuse it on an in-progress stay), this is
+    // the sentence the member reads — and the fixed wording
     // told them the code "has not been used, so it is still available for
     // another booking" while its redemption sat on their booking and its
     // discount sat in the total on screen. Both clauses were false.
@@ -251,7 +233,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -276,7 +258,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -292,7 +274,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
   it("stops claiming who the code covers is unchanged when the same request removed a guest", () => {
     // REACHABLE THROUGH THE ORDINARY PANEL, and only ever in the safe
     // direction. `PromoRedemptionGuestTarget.bookingGuest` is
-    // `onDelete: Cascade` and a PARKED edit still deletes the rows for the
+    // `onDelete: Cascade` and an edit that drops the promo change still deletes the rows for the
     // guests it removes, so a booking whose SPRING24 covered Ann and Bob loses
     // Bob's target row when the member removes Bob and re-sends SPRING24 in the
     // same request. The stored discount is written back untouched — nothing is
@@ -308,7 +290,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: true,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -326,7 +308,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -340,7 +322,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: true,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -360,7 +342,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: false,
       currentPromoCode: null,
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -380,7 +362,7 @@ describe("the sentence a member reads when a promo-code change was dropped (#317
       removePromoCodeRequested: true,
       currentPromoCode: "SPRING24",
       guestRemovalsRequested: false,
-      reason: "AMOUNT_UNDER_REVIEW",
+      reason: "STAY_IN_PROGRESS",
       phase: "saved",
     });
 
@@ -396,7 +378,7 @@ const NEW_CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
 
 const NOTE = promoChangeNotAppliedMessage({
   requested: "apply",
-  reason: "AMOUNT_UNDER_REVIEW",
+  reason: "STAY_IN_PROGRESS",
   promoCode: "SPRING24",
   phase: "saved",
   guestRemovalsRequested: false,
@@ -523,7 +505,7 @@ describe("neither surface can drop a promo-code change silently again (#3179)", 
 
     expect(
       source,
-      `${SAVE_SERVICE} must call describePromoChangeNotApplied where it stubs the promotion figures — without it a parked or in-progress edit returns 200 having quietly discarded the member's promo-code change (#3179).`,
+      `${SAVE_SERVICE} must call describePromoChangeNotApplied where it stubs the promotion figures — without it an in-progress edit returns 200 having quietly discarded the member's promo-code change (#3179).`,
     ).toContain("describePromoChangeNotApplied(");
   });
 
@@ -532,7 +514,7 @@ describe("neither surface can drop a promo-code change silently again (#3179)", 
 
     expect(
       source,
-      `${SAVE_SERVICE} must gate the member's notice on promo.promoEngineRan. Gating it on this service's own stub predicate covers the parked branch and MISSES the in-progress priced one, where applyPromoCodeChanges stubs the figures itself - the exact branch the STAY_IN_PROGRESS wording exists for (#3179, INV-MOD-028).`,
+      `${SAVE_SERVICE} must gate the member's notice on promo.promoEngineRan. Gating it on this service's own stub predicate would MISS the in-progress priced branch, where applyPromoCodeChanges stubs the figures itself - the exact branch the STAY_IN_PROGRESS wording exists for (#3179, INV-MOD-028).`,
     ).toContain("const promoChangeNotApplied = promo.promoEngineRan");
 
     // ...and the local stub must answer the same question, so a new caller
@@ -565,14 +547,13 @@ describe("neither surface can drop a promo-code change silently again (#3179)", 
 
     expect(
       source,
-      `${QUOTE_ROUTE} must build the same notice in its parked quote response, or the preview quotes a settled-looking total while silently ignoring the code the member just applied (#3179).`,
+      `${QUOTE_ROUTE} must build the same notice on its in-progress branch, or the preview quotes a settled-looking total while silently ignoring the code the member just applied (#3179).`,
     ).toContain("describePromoChangeNotApplied(");
-    expect(source).toContain("promoChangeNotApplied: describePromoChangeNotApplied(");
 
-    // The IN-PROGRESS branch builds it too, and resolves to null today because
-    // the route refuses a promo change on that path a few hundred lines above.
-    // It is wired anyway: wording nothing calls for warns nobody, and this is
-    // the preview half of "relaxing either refusal cannot re-open the silence".
+    // The IN-PROGRESS branch builds it, and resolves to null today because the
+    // route refuses a promo change on that path a few hundred lines above. It
+    // is wired anyway: wording nothing calls for warns nobody, and this is the
+    // preview half of "relaxing either refusal cannot re-open the silence".
     expect(
       source,
       `${QUOTE_ROUTE} must build the notice on its in-progress branch as well - leaving it unwired because the refusal above makes it unreachable is exactly what would make relaxing that refusal silent again (#3179).`,
@@ -584,14 +565,14 @@ describe("neither surface can drop a promo-code change silently again (#3179)", 
   it("both surfaces answer the coverage question from the removals the request really made", () => {
     expect(
       executableSource(SAVE_SERVICE),
-      `${SAVE_SERVICE} must pass guestRemovalsRequested from the RESOLVED removals (guestPlan.removedGuests). A resent code's sentence claims who it covers has not changed; PromoRedemptionGuestTarget.bookingGuest is onDelete: Cascade and a parked edit still deletes the removed guest rows, so an edit carrying a removal narrows the coverage while the stored discount is written back untouched (#3179).`,
+      `${SAVE_SERVICE} must pass guestRemovalsRequested from the RESOLVED removals (guestPlan.removedGuests). A resent code's sentence claims who it covers has not changed; PromoRedemptionGuestTarget.bookingGuest is onDelete: Cascade and an edit still deletes the removed guest rows, so an edit carrying a removal narrows the coverage while the stored discount is written back untouched (#3179).`,
     ).toContain("guestRemovalsRequested: guestPlan.removedGuests.length > 0");
 
     const quote = executableSource(QUOTE_ROUTE);
     expect(
       quote.split("guestRemovalsRequested: removedGuests.length > 0").length - 1,
-      `${QUOTE_ROUTE} must pass the same resolved removals on BOTH branches that build the notice (the parked response and the in-progress preview), or the preview promises a coverage the save it is previewing then narrows (#3179).`,
-    ).toBe(2);
+      `${QUOTE_ROUTE} must pass the resolved removals on the branch that builds the notice (the in-progress preview), or the preview promises a coverage the save it is previewing then narrows (#3179).`,
+    ).toBe(1);
   });
 
   it("both surfaces compose it from the one shared module, never their own words", () => {
@@ -661,6 +642,53 @@ describe("applyPromoCodeChanges reports whether the promotion engine ran (#3179)
     expect(result.newDiscountCents).toBe(1_500);
     expect(result.promoChanged).toBe(false);
     expect(result.promoRemoved).toBe(false);
+  });
+
+  it("carries a capped in-progress promotion and scales its records, never re-deciding it (#4317 round 4)", async () => {
+    // The capped figure is the plan's; the stored redemption is kept, never
+    // re-validated, and scaled to the cap, so the engine does not run.
+    const redemption = {
+      id: "r1",
+      promoCodeId: "code-1",
+      bookingId: "b1",
+      memberId: "m1",
+      discountCents: 3_000,
+      priceAdjustmentCents: -3_000,
+      freeNightsUsed: null,
+      eligibleGuestCount: 1,
+      allocations: [{ memberId: "m1", discountCents: 3_000, priceAdjustmentCents: -3_000, freeNightsUsed: 0 }],
+    };
+    const capTx = { ...tx, promoRedemption: { findMany: vi.fn().mockResolvedValue([redemption]) } };
+    promoMocks.replacePromoRedemptionAllocations.mockClear();
+    promoMocks.validateAndCalculatePromoDiscount.mockClear();
+    const result = await applyPromoCodeChanges(
+      capTx as never,
+      baseArgs({
+        booking: { memberId: "m1", lodgeId: "lodge-1", discountCents: 3_000, promoAdjustmentCents: -3_000 },
+        inProgressPlan: {
+          newDiscountCents: 1_500,
+          newPromoAdjustmentCents: -1_500,
+          promotionCappedAtNewTotal: true,
+        },
+      }) as never,
+    );
+
+    expect(result.promoEngineRan).toBe(false);
+    expect(result.newPromoAdjustmentCents).toBe(-1_500);
+    expect(result.promoRemoved).toBe(false);
+    // The save's row scaler is picked from this (round 6): the records were scaled.
+    expect(result.carriedCapScaled).toBe(true);
+    expect(promoMocks.validateAndCalculatePromoDiscount).not.toHaveBeenCalled();
+    expect(promoMocks.lockPromoCodeRowsForUpdate).toHaveBeenCalledWith(capTx, ["code-1"]);
+    expect(promoMocks.replacePromoRedemptionAllocations).toHaveBeenCalledWith(
+      capTx,
+      redemption,
+      1_500,
+      -1_500,
+      undefined,
+      1,
+      [{ memberId: "m1", discountCents: 1_500, priceAdjustmentCents: -1_500, freeNightsUsed: 0 }],
+    );
   });
 
   it("reports that it DID run on an ordinary edit — the CONTROL", async () => {

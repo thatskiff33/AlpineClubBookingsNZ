@@ -16,6 +16,7 @@ import {
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { createPaymentIntent, getPaymentIntent } from "@/lib/stripe";
+import { bookingEndedBeforeAskMint, retireAskOnEndedBooking } from "@/lib/ended-booking-ask-guard";
 import { stripeChargeCurrency } from "@/lib/stripe-charge-currency";
 
 /**
@@ -51,6 +52,12 @@ export function intentCurrencyDiffers(
  *    additional pointer names the new intent.
  *
  * Stripe calls happen outside any transaction; nothing here takes a lock.
+ *
+ * #4316 (`INV-ADDPAY-044`): it is a mint like the door's, so it runs the door's
+ * two checks. A booking ended (CANCELLED or BUMPED) before the mint gets no new
+ * intent; one ended by a cancel that landed before the row write has the new
+ * intent retired as the cancel retires one. Either way it returns `null`, and
+ * nothing is offered.
  */
 export async function reissueAdditionalIntentInClubCurrency({
   format,
@@ -68,7 +75,8 @@ export async function reissueAdditionalIntentInClubCurrency({
   ask: AdditionalAsk;
   reason: string | null;
   customerId: string | null;
-}): Promise<Stripe.PaymentIntent> {
+}): Promise<Stripe.PaymentIntent | null> {
+  if (await bookingEndedBeforeAskMint(bookingId, null)) return null;
   const currency = stripeChargeCurrency(format);
   const pi = await createPaymentIntent({
     format,
@@ -119,6 +127,7 @@ export async function reissueAdditionalIntentInClubCurrency({
     newPaymentIntentId: pi.id,
   });
   await reconcilePaymentAggregates({ paymentId });
+  if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return null;
   return pi;
 }
 
@@ -130,6 +139,8 @@ export async function reissueAdditionalIntentInClubCurrency({
  * the club's currency instead, and the old one superseded. The new row keeps the
  * request's `reason`, so the next share finds it. Returns the new intent's id,
  * or `null` when the currency is unchanged and the caller raises as before.
+ * #4316: a booking that ended meanwhile THROWS, with nothing offered: the
+ * caller's debt goes to its recovery row, whose replay takes the cancelled path.
  */
 export async function reissueRaisedAskIfCurrencyChanged(params: {
   format: ClubFormat;
@@ -151,5 +162,8 @@ export async function reissueRaisedAskIfCurrencyChanged(params: {
       : live.customer.id
     : null;
   const reissued = await reissueAdditionalIntentInClubCurrency({ ...params, customerId });
+  if (!reissued) {
+    throw new Error(`Booking ${params.bookingId} ended before its review charge could be re-issued in the club's currency; nothing was offered (#4316)`);
+  }
   return reissued.id;
 }

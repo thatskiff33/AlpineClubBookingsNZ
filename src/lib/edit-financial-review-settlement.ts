@@ -11,8 +11,8 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment, refusesReviewChargeForCancellation } from "@/lib/booking-payment-state";
-import { prisma } from "@/lib/prisma";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { readBookingHasEnded } from "@/lib/booking-ended";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -629,7 +629,7 @@ export async function executeEditReviewSettlement({
     if (charged.outcome === "booking-cancelled") {
       return { stripeRefundId, additionalPaymentIntentId, chargeBookingCancelled: { recorded: charged.recordedUncollected === true } };
     }
-    if (route.collectVia === "stripe" && (await isBookingCancelledNow(bookingId))) return { stripeRefundId, additionalPaymentIntentId };
+    if (route.collectVia === "stripe" && (await readBookingHasEnded(bookingId)) /* #4272, #4316: ended now, after the commit */) return { stripeRefundId, additionalPaymentIntentId };
   }
 
   // #3791: an account-credit share's event and Xero leg - given back, minted,
@@ -691,10 +691,4 @@ export async function executeEditReviewSettlement({
   });
 
   return { stripeRefundId, additionalPaymentIntentId };
-}
-
-/** #4272: the booking's status as it stands now, after the commit. */
-async function isBookingCancelledNow(bookingId: string): Promise<boolean> {
-  const b = await prisma.booking.findUnique({ where: { id: bookingId }, select: { status: true } });
-  return b !== null && refusesReviewChargeForCancellation(b);
 }

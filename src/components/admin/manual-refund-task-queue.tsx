@@ -36,7 +36,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
 // (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
@@ -138,6 +138,8 @@ interface ManualRefundTask {
    */
   reviewEvidence?: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable?: boolean;
+  /** #4317 (owner, #4302): moved guests removed since, already credited. Absent: no warning. */
+  reviewGuestsRemovedSinceRaised?: Array<{ strandIndex: number; strandCount: number; guestTotalCents: number | null; gaveNightsBack: boolean; addedNights: boolean }>;
   /**
    * #3191: this booking's nights that carry no stored price, and the two totals
    * the officer's figures must reconcile against.
@@ -1886,6 +1888,9 @@ export function ManualRefundTaskQueue() {
                             : `Open this booking's invoices in Xero and check whether they already include ${formatCents(task.amountCents, format)}. If they do, nothing is owed. If they fall short, raise a supplementary invoice for that amount only — never for the change's full total, which the member has already been asked for. Then close the item with a note saying what Xero showed and what you billed.`}
                         </p>
                       ) : null}
+                      {(task.reviewGuestsRemovedSinceRaised ?? []).map((guest) => (
+                        <p key={guest.strandIndex} role="alert" className="text-sm font-medium text-warning-11" data-testid="manual-refund-task-review-guest-removed">{reviewGuestRemovedSinceRaisedWarning({ ...guest, ordinal: strandOrdinal(guest.strandIndex, guest.strandCount) }, format)}</p>
+                      ))}
                       {task.reviewEvidence ? (
                         <EditFinancialReviewEvidenceBlock
                           evidence={task.reviewEvidence}

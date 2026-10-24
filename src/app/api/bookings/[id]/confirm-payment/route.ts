@@ -18,11 +18,14 @@ import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import { getStripePaymentMethodId, queueSupersededPaymentIntentRefundRecovery } from "@/lib/payment-recovery";
+import { isSupersededCaptureOfBooking } from "@/lib/superseded-paid-intent";
 import { PaymentStatus } from "@prisma/client";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -90,6 +93,11 @@ export async function POST(
     }
 
     if (payment.stripePaymentIntentId !== paymentIntentId) {
+      // #4300 (`INV-PAY-138`): the pointer moved on to a fresh intent, but this
+      // one is the booking's own and captured: a superseded capture is going back.
+      if (await isSupersededCaptureOfBooking(paymentIntentId, bookingId)) {
+        return NextResponse.json(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, { status: 409 });
+      }
       return NextResponse.json(
         { error: "PaymentIntent does not match booking" },
         { status: 400 }
@@ -142,6 +150,11 @@ export async function POST(
         { status: 409 },
       );
     }
+    // #4300 (`INV-PAY-138`): a superseded intent's capture is refunded, never settled with.
+    if (await queueSupersededPaymentIntentRefundRecovery(pi)) {
+      logger.warn({ bookingId, paymentIntentId: pi.id }, "A superseded PaymentIntent was confirmed; it is being refunded and settled nothing (#4300)");
+      return NextResponse.json(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, { status: 409 });
+    }
     successfulIntentClassificationPending = false;
     // Stripe is authoritative for capture. From this point onward, an
     // unexpected local failure must never send the member back through an
@@ -192,10 +205,7 @@ export async function POST(
       bookingId,
       paymentIntentId: pi.id,
       amountCents: pi.amount,
-      paymentMethodId:
-        typeof pi.payment_method === "string"
-          ? pi.payment_method
-          : pi.payment_method?.id ?? null,
+      paymentMethodId: getStripePaymentMethodId(pi),
     });
 
     if (
@@ -212,6 +222,11 @@ export async function POST(
         },
         { status: 409 }
       );
+    }
+
+    // #4300: the settle's own check under lock(1) found the capture superseded.
+    if (reconciliation.outcome === "superseded_capture") {
+      return NextResponse.json(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, { status: 409 });
     }
 
     // Send the confirmation email only on a fresh transition to PAID. If the

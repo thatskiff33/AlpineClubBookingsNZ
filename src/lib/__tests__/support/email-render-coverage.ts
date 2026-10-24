@@ -170,6 +170,8 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-bank-transfer-settlement-figure": "adminBankTransferSettlementFigureTemplate",
   // admin-alerts-settlement (#4211), template in ./admin-duplicate-capture-kept
   "admin-duplicate-capture-kept": "adminDuplicateCaptureKeptTemplate",
+  // admin-alerts-settlement (#4300), template in ./admin-superseded-capture-refused
+  "admin-superseded-capture-refused": "adminSupersededCaptureRefusedTemplate",
   "admin-payment-failure": "adminPaymentFailureTemplate",
   "admin-refund-request": "adminRefundRequestTemplate",
   "admin-xero-reconciliation-report": "adminXeroReconciliationReportTemplate",

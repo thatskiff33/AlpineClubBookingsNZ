@@ -147,7 +147,14 @@ beforeEach(() => {
       consentStatus: null,
       stayStart: new Date("2026-08-10"),
       stayEnd: new Date("2026-08-13"),
-      nights: GAP_NIGHTS.map((night) => ({ stayDate: new Date(night) })),
+      // #4317: the stored total and each night's price and provenance; the two
+      // held nights at the nightly rate add up to the total (R1).
+      priceCents: GAP_NIGHTS.length * NIGHTLY,
+      nights: GAP_NIGHTS.map((night) => ({
+        stayDate: new Date(night),
+        priceCents: NIGHTLY,
+        priceSource: "SOLD",
+      })),
     },
   ]);
 });

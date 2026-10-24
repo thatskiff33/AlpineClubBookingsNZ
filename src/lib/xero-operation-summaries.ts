@@ -180,6 +180,30 @@ function summarizeQueuedPayload(
         facts: facts.build(),
       };
 
+    case "ADDITIONAL_CAPTURE_RECEIPT": {
+      // #3953 (`INV-PAY-139`): a booking change's card payment recorded against the invoice that bills it.
+      const plan = asRecord(req.plan);
+      facts
+        .add("Booking", shortId(req.bookingId))
+        .add("Payment intent", readString(req.paymentIntentId));
+      if (plan) {
+        facts
+          .add(
+            "Recorded against",
+            plan.target === "GAP_INVOICE"
+              ? "Supplementary invoice for the change"
+              : plan.target === "CHANGE_INVOICE"
+                ? "The change's own supplementary invoice"
+                : "Booking invoice",
+          )
+          .add("Xero invoice", shortId(plan.invoiceId))
+          .add("Amount", formatCentsValue(plan.amountCents, format))
+          .add("Captured", formatCentsValue(plan.capturedCents, format))
+          .add("Payment date", readString(plan.date));
+      }
+      return { title: "Queued: record a booking change's card payment", facts: facts.build() };
+    }
+
     case "GROUP_SETTLEMENT_INVOICE":
       facts.add("Settlement", shortId(req.settlementId));
       return {

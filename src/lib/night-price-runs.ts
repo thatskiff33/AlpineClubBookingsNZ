@@ -76,3 +76,28 @@ export function evenlySplitCents(totalCents: number, count: number): number[] {
   const remainder = totalCents - base * count;
   return Array.from({ length: count }, (_, i) => (i < remainder ? base + 1 : base));
 }
+
+/**
+ * Split `totalCents` across entries in proportion to their `weights`, in whole
+ * cents that add up to it exactly. Each share is truncated toward zero; the
+ * cents truncation leaves go one each to the earliest entries with a weight,
+ * the way `evenlySplitCents` above puts its leftover cents on the earliest
+ * nights. The weights must not sum to zero. #4317 review round 4: a capped
+ * carried promotion's redemptions, allocations and night rows are scaled with it.
+ */
+export function apportionCents(totalCents: number, weights: readonly number[]): number[] {
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+  if (weightSum === 0) {
+    throw new Error("apportionCents: the weights sum to zero, so there is no proportion to keep");
+  }
+  const shares = weights.map((weight) => Math.trunc((totalCents * weight) / weightSum));
+  let leftover = totalCents - shares.reduce((sum, share) => sum + share, 0);
+  const step = Math.sign(leftover);
+  const weighted = weights.flatMap((weight, index) => (weight === 0 ? [] : [index]));
+  for (let turn = 0; leftover !== 0; turn += 1) {
+    const at = weighted[turn % weighted.length]!;
+    shares[at] = shares[at]! + step;
+    leftover -= step;
+  }
+  return shares;
+}

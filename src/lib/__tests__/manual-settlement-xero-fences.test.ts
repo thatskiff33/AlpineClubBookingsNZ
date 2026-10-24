@@ -49,6 +49,8 @@ vi.mock("@/lib/prisma", () => {
     booking: { findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a) },
     // #3980 review M1: the create's read is one snapshot, with the marked edits.
     bookingModification: { findMany: async () => [] },
+    // #3953: and the captures its cash figure holds.
+    paymentTransaction: { findMany: async () => [] },
     payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
     season: { findFirst: (...a: unknown[]) => mocks.seasonFindFirst(...a) },
     xeroObjectLink: {

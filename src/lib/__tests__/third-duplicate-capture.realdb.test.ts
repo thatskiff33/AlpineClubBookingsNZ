@@ -531,7 +531,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       return { transactionId: row.id, refundOperationId: refund.id };
     }
 
-    it("#4283: a superseded capture's success redelivered after its cancel handed it to a live refund reaches the settle and is not refunded on top", async () => {
+    it("#4283: a superseded capture's success after its cancel handed it to a live refund is not refunded on top by the settle", async () => {
       const asked = stripeMakesRefunds();
       const [settling, superseded] = TABS;
       expect((await arrive(settling)).outcome).toBe("paid");
@@ -539,11 +539,16 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await reconcile();
       const before = await snapshot();
 
-      // The cancel operation completed with the handoff, so the webhook no
-      // longer diverts this intent: it reaches markBookingPaymentSucceeded.
+      // Straight to the settle: since #4300 the webhook diverts this intent
+      // before it gets there (its refund row still owns it), so only a door
+      // reaching the settle exercises the guard's own reading.
+      expect((await arrive(superseded)).outcome).toBe("already_paid");
+      expect(asked, "only the superseded machinery refunds it").toEqual([]);
+      expect(await snapshot()).toEqual(before);
+      // And the webhook, asking the same reading first, diverts it.
       const delivered = await deliverWebhook(superseded);
       expect(delivered.init?.status ?? 200, JSON.stringify(delivered.body)).toBe(200);
-      expect(asked, "only the superseded machinery refunds it").toEqual([]);
+      expect(asked).toEqual([]);
       expect(await snapshot()).toEqual(before);
       expect(
         await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING_ID, idempotencyKey: { startsWith: "duplicate_capture_" } } }),
@@ -603,6 +608,10 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await reconcile();
       const before = await snapshot();
 
+      // Straight to the settle (the webhook diverts it first since #4300).
+      expect((await arrive(superseded)).outcome).toBe("already_paid");
+      expect(asked).toEqual([]);
+      expect(await snapshot()).toEqual(before);
       const delivered = await deliverWebhook(superseded);
       expect(delivered.init?.status ?? 200, JSON.stringify(delivered.body)).toBe(200);
       expect(asked).toEqual([]);

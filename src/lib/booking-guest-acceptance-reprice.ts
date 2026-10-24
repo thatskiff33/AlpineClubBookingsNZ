@@ -40,7 +40,7 @@ import {
   priceStoredBookingPromotions,
 } from "@/lib/booking-promotions";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
-import { readStrandNightPrices } from "@/lib/booking-strand-night-prices";
+import { valuedStrandNightPrices } from "@/lib/edit-night-valuation";
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import {
@@ -104,14 +104,13 @@ import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-c
  * moves.
  *
  * WHEN IT DOES NOT RE-PRICE, and the booking keeps the figures it had, to be
- * re-priced by its next ordinary edit — the same outcome a parked edit has:
+ * re-priced by its next ordinary edit:
  * - the booking carries no code (by far the common case: nothing to do);
  * - a member could not edit it for a stay yet to start (`getBookingEditPolicy`
  *   in "future" mode: DRAFT, PENDING, PAYMENT_PENDING, CONFIRMED or PAID, check-in
  *   after today — so never AWAITING_REVIEW, `INV-MOD-013`, a waitlist status or
- *   a stay under way), it is quote-priced, or a parked edit's financial review is
- *   still open (`INV-MOD-028`);
- * - its nights cannot be read back as exact money (the review re-base's rule);
+ *   a stay under way), it is quote-priced, or a financial review raised before
+ *   #4317 is still open;
  * - the re-price would RAISE the price of a booking whose price is settled in
  *   any form — captured cash, paid with credit or at $0, or invoiced: collecting
  *   more needs an ask only the payer can answer, which an acceptance has no door
@@ -129,7 +128,6 @@ export type GuestAcceptanceRepriceSkip =
   | "BOOKING_STATUS"
   | "QUOTE_PRICED"
   | "UNDER_FINANCIAL_REVIEW"
-  | "STRANDS_UNREADABLE"
   | "INCREASE_NEEDS_COLLECTION"
   | "REDUCTION_NOT_FULLY_RETURNABLE";
 
@@ -247,14 +245,10 @@ export async function repriceBookingAfterGuestAcceptance(
     }
     throw error;
   }
-  const strands = readStrandNightPrices(booking.guests);
-  if (
-    strands === null ||
-    strands.reduce((sum, strand) => sum + strand.perNightRates.reduce((a, b) => a + b, 0), 0) !==
-      booking.totalPriceCents
-  ) {
-    return { repriced: false, reason: "STRANDS_UNREADABLE" };
-  }
+  // #4317 (`INV-MOD-028`): every guest's nights are valued from what is
+  // stored, so the promotion is re-decided over figures that add up to each
+  // guest's stored total. No booking is skipped for want of exact rows.
+  const strands = valuedStrandNightPrices(booking.guests, booking);
 
   const lodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   const decided = await priceStoredBookingPromotions(tx, {

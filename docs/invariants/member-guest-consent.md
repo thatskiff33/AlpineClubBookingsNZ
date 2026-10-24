@@ -65,7 +65,9 @@ because both are surprising and neither should be discovered by a member:
   on the mixed-party split), when they are the booking's only guest, when the
   booking was quote-priced, when check-in has started, or when the status forbids
   changes. The member is told who can help; MG2 adds no exemption, which is
-  exactly what D-14 decides. See docs/STATE_MACHINES.md for the transition list.
+  exactly what D-14 decides. Since #4317 a booking whose money a decline used to
+  park for review prices instead, so it traps the same way. See
+  docs/STATE_MACHINES.md for the transition list.
 
 ## INV-GUEST-004
 

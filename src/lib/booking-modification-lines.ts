@@ -36,13 +36,10 @@
  *    - and runs are folded across guests per (sign, category, rate, unit price,
  *    night count, start date), so two identical guests read as one line with
  *    `guestCount: 2`.
- *  - ANY unpriced night on either side yields NO lines (`INV-MOD-028`): never a
- *    partial itemisation. So does a before-night whose stored price is not
- *    EXACT provenance (`EVEN_SPLIT`, `UNKNOWN`): such rows sum correctly to the
- *    strand's total but were never the price of that particular night, and
- *    diffing them against an exactly-priced after set would print a reprice
- *    that never happened. The same rule `classifyStoredSoldPriceEvidence`
- *    applies at individual-night grain.
+ *  - The BEFORE side of an edit is each guest's nights at their VALUED figure
+ *    (`valueStrandNights`, `INV-MOD-028`, #4317): the figure the edit itself
+ *    credited or kept, whatever the row's provenance. ANY night still unpriced
+ *    on either side yields NO lines: never a partial itemisation.
  *  - POSTCONDITION: the lines sum to the delta the caller settles on. A caller
  *    passes its own `priceDiffCents`; a mismatch returns `null` - nothing
  *    stored - because a wrong itemisation is worse than none
@@ -54,12 +51,12 @@
  */
 
 import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
-import { formatStayDateOrNull } from "@/lib/club-time";
+import { dateOnlyInstantOf, formatStayDateOrNull } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { splitNightsIntoPriceRuns } from "@/lib/night-price-runs";
 import { modificationPromoDeltas } from "@/lib/booking-modification-promo-delta";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
-import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
+import { valueEditStrand } from "@/lib/edit-night-valuation";
 import {
   describeGuestRateMembershipLabel,
   loadRateMembershipLabelResolver,
@@ -136,7 +133,6 @@ export type DiffBookingPricingResult =
       kind: "none";
       reason:
         | "UNPRICED_NIGHT"
-        | "INEXACT_STORED_NIGHT_PRICE"
         | "SUM_MISMATCH";
       /** What the lines summed to when the sum was the problem. */
       linesSumCents?: number;
@@ -159,7 +155,7 @@ export type GuestNightChange = {
 
 export type DiffGuestNightsResult =
   | { kind: "nights"; guests: GuestNightChange[] }
-  | { kind: "none"; reason: "UNPRICED_NIGHT" | "INEXACT_STORED_NIGHT_PRICE" };
+  | { kind: "none"; reason: "UNPRICED_NIGHT" };
 
 /**
  * THE PER-NIGHT STEP OF AN EDIT'S DIFF (#3582), before anything is folded.
@@ -168,8 +164,8 @@ export type DiffGuestNightsResult =
  * the folded Xero/history lines below and the booking ledger's per-night
  * postings (`booking-ledger-modification-posting.ts`) - read ONE differ
  * (`INV-SSOT`). Every rule in this module's header that is about a NIGHT lives
- * here: the unpriced refusal, the inexact-provenance refusal, the category
- * judgement, and "a repriced night is one removed and one added, never netted".
+ * here: the unpriced refusal, the category judgement, and "a repriced night is
+ * one removed and one added, never netted".
  */
 export function diffGuestNights(
   before: ModificationPricingSide,
@@ -210,12 +206,6 @@ export function diffGuestNights(
         night.priceCents as number,
       ]),
     );
-    const beforeSourceByDay = new Map(
-      (beforeGuest?.nights ?? []).map((night) => [
-        formatDateOnly(night.stayDate),
-        night.priceSource,
-      ]),
-    );
     const afterNights = new Map(
       (afterGuest?.nights ?? []).map((night) => [
         formatDateOnly(night.stayDate),
@@ -242,13 +232,6 @@ export function diffGuestNights(
       // the line names a category and a rate, so a guest whose category moved
       // is re-sold night by night.
       if (sameShape && afterNights.get(day) === priceCents) continue;
-      // A night that leaves a line is described by its stored price, so that
-      // price has to be one somebody sold - the same grain the edit gate
-      // applies (#3531 D-3531-1): a kept night that cancels above needs no
-      // per-night evidence, because no line names its price.
-      if (storedNightPriceSourceIsInexact(beforeSourceByDay.get(day))) {
-        return { kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" };
-      }
       removed.push({ stayDate: parseDay(day), priceCents });
     }
     for (const [day, priceCents] of afterNights) {
@@ -477,6 +460,11 @@ export function renderModificationLineWithAmount(
 /** What a booking's own guest rows carry, as every edit site loads them. */
 export interface StoredGuestForLines {
   id: string;
+  /** `BookingGuest.priceCents`: the total the valued nights add up to (#4317). */
+  priceCents: number;
+  /** The stored envelope, for a guest carrying no night rows (`INV-DATE-020`). */
+  stayStart: Date;
+  stayEnd: Date;
   firstName: string;
   lastName: string;
   ageTier: AgeTier;
@@ -497,7 +485,9 @@ export interface StoredGuestForLines {
  * The BEFORE side, from the snapshot an edit loaded before it wrote anything.
  * Always the in-memory rows, never a re-read: by the time the modification row
  * is written the edit has rewritten or deleted the night rows it is about to
- * describe.
+ * describe. Each night carries its VALUED figure (`valueEditStrand`, #4317), the
+ * one the edit priced with, so a kept night cancels and a night given back is
+ * itemised at what it was credited. A guest's own envelope is its range.
  */
 export function pricingSideFromStoredGuests(
   guests: ReadonlyArray<StoredGuestForLines>,
@@ -510,9 +500,12 @@ export function pricingSideFromStoredGuests(
       isMember: guest.isMember,
       rateMembershipTypeId: guest.rateMembershipTypeId ?? null,
       name: `${guest.firstName} ${guest.lastName}`.trim(),
-      nights: (guest.nights ?? []).map((night) => ({
-        stayDate: night.stayDate,
-        priceCents: night.priceCents ?? null,
+      nights: valueEditStrand(guest, {
+        checkIn: guest.stayStart,
+        checkOut: guest.stayEnd,
+      }).nights.map((night) => ({
+        stayDate: dateOnlyInstantOf(night.date),
+        priceCents: night.valueCents,
         priceSource: night.priceSource,
       })),
     })),
@@ -528,9 +521,11 @@ export function pricingSideFromStoredGuests(
  * bought night its fresh one, both exactly as sold.
  */
 export function pricingSideFromWrittenGuests(
-  guests: ReadonlyArray<Omit<StoredGuestForLines, "nights"> & {
-    nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
-  }>,
+  guests: ReadonlyArray<
+    Omit<StoredGuestForLines, "nights" | "priceCents" | "stayStart" | "stayEnd"> & {
+      nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
+    }
+  >,
   promo: { promoAdjustmentCents: number; promoCode?: string | null },
 ): ModificationPricingSide {
   return {

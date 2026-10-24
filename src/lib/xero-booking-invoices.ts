@@ -375,7 +375,7 @@ export async function createXeroInvoiceForBooking(
   options?: CreateXeroBookingInvoiceOptions
 ): Promise<string | null> {
   // #3980 review M1: one snapshot, so the worth built from and the lines agree.
-  const { booking, markedModificationIdsAtBuild } = await readBookingForPrimaryInvoice(bookingId);
+  const { booking, markedModificationIdsAtBuild, capturesAtBuild } = await readBookingForPrimaryInvoice(bookingId);
 
   if (!booking) throw new Error(`Booking not found: ${bookingId}`);
   if (!booking.payment) throw new Error(`No payment record for booking: ${bookingId}`);
@@ -640,6 +640,7 @@ export async function createXeroInvoiceForBooking(
     worthCents: bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: booking.payment.changeFeeCents }),
     lineTotalCents: invoiceLineItemsTotalCents(lineItems),
     markedModificationIdsAtBuild,
+    capturesAtBuild, // #3953: the captures its cash figure counts, oldest first
   };
 
   // Read once, outside the closure: `buildInvoice` runs for the recorded

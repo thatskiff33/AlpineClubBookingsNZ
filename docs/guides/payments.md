@@ -518,13 +518,27 @@ record, so do not wait for the email.
 
 ### Decide a booking change the system would not price
 
-Sometimes a member changes a booking — gives back a night, takes a guest off —
-and the change itself is fine, but the club's records do not say clearly enough
+**No new row of this kind appears any more.** Every booking change is now priced
+automatically when it is saved — see
+[Bookings — How a booking change is priced](bookings.md#how-a-booking-change-is-priced).
+The rows still on this card were raised before that. Work them as described below
+until the club's clean-up has settled them; while one is open, a further price
+change to its booking is refused. **A row warned that a guest "was removed
+from the booking after this review was raised"** names a guest whose nights that
+change moved and who came off the booking since. The removal credited the
+guest's stored total, which a held change never altered: it still included the
+nights the change gave back, so settling could credit those nights again, and it
+never included the nights the change added, so settling could charge for nights
+the guest no longer holds. The warning says which applies. Check Xero and the
+booking before settling: the row may still hold money owed for another guest.
+The clean-up closes such a row with no money moved.
+
+Before that, sometimes a member changed a booking — gave back a night, took a
+guest off — and the change itself was fine, but the club's records did not say clearly enough
 what those nights were sold for. Rather than work out a plausible-looking number
-that was never actually charged, the system **saves the booking change and holds
-the money for you to decide**. No refund is made, no account credit is created,
-nothing is sent to Xero, and no amount is assumed. This is the club's settled
-rule: exact stored evidence, or a person decides.
+that was never actually charged, the system **saved the booking change and held
+the money for you to decide**. No refund was made, no account credit was created,
+nothing was sent to Xero, and no amount was assumed.
 
 The member is told their change saved and that the club is working the amount
 out. They are not shown a figure, and they are not told anything about why.
@@ -611,9 +625,10 @@ they said, because the row itself stops carrying them once it is open again.
 #### Say what the unpriced nights sold for, so the booking stops coming back
 
 Some of these bookings have nights with **no stored price at all** — that is
-usually why the change could not be worked out. Until somebody says what those
-nights sold for, the booking comes back to this queue *every time it is changed*,
-and you price it by hand again each time.
+usually why the change could not be worked out. Such a booking used to come back
+to this queue every time it was changed; now that every change is priced
+automatically it no longer does, but a row that shows these boxes still needs
+them filled in to close.
 
 So when a row has nights like that, the settle box lists them and asks. It is on
 both buttons: **Record the adjustment** and **No adjustment**, because a change
@@ -750,8 +765,7 @@ why, and shows what is on file for each of their nights.
 - **Nothing is filled in for you**, here or anywhere in this feature. If the
   figures will not add up honestly, do not adjust one to close the gap; a figure
   typed to close a gap is a price nobody decided.
-- **One guest at a time.** A booking with two such guests needs both recorded
-  before it stops coming back.
+- **One guest at a time.** A booking with two such guests needs each recorded.
 - **It is not offered while the booking has a review waiting** on this queue.
   Settle that first — its boxes ask for the same figures, against a total that
   also includes the amount being settled — and record anything still missing
@@ -762,10 +776,9 @@ why, and shows what is on file for each of their nights.
 You need **Finance — Edit** to use it; a finance viewer sees the section and
 every control disabled.
 
-**Why this exists.** Until an officer records them, every change to such a
-booking has to be priced by hand, and an other-club member rate cannot be set on
-it at all — the edit that would set one is refused, and its message points
-here.
+**Why this existed.** Until every change was priced automatically, a change to
+such a booking had to be priced by hand. A booking no longer needs this to be
+changed or re-rated, and the tool is due to be removed.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
 on its own page, under **Admin tools**, with a link back to this page.

@@ -94,7 +94,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-025` | A cap check excluding a booking subtracts that booking's own allocation rows |
 | `INV-MONEY-026` | TRAP: the in-memory allocation list is not benefit-filtered; filter it yourself |
 | `INV-MONEY-027` | A `SET_PRICE` application netting to exactly zero counts as no use |
-| `INV-MONEY-028` | Each stored guest-night price records its origin; even splits are not evidence |
+| `INV-MONEY-028` | Each stored guest-night price records its origin; edits value every usable row |
 | `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
 | `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
 | `INV-MONEY-031` | Stored booking totals carry a derived reconciliation state |
@@ -224,6 +224,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
 | `INV-PAY-043` | The recorded settler is kept; every other capture is refunded |
+| `INV-PAY-138` | A superseded card capture never settles its booking |
 | `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
@@ -234,7 +235,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
 | `INV-PAY-103` | A card refund adds only newly recorded money, through one writer |
-| `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
+| `INV-PAY-051` | Legacy: an unpriceable edit held the money as one review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
 | `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |
 | `INV-PAY-074` | The card stamp is row-guarded; a cancelled SetupIntent leaves the row alone |
@@ -264,7 +265,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-093` | Withdrawal fires at the last failure; it never writes off the debt |
 | `INV-PAY-094` | It withdraws the ask only when a duplicate genuinely exists |
 | `INV-PAY-095` | The cancel is idempotent and never throws; its reason states abandonment |
-| `INV-PAY-067` | One review task per parked edit, carrying every strand it records |
+| `INV-PAY-067` | Legacy: one review task per parked edit, carrying every strand |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
 | `INV-PAY-068` | A completion at zero is refused; the refusal names the way out |
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
@@ -296,7 +297,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-064` | Recovery replays close debt only when the ask exists; edit-time answer |
 | `INV-PAY-072` | Repair pass dates the primary invoice from operation history; unrequested shares traced |
 | `INV-PAY-065` | Card refunds cap before claiming, task-keyed; anchor is the original edit |
-| `INV-PAY-066` | Open review fences four money doors; three DB constraints; #3030 versus #3032 |
+| `INV-PAY-066` | Live fence on money doors for pre-#4317 reviews; three DB constraints |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft election spends nothing |
 | `INV-PAY-003` | The edit path writes an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members edit own drafts; draft edits move no money or capacity |
@@ -343,6 +344,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-135` | A capacity race's unrefunded rest is a hand-back task to check |
 | `INV-PAY-136` | An edit racing the primary invoice create is refused or measured |
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
+| `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -436,27 +438,27 @@ Prefix `INV-MOD`.
 | `INV-MOD-023` | Advisory surfaces report the same facts and gate nothing; nothing persisted |
 | `INV-MOD-024` | Minimum-stay policy administration is versioned; a stale version is refused, not overwritten |
 | `INV-MOD-028` | `valueStrandNights`: stored rows, else even split, always summing to guest total |
-| `INV-MOD-036` | A blank is filled only by a person, on four conditions |
-| `INV-MOD-037` | The repair is optional, and four things it deliberately does not repair |
-| `INV-MOD-038` | Three consumers read a re-based strand total; none restates a billed amount |
-| `INV-MOD-039` | Whole-guest evidence may reconcile; individual-night evidence also requires exact provenance |
-| `INV-MOD-040` | A parked edit writes structure, never an amount; prohibited estimate sources |
-| `INV-MOD-041` | It holds on every edit path; a second edit is refused |
-| `INV-MOD-042` | What every parked path does; a dropped promotion is disclosed |
+| `INV-MOD-036` | Legacy: settling an older review may fill a blank, on four conditions |
+| `INV-MOD-037` | Legacy: the optional repair, and four things it does not repair |
+| `INV-MOD-038` | Legacy: three consumers read a re-based total; none restates a bill |
+| `INV-MOD-039` | Superseded for edits and re-bases; the grain test survives in a census |
+| `INV-MOD-040` | An edit writes valued amounts again; estimate sources still prohibited |
+| `INV-MOD-041` | Every edit door prices; the legacy open-review fence still refuses |
+| `INV-MOD-042` | No door parks or freezes money; promotion changes are applied |
 | `INV-MOD-043` | The in-progress promo notice is built even where nothing calls for it |
-| `INV-MOD-044` | The five edit paths that park, and what is peculiar to each |
-| `INV-MOD-045` | A blank is never repaired by a reprice; two repair acts |
-| `INV-MOD-046` | The second act re-apportions within a fixed total; eligibility is its fence |
+| `INV-MOD-044` | The five edit doors, each priced from stored data |
+| `INV-MOD-045` | Legacy: an edit now re-writes a blank; two repair acts |
+| `INV-MOD-046` | Legacy: the second act re-apportions within a fixed total |
 | `INV-MOD-047` | It binds every night-price writer, not only the five edit doors |
 | `INV-MOD-048` | Two writers sit outside this rule; neither values a historical night |
-| `INV-MOD-049` | A member may still pay the pre-edit price during an open review |
-| `INV-MOD-050` | A placeholder link half-lands; an other-club rate tick no longer does |
-| `INV-MOD-051` | What is left of parked-once-parked-forever; negative rows stay unrepaired |
-| `INV-MOD-052` | Where the base rule and the three added paths are pinned |
-| `INV-MOD-053` | Where the removal park and the second act are pinned |
-| `INV-MOD-054` | Where the settle-time repair is pinned |
-| `INV-MOD-055` | Closing a parked review re-prices the booking from its strands, or declines |
-| `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
+| `INV-MOD-049` | Legacy: a member may pay the pre-edit price during an older review |
+| `INV-MOD-050` | A placeholder link lands whole; an other-club tick is honoured |
+| `INV-MOD-051` | Nothing is left of parked-for-good; negative rows stay unvalued |
+| `INV-MOD-052` | Where each door's automatic pricing is pinned |
+| `INV-MOD-053` | Where the removal's pricing and the legacy second act are pinned |
+| `INV-MOD-054` | Legacy: where the settle-time repair is pinned |
+| `INV-MOD-055` | Legacy: closing a parked review re-bases the booking from valued strands |
+| `INV-MOD-056` | Operation-grain provenance: kept for the census; edits and re-bases value nights |
 | `INV-MOD-057` | Cancellable statuses have one home; member doors read a named subset |
 | `INV-MOD-058` | An edit stores its delta as lines; every reader reads those rows |
 | `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
@@ -726,6 +728,7 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-041` | A voided refund note is never re-adopted or replayed by Xero |
 | `INV-ADDPAY-042` | A voided bank-transfer refund note is undone once, then asked once |
 | `INV-ADDPAY-043` | A later bank-transfer hand-back gets its own note, sized on its task |
+| `INV-ADDPAY-044` | An edit's after-commit mint leaves no live ask on an ended booking |
 
 ## Analytics And Privacy
 

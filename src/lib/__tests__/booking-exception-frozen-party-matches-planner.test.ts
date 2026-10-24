@@ -84,6 +84,7 @@ function liveGuest(
   end: string,
   nights?: string[],
 ) {
+  const held = nights ?? nightsBetween(start, end);
   return {
     id,
     firstName,
@@ -93,9 +94,13 @@ function liveGuest(
     memberId: null,
     stayStart: parseDateOnly(start),
     stayEnd: parseDateOnly(end),
-    nights: (nights ?? nightsBetween(start, end)).map((night) => ({
+    // #4317: the stored guest total is what the held nights add up to ($50 a
+    // night, R1), and each stored night carries its provenance.
+    priceCents: held.length * 5000,
+    nights: held.map((night) => ({
       stayDate: parseDateOnly(night),
       priceCents: 5000,
+      priceSource: "SOLD" as const,
     })),
   };
 }

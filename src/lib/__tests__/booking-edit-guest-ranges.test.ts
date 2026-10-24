@@ -17,7 +17,6 @@ import {
 } from "@/lib/booking-edit-guest-ranges";
 import type { SeasonRateData } from "@/lib/pricing";
 import { eachDateOnlyInRange } from "@/lib/date-only";
-import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -75,25 +74,14 @@ function guest(stayStart: string, stayEnd: string, priceCents: number, id = "g1"
 }
 
 /**
- * The plan, insisting it priced.
+ * The plan, unwrapped from its priced result.
  *
- * #3031 made `buildInProgressGuestRangePlan` return a discriminated result, and
- * unwrapping it through an assertion rather than a cast is deliberate: a fixture
- * that drifts into the unpriceable case fails HERE, naming the causes, instead
- * of failing twenty lines later on an expectation about a number that was never
- * produced.
+ * `buildInProgressGuestRangePlan` answers `{ kind: "priced"; plan }` only now
+ * (#4317: no edit parks its money for an officer), so there is no unpriceable
+ * case left to assert away; the helper keeps one place that names the shape.
  */
 function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
-  const result = buildInProgressGuestRangePlan(input);
-  if (result.kind !== "priced") {
-    throw new Error(
-      `Expected a priced plan, got financial review: ${result.occurrences
-        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
-        .map((strand) => strand.cause)
-        .join(", ")}`,
-    );
-  }
-  return result.plan;
+  return buildInProgressGuestRangePlan(input).plan;
 }
 
 function planInput(

@@ -11,6 +11,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
+import { findAdditionalCaptureReceiptInvoiceId } from "@/lib/additional-capture-receipt-link";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
@@ -469,11 +470,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   if (
-    await queueSupersededPaymentIntentRefundRecovery({
-      paymentIntentId: paymentIntent.id,
-      amountCents: paymentIntent.amount,
-      paymentMethodId: getStripePaymentMethodId(paymentIntent),
-    })
+    await queueSupersededPaymentIntentRefundRecovery(paymentIntent)
   ) {
     logger.warn(
       { bookingId, paymentIntentId: paymentIntent.id },
@@ -631,6 +628,9 @@ async function handlePaymentIntentSucceeded(
     );
     return;
   }
+  // #4300 (`INV-PAY-138`): the settle's own check refused a superseded capture
+  // (an edit overtook the check above); it is the machinery's, already alerted.
+  if (reconciliation.outcome === "superseded_capture") return;
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id, outcome: reconciliation.outcome }, `PaymentIntent reconciled: ${reconciliation.outcome}`);
 
@@ -1209,9 +1209,12 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   } else if (refundSync.refundDeltaCents > 0) {
     // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
     try {
+      // #3953 (`INV-PAY-139`): a change's capture its own receipt recorded names the invoice it paid.
+      const creditsInvoiceId = await findAdditionalCaptureReceiptInvoiceId(paymentIntentId);
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
         refundSync.paymentId,
-        refundSync.refundDeltaCents
+        refundSync.refundDeltaCents,
+        ...(creditsInvoiceId ? [{ creditsInvoiceId }] : [])
       );
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {

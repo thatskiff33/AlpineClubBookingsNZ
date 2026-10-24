@@ -42,9 +42,9 @@ import type { BookingGuestNightPriceSource } from "@prisma/client";
  *
  * PRICES, #4202. A remaining guest also carries the locks the quote and the
  * save price them with, from the one home for them (`editedGuestPricingLocks`,
- * `INV-SSOT`): every night they already bought keeps the price it was sold at
- * (#1036, `INV-MOD-005`), and only a night the edit buys prices at current
- * rates. The route hands the party to the same pricing pass the quote uses
+ * `INV-SSOT`): every night they already hold keeps its valued figure (#1036,
+ * `INV-MOD-005`, `INV-MOD-028` since #4317), and only a night the edit buys
+ * prices at current rates. The route hands the party to the same pricing pass the quote uses
  * (`priceBookingGuestsWithMembershipTypePolicy`), so when rates have changed
  * since the booking was made the box discounts what the quote discounts.
  *
@@ -74,6 +74,8 @@ export type PromoPreviewStayGuest = StayRangeDeltaEntry & {
  */
 export type PromoPreviewStoredGuest = Omit<LiveGuestStayRow, "nights"> & {
   memberId: string | null;
+  /** `BookingGuest.priceCents` as stored: the total the valued locks add up to (#4317). */
+  priceCents: number;
   /** The other-lodge flag the quote prices this guest with (Other Lodges epic). */
   otherLodgeMember?: boolean;
   /** The edit re-rates this guest (a #2337 link, an other-lodge tick or untick): no locks. */
@@ -190,7 +192,7 @@ export function resolvePromoPreviewStays<Guest extends PromoPreviewStayGuest>(
     const index = partyIndexByRowId.get(row.id)!;
     rangeByPartyIndex.set(index, range);
     locksByPartyIndex.set(index, {
-      ...editedGuestPricingLocks(lockableNights(row), row.repricedDeliberately === true),
+      ...editedGuestPricingLocks(lockableNights(row), args.edit.booking, row.repricedDeliberately === true),
       otherLodgeMember: row.otherLodgeMember ?? false,
       ...(row.linkedMemberId ? { link: { memberId: row.linkedMemberId, isMember: true as const } } : {}),
     });
@@ -224,14 +226,19 @@ export function resolvePromoPreviewStays<Guest extends PromoPreviewStayGuest>(
 }
 
 /**
- * The stored nights in the shape the lock reader takes. A row read without its
- * price source carries no usable sold price, so it yields no lock and that night
- * prices at current rates — the reader's own lenient answer for a missing price.
+ * The stored row in the shape the lock reader takes. Every night is kept, so the
+ * valued locks see every night the guest holds (#4317); a row read without its
+ * price source is recorded as UNKNOWN, which never changes a value (`INV-MOD-028`).
  */
 function lockableNights(row: PromoPreviewStoredGuest): Parameters<typeof editedGuestPricingLocks>[0] {
   return {
-    nights: (row.nights ?? []).flatMap((night) =>
-      night.priceSource ? [{ stayDate: night.stayDate, priceCents: night.priceCents, priceSource: night.priceSource }] : [],
-    ),
+    priceCents: row.priceCents,
+    stayStart: row.stayStart,
+    stayEnd: row.stayEnd,
+    nights: (row.nights ?? []).map((night) => ({
+      stayDate: night.stayDate,
+      priceCents: night.priceCents,
+      priceSource: night.priceSource ?? "UNKNOWN",
+    })),
   };
 }

@@ -252,6 +252,39 @@ export function completionSummary(shape: CompletionSettlementShape): string {
 }
 
 /**
+ * #4317 (owner decision on #4302; review rounds 3 and 6 wording): the officer's
+ * warning on an OPEN edit review one of whose MOVED guests was removed from the
+ * booking after the review was raised (`editFinancialReviewGuestsRemovedSinceRaised`).
+ * The removal credited that guest's STORED total, which a parked edit never
+ * changed (`INV-MOD-040`): it still held the nights the edit gave back, and
+ * never held the nights it added. So settling could credit given-back nights
+ * again, or charge for added nights the guest no longer holds - each strand is
+ * warned in the direction it moved, a mixed one in both. The review may still
+ * hold money owed for another guest, so it asks for a check, not a dismissal.
+ *
+ * The guest is named the way the settle card's evidence block names it - its
+ * ordinal on a several-guest item, and its stored total - because the payload
+ * carries no guest id and the guest's row is gone.
+ */
+export function reviewGuestRemovedSinceRaisedWarning(
+  guest: { ordinal: string | null; guestTotalCents: number | null; gaveNightsBack: boolean; addedNights: boolean },
+  format: ClubFormat,
+): string {
+  const who = guest.ordinal ?? "This review's guest";
+  const stored =
+    guest.guestTotalCents !== null ? `, stored at ${formatCents(guest.guestTotalCents, format)},` : "";
+  const risks = [
+    ...(guest.gaveNightsBack
+      ? ["the nights this change gave back were already credited with this guest's stored total, so settling could credit those nights again"]
+      : []),
+    ...(guest.addedNights
+      ? ["the nights this change added were never part of this guest's stored total, so settling could charge for nights this guest no longer holds"]
+      : []),
+  ];
+  return `${who}${stored} was removed from the booking after this review was raised. Check Xero and the booking before settling: ${risks.join("; and ")}.`;
+}
+
+/**
  * #3191: the second half of the receipt, when the officer also said what the
  * booking's unpriced nights sold for.
  *
@@ -261,33 +294,19 @@ export function completionSummary(shape: CompletionSettlementShape): string {
  * DISMISSAL, which those sentences never describe. Empty when nothing was
  * recorded, which is the ordinary case.
  *
- * It says what the officer gained, not what was written: not being sent back for
- * review is the outcome they were promised when they filled the boxes in, and it
- * is the thing they would otherwise have to take on trust.
- *
- * IT CLAIMS THE STRAND AND NOT THE BOOKING. One edit raises one review task per
- * unreadable guest strand, so settling the first of two writes guest one's
- * nights and leaves guest two's blank - and "this booking will not be sent for
- * review again" would be a receipt disproved by the next edit. Overstating it
- * here is worse than overstating it anywhere else on this screen, because not
- * coming back is the entire thing #3191 promises.
- *
- * THE SECOND SENTENCE IS CONDITIONAL, and it has to be written as one (#3191 fix
- * round). "Another guest on the same booking still can" presupposes a guest who
- * does not exist on a single-guest booking, which is most of them. Whether one
- * exists is not something this message can know - the projection the screen
- * receives deliberately carries no strand id and no party - so the sentence
- * states the rule ("if there is one") rather than asserting the guest. Gating it
- * on a real count would mean a second query on the settle path to change one
- * clause, which is not a trade worth making for copy that is already true.
+ * IT CLAIMS THE GUEST AND NOT THE BOOKING: one review names one guest's nights.
+ * It used to add that those nights would no longer send the booking back for
+ * review, and that another guest's blanks still could. #4317 (epic #4302) prices
+ * every edit from stored data, so no edit sends a booking for review any more
+ * and that promise is true of every booking; it is dropped rather than kept as a
+ * gain the officer did not make. This receipt goes with the settle screen in
+ * wave C.
  */
 export function nightPricesRecordedMessage(count: number): string {
   if (count === 0) return "";
-  const tail =
-    ", so this guest's nights will not send this booking back for review again. If another guest on the same booking has unpriced nights, theirs still can.";
   return count === 1
-    ? ` One night's price was recorded${tail}`
-    : ` ${count} nights' prices were recorded${tail}`;
+    ? " One night's price was recorded for this guest."
+    : ` ${count} nights' prices were recorded for this guest.`;
 }
 
 /**

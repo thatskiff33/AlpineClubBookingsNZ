@@ -119,16 +119,18 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     // #3827: every code re-priced through the shared re-price, then recorded.
     expect(everyWriteIsFollowedBy(code, /\bawait repriceBookingPromotions\(/, RECORD)).toBe(true);
     // The nested night write precedes the record; the targets come off the
-    // re-price; a PARKED add records nothing.
+    // re-price; and since #4317 every add records (none parks).
     expect(precedes(code, /nights:\s*\{\s*create:/, RECORD)).toBe(true);
     expect(code).toMatch(/adjustmentTargets = repriced\.adjustmentTargets/);
-    expect(code).toMatch(/if \(!parked\) \{\s*await recordBookingNightAdjustments\(/);
+    expect(code).toMatch(/await recordBookingNightAdjustments\(tx, \{[\s\S]{0,200}writer: "the add-guest route"/);
+    expect(code).not.toMatch(/if \(!parked\)/);
   },
   "src/lib/booking-date-modification-service.ts": (code) => {
     expect(everyWriteIsFollowedBy(code, /\bawait repriceBookingPromotions\(/, RECORD)).toBe(true);
     expect(precedes(code, /bookingGuestNight\.createMany\(/, RECORD)).toBe(true);
     expect(code).toMatch(/adjustmentTargets = repriced\.adjustmentTargets/);
-    expect(code).toMatch(/if \(!parked\) \{\s*await recordBookingNightAdjustments\(/);
+    expect(code).toMatch(/await recordBookingNightAdjustments\(tx, \{[\s\S]{0,200}writer: "the booking date modification"/);
+    expect(code).not.toMatch(/if \(!parked\)/);
     // The admin shift snapshots before translating the rows and restores after,
     // shifted by the same delta.
     expect(precedes(code, SNAPSHOT, /for \(const entry of translatedGuests\)/)).toBe(true);
@@ -180,6 +182,21 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     expect(precedes(code, SNAPSHOT, /\bawait applyGuestChanges\(/)).toBe(true);
     expect(precedes(code, /\bawait applyGuestChanges\(/, RESTORE)).toBe(true);
     expect(code).toMatch(/promoEngineRan: false as const,\s*\}\s*:\s*await applyPromoCodeChanges\(/);
+    // #4317 review round 4: a capped in-progress promotion's rows left on the
+    // stay are scaled to its scaled records (INV-MONEY-029's one exception).
+    expect(code).toMatch(
+      /restoreBookingNightAdjustments\(tx, \{[\s\S]{0,400}scaleSurvivors: carriedCapRowScaler\(promo\.carriedCapScaled\),/,
+    );
+  },
+  "src/lib/carried-promotion-cap.ts": (code) => {
+    // (The rows are scaled to these figures in the writer module itself; see
+    // "keeps the one rule-derived amount ..." below.)
+    // #4317 review round 4: scales a capped in-progress promotion's stored
+    // redemptions and allocations, and computes - never writes - the scaled
+    // rows the save hands to the writer after the night rewrite (above).
+    expect(code).toMatch(/await replacePromoRedemptionAllocations\(/);
+    expect(code).not.toMatch(RECORD);
+    expect(code).not.toMatch(RESTORE);
   },
   "src/lib/booking-promotions.ts": (code) => {
     // #3827: the shared re-price writes every code's redemption and hands the
@@ -277,6 +294,28 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     const writerModule = read(MODULE);
     expect(writerModule).toMatch(/export function deriveNightAdjustmentState\(/);
     expect(writerModule).not.toMatch(/adjustmentsState/);
+  });
+
+  it("keeps the one rule-derived amount to the capped in-progress carry (#4317, owner decision 24 Oct 2026 on #4302)", () => {
+    // INV-MONEY-029's exception: a capped carried promotion's surviving rows are
+    // scaled to the cap. One function computes it (`scaleCappedCarriedRows`),
+    // picked by `carriedCapRowScaler` only for records the cap scaled (a
+    // clearing scaler otherwise); the batch save alone hands it to the writer,
+    // which applies whatever scaler it is handed, on its one branch.
+    const CAP = "src/lib/carried-promotion-cap.ts";
+    expect(read(CAP)).toMatch(/export const scaleCappedCarriedRows: CappedCarryScaler = /);
+    expect(read(CAP)).toMatch(/return recordsScaled \? scaleCappedCarriedRows : \(rows\) => rows\.map\(\(\) => null\);/);
+    const writer = read(MODULE);
+    expect(writer.match(/\bparams\.scaleSurvivors\(/g)).toHaveLength(1);
+    expect(writer).toMatch(/if \(params\.scaleSurvivors\) \{\s*const scaled = params\.scaleSurvivors\(/);
+    const handedOver: string[] = [];
+    for (const file of SOURCE) {
+      const relative = relativeSource(file);
+      const code = stripComments(readFileSync(file, "utf8"));
+      if (/\bscaleSurvivors:/.test(code)) handedOver.push(relative);
+      if (relative !== CAP) expect(code, relative).not.toMatch(/\bscaleCappedCarriedRows\b/);
+    }
+    expect(handedOver).toEqual(["src/lib/booking-batch-modification-service.ts"]);
   });
 
   it("pairs every promotion writer with the recorder, in the order the night rows allow", () => {

@@ -20,7 +20,9 @@ vi.mock("@/lib/payment-link-intent", () => ({
   createPaymentIntentForPaymentLink: (...args: unknown[]) =>
     h.createPaymentIntentForPaymentLink(...args),
   PaymentLinkPaymentRecoveryError: class PaymentLinkPaymentRecoveryError extends Error {
-    kind = "payment_received_status_unconfirmed";
+    constructor(readonly kind: string = "payment_received_status_unconfirmed") {
+      super("Payment-link card status requires recovery");
+    }
   },
 }));
 
@@ -83,10 +85,49 @@ describe("POST /api/pay/[token]/payment-intent repayment response", () => {
     });
     expect(h.createPaymentIntentForPaymentLink).toHaveBeenCalledWith(
       "public-token",
+      { paidPaymentIntentId: null },
     );
     expect(JSON.stringify(body)).not.toContain(
       "secret_refunded_must_not_be_reused",
     );
+  });
+
+  it("#4300: tells the payer their earlier, superseded payment is going back, beside the fresh secret", async () => {
+    h.createPaymentIntentForPaymentLink.mockResolvedValue({
+      type: "clientSecret",
+      clientSecret: "secret_repay",
+      paymentIntentId: "pi_repay",
+      previousPaymentRefunding: true,
+    });
+    const response = await POST(
+      new NextRequest("http://localhost/api/pay/public-token/payment-intent", { method: "POST" }),
+      { params: Promise.resolve({ token: "public-token" }) },
+    );
+    expect(await response.json()).toEqual({ clientSecret: "secret_repay", paymentIntentId: "pi_repay", previousPaymentRefunding: true });
+  });
+
+  it("#4300: passes on the intent the payer says they have just paid, and nothing else from the body", async () => {
+    h.createPaymentIntentForPaymentLink.mockResolvedValue({ type: "clientSecret", clientSecret: "secret_fresh", paymentIntentId: "pi_fresh" });
+    await POST(
+      new NextRequest("http://localhost/api/pay/public-token/payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ paidPaymentIntentId: "pi_paid", bookingId: "someone-else" }),
+      }),
+      { params: Promise.resolve({ token: "public-token" }) },
+    );
+    expect(h.createPaymentIntentForPaymentLink).toHaveBeenCalledWith("public-token", { paidPaymentIntentId: "pi_paid" });
+  });
+
+  it("#4300: a superseded capture the settle refused answers the shared refunding body", async () => {
+    const { PaymentLinkPaymentRecoveryError } = await import("@/lib/payment-link-intent");
+    const { SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY } = await import("@/lib/payment-recovery-contract");
+    h.createPaymentIntentForPaymentLink.mockRejectedValue(new PaymentLinkPaymentRecoveryError("superseded_capture_refunding"));
+    const response = await POST(
+      new NextRequest("http://localhost/api/pay/public-token/payment-intent", { method: "POST" }),
+      { params: Promise.resolve({ token: "public-token" }) },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY);
   });
 
   // #3638 delta D4: the link door sends the SAME switched-to-Internet-Banking

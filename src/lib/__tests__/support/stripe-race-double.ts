@@ -26,7 +26,9 @@ export const stripeRaceHooks: {
   listRefunds: null | ((paymentIntentId: string) => Promise<unknown>);
   /** #4170: the refunds Stripe lists for one charge, which `charge.refunded` records. */
   listChargeRefunds: null | ((chargeId: string) => Promise<unknown>);
-} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null };
+  /** #4300: the Stripe customer a card door mints its intent for. */
+  customer: null | ((args: Parameters<Stripe["findOrCreateCustomer"]>[0]) => Promise<unknown>);
+} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null };
 
 export function resetStripeRaceHooks(): void {
   stripeRaceHooks.update = null;
@@ -38,6 +40,7 @@ export function resetStripeRaceHooks(): void {
   stripeRaceHooks.refund = null;
   stripeRaceHooks.listRefunds = null;
   stripeRaceHooks.listChargeRefunds = null;
+  stripeRaceHooks.customer = null;
 }
 
 export function stripeRaceDouble(actual: Stripe): Stripe {
@@ -73,5 +76,7 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.listChargeRefunds
         ? stripeRaceHooks.listChargeRefunds(args[0])
         : actual.listRefundsForCharge(...args)) as Stripe["listRefundsForCharge"],
+    findOrCreateCustomer: ((args: Parameters<Stripe["findOrCreateCustomer"]>[0]) =>
+      stripeRaceHooks.customer ? stripeRaceHooks.customer(args) : actual.findOrCreateCustomer(args)) as Stripe["findOrCreateCustomer"],
   };
 }

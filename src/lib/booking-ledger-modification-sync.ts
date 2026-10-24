@@ -41,9 +41,10 @@ type LedgerStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
 
 /**
  * One priced edit's lines, anchored on the `BookingModification` row it just
- * wrote. `sides` is what `computeModificationPricing` composed, or null where
- * the edit parked, stubbed its promotion figures, or could not compose them —
- * each of which posts nothing (`INV-MOD-040`).
+ * wrote. `sides` is what `computeModificationPricing` composed — each night of
+ * the before side at its valued figure (#4317, `INV-MOD-028`) — or null where
+ * the edit stubbed its promotion figures or could not compose them, each of
+ * which posts nothing.
  *
  * The figures the lines must sum to are READ FROM THAT ROW, never handed over
  * beside it, so the ledger and the edit's own history cannot be given two

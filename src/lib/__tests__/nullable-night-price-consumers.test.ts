@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
+import { valuedNightLocksForGuest } from "@/lib/edit-night-valuation";
 import {
   classifyStoredSoldPriceEvidence,
   storedSoldPriceEvidenceForGuest,
@@ -94,23 +94,35 @@ describe("#3170 the evidence reader: a null is an absence, never a price", () =>
   });
 });
 
-describe("#3170 the lenient lock reader: an unknown night carries no lock", () => {
-  it("drops an unknown night rather than locking it at zero", () => {
-    const locks = lockedNightPricesForGuest({
-      nights: [
-        { stayDate: D("2026-08-20"), priceCents: RATE, priceSource: "SOLD" },
-        { stayDate: D("2026-08-21"), priceCents: null, priceSource: "UNKNOWN" },
-        // A stored zero IS a price — a comped night — and must keep its lock.
-        // This is the assertion that stops "null" and "0" being conflated in the
-        // direction that costs the member money.
-        { stayDate: D("2026-08-22"), priceCents: 0, priceSource: "SOLD" },
-      ],
-    });
+describe("#3170 the valued lock reader: an unknown night is valued, never locked at zero (#4317)", () => {
+  it("values an unknown night from the stored total rather than locking it at zero or dropping it", () => {
+    const { lockedNightPrices, unattachedCents } = valuedNightLocksForGuest(
+      {
+        // $80 stored: the sold night is $50, the comped night is $0, so the one
+        // unknown night takes the $30 the total has left over (R2, INV-MOD-028).
+        priceCents: 8000,
+        stayStart: D("2026-08-20"),
+        stayEnd: D("2026-08-23"),
+        nights: [
+          { stayDate: D("2026-08-20"), priceCents: RATE, priceSource: "SOLD" },
+          { stayDate: D("2026-08-21"), priceCents: null, priceSource: "UNKNOWN" },
+          // A stored zero IS a price: a comped night keeps its $0 lock. This is
+          // the assertion that stops "null" and "0" being conflated in the
+          // direction that costs the member money.
+          { stayDate: D("2026-08-22"), priceCents: 0, priceSource: "SOLD" },
+        ],
+      },
+      { checkIn: D("2026-08-20"), checkOut: D("2026-08-23") },
+    );
 
-    expect(locks).toEqual([
+    expect(lockedNightPrices).toEqual([
       { stayDate: D("2026-08-20"), priceCents: RATE, priceSource: "SOLD" },
+      // Before #4317 this night carried no lock and priced at today's rate.
+      { stayDate: D("2026-08-21"), priceCents: 3000, priceSource: "EVEN_SPLIT" },
       { stayDate: D("2026-08-22"), priceCents: 0, priceSource: "SOLD" },
     ]);
+    // The values add up to the stored total, so no money is left unattached.
+    expect(unattachedCents).toBe(0);
   });
 });
 

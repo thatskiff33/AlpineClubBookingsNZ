@@ -1,59 +1,36 @@
 import { describe, expect, it } from "vitest";
 
 /**
- * #3498 (owner decision D1): NO STORED FIGURE IS LOST WHEN THE GRAIN MOVES.
+ * #3498 (owner decision D1) and #4317: EVERY STORED FIGURE ON A REVIEW ITEM ALREADY
+ * ON FILE STILL READS BACK.
  *
- * Until #3498 each guest strand of a parked edit became its own
- * `EDIT_FINANCIAL_REVIEW` work item, carrying that strand's cause, the nights
- * the edit took from it and gave it, its stored guest total and every stored
- * night-price row it held. D1 collapses those into ONE item per edit. The whole
- * hazard of that change is that a figure quietly stops being written down: the
- * per-strand records exist precisely because a parked edit deletes and recreates
- * night rows, so a number it stops recording is a number nothing in the database
- * holds any more.
+ * Until #4317 a parked edit raised `EDIT_FINANCIAL_REVIEW` work items, each
+ * carrying, per guest strand, the strand's cause, the nights the edit took from
+ * it and gave it, its stored guest total and every stored night-price row it
+ * held. #4317 (epic #4302) prices every edit, so nothing raises an item any more
+ * — but the items already raised stay open until wave B settles them, and the
+ * finance queue and settle screens read them through
+ * `parseEditFinancialReviewContext`. A figure that parser stops reading is a
+ * figure nothing in the database holds any more: the parked edit deleted the
+ * rows it came from.
  *
- * D1 therefore asks for a census, and this is it. It is deliberately NOT another
- * "does the happy path still work" test:
+ * So this census is now over the PARSER, on the shapes production is holding:
  *
  *  - `RECORDED_STRAND_FIELDS` is a FROZEN MANIFEST of every field a strand's
- *    record carried before the grain moved. Adding a field to the record does
- *    not fail; dropping one does, by name;
- *  - every field is asserted against the value the edit ACTUALLY destroyed, read
- *    from the fixture rather than from the record, so a record that carries the
- *    field with a hollowed-out value fails too;
- *  - it runs over one parked edit holding EVERY SHAPE the current code records -
- *    all four unreadable causes and all three ways an exact strand's evidence is
- *    destroyed - because a census over one shape proves one shape;
- *  - and it asserts the whole thing SURVIVES THE WRITE, through the same
- *    `parseEditFinancialReviewContext` the raise validates with and the finance
- *    queue reads back. A record composed correctly and then refused, truncated
- *    or silently dropped by that schema is lost just as thoroughly.
- *
- * Mutation-verified per `docs/TESTING.md`: removing `storedEvidence.nightPrices`
- * from `composeStrandRecord`, removing `otherStrands` from `occurrenceSchema`,
- * and returning only the lead strand from `parkedEditOccurrence` each fail this
- * file by name, and each mutation was restored.
+ *    record carries. Dropping one fails by name;
+ *  - every field is asserted against the value written in the fixture, so a
+ *    parser that keeps the field with a hollowed-out value fails too;
+ *  - the fixture holds every cause the raise could record, in both the one-item
+ *    grain (a lead strand with `otherStrands`) and a v1 row from before #3498.
  */
 
 import {
   editFinancialReviewStrandRecords,
   parseEditFinancialReviewContext,
-  type EditFinancialReviewContext,
   type EditFinancialReviewStrandRecord,
 } from "@/lib/edit-financial-review-context";
-import {
-  preCheckInEditEvidence,
-  type PreCheckInEditStrand,
-} from "@/lib/stored-sold-price-evidence";
 
-/**
- * EVERY FIELD ONE STRAND'S RECORD MUST STILL CARRY, as a path.
- *
- * Measured off the pre-#3498 `EditFinancialReviewOccurrence`, which is what one
- * work item was. `bookingId` is not here because it belongs to the edit rather
- * than to a strand and lives once on the occurrence; everything else on that
- * type is per-strand and is listed.
- */
+/** EVERY FIELD ONE STRAND'S RECORD MUST STILL CARRY, as a path. */
 const RECORDED_STRAND_FIELDS = [
   "bookingGuestId",
   "cause",
@@ -99,326 +76,115 @@ function fieldPresent(
   }
 }
 
-const BOOKING = {
-  checkIn: new Date("2026-08-01"),
-  checkOut: new Date("2026-08-04"),
-};
+const NIGHTS = ["2026-08-01", "2026-08-02", "2026-08-03"];
 
-const NIGHTS = ["2026-08-01", "2026-08-02", "2026-08-03"] as const;
-
-function nightsHeld(
-  prices: ReadonlyArray<number | null>,
-  source: "SOLD" | "EVEN_SPLIT" | "UNKNOWN" = "SOLD",
-) {
-  return NIGHTS.map((stayDate, index) => ({
-    stayDate: new Date(stayDate),
-    priceCents: prices[index] ?? null,
-    priceSource: source,
-  }));
+function evidence(guestTotalCents: number | null, prices: ReadonlyArray<number | null>) {
+  return {
+    guestTotalCents,
+    nightPrices: NIGHTS.map((date, index) => ({
+      date,
+      priceCents: prices[index] ?? null,
+    })),
+  };
 }
 
-const allNights = NIGHTS.map((date) => new Date(date));
-
 /**
- * One parked edit holding every shape the current code records.
- *
- * Each strand is named for what it proves, and the fixture is the SOURCE OF
- * TRUTH for the assertions below - the census reads the expected figures from
- * here, never from the record it is checking.
+ * One item of each cause the deleted raise could record, as it wrote them: the
+ * lead strand on the occurrence, the rest under `otherStrands`.
  */
-const STRANDS: readonly PreCheckInEditStrand[] = [
-  // NO_STORED_NIGHT_PRICES: nothing stored at all.
-  {
-    bookingGuestId: "no-prices",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([null, null, null], "UNKNOWN"),
-    proposedNightDates: allNights,
-  },
-  // PARTIAL_STORED_NIGHT_PRICES: some rows priced, some blank.
+const LEAD = {
+  bookingGuestId: "no-prices",
+  cause: "NO_STORED_NIGHT_PRICES",
+  surrenderedNightDates: ["2026-08-03"],
+  addedNightDates: [],
+  storedEvidence: evidence(24_000, [null, null, null]),
+} as const;
+const OTHER_STRANDS = [
   {
     bookingGuestId: "partial",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([8_000, null, 8_000]),
-    proposedNightDates: allNights,
+    cause: "PARTIAL_STORED_NIGHT_PRICES",
+    surrenderedNightDates: [],
+    addedNightDates: [],
+    storedEvidence: evidence(24_000, [8_000, null, 8_000]),
   },
-  // STORED_TOTAL_MISMATCH: every row priced, and they do not add up.
   {
     bookingGuestId: "mismatch",
-    guestTotalCents: 30_000,
-    nights: nightsHeld([8_000, 8_000, 8_000]),
-    proposedNightDates: allNights,
+    cause: "STORED_TOTAL_MISMATCH",
+    surrenderedNightDates: [],
+    addedNightDates: [],
+    storedEvidence: evidence(30_000, [8_000, 8_000, 8_000]),
   },
-  // INEXACT_STORED_NIGHT_PRICES: reconciles as a whole guest, from an even
-  // split, while the edit moves individual nights.
   {
     bookingGuestId: "even-split",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([8_000, 8_000, 8_000], "EVEN_SPLIT"),
-    proposedNightDates: [new Date("2026-08-01")],
+    cause: "INEXACT_STORED_NIGHT_PRICES",
+    surrenderedNightDates: ["2026-08-02", "2026-08-03"],
+    addedNightDates: [],
+    storedEvidence: evidence(24_000, [8_000, 8_000, 8_000]),
   },
-  // COUNTERPART_STRAND_UNREADABLE, way 1: gives nights back.
-  {
-    bookingGuestId: "shortened",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([8_000, 8_000, 8_000]),
-    proposedNightDates: [new Date("2026-08-01")],
-  },
-  // COUNTERPART_STRAND_UNREADABLE, way 2: gains nights against a frozen total.
   {
     bookingGuestId: "extended",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([8_000, 8_000, 8_000]),
-    proposedNightDates: [...allNights, new Date("2026-08-04")],
+    cause: "COUNTERPART_STRAND_UNREADABLE",
+    surrenderedNightDates: [],
+    addedNightDates: ["2026-08-04"],
+    storedEvidence: evidence(24_000, [8_000, 8_000, 8_000]),
   },
-  // COUNTERPART_STRAND_UNREADABLE, way 3: its rows are deleted outright.
-  {
-    bookingGuestId: "removed",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([8_000, 8_000, 8_000]),
-    proposedNightDates: [],
-    rowsDestroyed: true,
-  },
-  // The CONTROL, and it is load-bearing: an exact strand whose night set does
-  // not move keeps every row byte for byte, so there is nothing of its to
-  // record. A census that recorded everything would pass without it.
-  {
-    bookingGuestId: "untouched",
-    guestTotalCents: 24_000,
-    nights: nightsHeld([8_000, 8_000, 8_000]),
-    proposedNightDates: allNights,
-  },
-];
-
-/** Every strand the edit records, which is every one above except the control. */
-const RECORDED_GUEST_IDS = [
-  "no-prices",
-  "partial",
-  "mismatch",
-  "even-split",
-  "shortened",
-  "extended",
-  "removed",
 ] as const;
+const ALL_STRANDS = [LEAD, ...OTHER_STRANDS];
 
-function parkedEdit() {
-  const { occurrences } = preCheckInEditEvidence({
-    bookingId: "booking-1",
-    booking: BOOKING,
-    strands: STRANDS,
-  });
-  if (occurrences === null) {
-    throw new Error("The fixture must park; it holds four unreadable strands.");
-  }
-  return occurrences;
-}
+const ON_FILE = {
+  version: 1,
+  occurrence: { bookingId: "booking-1", ...LEAD, otherStrands: OTHER_STRANDS },
+  guestMemberId: null,
+  bookingCheckIn: "2026-08-01",
+  bookingCheckOut: "2026-08-04",
+  guestsAddedByEdit: null,
+  bookingModificationId: "mod-1",
+};
 
-/**
- * EVERY strand this parked edit recorded, across every work item it composed
- * into - which is the grain the "no stored figure is lost" property is really
- * about (#3498 fix round).
- *
- * The census used to read one item's strand list, because the fixture composed
- * to one item. It no longer does, and the reason is the owner's 17 September
- * decision rather than an accident: this fixture moves FOUR strands' night sets
- * (even-split, shortened, extended, removed), and an edit that moves two or more
- * fans out into one item per recorded strand, because an item holds one amount.
- *
- * Reading across the items is the honest place for this census either way: the
- * property D1 asked for is that no strand's stored figures are lost by the
- * regrouping, and a census pinned to one item could only ever check one grain.
- */
-function recordedStrands() {
-  return parkedEdit().flatMap((occurrence) =>
-    editFinancialReviewStrandRecords(occurrence),
+function readBack() {
+  const parsed = parseEditFinancialReviewContext(
+    JSON.parse(JSON.stringify(ON_FILE)),
   );
+  if (!parsed) throw new Error("A review context production holds failed to parse.");
+  return editFinancialReviewStrandRecords(parsed.occurrence);
 }
 
-describe("#3498 census: one item per parked edit loses no stored figure", () => {
-  it("names the booking on every item, and records each strand exactly once", () => {
-    const items = parkedEdit();
-    for (const occurrence of items) {
-      expect(occurrence.bookingId).toBe("booking-1");
-    }
-    /*
-      NO STRAND IS RECORDED TWICE and none is dropped, whichever grain the edit
-      composed at. That is the acceptance criterion as a fact about the values
-      rather than a count of rows written - and it is what a regrouping is
-      allowed to change nothing about.
-    */
-    expect(recordedStrands()).toHaveLength(RECORDED_GUEST_IDS.length);
-  });
-
-  it("fans out to one item per strand, because this edit moves four of them", () => {
-    /*
-      The owner's 17 September decision, on the fixture that demonstrates it. An
-      item carries ONE `amountCents`; four strands whose night sets all move need
-      four, so the edit raises one item per recorded strand and each keeps its
-      own. The single-item grain is exercised by the pure-add case below, where
-      no existing strand moves at all.
-
-      A FAN-OUT ITEM CARRIES NO `otherStrands`, which is not tidiness: the price
-      boxes an item offers are the blanks of every strand it names, so items that
-      each named all seven would offer every blank seven times and let two items
-      fight over one night.
-    */
-    const items = parkedEdit();
-    expect(items).toHaveLength(RECORDED_GUEST_IDS.length);
-    for (const occurrence of items) {
-      expect(occurrence.otherStrands).toBeUndefined();
-    }
-    expect([...items.map((item) => item.bookingGuestId)].sort()).toEqual(
-      [...RECORDED_GUEST_IDS].sort(),
+describe("#4317 census: a review item already on file loses no stored figure", () => {
+  it("reads back every strand the raise recorded, lead first, once each", () => {
+    expect(readBack().map((strand) => strand.bookingGuestId)).toEqual(
+      ALL_STRANDS.map((strand) => strand.bookingGuestId),
     );
   });
 
-  it("records EVERY strand the per-strand rule recorded, and no other", () => {
-    const recorded = recordedStrands();
-    expect([...recorded.map((strand) => strand.bookingGuestId)].sort()).toEqual(
-      [...RECORDED_GUEST_IDS].sort(),
-    );
-  });
-
-  it.each(RECORDED_GUEST_IDS)(
+  it.each(ALL_STRANDS.map((strand) => strand.bookingGuestId))(
     "carries every manifest field on the %s strand",
     (bookingGuestId) => {
-      const strand = recordedStrands().find(
+      const strand = readBack().find(
         (candidate) => candidate.bookingGuestId === bookingGuestId,
       );
       expect(strand).toBeDefined();
-      const missing = RECORDED_STRAND_FIELDS.filter(
-        (path) => !fieldPresent(strand!, path),
-      );
-      expect(missing).toEqual([]);
+      expect(
+        RECORDED_STRAND_FIELDS.filter((path) => !fieldPresent(strand!, path)),
+      ).toEqual([]);
     },
   );
 
-  it("records the real stored figures, not hollowed-out ones", () => {
-    const recorded = recordedStrands();
-    for (const fixture of STRANDS) {
-      const strand = recorded.find(
+  it("reads the real stored figures, not hollowed-out ones", () => {
+    const read = readBack();
+    for (const fixture of ALL_STRANDS) {
+      const strand = read.find(
         (candidate) => candidate.bookingGuestId === fixture.bookingGuestId,
       );
-      if (!RECORDED_GUEST_IDS.includes(fixture.bookingGuestId as never)) {
-        expect(strand).toBeUndefined();
-        continue;
-      }
-      expect(strand).toBeDefined();
-      // The stored total, as the fixture holds it.
-      expect(strand!.storedEvidence.guestTotalCents).toBe(
-        fixture.guestTotalCents,
-      );
-      // One evidence row per night the strand HELD - including the blanks, which
-      // are the absence an admin needs to see rather than a zero.
-      expect(strand!.storedEvidence.nightPrices).toEqual(
-        (fixture.nights ?? []).map((night) => ({
-          date: (night.stayDate as Date).toISOString().slice(0, 10),
-          priceCents: night.priceCents ?? null,
-        })),
-      );
-      // And what the edit did to it: the nights it took and the nights it gave.
-      const held = new Set(
-        (fixture.nights ?? []).map((night) =>
-          (night.stayDate as Date).toISOString().slice(0, 10),
-        ),
-      );
-      const proposed = new Set(
-        fixture.proposedNightDates.map((date) =>
-          (date as Date).toISOString().slice(0, 10),
-        ),
-      );
-      expect([...strand!.surrenderedNightDates].sort()).toEqual(
-        [...held].filter((date) => !proposed.has(date)).sort(),
-      );
-      expect([...strand!.addedNightDates].sort()).toEqual(
-        [...proposed].filter((date) => !held.has(date)).sort(),
-      );
-    }
-  });
-
-  it.each(RECORDED_GUEST_IDS)(
-    "survives the WRITE: the %s strand's item round-trips through the stored-context schema",
-    (bookingGuestId) => {
-      const occurrence = parkedEdit().find((item) =>
-        editFinancialReviewStrandRecords(item).some(
-          (strand) => strand.bookingGuestId === bookingGuestId,
-        ),
-      )!;
-      const context: EditFinancialReviewContext = {
-        version: 1,
-        occurrence,
-        guestMemberId: null,
-        bookingCheckIn: "2026-08-01" as never,
-        bookingCheckOut: "2026-08-04" as never,
-        guestsAddedByEdit: null,
-        bookingModificationId: "mod-1",
-      };
-      /*
-      The raise refuses to write a context this parser cannot read back, so a
-      schema that silently dropped `otherStrands` would not lose the evidence
-      quietly - it would lose the whole item. Either way the figures are gone,
-      which is why the census checks the round trip rather than the composition
-      alone.
-    */
-      const parsed = parseEditFinancialReviewContext(context);
-      expect(parsed).not.toBeNull();
-      expect(editFinancialReviewStrandRecords(parsed!.occurrence)).toEqual(
-        editFinancialReviewStrandRecords(occurrence),
-      );
-    },
-  );
-
-  it("RAISES AN ITEM ON A PURE GUEST ADD, where no existing strand moves at all", () => {
-    /*
-      THE CASE THAT RULES OUT THE SMALL FIX, and the acceptance criterion in its
-      own right. Adding guests surrenders no night and gains none on any strand
-      already on the booking, so "filter the fan-out down to the strands the edit
-      touched" raises NOTHING and the money owed for the new guests vanishes -
-      which is exactly why the grain moves UP instead.
-
-      Every strand here is untouched and unreadable, so `parkedEditWorkItems`
-      ranks them all equally and the lead is decided by guest id alone. What the
-      add is worth rides on `EditFinancialReviewContext.guestsAddedByEdit`, as
-      it has since #3166.
-    */
-    const { occurrences } = preCheckInEditEvidence({
-      bookingId: "booking-add",
-      booking: BOOKING,
-      strands: [
-        {
-          bookingGuestId: "b-existing",
-          guestTotalCents: 24_000,
-          nights: nightsHeld([null, null, null], "UNKNOWN"),
-          proposedNightDates: allNights,
-        },
-        {
-          bookingGuestId: "a-existing",
-          guestTotalCents: 24_000,
-          nights: nightsHeld([null, null, null], "UNKNOWN"),
-          proposedNightDates: allNights,
-        },
-      ],
-    });
-    expect(occurrences).not.toBeNull();
-    // ONE item, and that is the point of the case: a pure add moves NO existing
-    // strand's nights, so the fan-out grain cannot be reached by it however
-    // large the party (`parkedEditWorkItems`).
-    expect(occurrences).toHaveLength(1);
-    const occurrence = occurrences![0]!;
-    expect(
-      editFinancialReviewStrandRecords(occurrence).map(
-        (strand) => strand.bookingGuestId,
-      ),
-    ).toEqual(["a-existing", "b-existing"]);
-    // And nothing anywhere on it claims a night moved, because none did.
-    for (const strand of editFinancialReviewStrandRecords(occurrence)) {
-      expect(strand.surrenderedNightDates).toEqual([]);
-      expect(strand.addedNightDates).toEqual([]);
+      expect(strand?.cause).toBe(fixture.cause);
+      expect(strand?.storedEvidence).toEqual(fixture.storedEvidence);
+      expect(strand?.surrenderedNightDates).toEqual(fixture.surrenderedNightDates);
+      expect(strand?.addedNightDates).toEqual(fixture.addedNightDates);
     }
   });
 
   it("still reads a row written BEFORE the grain moved, which production is holding", () => {
     /*
-      #3498 does not migrate the items already raised - they are worked by hand -
+      #3498 did not migrate the items already raised - they are worked by hand -
       so a v1 row, which has no `otherStrands` at all, must parse exactly as it
       always did and read back as the one-strand item it is.
     */

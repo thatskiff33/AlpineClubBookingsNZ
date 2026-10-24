@@ -50,4 +50,14 @@ export const prisma: PrismaClient =
   globalForPrisma.prisma ??
   (createApplicationPrismaClient() as unknown as PrismaClient);
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+/**
+ * Shared through `globalThis` in production too (#4269). Next compiles this
+ * module into several server bundles (the instrumentation hook, the app-router
+ * server layer, the SSR layer and the route handlers), and each bundle evaluates
+ * its own copy. A module-level `const` alone therefore built one client, and so
+ * one `pg` pool, per bundle: measured at 22 backends from one container whose
+ * `connection_limit` is 10, which is what exhausted `max_connections=40` during a
+ * blue/green warm-up. `globalThis` is the one object every bundle shares, so the
+ * first bundle to load creates the client and the others adopt it.
+ */
+globalForPrisma.prisma = prisma;

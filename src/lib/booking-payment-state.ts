@@ -1,5 +1,6 @@
-import type { BookingStatus, PaymentSource } from "@prisma/client";
+import type { PaymentSource } from "@prisma/client";
 
+import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /**
@@ -204,14 +205,14 @@ export function canAskCardForIncrease(booking: {
   );
 }
 
-/** The booking status a review charge is refused on, checked by the compiler. */
-const CANCELLED_BOOKING_STATUS = "CANCELLED" satisfies BookingStatus;
-
 /**
  * #4272 (`INV-PAY-112`, owner decision 21 Oct 2026): a review charge on a
  * CANCELLED booking is REFUSED. Its ask is one the member cannot pay — every
  * pay surface excludes a cancelled booking (`INV-ADDPAY-023`) — and the
  * recovery replay already skips one, so the inline path refuses it too.
+ * #4316: and on a BUMPED one, for the same reason: the statuses are the ones
+ * that retire every ask (`isAdditionalAskRetiredBookingStatus`,
+ * `INV-ADDPAY-044`), so the sync and the replay take the cancelled path alike.
  *
  * THE ONE HOME for that rule, asked by the route chooser before the claim
  * (`chooseEditReviewChargeRoute`, which refuses with its own sentence before any
@@ -221,7 +222,7 @@ const CANCELLED_BOOKING_STATUS = "CANCELLED" satisfies BookingStatus;
 export function refusesReviewChargeForCancellation(booking: {
   status: string;
 }): boolean {
-  return booking.status === CANCELLED_BOOKING_STATUS;
+  return isAdditionalAskRetiredBookingStatus(booking.status);
 }
 
 /**
@@ -233,7 +234,8 @@ export function refusesReviewChargeForCancellation(booking: {
  * The two must agree, or a route chosen as "card" mints nothing, queues a
  * recovery row, and every replay reports `not-raised` until the row dies FAILED.
  *
- * NEVER on a CANCELLED booking (`refusesReviewChargeForCancellation`, #4272).
+ * NEVER on a CANCELLED or BUMPED booking (`refusesReviewChargeForCancellation`,
+ * #4272, #4316).
  * Otherwise it is `canAskCardForIncrease` — so a settled booking paid wholly
  * with credit (`{ amountCents: 0, SUCCEEDED, STRIPE }`) IS asked by card, the
  * owner's 15 Oct 2026 decision on #3947, matching the four edit doors (#3502) —
@@ -502,15 +504,6 @@ export function organiserInternetBankingMirrorCaptured(booking: {
 }
 
 /**
- * The payment shape the two accessors below need, spelled out so a caller cannot
- * hand them a payment row loaded without its id.
- */
-export type EditReviewSettlementPayment =
-  | (BookingPaymentState & { id: string })
-  | null
-  | undefined;
-
-/**
  * #3166 / #3194 (epic #2797): the captured payment a PARKED edit's financial
  * review settles against, or `null` — THE one derivation of that rule
  * (`INV-SSOT`), asked at both ends of the review's life.
@@ -528,23 +521,17 @@ export type EditReviewSettlementPayment =
  * task's `paymentId` nullable precisely because a credit owed for a surrendered
  * night need not sit against any one captured payment.
  *
- * TWO CALLERS, ONE QUESTION, and the second is why this returns the payment ROW:
- *
- *  - AT RAISE TIME, `raiseParkedEditFinancialReviewTasks` stamps the id onto the
- *    task. Four parked edit doors (the batch edit, the date change, the
- *    single-guest removal and the guest-add route) each computed it inline from
- *    the same two predicates before #3166 gathered them.
- *  - AT COMPLETION, `chooseEditReviewSettlementRoute` re-asks it of the booking
- *    as it stands NOW, but ONLY where the task carries no id — the stamped value
- *    is a snapshot of the moment the edit parked and nothing backfills it, so a
- *    member who paid afterwards would otherwise be refunded as club credit for
- *    ever. That path needs the row's `source` as well as its id to tell a card
- *    refund from a hand-settled ledger mirror, and re-reading the same row
- *    through a second accessor would reintroduce the disagreement this removes.
+ * It was asked at both ends of a review's life. AT RAISE TIME the parked edit
+ * stamped the id onto the task; #4317 retired the raise, so no task is stamped
+ * any more. AT COMPLETION, `chooseEditReviewSettlementRoute` re-asks it of the
+ * booking as it stands NOW, but ONLY where the task carries no id — a stamped
+ * value is a snapshot of the moment the edit parked and nothing backfills it, so
+ * a member who paid afterwards would otherwise be refunded as club credit for
+ * ever. That path needs the row's `source` as well as its id to tell a card
+ * refund from a hand-settled ledger mirror, which is why this returns the ROW.
  *
  * Getting it wrong does not fail: it routes real money down the wrong path weeks
- * later, in front of an admin with no way to tell. That is why both ends read
- * this and not a copy of it.
+ * later, in front of an admin with no way to tell.
  *
  * Lives here beside `hasIssuedPrimaryXeroInvoice`, which is the same shape for
  * the same reason, rather than in `edit-financial-review.ts` — that module is
@@ -561,18 +548,6 @@ export function editReviewSettlementPayment<
     hasCapturedPayment(booking.payment)
     ? (booking.payment ?? null)
     : null;
-}
-
-/**
- * The id half of `editReviewSettlementPayment` above, which is all a raise site
- * stores. Derived from it rather than repeating its two predicates, so the two
- * ends of a review's life cannot drift apart (`INV-SSOT`).
- */
-export function editReviewSettlementPaymentId(booking: {
-  status: string;
-  payment: EditReviewSettlementPayment;
-}): string | null {
-  return editReviewSettlementPayment(booking)?.id ?? null;
 }
 
 /**

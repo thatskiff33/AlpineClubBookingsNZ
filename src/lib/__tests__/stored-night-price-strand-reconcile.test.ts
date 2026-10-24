@@ -41,13 +41,11 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
  *
  * ## The property this file exists for
  *
- * #3214's refusal tells an officer that a booking's unpriced nights have to
- * carry a price before anything on it can be re-rated. Until this feature that
- * sentence was unsatisfiable on a quote-priced booking. The suite that proves it
- * is now true END TO END is
- * `booking-other-lodge-election-parked-edit.test.ts` -> "the refusal's sentence
- * is satisfiable"; what THIS file proves is the two things that make the act
- * safe enough to exist at all:
+ * #3214's refusal told an officer that a booking's unpriced nights had to carry
+ * a price before anything on it could be re-rated; #4317 (epic #4302) prices
+ * every edit and retired that refusal, with the end-to-end suite that proved it
+ * satisfiable. What THIS file proves is the two things that make the act safe
+ * enough to exist at all, until wave C removes it (D6):
  *
  *  1. **the eligibility fence** - a strand whose rows already reconcile is
  *     refused, so this is not a general re-pricer;

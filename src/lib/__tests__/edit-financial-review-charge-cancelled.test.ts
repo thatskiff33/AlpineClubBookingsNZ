@@ -84,6 +84,15 @@ describe("closeCancelledEditReviewChargeReplay (#4272)", () => {
     expect(mocks.complete).toHaveBeenCalledWith(operation);
   });
 
+  // #4316 (`INV-ADDPAY-044`): a BUMPED booking retires every ask too, so its
+  // replay takes the same cancelled path rather than retrying a card ask.
+  it("takes the same path for a BUMPED booking (#4316)", async () => {
+    await expect(closeCancelledEditReviewChargeReplay({ ...args, status: "BUMPED" })).resolves.toBe(true);
+
+    expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ cause: "booking-cancelled" }));
+    expect(mocks.complete).toHaveBeenCalledWith(operation);
+  });
+
   it("re-reads the status when the caller has none (a cancellation landing mid-replay)", async () => {
     mocks.bookingFindUnique.mockResolvedValue({ status: "CANCELLED" });
 

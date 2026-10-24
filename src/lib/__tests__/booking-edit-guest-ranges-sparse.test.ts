@@ -40,6 +40,14 @@
  *     Plus the state the fix newly makes reachable (a check-out ahead of the
  *     last night anybody holds), the refusal it newly makes (proved re-runnable
  *     with the date it names), and the two things it deliberately does NOT do.
+ *
+ * **#4317 (epic #4302) — every held night has a value.** The plan no longer
+ * hands an edit to an officer: a night a guest holds is valued from its stored
+ * row and the guest's stored total by `valueStrandNights` (`INV-MOD-028`, owner
+ * decision D1), so the three row variants the matrix used to send to review are
+ * now PRICED, against an oracle stated over night sets rather than the plan's
+ * own windows: an edit credits the valued figure of every night given back and
+ * charges today's rate for every night bought.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -53,7 +61,8 @@ import {
 } from "@/lib/pricing";
 import { eachDateOnlyInRange, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
-import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
+import { valueStrandNights } from "@/lib/strand-night-valuation";
+import { requireCalendarDate } from "@/lib/club-time";
 
 /**
  * The zone the LEGACY oracle below reads, named rather than left to
@@ -120,7 +129,7 @@ type TestGuest = {
   stayStart: Date;
   stayEnd: Date;
   // `priceCents` is on the real `BookingGuestNight` row and is what
-  // `lockedNightPricesForGuest` reads on the other edit paths — carried here so
+  // `valuedNightLocksForGuest` reads on the other edit paths — carried here so
   // a test can show whether this plan consults it. Optional, because most cases
   // do not care.
   nights?: Array<{
@@ -224,43 +233,86 @@ function planInput(args: {
 
 
 /**
- * The plan, insisting it priced (#3031).
- *
- * `buildInProgressGuestRangePlan` now answers with a discriminated result, and
- * unwrapping it through an assertion rather than a cast is deliberate: a fixture
- * that drifts into the unpriceable case fails HERE, naming the causes, rather
- * than failing later on an expectation about a number that was never produced.
+ * The plan. Since #4317 there is no other answer: every edit prices.
  */
 function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
-  const result = buildInProgressGuestRangePlan(input);
-  if (result.kind !== "priced") {
-    throw new Error(
-      `Expected a priced plan, got financial review: ${result.occurrences
-        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
-        .map((strand) => `${strand.bookingGuestId}:${strand.cause}`)
-        .join(", ")}`,
-    );
-  }
-  return result.plan;
+  return buildInProgressGuestRangePlan(input).plan;
 }
 
 /**
- * The review verdict, insisting the edit was NOT priced (#3031).
- *
- * #3498 moved the grain: a parked edit raises ONE occurrence carrying every
- * strand it records, where it used to raise one per strand. What these cases
- * assert about is the strand records, so that is what this hands back - through
- * `editFinancialReviewStrandRecords`, the one place that list is assembled.
+ * What each night a test guest holds is worth, by the INV-MOD-028 rule
+ * (`valueStrandNights`), keyed by night. The held set is the guest's own rows,
+ * or its envelope when it carries none — the planner's own rule for which
+ * nights a guest holds (`INV-DATE-020`).
  */
-function reviewOf(input: BuildInProgressGuestRangePlanInput) {
-  const result = buildInProgressGuestRangePlan(input);
-  if (result.kind !== "financial_review_required") {
-    throw new Error(
-      "Expected financial review, got a priced plan — an amount was invented",
+function valuedNights(guest: {
+  priceCents: number;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
+  nights?: ReadonlyArray<{ stayDate: Date | string; priceCents?: number | null }> | null;
+}): Map<string, number> {
+  const held = guest.nights?.length
+    ? guest.nights.map((night) => ({
+        date: requireCalendarDate(
+          typeof night.stayDate === "string"
+            ? night.stayDate.slice(0, 10)
+            : key(night.stayDate),
+        ),
+        priceCents: night.priceCents,
+      }))
+    : eachDateOnlyInRange(guest.stayStart!, guest.stayEnd!).map((night) => ({
+        date: requireCalendarDate(key(night)),
+        priceCents: undefined,
+      }));
+  return new Map(
+    valueStrandNights(held, guest.priceCents).nights.map((night) => [
+      night.date as string,
+      night.valueCents,
+    ]),
+  );
+}
+
+/**
+ * THE #4317 ORACLE, stated over night SETS rather than over the plan's own
+ * windows: an existing guest's new total is their stored total, less the valued
+ * figure of every night they give back, plus today's rate for every night they
+ * newly hold; a night they keep is written at its valued figure. Independent of
+ * `oldFutureStart`/`newFutureStart`, which is exactly where T6 lived.
+ */
+function expectValuedMoney(
+  input: BuildInProgressGuestRangePlanInput,
+  plan: ReturnType<typeof pricedPlan>,
+  label: string,
+) {
+  let expectedTotal = 0;
+  for (const [index, guest] of input.booking.guests.entries()) {
+    const values = valuedNights(guest);
+    const entry = plan.proposedExistingGuests[index]!;
+    const proposed = entry.nights.map(key);
+    const proposedSet = new Set(proposed);
+    const given = [...values.keys()].filter((night) => !proposedSet.has(night));
+    const bought = proposed.filter((night) => !values.has(night));
+    const expectedPrice =
+      guest.priceCents -
+      given.reduce((sum, night) => sum + values.get(night)!, 0) +
+      bought.reduce((sum, night) => sum + rateFor(night), 0);
+    expect(entry.priceCents, `${label} ${guest.id} total`).toBe(expectedPrice);
+    expect(entry.perNightCents, `${label} ${guest.id} rows`).toEqual(
+      proposed.map((night) => values.get(night) ?? rateFor(night)),
     );
+    // The rows written add up to the total written, so the next edit reads R1.
+    expect(
+      entry.perNightCents.reduce((sum, cents) => sum + cents, 0),
+      `${label} ${guest.id} reconciles`,
+    ).toBe(expectedPrice);
+    expectedTotal += expectedPrice;
   }
-  return result.occurrences.flatMap((occurrence) =>
-    editFinancialReviewStrandRecords(occurrence),
+  for (const entry of plan.proposedAddedGuests) {
+    expectedTotal += priceNights(entry.nights.map(key));
+  }
+  expect(plan.newTotalPriceCents, `${label} total`).toBe(expectedTotal);
+  expect(plan.priceDiffCents, `${label} diff`).toBe(
+    expectedTotal - input.booking.finalPriceCents,
   );
 }
 
@@ -477,8 +529,9 @@ describe("#2736/#2743 contiguous stays", () => {
   ];
 
   // What the guest's stored `BookingGuestNight` rows look like. ONE of the four
-  // is priced, and the other three are the reasons an edit can no longer be
-  // priced at all (#3031). The matrix asks a different question of each:
+  // is exactly priced; the other three are the shapes #3031 used to send to an
+  // officer and #4317 values by the INV-MOD-028 rule instead. The matrix asks a
+  // different question of each:
   //
   //  - `rows+prices` is the ordinary live booking whose rates have not moved
   //    since it was made, so #2744's locked prices ARE the current rates and
@@ -487,43 +540,25 @@ describe("#2736/#2743 contiguous stays", () => {
   //    from "changes ordinary bookings", because the others carry no price to
   //    honour. It is the only variant the equivalence claim is ABOUT.
   //  - `drifted` is that same guest with a stored TOTAL that no longer matches
-  //    the sum of their rows. It used to be priced anyway — the per-night
-  //    amounts written back fell back to an even split of the total across the
-  //    nights — and that output became the evidence the NEXT edit read as a sold
-  //    price. #3031 deletes the fallback: this is `STORED_TOTAL_MISMATCH` and it
-  //    goes to a person. It is the only unpriceable case reachable by a guest
-  //    whose rows are all present and priced, which is why it is worth a whole
-  //    matrix pass.
+  //    the sum of their rows (`STORED_TOTAL_MISMATCH`). #4317 values it by R3:
+  //    the stored total split evenly over every night held.
   //  - `rows` is a guest whose rows arrive WITHOUT their price. The schema makes
   //    `BookingGuestNight.priceCents` NOT NULL and both production loaders ask
   //    for it, so this is not a state the database can hold — it is the shape a
   //    THINNER `select` would produce, and it is here because that select is a
   //    one-word edit away and the plan cannot tell it from a guest who was never
   //    priced. `in-progress-edit-sold-price-census.test.ts` is what stops it
-  //    happening; this row is what proves the degradation stays safe if it did.
+  //    happening; this row is what proves the degradation stays safe if it did:
+  //    R2 splits the stored total evenly over the unpriced nights.
   //  - `envelope` is a guest with no rows at all: pre-`BookingGuestNight`, or a
   //    booking created by approving a request, which still writes none (#2739).
+  //    Its envelope says which nights it holds, and R2 values them.
   const ROW_VARIANTS = [
     { label: "rows+prices", withNightRows: true, withStoredPrices: true, driftCents: 0 },
     { label: "drifted", withNightRows: true, withStoredPrices: true, driftCents: 101 },
     { label: "rows", withNightRows: true, withStoredPrices: false, driftCents: 0 },
     { label: "envelope", withNightRows: false, withStoredPrices: false, driftCents: 0 },
   ];
-
-  /**
-   * Why each variant cannot be priced (#3031). `rows+prices` has no entry
-   * because it always can.
-   */
-  const EXPECTED_CAUSE: Record<string, string> = {
-    // Rows all present and priced, and a stored total that no longer matches
-    // their sum. Nothing is missing; the evidence simply does not add up.
-    drifted: "STORED_TOTAL_MISMATCH",
-    // Rows present, no usable price on any of them.
-    rows: "NO_STORED_NIGHT_PRICES",
-    // No rows at all, so the envelope says which nights and nothing says what
-    // they cost.
-    envelope: "NO_STORED_NIGHT_PRICES",
-  };
 
   /**
    * How the 960 land, pinned so a later change cannot quietly move cases between
@@ -536,15 +571,16 @@ describe("#2736/#2743 contiguous stays", () => {
     identical: 100 + 3 * 56,
     corrected: 135,
     refused: 4 * 5,
-    // Everything the priced variant valued (100 + 135), less those 56 legacy
-    // refusals, for each of the three variants with nothing exact to read.
-    review: 3 * (100 + 135 - 56),
+    // #4317: everything the exact variant priced (100 + 135), less those 56
+    // legacy refusals, for each of the three variants that used to go to an
+    // officer — now priced by the valuation rule and checked by its oracle.
+    valued: 3 * (100 + 135 - 56),
   };
   const EXPECTED_PRICED_VARIANT_BUCKETS = {
     identical: 100,
     corrected: 135,
     refused: 5,
-    review: 0,
+    valued: 0,
   };
 
   const cases: Array<{
@@ -598,14 +634,13 @@ describe("#2736/#2743 contiguous stays", () => {
     // How the 960 land. Pinned so a later change cannot quietly move cases
     // between buckets.
     //
-    // The grid is four row variants (#2744) over the 240 edits below, and since
-    // #3031 they DO NOT all land identically — the buckets asserted above are
-    // what says so, case by case. Only `rows+prices` is priced at all; the other
-    // three carry no exact evidence to read and every edit on them is
-    // `financial_review_required`. That separation IS the #3031 half of this
-    // matrix, and it is the assertion that would fail if a fallback came back:
-    // an estimator would move those cases out of `review` and into `identical`
-    // or `corrected`.
+    // The grid is four row variants (#2744) over the 240 edits below, and they
+    // DO NOT all land identically — the buckets asserted above are what says
+    // so, case by case. `rows+prices` is compared with the legacy arithmetic;
+    // the other three carry no exact rows, so since #4317 they are priced by
+    // the INV-MOD-028 valuation and land in `valued`, each checked against the
+    // night-set oracle (`expectValuedMoney`) and against the same beds the
+    // exact variant proposes.
     //
     // What survives from #2744 is narrower and still load-bearing: on the ONE
     // variant that can be priced, every ordinary edit agrees with the pre-#2736
@@ -623,7 +658,7 @@ describe("#2736/#2743 contiguous stays", () => {
     let identical = 0;
     let corrected = 0;
     let refused = 0;
-    let review = 0;
+    let valued = 0;
     /** Per variant: cases the LEGACY arithmetic itself refused. */
     let identicalRefusals = 0;
     const byVariant = new Map<
@@ -632,17 +667,17 @@ describe("#2736/#2743 contiguous stays", () => {
         identical: number;
         corrected: number;
         refused: number;
-        review: number;
+        valued: number;
       }
     >(
       ROW_VARIANTS.map((variant) => [
         variant.label,
-        { identical: 0, corrected: 0, refused: 0, review: 0 },
+        { identical: 0, corrected: 0, refused: 0, valued: 0 },
       ]),
     );
     const tally = (
       testCase: { variant: string },
-      bucket: "identical" | "corrected" | "refused" | "review",
+      bucket: "identical" | "corrected" | "refused" | "valued",
     ) => {
       const counts = byVariant.get(testCase.variant);
       if (!counts) throw new Error(`unknown row variant ${testCase.variant}`);
@@ -722,59 +757,43 @@ describe("#2736/#2743 contiguous stays", () => {
       expect(current.ok, testCase.name).toBe(true);
       if (!current.ok) continue;
 
-      // #3031: THREE OF THE FOUR ROW VARIANTS NO LONGER PRICE AT ALL, and that
-      // is the whole change this matrix now measures.
-      //
-      // Before, all four landed in identical buckets, and that was the proof
-      // that reading the sold price changed nothing about ordinary bookings. It
-      // was also, read the other way, the proof that a guest with NO recoverable
-      // price was being valued by the same arithmetic as one whose rows recorded
-      // exactly what they paid — from today's rate table on the credit leg, and
-      // from an even split on the rows written back. Epic #2797 prohibits both.
-      //
-      // So `rows+prices` — the ordinary live booking — must still land case for
-      // case where it always did, and the other three must return
-      // `financial_review_required` naming why, with no numeric result to read.
-      // The structural refusals above are deliberately checked BEFORE this: an
-      // edit that cannot stand up as a STAY is refused as one whatever the state
-      // of its money, which is what keeps the two verdicts separable.
+      const plan = current.value.plan;
+      const structure = plan.proposedExistingGuests.map((entry) => ({
+        id: entry.guest.id,
+        stayStart: key(entry.stayStart),
+        stayEnd: key(entry.stayEnd),
+        futureStart: key(entry.futureStart),
+        removedFromFuture: entry.removedFromFuture,
+        nights: entry.nights.map(key),
+        futureNights: entry.futureNights.map(key),
+      }));
+
+      // #4317: THE THREE VARIANTS WITH NO EXACT ROWS ARE PRICED, by the
+      // INV-MOD-028 valuation. Their beds are exactly the exact variant's — the
+      // money never moves a bed — and their money is checked against the
+      // night-set oracle rather than against the legacy arithmetic, whose
+      // today's-rate valuation of a night given back is what epic #2797
+      // prohibited and D1 replaced.
       if (testCase.variant !== "rows+prices") {
-        expect(current.value.kind, testCase.name).toBe(
-          "financial_review_required",
+        expect(structure, testCase.name).toEqual(
+          expectedExisting.map((entry) => ({
+            id: entry.id,
+            stayStart: entry.stayStart,
+            stayEnd: entry.stayEnd,
+            futureStart: entry.futureStart,
+            removedFromFuture: entry.removedFromFuture,
+            nights: entry.nights,
+            futureNights: entry.futureNights,
+          })),
         );
-        if (current.value.kind !== "financial_review_required") continue;
-        // Both guests carry the same variant, so both strands are unpriceable —
-        // including the one this edit does not touch, because the writer
-        // rewrites every existing guest's night rows.
-        expect(
-          current.value.occurrences
-            .flatMap((occurrence) =>
-              editFinancialReviewStrandRecords(occurrence),
-            )
-            .map((strand) => ({
-              bookingGuestId: strand.bookingGuestId,
-              cause: strand.cause,
-            }))
-            // #3498 orders the strands by how urgent each is rather than by the
-            // order the planner walked the booking's guests in, so this case -
-            // which is about WHICH strands are recorded and with what cause -
-            // sorts by guest to stay about that.
-            .sort((left, right) =>
-              left.bookingGuestId < right.bookingGuestId ? -1 : 1,
-            ),
-          testCase.name,
-        ).toEqual([
-          { bookingGuestId: "g1", cause: EXPECTED_CAUSE[testCase.variant] },
-          { bookingGuestId: "g2", cause: EXPECTED_CAUSE[testCase.variant] },
-        ]);
-        review += 1;
-        tally(testCase, "review");
+        expect(plan.futureActiveGuestCount, testCase.name).toBe(expectedActiveCount);
+        expectValuedMoney(testCase.input(), plan, testCase.name);
+        valued += 1;
+        tally(testCase, "valued");
         continue;
       }
 
-      expect(current.value.kind, testCase.name).toBe("priced");
-      if (current.value.kind !== "priced") continue;
-      const plan = current.value.plan;
+
 
       expect(plan.newTotalPriceCents, testCase.name).toBe(
         before.newTotalPriceCents - withheldTotalCents,
@@ -853,17 +872,9 @@ describe("#2736/#2743 contiguous stays", () => {
       // compare them against — but they are what gets written to
       // `BookingGuestNight.priceCents`, so on every one of these edits they must
       // be one integer per night that adds back to the guest's total. Anything
-      // else is a phantom balance the moment Xero rebuilds its lines.
-      //
-      // ONE carve-out, and the `drifted` variant is what found it: a guest who
-      // ends the edit holding NO nights at all — removed before their stay
-      // begins — has nothing to distribute across. A guest whose rows account
-      // for their total lands exactly on zero there, because the credit is all
-      // of their nights at all of their own prices. A guest whose total has
-      // DRIFTED from their rows keeps the drift, and that residual is neither
-      // invented nor erased here: it is what the pre-#2736 arithmetic left too
-      // (`priceCents` is compared against it above, case by case), and what to
-      // do about a total that no longer matches its rows is #2745's decision.
+      // else is a phantom balance the moment Xero rebuilds its lines. A guest
+      // who ends the edit holding NO nights lands exactly on zero, because the
+      // credit is all of their nights at all of their own prices.
       for (const entry of [
         ...plan.proposedExistingGuests,
         ...plan.proposedAddedGuests,
@@ -875,22 +886,19 @@ describe("#2736/#2743 contiguous stays", () => {
           entry.perNightCents.every((cents) => Number.isInteger(cents)),
           testCase.name,
         ).toBe(true);
-        if (entry.nights.length > 0) {
-          expect(
-            entry.perNightCents.reduce((sum, cents) => sum + cents, 0),
-            testCase.name,
-          ).toBe(entry.priceCents);
-        }
+        expect(
+          entry.perNightCents.reduce((sum, cents) => sum + cents, 0),
+          testCase.name,
+        ).toBe(entry.priceCents);
       }
     }
 
-    // #3031: the row variants no longer land identically, and the shape of the
+    // The row variants do not land identically, and the shape of the
     // difference IS the claim. `rows+prices` is unchanged case for case — that
     // is what says an ordinary live booking prices exactly as it always did.
-    // The three variants with nothing exact to read produce no number at all,
-    // and every one of them that the pre-#2743 arithmetic would have PRICED is
-    // now a review rather than an estimate: none of them lands in `identical`
-    // or `corrected` on a case that was priced. Asserted per variant and not
+    // The three variants with nothing exact to read are priced by the
+    // INV-MOD-028 valuation (#4317), so every case the exact variant priced is
+    // `valued` for them: none goes to an officer. Asserted per variant and not
     // only in the total, because a total can absorb a move in one variant that a
     // per-variant comparison cannot.
     const pricedVariant = byVariant.get("rows+prices");
@@ -900,10 +908,10 @@ describe("#2736/#2743 contiguous stays", () => {
       // The refusals are structural and therefore variant-blind: the same edits
       // are refused for the same reason whatever the rows say.
       expect(counts.refused, variant.label).toBe(pricedVariant.refused);
-      // Nothing is priced that was not exactly evidenced.
+      // Nothing here is compared with the legacy arithmetic...
       expect(counts.corrected, variant.label).toBe(0);
-      // Everything the priced variant valued, this one hands to a person.
-      expect(counts.review, variant.label).toBe(
+      // ...because everything the exact variant priced, this one values.
+      expect(counts.valued, variant.label).toBe(
         pricedVariant.identical + pricedVariant.corrected - identicalRefusals,
       );
       // The only cases left in `identical` are the ones the LEGACY arithmetic
@@ -917,11 +925,11 @@ describe("#2736/#2743 contiguous stays", () => {
     // save through by re-admitting and charging a guest who had gone; refusing
     // it is the corrected answer, and the message names the check-out that fits
     // who is actually there.
-    expect({ identical, corrected, refused, review }).toEqual(EXPECTED_BUCKETS);
+    expect({ identical, corrected, refused, valued }).toEqual(EXPECTED_BUCKETS);
     expect(byVariant.get("rows+prices")).toEqual(
       EXPECTED_PRICED_VARIANT_BUCKETS,
     );
-    expect(identical + corrected + refused + review).toBe(cases.length);
+    expect(identical + corrected + refused + valued).toBe(cases.length);
   });
 
   it("agrees on an added guest too, whose window this plan still owns", () => {
@@ -1081,10 +1089,9 @@ describe("#2736 a sparse stay", () => {
     // canonical set to read, so the envelope IS the answer for WHICH nights the
     // guest holds. #2736's fallback is unchanged.
     //
-    // What #3031 changes is the MONEY, and only the money: those nights have no
-    // stored price, so the edit is not priced at all. The night set the envelope
-    // produced is still what the refusal reports - which is how this case can
-    // still prove the fallback works, without an invented amount attached to it.
+    // #4317: those nights have no stored price, so they are valued by the
+    // INV-MOD-028 rule (R2): the stored total, $150, split evenly over the three
+    // nights the envelope says the guest holds — $50 each.
     const withRows = guestFromNights(["2026-08-20", "2026-08-21", "2026-08-22"]);
     const withoutRows = guestFromNights(
       ["2026-08-20", "2026-08-21", "2026-08-22"],
@@ -1099,24 +1106,22 @@ describe("#2736 a sparse stay", () => {
       });
 
     expect(withoutRows.nights).toBeUndefined();
-    const occurrences = reviewOf(inputFor(withoutRows));
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
+    const enveloped = pricedPlan(inputFor(withoutRows)).proposedExistingGuests[0];
+    const rowed = pricedPlan(inputFor(withRows)).proposedExistingGuests[0];
     // The envelope expanded, night for night - the same nights the guest WITH
-    // rows holds, which is the equivalence this case has always asserted.
-    expect(
-      occurrences[0].storedEvidence.nightPrices.map((night) => night.date),
-    ).toEqual((withRows.nights ?? []).map((night) => key(night.stayDate)));
-    // And the guest with rows still prices, over that same held set plus the
-    // nights the extension buys.
-    expect(
-      pricedPlan(inputFor(withRows)).proposedExistingGuests[0].nights.map(key),
-    ).toEqual([
+    // rows holds, plus the two the extension buys.
+    expect(enveloped.nights.map(key)).toEqual([
       "2026-08-20",
       "2026-08-21",
       "2026-08-22",
       "2026-08-23",
       "2026-08-24",
     ]);
+    expect(enveloped.nights.map(key)).toEqual(rowed.nights.map(key));
+    // Same money too: $50 x 3 held (valued) + $90 x 2 bought = $330.
+    expect(enveloped.perNightCents).toEqual([LOW, LOW, LOW, HIGH, HIGH]);
+    expect(enveloped.priceCents).toBe(3 * LOW + 2 * HIGH);
+    expect(enveloped.priceCents).toBe(rowed.priceCents);
   });
 
   it("prices each night at its own season rate across a gap that spans the boundary", () => {
@@ -1270,31 +1275,21 @@ describe("#2736 a sparse stay", () => {
     expect(entry.futureDeltaCents).toBeGreaterThan(legacyDeltaCents);
   });
 
-  it("sends a strand whose rows reach past its own stored stayEnd to review (#3031)", () => {
-    // THE SECOND REVIEW RETURN, which the post-compose reconciliation check
-    // raises — and which nothing reached until this case existed. It is a real
-    // shape, not a defensive branch: `stayEnd` is a DERIVED envelope
-    // (INV-DATE-012) and can disagree with the rows in either direction; the
-    // suite already covers the envelope running WIDER than the rows, and this is
-    // the other side, where the rows run past the envelope.
-    //
-    // Why the money then fails to reconcile, in the order the plan computes it:
-    // `oldWindowNightKeys` is bounded by the guest's stored `stayEnd`, so the
-    // night of the 22nd is NOT in the old-price window and is credited nowhere;
-    // the proposed set keeps it, so it is charged again in the new one. The
-    // guest's price therefore gains a night they already hold, while the rows
-    // composed for them still sum to what they were sold. That is a
-    // reconciliation failure like any other, and #3031's rule is that it goes to
-    // a person rather than being smoothed over — smoothing it over is precisely
-    // what the deleted even-split rewrite did.
+  it("T6: bounds the edit by the guest's night rows, not a stored stayEnd that stops short (#4317, INV-DATE-020)", () => {
+    // `stayEnd` is a DERIVED envelope (INV-DATE-012) and can disagree with the
+    // rows. Here the rows hold the 20th-22nd but the stored `stayEnd` says the
+    // 22nd, one morning short. The old-price window used to stop at that stored
+    // `stayEnd`, so the night of the 22nd was credited nowhere and charged
+    // again in the new window: the strand's rows stopped adding up to its total
+    // and #3031 sent the edit to an officer. #4317 bounds both windows by the
+    // rows, so the identical edit prices exactly as the control below does.
     const rowsPastEnvelope = {
       ...guestFromNights(["2026-08-20", "2026-08-21", "2026-08-22"]),
       // One day short: the real envelope for those rows is the 23rd.
       stayEnd: D("2026-08-22"),
     };
     // PREMISE, so the fixture cannot silently stop being the shape under test:
-    // the strand's own stored evidence is EXACT. Whatever this returns, it is
-    // not the first gate.
+    // the strand's own stored evidence is EXACT, so only the window could fail.
     expect(
       storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
         checkIn: D("2026-08-20"),
@@ -1302,7 +1297,7 @@ describe("#2736 a sparse stay", () => {
       }, "WHOLE_GUEST").kind,
     ).toBe("exact");
 
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       planInput({
         guests: [rowsPastEnvelope],
         editableFrom: "2026-08-22",
@@ -1311,32 +1306,66 @@ describe("#2736 a sparse stay", () => {
         checkOut: "2026-08-23",
       }),
     );
+    const entry = plan.proposedExistingGuests[0];
+    // The three nights held at $50 each, plus the 23rd bought at $90: $240,
+    // a $90 charge — not $140, which counted the 22nd twice.
+    expect(entry.nights.map(key)).toEqual([
+      "2026-08-20",
+      "2026-08-21",
+      "2026-08-22",
+      "2026-08-23",
+    ]);
+    expect(entry.perNightCents).toEqual([LOW, LOW, LOW, HIGH]);
+    expect(entry.priceCents).toBe(3 * LOW + HIGH);
+    expect(plan.priceDiffCents).toBe(HIGH);
+  });
 
-    expect(occurrences).toHaveLength(1);
-    expect(occurrences[0]).toMatchObject({
-      bookingGuestId: "g1",
-      cause: "STORED_TOTAL_MISMATCH",
-      // Nothing leaves the stay — the edit only extends it — so the identity
-      // records the added night alone.
-      surrenderedNightDates: [],
-      addedNightDates: ["2026-08-23"],
-    });
-    // The evidence handed to the admin is the rows as they stand, unrewritten.
-    expect(occurrences[0].storedEvidence).toEqual({
-      guestTotalCents: 3 * LOW,
-      nightPrices: [
-        { date: "2026-08-20", priceCents: LOW },
-        { date: "2026-08-21", priceCents: LOW },
-        { date: "2026-08-22", priceCents: LOW },
-      ],
-    });
+  it("T6 on the check-out-day extension: a short stored stayEnd does not re-sell the last held night (#4317, #2029)", () => {
+    // The shape where the stored envelope actually moves a window: the edit is
+    // made on the morning after the guest's last held night (#2029's
+    // check-out-day extension), so the new-price window starts at the guest's
+    // own stay end. Read off a stored `stayEnd` one morning short, that start
+    // fell on the 22nd — a night already held and paid for — and the edit sold
+    // it a second time. Read off the rows it starts on the 23rd.
+    const rowsPastEnvelope = {
+      ...guestFromNights(["2026-08-20", "2026-08-21", "2026-08-22"]),
+      stayEnd: D("2026-08-22"),
+    };
+    const plan = pricedPlan(
+      planInput({
+        guests: [rowsPastEnvelope],
+        editableFrom: "2026-08-23",
+        newCheckOut: "2026-08-25",
+        checkIn: "2026-08-20",
+        checkOut: "2026-08-23",
+      }),
+    );
+    const entry = plan.proposedExistingGuests[0];
+    const bought = rateFor("2026-08-23") + rateFor("2026-08-24");
+
+    expect(entry.nights.map(key)).toEqual([
+      "2026-08-20",
+      "2026-08-21",
+      "2026-08-22",
+      "2026-08-23",
+      "2026-08-24",
+    ]);
+    expect(entry.perNightCents).toEqual([
+      LOW,
+      LOW,
+      LOW,
+      rateFor("2026-08-23"),
+      rateFor("2026-08-24"),
+    ]);
+    expect(entry.priceCents).toBe(3 * LOW + bought);
+    // The charge is the two nights bought, and nothing for the 22nd.
+    expect(plan.priceDiffCents).toBe(bought);
   });
 
   it("prices the SAME edit on the SAME guest once the envelope agrees with the rows", () => {
-    // The control for the case above, and the reason it is not merely "any
-    // fixture the planner happens to refuse": one field moves — the stored
-    // `stayEnd` back onto the morning after the last row — and the identical
-    // edit prices. So the refusal is about the drift and about nothing else.
+    // The control for the case above: one field moves — the stored `stayEnd`
+    // back onto the morning after the last row — and the money is identical,
+    // which is what says T6's window is read off the rows.
     const plan = pricedPlan(
       planInput({
         guests: [guestFromNights(["2026-08-20", "2026-08-21", "2026-08-22"])],
@@ -1362,18 +1391,14 @@ describe("#2736 a sparse stay", () => {
   });
 
   /**
-   * #3166: BOTH parked exits record the same thing, because which one an edit
-   * reaches is not a fact about the booking.
-   *
-   * One fixture, two guests, run twice. The only thing that moves between the
-   * two runs is WHEN `g1` becomes unpriceable — at the gate, or at the
-   * reconciliation check after composing — and the occurrence list must not
-   * notice. It used to: the second exit built its list purely from the strands
-   * that failed to reconcile, so `g2` — exact before the edit, rewritten to
-   * `PARTIAL_STORED_NIGHT_PRICES` by the park, with real money owed on nights
-   * nobody has priced — was named nowhere at all.
+   * The two shapes that used to park at the planner's two review exits — a
+   * strand whose rows do not add up (the gate) and one whose rows reach past
+   * its stored `stayEnd` (the post-compose check) — beside an exact counterpart
+   * whose nights the same edit moves. Since #4317 all of them PRICE: the
+   * counterpart keeps its stored nights and buys the new ones, so nothing the
+   * system knew is lost and nothing is sent to an officer.
    */
-  describe("both parked exits record the counterpart strands they destroy", () => {
+  describe("the strands that used to park both price, beside their counterpart (#4317)", () => {
     /** Two guests, each holding 20-21 Aug at a stored $50 a night. */
     const BOUGHT = ["2026-08-20", "2026-08-21"];
     /** The officer extends the check-out by two nights, from tomorrow on. */
@@ -1384,92 +1409,42 @@ describe("#2736 a sparse stay", () => {
       checkOut: "2026-08-22",
     } as const;
     const counterpart = guestFromNights(BOUGHT, "g2");
+    /** The 22nd at $50 and the 23rd at $90, bought by each guest. */
+    const BOUGHT_NOW = LOW + HIGH;
 
-    it("records the exact counterpart when the FIRST exit parks (the control)", () => {
-      // `g1` fails at the gate: its rows are all present and priced, and they do
-      // not add up to its stored total. This is the behaviour that already
-      // shipped, pinned here so the second exit below is measured against a
-      // control on the same fixture rather than against a description of one.
+    it("prices a strand whose rows do not add up by an even split of its total (R3)", () => {
+      // `g1` holds two $50 rows against a stored $101.01: R3 splits the total,
+      // leftover cent on the earlier night — $50.51 and $50.50.
       const driftedTotal = guestFromNights(BOUGHT, "g1", true, true, 101);
-      const occurrences = reviewOf(
+      const plan = pricedPlan(
         planInput({ guests: [driftedTotal, counterpart], ...EXTEND }),
       );
+      const [g1, g2] = plan.proposedExistingGuests;
 
-      expect(
-        occurrences.map((occurrence) => [
-          occurrence.bookingGuestId,
-          occurrence.cause,
-        ]),
-      ).toEqual([
-        ["g1", "STORED_TOTAL_MISMATCH"],
-        ["g2", "COUNTERPART_STRAND_UNREADABLE"],
-      ]);
-      // `g2`'s real per-night prices travel with it. They are about to stop
-      // existing: the park writes its rows as $50, $50, NULL, NULL against a
-      // frozen $100 total.
-      expect(occurrences[1].storedEvidence.nightPrices).toEqual([
-        { date: "2026-08-20", priceCents: LOW },
-        { date: "2026-08-21", priceCents: LOW },
-      ]);
-      expect(occurrences[1].addedNightDates).toEqual([
-        "2026-08-22",
-        "2026-08-23",
-      ]);
+      expect(g1.perNightCents).toEqual([5051, 5050, LOW, HIGH]);
+      expect(g1.priceCents).toBe(2 * LOW + 101 + BOUGHT_NOW);
+      // The counterpart keeps its own rows byte for byte.
+      expect(g2.perNightCents).toEqual([LOW, LOW, LOW, HIGH]);
+      expect(g2.priceCents).toBe(2 * LOW + BOUGHT_NOW);
+      // The edit charges exactly the two nights each guest bought: $280.
+      expect(plan.priceDiffCents).toBe(2 * BOUGHT_NOW);
     });
 
-    it("records the exact counterpart when the SECOND exit parks, and names each strand once", () => {
-      // Same booking, same destruction, and `g1` unpriceable for a different
-      // reason: its rows reach one day past its own stored `stayEnd`
-      // (INV-DATE-012), so the night of the 21st is outside the old-price window
-      // and charged again in the new one. Its own evidence is EXACT, so the gate
-      // passes it and only the post-compose reconciliation check catches it.
+    it("prices a strand whose rows reach past its stored stayEnd the same as one that does not (T6)", () => {
       const rowsPastEnvelope = {
         ...guestFromNights(BOUGHT, "g1"),
         // One day short: the real envelope for those rows is the 22nd.
         stayEnd: D("2026-08-21"),
       };
-      // PREMISE, so the fixture cannot silently stop being the shape under test.
-      expect(
-        storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
-          checkIn: D("2026-08-20"),
-          checkOut: D("2026-08-22"),
-        }, "WHOLE_GUEST").kind,
-      ).toBe("exact");
-
-      const occurrences = reviewOf(
+      const plan = pricedPlan(
         planInput({ guests: [rowsPastEnvelope, counterpart], ...EXTEND }),
       );
+      const [g1, g2] = plan.proposedExistingGuests;
 
-      // Byte for byte what the control above records. `g2` is here, with its
-      // prices, because the parked plan rewrites its rows exactly as it does at
-      // the first exit.
-      expect(
-        occurrences.map((occurrence) => [
-          occurrence.bookingGuestId,
-          occurrence.cause,
-        ]),
-      ).toEqual([
-        ["g1", "STORED_TOTAL_MISMATCH"],
-        ["g2", "COUNTERPART_STRAND_UNREADABLE"],
-      ]);
-      expect(occurrences[1].storedEvidence.nightPrices).toEqual([
-        { date: "2026-08-20", priceCents: LOW },
-        { date: "2026-08-21", priceCents: LOW },
-      ]);
-
-      // AND ONCE EACH. `g1` is in both lists here — exact at the gate with a
-      // night set that moves, so it is a destroyed-evidence strand too, and
-      // unpriceable once composed. A naive concatenation emits it twice, under
-      // the same booking, strand, night sets and stored evidence, differing in
-      // `cause` alone — which is enough to hash to two occurrence keys and raise
-      // TWO review tasks for one guest. The unpriceable occurrence is the one
-      // that survives, because it says why no money moved.
-      expect(
-        occurrences.filter((occurrence) => occurrence.bookingGuestId === "g1"),
-      ).toHaveLength(1);
-      expect(
-        new Set(occurrences.map((occurrence) => occurrence.bookingGuestId)).size,
-      ).toBe(occurrences.length);
+      expect(g1.perNightCents).toEqual([LOW, LOW, LOW, HIGH]);
+      expect(g1.priceCents).toBe(2 * LOW + BOUGHT_NOW);
+      expect(g2.perNightCents).toEqual(g1.perNightCents);
+      expect(plan.priceDiffCents).toBe(2 * BOUGHT_NOW);
     });
   });
 
@@ -2167,25 +2142,18 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.perNightCents).toEqual([LOW]);
   });
 
-  it("REFUSES to value a night at today's rate when there is no sold price to recover", () => {
-    // #3031, and the test that fails if the today's-rate fallback comes back.
-    //
-    // This case used to assert the fallback: a booking predating
-    // `BookingGuestNight`, or one converted from a request, had its surrendered
-    // night credited at the CURRENT season rate and its rows written back as an
-    // even split of whatever total was left. Both numbers were arithmetic about
-    // a stay nobody has a per-night record of, and epic #2797 prohibits both.
-    //
-    // The member here paid 2 x LOW and the night they are giving back is now
-    // HIGH. Any answer at all - HIGH, LOW, the average, zero - would be
-    // invented, so the plan produces none.
+  it("T8: credits a night with no stored price at its share of the stored total, never today's rate (#4317)", () => {
+    // A booking predating `BookingGuestNight`, or one converted from a request:
+    // no per-night record, only the guest's stored total. The member paid
+    // $100 for two nights; the night they give back (the 23rd) is now $90 at
+    // today's rate. The INV-MOD-028 rule (R2) splits the stored total over the
+    // nights held — $50 each — so the credit is $50, not $90 (today's rate)
+    // and not $0. Epic #2797 parked this; D1 prices it.
     const legacyGuest: TestGuest = {
       ...guestFromNights(["2026-08-22", "2026-08-23"], "g1", false),
-      // Whatever they were charged is not recoverable per night; only the total
-      // survives, and it is not today's price for those nights.
       priceCents: 2 * LOW,
     };
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       planInput({
         guests: [
           legacyGuest,
@@ -2196,100 +2164,92 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
         removeGuestIds: ["g1"],
       }),
     );
+    const entry = plan.proposedExistingGuests[0];
 
-    expect(occurrences).toHaveLength(1);
-    expect(occurrences[0].bookingGuestId).toBe("g1");
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
-    // The night given back is named, so an admin knows what they are pricing -
-    // and the envelope is still what says WHICH nights this guest holds, which
-    // is the fallback #2736 kept and #3031 does not touch.
-    expect(occurrences[0].surrenderedNightDates).toEqual(["2026-08-23"]);
-    // The evidence is recorded as an ABSENCE, never as a zero. Zero is a real
-    // sold price (a comped night) and would read as "the member paid nothing".
-    expect(occurrences[0].storedEvidence.nightPrices).toEqual([
-      { date: "2026-08-22", priceCents: null },
-      { date: "2026-08-23", priceCents: null },
-    ]);
-    expect(occurrences[0].storedEvidence.guestTotalCents).toBe(2 * LOW);
+    // The envelope still says WHICH nights the guest holds (#2736).
+    expect(entry.nights.map(key)).toEqual(["2026-08-22"]);
+    expect(entry.oldFuturePriceCents).toBe(LOW);
+    expect(entry.priceCents).toBe(LOW);
+    // The kept night is written at its valued $50, so the next edit reads R1.
+    expect(entry.perNightCents).toEqual([LOW]);
+    expect(entry.perNightPriceSources).toEqual(["EVEN_SPLIT"]);
+    expect(plan.priceDiffCents).toBe(-LOW);
   });
 
-  it("REFUSES when the stored rows do not add up to the stored total, and writes nothing", () => {
-    // #3031, and the test that fails if the even split comes back.
-    //
-    // Drifted data: the guest's rows say LOW + LOW, their stored total says 101
-    // cents more. This used to write an even split of the whole total across
-    // every night - which is the sharpest form of the defect, because that split
-    // BECOMES `BookingGuestNight.priceCents` and the next edit reads it back as
-    // the price the member was charged. A guess that writes itself into the
-    // history is worse than a guess that is merely shown.
+  it("T9: values a strand whose rows do not add up by an even split of its stored total (R3)", () => {
+    // Drifted data: the rows say $50 + $50, the stored total says $101.01.
+    // R3 splits the total over the nights held — $50.51 and $50.50, the
+    // leftover cent on the earlier night — and that is what the rows become,
+    // so the strand reconciles from here on. The extension buys the 23rd and
+    // 24th at $90 each.
     const drifted: TestGuest = {
       ...guestWhoPaid({ "2026-08-20": LOW, "2026-08-22": LOW }, "g1"),
       priceCents: 2 * LOW + 101,
     };
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       planInput({
         guests: [drifted],
         editableFrom: "2026-08-21",
         newCheckOut: "2026-08-25",
       }),
     );
+    const entry = plan.proposedExistingGuests[0];
 
-    expect(occurrences).toHaveLength(1);
-    expect(occurrences[0].cause).toBe("STORED_TOTAL_MISMATCH");
-    // Nothing is missing - every row has a real price. The rows simply do not
-    // account for the total, which is a question for a person and not for
-    // arithmetic.
-    expect(occurrences[0].storedEvidence.nightPrices).toEqual([
-      { date: "2026-08-20", priceCents: LOW },
-      { date: "2026-08-22", priceCents: LOW },
+    expect(entry.nights.map(key)).toEqual([
+      "2026-08-20",
+      "2026-08-22",
+      "2026-08-23",
+      "2026-08-24",
     ]);
-    expect(occurrences[0].storedEvidence.guestTotalCents).toBe(2 * LOW + 101);
+    expect(entry.perNightCents).toEqual([5051, 5050, HIGH, HIGH]);
+    expect(entry.priceCents).toBe(2 * LOW + 101 + 2 * HIGH);
+    expect(plan.priceDiffCents).toBe(2 * HIGH);
   });
 
-  it("REFUSES a guest whose stored total is negative rather than spreading it", () => {
-    // The negative total the pre-#2744 arithmetic could itself produce. It used
-    // to be spread across the guest's nights cent by cent, so a damaged booking
-    // got MORE negative rows for the next edit to read as sold prices. Nothing
-    // is written now, and nothing already stored is repaired either: what to do
-    // about a damaged total is an owner decision with its own audit (#2745).
+  it("D11: values a negative stored total at $0, so giving a night back credits nothing and charges nothing", () => {
+    // The negative total the pre-#2744 arithmetic could itself produce. D11
+    // values every one of its nights at $0 and keeps the stored figure on the
+    // strand for #2745: the shortened check-out gives the 22nd back for $0, so
+    // this guest's total stays at -$3.01. Only the companion's real $50 night
+    // is credited.
     const owingLess: TestGuest = {
       ...guestWhoPaid({ "2026-08-20": LOW, "2026-08-22": LOW }, "g1"),
       priceCents: -301,
     };
-    const occurrences = reviewOf(
+    const companion = guestFromNights(
+      ["2026-08-20", "2026-08-21", "2026-08-22"],
+      "g2",
+    );
+    const plan = pricedPlan(
       planInput({
-        guests: [owingLess],
+        guests: [owingLess, companion],
         editableFrom: "2026-08-21",
-        newCheckOut: "2026-08-23",
+        newCheckOut: "2026-08-22",
       }),
     );
+    const [g1, g2] = plan.proposedExistingGuests;
 
-    expect(occurrences[0].cause).toBe("STORED_TOTAL_MISMATCH");
-    // A total that is not usable money is recorded as an absence, because the
-    // review context refuses a negative one - and the admin needs to know that
-    // the total itself is the problem.
-    expect(occurrences[0].storedEvidence.guestTotalCents).toBeNull();
+    expect(g1.nights.map(key)).toEqual(["2026-08-20"]);
+    expect(g1.oldFuturePriceCents).toBe(0);
+    expect(g1.priceCents).toBe(-301);
+    expect(g1.perNightCents).toEqual([0]);
+    expect(g1.perNightPriceSources).toEqual(["UNKNOWN"]);
+    expect(g2.priceCents).toBe(2 * LOW);
+    expect(plan.priceDiffCents).toBe(-LOW);
   });
 
-  it("REFUSES rather than clamping, when there is nothing per night to recover", () => {
-    // #3031, and the test that fails if the `refundCeilingCents` clamp comes
-    // back.
-    //
-    // Three nights bought for 3 x LOW, no per-night rows at all, and the last
-    // two are now HIGH. The old code credited 2 x HIGH - more than the club had
-    // ever charged - and then clamped the result against the guest's stored
-    // total so they landed on exactly zero. The clamp made the answer look safe;
-    // it was still today's rate, and the amount it clamped TO was a derived
-    // total rather than money anybody had taken.
-    //
-    // (The captured-cash caps in `booking-modify-settlement.ts` are a different
-    // thing and are untouched: they cap a refund against money actually taken.)
+  it("T8: credits never more than the guest carries, with no clamp to do it", () => {
+    // Three nights bought for $150 with no per-night rows; the last two are $90
+    // at today's rate. The old code credited 2 x $90 and then clamped it; the
+    // valuation credits 2 x $50 — the stored total's share — and needs no clamp,
+    // because the values add up to what the guest carries. (The captured-cash
+    // caps in `booking-modify-settlement.ts` are a different thing.)
     const nights = ["2026-08-22", "2026-08-23", "2026-08-24"];
     const noPerNightRecord: TestGuest = {
       ...guestFromNights(nights, "g1", false),
       priceCents: 3 * LOW,
     };
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       planInput({
         guests: [noPerNightRecord, guestFromNights(nights, "g2")],
         editableFrom: "2026-08-23",
@@ -2299,26 +2259,12 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
         checkOut: "2026-08-25",
       }),
     );
+    const entry = plan.proposedExistingGuests[0];
 
-    // The clamped answer used to be zero, which is a real financial number and
-    // is exactly what the epic forbids showing for an amount nobody has worked
-    // out. There is no amount on this branch to be zero.
-    expect(occurrences).toHaveLength(1);
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
     expect(2 * HIGH).toBeGreaterThan(3 * LOW);
-    // The WHOLE key set, not `not.toContain("priceCents")` — that assertion was
-    // tautological, because no branch of this union has such a key and nothing
-    // could add one under that name. Pinning the key set is what actually fails
-    // if a numeric field appears on the review branch under ANY name.
-    // #3498: `bookingId` belongs to the EDIT and lives once on the occurrence,
-    // so it is no longer repeated on a strand's own record.
-    expect(Object.keys(occurrences[0]).sort()).toEqual([
-      "addedNightDates",
-      "bookingGuestId",
-      "cause",
-      "storedEvidence",
-      "surrenderedNightDates",
-    ]);
+    expect(entry.oldFuturePriceCents).toBe(2 * LOW);
+    expect(entry.priceCents).toBe(LOW);
+    expect(entry.perNightCents).toEqual([LOW]);
   });
 
   it("credits a guest exactly the stored price of every night they give back", () => {
@@ -2375,16 +2321,15 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.perNightCents).toEqual([]);
     expect(entry.priceCents).toBe(0);
 
-    // #3031: the same guest with a stored total that has DRIFTED from their rows
-    // is no longer left carrying the residual - the drift IS the reconciliation
-    // failure, so the edit is not priced at all. That residual used to be
-    // written out as the guest's remaining price: a real number standing for an
-    // amount nobody could account for.
+    // T2/T9 (#4317): the same guest with a stored total that has DRIFTED from
+    // their rows is credited the whole stored total ($100.01), because the
+    // valued nights add up to it — so they too land on exactly nothing owing,
+    // with no residual left standing for money nobody can account for.
     const drifted: TestGuest = {
       ...settled,
       priceCents: settled.priceCents + 101,
     };
-    const occurrences = reviewOf(
+    const driftedPlan = pricedPlan(
       planInput({
         guests: [drifted, guestFromNights(wholeStay, "g2")],
         editableFrom: "2026-08-21",
@@ -2394,24 +2339,18 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
         checkOut: "2026-08-24",
       }),
     );
-
-    expect(occurrences.map((occurrence) => occurrence.cause)).toEqual([
-      "STORED_TOTAL_MISMATCH",
-    ]);
-    expect(occurrences[0].surrenderedNightDates).toEqual(wholeStay);
+    expect(driftedPlan.proposedExistingGuests[0].oldFuturePriceCents).toBe(
+      2 * LOW + 101,
+    );
+    expect(driftedPlan.proposedExistingGuests[0].priceCents).toBe(0);
   });
 
-  it("REFUSES a NEGATIVE stored row as a sold price, so giving a night back never charges the member", () => {
-    // The rows this bug itself wrote. `BookingGuestNight.priceCents` is a bare
-    // `Int` with no non-negative constraint, and the pre-#2744 even split of a
-    // total driven below zero could store -3000 against a night. Honouring that
-    // as a "sold price" inverts the edit: the old-price window comes out
-    // negative, so the delta is POSITIVE and taking the guest OFF the booking
-    // CHARGES them, on a booking an earlier defect had already damaged.
-    //
-    // A negative row is not a cheap night; it is a row that cannot be money. It
-    // is classified exactly like an absent one, and nothing already stored is
-    // rewritten - repair is #2745's audited decision, not this edit's.
+  it("D11: values negative rows at $0, so giving a night back never charges the member", () => {
+    // The rows this bug itself wrote: -$30 a night against a -$90 total. Read
+    // as sold prices they invert the edit — giving a night back would CHARGE the
+    // member. D11 values a negative stored total's nights at $0, so removing the
+    // guest from the 24th credits $0 and the stored -$90 stays on the strand
+    // for #2745. Nothing about the companion moves.
     const damaged: TestGuest = {
       ...guestWhoPaid(
         {
@@ -2423,7 +2362,7 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
       ),
       priceCents: -9000,
     };
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       planInput({
         guests: [
           damaged,
@@ -2434,17 +2373,14 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
         removeGuestIds: ["g1"],
       }),
     );
+    const entry = plan.proposedExistingGuests[0];
 
-    expect(occurrences).toHaveLength(1);
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
-    // Every negative row is reported as an absence of evidence, never carried
-    // forward as a number an admin might mistake for a price.
-    expect(
-      occurrences[0].storedEvidence.nightPrices.map(
-        (night) => night.priceCents,
-      ),
-    ).toEqual([null, null, null]);
-    expect(occurrences[0].storedEvidence.guestTotalCents).toBeNull();
+    expect(entry.oldFuturePriceCents).toBe(0);
+    expect(entry.priceCents).toBe(-9000);
+    expect(entry.perNightCents).toEqual([0]);
+    // Nothing moves for the companion either: the whole edit is $0.
+    expect(plan.proposedExistingGuests[1].futureDeltaCents).toBe(0);
+    expect(plan.priceDiffCents).toBe(0);
   });
 });
 
@@ -2892,10 +2828,10 @@ describe("#2756 the group discount on a stay already under way", () => {
     // the old ones.
     expect(plan.proposedAddedGuests[0].priceCents).toBe(2 * GROUP_NIGHT);
 
-    // #3031: the same edit with that guest carrying no rows at all is not priced
-    // - it is handed to a person. Nothing about their nights is knowable, so
-    // there is no number for the party to move.
-    const occurrences = reviewOf(
+    // #4317: the same edit with that guest carrying no rows at all prices too.
+    // Their $600 stored total is split over their five nights ($120 each, R2),
+    // both windows read that value, and it cancels exactly as the $70 did.
+    const noRowsPlan = pricedPlan(
       groupPlanInput({
         guests: [
           ...wholeRunMembers(4),
@@ -2910,10 +2846,14 @@ describe("#2756 the group discount on a stay already under way", () => {
         groupDiscount: GROUP_DISCOUNT,
       }),
     );
-    expect(occurrences.map((occurrence) => occurrence.bookingGuestId)).toEqual([
-      "n1",
-    ]);
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
+    const noRows = noRowsPlan.proposedExistingGuests.find(
+      (candidate) => candidate.guest.id === "n1",
+    );
+    expect(noRows?.futureDeltaCents).toBe(0);
+    expect(noRows?.priceCents).toBe(5 * NON_MEMBER_NIGHT);
+    expect(noRows?.perNightCents).toEqual(PARTY_NIGHTS.map(() => NON_MEMBER_NIGHT));
+    expect(noRowsPlan.proposedAddedGuests[0].priceCents).toBe(2 * GROUP_NIGHT);
+    expect(noRowsPlan.priceDiffCents).toBe(2 * GROUP_NIGHT);
   });
 
   it("does not re-rate a remaining guest's nights when a removal drops the party below the minimum", () => {
@@ -2987,67 +2927,45 @@ describe("#2756 the group discount on a stay already under way", () => {
     expect(entry.priceCents).toBeGreaterThanOrEqual(0);
   });
 
-  it("REFUSES to credit a guest with NO stored prices, at their own rate or any other", () => {
-    // #3031, and the test that fails if the today's-rate credit leg comes back.
-    //
-    // The population the lock cannot reach: a guest with no `BookingGuestNight`
-    // rows at all (a booking predating them, or one created by approving a
-    // request - #2739 backfills those but cannot empty the population). There is
-    // no per-night evidence of what they paid.
-    //
-    // The old leg credited them at their own rate type's CURRENT rate, and the
-    // comment defending it argued the alternative - today's party and today's
-    // config - would credit less. Both are today's price list, and this guest
-    // last paid something else: 5 x 12000 is what their total says, and the club
-    // may have changed its rates twice since. Neither answer is evidence, so
-    // neither is produced.
+  it("T8: credits a guest with NO stored rows their stored total's share, never today's rate (#4317)", () => {
+    // A guest with no `BookingGuestNight` rows at all (a booking predating them,
+    // or one approved from a request, #2739). They paid $100 a night — $500 for
+    // five — and today a non-member pays $120 and the party's group rate is $80.
+    // The old leg credited one of today's rates; the valuation (R2) splits the
+    // stored $500 over the five nights, so removing them from the 23rd credits
+    // the two nights given back at $100 each: $200, not $240 and not $160.
     const noRows = partyGuest({
       id: "n1",
       nights: PARTY_NIGHTS,
       isMember: false,
       soldRateCents: null,
-      paidRateCents: NON_MEMBER_NIGHT,
+      paidRateCents: 10000,
     });
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       groupPlanInput({
         guests: [...wholeRunMembers(5), noRows],
         removeGuestIds: ["n1"],
         groupDiscount: GROUP_DISCOUNT,
       }),
     );
+    const entry = plan.proposedExistingGuests.find(
+      (candidate) => candidate.guest.id === "n1",
+    );
 
-    expect(occurrences.map((occurrence) => occurrence.bookingGuestId)).toEqual([
-      "n1",
-    ]);
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
-    // Neither of the two amounts the old code chose between exists anywhere on
-    // this result: not $240 (their own rate today), not $160 (today's party).
-    expect(JSON.stringify(occurrences[0])).not.toContain(
-      String(2 * NON_MEMBER_NIGHT),
-    );
-    expect(JSON.stringify(occurrences[0])).not.toContain(String(2 * GROUP_NIGHT));
-    // What IS recorded is the evidence: which nights are leaving, and that the
-    // club has no per-night record of them.
-    expect(occurrences[0].surrenderedNightDates.length).toBeGreaterThan(0);
-    expect(
-      occurrences[0].storedEvidence.nightPrices.every(
-        (night) => night.priceCents === null,
-      ),
-    ).toBe(true);
-    expect(occurrences[0].storedEvidence.guestTotalCents).toBe(
-      5 * NON_MEMBER_NIGHT,
-    );
+    expect(entry?.oldFuturePriceCents).toBe(2 * 10000);
+    expect(entry?.oldFuturePriceCents).not.toBe(2 * NON_MEMBER_NIGHT);
+    expect(entry?.oldFuturePriceCents).not.toBe(2 * GROUP_NIGHT);
+    // They keep the three nights already slept, at $100 each.
+    expect(entry?.priceCents).toBe(3 * 10000);
+    expect(entry?.perNightCents).toEqual([10000, 10000, 10000]);
+    expect(plan.priceDiffCents).toBe(-2 * 10000);
   });
 
-  it("REFUSES a guest with no rows rather than clamping the credit to what they carry", () => {
-    // #3031, and the second test that fails if `refundCeilingCents` comes back.
-    //
-    // A guest with no rows whose stored total is BELOW today's rate for the
-    // nights they are giving back. The old code credited today's rate and then
-    // clamped the result to their stored total, so they landed on exactly zero
-    // and the answer looked safe. It was still a number nobody could evidence,
-    // and the thing it was clamped against was a derived total rather than money
-    // the club had taken.
+  it("T8: credits a cheap guest with no rows only what they paid, with no clamp", () => {
+    // A guest with no rows whose stored total ($30 a night) is below today's
+    // rate. The old code credited today's rate and clamped it to the stored
+    // total; the valuation credits $30 for each of the two nights given back,
+    // because that is what the stored total says each is worth.
     const cheapNoRows = partyGuest({
       id: "n1",
       nights: PARTY_NIGHTS,
@@ -3055,31 +2973,20 @@ describe("#2756 the group discount on a stay already under way", () => {
       soldRateCents: null,
       paidRateCents: 3000,
     });
-    const occurrences = reviewOf(
+    const plan = pricedPlan(
       groupPlanInput({
         guests: [...wholeRunMembers(5), cheapNoRows],
         removeGuestIds: ["n1"],
         groupDiscount: GROUP_DISCOUNT,
       }),
     );
+    const entry = plan.proposedExistingGuests.find(
+      (candidate) => candidate.guest.id === "n1",
+    );
 
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
-    // The clamped answer used to be 5 x 3000 credited and the guest left on
-    // zero. Neither number exists here: the result carries the EVIDENCE and the
-    // identity of the edit, and no amount field at all - which is the shape that
-    // makes a fake amount unrepresentable rather than merely absent. (The stored
-    // total appears under `storedEvidence`, because that is what the club has on
-    // file, not what it owes.)
-    // #3498: `bookingId` belongs to the EDIT and lives once on the occurrence,
-    // so it is no longer repeated on a strand's own record.
-    expect(Object.keys(occurrences[0]).sort()).toEqual([
-      "addedNightDates",
-      "bookingGuestId",
-      "cause",
-      "storedEvidence",
-      "surrenderedNightDates",
-    ]);
-    expect(occurrences[0].storedEvidence.guestTotalCents).toBe(5 * 3000);
+    expect(entry?.oldFuturePriceCents).toBe(2 * 3000);
+    expect(entry?.priceCents).toBe(3 * 3000);
+    expect(plan.priceDiffCents).toBe(-2 * 3000);
   });
 
   it("does not discount a WINTER night on the default summer-only setting, and does with the restriction lifted", () => {
@@ -3195,43 +3102,29 @@ describe("#2756 the group discount on a stay already under way", () => {
       seasons: EARLY_NO_MEMBER_ROW,
     });
 
-    // #3031: with NO stored price for the drifted night, the edit is not priced
-    // at all. It used to go through by valuing that guest's whole stay at
-    // today's rates, and the case was written to show the COST of that being
-    // bounded to one night's party count. There is no cost to bound now, because
-    // there is no valuation - and the season with no member rate row is never
-    // consulted either, so the old "No rate found" throw stays gone.
-    const occurrences = reviewOf(extendWithSeasons(driftedGuest(null)));
-    // #3166: the five on-check-out-day strands are recorded TOO, and that is a
-    // defect fix rather than noise. This edit extends the booking's check-out,
-    // so each of them gains 2026-08-22 and 2026-08-23 — nights the parked plan
-    // writes NULL against a frozen stored total. A strand that reconciled
-    // exactly before the edit is therefore PARTIAL_STORED_NIGHT_PRICES after it
-    // and unpriceable for ever, with $70 a night owed on each of five guests and
-    // — before this — nothing anywhere recording that they had ever been exact.
-    // `BookingModification.previousData` keeps booking-level totals only.
-    expect(occurrences.map((occurrence) => occurrence.bookingGuestId)).toEqual([
-      "d1",
-      "n1",
-      "n2",
-      "n3",
-      "n4",
-      "n5",
+    // #4317: with NO stored price for the drifted guest, its nights are valued
+    // from its stored $150 total (R2: $50 each), and every one of them is
+    // LOCKED at that value — so the season with no member rate row is never
+    // consulted and the old "No rate found" throw stays gone. The 22nd joins
+    // the party count, so both nights the five non-members buy are discounted,
+    // and the drifted guest buys the 23rd at the member rate.
+    const valued = pricedPlan(extendWithSeasons(driftedGuest(null)));
+    for (const entry of valued.proposedExistingGuests.slice(0, 5)) {
+      expect(entry.perNightCents, entry.guest.id).toEqual([
+        7000,
+        7000,
+        GROUP_NIGHT,
+        GROUP_NIGHT,
+      ]);
+    }
+    const drifted = valued.proposedExistingGuests[5]!;
+    expect(drifted.perNightCents).toEqual([
+      MEMBER_NIGHT,
+      MEMBER_NIGHT,
+      MEMBER_NIGHT,
+      MEMBER_NIGHT,
     ]);
-    expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
-    expect(occurrences.slice(1).map((occurrence) => occurrence.cause)).toEqual(
-      Array(5).fill("COUNTERPART_STRAND_UNREADABLE"),
-    );
-    // Their real per-night prices travel with them, which is the whole point:
-    // this is the only copy of them that survives the edit.
-    expect(occurrences[1].storedEvidence.nightPrices).toEqual([
-      { date: "2026-08-20", priceCents: 7000 },
-      { date: "2026-08-21", priceCents: 7000 },
-    ]);
-    expect(occurrences[1].addedNightDates).toEqual([
-      "2026-08-22",
-      "2026-08-23",
-    ]);
+    expect(drifted.priceCents).toBe(4 * MEMBER_NIGHT);
 
     // With a stored price for it, the same night joins the count without any season
     // lookup — a lock short-circuits the rate — so the party is six on the 22nd and

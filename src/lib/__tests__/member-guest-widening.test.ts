@@ -995,6 +995,8 @@ describe("consent columns have exactly one writer", () => {
       "the review re-base selects each strand's stored consent for the promo re-price",
     "src/lib/booking-strand-night-prices.ts":
       "the strand reader carries each strand's stored consent to the promo re-price",
+    "src/lib/edit-night-valuation.ts":
+      "the valued strand reader (#4317) carries each guest's stored consent to the acceptance promo re-price",
     "src/lib/waitlist.ts":
       "the waitlist offer hands each guest's stored consent to the promo re-price",
     "src/app/api/promo-codes/validate/route.ts":

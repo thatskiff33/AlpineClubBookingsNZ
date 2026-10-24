@@ -27,6 +27,23 @@ vi.mock("@/lib/prisma", () => {
   return { prisma: { ...client, $transaction: vi.fn(async (run: (tx: typeof client) => unknown) => run(client)) } };
 });
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroSupplementaryInvoiceOperation: mocks.enqueue }));
+// #3953: one recorder per capture. The booking's captured cash is the payment
+// fixture's, on one intent; no receipt row claims any unless a case says so.
+const recorderMocks = vi.hoisted(() => ({ claimed: new Set<string>(), supplementaryRecorded: new Set<string>(), queueReceipts: vi.fn() }));
+vi.mock("@/lib/additional-capture-recorder", async () => {
+  const actual = (await vi.importActual("@/lib/additional-capture-recorder")) as typeof import("@/lib/additional-capture-recorder");
+  return {
+    attributeGapCash: actual.attributeGapCash,
+    readReceiptClaimedIntents: async () => recorderMocks.claimed,
+    readSupplementaryRecordedIntents: async () => recorderMocks.supplementaryRecorded,
+    readCapturedStripeCash: async () => {
+      const payment = (await mocks.payment.findUnique()) as { amountCents?: number; refundedAmountCents?: number } | null;
+      const net = Math.max(0, (payment?.amountCents ?? 0) - (payment?.refundedAmountCents ?? 0));
+      return net > 0 ? [{ paymentIntentId: "pi_booking", netCents: net, bookingModificationId: null }] : [];
+    },
+  };
+});
+vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({ queueReceiptsForUnrecordedCaptures: recorderMocks.queueReceipts }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 vi.mock("@/lib/xero-primary-invoice-review-task", () => ({ raisePrimaryInvoiceReviewTask: mocks.review }));
 
@@ -143,7 +160,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     // Round 3, finding 1: never the enqueue's paid-by-Stripe default.
     expect(mocks.enqueue).toHaveBeenCalledWith(
       { bookingId: "booking_1", priceDiffCents: 0, changeFeeCents: 4_000, bookingModificationId: "mod_late" },
-      { createdByMemberId: "officer_1", recordPayment: false },
+      { createdByMemberId: "officer_1", recordPayment: false, primaryInvoiceGap: { coveredCaptures: [] } },
     );
     expect(mocks.logger.error).not.toHaveBeenCalled();
   });
@@ -173,6 +190,53 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       amountCents: 26_500,
     });
     await queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees });
+    expect(mocks.enqueue).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ recordPayment: false }));
+  });
+
+  it("#3953: queues the receipts of captures the primary's cash does not cover BEFORE it measures the gap", async () => {
+    const fees = atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]));
+    await queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees });
+    expect(recorderMocks.queueReceipts).toHaveBeenCalledWith("booking_1", fees);
+    expect(recorderMocks.queueReceipts.mock.invocationCallOrder[0]).toBeLessThan(mocks.enqueue.mock.invocationCallOrder[0]);
+  });
+
+  it("#3953 MUTATION: names the captures its own payment takes, and never pays itself from a capture a receipt row claimed", async () => {
+    const fees = atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]), 6_500, 22_500);
+    mocks.payment.findUnique.mockResolvedValue({ ...unpaid, status: "SUCCEEDED", amountCents: 26_500 });
+    await queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees });
+    expect(mocks.enqueue).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ recordPayment: true, primaryInvoiceGap: { coveredCaptures: [{ paymentIntentId: "pi_booking", cents: 4_000 }] } }),
+    );
+
+    // The same cash, claimed by that capture's receipt - or (round 3, F3)
+    // recorded by a supplementary invoice: the gap is raised unpaid and names nothing.
+    for (const claimer of ["claimed", "supplementaryRecorded"] as const) {
+      recorderMocks[claimer] = new Set(["pi_booking"]);
+      try {
+        await expect(queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees })).resolves.toMatchObject({ cashTakenCents: 0 });
+        expect(mocks.enqueue).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ recordPayment: false, primaryInvoiceGap: { coveredCaptures: [] } }),
+        );
+      } finally {
+        recorderMocks[claimer] = new Set();
+      }
+    }
+  });
+
+  it("#3953 round 3 (F4): reads what the primary recorded from its link's stored list, never re-walking its cash", async () => {
+    // The primary's cash figure says 225.00, but its stored list says it covered
+    // nothing of this capture: all 265.00 is spare, and the gap's 40.00 is taken.
+    const fees = { ...atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]), 6_500, 22_500), paymentIntentIdsRecordedAtLink: [] };
+    mocks.payment.findUnique.mockResolvedValue({ ...unpaid, status: "SUCCEEDED", amountCents: 26_500 });
+    await queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees });
+    expect(mocks.enqueue).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ recordPayment: true, primaryInvoiceGap: { coveredCaptures: [{ paymentIntentId: "pi_booking", cents: 4_000 }] } }),
+    );
+    // Covered wholly by the stored list: nothing spare, so the gap is raised unpaid.
+    await queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: { ...fees, paymentIntentIdsRecordedAtLink: ["pi_booking"] } });
     expect(mocks.enqueue).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ recordPayment: false }));
   });
 
@@ -531,7 +595,7 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
     });
     expect(mocks.enqueue).toHaveBeenLastCalledWith(
       { bookingId: "booking_1", priceDiffCents: 0, changeFeeCents: 4_000, bookingModificationId: "mod_late" },
-      { createdByMemberId: undefined, recordPayment: false },
+      { createdByMemberId: undefined, recordPayment: false, primaryInvoiceGap: { coveredCaptures: [] } },
     );
   });
 
@@ -703,7 +767,7 @@ describe("the primary invoice's worth gap (#3980)", () => {
     });
     expect(mocks.enqueue).toHaveBeenCalledWith(
       { bookingId: "booking_1", priceDiffCents: 8_000, changeFeeCents: 0, bookingModificationId: "mod_edit" },
-      { createdByMemberId: "member_1", recordPayment: false },
+      { createdByMemberId: "member_1", recordPayment: false, primaryInvoiceGap: { coveredCaptures: [] } },
     );
     expect(mocks.review).not.toHaveBeenCalled();
   });

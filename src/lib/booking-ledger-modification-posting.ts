@@ -65,7 +65,6 @@ function nightIndexKey(bookingGuestId: string, stayDate: Date): string {
 
 export type ModificationPostingNoneReason =
   | "UNPRICED_NIGHT"
-  | "INEXACT_STORED_NIGHT_PRICE"
   | "NO_LIVE_LINE"
   | "AMBIGUOUS_LIVE_LINE"
   | "NIGHT_ALREADY_LIVE"
@@ -230,8 +229,9 @@ export function planModificationChargeLines(
 
 /**
  * THE BEFORE SIDE OF A REVIEW CLOSURE'S RE-PRICE, read from the ledger (#3582).
+ * Reached only by a review raised before #4317, which retired the park.
  *
- * A parked edit posts nothing (`INV-MOD-040`) and writes no night-grain record
+ * A parked edit posted nothing (`INV-MOD-040`) and wrote no night-grain record
  * of what it started from, so when its review closes by re-pricing
  * (`INV-MOD-055`) the only statement of "before" is what the ledger still
  * holds. That IS the parked edit's own before: an open review fences every edit

@@ -72,7 +72,10 @@
  * edit transaction, the census guard, the operator CLI and the tests all import
  * it.
  */
-import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
+import {
+  ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES,
+  isAdditionalAmountUncollected,
+} from "@/lib/additional-payment-chase";
 import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -651,10 +654,8 @@ export function bookingLedgerResidualSql(): string {
  * identity has no third term to check there. Both filters are written once and
  * read by the TypeScript census and the SQL alike.
  */
-export const BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES = [
-  "CANCELLED",
-  "BUMPED",
-] as const;
+export const BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES =
+  ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES; // #4316: one home, re-exported
 
 // #3340 fix round (`INV-SSOT-001`): re-exported, never restated. A third copy of
 // this list was added HERE by the change that exists to stop facts having two

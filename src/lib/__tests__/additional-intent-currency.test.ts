@@ -20,6 +20,12 @@ const mocks = vi.hoisted(() => ({
   staleRowRead: vi.fn(),
   enqueueCancel: vi.fn(),
   cancelNow: vi.fn(),
+  // #4316: the door's two ended-booking checks, and the cancel claim's retirement.
+  bookingRead: vi.fn(),
+  paymentRead: vi.fn(),
+  paymentUpdate: vi.fn(),
+  askRowRead: vi.fn(),
+  markFailed: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -30,15 +36,27 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
   reconcilePaymentAggregates: mocks.reconcilePaymentAggregates,
+  lockPaymentForRefundedTotal: async () => undefined,
+  markPaymentIntentTransactionFailed: (...a: unknown[]) => mocks.markFailed(...a),
 }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
+    booking: { findUnique: (...a: unknown[]) => mocks.bookingRead(...a) },
+    payment: {
+      findUnique: (...a: unknown[]) => mocks.paymentRead(...a),
+      update: (...a: unknown[]) => mocks.paymentUpdate(...a),
+    },
     paymentTransaction: {
       findMany: (...a: unknown[]) => mocks.supersedeRead(...a),
-      findUnique: (...a: unknown[]) => mocks.staleRowRead(...a),
+      // The stale row's provenance; #4316: and the new ask's row, by its intent.
+      findUnique: (args: { where: { stripePaymentIntentId: string } }) =>
+        args.where.stripePaymentIntentId === "pi_chf" ? mocks.askRowRead(args) : mocks.staleRowRead(args),
+      findFirst: async () => ({ id: "tx_chf", amountCents: 4500 }),
     },
-  },
-}));
+    $transaction: (fn: (tx: unknown) => unknown) => fn(prisma),
+  };
+  return { prisma };
+});
 vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: (...a: unknown[]) => mocks.enqueueCancel(...a),
   runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
@@ -70,6 +88,9 @@ beforeEach(() => {
   mocks.enqueueCancel.mockResolvedValue({ id: "op-cancel-1" });
   mocks.cancelNow.mockResolvedValue("succeeded");
   mocks.reconcilePaymentAggregates.mockResolvedValue(null);
+  mocks.bookingRead.mockResolvedValue({ status: "PAID" });
+  mocks.paymentRead.mockResolvedValue({ id: "p1", additionalPaymentIntentId: "pi_chf", additionalPaymentStatus: "PENDING" });
+  mocks.askRowRead.mockResolvedValue({ id: "tx_chf", paymentId: "p1", amountCents: 4500, status: "PENDING" });
 });
 
 describe("intentCurrencyDiffers", () => {
@@ -90,6 +111,39 @@ describe("intentCurrencyDiffers", () => {
 
 describe("reissueAdditionalIntentInClubCurrency", () => {
   const ask = restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 1500 });
+  const reissue = () =>
+    reissueAdditionalIntentInClubCurrency({
+      format: CLUB_FORMAT_TEST_OTHER,
+      bookingId: "bk1",
+      paymentId: "p1",
+      staleIntentId: "pi_nzd",
+      ask,
+      reason: "edit_financial_review_charge",
+      customerId: "cus_1",
+    });
+
+  // #4316 (`INV-ADDPAY-044`): a re-issue is a mint, under the door's two checks.
+  it.each(["CANCELLED", "BUMPED"])("mints nothing on a booking that is %s before the call (#4316)", async (status) => {
+    mocks.bookingRead.mockResolvedValueOnce({ status });
+
+    await expect(reissue()).resolves.toBeNull();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+  });
+
+  it("retires the intent it wrote when a cancel lands before the row write, durably first, and offers nothing (#4316)", async () => {
+    mocks.bookingRead.mockResolvedValueOnce({ status: "PAID" }).mockResolvedValueOnce({ status: "CANCELLED" });
+
+    await expect(reissue()).resolves.toBeNull();
+    // The cancellation queued on its own before the retirement transaction...
+    expect(mocks.enqueueCancel.mock.calls[0]![0]).toEqual({
+      bookingId: "bk1", paymentId: "p1", paymentTransactionId: "tx_chf", paymentIntentId: "pi_chf", amountCents: 4500,
+    });
+    // ...then the claim's own retirement, and the cancel run now.
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({ where: { id: "p1" }, data: { additionalPaymentStatus: "FAILED" } });
+    expect(mocks.markFailed).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_chf" }));
+    expect(mocks.cancelNow).toHaveBeenCalledWith("op-cancel-1", CLUB_FORMAT_TEST_OTHER);
+  });
 
   it("mints in the club's currency under a key naming the stale intent, the currency and the amount", async () => {
     const pi = await reissueAdditionalIntentInClubCurrency({
@@ -102,7 +156,7 @@ describe("reissueAdditionalIntentInClubCurrency", () => {
       customerId: "cus_1",
     });
 
-    expect(pi.id).toBe("pi_chf");
+    expect(pi!.id).toBe("pi_chf");
     expect(mocks.createPaymentIntent).toHaveBeenCalledTimes(1);
     expect(mocks.createPaymentIntent).toHaveBeenCalledWith({
       format: CLUB_FORMAT_TEST_OTHER,
@@ -199,7 +253,7 @@ describe("reissueAdditionalIntentInClubCurrency", () => {
       customerId: "cus_1",
     });
 
-    expect(pi.id).toBe("pi_chf");
+    expect(pi!.id).toBe("pi_chf");
     const written = mocks.upsertPaymentIntentTransaction.mock.calls[0]![0] as Record<string, unknown>;
     expect(written).not.toHaveProperty("hadIssuedXeroInvoice");
     expect(written).not.toHaveProperty("bookingModificationId");
@@ -266,6 +320,17 @@ describe("reissueRaisedAskIfCurrencyChanged", () => {
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
     expect(mocks.supersedeRead).not.toHaveBeenCalled();
+  });
+
+  // #4316: a booking that ended meanwhile is never raised by any path - the
+  // throw hands the debt to the caller's recovery, whose replay takes the
+  // cancelled path; the caller never falls through to raising the old intent.
+  it("throws, offering nothing, when the booking ended before the re-issue could mint (#4316)", async () => {
+    mocks.getPaymentIntent.mockResolvedValue({ id: "pi_live", currency: "nzd", status: "requires_payment_method", customer: "cus_1" });
+    mocks.bookingRead.mockResolvedValueOnce({ status: "CANCELLED" });
+
+    await expect(reissueRaisedAskIfCurrencyChanged(params)).rejects.toThrow(/ended before its review charge could be re-issued/);
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("re-issues the raised ask in the club's currency when the live intent is in another, keeping the intent's customer", async () => {

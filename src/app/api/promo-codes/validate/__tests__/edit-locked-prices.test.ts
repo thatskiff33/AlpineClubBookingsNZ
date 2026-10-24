@@ -156,6 +156,8 @@ beforeEach(() => {
       consentStatus: null,
       stayStart: new Date("2026-08-10"),
       stayEnd: new Date("2026-08-13"),
+      // #4317: the guest's stored total; three nights at $40 add up to it (R1).
+      priceCents: HELD.length * SOLD,
       nights: HELD.map((night) => ({ stayDate: new Date(night), priceCents: SOLD, priceSource: "SOLD" })),
     },
   ]);

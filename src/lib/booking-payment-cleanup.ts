@@ -1,11 +1,12 @@
 import {
   PaymentSource,
-  PaymentStatus,
   PaymentTransactionKind,
   type Prisma,
 } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { lockPaymentForRefundedTotal, markPaymentIntentTransactionFailed } from "@/lib/payment-transactions";
+import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import {
   enqueuePaymentIntentCancellationRecovery,
   runPaymentRecoveryOperationNow,
@@ -46,7 +47,7 @@ export async function queueSupersededPrimaryIntentCancellations(
       paymentId: options.paymentId,
       kind: PaymentTransactionKind.PRIMARY,
       source: PaymentSource.STRIPE,
-      status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+      status: { in: [...OPEN_INTENT_TRANSACTION_STATUS_LIST] },
       stripePaymentIntentId: { not: null },
       // A pending intent is only reusable at exactly the current price:
       // any modification that moves finalPriceCents strands the old intent
@@ -157,7 +158,7 @@ export async function queueSupersededAdditionalIntentCancellationRows(options: {
       paymentId: options.paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
       source: PaymentSource.STRIPE,
-      status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+      status: { in: [...OPEN_INTENT_TRANSACTION_STATUS_LIST] },
       stripePaymentIntentId: { not: options.newPaymentIntentId },
       amountCents: { gt: 0 },
     },
@@ -245,4 +246,104 @@ export async function cancelSupersededAdditionalIntentsNow(options: {
       );
     }
   }
+}
+
+/** The `Payment` mirror columns that name a booking's outstanding additional ask. */
+export type AdditionalAskMirror = {
+  id: string;
+  additionalPaymentIntentId?: string | null;
+  additionalPaymentStatus?: string | null;
+};
+
+/**
+ * Does the mirror name an additional intent that is still OUTSTANDING - neither
+ * paid nor already failed? An intent that already failed (a declined card) is
+ * left alone: it is not cancelled again (`INV-ADDPAY-023`).
+ */
+export function hasOutstandingAdditionalPaymentIntent(
+  payment: Omit<AdditionalAskMirror, "id"> | null | undefined,
+): boolean {
+  return Boolean(
+    payment?.additionalPaymentIntentId &&
+      payment.additionalPaymentStatus !== "SUCCEEDED" &&
+      payment.additionalPaymentStatus !== "FAILED",
+  );
+}
+
+/**
+ * RETIRE A CANCELLED BOOKING'S OUTSTANDING ADDITIONAL ASK, in the caller's
+ * transaction (`INV-ADDPAY-044`). The one routine the writers that end an ask
+ * with its booking run (#4316):
+ *
+ *  - both cancel claims (`booking-cancel.ts`: the paid path's tx1 and, review
+ *    round 2, the never-captured branch's), on the mirror each reads under the
+ *    `Payment` row lock, beside its CANCELLED flip;
+ *  - the after-commit minters (`ended-booking-ask-guard.ts`: the edit doors,
+ *    the recovery runner's replay and a currency re-issue), when a cancel
+ *    committed before the minter wrote its new intent's row - that cancel read
+ *    the mirror before the intent existed and could not retire it.
+ *
+ * The caller holds the `Payment` row lock and passes the mirror it read under
+ * it. The mirror is marked FAILED, the intent's row FAILED (never over a
+ * capture), and a durable `CANCEL_PAYMENT_INTENT` recovery is queued (F1,
+ * #1350): the cron cancels the intent at Stripe, or hands a capture that won
+ * the race to a full refund. Its key is the transaction and the intent, so the
+ * two writers queue one row. Returns the queued cancellation, for the caller's
+ * after-commit Stripe attempt, or null when nothing was outstanding.
+ */
+export async function failOutstandingAdditionalAskInClaim(
+  tx: Prisma.TransactionClient,
+  { bookingId, payment }: { bookingId: string; payment: AdditionalAskMirror },
+): Promise<QueuedSupersededIntentCancellation | null> {
+  if (!hasOutstandingAdditionalPaymentIntent(payment)) return null;
+  await tx.payment.update({
+    where: { id: payment.id },
+    data: { additionalPaymentStatus: "FAILED" },
+  });
+  const paymentIntentId = payment.additionalPaymentIntentId;
+  if (!paymentIntentId) return null;
+  await markPaymentIntentTransactionFailed({ paymentIntentId, store: tx });
+  const additionalTransaction = await tx.paymentTransaction.findFirst({
+    where: { paymentId: payment.id, stripePaymentIntentId: paymentIntentId },
+    select: { id: true, amountCents: true },
+  });
+  if (!additionalTransaction) {
+    // No ledger row for the outstanding intent (legacy mirror-only payment):
+    // the webhook status guard (#1350 part 1) remains the backstop for a late
+    // capture.
+    logger.warn(
+      { bookingId, paymentId: payment.id, additionalPaymentIntentId: paymentIntentId },
+      "No payment transaction row for outstanding additional intent; skipping durable cancellation recovery enqueue",
+    );
+    return null;
+  }
+  const operation = await enqueuePaymentIntentCancellationRecovery({
+    bookingId,
+    paymentId: payment.id,
+    paymentTransactionId: additionalTransaction.id,
+    paymentIntentId,
+    amountCents: additionalTransaction.amountCents,
+    store: tx,
+  });
+  return { paymentTransactionId: additionalTransaction.id, paymentIntentId, operationId: operation.id };
+}
+
+/**
+ * `failOutstandingAdditionalAskInClaim` with its lock and its read: take the
+ * `Payment` row (`INV-LOCK-002`; a re-lock where the caller holds it), read the
+ * ask mirror under it, and retire what it names as outstanding. The one
+ * spelling for a writer that has not read the mirror under the lock itself -
+ * the never-captured cancel claim and the after-commit minters' retirement
+ * (#4316 review round 3).
+ */
+export async function failOutstandingAdditionalAskUnderRowLock(
+  tx: Prisma.TransactionClient,
+  { bookingId, paymentId }: { bookingId: string; paymentId: string },
+): Promise<QueuedSupersededIntentCancellation | null> {
+  await lockPaymentForRefundedTotal(tx, paymentId);
+  const payment = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, additionalPaymentIntentId: true, additionalPaymentStatus: true },
+  });
+  return payment ? failOutstandingAdditionalAskInClaim(tx, { bookingId, payment }) : null;
 }

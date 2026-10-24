@@ -75,6 +75,23 @@ const {
   mockIsValidCronSecret: vi.fn().mockReturnValue(false),
 }));
 
+// #4300 (`INV-PAY-138`): step (b) asks whether the superseded machinery owns a
+// captured row, and where its refund stands; nothing here is superseded unless
+// a case says so (`supersededDoor.owned`, no refund started).
+const supersededDoor = vi.hoisted(() => ({ owned: new Set<string>(), handOff: vi.fn() }));
+vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
+  readSupersededOwnership: async () => ({
+    holdsForMember: new Set<string>(),
+    owns: async (intent: string) => supersededDoor.owned.has(intent),
+    refundState: () => "not_started",
+  }),
+}));
+vi.mock("@/lib/superseded-paid-intent", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-paid-intent")),
+  handOffSupersededCaptureAfterRefusal: supersededDoor.handOff,
+}));
+
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
 }));
@@ -415,6 +432,23 @@ describe("POST /api/payments/charge-saved-method", () => {
     );
     // A captured charge never releases the claim.
     expect(releaseCall()).toBeUndefined();
+  });
+
+  it("#4300: a charge the settle refuses as superseded answers not paid, queues no invoice and releases the claim", async () => {
+    mockChargePaymentMethod.mockResolvedValue({ id: "pi_superseded", status: "succeeded", amount: 12500 });
+    mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "superseded_capture", bookingId: "booking-1", bumpedBookingIds: [] });
+
+    const response = await POST(makeRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({ success: false, paymentIntentId: "pi_superseded", code: "SUPERSEDED_CHARGE_NOT_SETTLED", chargeReturning: true });
+    // Never "money arrived, do not charge again": this money is going back.
+    expect(body).not.toHaveProperty("paymentReceived");
+    expect(mockLogAudit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "booking.payment.confirmed" }));
+    expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    // The money is going back, so the claim is released: PENDING, hold restored, for the next charge.
+    expect(releaseCall()).toBeDefined();
   });
 
   it("refuses a club currency without two decimal places with a 409 before the claim (#3567)", async () => {
@@ -874,6 +908,24 @@ describe("POST /api/payments/charge-saved-method", () => {
       // The transaction threw, so nothing it wrote is committed; no release runs.
       expect(releaseCall()).toBeUndefined();
     });
+  });
+
+  it("#4300: a superseded capture with no refund started refuses, charges nothing, and is handed off after the rollback", async () => {
+    mockPaymentTransactionFindMany.mockResolvedValue([
+      { id: "txn_superseded", status: "SUCCEEDED", amountCents: 12500, refundedAmountCents: 0, paymentMethodId: "pm_123", stripePaymentIntentId: "pi_superseded", reference: null, reason: null },
+    ]);
+    supersededDoor.owned.add("pi_superseded");
+    try {
+      const response = await POST(makeRequest());
+      const body = await response.json();
+      expect(response.status).toBe(409);
+      expect(body).toMatchObject({ paymentIntentId: "pi_superseded" });
+      expect(body.error).toMatch(/refund has not started yet/);
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(supersededDoor.handOff).toHaveBeenCalledWith(expect.objectContaining({ why: "superseded_capture_returning", paymentIntentId: "pi_superseded", supersededIntentsToHandOff: ["pi_superseded"] }));
+    } finally {
+      supersededDoor.owned.clear();
+    }
   });
 
   it("refuses (400) a card written by a one-off checkout — no SetupIntent — and never calls Stripe (#3269)", async () => {

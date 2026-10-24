@@ -1284,6 +1284,24 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // callers (the Stripe webhook's additional-payment handler, the
   // confirm-modification-payment route, the waiting-invoice reaper) hold no
   // transaction or other advisory lock there, and no provider call runs inside.
+  // #3953 (`INV-PAY-139`): the change-capture receipt's enqueue
+  // (`additional-capture-receipt-enqueue.ts`) calls the same helper on the
+  // change its capture pays for (else the booking), holding nothing, for
+  // find-by-key -> create of one outbox row; and its worker's planning gate
+  // (`passPlanningGate`) calls it on the booking, holding nothing, for
+  // check-stamp -> stamp, with every Xero call after it commits. Round 6: its
+  // plan store (on the change, else the booking) and its unsent-invoice switch
+  // (on that invoice's anchor) each take it alone in a short transaction of
+  // their own, and the supplementary enqueue reads the anchor's receipts under
+  // it (`anchorCaptureHasReceipt`). Round 7: where the booking has a change
+  // capture no change can be read from, that enqueue takes it on the booking
+  // and then on its anchor - the one fixed order, booking -> change; no holder
+  // of a change's key takes a booking's. Round 8: the late-capture re-queue's
+  // revive asks the same receipt check under its anchor lock and revives
+  // unpaid where it holds. Round 9: that booking-first key is taken only for
+  // an invoice naming no capture, and an officer's inline Retry of a change's
+  // invoice re-asks under the change's key alone, in its own short
+  // transaction, before its Xero call. No new raw site, no new key.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,

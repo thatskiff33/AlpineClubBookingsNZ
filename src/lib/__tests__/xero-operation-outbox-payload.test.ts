@@ -278,6 +278,7 @@ describe("xero operation outbox payload parsing", () => {
       "GROUP_SETTLEMENT_INVOICE_VOID",
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
       "KEPT_LATE_CAPTURE_INVOICE",
+      "ADDITIONAL_CAPTURE_RECEIPT",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
@@ -346,6 +347,27 @@ describe("xero operation outbox payload parsing", () => {
     });
   });
 
+  it("#3953: reads a change capture's receipt, anchored on its ledger row, and its stored decision", () => {
+    const queued = {
+      queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      paymentTransactionId: "ptx_1",
+      paymentIntentId: "pi_change",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    const plan = { target: "GAP_INVOICE", invoiceId: "inv_gap", amountCents: 8000, capturedCents: 8000, date: "2026-06-30" };
+    expect(readQueuedOutboxPayload({ ...queued, plan })).toEqual({ ...queued, plan });
+    expect(readQueuedOutboxPayload({ ...queued, paymentIntentId: undefined })).toBeNull();
+    // A decision that does not parse never lets a retry decide again.
+    expect(readQueuedOutboxPayload({ ...queued, plan: { ...plan, amountCents: 12.5 } })).toBeNull();
+    expect(getQueuedOutboxExpectedOperation("ADDITIONAL_CAPTURE_RECEIPT")).toEqual({
+      entityType: "PAYMENT",
+      operationType: "CREATE",
+      localModels: ["PaymentTransaction"],
+    });
+  });
+
   it("routes every scanned queue type through the guarded expected-operation map (#1272)", () => {
     // Every queueType the scan selects must resolve to a concrete claim guard,
     // so the column scan can never surface a type the dispatch path lacks.
@@ -367,6 +389,7 @@ describe("xero operation outbox payload parsing", () => {
       ["GROUP_SETTLEMENT_INVOICE_VOID", "INVOICE"],
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
       ["KEPT_LATE_CAPTURE_INVOICE", "INVOICE"],
+      ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(

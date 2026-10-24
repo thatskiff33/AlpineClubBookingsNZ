@@ -242,8 +242,19 @@ reversals included, so an edit's slice is what that edit changed. **Sum or
 nothing**: the lines must add up to `priceDiffCents + changeFeeCents`, and a
 night with no live line, a live line at a different price, or any other
 disagreement posts nothing and is logged for C4 (#3583) to count (its census
-names it coverage, `UNPOSTED_EDIT`). Only a
-booking already confirmed on the ledger posts (§4.1a), asked under `lock(1)`.
+names it coverage, `UNPOSTED_EDIT`). Since #4317 the before side is each night's
+`INV-MOD-028` value (`pricingSideFromStoredGuests`), the figure the edit priced
+with. An edit posts only where every night it reverses has exactly one live
+single-night line at that value: a strand whose rows reconcile (R1) does,
+whatever their provenance. A strand valued by a split (R2 or R3) differs from
+the lines its confirmation posted, and a night whose blank row confirmation
+skipped has no live line, so those edits post NOTHING (`LIVE_LINE_DISAGREES`,
+`NO_LIVE_LINE`) - never a wrong line. Each such edit is an `UNPOSTED_EDIT` gap,
+and **every one closes the cut-over gate**, where a park posted nothing and
+raised none. `booking-money:census` counts the bookings an edit would leave so
+(`ledgerNightValues`, #4317 review M3); wave B's re-base (D5) re-posts their
+lines. Only a booking already confirmed on the ledger posts (§4.1a), asked under
+`lock(1)`.
 The planner is `booking-ledger-modification-posting.ts`; the writer calls are in
 `booking-ledger-modification-sync.ts` (`INV-MONEY-036`).
 
@@ -334,7 +345,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
-| Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
+| Booking edited and **parked** before #4317 (`INV-MOD-040`) | **nothing** — a parked edit wrote structure, never an amount; the lines post when the review closes. Since #4317 no edit parks: every edit is the priced row above | — | — |
 | Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch (and the unpaid branch's tiered credit on a captured, refunded-whole payment, #3809) and a group organiser's settled children keep anything; every other path keeps nothing and posts reversals only. A settled child keeps its share less every refund made or owed on it (#3854; before #3854 it held no settlement line and kept nothing) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
@@ -418,8 +429,8 @@ the database makes — and its lines cascade with it.)
 | Late capture on a deleted booking (`INV-ADDPAY-036`) | `CARD_CAPTURE` (+) as any capture; the task that queues it for a person is the instrument | `PAYMENT_TRANSACTION` | the webhook |
 
 **Which money a closure's lines record (#3582) — decided at booking grain, never per task.**
-One parked edit can raise several `EDIT_FINANCIAL_REVIEW` tasks (one per strand
-it moved), and every closure re-bases the WHOLE booking from its strands
+One parked edit could raise several `EDIT_FINANCIAL_REVIEW` tasks before #4317
+(one per strand it moved), and every closure re-bases the WHOLE booking from its strands
 (`INV-MOD-055`). So the first sibling's re-price already carries every
 sibling's money, and a rule decided per task counts it twice. The rule, applied
 by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
@@ -848,7 +859,7 @@ No row is "unknown". Codes:
 | 005, 023–027 | U | promo caps count `PromoRedemption`/allocation rows, which stay the promo authority; the `PROMOTION` line is their posting |
 | 006 | L | "reconcile back to cent-based ledger records" becomes literal: every Stripe/Xero amount is a line's `amountCents` |
 | 007 | L | an `ADJUSTMENT` line requires `postedByMemberId` and a narration; approval stays on `AdminCreditAdjustmentRequest` |
-| 028 | L | a `GUEST_NIGHT` line posts one per priced night row, an inexact strand's included (#3583 decision A: a strand-sized line fails `isSingleNightLine`, so no later closure could post); provenance stays on the night row, and an edit still refuses to price an inexact night (`INV-MOD-028`) |
+| 028 | L | a `GUEST_NIGHT` line posts one per priced night row, an inexact strand's included (#3583 decision A: a strand-sized line fails `isSingleNightLine`, so no later closure could post); provenance stays on the night row, and since #4317 an edit values every night by `INV-MOD-028`, whatever its provenance |
 | 029 | L | `PROMOTION` line = the promo build-up; unknown posts nothing and the census reports the gap, never zero |
 | 030 | U | reader discipline; the ledger readers follow it |
 | 031 | L | the verdict becomes the census's per-booking result (§6, §8) |
@@ -902,13 +913,13 @@ No row is "unknown". Codes:
 | 005, 006, 026 | L | locked nights are `GUEST_NIGHT` lines that a re-post preserves (same unit, same tier); only reversed lines reprice |
 | 007, 008, 009, 010, 027, 029–035 | U | rates, eligibility, snapshots |
 | 011, 012 | L | a reduction posts a reversal; the refund/credit line follows the tier; "over-consumed slice" is Σ `CREDIT_APPLIED` − `charged(b)` |
-| 013 | L | a parked modification posts nothing (§5.1) |
+| 013 | L | a modification parked before #4317 posted nothing (§5.1) |
 | 014, 015, 016, 017 | U | Xero credit-note allocation mechanics (`MemberCreditNoteAllocation` stays) |
 | 018 | U | lifecycle transitions |
 | 028, 036, 037, 045–048, 051–054 | L | the night row stays the sold-price authority; the line posts from it; a blank posts nothing; the repair store's writes reverse-and-re-post |
 | 038 | C | three consumers of a re-based strand read one line set |
 | 039 | L | whole-guest vs individual-night evidence decides the grain a strand posts at (§7 C1) |
-| 040, 041, 042, 043, 044 | U | what parking writes and discloses |
+| 040, 041, 042, 043, 044 | U | since #4317 every edit door prices and posts as §5.1; parking is legacy |
 | 049 | L | during an open review the pre-edit lines stand; `owed(b)` is the pre-edit figure |
 | 050 | U | the placeholder link and the other-club tick |
 | 055 | L | closing re-prices = reversal + re-post from strands, or declines (posts nothing) |
@@ -970,8 +981,8 @@ Taken here, on the evidence above:
 - **Account credit stays in `MemberCredit`**; the booking ledger posts the
   booking-side leg and links the row (`INV-PAY-019`).
 - **Night rows stay the sold-price authority** until C7, and after it: a
-  `GUEST_NIGHT` line is a posting of a night row, so `INV-MOD-028`'s evidence
-  discipline is unchanged.
+  `GUEST_NIGHT` line is a posting of a night row. Since #4317 an edit values
+  those rows by `INV-MOD-028` and its lines post the values (§5.1).
 
 Owner decisions (#3532, 23 Sep 2026):
 

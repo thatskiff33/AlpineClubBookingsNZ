@@ -30,6 +30,7 @@ import {
   queueSupersededAdditionalIntentCancellationRows,
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
+import { bookingEndedBeforeAskMint, retireAskOnEndedBooking } from "@/lib/ended-booking-ask-guard";
 import logger from "@/lib/logger";
 import {
   enqueueAdditionalPaymentIntentRecovery,
@@ -307,6 +308,9 @@ const NOTHING_MINTED: ModificationAdditionalAskMint = {
   additionalAskRetired: false,
 };
 
+/** Retired, nothing owed or offered: a netted-off re-issue (#3954), or a booking ended since its edit (#4316). */
+const ASK_RETIRED_UNMINTED: ModificationAdditionalAskMint = { ...NOTHING_MINTED, additionalAskRetired: true };
+
 /**
  * #3954 final review: what a door that did not mint its re-issue reports. A
  * later reduction that netted the waiting re-issue off retired it - that
@@ -320,7 +324,7 @@ function reissueNotMinted(
   const nettedOff =
     recovery?.status === PaymentRecoveryOperationStatus.SUCCEEDED &&
     recovery.lastError === PENDING_ASK_NETTED_BY_REDUCTION_NOTE;
-  return nettedOff ? { ...NOTHING_MINTED, additionalAskRetired: true } : NOTHING_MINTED;
+  return nettedOff ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
 }
 
 function mintedAsk(pi: { id: string; client_secret: string | null }, live: boolean): ModificationAdditionalAskMint {
@@ -372,6 +376,10 @@ export function additionalAmountToName(
  * be cancelled. Pairing the two in one value that only
  * `@/lib/additional-payment-ask` can build is what stops a future caller doing
  * one and not the other. `INV-PAY-098` is the rule.
+ *
+ * IT ASKS NOTHING OF A BOOKING THAT HAS ENDED (#4316, `INV-ADDPAY-044`): it
+ * re-reads the booking before the provider call and after its row write, and
+ * retires what a cancel committing in between could not see.
  *
  * THE CALLER READS THE RESULT, and must. This function swallows a provider
  * failure by design - the ordinary edit path has to return the member's saved
@@ -436,6 +444,9 @@ export async function createModificationAdditionalPaymentIntent(
   ) {
     return NOTHING_MINTED;
   }
+
+  // #4316: a booking ended since the edit committed is asked nothing, and owes nothing.
+  if (await bookingEndedBeforeAskMint(bookingId, result.bookingModificationId)) return ASK_RETIRED_UNMINTED;
 
   // #3954 review round 4: a RE-ISSUED ask's recovery was written in the edit's
   // own transaction (`queueReissuedAskRecovery`). This mint runs under that
@@ -543,6 +554,8 @@ export async function createModificationAdditionalPaymentIntent(
         return reissueNotMinted(moved);
       }
       await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded });
+      // #4316: a cancel that committed while this minted could not see it.
+      if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return ASK_RETIRED_UNMINTED;
       // Decision A (#3954): the smaller ask's own invoice, waiting on it - only
       // while it is still live (round 7): a reduction may have retired it during
       // the cancels above, and named this edit for it. Round 8: only the secret
@@ -655,6 +668,9 @@ export async function createModificationAdditionalPaymentIntent(
         "Failed to queue superseded additional intent cancellations",
       ),
     );
+
+    // #4316: a cancel that committed while this minted could not see it.
+    if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return ASK_RETIRED_UNMINTED;
 
     // #3954 round 6: the re-issues this increase folded in are asked for on
     // this intent now, so their own invoices wait on it. An ordinary edit's ask

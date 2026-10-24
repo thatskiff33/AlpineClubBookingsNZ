@@ -69,6 +69,8 @@ function existingGuest(id: string, firstName: string, lastName: string) {
     memberId: null,
     stayStart: CHECK_IN,
     stayEnd: CHECK_OUT,
+    // #4317: the stored guest total; two nights at $50 add up to it (R1).
+    priceCents: 10000,
     nights: [
       { stayDate: CHECK_IN, priceCents: 5000, priceSource: "SOLD" },
       {

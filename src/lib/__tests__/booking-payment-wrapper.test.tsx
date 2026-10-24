@@ -15,6 +15,9 @@ import {
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE,
+  PREVIOUS_PAYMENT_REFUNDING_NOTICE,
   SWITCHED_TO_INTERNET_BANKING_BODY,
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -777,6 +780,109 @@ describe("BookingPaymentWrapper", () => {
     expect(alert).not.toHaveTextContent("raw server text");
     expect(onPaymentComplete).not.toHaveBeenCalled();
     expect(screen.getByText("Payment successful!")).not.toBeNull();
+  });
+
+  it("#4300: says a payment on a superseded intent is being refunded, never that the booking is paid", async () => {
+    const onPaymentComplete = vi.fn();
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ clientSecret: "cs_test" }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+          error: "raw server text must not be shown",
+        }),
+      });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={onPaymentComplete}
+      />,
+    );
+    fireEvent.click(await screen.findByText("trigger-success"));
+
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() => expect(alert).toHaveTextContent("Card payment being returned"));
+    expect(alert).toHaveTextContent(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE);
+    expect(alert).not.toHaveTextContent("Payment received");
+    expect(alert).not.toHaveTextContent("raw server text");
+    expect(onPaymentComplete).not.toHaveBeenCalled();
+    // No green "Payment successful!" box beside it, and a way to reload.
+    await waitFor(() => expect(screen.queryByText("Payment successful!")).toBeNull());
+    expect(screen.getByRole("button", { name: "Reload booking", hidden: true })).not.toBeNull();
+  });
+
+  it("#4300: the pay step's own superseded refusal is shown with a reload, and no payment form", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, error: "raw server text must not be shown" }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert", { hidden: true });
+    await waitFor(() => expect(alert).toHaveTextContent(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE));
+    expect(alert).not.toHaveTextContent("raw server text");
+    expect(screen.queryByText("trigger-success")).toBeNull();
+    expect(screen.getByRole("button", { name: "Reload booking", hidden: true })).not.toBeNull();
+  });
+
+  it("#4300: 'Reload booking' opens the booking's own page, so the /book wizard never loses it", async () => {
+    const assign = vi.fn();
+    const original = window.location;
+    Object.defineProperty(window, "location", { configurable: true, value: { ...original, assign } });
+    try {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 409, json: async () => SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY });
+      render(
+        <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/book" onPaymentComplete={vi.fn()} />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Reload booking", hidden: true }));
+      expect(assign).toHaveBeenCalledWith("/bookings/booking-1");
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: original });
+    }
+  });
+
+  it("#4300: the pay step's going-back notice is shown beside the fresh form", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test", previousPaymentRefunding: true }) });
+    render(
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={vi.fn()} />,
+    );
+    expect(await screen.findByText(PREVIOUS_PAYMENT_REFUNDING_NOTICE)).not.toBeNull();
+    expect(screen.getByText("trigger-success")).not.toBeNull();
+  });
+
+  it("#4300: a 400 from the confirm route after a card success is never called complete", async () => {
+    const onPaymentComplete = vi.fn();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test" }) })
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: "PaymentIntent does not match booking" }) });
+    render(
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={onPaymentComplete} />,
+    );
+    fireEvent.click(await screen.findByText("trigger-success"));
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() => expect(alert).toHaveTextContent("Payment received - check booking status"));
+    expect(alert).toHaveTextContent(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE);
+    expect(alert).not.toHaveTextContent("does not match");
+    expect(onPaymentComplete).not.toHaveBeenCalled();
   });
 
   it.each(capacityCancellationCases)(

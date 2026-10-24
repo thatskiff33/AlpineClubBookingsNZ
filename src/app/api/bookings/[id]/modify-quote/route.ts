@@ -36,7 +36,6 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
   assertOtherLodgeExists,
-  OtherLodgeRateAmountUnderReviewError,
   OtherLodgeRateInProgressError,
   requestCarriesOtherLodgeElection,
   requestIsOtherLodgeRateElectionOnly,
@@ -53,10 +52,12 @@ import {
   findOpenEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
 import {
-  preCheckInEditEvidence,
-  preCheckInEditStrands,
-} from "@/lib/stored-sold-price-evidence";
-import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
+  editedBookingTotalCents,
+  NegativeEditedHeadlineError,
+  NegativeStoredGuestTotalError,
+  refuseNegativeStoredGuestTotals,
+  withUnattachedStrandMoney,
+} from "@/lib/edit-night-valuation";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
   assertCheckInClearsXeroLockDate,
@@ -150,7 +151,6 @@ import {
   editedGuestPricingLocks,
   resolveGuestMemberLinks,
   resolveGuestNameUpdates,
-  EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
@@ -1206,7 +1206,7 @@ export async function POST(
         // The same locks the save prices with, cleared for the same reasons,
         // from the one home (#3531): the preview's re-rate delta equals the
         // save's by construction rather than by two agreeing comments.
-        ...editedGuestPricingLocks(entry.guest, rerateGuestIds.has(entry.guest.id)),
+        ...editedGuestPricingLocks(entry.guest, booking, rerateGuestIds.has(entry.guest.id)),
       };
     }),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
@@ -1607,6 +1607,11 @@ export async function POST(
         })
         : null;
   } catch (error) {
+    // Review round 2: the save refuses an edit that would carry a frozen
+    // headline below zero in these words; the preview says the same.
+    if (error instanceof NegativeEditedHeadlineError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     logger.error({ err: error, bookingId }, "Failed to price booking modification quote");
     return NextResponse.json(
       { error: "Unable to price the requested future-night changes" },
@@ -1614,36 +1619,24 @@ export async function POST(
     );
   }
 
-  // #3031 (epic #2797): QUOTE AND APPLY CONSUME THE SAME DISCRIMINATED RESULT,
-  // which is the issue's own parity requirement. The preview refuses here with
-  // the same code and the same member-facing sentence the save refuses with
-  // (`BookingEditFinancialReviewRequiredError`), so the member cannot be shown a
-  // price the save would decline to honour — and is never shown an estimate or a
-  // `$0` for an amount nobody has worked out yet.
-  //
-  // #3170 CHANGED WHAT THAT PARITY MEANS, and the parity itself is why this had
-  // to change here too. The save no longer refuses: it COMMITS the structural
-  // change and parks the amount as an OPEN review task. A preview that went on
-  // refusing would have blocked the member from a save that would have
-  // succeeded, which is the same disagreement in the opposite direction.
-  //
-  // So the quote parks as well: it prices NOTHING, reports a zero movement
-  // because the booking's money genuinely does not move, and says so with
-  // `financialReviewRequired`. It is not a `$0` quote — the panel renders the
-  // sentence rather than the number, and no settlement option is offered
-  // because none is being taken.
-  //
-  // THE CAPACITY CHECK STILL RUNS FIRST, on the parked plan, for the same
-  // reason it does on the save: beds are not money, and the member must be told
-  // "no beds" before they are told "an officer will confirm the amount".
-  const parkedPlan = planResult?.kind === "financial_review_required"
-    ? planResult.parkedPlan
-    : null;
+  // #3031: QUOTE AND APPLY CONSUME THE SAME RESULT, which is their parity
+  // requirement. Since #4317 it is always priced: every held night is valued
+  // from stored data (`INV-MOD-028`), so the preview quotes exactly what the
+  // save will charge and never parks.
   const inProgressPlan: BookingEditGuestRangePlan | null =
-    planResult?.kind === "priced" ? planResult.plan : null;
-  // Which plan the capacity check reads. Exactly one is ever set, and both
-  // propose the same beds by construction (`composeCapacityCoverage`).
-  const capacityPlan = inProgressPlan ?? parkedPlan;
+    planResult?.plan ?? null;
+  const capacityPlan = inProgressPlan;
+  // #4317 (D11, review M2): the save refuses an edit to a booking holding a
+  // negative stored guest total, which the database forbids; the preview
+  // refuses it in the same words, so it never quotes what the save will not do.
+  try {
+    refuseNegativeStoredGuestTotals(logger, { bookingId, site: "modify-quote" }, booking.guests);
+  } catch (error) {
+    if (error instanceof NegativeStoredGuestTotalError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 
   // Capacity check (exclude current booking)
   // #1746: with admin-flagged partner-sharers the preview runs the same
@@ -1712,31 +1705,6 @@ export async function POST(
   }
 
   /**
-   * The parked preview, composed once and returned from BOTH review exits
-   * (`INV-SSOT`, #3166).
-   *
-   * EVERY MONEY FIELD IS THE BOOKING'S OWN STORED FIGURE, and the three deltas
-   * are zero because the booking's money does not move on this save, not
-   * because zero was chosen as the adjustment. `settlementOptions` is null, so
-   * the panel offers no card-or-credit election for a movement that is not
-   * happening, and `promoValidation` is null because no promotion is re-run.
-   *
-   * Two exits reach it. The in-progress planner's park is decided before a
-   * single cent is computed; the pre-check-in one (#3166) is decided after the
-   * ordinary pricing pass, because that pass is what says which nights each
-   * strand ends up holding. Both are the same answer to the member and must
-   * therefore be the same payload — a second literal here is how the two
-   * previews would come to differ from each other, and from the save.
-   *
-   * #3179: AND IT SAYS WHAT IT IS NOT DOING WITH THE PROMO CODE. No promotion is
-   * re-run on this branch, so a request that also carries a promo-code change
-   * has that part dropped - and the member is reading a quote whose total looks
-   * settled. The sentence is built by the same function the save uses, from the
-   * same request fields, so the preview and the save cannot describe one
-   * member's request two ways (`INV-SSOT`). Null whenever the request carried no
-   * promo change at all.
-   */
-  /**
    * What a capacity refusal puts on the wire, for each of the two audiences that
    * can receive one (#2930).
    *
@@ -1771,114 +1739,6 @@ export async function POST(
           : {}),
       };
 
-  const parkedQuoteResponse = (causes: readonly string[]) => {
-    /**
-     * #3214: THE ONE ANSWER THAT IS NOT A PARKED QUOTE — an edit that parks its
-     * money may not also carry an other-lodge rate election, and the save
-     * refuses it (`OtherLodgeRateAmountUnderReviewError`, `INV-MOD-028`). Inside
-     * this helper rather than at its two call sites, for the reason the payload
-     * is: both exits are the same answer, and a second copy of the test is how
-     * the two previews would come to differ. Fenced on
-     * `otherLodgeElection.requested`, the field the SAVE fences on, so neither
-     * surface can offer what the other declines. The in-progress exit cannot
-     * reach it — a mid-stay election is refused several hundred lines above —
-     * and is covered anyway so relaxing that refusal cannot silently re-open
-     * this one.
-     *
-     * AHEAD OF THE CAPACITY PAYLOAD, and that does NOT breach the "beds before
-     * money" ordering the caller below states. That rule orders two FIELDS of
-     * one quote: a parked preview is a 200 that reports `capacityAvailable`
-     * alongside `financialReviewRequired`, so the member reads "no beds" first.
-     * This is not a field of a quote — it is the refusal of a request two of
-     * whose parts cannot be combined, and there is no quote to hang a bed
-     * answer on. Ordering it after the capacity composition would have to mean
-     * gating it on `capacity.available`, which would make an unconditional
-     * refusal conditional on an unrelated field and hide the election problem
-     * entirely from the officer who is also overbooked. The save answers a
-     * capacity failure first because there capacity THROWS, from inside
-     * `calculateModifiedPricing`; the preview has no such throw to order
-     * against.
-     */
-    if (otherLodgeElection.requested) {
-      const refusal = new OtherLodgeRateAmountUnderReviewError();
-      return NextResponse.json(
-        { error: refusal.message },
-        { status: refusal.status },
-      );
-    }
-    logger.info(
-      {
-        bookingId,
-        // The CAUSES only. Which nights and what was stored against them is
-        // evidence for an admin on the review task (#3030), not log fodder.
-        causes,
-      },
-      "Booking modification quote parks its money for financial review",
-    );
-    return NextResponse.json({
-      newTotalPriceCents: booking.totalPriceCents,
-      newDiscountCents: booking.discountCents,
-      newPromoAdjustmentCents: booking.promoAdjustmentCents,
-      newFinalPriceCents: booking.finalPriceCents,
-      priceDiffCents: 0,
-      changeFeeCents: 0,
-      netChargeCents: 0,
-      settlementOptions: null,
-      availableCreditCents,
-      capacityAvailable: capacity.available,
-      financialReviewRequired: true,
-      financialReviewNotice: EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
-      minimumStayValid: minimumStayViolations.length === 0,
-      minimumStayViolations,
-      exceptionReview,
-      promoStillValid: true,
-      promoCoverage: null,
-      // #3179: the promo-code change this parked edit will not carry. The
-      // reason is chosen the same way the save chooses it - a stay already
-      // under way refuses a promo change outright a few hundred lines above,
-      // so the reachable case here is the parked one.
-      promoChangeNotApplied: describePromoChangeNotApplied({
-        ...promoChange,
-        currentPromoCode: bookingPromoCodeLabel(booking) ?? undefined,
-        // The resolved removals, matching the save exactly - a preview that
-        // promised "who it covers has not changed" would be contradicted by the
-        // save it is previewing.
-        guestRemovalsRequested: removedGuests.length > 0,
-        reason: isInProgressEdit ? "STAY_IN_PROGRESS" : "AMOUNT_UNDER_REVIEW",
-        phase: "preview",
-      }),
-      promoValidation: null,
-      itemizedChanges: [],
-      ...(partnerSharedReason !== null ? { partnerSharedReason } : {}),
-      ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
-        ? { overCapacityConfirmRequired: true }
-        : {}),
-      ...capacityRefusalFields,
-    });
-  };
-
-  // #3170: the parked preview for a stay already under way. Taken the moment
-  // the beds are settled and before a single cent is computed — everything
-  // below prices the edit, and this booking's history cannot support a price.
-  //
-  // THE CAPACITY CHECK STILL RUNS FIRST, on the parked plan, for the same
-  // reason it does on the save: beds are not money, and the member must be told
-  // "no beds" before they are told "an officer will confirm the amount".
-  if (parkedPlan) {
-    return parkedQuoteResponse(
-      // #3498: the causes of EVERY strand this park records, across every work
-      // item it composes into - the preview said the same thing before, when it
-      // was one occurrence per strand.
-      planResult?.kind === "financial_review_required"
-        ? planResult.occurrences.flatMap((occurrence) =>
-            editFinancialReviewStrandRecords(occurrence).map(
-              (strand) => strand.cause,
-            ),
-          )
-        : [],
-    );
-  }
-
   // Calculate new total price
   let newTotalPriceCents: number;
   let priceBreakdown: {
@@ -1889,19 +1749,29 @@ export async function POST(
     if (inProgressPlan) {
       newTotalPriceCents = inProgressPlan.newTotalPriceCents;
     } else {
-      priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: bookingOwner(booking).memberId,
-        checkIn: newCheckIn,
-        checkOut: newCheckOut,
-        guests: policyAdjustedGuestsForPricing,
-        seasons: seasonRateData,
-        groupDiscount,
-        seasonYear,
-        subscriptionLockoutMode,
-      });
-      newTotalPriceCents = priceBreakdown.totalPriceCents;
+      // #4317: the same unattached-money step the save takes
+      // (`calculateModifiedPricing`), through the same helper, so the preview's
+      // total is the save's.
+      priceBreakdown = withUnattachedStrandMoney(
+        await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+          ownerMemberId: bookingOwner(booking).memberId,
+          checkIn: newCheckIn,
+          checkOut: newCheckOut,
+          guests: policyAdjustedGuestsForPricing,
+          seasons: seasonRateData,
+          groupDiscount,
+          seasonYear,
+          subscriptionLockoutMode,
+        }),
+        guestsForPricing,
+      );
+      // #4317 review H1: the save's carry-forward, through the same helper.
+      newTotalPriceCents = editedBookingTotalCents(booking, priceBreakdown.totalPriceCents);
     }
   } catch (error) {
+    if (error instanceof NegativeEditedHeadlineError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof MembershipTypeBookingPolicyError) {
       // Finding 2 (privacy re-review of MG3 #2308). The membership-type refusal
       // is D-8's FOURTH collapsing refusal, so when it collapsed it owes the
@@ -1930,47 +1800,6 @@ export async function POST(
     );
   }
 
-  /**
-   * #3166: THE PREVIEW HALF OF THE PRE-CHECK-IN GATE, and the parity requirement
-   * is why it cannot be left to the save.
-   *
-   * `calculateModifiedPricing` now judges every existing strand of a
-   * not-yet-started booking and PARKS the edit when one of them cannot be priced
-   * from its own history. A preview that went on quoting a price for that edit
-   * would show the member a refund or a charge the save will not make — the same
-   * disagreement #3170 removed in the opposite direction, and the one thing
-   * INV-MOD-028 says quote and apply may never have.
-   *
-   * It is judged HERE, after the pricing pass and against
-   * `priceBreakdown.guests[i].nightDates`, for exactly the reason the save
-   * judges it there: that array is the night set the edit really proposes, and a
-   * second derivation of it would be a second answer to a question already
-   * answered (`INV-SSOT`). The two surfaces read the same input in the same
-   * order, so they cannot disagree about which strands are unreadable.
-   */
-  if (!inProgressPlan && priceBreakdown) {
-    const previewEvidence = preCheckInEditEvidence({
-      bookingId: booking.id,
-      booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-      // THE SAME ASSEMBLY THE SAVE USES, not a second one that agrees today.
-      strands: preCheckInEditStrands({
-        bookingGuests: booking.guests,
-        guestsForPricing,
-        pricedGuests: priceBreakdown.guests,
-        removeGuestIds: removeSet,
-      }),
-    });
-    if (previewEvidence.occurrences !== null) {
-      return parkedQuoteResponse(
-        previewEvidence.occurrences.flatMap((occurrence) =>
-          editFinancialReviewStrandRecords(occurrence).map(
-            (strand) => strand.cause,
-          ),
-        ),
-      );
-    }
-  }
-
   // --- Build itemized changes ---
   const itemizedChanges: Array<{ label: string; amountCents: number }> = [];
   if (guestNameUpdates.length > 0) {
@@ -1989,9 +1818,10 @@ export async function POST(
    * prices the shared resolver gave each guest (`INV-EXCEPT-022`, `INV-SSOT`).
    * The old side is each guest's stored price, as the removed-guest line reads.
    * So the lines sum to `priceDiffCents` (and, with the change-fee line, to
-   * `netChargeCents`) only while the stored `totalPriceCents` equals the stored
-   * guest prices summed and the stored final price is that total plus the
-   * stored promo adjustment, which is how every writer stores them.
+   * `netChargeCents`) while the stored final price is the stored total plus the
+   * stored promo adjustment, which is how every writer stores them. A total a
+   * parked edit froze away from its guests no longer breaks that: the new total
+   * carries the gap forward (`editedBookingTotalCents`, #4317 review H1).
    */
   const pricedGuestAt = (index: number) => {
     const priced = priceBreakdown?.guests[index];
@@ -2194,7 +2024,8 @@ export async function POST(
     });
   }
 
-  // 4. Per-removed-guest credits (use their stored priceCents)
+  // 4. Per-removed-guest credits: their stored priceCents, or $0 for a negative
+  // stored total (D11), exactly what the save credits.
   if (inProgressPlan) {
     for (const entry of inProgressPlan.proposedExistingGuests.filter(
       (guest) => guest.removedFromFuture
@@ -2235,9 +2066,7 @@ export async function POST(
   } | null = null;
   // #3179: the promo-code change this preview will not carry. Null on every
   // ordinary quote; set only on the in-progress branch below, which prices the
-  // stay from prices already agreed and re-runs no promotion. (The PARKED
-  // preview never reaches here — it returns from `parkedQuoteResponse` long
-  // before this, and builds the same notice there.)
+  // stay from prices already agreed and re-runs no promotion.
   let promoChangeNotApplied: PromoChangeNotAppliedNotice | null = null;
   // #3827: the codes the preview applied, in order, for the line item.
   let appliedPromoCodeLabel: string | null = null;
@@ -2260,7 +2089,7 @@ export async function POST(
   if (inProgressPlan) {
     // #3179: an in-progress edit prices from the nights already agreed and
     // re-runs no promotion, so a promo-code change carried alongside it is
-    // dropped exactly as it is on a parked edit.
+    // dropped.
     //
     // TODAY THIS RESOLVES TO NULL, and it is wired anyway on purpose. A promo
     // change on a stay already under way is refused outright above, with "Promo
@@ -2270,10 +2099,6 @@ export async function POST(
     // is what would make relaxing either refusal re-open the silence: the
     // wording alone does not warn anybody unless something calls for it. The
     // save is wired the same way, off `promo.promoEngineRan`.
-    //
-    // The reason is fixed rather than chosen: `inProgressPlan` is produced only
-    // under `isInProgressEdit`, so `AMOUNT_UNDER_REVIEW` here would be a dead
-    // arm claiming something untrue if it ever came alive.
     promoChangeNotApplied = describePromoChangeNotApplied({
       ...promoChange,
       currentPromoCode: bookingPromoCodeLabel(booking) ?? undefined,
@@ -2283,6 +2108,8 @@ export async function POST(
     });
     newDiscountCents = inProgressPlan.newDiscountCents;
     newPromoAdjustmentCents = inProgressPlan.newPromoAdjustmentCents;
+    // The stored codes stay applied, never re-validated (#4317 review round 4).
+    appliedPromoCodeLabel = bookingPromoCodeLabel(booking);
   } else {
     // #3827: the save's reading of the request (`requestedPromoCodeList`) and
     // the save's pricing (`applyBookingPromotions`), unlocked and read-only, so
@@ -2453,8 +2280,10 @@ export async function POST(
 
   itemizedChanges.push(
     ...promoBreakdownLines({
-      // An in-progress edit carries the stored adjustment over unchanged.
-      carriedOver: Boolean(inProgressPlan),
+      // An in-progress edit carries the stored adjustment over unchanged,
+      // unless it capped it at the new total (#4317 review round 4): then the
+      // stored codes are re-priced to the cap, a line of their own.
+      carriedOver: Boolean(inProgressPlan) && !inProgressPlan?.promotionCappedAtNewTotal,
       // A refused code refuses the save; the promo card shows why instead.
       refused: promoValidation?.valid === false,
       storedCodes: bookingPromoCodeLabel(booking),

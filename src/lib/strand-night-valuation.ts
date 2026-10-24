@@ -26,9 +26,9 @@ import {
  * - "Which stored value is usable money, and do the rows reconcile" is
  *   `classifyStoredSoldPriceEvidence`'s question. R1 is exactly its `exact`
  *   verdict, and an unusable row (missing, `NULL`, negative, non-integer) is
- *   whatever it reports as `null`. It is asked at `WHOLE_GUEST` grain always,
- *   not through `editStrandEvidenceGrain`: provenance never decides a value
- *   under D1, and `WHOLE_GUEST` is the grain that does not read it.
+ *   whatever it reports as `null`. It is asked at `WHOLE_GUEST` grain always:
+ *   provenance never decides a value under D1, and `WHOLE_GUEST` is the grain
+ *   that does not read it.
  * - The even split is `evenlySplitCents`, the largest-remainder rule the
  *   night-row backfills and the Xero synthetic lines already use: leftover
  *   cents go one each on the earliest nights.

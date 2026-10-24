@@ -8,10 +8,16 @@ import { PaymentStatus } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   findPaymentTransactionByIntentId: vi.fn(),
+  queueSupersededPaymentIntentRefundRecovery: vi.fn(),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
   findPaymentTransactionByIntentId: mocks.findPaymentTransactionByIntentId,
+}));
+
+// #4300: the doors' superseded check (which hands off), real in its own suite.
+vi.mock("@/lib/payment-recovery", () => ({
+  queueSupersededPaymentIntentRefundRecovery: mocks.queueSupersededPaymentIntentRefundRecovery,
 }));
 
 import {
@@ -24,6 +30,7 @@ const intent = (status: string) => ({ id: "pi_1", status }) as never;
 
 beforeEach(() => {
   mocks.findPaymentTransactionByIntentId.mockReset();
+  mocks.queueSupersededPaymentIntentRefundRecovery.mockReset().mockResolvedValue(false);
 });
 
 describe("isPaymentIntentCancelConfirmed", () => {
@@ -122,6 +129,16 @@ describe("isCardIntentRetired", () => {
         paymentStatus: PaymentStatus.PENDING,
       }),
     ).resolves.toBe(false);
+  });
+
+  it("#4300: is retired for a succeeded capture the superseded machinery owns, through the doors' own check (which hands it off)", async () => {
+    mocks.findPaymentTransactionByIntentId.mockResolvedValue({ status: PaymentStatus.SUCCEEDED, paymentId: "pay-1" });
+    mocks.queueSupersededPaymentIntentRefundRecovery.mockResolvedValue(true);
+    const paymentIntent = { id: "pi_1", status: "succeeded", amount: 6000, payment_method: "pm_1" } as never;
+    await expect(
+      isCardIntentRetired({ result: { paymentIntent, canceled: false }, paymentStatus: PaymentStatus.PENDING }),
+    ).resolves.toBe(true);
+    expect(mocks.queueSupersededPaymentIntentRefundRecovery).toHaveBeenCalledWith(paymentIntent);
   });
 
   it("never asks the ledger about a status that is neither cancelled nor succeeded", async () => {

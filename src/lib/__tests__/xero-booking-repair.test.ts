@@ -9,7 +9,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
 import { modificationNoteWording, readModificationNoteWording } from "@/lib/xero-refund-method";
-import { buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { buildEditFinancialReviewChargeReason, buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
@@ -318,6 +318,8 @@ function createDependencies(state: {
    * may answer.
    */
   lateCaptureCardRefundsByHand?: Record<string, CardByHand>;
+  /** #3953: the primary invoice create row carrying its stored link figures. */
+  primaryInvoiceFiguresOperation?: { id: string; requestPayload: unknown } | null;
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
   // #4215 (`INV-PAY-118`): refund requests' completed hand-backs, the cash each paid back.
@@ -487,6 +489,9 @@ function createDependencies(state: {
       booking: {
         findMany: vi.fn().mockResolvedValue(state.bookings),
       },
+      // #3953: the edits marked as settled against the primary invoice, which
+      // its gap invoice's anchors are read from - none unless a test says so.
+      bookingModification: { findMany: vi.fn().mockResolvedValue([]) },
       xeroObjectLink: {
         // A read naming one role gets that role's links only, as the real query does - here the
         // loader's refund-note read (`refundNoteSetsForPayments`, #4231) and the refund-payment
@@ -494,9 +499,33 @@ function createDependencies(state: {
         findMany: vi.fn().mockImplementation(async ({ where }: any = {}) =>
           typeof where?.role === "string" ? links.filter((link: any) => link.role === where.role) : links,
         ),
+        // #3953: the change's own supplementary invoice link (`readCaptureRecorder`).
+        findFirst: vi.fn().mockImplementation(async ({ where }: any = {}) =>
+          links.find((link: any) =>
+            link.role === where?.role && link.localModel === where?.localModel && link.localId === where?.localId && link.active,
+          ) ?? null,
+        ),
       },
       xeroSyncOperation: {
         findMany: vi.fn().mockResolvedValue(operations),
+        // #3953: the primary invoice's stored figures (none unless a test says
+        // so), and `readCaptureRecorder`'s supplementary-invoice reads, matched
+        // as the real queries match them.
+        findFirst: vi.fn().mockImplementation(async ({ where }: any = {}) => {
+          if (where?.correlationKey) return state.primaryInvoiceFiguresOperation ?? null;
+          const live = operations.filter((op: any) => op.queueType === where?.queueType && op.status !== "CANCELLED");
+          if (where?.localId) return live.find((op: any) => op.localModel === where.localModel && op.localId === where.localId) ?? null;
+          // The intent naming read (`paymentIntentId`), or the gap-coverage read (`coveredPaymentIntentIds`).
+          const intent = where?.requestPayload?.equals ?? where?.requestPayload?.array_contains?.[0];
+          const byCoverage = where?.requestPayload?.path?.[0] === "coveredPaymentIntentIds";
+          return (
+            live.find((op: any) =>
+              byCoverage
+                ? (op.requestPayload?.coveredPaymentIntentIds ?? []).includes(intent)
+                : op.requestPayload?.paymentIntentId === intent,
+            ) ?? null
+          );
+        }),
       },
       // #1491: booking-cancel card-path refund decisions (matched by exact
       // booking_cancel_refund_recovery_<id> keys in the loader).
@@ -737,6 +766,8 @@ function createDependencies(state: {
       cardNoteMayBeInXeroCents: state.paidAnotherWayCardNoteMayBeInXeroCents ?? 0,
     })),
     queueWaitingPaidAnotherWayNote: vi.fn().mockResolvedValue("op_note"),
+    // #3953: a change capture's receipt, queued once.
+    enqueueAdditionalCaptureReceiptOperation: vi.fn().mockResolvedValue({ outcome: "queued", queueOperationId: "op_receipt" }),
     // #3924 round 12: none, unless a test says so.
     readLateCaptureCardRefundsByHand: vi
       .fn()
@@ -8962,5 +8993,285 @@ describe("#3954: a reduction set against an unpaid ask", () => {
     const bookingReport = report.passes[0].bookings[0];
     expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:billed-offset-note:mod_reduction");
     expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+  });
+});
+
+/**
+ * #3953 (`INV-PAY-139`): "card payment not recorded in Xero" - a change's card
+ * capture on a booking whose primary invoice exists, that no supplementary
+ * invoice and no receipt of its own records.
+ */
+describe("runBookingXeroRepair - a change's card capture no Xero invoice records (#3953)", () => {
+  const changeCapture = (overrides: Record<string, unknown> = {}) => ({
+    id: "txn_change",
+    paymentId: "payment_1",
+    kind: "ADDITIONAL",
+    source: "STRIPE",
+    stripePaymentIntentId: "pi_change",
+    amountCents: 8000,
+    refundedAmountCents: 0,
+    status: "SUCCEEDED",
+    paymentMethodId: "pm_123",
+    reason: null,
+    withdrawnAt: null,
+    createdAt: new Date("2026-05-03T00:00:00Z"),
+    updatedAt: new Date("2026-05-03T00:00:00Z"),
+    ...overrides,
+  });
+  const bookingWithChangeCapture = (bookingOverrides: Record<string, unknown> = {}) =>
+    makeBooking({
+      payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture()] },
+      ...bookingOverrides,
+    });
+  const figures = (captured: string[] | undefined) => ({
+    id: "op_primary_create",
+    requestPayload: {
+      primaryInvoiceBilledFee: {
+        xeroInvoiceId: "inv_primary",
+        billedChangeFeeCents: 0,
+        billedTotalCents: 18000,
+        recordedChangeFeeCentsAtLink: 0,
+        primaryInvoiceCashCents: 10000,
+        ...(captured ? { paymentIntentIdsRecordedAtLink: captured } : {}),
+      },
+    },
+  });
+  const run = async (state: { booking?: ReturnType<typeof makeBooking>; operations?: unknown[]; links?: unknown[]; figures?: ReturnType<typeof figures> | null }, apply = false) => {
+    const deps = createDependencies({
+      bookings: [state.booking ?? bookingWithChangeCapture()],
+      operations: state.operations ?? [],
+      links: state.links ?? [],
+      primaryInvoiceFiguresOperation: state.figures === undefined ? figures(["pi_123"]) : state.figures,
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply, dependencies: deps, scope: { all: true } });
+    return { bookingReport: report.passes[0].bookings[0], deps };
+  };
+  const finding = (bookingReport: { findings: Array<{ code: string }> }) =>
+    bookingReport.findings.find((entry) => entry.code === "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO") as
+      | { severity: string; summary: string; safeToAutoApply: boolean; details: Record<string, unknown> }
+      | undefined;
+
+  it("names it and queues the capture's receipt, automatically where the invoice's figures say it was not counted", async () => {
+    const { bookingReport, deps } = await run({});
+
+    expect(finding(bookingReport)).toMatchObject({
+      severity: "critical",
+      safeToAutoApply: true,
+      summary: expect.stringContaining("Card payment not recorded in Xero"),
+      details: { paymentId: "payment_1", paymentIntentId: "pi_change", paymentTransactionId: "txn_change", capturedCents: 8000 },
+    });
+    expect(bookingReport.actions.find((action) => action.type === "QUEUE_ADDITIONAL_CAPTURE_RECEIPT")).toMatchObject({
+      key: "queue:additional-capture-receipt:pi_change",
+      safeToAutoApply: true,
+      payload: { paymentIntentId: "pi_change" },
+    });
+
+    await run({}, true).then(({ deps: applied }) => {
+      expect(applied.enqueueAdditionalCaptureReceiptOperation).toHaveBeenCalledWith("pi_change");
+    });
+    expect(deps.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+  });
+
+  it("asks an officer to check Xero first where the invoice predates its counted-capture figures", async () => {
+    const { bookingReport } = await run({ figures: figures(undefined) });
+
+    expect(finding(bookingReport)).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      summary: expect.stringContaining("check Xero first"),
+    });
+  });
+
+  it.each([
+    ["the primary invoice's create counted it", { figures: figures(["pi_123", "pi_change"]) }],
+    [
+      "its receipt's payment is linked",
+      { links: [{ id: "link_receipt", localModel: "PaymentTransaction", localId: "txn_change", xeroObjectType: "PAYMENT", xeroObjectId: "xp_1", role: "ADDITIONAL_CAPTURE_PAYMENT", active: true, metadata: null, createdAt: new Date(), updatedAt: new Date(), xeroObjectNumber: null, xeroObjectUrl: null }] },
+    ],
+    [
+      "a supplementary invoice names the capture",
+      { operations: [makeOperation({ id: "op_supp", queueType: "SUPPLEMENTARY_INVOICE", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: "pi_change" } })] },
+    ],
+    ["the booking is cancelled", { booking: bookingWithChangeCapture({ status: "CANCELLED" }) }],
+    ["the booking has no Xero invoice", { booking: makeBooking({ payment: { ...makeBooking().payment, xeroInvoiceId: null, xeroInvoiceNumber: null, transactions: [changeCapture()] } }) }],
+  ])("raises nothing when %s", async (_label, state) => {
+    const { bookingReport } = await run(state as never);
+    expect(finding(bookingReport)).toBeUndefined();
+    expect(bookingReport.actions.find((action) => action.type === "QUEUE_ADDITIONAL_CAPTURE_RECEIPT")).toBeUndefined();
+  });
+
+  const receiptOperation = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      id: "op_receipt",
+      entityType: "PAYMENT",
+      operationType: "CREATE",
+      localModel: "PaymentTransaction",
+      localId: "txn_change",
+      queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+      xeroObjectType: null,
+      xeroObjectId: null,
+      replayable: true,
+      requestPayload: {
+        queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        paymentTransactionId: "txn_change",
+        paymentIntentId: "pi_change",
+      },
+      ...overrides,
+    });
+
+  it("offers a retry of a receipt whose Xero write failed", async () => {
+    const { bookingReport } = await run({ operations: [receiptOperation({ status: "FAILED", lastErrorCode: "500" })] });
+
+    expect(bookingReport.findings.find((entry) => entry.code === "BLOCKED_BY_XERO_OPERATION")).toMatchObject({
+      details: expect.objectContaining({ operationId: "op_receipt", paymentIntentId: "pi_change" }),
+    });
+    expect(finding(bookingReport)).toBeUndefined();
+  });
+
+  it("hands a receipt the worker refused to an officer, never retrying it automatically", async () => {
+    const { bookingReport } = await run({
+      operations: [receiptOperation({ status: "FAILED", lastErrorCode: "ADDITIONAL_CAPTURE_RECEIPT_REFUSED", lastErrorMessage: "nothing due" })],
+    });
+
+    expect(finding(bookingReport)).toMatchObject({ severity: "manual_review", safeToAutoApply: false });
+    expect(bookingReport.actions.some((action) => action.type === "REQUEUE_XERO_OPERATION")).toBe(false);
+  });
+
+  describe("one recorder per capture (review round 1, B)", () => {
+    const changeOnPrimary = {
+      id: "mod_change",
+      bookingId: "booking_1",
+      modificationType: "GUEST_ADD",
+      priceDiffCents: 8000,
+      changeFeeCents: 0,
+      createdAt: new Date("2026-05-02T00:00:00Z"),
+    };
+    const receiptLink = {
+      id: "link_receipt",
+      localModel: "PaymentTransaction",
+      localId: "txn_change",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "xp_1",
+      role: "ADDITIONAL_CAPTURE_PAYMENT",
+      active: true,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+    };
+    const withChange = (
+      receipt: "linked" | "queued" | "running" | "planned" | "none",
+      capture: Record<string, unknown> = { bookingModificationId: "mod_change" },
+    ) =>
+      run({
+        booking: makeBooking({
+          payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture(capture)] },
+          modifications: [changeOnPrimary],
+        }),
+        operations: [
+          makePrimaryInvoiceCreateOperation(),
+          ...(receipt === "none"
+            ? []
+            : [
+                receiptOperation({
+                  status: receipt === "linked" ? "SUCCEEDED" : receipt === "running" ? "RUNNING" : receipt === "planned" ? "FAILED" : "PENDING",
+                  ...(receipt === "planned"
+                    ? {
+                        requestPayload: {
+                          queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+                          bookingId: "booking_1",
+                          paymentId: "payment_1",
+                          paymentTransactionId: "txn_change",
+                          paymentIntentId: "pi_change",
+                          plan: { target: "PRIMARY_INVOICE", invoiceId: "inv_primary", amountCents: 8000, capturedCents: 8000, date: "2026-06-30" },
+                        },
+                      }
+                    : {}),
+                }),
+              ]),
+        ],
+        links: receipt === "linked" ? [receiptLink] : [],
+      });
+
+    it("never reports a capture its change's own supplementary invoice records", async () => {
+      const { bookingReport } = await run({
+        booking: bookingWithChangeCapture({
+          payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture({ bookingModificationId: "mod_change" })] },
+        }),
+        operations: [
+          makeOperation({ id: "op_change_invoice", queueType: "SUPPLEMENTARY_INVOICE", localModel: "BookingModification", localId: "mod_change", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: null } }),
+        ],
+      });
+      expect(finding(bookingReport)).toBeUndefined();
+    });
+
+    it("never reports a capture a gap invoice's own payment took", async () => {
+      const { bookingReport } = await run({
+        operations: [
+          makeOperation({ id: "op_gap", queueType: "SUPPLEMENTARY_INVOICE", localId: "mod_racing", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", primaryInvoiceGap: true, coveredPaymentIntentIds: ["pi_change"] } }),
+        ],
+      });
+      expect(finding(bookingReport)).toBeUndefined();
+    });
+
+    it("raises the change's missing supplementary invoice UNPAID where the capture's own receipt records it", async () => {
+      const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+        bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+      const withReceipt = (await withChange("linked")).bookingReport;
+      expect(queueAction(withReceipt)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
+      // Control: with no receipt, the enqueue's own default stands.
+      const without = (await withChange("none")).bookingReport;
+      expect(queueAction(without)?.payload).not.toHaveProperty("recordPayment");
+    });
+
+    it("MUTATION round 7: raises it unpaid where an officer's review charge for the change - no stamp, its reason naming the change - has a receipt", async () => {
+      const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+        bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+      const reviewCharge = { bookingModificationId: null, reason: buildEditFinancialReviewChargeReason("mod_change") };
+      for (const receipt of ["linked", "planned"] as const) {
+        const report = (await withChange(receipt, reviewCharge)).bookingReport;
+        expect(queueAction(report)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
+      }
+    });
+
+    it("MUTATION round 3 (F1): raises it unpaid only for a receipt that RECORDED the capture, never one still queued or refused", async () => {
+      const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+        bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+      const queued = (await withChange("queued")).bookingReport;
+      expect(queueAction(queued)?.payload).not.toHaveProperty("recordPayment");
+    });
+
+    it.each(["running", "planned"] as const)(
+      "MUTATION round 4 (1a): raises it unpaid where the capture's receipt may be recording it (%s)",
+      async (receipt) => {
+        const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+          bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+        const report = (await withChange(receipt)).bookingReport;
+        expect(queueAction(report)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
+      },
+    );
+
+    it("MUTATION round 3 (F1): still reports a capture whose change's own invoice was raised UNPAID - the receipt records against it", async () => {
+      const { bookingReport } = await run({
+        booking: bookingWithChangeCapture({
+          payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture({ bookingModificationId: "mod_change" })] },
+        }),
+        operations: [
+          makeOperation({ id: "op_change_invoice", queueType: "SUPPLEMENTARY_INVOICE", localModel: "BookingModification", localId: "mod_change", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: null, recordPayment: false } }),
+        ],
+      });
+      expect(finding(bookingReport)).toMatchObject({ details: expect.objectContaining({ paymentIntentId: "pi_change" }) });
+    });
+  });
+
+  it("raises nothing while the receipt is queued or after it finished", async () => {
+    for (const status of ["PENDING", "RUNNING", "SUCCEEDED", "CANCELLED"]) {
+      const { bookingReport } = await run({ operations: [receiptOperation({ status })] });
+      expect(finding(bookingReport)).toBeUndefined();
+      expect(bookingReport.findings.find((entry) => entry.code === "BLOCKED_BY_XERO_OPERATION")).toBeUndefined();
+    }
   });
 });

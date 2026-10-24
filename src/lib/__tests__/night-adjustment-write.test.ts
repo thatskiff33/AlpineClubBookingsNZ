@@ -12,6 +12,7 @@ import {
   snapshotBookingNightAdjustments,
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
+import { carriedCapRowScaler, scaleCappedCarriedRows } from "@/lib/carried-promotion-cap";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const loggerMocks = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
@@ -52,9 +53,10 @@ function fakeTx(options: {
     id: string;
     bookingGuestId: string;
     stayDate: Date;
+    priceCents?: number | null;
     adjustments?: Array<Record<string, unknown>>;
   }>;
-  guests?: Array<{ id: string }>;
+  guests?: Array<{ id: string; priceCents?: number }>;
   adjustments?: Array<Record<string, unknown>>;
 }): { tx: Prisma.TransactionClient; recorded: Recorded } {
   const order: string[] = [];
@@ -501,6 +503,94 @@ describe("snapshot and restore across a mechanical rewrite", () => {
       restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test edit" }),
     ).resolves.toEqual({ carried: false });
     nothingWritten(after.recorded);
+  });
+
+  describe("#4317 review rounds 4 and 6: a capped in-progress promotion scales the rows left on the stay", () => {
+    /** A 100% code on guest A's two nights: -$50 each; the edit gives back N2. */
+    const FULL = (amountCents: number) => ({ ...NIGHT_ROW, amountCents });
+    const twoNights = () =>
+      fakeTx({
+        nights: [
+          { id: "old-a1", bookingGuestId: "guest-a", stayDate: N1, adjustments: [FULL(-5000)] },
+          { id: "old-a2", bookingGuestId: "guest-a", stayDate: N2, adjustments: [FULL(-5000)] },
+        ],
+      });
+    const capped = (priceAdjustmentCents: number) => ({
+      ...REDEMPTION,
+      priceAdjustmentCents,
+      allocations: [{ memberId: "booker", priceAdjustmentCents }],
+    });
+
+    it("drops the row on a night given back and keeps the rest, byte for byte, where they reconcile", async () => {
+      const snapshot = await snapshotBookingNightAdjustments(twoNights().tx, "booking-1");
+      const after = fakeTx({
+        nights: [{ id: "new-a1", bookingGuestId: "guest-a", stayDate: N1, priceCents: 5000 }],
+        guests: [{ id: "guest-a", priceCents: 5000 }],
+        // The cap scaled the redemption to the -$50 left.
+        redemption: capped(-5000),
+      });
+      await expect(
+        restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test cap", scaleSurvivors: scaleCappedCarriedRows }),
+      ).resolves.toEqual({ carried: true });
+      expect(after.recorded.adjustmentCreateMany.mock.calls[0][0]).toEqual({ data: [ROW("new-a1", null, -5000)] });
+    });
+
+    it("scales the rows left to the scaled figure where they no longer add up to it (INV-MONEY-029's exception)", async () => {
+      const snapshot = await snapshotBookingNightAdjustments(twoNights().tx, "booking-1");
+      const after = fakeTx({
+        nights: [{ id: "new-a1", bookingGuestId: "guest-a", stayDate: N1, priceCents: 5000 }],
+        guests: [{ id: "guest-a", priceCents: 5000 }],
+        // The cap scaled the redemption to -$30: the -$50 row left is scaled to it.
+        redemption: capped(-3000),
+      });
+      await expect(
+        restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test cap", scaleSurvivors: scaleCappedCarriedRows }),
+      ).resolves.toEqual({ carried: true });
+      expect(after.recorded.adjustmentCreateMany.mock.calls[0][0]).toEqual({ data: [ROW("new-a1", null, -3000)] });
+    });
+
+    it("writes none, and clears the booking's rows, where no row is left on the stay to scale", async () => {
+      const snapshot = await snapshotBookingNightAdjustments(twoNights().tx, "booking-1");
+      const after = fakeTx({
+        // Both nights given back; the cap left -$30 with nothing to carry it.
+        nights: [{ id: "new-b1", bookingGuestId: "guest-b", stayDate: N1, priceCents: 5000 }],
+        guests: [{ id: "guest-a", priceCents: 0 }, { id: "guest-b", priceCents: 5000 }],
+        redemption: capped(-3000),
+      });
+      await restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test cap", scaleSurvivors: scaleCappedCarriedRows });
+      expect(after.recorded.adjustmentDeleteMany).toHaveBeenCalledWith({ where: { bookingId: "booking-1" } });
+      expect(after.recorded.adjustmentCreateMany).toHaveBeenCalledWith({ data: [] });
+    });
+
+    it("writes none, and clears the rows, where the records could not be scaled (round 6, item 3)", async () => {
+      const snapshot = await snapshotBookingNightAdjustments(twoNights().tx, "booking-1");
+      const after = fakeTx({
+        nights: [{ id: "new-a1", bookingGuestId: "guest-a", stayDate: N1, priceCents: 10000 }],
+        guests: [{ id: "guest-a", priceCents: 5000 }],
+        // The redemption still carries its uncapped -$80, which the $100 night
+        // left could carry - but the booking was capped beneath it, so rows
+        // scaled to it would disagree: none is written.
+        redemption: capped(-8000),
+      });
+      await expect(
+        restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test cap", scaleSurvivors: carriedCapRowScaler(false) }),
+      ).resolves.toEqual({ carried: false });
+      expect(after.recorded.adjustmentDeleteMany).toHaveBeenCalledWith({ where: { bookingId: "booking-1" } });
+      expect(after.recorded.adjustmentCreateMany).toHaveBeenCalledWith({ data: [] });
+    });
+
+    it("CONTROL: without a scaler the same night given back abandons the carry, as every other rewrite does", async () => {
+      const snapshot = await snapshotBookingNightAdjustments(twoNights().tx, "booking-1");
+      const after = fakeTx({
+        nights: [{ id: "new-a1", bookingGuestId: "guest-a", stayDate: N1, priceCents: 5000 }],
+        guests: [{ id: "guest-a", priceCents: 5000 }],
+        redemption: capped(-5000),
+      });
+      await expect(
+        restoreBookingNightAdjustments(after.tx, { snapshot, writer: "test edit" }),
+      ).resolves.toEqual({ carried: false });
+      nothingWritten(after.recorded);
+    });
   });
 
   it("is a no-op for a booking that recorded nothing", async () => {

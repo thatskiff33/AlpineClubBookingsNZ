@@ -29,11 +29,12 @@ import {
 } from "@/lib/edit-financial-review-context";
 
 /**
- * How a strand's rows read as a whole: `INV-MOD-028`'s own verdict on the
- * strand at individual-night grain — the grain an edit that moves one of its
- * nights needs — so a class here is either `EXACT` or the cause the edit gate
- * would park with. The same vocabulary as the review tasks the second summary
- * counts, which is what lets the two summaries be read against each other.
+ * How a strand's rows read as a whole: the evidence classifier's verdict on the
+ * strand at individual-night grain, so a class here is either `EXACT` or the
+ * cause an edit moving one of its nights parked with before #4317 (which prices
+ * every edit, `INV-MOD-028`). The same vocabulary as the review tasks the second
+ * summary counts, which is what lets the two summaries be read against each
+ * other.
  */
 export type StrandProvenanceClass = "EXACT" | EditFinancialReviewCause;
 // (3b's `RateDerivationResidueReason.UNVALUED_NIGHT` names a different, narrower

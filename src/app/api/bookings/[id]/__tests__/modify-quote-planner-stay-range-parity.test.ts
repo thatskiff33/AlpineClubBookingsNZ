@@ -148,7 +148,7 @@ vi.mock("@/lib/membership-type-policy", () => ({
   getMembershipTypeBookingPolicyErrorBody: (e: Error) => ({ error: e.message }),
 }));
 // The REAL barrel, so `resolveGuestMemberLinks`, `resolveGuestNameUpdates` and
-// `lockedNightPricesForGuest` behave identically on both sides of the
+// `editedGuestPricingLocks` behave identically on both sides of the
 // comparison. Only the settlement read (a Xero/payment surface irrelevant to
 // stay ranges) is stubbed.
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
@@ -1770,6 +1770,8 @@ function promoPreviewParty(
         memberId: guest.memberId,
         stayStart: guest.stayStart,
         stayEnd: guest.stayEnd,
+        // #4317: the preview reads the stored total to value the held nights.
+        priceCents: guest.priceCents,
         nights: guest.nights,
       })),
     } : null,

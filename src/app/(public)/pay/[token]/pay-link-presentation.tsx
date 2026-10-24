@@ -30,6 +30,16 @@ import {
   parseInstant,
   type BoundClubTime,
 } from "@/lib/club-time";
+import {
+  EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
+  isExistingCardTransactionStatusUnconfirmed,
+  isPaymentProcessing,
+  isPaymentReceivedFinalisationPending,
+  isPaymentReceivedStatusUnconfirmed,
+  isSupersededCardPaymentRefunding,
+  PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 
 export interface Narrative {
   state: string;
@@ -231,6 +241,46 @@ export function CardPaymentUnavailableNotice() {
       card here. Use the bank-transfer details below.
     </p>
   );
+}
+
+/**
+ * What the page shows for a 409 from the link's payment-intent route that a
+ * payer must not answer with another payment, or null for any other refusal
+ * (shown as an ordinary error). Moved from the page unchanged; #4300 adds a
+ * superseded payment going back to the card.
+ */
+export function paymentRecoveryForRefusal(data: Record<string, unknown>): PaymentRecovery | null {
+  if (data.status === "CANCELLED" && typeof data.refunded === "boolean") {
+    return data.refunded
+      ? {
+          heading: "Booking cancelled - payment refunded",
+          message:
+            "The booking was cancelled because lodge capacity was no longer available, and the card payment was refunded. Reload the payment link to check the latest booking status. Do not try another payment.",
+        }
+      : {
+          heading: "Booking cancelled - refund needs attention",
+          message:
+            "The booking was cancelled because lodge capacity was no longer available, but the refund could not be confirmed. Reload the payment link and contact the club if the refund is not confirmed. Do not try another payment.",
+        };
+  }
+  if (isPaymentReceivedFinalisationPending(data)) {
+    return {
+      heading: "Payment received - finalisation pending",
+      message:
+        "Your card payment was received, but booking finalisation is still pending. Reload the payment link and check the booking status before trying any payment again.",
+    };
+  }
+  if (isPaymentReceivedStatusUnconfirmed(data)) {
+    return { heading: "Payment received - check booking status", message: PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE };
+  }
+  if (isExistingCardTransactionStatusUnconfirmed(data)) {
+    return { heading: "Card transaction found - check payment status", message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE };
+  }
+  if (isPaymentProcessing(data)) return { heading: "Payment being processed", message: data.error };
+  if (isSupersededCardPaymentRefunding(data)) {
+    return { heading: "Card payment being returned", message: SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE };
+  }
+  return null;
 }
 
 /** The bank-transfer box's heading: an alternative to the card, or the only way. */

@@ -3923,15 +3923,15 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
     );
   });
 
-  it("SHAPE 2 (#3257): a surviving strand with NO night rows DECLINES rather than inventing a figure", async () => {
+  it("SHAPE 2 (#3257): a surviving strand with NO night rows now RE-BASES from its stored total (#4317 review H1)", async () => {
     /*
-      The strand carries $80.00 and no evidence whatever of what any night of it
-      sold for. Its review is raised, but boxes appear only for a strand with
-      genuine BLANK nights among readable ones, so it closes with none - and this
-      is the shape that would be dangerous if a re-price-on-any-close simply
-      summed what it found. `INV-MOD-028` applied to the whole booking says the
-      strands do not reconcile, so the booking's four columns are left exactly
-      where the park put them.
+      The strand carries $80.00 and no row saying what any night of it sold for.
+      Its review is raised, but boxes appear only for a strand with genuine BLANK
+      nights among readable ones, so it closes with none. Until #4317 the
+      closure DECLINED here and left the frozen $240 headline behind, which the
+      next priced edit would have settled as if it were its own. Every night now
+      has a value (`valueStrandNights`, D1), so the closure re-bases the headline
+      to the sum of the guests' stored totals (D5): $80.00.
     */
     mocks.bookingGuestFindUnique.mockResolvedValue({
       id: "guest-2",
@@ -3960,6 +3960,8 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
             priceCents: 8_000,
             memberId: null,
             isMember: false,
+            stayStart: null,
+            stayEnd: null,
             nights: [],
           },
         ],
@@ -3974,21 +3976,20 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       recordedNightPrices: null,
     }, CLUB_FORMAT_TEST);
 
-    // NOTHING was written to the booking, and no history row claims a price was
-    // recalculated. The task still closes - declining is an answer.
-    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
-    expect(mocks.bookingModificationCreate).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "booking-1", totalPriceCents: 24_000 }),
+        data: expect.objectContaining({ totalPriceCents: 8_000, finalPriceCents: 8_000 }),
+      }),
+    );
     expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
-    // And WHY it wrote nothing is on the record rather than silent.
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking-payment.review-closure.reprice",
         metadata: expect.objectContaining({
-          bookingRebased: false,
-          bookingPriceMoved: false,
-          bookingRebaseDeclinedReason: "strand-evidence-unreadable",
-          previousBookingTotalPriceCents: null,
-          newBookingTotalPriceCents: null,
+          bookingRebased: true,
+          previousBookingTotalPriceCents: 24_000,
+          newBookingTotalPriceCents: 8_000,
         }),
       }),
       tx,
@@ -4054,8 +4055,8 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
  *
  * The fix is a re-read, not a backfill: a task with NO payment id asks the
  * booking's own row, inside the completion transaction, through the same
- * `editReviewSettlementPayment` gate the raise sites use (they take its id-only
- * sibling `editReviewSettlementPaymentId`). Nothing is written, so there is no
+ * `editReviewSettlementPayment` gate the raise sites used before #4317 retired
+ * them. Nothing is written, so there is no
  * second write for a webhook replay to duplicate.
  *
  * Every test here has its control, because the property being protected is

@@ -1555,9 +1555,11 @@ decision and would need its own owner decision.
 
 ### INV-ADDPAY-040
 
+_Legacy: settles tasks raised before #4317._
+
 - **An unpaid additional-payment request a completed financial review raised
   can always be withdrawn, and withdrawal retires every instrument it minted**
-  (#3528, stage 0 of #3527). One service, `additional-payment-withdraw.ts`, one
+  (#3528). One service, `additional-payment-withdraw.ts`, one
   route (`finance:edit`), one button on the admin booking page. In order: the
   Stripe PaymentIntent is cancelled at the provider FIRST, outside any lock
   (`INV-LOCK-001`; idempotent — an already-cancelled intent makes no call); then,
@@ -1575,7 +1577,7 @@ decision and would need its own owner decision.
   `reconcilePaymentAggregates` derives the additional columns from the latest
   ADDITIONAL row WITHOUT a stamp, so the `payment_intent.canceled` webhook the
   cancel triggers cannot put the ask back. A FAILED row still projects as owed
-  by design (a declined card is retried), which is why FAILED alone cannot mean
+  (a declined card is retried), which is why FAILED alone cannot mean
   withdrawn. `findEditReviewChargeRequest` and the repair pass's
   `planEditReviewChargeInvoicePayment` (`withdrawn` outcome, no finding) read
   past it too, so no fresh invoice is parked on a cancelled intent.
@@ -1686,3 +1688,35 @@ decision and would need its own owner decision.
   Pinned by `xero-bt-per-refund-notes` (realdb), `bank-hand-back-refund-note`,
   `card-refund-paid-another-way-cash`, `manual-refund-task`,
   `payment-lock-before-rebuild` and `xero-bt-recount-handbacks`.
+
+### INV-ADDPAY-044
+
+- **An after-commit mint never leaves a live ask on a booking that has ended**
+  (#4316, the cancelled-booking case of `INV-ADDPAY-023`). Three minters run
+  after the decision to ask commits: the edit doors'
+  `createModificationAdditionalPaymentIntent`, the recovery runner's replay of
+  a failed mint (`processCreateAdditionalPaymentIntentOperation`) and a
+  currency re-issue (`reissueAdditionalIntentInClubCurrency`). Each re-reads
+  the booking twice against `ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES`
+  (CANCELLED, BUMPED):
+  - **Before the provider call:** an ended booking is asked nothing and owes
+    nothing.
+  - **After the new row is written:** a cancel that committed in between could
+    not see the intent. Its `CANCEL_PAYMENT_INTENT` row is queued first, on its
+    own, then the ask retired with the cancel claim's own routine,
+    `failOutstandingAdditionalAskInClaim`, under the `Payment` row lock, and
+    cancelled now.
+- **The two writers cannot both miss.** The row write and BOTH cancel claims -
+  the paid path's and the never-captured branch's, which a fully REFUNDED
+  payment takes - hold the `Payment` row: a cancel that held it first is seen
+  by the re-read; one that took it after reads the new intent and retires it.
+- **Nothing is offered.** No secret, no figure named as due, no supplementary
+  invoice; a currency re-issue answers the pay door with nothing payable. A
+  review charge on a CANCELLED or BUMPED booking takes its cancelled path
+  (`INV-PAY-112`).
+- **A failed retirement still ends.** The door's queued cancellation, if
+  written, finishes it; the runner throws and retries, and its retry retires
+  the ask before its settled check, then closes.
+- **No new advisory key.** Home: `ended-booking-ask-guard.ts`. Pinned by
+  `ended-booking-ask-mint-guard`, `payment-recovery`,
+  `additional-intent-currency` and `ended-booking-ask-mint-race` (realdb).

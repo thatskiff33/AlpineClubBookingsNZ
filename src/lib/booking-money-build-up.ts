@@ -170,23 +170,36 @@ function exactBaseAmount(
       : { kind: "UNKNOWN", reason: evidence.cause };
   }
 
-  const grain = operation === "REVIEW_REBASE" ? "INDIVIDUAL_NIGHT" : "WHOLE_GUEST";
   if (booking.guests.length === 0) {
     return { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
   }
+  if (operation === "REVIEW_REBASE") {
+    // A review rebase deliberately replaces a stale booking headline with the
+    // sum of its guests' stored totals. Requiring the old headline to agree
+    // here would make the operation incapable of correcting that stale value.
+    //
+    // #4317 review H1 (owner decisions D1 and D5): the base is the guests'
+    // stored totals, which `valueStrandNights` values every night against
+    // (`INV-MOD-028`), rather than individual-night provenance - so a closure
+    // re-bases a strand whose rows are an even split or do not add up instead
+    // of declining and leaving the headline frozen. A negative or fractional
+    // stored total (D11; the database forbids it) is still no base.
+    let rebaseTotalCents = 0;
+    for (const guest of booking.guests) {
+      if (!Number.isInteger(guest.priceCents) || guest.priceCents < 0) {
+        return { kind: "UNKNOWN", reason: "STORED_TOTAL_MISMATCH" };
+      }
+      rebaseTotalCents += guest.priceCents;
+    }
+    return { kind: "EXACT", amountCents: rebaseTotalCents };
+  }
   let totalCents = 0;
   for (const guest of booking.guests) {
-    const evidence = storedSoldPriceEvidenceForGuest(guest, booking, grain);
+    const evidence = storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST");
     if (evidence.kind === "unusable") {
       return { kind: "UNKNOWN", reason: evidence.cause };
     }
     totalCents += evidence.totalCents;
-  }
-  if (operation === "REVIEW_REBASE") {
-    // A review rebase deliberately replaces a stale booking headline with the
-    // exact surviving-night total. Requiring the old headline to agree here
-    // would make the operation incapable of correcting that stale value.
-    return { kind: "EXACT", amountCents: totalCents };
   }
   return totalCents === booking.totalPriceCents
     ? { kind: "EXACT", amountCents: totalCents }

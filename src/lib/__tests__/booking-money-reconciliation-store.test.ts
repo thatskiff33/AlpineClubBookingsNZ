@@ -130,8 +130,16 @@ describe("booking money reconciliation store", () => {
         reviewContext: null,
       },
     ]);
+    // #4317 review M3: the guests and the charge lines, from the same snapshot.
+    const guestFindMany = vi.fn().mockResolvedValue([]);
+    const lineFindMany = vi.fn().mockResolvedValue([]);
     const transaction = vi.fn(async (callback) =>
-      callback({ booking: { findMany }, manualRefundTask: { findMany: reviewFindMany } }),
+      callback({
+        booking: { findMany },
+        manualRefundTask: { findMany: reviewFindMany },
+        bookingGuest: { findMany: guestFindMany },
+        bookingLedgerLine: { findMany: lineFindMany },
+      }),
     );
     const result = await censusBookingMoneyReconciliation(
       { $transaction: transaction } as never,
@@ -144,7 +152,7 @@ describe("booking money reconciliation store", () => {
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { id: "asc" },
-        select: expect.objectContaining({ createdAt: true }),
+        select: expect.objectContaining({ createdAt: true, status: true, deletedAt: true }),
       }),
     );
     // #3531 3c: the two provenance summaries come from the SAME snapshot.
@@ -156,6 +164,14 @@ describe("booking money reconciliation store", () => {
       NO_STORED_NIGHT_PRICES: 1,
     });
     expect(result.editFinancialReviews).toMatchObject({ total: 1, byStatus: { OPEN: 1 }, byCause: { UNREADABLE_CONTEXT: 1 } });
+    expect(lineFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { side: "CHARGE" } }));
+    expect(result.ledgerNightValues).toEqual({
+      bookingsOnLedger: 0,
+      bookingsWhoseLinesDifferFromValues: 0,
+      linesDifferingFromValues: 0,
+      valuedNightsWithoutLiveLine: 0,
+      sampleBookingIds: [],
+    });
     expect(result).toMatchObject({
       totalBookings: 9,
       byState: { RECONCILED: 2, UNRECONCILED: 7 },

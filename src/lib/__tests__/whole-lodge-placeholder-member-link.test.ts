@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
   TypePolicy` would hold every night at the booked non-member price and the
   re-rate would silently do nothing — the member would never get the member rate.
 
-  Revert the `link ? [] : lockedNightPricesForGuest(...)` carve-out in
+  Revert the `link ? [] : valuedNightLocksForGuest(...)` carve-out in
   `prepareGuestPlan` and the first test fails: the linked row keeps a length-1 lock
   set. A non-linked placeholder KEEPS its locks (the #1036 behaviour), which the
   same test pins so the carve-out cannot be widened into "clear everyone".
@@ -66,6 +66,8 @@ function placeholder(id: string) {
     memberId: null,
     stayStart: CHECK_IN,
     stayEnd: CHECK_OUT,
+    // #4317: the stored guest total, which the one night adds up to (R1).
+    priceCents: 5000,
     // A booked non-member night price — this is what the re-rate must displace
     // for the linked row and keep for the non-linked one.
     nights: [{ stayDate: NIGHT_1, priceCents: 5000, priceSource: "SOLD" }],

@@ -1,5 +1,4 @@
 import {
-  BookingStatus,
   PaymentSource,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
@@ -26,6 +25,7 @@ import {
 } from "@/lib/stripe";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
+  findPaymentTransactionByIntentId,
   lockPaymentForRefundedTotal,
   reconcilePaymentAggregates,
   recordStripeRefundsAgainstTransaction,
@@ -65,9 +65,10 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS, PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE }
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
+import { supersededMachineryOwnsCapture } from "@/lib/superseded-capture-ownership";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
@@ -1654,7 +1655,7 @@ async function markSupersededTransactionFailed(
   const updated = await prisma.paymentTransaction.updateMany({
     where: {
       id: operation.paymentTransactionId,
-      status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+      status: { in: [...OPEN_INTENT_TRANSACTION_STATUS_LIST] },
     },
     data: {
       status: PaymentStatus.FAILED,
@@ -1711,7 +1712,7 @@ async function handoffSucceededSupersededIntentToRefund({
    * on the attempt). The worker's own hand-off stays inside its attempt.
    */
   takenFromOutside?: boolean;
-}) {
+}): Promise<boolean> {
   if (!operation.paymentTransactionId) {
     throw new Error("Payment recovery operation is missing paymentTransactionId");
   }
@@ -1747,7 +1748,7 @@ async function handoffSucceededSupersededIntentToRefund({
       },
       "Superseded-intent refund handoff ABANDONED: the operation is gone or already terminal (deleted by a manual mark-paid reversal, or completed elsewhere). No transaction flip, no refund enqueued."
     );
-    return;
+    return false;
   }
 
   await markSupersededTransactionSucceeded({
@@ -1766,7 +1767,7 @@ async function handoffSucceededSupersededIntentToRefund({
     })
   ) {
     await completePaymentRecoveryOperation(operation.id);
-    return;
+    return true;
   }
 
   await enqueueSupersededPaymentRefundRecovery({
@@ -1778,6 +1779,7 @@ async function handoffSucceededSupersededIntentToRefund({
   });
 
   await completePaymentRecoveryOperation(operation.id);
+  return true;
 }
 
 async function processCancelPaymentIntentOperation(
@@ -2711,6 +2713,16 @@ async function processCreateAdditionalPaymentIntentOperation(
   });
   const reissuesReducedAsk = replay.kind === "reissue";
 
+  // A booking ended after the edit (#1358; #4316, `INV-ADDPAY-044`: CANCELLED or BUMPED)
+  // has nothing to collect. A retry after a failed retirement retires its own ask first
+  // (throws to retry) - before the settled check, which reads that ask as settled. Cycle: dynamic.
+  const guard = await import("@/lib/ended-booking-ask-guard");
+  if (await guard.bookingEndedBeforeAskMint(operation.bookingId, bookingModificationId)) {
+    await guard.retireOutstandingAskOnEndedBooking({ format, bookingId: operation.bookingId, paymentId: operation.paymentId });
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   // A later edit already created a fresh additional intent: it superseded
   // this modification's collectable, so resurrecting ours would offer the
   // member two instruments for overlapping money. The later edit repriced
@@ -2725,23 +2737,6 @@ async function processCreateAdditionalPaymentIntentOperation(
     await completePaymentRecoveryOperation(operation.id);
     return;
   }
-
-  // A booking cancelled after the modification has no increase left to
-  // collect (#1358): the cancel flow already tore down its additional
-  // intents, so minting a live intent here would resurrect a collectable the
-  // cancel retired and re-arm the WAITING_PAYMENT supplementary Xero
-  // operation for money that must never be captured. Complete without
-  // creating anything — the parked Xero op is retired by the
-  // stale-WAITING_PAYMENT reaper.
-  if (payment.booking.status === BookingStatus.CANCELLED) {
-    logger.info(
-      { operationId: operation.id, bookingId: operation.bookingId },
-      "Skipping additional intent recovery for cancelled booking",
-    );
-    await completePaymentRecoveryOperation(operation.id);
-    return;
-  }
-
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
   // the two minters of one key send one request (`resolveAskCustomerId`).
@@ -2908,6 +2903,13 @@ async function processCreateAdditionalPaymentIntentOperation(
     paymentId: operation.paymentId,
     queued: held.value,
   });
+
+  // #4316: a cancel committed since that check could not see this intent; retired as the
+  // cancel retires one (a failure throws, to retry), the debt closes - no invoice is owed.
+  if (await guard.replayRetiresAskOnEndedBooking({ format, bookingId: operation.bookingId, paymentId: operation.paymentId, paymentIntentId: pi.id })) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
 
   // #3954 round 6: the Stripe cancels above can take a while. A price
   // reduction may have netted this ask off since (a claim older than
@@ -3301,36 +3303,47 @@ export async function completeCanceledSupersededPaymentIntentRecovery({
   return true;
 }
 
-export async function queueSupersededPaymentIntentRefundRecovery({
-  paymentIntentId,
-  amountCents,
-  paymentMethodId,
-}: {
-  paymentIntentId: string;
-  amountCents: number;
-  paymentMethodId?: string | null;
-}) {
+/**
+ * THE CHECK every door that brings a succeeded intent back asks before it
+ * settles a booking with it (#4300, `INV-PAY-138`): the webhook,
+ * `confirm-payment`, and the pay step's and `/pay` link's reconcile arms.
+ * `true`: the superseded machinery owns the capture, so the door settles
+ * nothing. A cancel row not SUCCEEDED hands it on here (to its refund, or held
+ * for the treasurer on a cancelled booking, `holdSupersededLateCaptureIfRequired`);
+ * otherwise, or when that hand-off lost its claim, the shared reading answers
+ * (`supersededMachineryOwnsCapture`). Unlocked; the settle asks that reading
+ * again under lock(1).
+ */
+export async function queueSupersededPaymentIntentRefundRecovery(
+  paymentIntent: Pick<Stripe.PaymentIntent, "id" | "amount" | "payment_method">,
+): Promise<boolean> {
   const operation = await prisma.paymentRecoveryOperation.findFirst({
     where: {
       type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
-      paymentIntentId,
+      paymentIntentId: paymentIntent.id,
       status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
     },
     orderBy: { createdAt: "desc" },
   });
 
-  if (!operation) {
-    return false;
+  // A hand-off abandoned on its claim (the row went terminal or was deleted
+  // meanwhile) moved nothing: ask the rows again rather than assume.
+  if (
+    operation &&
+    (await handoffSucceededSupersededIntentToRefund({
+      operation,
+      amountCents: paymentIntent.amount,
+      paymentMethodId: getStripePaymentMethodId(paymentIntent),
+      takenFromOutside: true,
+    }))
+  ) {
+    return true;
   }
 
-  await handoffSucceededSupersededIntentToRefund({
-    operation,
-    amountCents,
-    paymentMethodId,
-    takenFromOutside: true,
-  });
-
-  return true;
+  // The intent's own ledger row names its payment (the one lookup every reader
+  // of an intent uses, backfilling a pre-ledger payment).
+  const row = await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id });
+  return supersededMachineryOwnsCapture(prisma, { paymentId: row?.paymentId ?? null, paymentIntentId: paymentIntent.id });
 }
 
 /**

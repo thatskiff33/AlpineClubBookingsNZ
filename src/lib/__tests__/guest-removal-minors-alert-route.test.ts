@@ -26,7 +26,6 @@ const mocks = vi.hoisted(() => ({
   applyLifecycleTransitions: vi.fn(),
   applyPaymentAdjustments: vi.fn(),
   calculateModificationSettlementOptions: vi.fn(),
-  lockedNightPricesForGuest: vi.fn(),
   // #3531: the wrapper the route reaches the reader through; answers as the reader stub does.
   editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: [] }),
   // membership-type-policy (pricing) collaborators
@@ -96,7 +95,6 @@ vi.mock("@/lib/booking-modify", async (importActual) => {
     applyLifecycleTransitions: mocks.applyLifecycleTransitions,
     applyPaymentAdjustments: mocks.applyPaymentAdjustments,
     calculateModificationSettlementOptions: mocks.calculateModificationSettlementOptions,
-    lockedNightPricesForGuest: mocks.lockedNightPricesForGuest,
     rateSnapshotUpdateForRepricedGuest: actual.rateSnapshotUpdateForRepricedGuest,
     // #3170: the refusal class this partial mock used to carry is GONE. Nothing
     // throws it any more - an unpriceable edit parks on every path this rule
@@ -160,7 +158,6 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 const CHECK_IN = new Date("2027-07-15");
 const CHECK_OUT = new Date("2027-07-17");
@@ -419,7 +416,6 @@ beforeEach(() => {
     lastName: "Owner",
   });
   mocks.assertBookingNotQuotePriced.mockResolvedValue(undefined);
-  mocks.lockedNightPricesForGuest.mockReturnValue(null);
   mocks.assertMembershipTypeBookingAllowed.mockResolvedValue(undefined);
   // One remaining guest priced trivially (remainingGuests always length 1 here).
   mocks.priceBookingGuestsWithMembershipTypePolicy.mockResolvedValue({
@@ -463,27 +459,16 @@ beforeEach(() => {
   mocks.sendAdminMinorsOnlyReviewAlert.mockResolvedValue(undefined);
 });
 
-describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)", () => {
+describe("DELETE guest removal - no stored per-night record is priced, not parked (#4317)", () => {
   /**
-   * The park, driven through the REAL service and the REAL route.
-   *
-   * A removal gives back every night the departing guest holds, so the credit is
-   * historical money. This path never computed it directly: it reprices the
+   * Driven through the REAL service and the REAL route. A removal reprices the
    * REMAINING guests and takes the difference against the booking's stored
-   * total, which is exact only while the reprice cannot move. A remaining guest
-   * whose rows carry no usable price has no locks, so their nights reprice at
-   * TODAY's rate - and all of that movement was reported as the departing
-   * guest's credit.
-   *
-   * #3031 answered that by REFUSING the removal, and said in as many words that
-   * the refusal was an interim. #3032 replaces it with the epic's real answer:
-   * the removal succeeds, and the money is held as an OPEN review task. So this
-   * case now asserts a 200 where it used to assert a 409, and the substance of
-   * what it was protecting is unchanged and is asserted harder - NO MONEY MOVES.
-   *
-   * Disarming the park is not visible to a source census (the symbol is still
-   * there) or to the mocked pricer beside it, so it has to be asserted on
-   * BEHAVIOUR.
+   * total. #3031 refused and #3032 parked a removal whose remaining guest had no
+   * usable per-night price, because that guest's nights would have repriced at
+   * today's rate. #4317 locks every night a guest holds at its VALUED figure
+   * (`valueStrandNights`, INV-MOD-028), so the remaining guest keeps its stored
+   * total and the credit is the departing guest's own — priced, settled, and
+   * with no review task.
    */
   function stripStoredNightPrices(guests: Guest[]) {
     return {
@@ -491,8 +476,8 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
         ...g,
         stayStart: CHECK_IN,
         stayEnd: CHECK_OUT,
-        // The population epic #2797 names: a booking predating
-        // `BookingGuestNight`, or one created by approving a request.
+        // A booking predating `BookingGuestNight`, or one approved from a
+        // request: no rows, only each guest's stored $40 total.
         nights: [] as Array<{ stayDate: Date; priceCents: number }>,
         priceCents: 4000,
         consentStatus: null,
@@ -503,7 +488,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     };
   }
 
-  it("removes the guest and parks the money when no row records a price", async () => {
+  it("removes the guest and credits its stored $40, locking the remaining guest at its valued nights", async () => {
     const tx = buildTx([ADULT, CHILD], stripStoredNightPrices([ADULT, CHILD]));
     mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
       cb(tx),
@@ -513,208 +498,39 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
       params: Promise.resolve({ id: "b1", guestId: "g-child" }),
     });
 
-    // The structural half committed: the request succeeded and the guest row is
-    // gone. This is the headline requirement - save the booking change.
     expect(res.status).toBe(200);
     expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
       where: { id: "g-child" },
     });
-
-    // ONE TASK PER UNREADABLE STRAND, and this fixture has two of them: it is a
-    // whole booking predating `BookingGuestNight`, so NEITHER guest's rows can be
-    // read. #3498 (owner decision D1) moved the shape the raise commits to: the
-    // occurrence key is minted over the whole EDIT, so ONE parked removal is one
-    // work item however many strands it records - and both strands' evidence is
-    // on it. Asserted as the count it is rather than loosened to
-    // `toHaveBeenCalled`, because a change here is a real change of behaviour.
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
-    // Spelled out rather than inferred from the mock, whose `calls` are `any[]`:
-    // an inferred row would make every assertion below vacuously true.
-    type RaisedTaskRow = {
-      kind: string;
-      status: string;
-      amountCents: number | null;
-      raisedAmountCents: number | null;
-      occurrenceKey: string;
-      reviewContext: {
-        bookingModificationId: string | null;
-        occurrence: {
-          bookingGuestId: string;
-          surrenderedNightDates: string[];
-          otherStrands?: Array<{
-            bookingGuestId: string;
-            surrenderedNightDates: string[];
-          }>;
-        };
-      };
-    };
-    const raisedRows: RaisedTaskRow[] =
-      tx.manualRefundTask.create.mock.calls.map(
-        (call: unknown[]) => (call[0] as { data: RaisedTaskRow }).data,
-      );
-    for (const raised of raisedRows) {
-      expect(raised.kind).toBe("EDIT_FINANCIAL_REVIEW");
-      expect(raised.status).toBe("OPEN");
-      // Null is "not yet known". Zero is a financial statement the club has not
-      // made, and epic #2797 rejects it by name.
-      expect(raised.amountCents).toBeNull();
-      expect(raised.raisedAmountCents).toBeNull();
-      // D-3032-1: anchored to this removal's own modification row.
-      expect(raised.reviewContext.bookingModificationId).toBe("mod_1");
-      // The anchor is deliberately NOT part of the occurrence, which is what the
-      // key is hashed from - otherwise a replay of one edit would hash
-      // differently from the first attempt and raise a second task.
-      expect(raised.reviewContext.occurrence).not.toHaveProperty(
-        "bookingModificationId",
-      );
-    }
-    // #3498: both strands, ONE key - the identity is the edit's.
-    const strands = raisedStrands(raisedRows[0].reviewContext);
-    expect(strands.map((strand) => strand.bookingGuestId).sort()).toEqual([
-      "g-adult",
-      "g-child",
+    // The remaining adult's two envelope nights are LOCKED at their valued
+    // $20 each (R2: the stored $40 split evenly), so no night of theirs can
+    // reach today's rate.
+    const pricedWith =
+      mocks.priceBookingGuestsWithMembershipTypePolicy.mock.calls[0][1];
+    expect(pricedWith.guests[0].lockedNightPrices).toEqual([
+      { stayDate: new Date("2027-07-15"), priceCents: 2000, priceSource: "EVEN_SPLIT" },
+      { stayDate: new Date("2027-07-16"), priceCents: 2000, priceSource: "EVEN_SPLIT" },
     ]);
-    // And exactly one of them is the guest who actually left: only their strand
-    // surrenders nights, which is the strand carrying the money - so it is the
-    // one the item LEADS with, which is what an officer reads first.
-    const surrendering = strands.filter(
-      (strand) => strand.surrenderedNightDates.length > 0,
-    );
-    expect(surrendering).toHaveLength(1);
-    expect(strands[0]!.bookingGuestId).toBe("g-child");
-
-    // AND NO MONEY MOVED. The settlement leg ran with a zero delta and no
-    // options, so there is no refund, no credit and no Xero adjustment; the
-    // provider calls the route makes after the commit were never reached.
+    // Priced and settled: $80 -> $40, a $40 reduction through the ordinary
+    // settlement options. Nothing parks.
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(mocks.calculateModificationSettlementOptions).toHaveBeenCalledTimes(1);
     expect(mocks.applyPaymentAdjustments).toHaveBeenCalledTimes(1);
-    const settled = mocks.applyPaymentAdjustments.mock.calls[0][1];
-    expect(settled.priceDiffCents).toBe(0);
-    expect(settled.changeFeeCents).toBe(0);
-    // The settlement OPTIONS were never even computed: the park skips the
-    // cancellation-policy tier outright, which is what stops a refund basis
-    // being derived from a total the review has not confirmed.
-    expect(mocks.calculateModificationSettlementOptions).not.toHaveBeenCalled();
-    // The route calls the refund and additional-charge helpers unconditionally
-    // after the commit, so the proof that nothing moves is what they are HANDED,
-    // not whether they were reached: each one short-circuits on a zero amount
-    // (`executeBookingModificationRefund` returns early on
-    // `pendingRefundAmountCents <= 0`).
-    expect(mocks.executeBookingModificationRefund).toHaveBeenCalledTimes(1);
-    const refundArgs = mocks.executeBookingModificationRefund.mock.calls[0][0];
-    expect(refundArgs.result.pendingRefundAmountCents).toBe(0);
-    expect(refundArgs.result.refundAmountCents).toBe(0);
-    expect(refundArgs.result.accountCreditAmountCents).toBe(0);
-    expect(refundArgs.result.additionalAmountCents).toBe(0);
-    expect(refundArgs.result.xeroRefundAmountCents).toBe(0);
-    expect(refundArgs.result.xeroAdditionalAmountCents).toBe(0);
-    // The booking's own stored money is untouched: reducing it would mean
-    // knowing by how much, which is the question under review.
+    expect(mocks.applyPaymentAdjustments.mock.calls[0][1].priceDiffCents).toBe(-4000);
     const written = tx.booking.update.mock.calls[0][0].data;
-    expect(written.totalPriceCents).toBe(8000);
-    expect(written.finalPriceCents).toBe(8000);
-  });
-
-  /**
-   * #3032: WHICH WAY A CONFIRMED AMOUNT WILL EVENTUALLY GO, decided at raise time
-   * and recorded on the task as `paymentId`.
-   *
-   * `chooseEditReviewSettlementRoute` reads exactly this field to decide whether a
-   * completion becomes a card refund, a hand-settled allocation, or account
-   * credit. Getting it wrong is silent in both directions: a null where a capture
-   * exists routes a card refund to account credit, and a non-null where nothing
-   * was captured points a refund at money the club never received.
-   *
-   * The expression is byte-identical to `applyPaymentAdjustments`' own
-   * `hasSettledPayment`, so the LOGIC is not in doubt - what was in doubt is
-   * whether anything would notice if it changed. Forcing it to `null` and running
-   * `vitest related` over the removal service passed 142 files and 2,673 tests.
-   * These three cases are what make it noticed, and they are split so that each
-   * HALF of the conjunction has a case that fails alone.
-   */
-  function capturedPayment(overrides: Record<string, unknown> = {}) {
-    return {
-      id: "pay_1",
-      bookingId: "b1",
-      status: "SUCCEEDED",
-      source: "STRIPE",
-      amountCents: 8000,
-      refundedAmountCents: 0,
-      stripePaymentIntentId: "pi_1",
-      stripeCustomerId: "cus_1",
-      xeroInvoiceId: null,
-      changeFeeCents: 0,
-      additionalPaymentIntentId: null,
-      additionalAmountCents: 0,
-      additionalPaymentStatus: null,
-      ...overrides,
-    };
-  }
-
-  /** Every `paymentId` this removal wrote onto a review task. */
-  async function paymentIdsOnRaisedTasks(
-    bookingOverride: Record<string, unknown>,
-  ) {
-    const tx = buildTx([ADULT, CHILD], {
-      ...stripStoredNightPrices([ADULT, CHILD]),
-      ...bookingOverride,
-    });
-    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
-      cb(tx),
+    expect(written.totalPriceCents).toBe(4000);
+    expect(written.finalPriceCents).toBe(4000);
+    // And the member is not told a review is open, because none is.
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ financialReviewPending: false }),
+      CLUB_FORMAT_TEST,
     );
-
-    const res = await DELETE(makeRequest(), {
-      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
-    });
-    expect(res.status).toBe(200);
-    // The park really happened, so the assertion below is reading a real row
-    // rather than agreeing with an empty list. ONE row since #3498.
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
-    return (tx.manualRefundTask.create.mock.calls as unknown[][]).map(
-      (call) => (call[0] as { data: { paymentId: string | null } }).data.paymentId,
-    );
-  }
-
-  it("carries the captured payment id, so a confirmed amount can go back to the card", async () => {
-    // A PAID booking with a SUCCEEDED capture: both halves of the gate are true.
-    expect(await paymentIdsOnRaisedTasks({ payment: capturedPayment() })).toEqual(
-      ["pay_1"],
-    );
-  });
-
-  it("carries no payment id when the payment row exists but nothing was captured", async () => {
-    // THE CONTROL FOR THE CAPTURE HALF, and the case a bare `payment?.id ?? null`
-    // gets wrong: the row is there, so the id is there, but no money was ever
-    // taken - and a completion pointed at it would try to refund a capture that
-    // does not exist. `PENDING` is stated explicitly rather than inherited.
-    expect(
-      await paymentIdsOnRaisedTasks({
-        payment: capturedPayment({ status: "PENDING" }),
-      }),
-    ).toEqual([null]);
-  });
-
-  it("carries no payment id when the booking is not in a settled status", async () => {
-    // THE CONTROL FOR THE STATUS HALF. The capture is real, but a PENDING booking
-    // has not settled, so its money is not the money a review adjustment sits
-    // against.
-    expect(
-      await paymentIdsOnRaisedTasks({
-        status: BookingStatus.PENDING,
-        payment: capturedPayment(),
-      }),
-    ).toEqual([null]);
   });
 
   it("hands the fence's own machine code back to the caller, not a bare 409", async () => {
-    // The refusal that DOES still reach this route: an earlier edit on this
-    // booking is under review, so a second money-affecting removal would have to
-    // price against an amount nobody has confirmed.
-    //
-    // This case replaced the one that pinned `FINANCIAL_REVIEW_REQUIRED` here.
-    // That branch is unreachable now - an unpriceable removal is parked, not
-    // refused - and deleting it left the fence falling through to the generic
-    // `ApiError` branch, which drops `code`. The preview route already surfaced
-    // this code, so the two doors were about to disagree about one refusal.
+    // The refusal that still reaches this route: a review raised before #4317
+    // is still open on this booking (waves B and C retire them), so a second
+    // money-affecting removal waits for it.
     const tx = buildTx([ADULT, CHILD], preEditBooking([ADULT, CHILD]));
     tx.manualRefundTask.findFirst.mockResolvedValue({
       id: "task-open",
@@ -733,52 +549,12 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("EDIT_FINANCIAL_REVIEW_PENDING");
-    // Refused before anything was written, and before anything was parked.
+    // Refused before anything was written.
     expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
-  it("tells the member their money is being worked out, on the email itself", async () => {
-    /*
-      #3032 - THE WIRE, and it was dead until this issue. #3033 taught the
-      "Booking Modified" email to say "the club is still working out what that
-      change means" instead of rendering a SILENT money section, but the
-      parameter arrived optional and defaulting to false and no production
-      caller set it. So the member whose removal had just been parked got the
-      identical silent email the fix existed to prevent.
-
-      Asserted through the REAL service on the REAL route: the fixture strips
-      the stored night prices, the service decides the strands are unpriceable
-      and parks them, and the value the email receives is the one that decision
-      produced. Nothing here hands the route a literal - hard-code `false` at
-      the call site and this fails; the control below fails if it is hard-coded
-      `true`.
-    */
-    const tx = buildTx([ADULT, CHILD], stripStoredNightPrices([ADULT, CHILD]));
-    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
-      cb(tx),
-    );
-
-    const res = await DELETE(makeRequest(), {
-      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
-    });
-
-    expect(res.status).toBe(200);
-    // The park really happened, so the flag below is reporting a fact rather
-    // than agreeing with an empty scenario.
-    expect(tx.manualRefundTask.create).toHaveBeenCalled();
-    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
-    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ financialReviewPending: true }),
-      CLUB_FORMAT_TEST,
-    );
-  });
-
   it("says nothing about a review on a removal that priced normally", async () => {
-    // The CONTROL for the case above, and the half that matters commercially:
-    // an ordinary removal must not tell a member their refund is under review
-    // when it is not. A hard-coded `true` at the call site passes the test
-    // above and fails this one.
     const res = await runRemoval("g-child", [ADULT, CHILD]);
 
     expect(res.status).toBe(200);
@@ -790,10 +566,6 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
   });
 
   it("settles normally, and raises nothing, when every strand's rows reconcile", async () => {
-    // The control: the same removal on the ordinary fixture, whose rows carry
-    // what each night was sold for. Without it the case above could pass on a
-    // route that parked every removal - which would be the same defect in the
-    // other direction, a club never settling anything automatically again.
     const res = await runRemoval("g-child", [ADULT, CHILD]);
 
     expect(res.status).toBe(200);

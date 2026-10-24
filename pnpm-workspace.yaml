@@ -13,7 +13,7 @@ nodeLinker: isolated
 # overrides below point here too, so each range is written exactly once; bump
 # it here.
 catalog:
-  nodemailer: ^10.0.14
+  nodemailer: ^10.1.4
   sharp: ^0.35.5
 
 # The former npm `overrides` block, translated one entry for one entry, less
@@ -47,6 +47,7 @@ overrides:
   deepmerge-ts: ^8.0.1
   browserslist: ^4.28.7
   mysql2: ^3.22.0
+  ajv>fast-uri: ^3.1.9
 
 # Dependencies allowed to run install scripts, pinned to the exact version that
 # was reviewed. pnpm runs none by default and fails the install on any build it

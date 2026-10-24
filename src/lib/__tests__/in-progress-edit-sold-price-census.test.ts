@@ -10,20 +10,18 @@ import { stripComments } from "./support/strip-comments";
  * that says what a night was SOLD for (#2744), and every builder of the plan must
  * hand it the club's group-discount config (#2756).
  *
- * THE FILENAME UNDERSELLS IT, AND IS KEPT ANYWAY. Since #3166 four of the five
- * lenient-reader sites below are PRE-check-in paths, and the last block in this
- * file is the pre-check-in gate census. A rename would read better and would
+ * THE FILENAME UNDERSELLS IT, AND IS KEPT ANYWAY. Most of the valued-reader
+ * sites below are PRE-check-in paths. A rename would read better and would
  * disarm every path-hardcoded scanner that names this file — including three
  * ways of doing so silently — for no measured benefit. The scope is what the
  * describe blocks say, not what the name says.
  *
- * `buildInProgressGuestRangePlan` credits a night given back at the price
- * recorded on its `BookingGuestNight` row. Since #3031 it does not fall back to
- * anything: a night whose stored price it cannot see makes the whole edit
- * `financial_review_required`, because inventing the amount is what epic #2797
- * exists to stop. What has NOT changed is that the plan cannot tell "this night
- * has no stored price" from "this query did not ask for it" — both arrive as a
- * row with no `priceCents`.
+ * `buildInProgressGuestRangePlan` credits a night given back at the figure
+ * `valueStrandNights` reads from its `BookingGuestNight` row and the guest's
+ * stored total (#4317, `INV-MOD-028`). What has NOT changed is that the plan
+ * cannot tell "this night has no stored price" from "this query did not ask for
+ * it" — both arrive as a row with no `priceCents`, and the valuation then splits
+ * the total over it instead of reading the row.
  *
  * So the whole money path still rests on two Prisma selects saying
  * `nights: { select: { stayDate: true, priceCents: true } }`, and the failure
@@ -32,11 +30,9 @@ import { stripComments } from "./support/strip-comments";
  * the plan-level suites build guests by hand while
  * `calculate-modified-pricing-capacity.test.ts` mocks the database.
  *
- * #3031 changed what that failure LOOKS like, and the new one is much louder: a
- * trimmed select no longer refunds a member at today's price list, it makes
- * every in-progress edit on every booking refuse as unpriceable. Louder is not
- * the same as caught, and an outage is not obviously better than a quiet
- * over-refund, so this census still earns its place.
+ * Since #4317 that failure is QUIET again: a trimmed select would value every
+ * night by an even split of the guest's total rather than by its row, and the
+ * member would be credited the average. So this census still earns its place.
  *
  * Roughly twenty other sites in the tree load `nights: { select: { stayDate:
  * true } }`, because they only need to know which nights a guest holds. A new
@@ -386,358 +382,191 @@ describe("season rate data census (#2756)", () => {
 
 
 /**
- * `lockedNightPricesForGuest` — the LENIENT reader, and the door every edit path
- * that is not the in-progress planner goes through (#3031, E6).
+ * #4317 (epic #4302, `INV-MOD-028`): EVERY EDIT DOOR PRICES AN EXISTING GUEST
+ * FROM ITS VALUED NIGHTS.
  *
- * It turns whatever prices a guest's rows carry into `lockedNightPrices` and
- * says nothing at all about the rows it could not use: a night with no usable
- * price simply yields no lock, and an unlocked night prices at the CURRENT
- * season rate. That is the right answer for a night the edit is genuinely
- * BUYING and the wrong answer for a night it is giving BACK, and the function
- * cannot tell them apart, because it is handed no idea what the edit is doing.
+ * The lenient `lockedNightPricesForGuest` is gone. It locked only usable rows,
+ * so a night with no usable stored price fell through to today's season rate —
+ * on a night the edit was giving BACK as much as on one it was buying — and
+ * epic #2797 answered that by parking the edit. #4317 answers it by valuing
+ * every held night (`valueStrandNights`) and locking it at that value
+ * (`valuedNightLocksForGuest`), so only a night the edit newly buys reaches a
+ * season rate. Two things make that hold door by door, and this census measures
+ * both, because nothing in the type system objects to a door that skips them:
  *
- * It is deliberately NOT made strict. A strict version would refuse the guest-add
- * and date-change paths, where an unlocked night is a night being bought and
- * pricing it at today's rate is correct policy. What #3031 adds instead is the
- * strict twin — `storedSoldPriceEvidenceForGuest` — which returns a verdict
- * rather than a best effort, and which the guest-removal path asks BEFORE it
- * prices anything, because a removal gives every one of the departing guest's
- * nights back.
+ *  - the existing party is LOCKED through the valued reader — directly, or
+ *    through `editedGuestPricingLocks`, its one wrapper for the modify save,
+ *    the modify preview and the edit's promo preview (#3531);
+ *  - the engine's breakdown is passed through `withUnattachedStrandMoney`, so
+ *    a strand carrying money beyond its night values (a negative stored total,
+ *    D11) keeps it and a removed one credits $0.
  *
- * This census is what stops a SEVENTH caller appearing without that choice being
- * made. A new edit path reaching for the lenient reader because it is the
- * obvious one is precisely how "never guess historical money" comes undone, and
- * nothing in the type system objects: both functions compile at every call site.
+ * A new door that prices an existing guest with no lock, or skips the
+ * unattached money, is how a night given back comes to be credited at today's
+ * rate again; a door that raises an `EDIT_FINANCIAL_REVIEW` task is how the
+ * retired review comes back. Each must be declared here.
  */
-const LENIENT_LOCK_CALL_SITES = [
+const VALUED_LOCK_CALL_SITES = [
   {
     file: "src/app/api/bookings/[id]/guests/route.ts",
     calls: 1,
-    what: "adding a guest: the existing party keep their booked prices while the new guest's nights are bought at current rates. An unlocked night here is a night nobody is giving back — but it still reached the booking's recomputed TOTAL at today's rate, which #3166 closed by asking preCheckInEditEvidence first and parking the whole add when a strand cannot be read",
+    what: "adding a guest: the existing party is locked at its valued nights, so the add costs exactly the added guests",
   },
   {
     file: "src/lib/booking-date-modification-service.ts",
     calls: 1,
-    what: "a date change: the locks are keyed by NORMALISED stay date, so a night the guest keeps across the move matches its lock however far the range moved and keeps its booked price - only genuinely new nights reach the season table. The old side of the credit is `Booking.finalPriceCents` as stored, so nothing here reconstructs a historical amount. It used NOT to test that the stored rows can account for that total, so a strand with no usable per-night price had its nights valued at today's rate AND written back as integers; #3166 added preCheckInEditEvidence after the pricing pass, and an unreadable strand now parks with NULL on every night this booking cannot account for",
+    what: "a date change: a night kept across the move keeps its valued price, a night given back is credited at it, and only the new range's nights reach the season table",
   },
   {
     file: "src/lib/booking-guest-removal-service.ts",
     calls: 1,
-    what: "the REMOVAL path, which is the one that gives nights back — and which asks storedSoldPriceEvidenceForGuest first and refuses the removal outright unless every strand reconciles. By the time this reader runs, every night it is handed is known to be locked",
+    what: "the guest removal: every remaining night is locked, so the reprice returns each remaining guest's stored total and the credit is the departing guest's own",
   },
   {
     file: "src/lib/booking-modify-plan.ts",
     calls: 2,
-    what: "prepareGuestPlan (the apply path's ordinary pricing pass) and `editedGuestPricingLocks` - the one wrapper (#3531) through which the apply path's proposed-remaining-guest pass AND the modify-quote preview's ordinary pricing pass reach this reader, so the two cannot disagree on which guest keeps its locks or has them cleared. Since #4202 the edit's promo preview (`resolvePromoPreviewStays`) reaches it the same way, clearing the same re-rated guests' locks, so the promo box prices held nights at the quote's sold prices; that preview only shows a discount, values no night given back and charges nothing. The quote's in-progress branch does not use this reader at all - it goes through the planner, which is strict; since #3166 the ordinary branch is judged by preCheckInEditEvidence AFTER the pass, so the preview parks whenever the save would. The declaration itself is excluded by the pattern's lookbehind. Since #3166 the amounts this reader produces for an unreadable strand are computed and then DISCARDED: calculateModifiedPricing judges every existing strand against the night sets the pass produced and parks the edit, writing the stored price where there is one and NULL where there is not",
+    what: "`editedGuestPricingLocks` (the save's and both previews' one wrapper) and `applyGuestChanges`' rate-snapshot decision, which must see the same locks pricing used",
   },
 ] as const;
 
+/** A CALL, not the declaration. */
+const VALUED_LOCK_CALL = /(?<!function\s)\bvaluedNightLocksForGuest\s*\(/g;
+
+const EDITED_LOCKS_CALL_SITES = [
+  "src/app/api/bookings/[id]/modify-quote/route.ts",
+  "src/lib/booking-modify-plan.ts",
+  "src/lib/promo-preview-stay-ranges.ts",
+] as const;
+const EDITED_LOCKS_CALL = /(?<!function\s)\beditedGuestPricingLocks\s*\(/g;
+
 /**
- * {@link LENIENT_LOCK_CALL} without `g`, for `String.search` — a global flag
- * makes a regex stateful, and a shared stateful one is a test that passes or
- * fails depending on what ran before it.
+ * Every door that writes a new booking total after an edit, and the in-progress
+ * planner the quote and save share: each takes it through
+ * `editedBookingTotalCents`, so a headline a parked edit froze keeps its gap
+ * rather than being settled by the edit (#4317 review H1, `INV-SSOT-001`).
  */
-const LENIENT_LOCK_CALL_ONCE =
-  /(?<!function\s)\blockedNightPricesForGuest\s*\(/;
+const EDITED_TOTAL_SITES = [
+  "src/app/api/bookings/[id]/guests/route.ts",
+  "src/app/api/bookings/[id]/modify-quote/route.ts",
+  "src/lib/booking-date-modification-service.ts",
+  "src/lib/booking-edit-guest-ranges.ts",
+  "src/lib/booking-guest-removal-service.ts",
+  "src/lib/booking-modify-plan.ts",
+] as const;
+const EDITED_TOTAL_CALL = /(?<!function\s)\beditedBookingTotalCents\s*\(/g;
 
-/** A CALL, not the declaration or a re-export. */
-const LENIENT_LOCK_CALL =
-  /(?<!function\s)\blockedNightPricesForGuest\s*\(/g;
+/**
+ * #4317 review round 4: an in-progress edit never re-decides its promotion. It
+ * carries the plan's capped figure, and the save scales the stored records to
+ * it in ONE place, the in-progress arm of `applyPromoCodeChanges`; the round-3
+ * engine re-decision (`inProgressPlanGuestNightRates`) stays deleted.
+ */
+const CARRIED_CAP_SITES = ["src/lib/booking-modify-plan.ts"] as const;
+const CARRIED_CAP_CALL = /(?<!function\s)\bcapCarriedPromotionRecords\s*\(/g;
+const RE_DECIDED_PLAN_RATES = /\binProgressPlanGuestNightRates\b/;
 
-describe("lenient locked-night reader census (#3031, E6)", () => {
-  it("declares every production caller of the lenient reader", () => {
+/** Every door whose engine breakdown carries a night-less strand's money. */
+const UNATTACHED_MONEY_SITES = [
+  "src/app/api/bookings/[id]/guests/route.ts",
+  "src/app/api/bookings/[id]/modify-quote/route.ts",
+  "src/lib/booking-date-modification-service.ts",
+  "src/lib/booking-guest-removal-service.ts",
+  "src/lib/booking-modify-plan.ts",
+] as const;
+const UNATTACHED_MONEY_CALL = /(?<!function\s)\bwithUnattachedStrandMoney\s*\(/g;
+
+describe("valued locked-night reader census (#4317, INV-MOD-028)", () => {
+  it("declares every production caller of the valued reader", () => {
     const found = strippedSources()
-      .filter((file) => [...file.code.matchAll(LENIENT_LOCK_CALL)].length > 0)
+      .filter((file) => [...file.code.matchAll(VALUED_LOCK_CALL)].length > 0)
       .map((file) => repoRelative(file.absolute))
       .sort();
-
-    // A new caller must be classified here: does this path VALUE a night it is
-    // giving back? If yes it needs `storedSoldPriceEvidenceForGuest`, not this.
     expect(found).toEqual(
-      LENIENT_LOCK_CALL_SITES.map((site) => site.file as string).sort(),
+      VALUED_LOCK_CALL_SITES.map((site) => site.file as string).sort(),
     );
   });
 
   it("counts the calls in each declared file, so a second one cannot hide", () => {
-    for (const site of LENIENT_LOCK_CALL_SITES) {
+    for (const site of VALUED_LOCK_CALL_SITES) {
       const source = stripComments(
         fs.readFileSync(path.resolve(process.cwd(), site.file), "utf8"),
       );
-      expect([...source.matchAll(LENIENT_LOCK_CALL)].length, site.file).toBe(
+      expect([...source.matchAll(VALUED_LOCK_CALL)].length, site.file).toBe(
         site.calls,
       );
     }
   });
 
-  it("keeps the removal path asking the STRICT twin, and fencing the reprice on its answer", () => {
-    // The one lenient call site that values nights being GIVEN BACK. It is safe
-    // only because the strict gate decides first; delete the gate and the removal
-    // silently reprices a remaining guest's stay at today's rate again, reporting
-    // the movement as the departing guest's credit (#3031, E10).
-    //
-    // WHAT THIS ASSERTED BEFORE #3032, AND WHY IT MOVED. It used to require a
-    // `throw new BookingEditFinancialReviewRequiredError(` ahead of the lenient
-    // reader: the gate's answer was a REFUSAL, so "refuses before repricing" was
-    // the whole safety property. #3032 replaced the refusal with a park - the
-    // guest comes off and the amount is held as an OPEN review task - so there is
-    // no throw left to find, and asserting one would pin behaviour that was
-    // deliberately removed. The property it was protecting is unchanged, and is
-    // now asserted directly: THE REPRICE IS FENCED ON THE GATE'S ANSWER.
-    //
-    // ASSERTED AS CALLS AND AS AN ORDER, not as the presence of the words. A bare
-    // `toContain("storedSoldPriceEvidenceForGuest")` is satisfied by an IMPORT of
-    // the symbol, so it would still pass with the gate deleted and the import left
-    // behind - which is the likeliest way this actually regresses, because nothing
-    // else complains about an unused import until knip runs.
-    const source = stripComments(
-      fs.readFileSync(
-        path.resolve(process.cwd(), "src/lib/booking-guest-removal-service.ts"),
-        "utf8",
-      ),
-    );
+  it("routes the save, the quote and the promo preview through one locks wrapper", () => {
+    const found = strippedSources()
+      .filter((file) => [...file.code.matchAll(EDITED_LOCKS_CALL)].length > 0)
+      .map((file) => repoRelative(file.absolute))
+      .sort();
+    expect(found).toEqual([...EDITED_LOCKS_CALL_SITES].sort());
+  });
 
-    const strictCall = source.search(
-      /(?<!function\s)\bstoredSoldPriceEvidenceForGuest\s*\(/,
-    );
-    const lenientCall = source.search(LENIENT_LOCK_CALL_ONCE);
-    // #3032: the verdict is derived from `strandEvidence` - the strict twin's
-    // per-strand answers - rather than from the length of the occurrence list it
-    // used to be counted off. The two came apart when a parked removal started
-    // recording the DEPARTING strand even where that strand's own rows are exact:
-    // the occurrence list is no longer "the unreadable ones", so counting it is
-    // no longer the same question as "is anything unreadable". Matched on the
-    // derivation, so a verdict computed from something other than the gate's
-    // answers fails here.
-    const verdict = source.search(
-      /const parkedFinancialReview =\s*strandEvidence\.some\(/,
-    );
-    const fence = source.search(/if \(!parkedFinancialReview\) \{/);
-    const repriceCall = /await priceBookingGuestsWithMembershipTypePolicy\s*\(/;
-    const reprice = source.search(repriceCall);
-    const raise = source.search(
-      /await raiseParkedEditFinancialReviewTasks\s*\(/,
-    );
+  it("moves every edited headline only by the edit's own change (review H1)", () => {
+    const found = strippedSources()
+      .filter((file) => [...file.code.matchAll(EDITED_TOTAL_CALL)].length > 0)
+      .map((file) => repoRelative(file.absolute))
+      .sort();
+    expect(
+      found,
+      "#4317 review H1: every edit door takes its new total through editedBookingTotalCents",
+    ).toEqual([...EDITED_TOTAL_SITES].sort());
+  });
 
+  it("carries and caps an in-progress promotion in one place, and never re-decides it (round 4)", () => {
+    const sources = strippedSources();
+    const found = sources
+      .filter((file) => [...file.code.matchAll(CARRIED_CAP_CALL)].length > 0)
+      .map((file) => repoRelative(file.absolute))
+      .sort();
     expect(
-      strictCall,
-      "the strict twin must be CALLED, not merely imported",
-    ).toBeGreaterThan(-1);
+      found,
+      "#4317 review round 4: only applyPromoCodeChanges' in-progress arm scales a capped promotion's records",
+    ).toEqual([...CARRIED_CAP_SITES]);
+    const plan = sources.find((file) => repoRelative(file.absolute) === CARRIED_CAP_SITES[0])!;
+    expect([...plan.code.matchAll(CARRIED_CAP_CALL)]).toHaveLength(1);
     expect(
-      verdict,
-      "the gate's answer must be kept, not discarded",
-    ).toBeGreaterThan(-1);
-    expect(
-      raise,
-      "an unusable strand must be PARKED, not merely noted",
-    ).toBeGreaterThan(-1);
-    expect(lenientCall).toBeGreaterThan(-1);
-    expect(reprice).toBeGreaterThan(-1);
-    // The gate decides before the lenient reader is handed anything.
-    expect(strictCall).toBeLessThan(lenientCall);
-    expect(strictCall).toBeLessThan(verdict);
-    // And the reprice - the pass that would revalue a remaining guest's nights
-    // at today's rate - sits INSIDE the fence the gate's answer opens. This is
-    // the assertion the refusal check used to stand in for.
-    expect(
-      fence,
-      "the reprice must be fenced on the gate's answer",
-    ).toBeGreaterThan(-1);
-    expect(verdict).toBeLessThan(fence);
-    expect(fence).toBeLessThan(reprice);
-    // Exactly one reprice, so a second unfenced call cannot hide behind it.
-    expect([...source.matchAll(new RegExp(repriceCall, "g"))]).toHaveLength(1);
+      sources.filter((file) => RE_DECIDED_PLAN_RATES.test(file.code)).map((file) => repoRelative(file.absolute)),
+      "#4317 review round 4: an in-progress plan hands the promotion engine no nights",
+    ).toEqual([]);
+  });
+
+  it("keeps every engine-priced door carrying a night-less strand's money", () => {
+    const found = strippedSources()
+      .filter((file) => [...file.code.matchAll(UNATTACHED_MONEY_CALL)].length > 0)
+      .map((file) => repoRelative(file.absolute))
+      .sort();
+    expect(found).toEqual([...UNATTACHED_MONEY_SITES].sort());
+  });
+
+  it("leaves the lenient reader deleted, so a held night cannot fall through to today's rate", () => {
+    const found = strippedSources()
+      .filter((file) => /\blockedNightPricesForGuest\b/.test(file.code))
+      .map((file) => repoRelative(file.absolute));
+    expect(found, "INV-MOD-028: no edit door may lock only usable rows").toEqual([]);
   });
 });
 
-/**
- * #3166: THE PRE-CHECK-IN GATE, ASSERTED THE WAY THE REMOVAL PATH'S IS.
- *
- * The `what` strings in the census above widened when #3166 landed — "closed by
- * asking preCheckInEditEvidence first", "an unreadable strand now parks with
- * NULL on every night", "the preview parks whenever the save would" — and
- * NOTHING in that file measured any of it. Delete the gate from
- * `booking-date-modification-service.ts` and the census stayed green while its
- * own prose said that path parks. Prose in a census is documentation of a
- * measurement, not the measurement.
- *
- * So this mirrors what the removal path already does, on the three sites #3166
- * added plus the preview that has to agree with them, and for the same stated
- * reason: a bare `toContain("preCheckInEditEvidence")` is satisfied by an IMPORT
- * of the symbol, which is the likeliest way this regresses — nothing complains
- * about an unused import until knip runs. Every marker below is therefore a CALL
- * or an assignment, and the ORDER between them is asserted, because "the gate
- * runs somewhere in this file" is not the property. The property is that it runs
- * against the night sets the pricing pass produced and that its answer is what
- * fences the write.
- */
-const PRE_CHECK_IN_GATE_SITES = [
-  {
-    file: "src/lib/booking-modify-plan.ts",
-    what: "the SAVE. calculateModifiedPricing judges every existing strand after the pricing pass and returns the parked exit instead of a priced plan.",
-    /** In the order they must appear. */
-    markers: [
-      {
-        // The gate is the OUTER call and the assembly is its argument, so the
-        // gate reads first: this is a nesting, and the order asserts that.
-        label: "the gate is CALLED, not merely imported",
-        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
-      },
-      {
-        label: "the strands are assembled from the pricing pass's own night sets",
-        pattern: /preCheckInEditStrands\s*\(/,
-      },
-      {
-        label: "an unreadable strand takes the parked exit",
-        pattern: /kind: "financial_review_required"/,
-      },
-      {
-        label: "the parked rows carry PRESERVED stored prices, never repriced ones",
-        pattern: /preservedNightPriceWrites\s*\(/,
-      },
-    ],
-  },
-  {
-    file: "src/app/api/bookings/[id]/modify-quote/route.ts",
-    what: "the PREVIEW, which must park whenever the save would or it quotes money the save will not move.",
-    markers: [
-      {
-        // The gate is the OUTER call and the assembly is its argument, so the
-        // gate reads first: this is a nesting, and the order asserts that.
-        label: "the gate is CALLED, not merely imported",
-        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
-      },
-      {
-        label: "the strands are assembled from the pricing pass's own night sets",
-        pattern: /preCheckInEditStrands\s*\(/,
-      },
-      {
-        label: "the preview answers with the parked quote",
-        pattern: /parkedQuoteResponse\s*\(/,
-      },
-    ],
-  },
-  {
-    file: "src/lib/booking-date-modification-service.ts",
-    what: "the DATE CHANGE, which read night prices through the lenient reader and wrote a blank back as an integer.",
-    markers: [
-      {
-        label: "the gate is CALLED, not merely imported",
-        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
-      },
-      {
-        label: "its answer is kept, not discarded",
-        pattern: /const parked =\s*dateEditEvidence\.occurrences !== null/,
-      },
-      {
-        label: "the night write uses PRESERVED stored prices when it parks",
-        pattern: /preservedNightPriceWrites\s*\(/,
-      },
-      {
-        label: "an unusable strand is PARKED, not merely noted",
-        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
-      },
-    ],
-  },
-  {
-    file: "src/lib/booking-batch-modification-service.ts",
-    what: "the BATCH SAVE — the fourth raise door, and the only one that does not ask the gate itself. It inherits the verdict from calculateModifiedPricing, so what has to be measured here is that it KEEPS that verdict, writes the parked rows rather than the priced ones, and raises.",
-    markers: [
-      {
-        // Not `preCheckInEditEvidence` — this door never calls it. The gate it
-        // inherits is the one inside `calculateModifiedPricing`, so the marker
-        // is that call, and everything after it is what this file does with the
-        // answer.
-        label: "the gate is inherited from calculateModifiedPricing, not re-derived here",
-        pattern: /await calculateModifiedPricing\s*\(/,
-      },
-      {
-        label: "its answer is kept, not discarded",
-        pattern: /const parked =\s*pricingResult\.kind === "financial_review_required"/,
-      },
-      {
-        label: "the rows written are the PARKED ones, never the priced pass's",
-        pattern: /pricingResult\.parkedGuestRows/,
-      },
-      {
-        label: "an unusable strand is PARKED, not merely noted",
-        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
-      },
-    ],
-  },
-  {
-    file: "src/app/api/bookings/[id]/guests/route.ts",
-    what: "the GUEST ADD, which recomputed the booking's total from a full-party pass in which a blank night priced at today's rate.",
-    markers: [
-      {
-        label: "the gate is CALLED, not merely imported",
-        pattern: /preCheckInEditEvidence\s*\(\s*\{/,
-      },
-      {
-        label: "its answer is kept, not discarded",
-        pattern: /const parked = addEvidence\.occurrences !== null/,
-      },
-      {
-        label: "the booking's total write-back is FENCED on that answer",
-        pattern: /const newTotalPriceCents = parked/,
-      },
-      {
-        label: "an unusable strand is PARKED, not merely noted",
-        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
-      },
-    ],
-  },
-] as const;
+describe("no edit door parks its money (#4317, INV-MOD-028)", () => {
+  it("raises no EDIT_FINANCIAL_REVIEW task from any production path", () => {
+    // The state module still DEFINES the raise — tests build the open tasks
+    // waves B and C settle with it — but nothing in production calls it.
+    const found = strippedSources()
+      .filter((file) =>
+        [...file.code.matchAll(/(?<!function\s)\braiseEditFinancialReviewTask\s*\(/g)]
+          .length > 0,
+      )
+      .map((file) => repoRelative(file.absolute));
+    expect(found, "INV-MOD-028: every edit is priced, none is sent to review").toEqual([]);
+  });
 
-describe("pre-check-in exact-evidence gate census (#3166)", () => {
-  it.each(PRE_CHECK_IN_GATE_SITES.map((site) => [site.file, site] as const))(
-    "%s keeps the gate, its answer, and the order between them",
-    (_file, site) => {
-      const source = stripComments(
-        fs.readFileSync(path.resolve(process.cwd(), site.file), "utf8"),
-      );
-      // Each marker is looked for in what is LEFT after the one before it, so
-      // "must come after" means an occurrence genuinely follows — rather than
-      // the first match in the file, which for these files is the in-progress
-      // branch's own parked exit several thousand characters earlier.
-      //
-      // The cursor advances past the END of the match it just made, never one
-      // character into it. Advancing by 1 would let a marker satisfy "after the
-      // previous one" by matching the SAME text again from its second
-      // character, which is only harmless while every pattern here happens to
-      // be distinct — and that is a property of today's markers rather than of
-      // the walk. `match` is used instead of `search` for exactly that: the
-      // length of what matched is the thing the walk needs and `search` cannot
-      // report it.
-      let previous = 0;
-      let previousLabel = "";
-      for (const marker of site.markers) {
-        const found = source.slice(previous).match(marker.pattern);
-        expect(
-          found?.index ?? -1,
-          previousLabel === ""
-            ? `${site.file}: ${marker.label} — ${site.what}`
-            : `${site.file}: "${marker.label}" must appear, and after "${previousLabel}" — ${site.what}`,
-        ).toBeGreaterThan(-1);
-        previous += (found?.index ?? 0) + (found?.[0].length ?? 0);
-        previousLabel = marker.label;
-      }
-    },
-  );
-
-  it("judges the SAVE and the PREVIEW against the same assembly, so they cannot park differently", () => {
-    // The one property no per-file assertion can state: both surfaces feed
-    // `preCheckInEditStrands` the pricing pass's own `priceBreakdown.guests`,
-    // which is the night set the save will actually write. A second derivation
-    // at either of them is how quote and apply come to disagree about one
-    // member's edit — the parity INV-MOD-028 exists to make impossible.
-    for (const file of [
-      "src/lib/booking-modify-plan.ts",
-      "src/app/api/bookings/[id]/modify-quote/route.ts",
-    ]) {
-      const source = stripComments(
-        fs.readFileSync(path.resolve(process.cwd(), file), "utf8"),
-      );
-      expect(source, file).toMatch(/pricedGuests: priceBreakdown\.guests/);
-    }
+  it("returns no review branch from any pricing result", () => {
+    const found = strippedSources()
+      .filter((file) => file.code.includes("financial_review_required"))
+      .map((file) => repoRelative(file.absolute));
+    expect(found, "INV-MOD-028: PricingResult is priced-only").toEqual([]);
   });
 });

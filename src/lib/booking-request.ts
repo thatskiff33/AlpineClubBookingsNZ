@@ -1986,8 +1986,8 @@ export async function reassignHeldBookingGuests(
    * ## It cannot overwrite a `NULL` night price, because a hold can never carry
    * one — which is why `INV-MOD-028` does not fence it
    *
-   * A blank night price — "sold price not known" (#3170) — is written by ONE
-   * thing: a parked edit. A hold is created `AWAITING_REVIEW`
+   * A blank night price — "sold price not known" (#3170) — was written by ONE
+   * thing, a parked edit, and since #4317 by nothing. A hold is created `AWAITING_REVIEW`
    * (`holdBookingRequestSlots`, `booking-request-quotes.ts`) and both callers of
    * this function refuse unless the held booking is still in that status. And
    * `AWAITING_REVIEW` is in neither `ADMIN_FUTURE_EDIT_STATUSES` nor

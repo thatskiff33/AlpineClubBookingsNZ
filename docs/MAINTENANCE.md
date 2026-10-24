@@ -246,6 +246,7 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | every package that depends on browserslist (today `webpack` `^4.28.1`, `@babel/helper-compilation-targets` `^4.24.0`, and `update-browserslist-db`'s peer `>= 4.21.0`) *requires* 4.28.7 or later, meaning the lowest version its range accepts is 4.28.7 or higher (e.g. `^4.28.7`). A range that only *includes* 4.28.7 does not count, and `pnpm audit` cannot show this because highest-version resolution clears the advisory with or without the override. |
 | `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `pnpm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offered was `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
+| `ajv>fast-uri` (`^3.1.9`) | **Security, in build tooling only.** `fast-uri < 3.1.9` carries four advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). It arrives only through `ajv@8` under Prisma's dev tooling (`prisma > @prisma/dev > @prisma/streams-local`), which the running application never loads. `ajv@8.20.0` accepts any `fast-uri@^3.0.1`, so the pin does not conflict with its range; remove it when the resolved version is at least 3.1.9 without it (#4326). |
 
 ### The direct-dependency hold register
 
@@ -1326,9 +1327,10 @@ the review tasks and is never a line on a main invoice (see below), so the
 timing question does not arise for it and those findings keep their one-click
 repair.
 
-**Booking edits priced by a financial review (#3187).** When an edit's money
-cannot be worked out from the booking's own history, the change is saved and the
-amount is parked for an officer to confirm. The booking's stored totals do not
+**Booking edits priced by a financial review (#3187).** Before #4317, when an
+edit's money could not be worked out from the booking's own history, the change
+was saved and the amount was parked for an officer to confirm; since #4317 every
+edit is priced, and only those older edits remain. The booking's stored totals do not
 move, so the change record itself says "nothing owed" and the tool used to skip
 those bookings entirely. It now reads the settled amount off the completed
 review tasks instead. Two things follow for an operator:
@@ -1441,6 +1443,40 @@ it (#3924 round 11): the close's findings below answer that capture. Like
 every record-by-hand finding, it keeps appearing after the refund is recorded
 by hand, and that is expected: the app cannot see what is recorded by hand in
 Xero, and the tool has no way to acknowledge a finding (#3924 round 12).
+
+**Card payment not recorded in Xero** (#3953, `INV-PAY-139`). A booking change
+whose extra the member paid by card after the booking's Xero invoice was raised,
+when no supplementary invoice waited on that payment, is recorded by its own
+receipt (`ADDITIONAL_CAPTURE_RECEIPT` in Xero Operations). A capture missed
+before that existed, or whose receipt never queued, raises
+`ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO`. It never fires on a cancelled
+booking, on a booking with no Xero invoice, or where another document records
+the payment: the invoice's own payment, the change's own supplementary invoice
+where it records a payment, or one naming or paying it. Its `QUEUE_ADDITIONAL_CAPTURE_RECEIPT` action
+queues the receipt, which reads the invoice in Xero first and records the
+payment only against money still due, or refuses and emails the treasurer; it
+is auto-applied only where the invoice's stored figures say its own payment did
+not cover the capture. Where the invoice predates those figures the finding is
+`manual_review`: check Xero for the payment first, then apply the action by key
+if it is missing. A receipt that failed is offered for retry
+(`BLOCKED_BY_XERO_OPERATION`); one the worker refused (code
+`ADDITIONAL_CAPTURE_RECEIPT_REFUSED`) is reported for an officer - its
+operation says why; record the payment by hand and mark it resolved, or fix the
+cause and **Retry**. The tool's own missing-supplementary-invoice action raises
+that invoice unpaid where the change's capture is recorded, or may be being
+recorded, by its receipt (its Xero payment linked, the operation running, or its
+payment already decided); a receipt that has decided nothing yet then records the
+payment against that unpaid invoice. A **Retry** of a change's supplementary
+invoice whose card payment its own receipt records raises it unpaid, and says
+so. That holds for an officer's review charge
+too (its change is read from the charge), and for an older capture whose change
+the app never recorded, any of whose receipts makes an invoice on the booking
+that names no card payment go unpaid (one naming its own payment is left as
+it is). A receipt for such an older capture refuses, telling the treasurer,
+where a paid invoice on the booking names no card payment, or a change's
+invoice from before that record existed has a Stripe payment recorded in
+Xero: check in Xero whether that
+invoice already records it, then record by hand or resolve.
 
 A late capture the treasurer **approved** refunding, whose card refund Stripe
 gave up on and which was then closed as **Paid another way** before Xero had
@@ -1668,8 +1704,10 @@ DATABASE_URL=<non-prod copy> pnpm run payments:backfill-orphaned-credits --apply
 local-only rewrite of the per-night split of guest totals that two earlier
 backfills (#1098, #2739) divided evenly across the nights. Those rows reconcile
 to each guest's total but no night among them was ever sold at its own figure,
-so [`INV-MOD-028`](invariants/booking-modifications.md) refuses to read one as a
-night's price and an edit that moves such a night goes to a person.
+so an edit that moved such a night used to go to a person. Since #4317 an edit
+values every night by [`INV-MOD-028`](invariants/booking-modifications.md)
+instead, which keeps a usable row's figure whatever its provenance; the backfill
+still makes those figures the ones the rate table actually sold.
 
 It runs the pricing engine once over each booking's party **as it was sold** —
 every guest's stored rate-type snapshot, age tier and membership, over the
@@ -1732,15 +1770,25 @@ snapshot it reports:
   with every applicable reason — as counts;
 - what the stored night prices are made of (#3531 3c): night rows by
   provenance (`SOLD`, `OFFICER_PRICED`, `EVEN_SPLIT`, `UNKNOWN`, `RATE_DERIVED`)
-  and strands by class — `INV-MOD-028`'s own verdict on the strand at
+  and strands by class — the evidence classifier's verdict on the strand at
   individual-night grain, so `EXACT` or the cause an edit moving one of its
-  nights would park with (`INEXACT_STORED_NIGHT_PRICES`,
+  nights parked with before #4317 (`INEXACT_STORED_NIGHT_PRICES`,
   `STORED_TOTAL_MISMATCH`, `PARTIAL_STORED_NIGHT_PRICES`,
-  `NO_STORED_NIGHT_PRICES`) — overall and per booking-creation month;
+  `NO_STORED_NIGHT_PRICES`) — overall and per booking-creation month. Since
+  #4317 no edit parks, and the class decides nothing an edit does
+  (`INV-MOD-028` values every strand);
 - every `EDIT_FINANCIAL_REVIEW` task by status and by the cause the raise
   recorded, overall and per task-creation month. The two summaries share one
-  cause vocabulary on purpose: strands by cause is what the gate WOULD park;
-  tasks by cause is what it DID park.
+  cause vocabulary on purpose: strands by cause is what the gate would have
+  parked; tasks by cause is what it did park before #4317;
+- `ledgerNightValues` (#4317 review M3): of the bookings an edit can still
+  reach (not cancelled or deleted) that are confirmed on the ledger, how many have a live single-night guest-night line whose figure is
+  not what an edit now values that night at, or a valued night with no live
+  line at all, with up to 100 of their ids. An edit to one of them posts no
+  ledger lines and leaves an `UNPOSTED_EDIT` gap that closes the booking
+  ledger's cut-over gate until wave B's re-base re-posts the lines. **Run it
+  before the auto-pricing release ships** and keep the figure with the release
+  notes, so the gaps that follow are expected rather than found.
 
 The per-month lines are the point: run it before a deploy and again after, and
 the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill

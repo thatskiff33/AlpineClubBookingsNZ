@@ -258,16 +258,56 @@ describe("planModificationChargeLines — an edit's own lines, per guest-night (
     });
   });
 
-  it("refuses an unpriced or inexactly-sourced night exactly as the stored lines do (one differ)", () => {
+  it("refuses an unpriced night exactly as the stored lines do (one differ)", () => {
+    // A side carrying a null cannot be posted: a line needs a unit price. An
+    // edit's own sides never carry one since #4317 (the before side is valued),
+    // so this guards the other readers of the differ.
     const unpriced = side([guest("g1", [[D1, 5_000]]), { ...guest("g2", []), nights: [{ stayDate: D1, priceCents: null }] }]);
     expect(planModificationChargeLines(input({ before: unpriced, expectedCents: 0 })).kind).toBe("none");
+  });
+
+  it("posts a removal of an EVEN_SPLIT strand at its figures, like any other (#4317, INV-MOD-028)", () => {
+    // g2's rows reconcile ($50 + $50 against its $100), one of them EVEN_SPLIT.
+    // Under D1 those rows ARE the values the edit credited, so the removal
+    // reverses both confirmation lines rather than refusing to post: -$100.
     const inexact = side([
       guest("g1", [[D1, 5_000], [D2, 5_000]]),
       { ...guest("g2", []), nights: [{ stayDate: D1, priceCents: 5_000, priceSource: "EVEN_SPLIT" as const }, { stayDate: D2, priceCents: 5_000, priceSource: "SOLD" as const }] },
     ], -2_000);
-    expect(
-      planModificationChargeLines(input({ before: inexact, after: side(BEFORE.guests.slice(0, 1), -2_000), expectedCents: -10_000 })),
-    ).toEqual({ kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" });
+    const plan = planModificationChargeLines(
+      input({ before: inexact, after: side(BEFORE.guests.slice(0, 1), -2_000), expectedCents: -10_000 }),
+    );
+    if (plan.kind !== "lines") throw new Error(plan.reason);
+    expect(plan.postings.map((posting) => posting.reversesLineId)).toEqual([
+      "line:confirmation:b1:night:g2:2026-08-01",
+      "line:confirmation:b1:night:g2:2026-08-02",
+    ]);
+  });
+
+  it("posts NOTHING where the valued before side disagrees with the live lines (R3; #4317 review M3)", () => {
+    // g2 was confirmed with two $50 lines, but its stored total is $120: the
+    // rows do not add up, so the edit credits each night at its R3 value, $60.
+    // Reversing the $50 lines would post a removal that does not sum to the
+    // edit's -$120, and re-posting at $60 would rewrite history the ledger never
+    // carried - so nothing posts, and the census counts the edit UNPOSTED_EDIT
+    // until wave B's re-base re-posts those lines (D5). Never a wrong line.
+    const valued = side([guest("g1", [[D1, 5_000], [D2, 5_000]]), guest("g2", [[D1, 6_000], [D2, 6_000]])], -2_000);
+    const plan = planModificationChargeLines(
+      input({ before: valued, after: side(BEFORE.guests.slice(0, 1), -2_000), expectedCents: -12_000 }),
+    );
+    expect(plan).toEqual({ kind: "none", reason: "LIVE_LINE_DISAGREES" });
+  });
+
+  it("posts NOTHING for a night valued after confirmation posted no line for it (#4317 review M3)", () => {
+    // Confirmation skipped g2's second night (its row was blank). The edit values
+    // it, so the before side names a night with no live line to reverse.
+    const postedLines = asPosted(confirmed()).filter(
+      (line) => line.id !== "line:confirmation:b1:night:g2:2026-08-02",
+    );
+    const plan = planModificationChargeLines(
+      input({ after: side(BEFORE.guests.slice(0, 1), -2_000), expectedCents: -10_000, postedLines }),
+    );
+    expect(plan).toEqual({ kind: "none", reason: "NO_LIVE_LINE" });
   });
 
   it("TWO EDITS: the second reverses the first edit's re-post, never the line the first already reversed", () => {

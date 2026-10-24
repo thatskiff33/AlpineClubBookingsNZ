@@ -35,10 +35,12 @@ export const REVIEW_CHARGE_WRONG_KIND_MESSAGE =
  * (`INV-ADDPAY-023`) - and a cancelled booking has no issued invoice to add to.
  * The recovery replay already skips a cancelled booking, so refusing here keeps
  * the inline path and the replay agreeing. Refused before the claim, so the
- * task stays OPEN for a person to settle another way.
+ * task stays OPEN for a person to settle another way. #4316: a BUMPED booking
+ * is refused the same way (`INV-ADDPAY-044`, an ended booking is asked
+ * nothing), so the sentence names both.
  */
 export const REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE =
-  "This booking has been cancelled, so the club cannot ask the member for this amount automatically - a payment request on a cancelled booking is one the member has no way to pay. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+  "This booking has ended (cancelled or bumped), so the club cannot ask the member for this amount automatically - a payment request on an ended booking is one the member has no way to pay. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
 
 /**
  * #4272: the same refusal on a cancelled joiner's booking the group organiser
@@ -46,7 +48,7 @@ export const REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE =
  * officer is pointed at the organiser, as the live-booking refusal above does.
  */
 export const REVIEW_CHARGE_BOOKING_CANCELLED_ORGANISER_MESSAGE =
-  "This booking has been cancelled, and the group organiser paid for it, so the club cannot ask for this amount automatically. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+  "This booking has ended (cancelled or bumped), and the group organiser paid for it, so the club cannot ask for this amount automatically. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
 
 /**
  * #3653 (`INV-PAY-114`): a charge on a joiner's booking the group organiser paid

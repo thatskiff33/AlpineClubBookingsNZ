@@ -39,6 +39,21 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>(
   CAPTURED_TRANSACTION_STATUS_LIST
 );
 
+/**
+ * The `PaymentTransaction.status` values of an intent that is still OPEN - not
+ * captured, not failed: it can still be confirmed, so it is what a supersede or
+ * a retirement cancels (#4316 review round 3, one list).
+ */
+export const OPEN_INTENT_TRANSACTION_STATUS_LIST = [
+  PaymentStatus.PENDING,
+  PaymentStatus.PROCESSING,
+] as const satisfies readonly PaymentStatus[];
+
+/** Is this transaction's intent still open (`OPEN_INTENT_TRANSACTION_STATUS_LIST`)? */
+export function isOpenIntentTransactionStatus(status: string): boolean {
+  return (OPEN_INTENT_TRANSACTION_STATUS_LIST as readonly string[]).includes(status);
+}
+
 /** Captured rows that still hold cash after refunds. */
 export const CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST = [
   PaymentStatus.SUCCEEDED,

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
-import { editedGuestPricingLocks, lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
+import { editedGuestPricingLocks } from "@/lib/booking-modify-plan";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
+import {
+  valuedNightLocksForGuest,
+} from "@/lib/edit-night-valuation";
 
 /**
  * #3031 (epic #2797): a guest removal credits the DEPARTING guest's own stored
@@ -21,20 +24,19 @@ import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidenc
  * what the member was told was the departing guest's credit. A rate rise on
  * somebody else's stay changed the amount refunded for this one.
  *
- * ## Why the fix is a gate rather than a new formula
+ * ## Why the fix is a lock on every night rather than a new formula
  *
- * The service now refuses the removal unless EVERY strand on the booking
- * reconciles: each night the guest holds carries a stored non-negative integer
- * price, and those prices sum to `BookingGuest.priceCents`. Under that
- * condition the existing arithmetic is exact, because a locked night
- * short-circuits the season lookup entirely — so the reprice returns each
- * remaining guest's stored total unchanged and the difference IS
- * `guestToRemove.priceCents`.
+ * #3031 refused, and #3032 parked, a removal unless every strand reconciled.
+ * #4317 (epic #4302, owner decision D1) locks EVERY night a remaining guest
+ * holds at its valued figure (`valuedNightLocksForGuest`, `INV-MOD-028`), and
+ * a locked night short-circuits the season lookup entirely — so the reprice
+ * returns each remaining guest's stored total unchanged, whatever its rows
+ * look like, and the difference IS `guestToRemove.priceCents` (or $0 for a
+ * negative one, D11).
  *
- * This suite proves both halves against the REAL pricing engine rather than a
- * mock: that locks make the reprice immovable even when today's rates have
- * doubled, and that the shapes which used to slip through the gate are refused.
- * The route-level suites mock the pricer, so they cannot see either.
+ * This suite proves that against the REAL pricing engine rather than a mock,
+ * for every strand shape that used to be refused. The route-level suites mock
+ * the pricer, so they cannot see it.
  */
 
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
@@ -104,12 +106,12 @@ function remainingGuest(
       stayStart: guest.stayStart,
       stayEnd: guest.stayEnd,
       nights: guest.nights.map((night) => night.stayDate),
-      lockedNightPrices: lockedNightPricesForGuest(guest),
+      lockedNightPrices: valuedNightLocksForGuest(guest, BOOKING_RANGE).lockedNightPrices,
     },
   };
 }
 
-describe("#3031 a removal's credit is the departing guest's own stored price", () => {
+describe("a removal's credit is the departing guest's own stored price (#3031, #4317)", () => {
   it("cannot move a remaining guest's total, however far today's rates have run", () => {
     // They bought three nights at 4000 when the club charged 4000. It charges
     // 12000 now. Repricing them at today's rate would add 24000 to the booking
@@ -146,112 +148,119 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     expect(breakdown.totalPriceCents).toBe(guest.priceCents);
   });
 
-  it("is exactly what the reprice would NOT be without the locks", () => {
-    // The control, so the case above cannot pass by coincidence: the same guest
-    // with no stored prices reprices at today's rate, and the difference is the
-    // contamination that used to be reported as somebody else's credit.
-    const { forPricing } = remainingGuest(
+  it("T8: a remaining guest with NO usable rows still reprices to its stored total", () => {
+    // Three nights with no stored price against a stored $120: R2 values each
+    // at $40, and the locks hold them there although the club charges $120 a
+    // night today. Without the lock (the control) the reprice is $360.
+    const { guest, forPricing } = remainingGuest(
       NIGHTS.map((night) => ({ stayDate: D(night) })),
       NIGHTS.length * 4000,
     );
 
-    const breakdown = calculateBookingPrice(
+    const locked = calculateBookingPrice(D(NIGHTS[0]), D("2026-08-23"), [forPricing], SEASONS);
+    expect(locked.guests[0].perNightCents).toEqual([4000, 4000, 4000]);
+    expect(locked.totalPriceCents).toBe(guest.priceCents);
+
+    const unlocked = calculateBookingPrice(
       D(NIGHTS[0]),
       D("2026-08-23"),
-      [forPricing],
+      [{ ...forPricing, lockedNightPrices: [] }],
       SEASONS,
     );
-
-    expect(breakdown.totalPriceCents).toBe(NIGHTS.length * TODAY_RATE);
-    expect(breakdown.totalPriceCents).toBeGreaterThan(NIGHTS.length * 4000);
+    expect(unlocked.totalPriceCents).toBe(NIGHTS.length * TODAY_RATE);
   });
 
-  it("refuses every strand whose stored rows cannot support the removal", () => {
-    // The gate, shape by shape. Each of these used to reach the pricer and be
-    // valued at today's rate on the nights it could not lock.
-    const base = { stayStart: D(NIGHTS[0]), stayEnd: D("2026-08-23") };
-
-    // No rows at all: a booking predating `BookingGuestNight`, or one created by
-    // approving a request (#2739 backfills those but cannot empty the
-    // population). The envelope still says which nights; nothing says what they
-    // cost.
-    expect(
-      storedSoldPriceEvidenceForGuest(
-        { ...base, priceCents: 12000, nights: [] },
+  it("reprices every strand shape the gate used to refuse to its stored total (#4317)", () => {
+    // Each of these used to be refused or parked. Valued and locked, each
+    // reprices to exactly what it carries, so a removal beside it credits
+    // only the departing guest.
+    const shapes: Array<{
+      label: string;
+      priceCents: number;
+      nights: Array<{ stayDate: Date; priceCents?: number | null }>;
+      values: number[];
+    }> = [
+      {
+        // No rows at all: valued over the envelope (R2), $40 a night.
+        label: "no rows",
+        priceCents: 12000,
+        nights: [],
+        values: [4000, 4000, 4000],
+      },
+      {
+        // Two priced, one blank: the blank takes the $40 the total has left (R2).
+        label: "partial",
+        priceCents: 12000,
+        nights: [
+          { stayDate: D(NIGHTS[0]), priceCents: 4000 },
+          { stayDate: D(NIGHTS[1]), priceCents: 4000 },
+          { stayDate: D(NIGHTS[2]), priceCents: null },
+        ],
+        values: [4000, 4000, 4000],
+      },
+      {
+        // Rows that do not add up ($120 against $120.01): R3 splits the total,
+        // the leftover cent on the earliest night.
+        label: "mismatch",
+        priceCents: 12001,
+        nights: NIGHTS.map((night) => ({ stayDate: D(night), priceCents: 4000 })),
+        values: [4001, 4000, 4000],
+      },
+      {
+        // Negative rows against a $0 total: not money, so the $0 is split.
+        label: "negative rows",
+        priceCents: 0,
+        nights: NIGHTS.map((night) => ({ stayDate: D(night), priceCents: -4000 })),
+        values: [0, 0, 0],
+      },
+    ];
+    for (const shape of shapes) {
+      const guest = {
+        stayStart: D(NIGHTS[0]),
+        stayEnd: D("2026-08-23"),
+        priceCents: shape.priceCents,
+        nights: shape.nights.map((night) => ({
+          ...night,
+          priceSource: "SOLD" as const,
+        })),
+      };
+      const { lockedNightPrices, unattachedCents } = valuedNightLocksForGuest(
+        guest,
         BOOKING_RANGE,
-        "WHOLE_GUEST",
-      ),
-    ).toMatchObject({ kind: "unusable", cause: "NO_STORED_NIGHT_PRICES" });
+      );
+      expect(lockedNightPrices.map((lock) => lock.priceCents), shape.label).toEqual(shape.values);
+      const repriced = calculateBookingPrice(
+        D(NIGHTS[0]),
+        D("2026-08-23"),
+        [
+          {
+            ageTier: "ADULT",
+            isMember: true,
+            rateMembershipTypeId: MEMBER_TYPE,
+            nights: NIGHTS.map((night) => D(night)),
+            lockedNightPrices,
+          },
+        ],
+        SEASONS,
+      );
+      expect(repriced.totalPriceCents + unattachedCents, shape.label).toBe(shape.priceCents);
+    }
+  });
 
-    // Some rows priced, some not — a mixed strand, which is worse than none,
-    // because the total that DOES reconcile is only part of the stay.
-    expect(
-      storedSoldPriceEvidenceForGuest(
-        {
-          ...base,
-          priceCents: 12000,
-          nights: [
-            { stayDate: D(NIGHTS[0]), priceCents: 4000 },
-            { stayDate: D(NIGHTS[1]), priceCents: 4000 },
-            { stayDate: D(NIGHTS[2]), priceCents: null },
-          ],
-        },
-        BOOKING_RANGE,
-        "WHOLE_GUEST",
-      ),
-    ).toMatchObject({ kind: "unusable", cause: "PARTIAL_STORED_NIGHT_PRICES" });
-
-    // Rows all present and priced, and a stored total that disagrees. Nothing is
-    // missing; the evidence simply does not add up.
-    expect(
-      storedSoldPriceEvidenceForGuest(
-        {
-          ...base,
-          priceCents: 12001,
-          nights: NIGHTS.map((night) => ({
-            stayDate: D(night),
-            priceCents: 4000,
-          })),
-        },
-        BOOKING_RANGE,
-        "WHOLE_GUEST",
-      ),
-    ).toMatchObject({ kind: "unusable", cause: "STORED_TOTAL_MISMATCH" });
-
-    // A negative row is not a cheap night; it is a row that cannot be money, and
-    // pre-#2744 arithmetic could write one. Trusting it would invert the credit.
-    expect(
-      storedSoldPriceEvidenceForGuest(
-        {
-          ...base,
-          priceCents: 0,
-          nights: NIGHTS.map((night) => ({
-            stayDate: D(night),
-            priceCents: -4000,
-          })),
-        },
-        BOOKING_RANGE,
-        "WHOLE_GUEST",
-      ),
-    ).toMatchObject({ kind: "unusable", cause: "NO_STORED_NIGHT_PRICES" });
-
-    // And the one that must NOT be refused: a negotiated flat allocation. Equal
-    // nightly rows are not a defect, and epic #2797 says so in as many words -
-    // refusing them would refuse a large share of historical bookings.
-    expect(
-      storedSoldPriceEvidenceForGuest(
-        {
-          ...base,
-          priceCents: 12000,
-          nights: NIGHTS.map((night) => ({
-            stayDate: D(night),
-            priceCents: 4000,
-          })),
-        },
-        BOOKING_RANGE,
-        "WHOLE_GUEST",
-      ),
-    ).toMatchObject({ kind: "exact", totalCents: 12000 });
+  it("D11: a negative stored total is valued at $0 a night and carries its figure unattached (pure; doors refuse it)", () => {
+    const guest = {
+      stayStart: D(NIGHTS[0]),
+      stayEnd: D("2026-08-23"),
+      priceCents: -500,
+      nights: NIGHTS.map((night) => ({
+        stayDate: D(night),
+        priceCents: 4000,
+        priceSource: "SOLD" as const,
+      })),
+    };
+    const { lockedNightPrices, unattachedCents } = valuedNightLocksForGuest(guest, BOOKING_RANGE);
+    expect(lockedNightPrices.map((lock) => lock.priceCents)).toEqual([0, 0, 0]);
+    expect(unattachedCents).toBe(-500);
   });
 
   it("asks the BOOKING's range for a strand carrying no envelope of its own", () => {
@@ -309,24 +318,40 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
  * them, are one answer for the modify save and the modify preview.
  */
 describe("editedGuestPricingLocks - one home for the cleared-locks fact", () => {
+  const booking = {
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
+  };
   const guest = {
+    priceCents: 10000,
+    stayStart: booking.checkIn,
+    stayEnd: booking.checkOut,
     nights: [
       { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 5000, priceSource: "EVEN_SPLIT" as const },
       { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 5000, priceSource: "EVEN_SPLIT" as const },
     ],
   };
 
-  it("keeps every booked night's price and provenance, and states nothing, for an ordinary edit", () => {
-    expect(editedGuestPricingLocks(guest, false)).toEqual({
-      lockedNightPrices: lockedNightPricesForGuest(guest),
+  it("locks every booked night at its valued price and provenance for an ordinary edit", () => {
+    expect(editedGuestPricingLocks(guest, booking, false)).toEqual({
+      lockedNightPrices: valuedNightLocksForGuest(guest, booking).lockedNightPrices,
+      unattachedCents: 0,
     });
-    expect(editedGuestPricingLocks(guest, false).lockedNightPrices).toHaveLength(2);
+    expect(
+      editedGuestPricingLocks(guest, booking, false).lockedNightPrices?.map(
+        (lock) => [lock.priceCents, lock.priceSource],
+      ),
+    ).toEqual([
+      [5000, "EVEN_SPLIT"],
+      [5000, "EVEN_SPLIT"],
+    ]);
   });
 
   it("clears the locks AND says so for a strand the edit deliberately reprices", () => {
-    expect(editedGuestPricingLocks(guest, true)).toEqual({
+    expect(editedGuestPricingLocks(guest, booking, true)).toEqual({
       lockedNightPrices: [],
       repricedDeliberately: true,
+      unattachedCents: 0,
     });
   });
 });

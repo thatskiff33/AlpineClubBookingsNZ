@@ -18,14 +18,6 @@ import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useClubFormat } from "@/components/club-format-provider";
-import {
-  EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
-  isExistingCardTransactionStatusUnconfirmed,
-  isPaymentReceivedFinalisationPending,
-  isPaymentProcessing,
-  isPaymentReceivedStatusUnconfirmed,
-  PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
-} from "@/lib/payment-recovery-contract";
 // The presentation layer this page renders through, split out when the club-time
 // migration carried this file past its 500-line route-page budget. See that
 // file's header for why an allowance was not the answer.
@@ -35,11 +27,14 @@ import {
   formatLinkExpiry,
   internetBankingHeading,
   NarrativeCard,
+  paymentRecoveryForRefusal,
   toneForState,
   type Narrative,
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
+import { checkCardSuccess } from "./card-success-check";
+import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
   #3194 (epic #2797): the sentences a member reads when their saved change is
   still being priced. Imported, never restated — the booking-detail banner
@@ -72,6 +67,8 @@ export default function PayByLinkPage() {
   const [paymentRecovery, setPaymentRecovery] =
     useState<PaymentRecovery | null>(null);
   const [paymentComplete, setPaymentComplete] = useState(false);
+  const [previousPaymentRefunding, setPreviousPaymentRefunding] = useState(false); // #4300
+  const [checkingPayment, setCheckingPayment] = useState(false); // #4300: never the pay buttons after a success
   const [refreshState, setRefreshState] = useState<"idle" | "sending" | "sent">(
     "idle"
   );
@@ -130,56 +127,11 @@ export default function PayByLinkPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (
-          res.status === 409 &&
-          data.status === "CANCELLED" &&
-          typeof data.refunded === "boolean"
-        ) {
-          setPaymentRecovery(
-            data.refunded
-              ? {
-                  heading: "Booking cancelled - payment refunded",
-                  message:
-                    "The booking was cancelled because lodge capacity was no longer available, and the card payment was refunded. Reload the payment link to check the latest booking status. Do not try another payment.",
-                }
-              : {
-                  heading: "Booking cancelled - refund needs attention",
-                  message:
-                    "The booking was cancelled because lodge capacity was no longer available, but the refund could not be confirmed. Reload the payment link and contact the club if the refund is not confirmed. Do not try another payment.",
-                },
-          );
-          return;
-        }
-        if (
-          res.status === 409 &&
-          isPaymentReceivedFinalisationPending(data)
-        ) {
-          setPaymentRecovery({
-            heading: "Payment received - finalisation pending",
-            message:
-              "Your card payment was received, but booking finalisation is still pending. Reload the payment link and check the booking status before trying any payment again.",
-          });
-          return;
-        }
-        if (res.status === 409 && isPaymentReceivedStatusUnconfirmed(data)) {
-          setPaymentRecovery({
-            heading: "Payment received - check booking status",
-            message: PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
-          });
-          return;
-        }
-        if (
-          res.status === 409 &&
-          isExistingCardTransactionStatusUnconfirmed(data)
-        ) {
-          setPaymentRecovery({
-            heading: "Card transaction found - check payment status",
-            message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
-          });
-          return;
-        }
-        if (res.status === 409 && isPaymentProcessing(data)) {
-          setPaymentRecovery({ heading: "Payment being processed", message: data.error });
+        // The refusals a payer must not answer with another payment (#4300 adds
+        // a superseded payment going back), in one table beside the page.
+        const recovery = res.status === 409 ? paymentRecoveryForRefusal(data) : null;
+        if (recovery) {
+          setPaymentRecovery(recovery);
           return;
         }
         throw new Error(data.error || "Unable to start payment");
@@ -188,12 +140,29 @@ export default function PayByLinkPage() {
         setPaymentComplete(true);
         return;
       }
+      setPreviousPaymentRefunding(data.previousPaymentRefunding === true);
       setClientSecret(data.clientSecret);
     } catch (err) {
       setIntentError(err instanceof Error ? err.message : "Unable to start payment");
     } finally {
       setIntentLoading(false);
     }
+  }
+
+  // #4300: after a card success, ask the server what it did (`checkCardSuccess`).
+  async function afterCardSuccess(paidIntentId: string) {
+    setCheckingPayment(true);
+    const outcome = await checkCardSuccess(token, paidIntentId);
+    if (outcome.kind === "paid") {
+      if (outcome.context) setContext(outcome.context);
+      setPaymentComplete(true);
+    } else if (outcome.kind === "fresh") {
+      // The refreshed context: "Amount due" and the form match the new intent.
+      if (outcome.context) setContext(outcome.context);
+      setPreviousPaymentRefunding(outcome.previousPaymentRefunding);
+      setClientSecret(outcome.clientSecret);
+    } else setPaymentRecovery(outcome.recovery);
+    setCheckingPayment(false);
   }
 
   async function requestFreshLink() {
@@ -447,15 +416,23 @@ export default function PayByLinkPage() {
           }
         />
 
+        <PreviousPaymentRefundingNotice show={!paymentRecovery && previousPaymentRefunding} />
         {paymentRecovery ? null : clientSecret ? (
-          <StripeProvider clientSecret={clientSecret}>
+          <StripeProvider key={clientSecret} clientSecret={clientSecret}>
             <PaymentForm
               amountCents={payable.amountCents}
               returnUrl={typeof window !== "undefined" ? window.location.href : ""}
-              onSuccess={() => setPaymentComplete(true)}
+              // #4300: the server says what the payment did - settled, or (an
+              // intent an edit superseded) going back with a fresh one to pay.
+              onSuccess={(paidIntentId) => {
+                setClientSecret(null);
+                void afterCardSuccess(paidIntentId);
+              }}
               onError={() => undefined}
             />
           </StripeProvider>
+        ) : checkingPayment ? (
+          <p className="text-sm text-muted-foreground">Checking your payment...</p>
         ) : (
           <div className="space-y-3">
             {payable.cardPaymentAvailable !== false ? (

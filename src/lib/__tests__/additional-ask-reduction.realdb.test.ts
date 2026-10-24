@@ -637,7 +637,7 @@ let webhookClient: PrismaClient;
       // The webhook's first step for a succeeded intent.
       const { queueSupersededPaymentIntentRefundRecovery } = await import("@/lib/payment-recovery");
       expect(
-        await queueSupersededPaymentIntentRefundRecovery({ paymentIntentId: ASK_INTENT, amountCents: 5_000, paymentMethodId: null }),
+        await queueSupersededPaymentIntentRefundRecovery({ id: ASK_INTENT, amount: 5_000, payment_method: null }),
       ).toBe(true);
 
       // Captured on the ledger, still not the live ask, and owed back whole.

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
@@ -43,7 +44,7 @@ import {
   type SavedCardChargeAnswer,
 } from "@/lib/saved-card-charge-settle";
 import { hasAdminAccess } from "@/lib/access-roles";
-import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
+import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY, SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 
@@ -290,6 +291,8 @@ export async function POST(request: NextRequest) {
           },
           "charge-saved-method: refused to charge (#3267)"
         );
+        // #4300: a superseded capture with no refund started yet is handed off now.
+        await handOffSupersededCaptureAfterRefusal(claimErr);
         sendAdminPaymentFailureAlert({
           memberName,
           checkIn: booking.checkIn,
@@ -462,6 +465,13 @@ export async function POST(request: NextRequest) {
           },
           { status: 409 }
         );
+      }
+
+      // #4300 (`INV-PAY-138`): superseded, so going back; nothing paid, so the claim is released.
+      if (reconciliation.outcome === "superseded_capture") {
+        claimReleaser = null;
+        await releaseChargeClaim().catch((err) => logger.error({ err, bookingId }, "Could not release the claim of a refused superseded charge (#4300)"));
+        return NextResponse.json({ success: false, ...SUPERSEDED_CHARGE_NOT_SETTLED_BODY, paymentIntentId: paymentIntent.id }, { status: 409 });
       }
 
       finalCapacityClaimed = true;

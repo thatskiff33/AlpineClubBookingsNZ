@@ -318,6 +318,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Booking may have been paid twice — check by hand: {{memberName}}",
     "defaultBody": "Booking May Have Been Paid Twice — Check By Hand\n\nA card payment was kept on a booking that was already paid. Nothing was refunded automatically — please check.\n\n{{duplicateCaptureKeptNote}}\n\n{{duplicateCaptureKeptAction}}\n\nBefore you refund by hand, check in Stripe that neither payment has already been refunded: while an upgrade is switching over, the previous app version can still refund one automatically.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nPayment kept: {{amount}}\nStripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
   },
+  // #4300 (`INV-PAY-138`): a card capture the settle refused because an edit had
+  // replaced the payment it was made on; the superseded machinery returns it.
+  "admin-superseded-capture-refused": {
+    "defaultSubject": "Card payment on a replaced payment — not applied: {{memberName}}",
+    "defaultBody": "Card Payment On A Replaced Payment — Not Applied\n\nA card payment was taken on a payment that a later change to this booking had replaced, so it was not applied to the booking.\n\n{{supersededCaptureNote}}\n\n{{supersededCaptureAction}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nPayment not applied: {{amount}}\nStripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
+  },
   "admin-manual-refund-task": {
     "defaultSubject": "Manual refund needed - {{handBackLabel}}: {{memberName}}",
     "defaultBody": "{{handBackHeading}}\n\n{{handBackNote}}\n\n{{handBackRecipientLabel}}: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\n{{handBackAmountLabel}}: {{refundAmount}}\nReason: {{reason}}\n\nView Payments: {{reviewUrl}}"

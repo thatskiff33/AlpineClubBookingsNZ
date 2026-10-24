@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
+import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
@@ -540,6 +542,8 @@ export async function POST(
           },
           "Admin confirm-pending-guests: refused to charge (#3267)"
         );
+        // #4300: a superseded capture with no refund started yet is handed off now.
+        await handOffSupersededCaptureAfterRefusal(claimErr);
         sendAdminPaymentFailureAlert({
           memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
           checkIn: booking.checkIn,
@@ -841,6 +845,13 @@ export async function POST(
         },
         { status: 409 }
       );
+    }
+
+    // #4300 (`INV-PAY-138`): superseded, so going back; nothing paid, so the claim is released.
+    if (reconciliation.outcome === "superseded_capture") {
+      await releaseChargeClaim().catch((err) => logger.error({ err, bookingId }, "Could not release the claim of a refused superseded charge (#4300)"));
+      await audit("charged_superseded_capture", true);
+      return NextResponse.json(SUPERSEDED_CHARGE_NOT_SETTLED_BODY, { status: 409 });
     }
 
     if (settledByAnotherCapture(reconciliation.outcome)) {

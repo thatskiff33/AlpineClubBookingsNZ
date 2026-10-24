@@ -509,6 +509,21 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     expect(definition.defaultBody).toContain("{{duplicateCaptureKeptAction}}");
   });
 
+  it("keeps the refused-superseded-capture alert admin-audience, delivery-locked and pinned to its note (#4300)", () => {
+    // A payment the member made was not applied and the booking may still owe;
+    // MUTATION PROOF: drop it from LOCKED_DELIVERY_TEMPLATE_NAMES and this fails.
+    const definition = getEmailTemplateDefinition("admin-superseded-capture-refused");
+    if (!definition) throw new Error("missing admin-superseded-capture-refused");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-superseded-capture-refused")).toBe("always");
+    expect(definition.defaultSubject).toBe("Card payment on a replaced payment — not applied: {{memberName}}");
+    expect(definition.defaultSubject).not.toMatch(/failed/i);
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining(["supersededCaptureNote", "supersededCaptureAction", "memberName", "reviewUrl"]),
+    );
+  });
+
   it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
     // It ships via sendToAdmins, so it must classify as an admin alert like its
     // siblings (audience "admin") rather than "member". It stays in

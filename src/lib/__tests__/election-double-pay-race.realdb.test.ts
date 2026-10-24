@@ -23,6 +23,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { registerRaceStripeKeyOverride } from "@/lib/__tests__/support/race-stripe-key-override";
+import { raceSession as session } from "@/lib/__tests__/support/race-session-double";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -151,10 +152,12 @@ vi.mock("stripe", async (importOriginal) => {
   return { ...actual, default: FakeAwareStripe };
 });
 
-/** The member's session, only while a case here installs one. */
-const session = vi.hoisted(() => ({ current: null as null | { user: Record<string, unknown> } }));
-// No other realdb suite reads a session, so signed-out is the pass-through.
-vi.mock("@/lib/auth", () => ({ auth: () => Promise.resolve(session.current) }));
+/**
+ * The member's session, only while a case here installs one: the harness's one
+ * shared `@/lib/auth` double (#4300's suite drives session routes too), so
+ * signed-out is the pass-through whichever file registered the factory last.
+ */
+vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeElectionDoublePayRaceDbUrl(url: string): void {

@@ -37,12 +37,13 @@ export type BookingMoneyReconciliationReason =
  * This map is their one route into Stage 4's canonical reason vocabulary.
  *
  * `strand-evidence-unreadable` maps to the DISAGREEMENT side, which is not the
- * reason its name resembles (#3547). The decline is raised when
- * `readStrandNightPrices` returns null, and one of the ways that happens is
- * `if (sum !== guest.priceCents) return null` — exactly the actionable case
- * this issue split out. The rebase also runs at INDIVIDUAL_NIGHT grain, where
- * an inexact price source is reachable too, so the one decline spelling covers
- * both kinds at once and cannot be mapped to a single quiet reason honestly.
+ * reason its name resembles (#3547). Until #4317 the decline was raised when a
+ * strand's rows did not reconcile exactly - `sum !== guest.priceCents`, exactly
+ * the actionable case this issue split out - or carried an inexact price source,
+ * so the one decline spelling covered both kinds at once and could not be
+ * mapped to a single quiet reason honestly. Since #4317 (review H1) the re-base
+ * values those strands and declines only for a negative stored total, which the
+ * database forbids; rows already written with the spelling keep this mapping.
  *
  * Mapping it to the quiet one would have let a real disagreement reach an
  * officer wearing "there is nothing to action here", which is the whole defect

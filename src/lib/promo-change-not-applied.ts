@@ -57,35 +57,24 @@
  *
  * ## Why the reason is a parameter and not a fixed sentence
  *
- * Two different things stop a promotional-code change, and telling a member the
- * wrong one is worse than telling them nothing:
+ * One thing stops a promotional-code change today:
  *
  *  - `STAY_IN_PROGRESS` — the stay has already started. Both the preview
  *    (`modify-quote`) and the save (`resolveTargetDates`) refuse a promo change
  *    outright on that path today, so this arm is defence in depth: if either
  *    refusal is ever relaxed, the member is told rather than silenced.
- *  - `AMOUNT_UNDER_REVIEW` — the edit committed its structural half and parked
- *    its money for a person to price (`INV-MOD-028`). Nothing is repriced on
- *    that branch and no promotion is re-run, so a code the member applied in the
- *    same request is dropped. THIS is the reachable one: the member edit panel
- *    shows the promo card on a stay that has not started, and a booking whose
- *    stored night prices cannot be read parks on its first edit.
  *
- * The `AMOUNT_UNDER_REVIEW` wording deliberately does not reuse
- * `FINANCIAL_REVIEW_WORKING_IT_OUT` from `booking-financial-review-copy.ts`. That
- * sentence is composed onto the SAME screens and the SAME email as this one, so
- * borrowing it would print "the club is working it out" twice in adjacent
- * paragraphs. This says only the part that module does not: that a promotional
- * code cannot be moved while the pricing is with a person.
+ * A second reason, `AMOUNT_UNDER_REVIEW`, covered an edit that parked its money
+ * for an officer. Since #4317 every edit is priced automatically and none parks
+ * (`INV-MOD-028`), so that reason is gone. The parameter stays so a new reason
+ * is a new arm here rather than a second module.
  */
 
 /** What the member asked for, and therefore what did not happen. */
 export type PromoChangeRequested = "apply" | "remove";
 
 /** Why this edit could not carry it. See the module docblock. */
-export type PromoChangeNotAppliedReason =
-  | "STAY_IN_PROGRESS"
-  | "AMOUNT_UNDER_REVIEW";
+export type PromoChangeNotAppliedReason = "STAY_IN_PROGRESS";
 
 /**
  * Whether the member is reading this BEFORE pressing Save (the quote) or after
@@ -142,9 +131,10 @@ export const PROMO_CHANGE_NOT_APPLIED_LABEL = "Promo code not applied";
  * ONE CLAUSE IS CONDITIONAL ON SOMETHING ELSE THE SAME REQUEST DID. "as it was"
  * and "who it covers has not changed" are claims about the redemption's
  * BENEFICIARIES, and a guest removal in the same request quietly falsifies both:
- * `PromoRedemptionGuestTarget.bookingGuest` is `onDelete: Cascade`, and a parked
- * edit still deletes the rows for the guests it removes, so their target rows go
- * with them while the stored discount is written back untouched. Coverage really
+ * `PromoRedemptionGuestTarget.bookingGuest` is `onDelete: Cascade`, and an edit
+ * that re-runs no promotion still deletes the rows for the guests it removes, so
+ * their target rows go with them while the stored discount is written back
+ * untouched. Coverage really
  * did narrow. Nobody is misled into acting WRONGLY by it — the panel builds the
  * promo selection from the guests that remain, so coverage can only ever shrink
  * to a subset the member's own request already excluded — but a sentence that is
@@ -196,9 +186,14 @@ function headlineOf(
 }
 
 function reasonOf(reason: PromoChangeNotAppliedReason): string {
-  return reason === "STAY_IN_PROGRESS"
-    ? "A promotional code cannot be added to or taken off a stay that has already started."
-    : "This change is with the club to price, and a promotional code cannot be added or taken off while that is happening.";
+  switch (reason) {
+    case "STAY_IN_PROGRESS":
+      return "A promotional code cannot be added to or taken off a stay that has already started.";
+    default: {
+      const unhandled: never = reason;
+      throw new Error(`promo-change-not-applied: unhandled reason ${String(unhandled)}`);
+    }
+  }
 }
 
 function consequenceOf(

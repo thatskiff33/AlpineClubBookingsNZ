@@ -252,7 +252,7 @@ import { generateSchoolGuests } from "@/lib/school-booking-constants";
 // #2739: the night rows this pipeline writes are the #1036 locked prices the
 // #2337 member link then prices against, so the join is asserted here with the
 // real reader and the real engine rather than described in a comment.
-import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
+import { valuedNightLocksForGuest } from "@/lib/edit-night-valuation";
 import { calculateBookingPrice } from "@/lib/policies/pricing";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 
@@ -2658,7 +2658,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
 
       The #2337 placeholder→member link is the ONE edit path exempt from the
       quote-priced block, and it reprices the whole booking. `prepareGuestPlan`
-      passes `link ? [] : lockedNightPricesForGuest(guest)`, so an UNLINKED
+      passes `link ? [] : valuedNightLocksForGuest(guest, booking)`, so an UNLINKED
       placeholder is protected only by its stored night rows. While this pipeline
       wrote none, those rows were empty, every unlinked placeholder repriced at
       whatever the season rate is on the day of the link, and the negotiated
@@ -2696,12 +2696,35 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
     ).create;
 
     // AFTER: the rows this pipeline now writes, read by the real lock reader.
-    const locks = lockedNightPricesForGuest({ nights: storedNights });
-    expect(locks).toHaveLength(2);
-    // BEFORE: what the same reader returned while the pipeline wrote no rows at
-    // all. Not a stand-in — a night-less guest is exactly what it was handed.
-    const noLocks = lockedNightPricesForGuest({ nights: [] });
-    expect(noLocks).toEqual([]);
+    // R1 (#4317, INV-MOD-028): the two $50 rows add up to the guest's $100, so
+    // the rows are the values.
+    const storedGuestTotalCents = data.guests.create[0].priceCents as number;
+    expect(storedGuestTotalCents).toBe(10000);
+    const bookingRange = { checkIn: CHECK_IN, checkOut: CHECK_OUT };
+    const locks = valuedNightLocksForGuest(
+      {
+        priceCents: storedGuestTotalCents,
+        stayStart: CHECK_IN,
+        stayEnd: CHECK_OUT,
+        nights: storedNights,
+      },
+      bookingRange,
+    ).lockedNightPrices;
+    expect(locks.map((lock) => lock.priceCents)).toEqual([5000, 5000]);
+    // BEFORE: the lock set the engine was handed while the pipeline wrote no
+    // rows at all, so every night priced at the season rate on the day of the
+    // link. Written out as the empty set it was, not read from the valued
+    // reader: since #4317 that reader values a night-less guest from its stored
+    // total (R3: $100 over two nights, $50 each), so it can no longer produce
+    // this historical case. That is pinned here too, so the old behaviour
+    // cannot come back through a guest that merely lost its rows.
+    const noLocks: typeof locks = [];
+    expect(
+      valuedNightLocksForGuest(
+        { priceCents: storedGuestTotalCents, stayStart: CHECK_IN, stayEnd: CHECK_OUT, nights: [] },
+        bookingRange,
+      ).lockedNightPrices.map((lock) => lock.priceCents),
+    ).toEqual([5000, 5000]);
 
     /** What the #2337 link charges this untouched placeholder, at `rateCents`. */
     const priceUnlinkedPlaceholderAt = (

@@ -22,7 +22,11 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
-import { isPaymentReceivedFinalisationPending } from "@/lib/payment-recovery-contract";
+import {
+  isPaymentReceivedFinalisationPending,
+  isSupersededChargeNotSettled,
+  SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 import { useClubFormat } from "@/components/club-format-provider";
 
 const CAPTURED_CARD_RECOVERY_MESSAGE =
@@ -30,7 +34,7 @@ const CAPTURED_CARD_RECOVERY_MESSAGE =
 const CANCELLED_REFUND_RECOVERY_MESSAGE =
   "The booking was cancelled because lodge capacity was no longer available. The saved-card charge was captured, but its refund could not be confirmed and automatic refund recovery is pending. Do not charge again. Reload the booking and check the refund status; contact the lodge administrator if it is not confirmed.";
 
-type PaymentRecoveryKind = "finalisation-pending" | "refund-pending";
+type PaymentRecoveryKind = "finalisation-pending" | "refund-pending" | "charge-returning";
 
 function isCancelledRefundRecovery(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -156,6 +160,16 @@ export function ConfirmPendingGuestsButton({
         router.refresh();
         return;
       }
+      // #4300 (`INV-PAY-138`): before the finalisation check - this charge is
+      // going back and the booking still owes, never "charged, do not charge again".
+      if (isSupersededChargeNotSettled(data)) {
+        setPaymentRecoveryKind("charge-returning");
+        showActionError(SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE);
+        toast.error(SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE);
+        setConfirming(false);
+        router.refresh();
+        return;
+      }
       if (isPaymentReceivedFinalisationPending(data)) {
         setPaymentRecoveryKind("finalisation-pending");
         showActionError(CAPTURED_CARD_RECOVERY_MESSAGE);
@@ -226,7 +240,9 @@ export function ConfirmPendingGuestsButton({
               ? "Booking cancelled - refund recovery pending"
               : paymentRecoveryKind === "finalisation-pending"
                 ? "Saved card charged - finalisation unconfirmed"
-                : undefined
+                : paymentRecoveryKind === "charge-returning"
+                  ? "Charge being returned - booking still owes"
+                  : undefined
           }
           action={
             paymentRecoveryKind ? (

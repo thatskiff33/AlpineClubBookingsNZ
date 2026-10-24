@@ -243,13 +243,16 @@ describe("#3277 canonical D3 build-up selection", () => {
     ).resolves.toMatchObject({
       baseEvidence: { kind: "EXACT", amountCents: 10_001 },
     });
+    // #4317 review H1 (D1, D5): a review re-base no longer asks individual-night
+    // provenance of an even split; its base is the guests' stored totals, which
+    // `valueStrandNights` values every night against.
     await expect(
       readBookingMoneyBuildUp(store as never, {
         bookingId: "booking-1",
         purpose: "REVIEW_REBASE",
       }),
     ).resolves.toMatchObject({
-      baseEvidence: { kind: "UNKNOWN", reason: "INEXACT_STORED_NIGHT_PRICES" },
+      baseEvidence: { kind: "EXACT", amountCents: 10_001 },
     });
     for (const operation of ["CREDIT_ELECTION", "XERO_PROMO_LINE"] as const) {
       await expect(

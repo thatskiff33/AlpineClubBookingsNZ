@@ -127,6 +127,33 @@ export function isAdditionalPayableBookingStatus(
 }
 
 /**
+ * The booking statuses that RETIRE every ask on the booking (`INV-ADDPAY-044`,
+ * the cancelled-booking case of `INV-ADDPAY-023`):
+ * both lists above exclude them, and no surface may offer or take a card
+ * payment for one. A CANCELLED or BUMPED booking keeps its ask columns as they
+ * were, so its residual says nothing to the ledger census either
+ * (`BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES` re-exports this list).
+ *
+ * #4316: the after-commit minter reads it twice - before the provider call (an
+ * ended booking is asked nothing) and after its row is written (a cancel that
+ * committed in between had no intent to see, so the minter retires its own).
+ */
+export const ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES = [
+  "CANCELLED",
+  "BUMPED",
+] as const;
+
+/** Has this booking's lifecycle retired every ask on it (`INV-ADDPAY-044`)? */
+export function isAdditionalAskRetiredBookingStatus(
+  status: string | null | undefined,
+): boolean {
+  return (
+    status != null &&
+    (ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES as readonly string[]).includes(status)
+  );
+}
+
+/**
  * THE BOOKING HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-104`): may this
  * booking still be shown, and take, a card payment for an outstanding addition
  * at all? Not deleted, and in `ADDITIONAL_PAYABLE_BOOKING_STATUSES`.

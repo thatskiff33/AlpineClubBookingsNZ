@@ -54,11 +54,8 @@ import type { PromoPreviewEdit } from "@/lib/promo-preview-stay-ranges";
  *   refusals of a re-rate (`GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE`,
  *   `OtherLodgeRateInProgressError`), judged on the same edit policy.
  *
- * NOT MIRRORED, and why. The quote also refuses an election on an edit whose
- * money it parks for an officer (`OtherLodgeRateAmountUnderReviewError`): that
- * needs the pre-check-in evidence of every strand the edit prices, which the
- * box does not assemble, so the box prices such an edit instead. Nor does the
- * box mirror the quote's refusal of any code change on a stay already under
+ * NOT MIRRORED, and why. The box does not mirror the quote's refusal of any
+ * code change on a stay already under
  * way (the panel hides the box there; a direct caller is answered about the
  * code), or the quote's other refusals of a whole edit (its status and date
  * windows, capacity, policy exceptions): it answers about a code, and the quote
@@ -126,6 +123,8 @@ export async function promoPreviewEditContext(params: {
           otherLodgeMember: true,
           stayStart: true,
           stayEnd: true,
+          // #4317: the stored total, which the valued locks reconcile to.
+          priceCents: true,
           nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
         },
       })
@@ -138,11 +137,12 @@ export async function promoPreviewEditContext(params: {
     consentById: new Map(rows.map((row) => [row.id, { memberId: row.memberId, consentStatus: row.consentStatus }])),
     edit: {
       booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-      storedGuests: rows.map(({ id, memberId, otherLodgeMember, stayStart, stayEnd, nights }) => ({
+      storedGuests: rows.map(({ id, memberId, otherLodgeMember, stayStart, stayEnd, priceCents, nights }) => ({
         id,
         memberId,
         stayStart,
         stayEnd,
+        priceCents,
         nights,
         otherLodgeMember: rerates.flaggedGuestIds ? rerates.flaggedGuestIds.has(id) : otherLodgeMember,
         repricedDeliberately: rerates.repriceGuestIds.has(id),

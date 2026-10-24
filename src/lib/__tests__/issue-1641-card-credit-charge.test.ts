@@ -35,6 +35,11 @@ vi.mock("@/lib/prisma", () => {
         findUnique: vi.fn(),
       },
       payment,
+      // #4300: the reuse arm asks whether a superseded-intent row names the
+      // intent; none here.
+      paymentRecoveryOperation: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
       // #3638: the mint attaches its intent under lock(1), re-reading the
       // payment's source first; nothing here has switched to Internet Banking.
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>

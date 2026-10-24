@@ -56,6 +56,10 @@ const mocks = vi.hoisted(() => ({
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroKeptLateCaptureInvoice: vi.fn(),
+  recordAdditionalCaptureReceipt: vi.fn(),
+  enqueueAdditionalCaptureReceiptOperation: vi.fn(),
+  anchorCaptureHasReceipt: vi.fn(),
+  bookingHasUnattributedCaptures: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
   syncXeroMembershipCancellationContact: vi.fn(),
   isXeroConnected: vi.fn().mockResolvedValue(false),
@@ -246,6 +250,17 @@ vi.mock("@/lib/xero-supplementary-invoices", () => ({
 }));
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
   createXeroKeptLateCaptureInvoice: mocks.createXeroKeptLateCaptureInvoice,
+}));
+vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
+  enqueueAdditionalCaptureReceiptOperation: mocks.enqueueAdditionalCaptureReceiptOperation,
+}));
+// #3953 round 6: no capture of the anchor has a receipt unless a case says so.
+vi.mock("@/lib/additional-capture-receipt-link", () => ({
+  anchorCaptureHasReceipt: (...args: unknown[]) => mocks.anchorCaptureHasReceipt(...args),
+  bookingHasUnattributedCaptures: async (...args: unknown[]) => (await mocks.bookingHasUnattributedCaptures(...args)) ?? false,
+}));
+vi.mock("@/lib/additional-capture-xero-receipt", () => ({
+  recordAdditionalCaptureReceipt: mocks.recordAdditionalCaptureReceipt,
 }));
 
 vi.mock("@/lib/xero-token-store", () => ({
@@ -841,6 +856,77 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
         },
       })
     );
+  });
+
+  it("#3953 round 6 (1a): raises the change's invoice UNPAID, decided under its anchor lock, where a capture of it already has a receipt recording it", async () => {
+    mocks.anchorCaptureHasReceipt.mockResolvedValueOnce(true);
+    await enqueueXeroSupplementaryInvoiceOperation(
+      { bookingId: "booking_1", priceDiffCents: 2500, changeFeeCents: 500, bookingModificationId: "mod_1" },
+      { createdByMemberId: "admin_1", paymentIntentId: "pi_change" },
+    );
+    expect(mocks.anchorCaptureHasReceipt).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId: "pi_change",
+    });
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.anchorCaptureHasReceipt.mock.invocationCallOrder[0]);
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ requestPayload: expect.objectContaining({ recordPayment: false }) }),
+    );
+  });
+
+  it("#3953 round 7: takes the BOOKING's key before the anchor's where the booking has a capture no change can be read from", async () => {
+    mocks.bookingHasUnattributedCaptures.mockResolvedValueOnce(true);
+    await enqueueXeroSupplementaryInvoiceOperation(
+      { bookingId: "booking_1", priceDiffCents: 2500, changeFeeCents: 500, bookingModificationId: "mod_1" },
+      { createdByMemberId: "admin_1" },
+    );
+    // Two lock statements, booking first: the one order (nothing takes them the other way round).
+    const locks = mocks.executeRaw.mock.calls.map((call) => (call as unknown[]).slice(1).join("|"));
+    expect(locks).toEqual([expect.stringContaining("booking_1"), expect.stringContaining("mod_1")]);
+    expect(mocks.anchorCaptureHasReceipt).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId: null,
+    });
+
+    mocks.executeRaw.mockClear();
+    await enqueueXeroSupplementaryInvoiceOperation(
+      { bookingId: "booking_1", priceDiffCents: 2500, changeFeeCents: 500, bookingModificationId: "mod_1" },
+      { createdByMemberId: "admin_1" },
+    );
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+
+    // Round 9: an invoice naming its capture records only that one, so it never takes the booking's key.
+    mocks.executeRaw.mockClear();
+    mocks.bookingHasUnattributedCaptures.mockResolvedValue(true);
+    await enqueueXeroSupplementaryInvoiceOperation(
+      { bookingId: "booking_1", priceDiffCents: 2500, changeFeeCents: 500, bookingModificationId: "mod_1" },
+      { createdByMemberId: "admin_1", paymentIntentId: "pi_named" },
+    );
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    mocks.bookingHasUnattributedCaptures.mockResolvedValue(undefined);
+  });
+
+  it("#3953 round 6 (1a): a #3980 gap invoice decides its own cash; an unpaid ask is never asked", async () => {
+    mocks.anchorCaptureHasReceipt.mockResolvedValue(true);
+    try {
+      await enqueueXeroSupplementaryInvoiceOperation(
+        { bookingId: "booking_1", priceDiffCents: 2500, changeFeeCents: 500, bookingModificationId: "mod_gap" },
+        { recordPayment: true, primaryInvoiceGap: { coveredCaptures: [] } },
+      );
+      expect(mocks.startXeroSyncOperation).toHaveBeenLastCalledWith(
+        expect.objectContaining({ requestPayload: expect.objectContaining({ recordPayment: true, primaryInvoiceGap: true }) }),
+      );
+      mocks.anchorCaptureHasReceipt.mockClear();
+      await enqueueXeroSupplementaryInvoiceOperation(
+        { bookingId: "booking_1", priceDiffCents: 2500, changeFeeCents: 500, bookingModificationId: "mod_unpaid" },
+        { recordPayment: false },
+      );
+      expect(mocks.anchorCaptureHasReceipt).not.toHaveBeenCalled();
+    } finally {
+      mocks.anchorCaptureHasReceipt.mockResolvedValue(false);
+    }
   });
 
   // #1356 (F16): mixed-sign components stay signed through the queue so the
@@ -2273,9 +2359,10 @@ describe("processQueuedXeroOutboxOperations", () => {
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
       // #3954 round 8: a note waiting for its edit's own note is spaced out.
-      AND: [expect.objectContaining({ OR: expect.any(Array) })],
+      // #3954 round 8 and #3953 round 3: rows waiting their turn are spaced out.
+      AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })],
     });
-    expect(args.where.queueType.in).toHaveLength(17);
+    expect(args.where.queueType.in).toHaveLength(18);
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -2382,6 +2469,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
   it("MUTATION (#3954 round 8): a billed-offset note waiting for its edit's own note is requeued under its wait code, and the scan spaces it out", async () => {
     const { BILLED_OFFSET_AWAITING_OWN_NOTE_CODE, BILLED_OFFSET_OWN_NOTE_RECHECK_MS } = await import("@/lib/unpaid-ask-billed-offset-order");
+    const { ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS, ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE } = await import("@/lib/additional-capture-receipt-gate");
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_dealloc_waiting",
@@ -2410,6 +2498,14 @@ describe("processQueuedXeroOutboxOperations", () => {
           { lastErrorCode: null },
           { lastErrorCode: { not: BILLED_OFFSET_AWAITING_OWN_NOTE_CODE } },
           { updatedAt: { lte: new Date(Date.now() - BILLED_OFFSET_OWN_NOTE_RECHECK_MS) } },
+        ],
+      },
+      // #3953 round 3: a change capture's receipt waiting its turn is spaced the same way.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS) } },
         ],
       },
     ]);
@@ -3413,6 +3509,23 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createXeroKeptLateCaptureInvoice,
     },
+    // #3953: a change's card capture nothing waited on, anchored on its ledger row.
+    ADDITIONAL_CAPTURE_RECEIPT: {
+      op: {
+        id: "op_additional_capture_receipt_1",
+        localId: "ptx_additional_1",
+        localModel: "PaymentTransaction",
+        createdByMemberId: null,
+        requestPayload: {
+          queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+          bookingId: "booking_1",
+          paymentId: "payment_1",
+          paymentTransactionId: "ptx_additional_1",
+          paymentIntentId: "pi_additional",
+        },
+      },
+      handler: mocks.recordAdditionalCaptureReceipt,
+    },
   };
 
   beforeEach(() => {
@@ -4268,6 +4381,9 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     mocks.findFirstRecoveryOperation.mockReset();
     mocks.findFirstRecoveryOperation.mockResolvedValue(null);
     mocks.findUniqueManualRefundTask.mockReset();
+    // #3953: a booking with no primary Xero invoice queues no receipt either.
+    mocks.enqueueAdditionalCaptureReceiptOperation.mockReset();
+    mocks.enqueueAdditionalCaptureReceiptOperation.mockResolvedValue({ outcome: "not-eligible", reason: "no-primary-invoice" });
   });
 
   const writeWith = (predicate: (data: Record<string, unknown>) => boolean) =>
@@ -4382,6 +4498,43 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
       queueOperationIds: ["op_retired"],
       outcome: "requeued",
     });
+  });
+
+  it("MUTATION #3953 round 8: revives the invoice UNPAID, deciding under the anchor lock, where the capture's own receipt records it", async () => {
+    retired = [retiredOperation()];
+    mocks.findFirstPaymentTransaction.mockResolvedValue({
+      status: "SUCCEEDED",
+      amountCents: 12000,
+      payment: { bookingId: "booking_1", booking: { status: "CONFIRMED" } },
+    });
+    mocks.anchorCaptureHasReceipt.mockResolvedValueOnce(true);
+
+    const result = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.anchorCaptureHasReceipt).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId: "pi_late",
+    });
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.anchorCaptureHasReceipt.mock.invocationCallOrder[0]!);
+    expect(reviveCalls()).toEqual([
+      {
+        where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+        data: expect.objectContaining({
+          status: "PENDING",
+          requestPayload: { ...payload(12000), recordPayment: false },
+        }),
+      },
+    ]);
+    expect(result.outcome).toBe("requeued");
+
+    // Control: with no receipt recording it, the payload is left as it was.
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.anchorCaptureHasReceipt.mockResolvedValueOnce(false);
+    await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+    expect(reviveCalls()).toHaveLength(1);
+    expect(reviveCalls()[0]!.data).not.toHaveProperty("requestPayload");
   });
 
   it("revives only the row billing the most of a raised ask ($100 then $130), and stamps the other covered", async () => {
@@ -4767,6 +4920,33 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
       expect(result).toEqual({ released: 0, queueOperationIds: [], outcome });
     },
   );
+
+  it("#3953: with nothing parked, queues the capture's own receipt once, counted so every caller kicks the outbox", async () => {
+    mocks.countOperations.mockResolvedValue(0);
+    mocks.enqueueAdditionalCaptureReceiptOperation.mockResolvedValueOnce({
+      outcome: "queued",
+      queueOperationId: "op_receipt",
+    });
+
+    const first = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.enqueueAdditionalCaptureReceiptOperation).toHaveBeenCalledWith("pi_late");
+    expect(first).toEqual({ released: 1, queueOperationIds: ["op_receipt"], outcome: "receipt-queued" });
+
+    // The confirm route or a replay finds that row: nothing more to kick.
+    mocks.enqueueAdditionalCaptureReceiptOperation.mockResolvedValueOnce({
+      outcome: "already-queued",
+      queueOperationId: "op_receipt",
+    });
+    const replay = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+    expect(replay).toEqual({ released: 0, queueOperationIds: [], outcome: "already-released" });
+  });
+
+  it("#3953: never queues a receipt where an invoice was released for the capture, or for a refunded one", async () => {
+    mocks.countOperations.mockResolvedValue(1);
+    await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+    expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+  });
 });
 
 /**

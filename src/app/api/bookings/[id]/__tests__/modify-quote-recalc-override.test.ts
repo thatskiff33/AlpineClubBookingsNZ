@@ -98,7 +98,6 @@ vi.mock("@/lib/booking-modify", () => ({
   isMemberWholeLodgeBooking: vi.fn().mockResolvedValue(false),
   resolveGuestMemberLinks: vi.fn().mockReturnValue([]),
   resolveGuestNameUpdates: vi.fn().mockReturnValue([]),
-  lockedNightPricesForGuest: vi.fn().mockReturnValue(null),
   // #3531: the route reaches the reader through this wrapper; the null it
   // answers is exactly what the reader stub above answers.
   editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: null }),

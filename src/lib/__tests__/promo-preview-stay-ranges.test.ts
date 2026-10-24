@@ -22,14 +22,27 @@ const storedGuests = [
     memberId: "booker",
     stayStart: d("2026-08-10"),
     stayEnd: d("2026-08-13"),
-    nights: ["2026-08-10", "2026-08-11", "2026-08-12"].map((night) => ({ stayDate: d(night) })),
+    // #4317: a stored guest carries its total and each night its price and
+    // provenance; three nights at $40 add up to the $120 total (R1).
+    priceCents: 12000,
+    nights: ["2026-08-10", "2026-08-11", "2026-08-12"].map((night) => ({
+      stayDate: d(night),
+      priceCents: 4000,
+      priceSource: "SOLD" as const,
+    })),
   },
   {
     id: "bg-gap",
     memberId: null,
     stayStart: d("2026-08-10"),
     stayEnd: d("2026-08-13"),
-    nights: ["2026-08-10", "2026-08-12"].map((night) => ({ stayDate: d(night) })),
+    // Two held nights at $40 add up to the $80 total (R1).
+    priceCents: 8000,
+    nights: ["2026-08-10", "2026-08-12"].map((night) => ({
+      stayDate: d(night),
+      priceCents: 4000,
+      priceSource: "SOLD" as const,
+    })),
   },
 ];
 const BOOKER = { memberId: "booker", bookingGuestId: "bg-full" };
@@ -151,12 +164,14 @@ describe("a create preview normalises each guest on their own", () => {
  */
 describe("an edit preview carries each remaining guest's sold prices (#4202)", () => {
   const SOLD = 4000;
+  const ODD_TOTAL = 8000;
   const soldGuests = [
     {
       id: "bg-sold",
       memberId: "booker",
       stayStart: d("2026-08-10"),
       stayEnd: d("2026-08-13"),
+      priceCents: SOLD * 3,
       nights: ["2026-08-10", "2026-08-11", "2026-08-12"].map((night) => ({
         stayDate: d(night),
         priceCents: SOLD,
@@ -168,8 +183,10 @@ describe("an edit preview carries each remaining guest's sold prices (#4202)", (
       memberId: null,
       stayStart: d("2026-08-10"),
       stayEnd: d("2026-08-12"),
+      priceCents: ODD_TOTAL,
       // A night with no known sold price and one that cannot be money: neither
-      // is a lock, so both price at current rates (the reader's lenient rule).
+      // row is usable, so each night takes its share of the stored total (R2,
+      // #4317 / INV-MOD-028) rather than today's rate.
       nights: [
         { stayDate: d("2026-08-10"), priceCents: null, priceSource: "SOLD" as const },
         { stayDate: d("2026-08-11"), priceCents: -1, priceSource: "SOLD" as const },
@@ -197,9 +214,14 @@ describe("an edit preview carries each remaining guest's sold prices (#4202)", (
     ]);
   });
 
-  it("a night with no usable sold price is not locked", () => {
+  it("a night with no usable sold price is locked at its share of the stored total (#4317)", () => {
     const resolved = resolveSold([{ bookingGuestId: "bg-odd", stayStart: "2026-08-10", stayEnd: "2026-08-12" }]);
-    expect(resolved.guests[0]!.lockedNightPrices).toEqual([]);
+    // R2: $80 stored, no usable rows ($0 kept), so the $80 splits over the two
+    // unvalued nights: $40 each. Before #4317 these nights were not locked.
+    expect(lockKeys(resolved.guests[0]!.lockedNightPrices)).toEqual([
+      ["2026-08-10", 4000],
+      ["2026-08-11", 4000],
+    ]);
   });
 
   it("an added guest, and a row named beside a different member, carry no locks", () => {

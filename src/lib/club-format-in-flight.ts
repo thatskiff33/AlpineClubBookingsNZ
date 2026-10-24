@@ -7,6 +7,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { SAVED_CARD_CHARGE_KEY_PREFIX } from "@/lib/saved-card-charge-attempt";
@@ -68,7 +69,7 @@ export async function countInFlightCardPayments(): Promise<ClubFormatInFlightCar
         prisma.paymentTransaction.count({
           where: {
             source: PaymentSource.STRIPE,
-            status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+            status: { in: [...OPEN_INTENT_TRANSACTION_STATUS_LIST] },
             stripePaymentIntentId: { not: null },
             amountCents: { gt: 0 },
           },

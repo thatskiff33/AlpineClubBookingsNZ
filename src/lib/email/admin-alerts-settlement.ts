@@ -7,6 +7,8 @@
 import { adminSecondInstrumentSettlementConflictTemplate } from "@/lib/email-templates/admin-finance";
 import { adminBankTransferSettlementFigureTemplate } from "@/lib/email-templates/admin-bank-transfer-settlement";
 import { adminDuplicateCaptureKeptTemplate } from "@/lib/email-templates/admin-duplicate-capture-kept";
+import { adminSupersededCaptureRefusedTemplate } from "@/lib/email-templates/admin-superseded-capture-refused";
+import { supersededCaptureRefusedAction, supersededCaptureRefusedParagraph } from "@/lib/superseded-capture-refused-note";
 import {
   duplicateCaptureKeptAction,
   duplicateCaptureKeptParagraph,
@@ -207,6 +209,51 @@ export async function sendAdminDuplicateCaptureKeptAlert(data: {
       // What to do differs too: with nothing else holding money this payment
       // may be the one paying for the booking (#4211 review).
       duplicateCaptureKeptAction: duplicateCaptureKeptAction({ otherHoldsMoney: data.otherHoldsMoney }),
+    },
+    requirement: { area: "finance", level: "edit" },
+  });
+}
+
+/**
+ * #4300 (`INV-PAY-138`): the settle refused a card capture the superseded
+ * machinery owns. It first shipped as the generic "Payment Failed" mail, which
+ * misdescribed it and could be muted; now its own template, through
+ * `sendUnmuteableAdminAlert` and delivery-locked, for whoever can edit finance.
+ * Throttled by the caller (`reportSupersededCaptureRefused`).
+ */
+export async function sendAdminSupersededCaptureRefusedAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  bookingId: string;
+  bookingCancelled: boolean;
+  amountCents: number;
+  paymentIntentId: string;
+},
+  format: ClubFormat,
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/payments`;
+  const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
+
+  await sendUnmuteableAdminAlert({
+    subject: `Card payment on a replaced payment — not applied: ${data.memberName}`,
+    html: await renderEmailHtml(() =>
+      adminSupersededCaptureRefusedTemplate({ ...data, bookingUrl, reviewUrl }, format),
+    ),
+    templateName: "admin-superseded-capture-refused",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
+      bookingId: data.bookingId,
+      amount: formatMoneyCents(data.amountCents, format),
+      paymentIntentId: data.paymentIntentId,
+      bookingUrl,
+      reviewUrl,
+      // The same sentences the hand-built HTML renders (#2268 convention).
+      supersededCaptureNote: supersededCaptureRefusedParagraph({ bookingCancelled: data.bookingCancelled }),
+      supersededCaptureAction: supersededCaptureRefusedAction({ bookingCancelled: data.bookingCancelled }),
     },
     requirement: { area: "finance", level: "edit" },
   });

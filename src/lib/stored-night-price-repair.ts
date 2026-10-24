@@ -39,8 +39,8 @@ import type { ClubFormat } from "@/lib/club-format";
  *  2. **The typed nights must reconcile.** A strand is exactly priced when every
  *     night it holds carries usable integer cents and those sum to
  *     `BookingGuest.priceCents` (`INV-MOD-028`). A repair that does not satisfy
- *     that leaves the strand inexact, so the booking parks again on the next
- *     edit and the officer's typing bought nothing. The settlement is what moves
+ *     that leaves the strand inexact, which before #4317 parked the booking
+ *     again on its next edit, so the officer's typing bought nothing. The settlement is what moves
  *     what the strand is worth: the officer's figures must come to the stored
  *     total plus or minus exactly the amount being settled. That is the
  *     "reconcile to the agreed total" #3191 asks for, stated as arithmetic a
@@ -307,18 +307,9 @@ export const NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE =
 /**
  * WHAT THE CONTROL IS CALLED, in one place (#3214, `INV-SSOT`).
  *
- * Two production strings say this name and they have to agree: the button
- * itself, on the booking's Admin tools card, and
- * `OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE` in
- * `booking-other-lodge-rate.ts`, whose refusal sends the officer to find the
- * control BY NAME. A rename that
- * moved only one of them would send them hunting for a control that does not
- * exist - which is the exact failure that message was rewritten to fix, so it
- * is not a hypothetical drift. Interpolated into the message rather than typed
- * into it, so the two cannot disagree.
- *
- * This module is the client-safe home both sites already import, which is why
- * the name lives here rather than beside either of them.
+ * The button on the booking's Admin tools card reads it from here. Until #4317
+ * an other-lodge refusal named the control too; that refusal is gone, and the
+ * control itself is retired by wave C (D6).
  */
 export const STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL =
   "Record what these nights sold for";

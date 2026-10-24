@@ -573,8 +573,10 @@ async function syncEditReviewChargeRequestUnderClaim(
       // landing between the check above and this re-read still mints nothing.
       // The sync then reports `not-raised`, and the replay of the recovery row
       // below takes the cancelled path (`closeCancelledEditReviewChargeReplay`),
-      // which records the share as uncollected. One landing after this re-read
-      // is not caught: nothing locks the booking across the provider call.
+      // which records the share as uncollected. #4316: one landing after this
+      // re-read is caught by the minter, which re-reads the booking before the
+      // provider call and after its row write, retires what it minted and
+      // returns no intent id - so this sync takes that same `not-raised` path.
       hasSucceededPayment: canAskCardForReviewCharge({
         status: payment?.booking.status ?? "",
         payment,

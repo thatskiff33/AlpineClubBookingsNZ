@@ -11,6 +11,7 @@ import {
   loadModificationLinesAuditFields,
   modificationLinesAuditFields,
   parseModificationLines,
+  pricingSideFromStoredGuests,
   renderModificationLineDescription,
   renderModificationLineWithAmount,
   sumModificationLines,
@@ -315,22 +316,19 @@ describe("diffBookingPricing", () => {
     expect(diffBookingPricing(side([]), afterNull, 0)).toEqual({ kind: "none", reason: "UNPRICED_NIGHT" });
   });
 
-  it("a before-night whose stored price is not exact provenance yields no lines", () => {
-    // An EVEN_SPLIT row sums to the strand's total but was never THIS night's
-    // price; diffing it against an exactly-priced after set would print a
-    // reprice that never happened.
+  it("an EVEN_SPLIT before-night is itemised at its figure, like any other (#4317, INV-MOD-028)", () => {
+    // Until #4317 an EVEN_SPLIT row stored no lines, because it was "never this
+    // night's price". Under D1 a row that reconciles IS the night's value, and
+    // the edit credited exactly that figure, so the line names it: two $80
+    // nights given back, two at $70 and $90 bought, and the delta is $0.
     const before = side([guest("a", { nights: nights("2026-08-14", [8000, 8000], "EVEN_SPLIT") })]);
     const after = side([{ ...guest("a"), nights: afterNights("2026-08-14", [7000, 9000]) }]);
 
-    expect(diffBookingPricing(before, after, 0)).toEqual({
-      kind: "none",
-      reason: "INEXACT_STORED_NIGHT_PRICE",
-    });
+    const lines = linesOf(diffBookingPricing(before, after, 0));
+    expect(lines.map((line) => line.amountCents)).toEqual([-16000, 7000, 9000]);
   });
 
-  it("an inexact before-night that CANCELS needs no provenance; one that leaves a line does (#3531 3a)", () => {
-    // Guest a is untouched with EVEN_SPLIT rows (kept at the same price and
-    // category, so no line names them); guest b is removed with SOLD rows.
+  it("an EVEN_SPLIT guest who is removed is itemised at their rows, and one kept cancels (#4317)", () => {
     const before = side([
       guest("a", { nights: nights("2026-08-14", [8000, 8000], "EVEN_SPLIT") }),
       guest("b"),
@@ -340,15 +338,17 @@ describe("diffBookingPricing", () => {
     expect(lines.map((line) => renderModificationLineDescription(line, CLUB_FORMAT_TEST))).toEqual([
       "1 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026",
     ]);
-    // The same untouched guest, but this time its nights are the ones going:
-    // the line would name an even-split figure as a sold price, so no lines.
+    // The same evenly-split guest removed: their $160 is credited as two $80
+    // nights, which is exactly what the edit gave back.
     expect(
-      diffBookingPricing(
-        side([guest("a", { nights: nights("2026-08-14", [8000, 8000], "EVEN_SPLIT") })]),
-        side([]),
-        -16000,
-      ),
-    ).toEqual({ kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" });
+      linesOf(
+        diffBookingPricing(
+          side([guest("a", { nights: nights("2026-08-14", [8000, 8000], "EVEN_SPLIT") })]),
+          side([]),
+          -16000,
+        ),
+      ).map((line) => line.amountCents),
+    ).toEqual([-16000]);
   });
 
   it("POSTCONDITION: lines that do not sum to the caller's delta are not returned", () => {
@@ -579,5 +579,67 @@ describe("computeModificationPriceLines never fails the edit", () => {
     expect(lines).toHaveLength(1);
     expect(sumModificationLines(lines ?? [])).toBe(8000);
     expect(log.info).not.toHaveBeenCalled();
+  });
+});
+
+describe("pricingSideFromStoredGuests values the before side (#4317, INV-MOD-028)", () => {
+  const stored = (overrides: { priceCents: number } & Record<string, unknown>) => ({
+    id: "g1",
+    firstName: "Guest",
+    lastName: "One",
+    ageTier: "ADULT" as const,
+    isMember: false,
+    rateMembershipTypeId: "rate-non-member",
+    stayStart: day("2026-08-14"),
+    stayEnd: day("2026-08-17"),
+    ...overrides,
+  });
+
+  it("R2: a blank night carries what the stored total has left, so the side has no unpriced night", () => {
+    // Rows $100, $100, blank against a stored $240: the blank is worth $40.
+    const guestSide = pricingSideFromStoredGuests(
+      [
+        stored({
+          priceCents: 24000,
+          nights: [
+            { stayDate: day("2026-08-14"), priceCents: 10000, priceSource: "SOLD" },
+            { stayDate: day("2026-08-15"), priceCents: 10000, priceSource: "SOLD" },
+            { stayDate: day("2026-08-16"), priceCents: null, priceSource: "UNKNOWN" },
+          ],
+        }),
+      ],
+      { promoAdjustmentCents: 0 },
+    );
+    expect(guestSide.guests[0]!.nights.map((night) => night.priceCents)).toEqual([
+      10000, 10000, 4000,
+    ]);
+    expect(guestSide.guests[0]!.nights[2]!.priceSource).toBe("EVEN_SPLIT");
+  });
+
+  it("a guest with no rows is valued over its stay envelope (R2)", () => {
+    const guestSide = pricingSideFromStoredGuests(
+      [stored({ priceCents: 9000, nights: [] })],
+      { promoAdjustmentCents: 0 },
+    );
+    expect(guestSide.guests[0]!.nights.map((night) => night.priceCents)).toEqual([
+      3000, 3000, 3000,
+    ]);
+  });
+
+  it("D11: a negative stored total is valued at $0 a night", () => {
+    const guestSide = pricingSideFromStoredGuests(
+      [
+        stored({
+          priceCents: -300,
+          nights: [
+            { stayDate: day("2026-08-14"), priceCents: -100, priceSource: "EVEN_SPLIT" },
+            { stayDate: day("2026-08-15"), priceCents: -100, priceSource: "EVEN_SPLIT" },
+            { stayDate: day("2026-08-16"), priceCents: -100, priceSource: "EVEN_SPLIT" },
+          ],
+        }),
+      ],
+      { promoAdjustmentCents: 0 },
+    );
+    expect(guestSide.guests[0]!.nights.map((night) => night.priceCents)).toEqual([0, 0, 0]);
   });
 });

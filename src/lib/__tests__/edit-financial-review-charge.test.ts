@@ -3009,6 +3009,18 @@ describe("#4272: a review charge on a cancelled booking is refused", () => {
     expectNothingWritten();
   });
 
+  // #4316 (`INV-ADDPAY-044`): a BUMPED booking has ended too, and the sentence names it.
+  it("refuses a bumped booking with the ended-booking sentence, before the claim", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(cancelledTask({ status: "BUMPED" }));
+
+    await expect(charge()).rejects.toMatchObject({
+      status: 409,
+      message: REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE,
+    });
+    expect(REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE).toContain("has ended (cancelled or bumped)");
+    expectNothingWritten();
+  });
+
   it("refuses a cancelled booking whose edit already has an open card request, raising nothing", async () => {
     // A second share of an edit whose first share was asked by card before the
     // cancellation: raising that request would ask again on the cancelled booking.
@@ -3451,6 +3463,8 @@ describe("canAskCardForReviewCharge (#3947)", () => {
     // ...but never for a cancelled one (#4272).
     ["refuses: a cancelled booking with money captured on a card", "CANCELLED", payment({ amountCents: 15000 }), false],
     ["refuses: a cancelled credit-paid booking", "CANCELLED", payment(), false],
+    // #4316: a bumped one retires every ask too.
+    ["refuses: a bumped booking with money captured on a card", "BUMPED", payment({ amountCents: 15000 }), false],
     ["refuses: a settled $0 internet-banking payment", "PAID", payment({ source: PaymentSource.INTERNET_BANKING }), false],
     ["refuses: a settled booking whose card payment never captured", "PAYMENT_PENDING", payment({ status: "PENDING" }), false],
   ])("%s", (_label, status, row, expected) => {
@@ -3463,6 +3477,7 @@ describe("canAskCardForReviewCharge (#3947)", () => {
 
   it.each([
     ["CANCELLED", true],
+    ["BUMPED", true],
     ["PAID", false],
     ["CONFIRMED", false],
     ["AWAITING_REVIEW", false],

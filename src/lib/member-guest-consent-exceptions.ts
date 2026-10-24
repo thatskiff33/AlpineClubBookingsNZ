@@ -207,11 +207,10 @@ export function describeConsentExceptionColumns(params: {
  * #3031 gave `removeBookingGuestInTransaction` an evidence gate (INV-MOD-028)
  * that this prediction cannot see — it would need every guest's stored night
  * rows — and exempted a consent-authority removal from it so a declining member
- * was never trapped. #3032 discharged that: the gate no longer REFUSES anything.
- * An unpriceable removal commits and parks its money as a review task, so the
- * exemption was removed from the evidence gate as having nothing left to exempt
- * from, and the gate cannot be why one of these rows is stuck because it turns
- * nobody away.
+ * was never trapped. #3032 discharged that: the gate stopped REFUSING anything,
+ * and an unpriceable removal parked its money as a review task instead. #4317
+ * removed the gate altogether - every removal is priced from stored data - so
+ * it cannot be why one of these rows is stuck.
  *
  * WHAT COULD STILL MAKE THIS CLASSIFIER STALE is the pending-review FENCE, and a
  * consent removal is still exempt from THAT (owner decision D-14,

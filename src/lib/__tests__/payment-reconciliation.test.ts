@@ -78,6 +78,15 @@ const cancellationLedger = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
+// #4300 (`INV-PAY-138`): the settle's superseded-capture refusal reads the
+// superseded machinery's rows, which this suite's transaction double does not
+// model; nothing here is superseded. Pinned by issue-1992-duplicate-capture-refund
+// and superseded-capture-ownership, and on PostgreSQL by superseded-intent-card-doors.
+vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
+  supersededMachineryOwnsCapture: async () => false,
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => mocks.transaction(...args),

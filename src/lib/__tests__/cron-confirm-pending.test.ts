@@ -35,6 +35,23 @@ const mockCancelPaymentIntentIfCancellableWithResult = vi.fn();
 const cancellationLedger = vi.hoisted(() => ({
   postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
 }));
+// #4300 (`INV-PAY-138`): step (b) asks whether the superseded machinery owns a
+// captured row, and where its refund stands; nothing here is superseded unless
+// a case says so (`supersededDoor.owned`, no refund started).
+const supersededDoor = vi.hoisted(() => ({ owned: new Set<string>(), handOff: vi.fn() }));
+vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
+  readSupersededOwnership: async () => ({
+    holdsForMember: new Set<string>(),
+    owns: async (intent: string) => supersededDoor.owned.has(intent),
+    refundState: () => "not_started",
+  }),
+}));
+vi.mock("@/lib/superseded-paid-intent", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-paid-intent")),
+  handOffSupersededCaptureAfterRefusal: supersededDoor.handOff,
+}));
+
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
 vi.mock("../stripe", () => ({
@@ -3046,6 +3063,23 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
     });
 
+    it("#4300: a charge the settle refuses as superseded counts as failed: no confirmation, no invoice", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([]);
+      mockMarkBookingPaymentSucceeded.mockResolvedValue({ outcome: "superseded_capture", bookingId: "child_1", bumpedBookingIds: [] });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toHaveLength(0);
+      expect(result.failedBookingIds).toEqual(["child_1"]);
+      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+      // The money is going back, so the claim is released for the next run.
+      expect(
+        mockBookingUpdateMany.mock.calls.some(([call]) => call?.where?.status === "CONFIRMED" && call?.data?.status === "PENDING"),
+      ).toBe(true);
+    });
+
     it("tolerates a cancel API error (best-effort): logged, charge proceeds, booking confirms", async () => {
       primeChargeableSplitChild();
       mockPaymentTransactionFindMany.mockResolvedValue([
@@ -3525,6 +3559,21 @@ describe("Cron: Confirm Pending Bookings", () => {
         }),
         CLUB_FORMAT_TEST,
       );
+    });
+
+    it("#4300: a superseded capture with no refund started refuses, charges nothing, and is handed off after the rollback", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      primeCapturedRow(1 * HOUR);
+      supersededDoor.owned.add("pi_paid");
+      try {
+        const result = await confirmPendingBookings();
+        expect(result.failedBookingIds).toEqual(["b1"]);
+        expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+        expect(supersededDoor.handOff).toHaveBeenCalledWith(expect.objectContaining({ why: "superseded_capture_returning", paymentIntentId: "pi_paid", supersededIntentsToHandOff: ["pi_paid"] }));
+      } finally {
+        supersededDoor.owned.clear();
+      }
     });
 
     describe("the refusal alert follows the #1993 cadence, once per window, anchored on when the cron could FIRST have observed the refusal (#3267 fix round 2)", () => {

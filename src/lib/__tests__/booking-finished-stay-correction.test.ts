@@ -4,7 +4,6 @@ import {
   classifyFinishedStayChangeFeeRule,
   defaultCorrectionSettlementMethod,
   FINISHED_STAY_INVOICE_RAISED_MESSAGE,
-  FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE,
   finishedStayNoticeDay,
   finishedStayRemovalFeeCents,
   finishedStayRemovedPortion,
@@ -233,7 +232,7 @@ describe("resolveTargetDates — finished-stay correction window (#3750)", () =>
 describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () => {
   const NO_PROMO: RemovalPromoRows = { byNight: new Map(), byGuest: new Map() };
   const nights = (dates: string[], cents: number) =>
-    dates.map((date) => ({ stayDate: day(date), priceCents: cents }));
+    dates.map((date) => ({ stayDate: day(date), priceCents: cents, priceSource: "SOLD" as const }));
   const guest = (id: string, dates: string[], cents = 4_000) => ({
     id,
     priceCents: dates.length * cents,
@@ -242,13 +241,14 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
     nights: nights(dates, cents),
   });
   const FULL = ["2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13"];
+  const RANGE = { checkIn: day("2026-06-10"), checkOut: day("2026-06-14") };
 
   it("counts a removed guest's every night", () => {
     expect(
       finishedStayRemovedPortion({
         storedGuests: [guest("g1", FULL), guest("g2", FULL)],
         keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-14") }]]),
-        booking: { totalPriceCents: 32_000, promoAdjustmentCents: 0 },
+        booking: { ...RANGE, totalPriceCents: 32_000, promoAdjustmentCents: 0 },
         promoRows: NO_PROMO,
       }),
     ).toEqual({ grossCents: 16_000, netCents: 16_000 });
@@ -259,7 +259,7 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
       finishedStayRemovedPortion({
         storedGuests: [guest("g1", FULL)],
         keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
-        booking: { totalPriceCents: 16_000, promoAdjustmentCents: 0 },
+        booking: { ...RANGE, totalPriceCents: 16_000, promoAdjustmentCents: 0 },
         promoRows: NO_PROMO,
       }),
     ).toEqual({ grossCents: 8_000, netCents: 8_000 });
@@ -278,7 +278,7 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
       finishedStayRemovedPortion({
         storedGuests: [guest("g1", ["2026-06-10", "2026-06-11"]), guest("g2", ["2026-06-10", "2026-06-11"])],
         keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
-        booking: { totalPriceCents: 16_000, promoAdjustmentCents: -2_500 },
+        booking: { ...RANGE, totalPriceCents: 16_000, promoAdjustmentCents: -2_500 },
         promoRows,
       }),
     ).toEqual({ grossCents: 8_000, netCents: 6_000 });
@@ -289,23 +289,64 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
       finishedStayRemovedPortion({
         storedGuests: [guest("g1", ["2026-06-10", "2026-06-11"]), guest("g2", ["2026-06-10", "2026-06-11"])],
         keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
-        booking: { totalPriceCents: 16_000, promoAdjustmentCents: -4_000 },
+        booking: { ...RANGE, totalPriceCents: 16_000, promoAdjustmentCents: -4_000 },
         promoRows: NO_PROMO,
       }),
     ).toEqual({ grossCents: 8_000, netCents: 6_000 });
   });
 
-  it("refuses to value a removed night whose price is not known", () => {
-    expect(() =>
+  it("values a trimmed night with no recorded price from the guest's stored total, rather than refusing (#4317 M1)", () => {
+    // $120 stored over three nights: the 10th sold at $40, the 11th and 12th
+    // blank. R2 values each blank at $40 (what the $120 leaves), so dropping the
+    // 12th removes $40. Before #4317 review M1 this refused the correction.
+    expect(
       finishedStayRemovedPortion({
         storedGuests: [
-          { ...guest("g1", ["2026-06-10"]), nights: [{ stayDate: day("2026-06-10"), priceCents: null }] },
+          {
+            ...guest("g1", ["2026-06-10", "2026-06-11", "2026-06-12"]),
+            nights: [
+              { stayDate: day("2026-06-10"), priceCents: 4_000, priceSource: "SOLD" as const },
+              { stayDate: day("2026-06-11"), priceCents: null, priceSource: "UNKNOWN" as const },
+              { stayDate: day("2026-06-12"), priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
         ],
-        keptStays: new Map(),
-        booking: { totalPriceCents: 4_000, promoAdjustmentCents: 0 },
+        keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
+        booking: { ...RANGE, totalPriceCents: 12_000, promoAdjustmentCents: 0 },
         promoRows: NO_PROMO,
       }),
-    ).toThrow(FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE);
+    ).toEqual({ grossCents: 4_000, netCents: 4_000 });
+  });
+
+  it("values a trimmed night of a strand whose rows do not add up by the even split (R3)", () => {
+    // Rows of $40 x 3 against a stored $150.01: R3 splits the total, the extra
+    // cent on the earliest night, so the 12th is worth $50.00.
+    expect(
+      finishedStayRemovedPortion({
+        storedGuests: [{ ...guest("g1", ["2026-06-10", "2026-06-11", "2026-06-12"]), priceCents: 15_001 }],
+        keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
+        booking: { ...RANGE, totalPriceCents: 15_001, promoAdjustmentCents: 0 },
+        promoRows: NO_PROMO,
+      }),
+    ).toEqual({ grossCents: 5_000, netCents: 5_000 });
+  });
+
+  it("credits a removed guest its whole stored total, even with blank or missing rows (T2)", () => {
+    expect(
+      finishedStayRemovedPortion({
+        storedGuests: [
+          {
+            ...guest("g1", ["2026-06-10", "2026-06-11"]),
+            priceCents: 9_000,
+            nights: [{ stayDate: day("2026-06-10"), priceCents: null, priceSource: "UNKNOWN" as const }],
+          },
+          { id: "g2", priceCents: 7_000, stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") },
+        ],
+        keptStays: new Map(),
+        booking: { ...RANGE, totalPriceCents: 16_000, promoAdjustmentCents: 0 },
+        promoRows: NO_PROMO,
+      }),
+    ).toEqual({ grossCents: 16_000, netCents: 16_000 });
   });
 
   it("defaults the refund to the way the booking was paid", () => {

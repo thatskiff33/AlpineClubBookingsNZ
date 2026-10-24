@@ -108,38 +108,39 @@ describe("INV-SSOT-001: one home for a booking's final-price relation", () => {
     ).toEqual([]);
   });
 
-  it("the parked-branch ternaries still write the booking's stored figure back", () => {
-    // Each of these composes the two halves the helper must NOT swallow: one
-    // branch calls `bookingFinalPriceCents`, the other hands back
-    // `booking.finalPriceCents` as stored. A sweep that "finished the job" by
-    // converting the second half would make `priceDiffCents` non-zero on a
-    // parked edit, which is the whole reason those branches exist.
-    const parkedTernaries = [
+  it("every edit door computes its new final price through the helper, with no parked branch left (#4317)", () => {
+    // These four doors used to compose two halves: one branch called
+    // `bookingFinalPriceCents`, the other wrote `booking.finalPriceCents` back
+    // as stored for a parked edit (#3260). #4317 prices every edit, so the
+    // parked half is gone and the helper is the whole expression. A stored
+    // figure written back here now would be an edit that moved no money it
+    // priced.
+    const editDoors = [
       "app/api/bookings/[id]/guests/route.ts",
       "lib/booking-batch-modification-service.ts",
       "lib/booking-date-modification-service.ts",
       "lib/booking-guest-removal-service.ts",
     ];
-    for (const rel of parkedTernaries) {
+    for (const rel of editDoors) {
       const code = stripCommentsAndStrings(
         readFileSync(join(SRC_ROOT, rel), "utf8"),
       );
-      const ternary = new RegExp(
-        String.raw`newFinalPriceCents\s*=\s*[^;]*\?[^;]*:[^;]*;`,
+      const assignment = new RegExp(
+        String.raw`newFinalPriceCents\s*=\s*[^;]*;`,
       ).exec(code);
       expect(
-        ternary,
-        `src/${rel} no longer computes newFinalPriceCents through a ternary; the parked branch must still exist (INV-SSOT-001, #3260)`,
+        assignment,
+        `src/${rel} no longer assigns newFinalPriceCents (INV-SSOT-001)`,
       ).not.toBeNull();
-      const expression = ternary![0];
-      expect(
-        expression.includes("booking.finalPriceCents"),
-        `src/${rel} must still write the booking's STORED finalPriceCents on its parked branch — see src/lib/booking-final-price.ts (#3260)`,
-      ).toBe(true);
+      const expression = assignment![0];
       expect(
         expression.includes("bookingFinalPriceCents("),
-        `src/${rel} must compute its other branch through bookingFinalPriceCents (INV-SSOT-001, #3260)`,
+        `src/${rel} must compute newFinalPriceCents through bookingFinalPriceCents (INV-SSOT-001)`,
       ).toBe(true);
+      expect(
+        expression.includes("booking.finalPriceCents"),
+        `src/${rel} writes the booking's STORED finalPriceCents back; no edit parks since #4317 (INV-MOD-028)`,
+      ).toBe(false);
     }
   });
 });

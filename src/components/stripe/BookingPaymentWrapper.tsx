@@ -9,6 +9,8 @@ import SetupForm from "./SetupForm";
 import { capacityCancellationRecovery } from "@/lib/booking-card-refund-copy";
 import { useClubFormat } from "@/components/club-format-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { Button } from "@/components/ui/button";
+import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isCreditElectionNotApplied,
@@ -17,9 +19,11 @@ import {
   isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   isRefundedCardTransactionRepaymentRequired,
+  isSupersededCardPaymentRefunding,
   isSwitchedToInternetBanking,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE,
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 
@@ -87,6 +91,10 @@ export default function BookingPaymentWrapper({
   const [initRecoveryError, setInitRecoveryError] = useState("");
   const [confirmationError, setConfirmationError] = useState("");
   const [recoveryHeading, setRecoveryHeading] = useState("");
+  // #4300: a payment just made was not confirmed (a superseded intent going
+  // back, or any other refusal): the form is gone, and the reload goes to the booking.
+  const [paymentFormClosed, setPaymentFormClosed] = useState(false);
+  const [previousPaymentRefunding, setPreviousPaymentRefunding] = useState(false);
   const [loading, setLoading] = useState(true);
   const handleAlreadyComplete = useEffectEvent(() => onPaymentComplete());
 
@@ -171,6 +179,13 @@ export default function BookingPaymentWrapper({
             setInitRecoveryError(data.error);
             return;
           }
+          // #4300: the pay step met a superseded capture the settle refused.
+          if (response.status === 409 && isSupersededCardPaymentRefunding(data)) {
+            setRecoveryHeading("Card payment being returned");
+            setInitRecoveryError(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE);
+            setPaymentFormClosed(true);
+            return;
+          }
           // #3864: the member's credit was not spent and the booking is still
           // payable; they retry. The server's own copy, not a fault to report.
           if (response.status === 409 && isCreditElectionNotApplied(data)) {
@@ -202,6 +217,8 @@ export default function BookingPaymentWrapper({
             ? data.deferredGuestAmountCents
             : null,
         );
+        // #4300: the member's earlier, superseded payment is going back.
+        setPreviousPaymentRefunding(data.previousPaymentRefunding === true);
         setClientSecret(data.clientSecret);
       } catch (error) {
         reportPaymentInitError(bookingId, error);
@@ -277,6 +294,25 @@ export default function BookingPaymentWrapper({
           );
           return;
         }
+        // #4300: the payment was on an intent an edit superseded; it is going
+        // back and the booking still owes. The fixed message, never data.error,
+        // and no "Payment successful!" box left on screen beside it.
+        if (isSupersededCardPaymentRefunding(data)) {
+          setRecoveryHeading("Card payment being returned");
+          setConfirmationError(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE);
+          setPaymentFormClosed(true);
+          return;
+        }
+      }
+      // #4300: a refusal that is not a recovery 409 (a 400 for an intent the
+      // booking no longer points at, a 5xx) is not a confirmation: money moved,
+      // so never call it complete - say what is known and let the member check.
+      // (An unrecognised 409 keeps its old meaning: nothing to invent.)
+      if (!response.ok && response.status !== 409) {
+        setRecoveryHeading("Payment received - check booking status");
+        setConfirmationError(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE);
+        setPaymentFormClosed(true);
+        return;
       }
     } catch {
       // Non-fatal: the Stripe webhook will still reconcile the booking state.
@@ -295,7 +331,7 @@ export default function BookingPaymentWrapper({
   const visibleHeading =
     initRecoveryError || confirmationError ? recoveryHeading : "Payment Error";
   const suppressPaymentContent = Boolean(
-    initFailed || initRecoveryError || (!loading && !clientSecret),
+    initFailed || initRecoveryError || paymentFormClosed || (!loading && !clientSecret),
   );
 
   return (
@@ -305,6 +341,16 @@ export default function BookingPaymentWrapper({
         error={visibleError}
         heading={visibleHeading}
         className="mb-4"
+        action={
+          paymentFormClosed ? (
+            // The booking's own page, fully loaded: a reload of the /book wizard
+            // would lose the booking, and a client push would keep stale state.
+            // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a full load on purpose (#4300)
+            <Button variant="outline" onClick={() => window.location.assign(`/bookings/${bookingId}`)}>
+              Reload booking
+            </Button>
+          ) : undefined
+        }
       />
       {loading ? (
         <div className="flex items-center justify-center p-8">
@@ -312,6 +358,8 @@ export default function BookingPaymentWrapper({
           <span className="ml-3 text-muted-foreground">Preparing payment...</span>
         </div>
       ) : suppressPaymentContent ? null : (
+        <>
+        <PreviousPaymentRefundingNotice show={previousPaymentRefunding} className="mb-4" />
         <StripeProvider clientSecret={clientSecret!}>
           {paymentMode === "payment" ? (
             <PaymentForm
@@ -331,6 +379,7 @@ export default function BookingPaymentWrapper({
             />
           )}
         </StripeProvider>
+        </>
       )}
     </>
   );

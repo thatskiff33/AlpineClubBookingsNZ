@@ -148,11 +148,9 @@ rates. So if the club's rates have changed since the booking was made, the
 discount in the box is worked out on what the guests actually paid, and matches
 the summary.
 
-The one exception is a night whose sold price the booking does not record (an
-earlier edit an officer had to value by hand). The summary then says an officer
-will confirm the amount and shows no price, while the box still works its
-discount out with today's rate for that night, so treat the box's figure as a
-guide until the officer has settled the edit.
+A night whose sold price the booking does not record is valued the same way in
+both, from the guest's stored total (see
+[Bookings — How a booking change is priced](bookings.md#how-a-booking-change-is-priced)).
 
 The box also follows the changes an officer makes on the panel, as the summary
 does: ticking or unticking a guest as another club's member, or linking a
@@ -205,6 +203,16 @@ Two consequences to expect:
 - If a code is completely used up and nobody on the booking was benefiting from
   it, the edit removes the code from the booking rather than pretending it still
   applies. Nobody loses anything, because nobody had anything.
+
+### What happens to a code when a stay already under way is changed
+
+A booking whose stay has started is never re-priced for its codes: every code it
+carries is kept exactly as it was, even one that has since expired, been
+switched off or used up, and nobody is asked about it again. If a change during
+the stay leaves less to pay than the codes took off, their discount shrinks to
+what is left, so the stay costs nothing and its price never rises for being
+shortened (the club's normal change fee still applies). The redemptions report
+then shows the smaller figure.
 
 ### Several codes on one booking
 
