@@ -54,9 +54,9 @@ CI also runs independent static and container checks:
   `Dependency audit` job, on pull requests and on pushes to `main`. It runs
   `pnpm audit --audit-level=high --json` and reports which of three things
   happened — see "When the advisory service is down" below — plus a fourth
-  passing verdict, MITIGATED (never CLEAN), for one reviewed unfixed advisory
-  under an expiring owner-approved record (#3843; see "Mitigated advisories"
-  below). It runs from a bare
+  passing verdict, MITIGATED (never CLEAN), for a reviewed unfixed advisory
+  under an expiring owner-approved record (introduced in #3843; none is live
+  since #3851 — see "Mitigated advisories" below). It runs from a bare
   checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
   its tree from `package-lock.json` and returned the same verdict with or without
   `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).

@@ -8,13 +8,16 @@ import path from "node:path";
  *
  * ## Why this exists
  *
- * `braces@3.0.3` carries a high-severity stack-exhaustion advisory
+ * `braces@3.0.3` carried a high-severity stack-exhaustion advisory
  * (GHSA-vfj7-8cjw-p6xm) with no published fix, and the required
  * `Dependency audit` check was red for every branch. The owner approved a
  * reviewed patch applied through pnpm's `patchedDependencies`, plus ONE
- * expiring, owner-approved record that lets the audit wrapper
+ * expiring, owner-approved record that let the audit wrapper
  * (`audit-dependencies.mjs`) say MITIGATED instead of VULNERABILITY FOUND —
- * and only while every fact the approval was given on is still true.
+ * and only while every fact the approval was given on was still true. GitHub
+ * withdrew that advisory on 23 Oct 2026 and the record and patch were retired
+ * (#3851). The mechanism stays, with no live records, for the next advisory
+ * that has no fix; with none, this module changes no verdict.
  *
  * ## When a record is accepted
  *
