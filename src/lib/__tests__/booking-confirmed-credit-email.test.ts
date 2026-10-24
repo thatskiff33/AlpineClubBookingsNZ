@@ -645,30 +645,33 @@ describe("#2328 × #2483 the unpaid branch's live-path premise", () => {
     expect(passers).toEqual(["src/lib/school-booking-request.ts"]);
   });
 
-  it("never applies account credit on that path", () => {
-    // No BOOKING_APPLIED row is written anywhere in the module, so
-    // deriveBookingAppliedCreditCents returns zero for every booking it mints.
+  it("applies account credit on that path only where the member chose it, through the shared writer", () => {
+    // THE TRIPWIRE FIRED (#4019). The whole-lodge approval now
+    // applies the credit a member asked for on their request — through
+    // `applyCreditToBooking`, the one ledger writer the ordinary create path
+    // uses — so an unpaid confirmation on that path can carry real netting,
+    // and the #2483 copy is what renders it (on the `payOnline` shape, which
+    // points at the booking page rather than at an invoice).
     //
-    // An earlier version of this comment added that the path "DOES allocate the
-    // member's existing Xero credit notes against the invoice — #1620
-    // allocate-existing". That was WRONG and is retracted (#2444 review, 1 Aug
-    // 2026): the allocation op the path enqueues is gated on exactly the
-    // BOOKING_APPLIED rows this assertion proves absent, so it always
-    // short-circuits and the invoice stands at the full price.
+    // What the LEGACY receivable (either module off) still relies on is
+    // unchanged: that branch applies no credit, so its #2444 conditional
+    // sentence and the admin's gross manual-invoice figure stay honest. The
+    // pins below hold that shape: no raw BOOKING_APPLIED row is written in the
+    // module, and the single credit writer sits in the member-choice branch.
     //
-    // #2483 turns that gating from a hazard into the design — but by a
-    // narrower argument than an earlier draft of this comment made (review, 2
-    // Aug 2026). The email may net these rows locally because
-    // `deriveBookingAppliedCreditCents` is the club's OWN amount-owing law (the
-    // same figure `prepareManualSettlement` derives an effective price from),
-    // so the netted figure is what the club would accept as full settlement.
-    // The allocation gate reads a strict SUBSET of them — only rows with
-    // `xeroCreditNoteId: null` — so it is a work-remaining filter, not the same
-    // predicate; the two agree only while a stamp means the credit really is
-    // off the live invoice. Keeping them in step is #2501's job.
+    // The allocation gate reads a strict SUBSET of applied rows — only those
+    // with `xeroCreditNoteId: null` — so it is a work-remaining filter, not the
+    // same predicate as the email's netting; the two agree only while a stamp
+    // means the credit really is off the live invoice. Keeping them in step is
+    // #2501's job, and on this path the allocation is enqueued by the Internet
+    // Banking switch route, after the member has chosen.
     const source = readFileSync(
       path.join(SRC_ROOT, "lib/school-booking-request.ts"),
       "utf8",
+    );
+    expect(source.match(/applyCreditToBooking\(/g)).toHaveLength(1);
+    expect(source.indexOf("applyCreditToBooking(\n")).toBeGreaterThan(
+      source.indexOf("if (memberChoosesPaymentMethod) {"),
     );
 
     expect(source).not.toContain("BOOKING_APPLIED");

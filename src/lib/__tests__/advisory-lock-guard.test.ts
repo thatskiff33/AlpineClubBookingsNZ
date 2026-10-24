@@ -265,7 +265,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "POST /api/payments/switch-to-internet-banking#1",
     tier: "GLOBAL",
     reason:
-      "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
+      "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all. #4019: re-read the payment source before any switch write; an already-IB payment returns persisted holds without a second PRIMARY, credit spend or invoice enqueue even when the booking status did not change.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -402,7 +402,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "modifyBookingBatch#1",
     tier: "GLOBAL",
     reason:
-      "A batch modification moves money and re-claims capacity. With the per-lodge key alone a concurrent cancel could interleave and both paths compute a refund against the same captured payment, or the modify's status commit could clobber a just-cancelled booking.",
+      "A batch modification moves money and re-claims capacity. With the per-lodge key alone a concurrent cancel could interleave and both paths compute a refund against the same captured payment, or the modify's status commit could clobber a just-cancelled booking.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -465,7 +465,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "modifyBookingDates#1",
     tier: "GLOBAL",
     reason:
-      "A date change refunds or charges and claims capacity for the new range, so it takes the global tier first for mutual exclusion with cancel, settlement and hold-release.",
+      "A date change refunds or charges and claims capacity for the new range, so it takes the global tier first for mutual exclusion with cancel, settlement and hold-release.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -514,7 +514,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "removeBookingGuestInTransaction#1",
     tier: "GLOBAL",
     reason:
-      "A single-guest removal computes a reduction refund and re-checks capacity, so it excludes cancel, settlement and hold-release before taking the booking's lodge key; the caller opens the transaction, so this is its first lock.",
+      "A single-guest removal computes a reduction refund and re-checks capacity, so it excludes cancel, settlement and hold-release before taking the booking's lodge key; the caller opens the transaction, so this is its first lock.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -849,7 +849,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveMemberWholeLodgeRequest#1",
     tier: "GLOBAL",
     reason:
-      "Whole-lodge conversion composes a booking lifecycle transition with allocation pruning, so it joins the global cohort before the booking's lodge capacity key; the held reconcile reuses that prefix.",
+      "Whole-lodge conversion composes a booking lifecycle transition with allocation pruning, so it joins the global cohort before the booking's lodge capacity key; the held reconcile reuses that prefix.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
 

@@ -1,3 +1,6 @@
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import {
   type AgeTier,
@@ -375,7 +378,7 @@ export async function modifyBookingDates({
             nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
           },
         },
-        payment: true,
+        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
@@ -884,8 +887,13 @@ export async function modifyBookingDates({
     // date change on a booking under review does not refund credit pre-approval
     // (F4, #1887); the clamp runs once the booking is released to PAYMENT_PENDING.
     let zeroDollarAutoPaid = false;
+    // #4019: see `isUnpaidConfirmedWholeLodge` - an approved member whole-lodge
+    // booking with no Payment row reprices like a PAYMENT_PENDING one.
+    const unpaidConfirmedWholeLodge = isUnpaidConfirmedWholeLodge(booking);
     const isRepriceablePrePayment =
-      newStatus === "PENDING" || newStatus === "PAYMENT_PENDING";
+      newStatus === "PENDING" ||
+      newStatus === "PAYMENT_PENDING" ||
+      (newStatus === "CONFIRMED" && unpaidConfirmedWholeLodge);
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
@@ -911,7 +919,11 @@ export async function modifyBookingDates({
         changeFeeCents: recordedChangeFeeCents,
         appliedCreditCents: clampedCredit.appliedCreditCents,
       });
-      if (effectivePriceCents === 0 && newStatus === "PAYMENT_PENDING") {
+      if (
+        effectivePriceCents === 0 &&
+        (newStatus === "PAYMENT_PENDING" ||
+          (newStatus === "CONFIRMED" && unpaidConfirmedWholeLodge))
+      ) {
         newStatus = "PAID";
         zeroDollarAutoPaid = true;
         // #2265 (#2319). Same as the batch-modify sibling in
@@ -1235,6 +1247,11 @@ export async function modifyBookingDates({
       sides: pricingSides,
       site: "date-change",
     });
+    // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
+    // Post after guest/night writes and the edit, at the final price only.
+    if (zeroDollarAutoPaid && unpaidConfirmedWholeLodge) {
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    }
 
     // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
     // banking or by hand asks the treasurer to send it back.

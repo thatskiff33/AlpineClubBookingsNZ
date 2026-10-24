@@ -452,7 +452,8 @@ Two consequences worth knowing before you edit one:
   $180.00 will read `Total Paid: $300.00` with nothing to explain the difference.
 - **A confirmation that still owes money points at the invoice, not at its own
   total.** When a booking is confirmed with payment still owing (a member
-  whole-lodge approval), `{{paymentDueNote}}` — carried inside
+  whole-lodge approval with the Internet Banking or Xero module off, so the
+  club raised a pay-on-account invoice), `{{paymentDueNote}}` — carried inside
   `{{paymentOutcome}}` — ends with *"If the invoice asks for a different amount
   — for example because the club has put account credit you hold towards it —
   please transfer the amount the invoice shows."* The `Total Due:` figure is the
@@ -476,6 +477,16 @@ Two consequences worth knowing before you edit one:
   label typed in front of it ("Payment: `{{paymentDueNote}}`") would leave a bare
   `Payment:` on every confirmation that is already paid, and the editor now warns
   you about exactly that.
+- **With both modules on, the same note sends the member to their booking page
+  instead.** A whole-lodge approval with the Internet Banking and Xero modules
+  both on raises no invoice: the member chooses on their booking page between
+  paying by card and switching to internet banking. `{{paymentDueNote}}` then
+  says the amount owing and *"Please pay it from your booking page, where you
+  can pay by card or choose to pay by internet banking"*, names no reference
+  (there is none yet, so `{{paymentReference}}` is empty) and mentions no
+  invoice. If the member asked for their account credit on the request, the
+  note states the three-line sum from the next point and asks for the
+  remainder.
 - **…unless the club's own records already show credit against that booking, in
   which case it does the sum for the member.** If account credit has been put
   towards the booking, `{{paymentOutcome}}` renders three lines that add up —

@@ -46,7 +46,6 @@ import {
 } from "@/lib/email-templates/booking-reminders";
 import {
   bookingBumpedRebookAction,
-  bookingPaymentDueNote,
   checkoutDayChoreNote,
   composeChoreLine,
   composeOptionalEmailLine,
@@ -55,6 +54,7 @@ import {
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
 } from "../email-message-notes";
+import { bookingPaymentDueNote, type BookingPaymentDueInstruction } from "../email-payment-due-note";
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
@@ -125,15 +125,14 @@ export async function sendBookingConfirmedEmail(
       holdUntil: Date;
     };
     // #2263: the booking is CONFIRMED but the money is NOT in — the member
-    // whole-lodge approval books a PENDING Internet Banking receivable. Pass
-    // this and the message states the amount OWING plus the internet-banking
-    // reference instead of claiming payment was processed. `invoiceEmailed`
-    // must be TRUE only when an invoice really was raised (Xero module on);
-    // otherwise the copy promises the club will send one by hand.
-    paymentDue?: {
-      reference: string;
-      invoiceEmailed: boolean;
-    };
+    // whole-lodge approval. Pass this and the message states the amount OWING
+    // instead of claiming payment was processed. `payOnline` points the member
+    // at their booking page (card, or a switch to internet banking); the
+    // legacy shape states the internet-banking reference of the receivable the
+    // approval minted, and `invoiceEmailed` must be TRUE only when an invoice
+    // really was raised (Xero module on) — otherwise the copy promises the
+    // club will send one by hand.
+    paymentDue?: BookingPaymentDueInstruction;
     // #2397: the booking IS settled, but for less than it is worth — an admin
     // recorded a cash / off-Xero payment and said it did not cover an
     // uncollected price increase, so the club will still ask for the rest.
@@ -313,8 +312,12 @@ export async function sendBookingConfirmedEmail(
   const paymentDueNote = paymentDue
     ? bookingPaymentDueNote({
         amount: formatMoneyCents(unpaidNetting.toTransferCents, format),
-        reference: paymentDue.reference,
-        invoiceEmailed: paymentDue.invoiceEmailed,
+        ...(paymentDue.payOnline === true
+          ? { payOnline: true as const }
+          : {
+              reference: paymentDue.reference,
+              invoiceEmailed: paymentDue.invoiceEmailed,
+            }),
         accountCredit: unpaidCreditNoteInput(
           totalCents,
           unpaidNetting,
@@ -516,7 +519,10 @@ export async function sendBookingConfirmedEmail(
       creditNote,
       paymentOutcome,
       paymentDueNote,
-      paymentReference: paymentDue?.reference ?? "",
+      // Empty on the pay-online shape: no receivable exists, so there is no
+      // reference for an override to print.
+      paymentReference:
+        paymentDue && paymentDue.payOnline !== true ? paymentDue.reference : "",
       doorCodeNote,
       // Legacy bare value, still supplied so an existing override that writes
       // its own "Door code: {{doorCode}}" line keeps rendering (#2267).

@@ -275,8 +275,10 @@ describe("the bookings list publishes its APPLIED filters (#2816)", () => {
     const params = Object.fromEntries(
       new URLSearchParams(href.split("?")[1]).entries(),
     );
+    // #4019: the queue is its own `unpaid=finished` key (PAYMENT_PENDING, or an
+    // approved member whole-lodge booking with no Payment row), unlisted in the
+    // registry row like `additionalOwed`, so only the check-out bound publishes.
     expect(await publishedViewFor(params)).toEqual({
-      status: "payment-pending",
       filters: { checkOutTo: "2026-07-01" },
     });
     expect(

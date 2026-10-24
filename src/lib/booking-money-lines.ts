@@ -28,7 +28,7 @@
  * have introduced two brand-new wrong-day defects here and fixed nothing.
  */
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
-import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
+import { type BookingPaymentDueCredit } from "@/lib/email-payment-due-note";
 import { PROMO_CHANGE_NOT_APPLIED_LABEL } from "@/lib/promo-change-not-applied";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";

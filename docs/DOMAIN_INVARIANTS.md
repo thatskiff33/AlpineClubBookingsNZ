@@ -345,6 +345,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-136` | An edit racing the primary invoice create is refused or measured |
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
+| `INV-PAY-140` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |

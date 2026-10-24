@@ -83,16 +83,9 @@ import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
-import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
-import { modificationChangeFeePosting } from "@/lib/booking-ledger-modification-posting";
-import { loadFeesAddedToAmountOwed } from "@/lib/booking-finished-stay-correction";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
-import {
-  buildBookingLedgerRows,
-  writeBookingLedgerRows,
-} from "@/lib/booking-ledger-write";
+import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -1428,99 +1421,9 @@ async function settleBookingPaymentInTransaction(
           : await findSettlingInternetBankingTransactionId(tx, payment.id),
     });
 
-    // #3580 (programme #3527, C1): post the booking's charge lines to the
-    // append-only money ledger, in THIS transaction and under THIS claim, so a
-    // settle that rolls back leaves no line saying it did not. Nothing reads
-    // these rows — the mirror columns are still the answer until C5 (#3584).
-    //
-    // THE SPLIT BELOW IS THE WHOLE POINT, and review of #3580 is why it exists.
-    // An earlier cut wrapped the write in a `try`/`catch` and claimed a posting
-    // failure could never fail the settle. That claim was false for exactly the
-    // failures worth worrying about: once Postgres has refused a statement the
-    // transaction is aborted (`25P02`), and a JavaScript `catch` does not bring
-    // it back — every later statement in this same `tx` would throw, and the
-    // settle would roll back anyway, through the guard meant to prevent it.
-    // This file's neighbours already know that: see
-    // `adult-member-hosting-system-cancellation.ts`, which says in as many
-    // words that there is no `try` there on purpose.
-    //
-    // So the two halves are treated differently, honestly:
-    //
-    //   * BUILDING the rows is pure. A bad plan — a malformed projection, a
-    //     shape the ledger refuses — throws an ordinary JavaScript error with
-    //     no database involved, and THAT is safe to swallow: the settle is
-    //     untouched and the booking simply has no lines, which is a coverage
-    //     gap C4's census (#3583) reports and must drive to zero before any
-    //     read moves.
-    //   * WRITING them is a statement. If Postgres refuses it, this settle is
-    //     already lost and pretending otherwise would only hide why.
-    //
-    // AND IT HAPPENS ONCE PER BOOKING (#3595). A booking can pass the PAID
-    // claim above twice — a mark-paid, its reversal, then a card payment — and
-    // its nights can change in between (a date shift recreates them; a guest
-    // removed and re-added gets a new id), so per-night keys alone would post
-    // the whole charge again under new keys. A booking is confirmed once; what
-    // changes afterwards is a modification (#3582). The question is asked
-    // under this transaction's global `lock(1)`, which serialises every settle,
-    // so it cannot race; and it counts un-keyed lines too, so lines #3580
-    // posted before keys existed fence this settle as well.
-    const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
-    // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"): a fee a finished-stay
-    // correction added to this unpaid booking's amount owed had no confirmed
-    // ledger to post to; it posts here, beside the confirmation's nights, under
-    // its modification's own key, so the ledger's CHANGE_FEE lines equal the
-    // payment's recorded fee once the booking is paid.
-    // Read only where a fee was recorded on the payment at all.
-    const feeOwedPostings =
-      alreadyConfirmedOnLedger || !(booking.payment && booking.payment.changeFeeCents > 0)
-      ? []
-      : (await loadFeesAddedToAmountOwed(tx, booking.id)).map((fee) =>
-          modificationChangeFeePosting({
-            bookingId: booking.id,
-            lodgeId: booking.lodgeId,
-            bookingModificationId: fee.modificationId,
-            changeFeeCents: fee.changeFeeCents,
-          }),
-        );
-    const ledgerRows = alreadyConfirmedOnLedger ? [] : (() => {
-      try {
-        const plan = planConfirmationChargeLines({
-          id: booking.id,
-          lodgeId: booking.lodgeId,
-          totalPriceCents: booking.totalPriceCents,
-          promoAdjustmentCents: booking.promoAdjustmentCents,
-          guests: booking.guests,
-        });
-        if (!plan.reconciles) {
-          logger.warn(
-            {
-              bookingId: booking.id,
-              unpricedStrandIds: plan.unpricedStrandIds,
-              postedLines: plan.postings.length,
-            },
-            "Booking ledger: the charge lines for a settled booking do not add up to its final price (#3580)"
-          );
-        }
-        return buildBookingLedgerRows([...plan.postings, ...feeOwedPostings]);
-      } catch (error) {
-        logger.error(
-          { err: error, bookingId: booking.id },
-          "Booking ledger: could not build charge lines for a settled booking; the settle stands and the gap is the census's to report (#3580)"
-        );
-        return [];
-      }
-    })();
-    const ledgerInserted = await writeBookingLedgerRows(tx, ledgerRows);
-    // Under the fence every row is new, so a shortfall means a key was already
-    // there — not an error (the write skipped it rather than aborting), but not
-    // something that should happen either, so it is said out loud rather than
-    // discarded (review of #3597).
-    if (ledgerInserted !== ledgerRows.length) {
-      logger.warn(
-        { bookingId: booking.id, planned: ledgerRows.length, inserted: ledgerInserted },
-        "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
-      );
-    }
+    // INV-PAY-047: the same fenced charge poster serves cash and the new
+    // whole-lodge zero-cash settlements, after this successful PAID claim.
+    await postBookingConfirmationLedgerLines(tx, booking);
 
     // #3581: the manual settle writes its transaction rows and the payment's
     // columns itself, so it never passes through `reconcilePaymentAggregates`

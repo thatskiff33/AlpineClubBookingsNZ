@@ -11,6 +11,7 @@ import {
 } from "@/lib/booking-payment-state";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isSwitchableToInternetBanking } from "@/lib/booking-payment-flow";
 import {
   getNetCollectedCashParts,
   netCollectedPaymentTookMoney,
@@ -72,13 +73,24 @@ export function resolveBookingDetailPayment({
     booking.payment?.source === "INTERNET_BANKING" ? booking.payment : null;
   // Switch-at-pay: a card PAYMENT_PENDING booking can move to Internet Banking
   // when the module is on (an organiser-settled or already-IB booking cannot).
+  //
+  // #4019: an approved member whole-lodge booking is the one
+  // CONFIRMED booking that can still owe its whole price with no receivable
+  // minted — the approval leaves the payment method to the member when both
+  // modules are on — so it gets the same switch. It is already capacity-holding
+  // through its hold, so the switch route sets no bed-hold clock on it. The
+  // predicate is the same one the switch route applies
+  // (`isSwitchableToInternetBanking`, booking-payment-flow.ts).
   const canSwitchToInternetBanking =
     modules.xeroIntegration &&
     modules.internetBankingPayments &&
     !isDeleted &&
     canManageBooking &&
     !internetBankingPayment &&
-    booking.status === "PAYMENT_PENDING" &&
+    isSwitchableToInternetBanking({
+      status: booking.status,
+      wholeLodgeHold: booking.wholeLodgeHold,
+    }) &&
     !booking.organiserSettled &&
     booking.finalPriceCents > 0;
   // #3924: a payment of money (`hasCapturedPayment`) that Net Collected's

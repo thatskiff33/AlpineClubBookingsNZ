@@ -1274,7 +1274,7 @@ and the bookings-list deep links all consume the same helpers):
 - **Unpaid finished stays** (#1709/#1731): `deletedAt` null +
   `status = PAYMENT_PENDING` + `checkOut ≤ today` — the whole booking price is
   still owed (a retroactive card create qualifies from creation). Deep link:
-  `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=<today>`.
+  `/admin/bookings?unpaid=finished&checkOutTo=<today>`.
 - **Unsettled finished-stay additions** (#1723 path 2, owner decision B):
   `deletedAt` null + `checkOut ≤ today` + `status ∈ {CONFIRMED, PAID,
   COMPLETED}` + payment `additionalAmountCents > 0` with

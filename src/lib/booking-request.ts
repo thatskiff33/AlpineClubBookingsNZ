@@ -830,6 +830,14 @@ export async function createMemberWholeLodgeRequest(input: {
   /** Who the group is, in the member's words. */
   groupDescription: string;
   notes?: string | null;
+  /**
+   * The member's ask to put their account credit towards the booking if the
+   * request is approved. A yes/no election rather than an amount, because the
+   * price is not known until the officer prices the approval; the approval
+   * applies min(balance, price) under the member's ledger lock. Omitted means
+   * no.
+   */
+  applyAccountCredit?: boolean;
 }) {
   const member = await prisma.member.findUnique({
     where: { id: bookingOwner(input).memberId },
@@ -914,6 +922,10 @@ export async function createMemberWholeLodgeRequest(input: {
       status: BookingRequestStatus.VERIFIED,
       verifiedAt,
       requestedByMemberId: member.id,
+      // The member's credit election, honoured at approval (see
+      // approveMemberWholeLodgeRequest). Stored as a plain yes/no: nobody knows
+      // the price yet.
+      applyAccountCredit: input.applyAccountCredit === true,
       // Contact details are SNAPSHOT from the member row, never accepted from
       // the body — the request must always be reachable at the account's own
       // address.
@@ -949,6 +961,7 @@ export async function createMemberWholeLodgeRequest(input: {
       headcount: input.headcount,
       lodgeId: requestedLodgeId,
       exclusivityRequested: true,
+      applyAccountCredit: input.applyAccountCredit === true,
     },
   });
 
@@ -3021,6 +3034,10 @@ export function serializeBookingRequestForAdmin(
     // Member attribution (#2263). Null for every public/school request. ADMIN
     // payload only: no member-facing serialiser reads this function.
     requestedByMemberId: request.requestedByMemberId,
+    // The member's credit election on a whole-lodge request, so the officer
+    // knows the approved total will be netted against the member's credit.
+    // Always false for public and school rows.
+    applyAccountCredit: request.applyAccountCredit,
     schoolName: request.schoolName,
     teachers: teacherDisplay.teachers,
     // #3413: a SCHOOL-only capacity/quote count. No name is implied by it.

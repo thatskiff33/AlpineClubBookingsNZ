@@ -1,8 +1,9 @@
+import { buildUnpaidConfirmedWholeLodgeWhere } from "@/lib/booking-payment-flow";
 import type { Prisma } from "@prisma/client";
 import { ADDITIONAL_OWED_BOOKING_STATUSES } from "@/lib/additional-payment-chase";
 
 /**
- * Unpaid finished stays (#1709): bookings still PAYMENT_PENDING whose
+ * Unpaid finished stays (#1709): bookings still owing their price whose
  * check-out is on or before NZ today — the stay is over but payment is still
  * owing. Retroactive card creates (#1704) match from the moment of creation;
  * organic bookings that cross check-out unpaid surface here too.
@@ -14,13 +15,23 @@ import { ADDITIONAL_OWED_BOOKING_STATUSES } from "@/lib/additional-payment-chase
  * This module stays free of runtime Prisma/server imports so the client-side
  * admin sidebar can consume the href builder directly.
  */
+/** The collection queue uses the modification paths' unpaid classification. */
+export function buildUnpaidFinishedStaysStatusWhere(): Prisma.BookingWhereInput {
+  return {
+    OR: [
+      { status: "PAYMENT_PENDING" },
+      buildUnpaidConfirmedWholeLodgeWhere(),
+    ],
+  };
+}
+
 export function buildUnpaidFinishedStaysWhere(
   today: Date,
 ): Prisma.BookingWhereInput {
   return {
     deletedAt: null,
-    status: "PAYMENT_PENDING",
     checkOut: { lte: today },
+    ...buildUnpaidFinishedStaysStatusWhere(),
   };
 }
 
@@ -29,7 +40,7 @@ export function buildUnpaidFinishedStaysWhere(
  * Check Out range filter. `todayKey` is the NZ date-only key (YYYY-MM-DD).
  */
 export function buildUnpaidFinishedStaysHref(todayKey: string): string {
-  return `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${todayKey}`;
+  return `/admin/bookings?unpaid=finished&checkOutTo=${todayKey}`;
 }
 
 /*

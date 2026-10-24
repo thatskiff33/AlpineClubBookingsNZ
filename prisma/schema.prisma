@@ -2454,6 +2454,15 @@ model BookingRequest {
   // Additive/expand-only; default false.
   exclusivityRequested Boolean            @default(false)
 
+  // Member whole-lodge requests only (#4019): the member's ask to
+  // put their account credit towards the booking if the request is approved.
+  // The price is not known when the request is made, so this is a yes/no
+  // election rather than an amount; approval applies min(balance, price) under
+  // the member's ledger lock, the same ledger write the ordinary create path
+  // makes for a member who ticked "Apply credit" on the review step. Always
+  // false for public and school rows. Additive/expand-only; default false.
+  applyAccountCredit Boolean              @default(false)
+
   // Member attribution for the authenticated whole-lodge request front-door
   // (#2263). Null for every public/school request (which have no account behind
   // them); set from the SESSION only, never from a request body. It is the

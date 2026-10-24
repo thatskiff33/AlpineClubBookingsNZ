@@ -1,3 +1,5 @@
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { BookingRequestStatus } from "@prisma/client";
@@ -239,5 +241,8 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ data, page, pageSize, total });
+  return NextResponse.json({
+    data, page, pageSize, total,
+    memberWholeLodgeChoosesPaymentMethod: memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
+  });
 }

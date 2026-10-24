@@ -1,3 +1,6 @@
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -393,7 +396,7 @@ export async function removeBookingGuestInTransaction({
           nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
         },
       },
-      payment: true,
+      payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
       member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
@@ -1004,6 +1007,11 @@ export async function removeBookingGuestInTransaction({
     sides: pricingSides,
     site: "guest-removal",
   });
+  // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
+  // Post after guest/night writes and the edit, at the final price only.
+  if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+  }
 
   // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
   // banking or by hand asks the treasurer to send it back.

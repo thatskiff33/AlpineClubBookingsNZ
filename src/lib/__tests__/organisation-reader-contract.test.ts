@@ -62,9 +62,12 @@ const SCHEMA = readFileSync(join(REPO, "prisma", "schema.prisma"), "utf8");
 
 /** The column this stage adds to each of the two existing tables. */
 const ADDED_COLUMN = "organisationId";
-// #3413 adds this independently of the organisation rollout. Keep the original
-// pre-stage column order proof while acknowledging the reviewed later field.
-const LATER_REQUEST_COLUMNS = ["pendingAdultCount"];
+// Columns added to BookingRequest independently of the organisation rollout,
+// in schema order. Keep the original pre-stage column order proof while
+// acknowledging each reviewed later field: `applyAccountCredit` (the member
+// whole-lodge credit election, #4019) sits after
+// `exclusivityRequested`; `pendingAdultCount` is #3413.
+const LATER_REQUEST_COLUMNS = ["applyAccountCredit", "pendingAdultCount"];
 
 /**
  * `Booking`'s scalar columns as the PRE-STAGE schema declared them, in order.

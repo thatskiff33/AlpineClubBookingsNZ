@@ -105,8 +105,13 @@ export function renderBookingDetailMessages({
       ? "booking.detail.internetBanking.pending"
       : "booking.detail.internetBanking.pendingNoXero",
   );
+  // #4019: an approved whole-lodge booking is already CONFIRMED and held, so
+  // the ordinary sentence's promise to confirm it after the transfer would be
+  // untrue; the club edits that case's wording under its own key.
   const switchToInternetBankingDescription = renderBookingMessage(
-    "booking.detail.switchToInternetBanking",
+    booking.wholeLodgeHold && booking.status === "CONFIRMED"
+      ? "booking.detail.switchToInternetBankingWholeLodge"
+      : "booking.detail.switchToInternetBanking",
   );
   /*
     #3033: the club's own explanation, beneath the banner's structural sentences.

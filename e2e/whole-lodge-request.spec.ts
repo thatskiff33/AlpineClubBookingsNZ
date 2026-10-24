@@ -796,9 +796,11 @@ test("the officer sees the member badges and the admin-only availability strip, 
   expect(approved.type).toBe("MEMBER_WHOLE_LODGE");
   expect(approved.priceCents).toBeGreaterThan(0);
   expect(approved.guestCount).toBe(REQUEST_BODY.headcount);
-  // The receivable is invoiced one way or the other — never neither (#2263).
-  // Which one depends on whether the staging stack has the Xero module on.
-  expect(["xero", "manual"]).toContain(approved.invoiceMode);
+  // This file turned BOTH the Internet Banking and Xero modules on in
+  // beforeAll, so the approval leaves the payment method to the member (#4019): nothing is invoiced here, the member pays from the booking
+  // page, and a switch to internet banking raises the invoice then. Alice holds
+  // no account credit, so the booking is not settled by credit ("paid").
+  expect(approved.invoiceMode).toBe("member");
   // Conflict surfacing reaches the ADMIN caller (empty here — the window was
   // clear — but the field is part of the admin contract).
   expect(Array.isArray(approved.exclusiveHoldConflicts)).toBe(true);
@@ -898,15 +900,21 @@ test("the approved booking tells its owner what is still owing, and never that t
   const page = await aliceContext.newPage();
   await page.goto(`/bookings/${approvedBookingId}`);
 
-  // The booking is CONFIRMED with an UNPAID Internet Banking receivable, so the
-  // owner is told the amount and the reference. That is the whole point of
-  // raising the invoice (#2263) — there is no tokenised payment link on this
-  // path, so the reference is the only way the member can pay.
+  // The booking is CONFIRMED and UNPAID with no receivable yet (both modules
+  // are on, so the approval left the method to the member — #4019): the
+  // owner gets the ordinary Complete Payment card, the
+  // door every card booking pays through, and the switch to internet banking
+  // beside it. No Internet Banking card, no reference: nothing has been
+  // minted for the member to quote until they choose. Scoped to <main> for
+  // the streaming reason e2e/internet-banking.spec.ts records.
+  const main = page.getByRole("main");
   await expect(
-    page.getByText(/internet banking payment/i).first(),
+    main.getByRole("heading", { name: /complete payment/i }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    main.getByRole("button", { name: "Pay by internet banking instead" }),
   ).toBeVisible();
-  await expect(page.getByText(/amount due/i).first()).toBeVisible();
-  await expect(page.getByText(/reference/i).first()).toBeVisible();
+  await expect(main.getByText("Internet Banking Payment")).toHaveCount(0);
 
   // And still nothing about exclusivity or occupancy (ADR-001 decision 6).
   // innerText, NOT textContent: textContent includes the text of inlined

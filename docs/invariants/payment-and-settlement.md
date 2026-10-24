@@ -981,10 +981,14 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   carry a provider round-trip in its send path. This is the shape sent whenever
   no applicable credit can be stated, and #2483 leaves it unchanged to the byte.
   **The sentence must not promise that credit WILL be applied.** The one send
-  site (member whole-lodge approval) mints a brand-new booking and writes no
-  `MemberCredit` row, so its `enqueueXeroAppliedCreditAllocationOperation` call
-  always short-circuits and the Xero invoice stays at the full price;
-  reinstating a netting claim requires making the allocation real first. The
+  site (member whole-lodge approval) has two shapes. Its LEGACY receivable
+  (either module off) writes no `MemberCredit` row, so its
+  `enqueueXeroAppliedCreditAllocationOperation` call short-circuits and the
+  Xero invoice stays at the full price. Its member-choice shape (both modules
+  on) mints no receivable and passes `payOnline`: credit the member asked for
+  IS applied at approval via `applyCreditToBooking`, so that note nets locally
+  (INV-PAY-022), naming no reference and no invoice; the Internet Banking
+  switch route raises both, netted, if chosen. The
   sentence is composed by `bookingPaymentDueNote` and rendered from that ONE
   composer by both the hand-built HTML and the `{{paymentDueNote}}` token
   (carried inside `{{paymentOutcome}}`); it rides on an EXISTING token, so an
@@ -1040,9 +1044,44 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `sendAdminWholeLodgeManualInvoiceEmail` takes the same ledger read and quotes
   the same figure (`wholeLodgeManualInvoiceAmountCents`). The PENDING receivable
   the conversion writes is the booking's price, which equals that figure only
-  while the path applies no credit — the premise the #2328 module guard pins; a
-  path that ever applies credit here must write the receivable at the effective
-  price too, as `booking-create` already does.
+  while the path applies no credit — and the LEGACY branch (either module off)
+  still applies none, which the #2328 module guard now pins by position: the
+  module's one `applyCreditToBooking` call sits inside the member-choice branch,
+  before the legacy mint. The member-choice branch (#4019) mints no receivable
+  at approval; the switch route mints it later at the effective price
+  ([`INV-PAY-140`](#inv-pay-140)).
+
+
+## INV-PAY-140
+
+**Related: `INV-PAY-059`, `INV-MOD-012`, `INV-LOCK-002`.**
+
+- **An unpaid approved member whole-lodge booking reprices like a
+  PAYMENT_PENDING one** (#4019), including after card entry was opened and
+  abandoned. `isUnpaidConfirmedWholeLodge` (`booking-payment-flow.ts`) admits
+  absent payment or proven uncaptured card attempts: known pending/processing/
+  failed Stripe PRIMARY-only evidence, no captured transaction history, no refund,
+  invoice, manual settlement or recorded settler. Missing evidence fails closed.
+  The runtime and Prisma queue forms derive from the same qualifying facts
+  (`INV-SSOT-001`). Both modification paths load the evidence under their locks;
+  negotiated-price and primary-invoice fences remain authoritative. Approved
+  requests reprice through sanctioned placeholder links or rate elections;
+  structural date edits stay refused. The
+  `INV-MOD-012` clamp preserves credit up to worth including recorded fees,
+  returns excess, and settles a covered booking PAID through the existing $0
+  path while retiring stale intents. The finished-stay collection queue includes
+  the same unpaid card attempts, including bookings with no applied credit.
+- **A credit-covered or $0 approval settles PAID and still queues the Xero
+  revenue invoice and the applied-credit allocation**, as every route to PAID
+  does; Xero then has the invoice to allocate the credit note against. Approval
+  and new whole-lodge zero-cash edits post the final stored charge through the
+  cash settlement's shared confirmation poster after PAID, once per booking
+  (`INV-PAY-047`); unpaid approvals post no confirmation charge.
+- **The approval takes the member-credit lock before its hosting reconcile**
+  (`INV-LOCK-002`: member-credit precedes Member rows and the coverage keys).
+- Pinned by `booking-payment-flow.test.ts`, `booking-modify-credit-clamp.test.ts`,
+  `unpaid-finished-stays.test.ts`, `school-booking-request.test.ts` and
+  `whole-lodge-payment-review.realdb.test.ts`.
 
 ## INV-PAY-023
 

@@ -258,6 +258,7 @@ import "./booking-outstanding-observation.realdb.test";
 // cleans its own `race-3864-` fixtures, and its Stripe and session doubles pass
 // through for every other suite.
 import "./election-double-pay-race.realdb.test";
+import "./whole-lodge-payment-review.realdb.test";
 // #3835 reuses it to prove a review completed after the REAL cancel of a
 // captured payment gives back only what the cancellation's refund left owed,
 // by card and by credit plus card at three tiers, on both captured routes and
