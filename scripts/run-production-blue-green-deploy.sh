@@ -14,8 +14,13 @@ DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')}"
 SYNC_SOURCE_REPO_AFTER_DEPLOY="${SYNC_SOURCE_REPO_AFTER_DEPLOY:-1}"
 PRUNE_STALE_DEPLOY_WORKSPACES="${PRUNE_STALE_DEPLOY_WORKSPACES:-1}"
-GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-app}"
-GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"
+# Resolved in `resolve_image_refs`: the shell environment, then the source
+# repository's .env, then the upstream defaults. Left empty here so an operator
+# who set neither can be told which source the deploy ended up using.
+GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-}"
+GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-}"
+UPSTREAM_GHCR_APP_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-app"
+UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-migrate"
 APP_IMAGE="${APP_IMAGE:-}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 ALLOW_UNPUBLISHED_DEPLOY_COMMIT="${ALLOW_UNPUBLISHED_DEPLOY_COMMIT:-0}"
@@ -108,6 +113,12 @@ write_active_upstream_file() {
     # the app had already closed and a reuse landing on that boundary was reset.
     # A reset POST/PUT cannot be replayed by Caddy's transport, so it reached the
     # browser as a bare 502 and every admin form showed its generic save error.
+    # The app reads the LAST X-Forwarded-For value as the visitor (getClientIp,
+    # src/lib/rate-limit.ts). Set it to Caddy's resolved client IP rather than
+    # appending Caddy's peer: behind a TLS-terminating proxy (CADDY_TLS_MODE=local,
+    # deploy/caddy/tls-local.caddy) the peer is the proxy, and every visitor would
+    # share one rate-limit bucket. With Caddy at the edge the two are the same.
+    echo "  header_up X-Forwarded-For {client_ip}"
     echo "  transport http {"
     echo "    keepalive 30s"
     echo "  }"
@@ -216,8 +227,59 @@ EOF
   warn "Push this commit as soon as the reason no longer holds, or the next release's preconditions are computed against a commit nobody else has."
 }
 
+# One key's value from the SOURCE repository's .env — the wrapper's own reader,
+# because the engine's `get_env_file_value` is nested inside
+# `run_internal_blue_green_deploy` and does not exist in this process. Same
+# grammar: a leading comment is skipped, a trailing ` # comment` is stripped.
+read_source_env_value() {
+  local key="$1"
+
+  [ -f "$SOURCE_REPO/.env" ] || return 0
+  awk -F= -v key="$key" '
+    /^[[:space:]]*#/ { next }
+    $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      sub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "$SOURCE_REPO/.env"
+}
+
+# Where each image repository came from: the shell environment, the source
+# repository's .env, or the upstream default. A fork publishes its images under
+# its own owner, so a fork operator sets these once — and `.env` is where every
+# other deployment value already lives, so it is honoured here too. The deploy
+# says which source won, because a default silently pointing at the upstream
+# registry is exactly how a fork's deploy fails at step 9 with "not found".
+resolve_image_repository() {
+  local key="$1"
+  local env_value="$2"
+  local upstream_default="$3"
+  local file_value
+
+  # The value goes to stdout for the caller's substitution; the provenance
+  # note goes to stderr so it reaches the operator rather than the variable.
+  if [ -n "$env_value" ]; then
+    printf '%s\n' "$env_value"
+    info "$key: from the shell environment" >&2
+    return 0
+  fi
+  file_value="$(read_source_env_value "$key")"
+  if [ -n "$file_value" ]; then
+    printf '%s\n' "$file_value"
+    info "$key: from $SOURCE_REPO/.env" >&2
+    return 0
+  fi
+  printf '%s\n' "$upstream_default"
+  info "$key: not set in the environment or .env; using the upstream default" >&2
+}
+
 resolve_image_refs() {
   if [ -z "$APP_IMAGE" ] && [ -z "$MIGRATE_IMAGE" ]; then
+    GHCR_APP_IMAGE_REPOSITORY="$(resolve_image_repository GHCR_APP_IMAGE_REPOSITORY "$GHCR_APP_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_APP_IMAGE_REPOSITORY")"
+    GHCR_MIGRATE_IMAGE_REPOSITORY="$(resolve_image_repository GHCR_MIGRATE_IMAGE_REPOSITORY "$GHCR_MIGRATE_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY")"
     APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"
     MIGRATE_IMAGE="${GHCR_MIGRATE_IMAGE_REPOSITORY}:${RESOLVED_REF}"
   elif [ -z "$APP_IMAGE" ] || [ -z "$MIGRATE_IMAGE" ]; then
@@ -1453,6 +1515,41 @@ require_non_placeholder_env_key() {
   fi
 }
 
+# A key the app treats as OPTIONAL — absent or blank means "feature off" — but
+# which must not be left holding a placeholder if it is set at all. Until this
+# helper the preflight demanded LEGACY_DASHBOARD_EXPORT_TOKEN unconditionally,
+# while .env.example and CONFIGURATION.md both say to leave it empty to disable
+# the bridge, so a club that never ran the legacy export could not deploy.
+require_optional_non_placeholder_env_key() {
+  local key="$1"
+  local value
+
+  value="$(trim_whitespace "$(get_env_file_value "$key")")"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  if printf '%s' "$value" | grep -Eqi '(^<.*>$|placeholder|changeme|example\.com)'; then
+    echo ".env entry appears to be a placeholder and must be replaced or left empty: $key" >&2
+    return 1
+  fi
+}
+
+# CADDY_TLS_MODE selects `deploy/caddy/tls-<mode>.caddy` from the Caddyfile's
+# global options (DEPLOYMENT.md, "Behind a TLS-terminating proxy"). Absent or
+# blank means acme, Caddy's own default. Only the two snippet files exist.
+require_caddy_tls_mode_env_key() {
+  local value
+
+  value="$(trim_whitespace "$(get_env_file_value CADDY_TLS_MODE)")"
+  case "$value" in
+    ""|acme|local) return 0 ;;
+    *)
+      echo "CADDY_TLS_MODE must be 'acme' (Caddy is the public edge) or 'local' (behind a TLS-terminating proxy); .env has '${value}'" >&2
+      return 1
+      ;;
+  esac
+}
+
 # NOTE: require_boolean_env_key / require_positive_integer_env_key /
 # env_key_is_true were removed with the BACKUP_ENABLED / BACKUP_RETENTION_DAYS
 # preflight (#2095) — backup config is DB-backed now and no other .env key needs
@@ -1786,6 +1883,96 @@ require_safe_database_password() {
   fi
 }
 
+# The email transport's credentials, required per the provider the .env
+# declares — the rule CONFIGURATION.md states and `src/lib/email-delivery.ts`
+# applies at runtime. Until this helper the preflight demanded the AWS SES keys
+# and the SNS topic unconditionally, so a club relaying through its own SMTP
+# provider (`USE_SMTP_RELAY=true`, SES keys legitimately blank) could not deploy
+# at all. Exactly one provider flag may be true; with none set, the club's live
+# site still defaults to AWS SES, so the SES keys stay required in that case.
+# `USE_LOCAL_CAPTURE=true` on a live site is refused by the app at boot; refusing
+# it here means the deploy stops at step 3 instead of at the health check.
+#
+# ENGINE-SECTION ONLY. Everything above `run_internal_blue_green_deploy` is
+# nested inside `run_production_wrapper`, which the `--internal-blue-green-deploy`
+# re-entry never calls, so the wrapper's `env_flag_is_true` does not exist in
+# this process. The flag test is therefore defined here, beside its one caller.
+# Mirrors the app's own rule (`parseBooleanFlag`, src/lib/email-delivery.ts):
+# only `true` and `false`, case-insensitively; anything else is an error there,
+# so it must be one here too — `USE_SMTP_RELAY=yes` used to pass this preflight
+# and then the app refused to send a single message.
+env_file_flag_is_true() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    true) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_env_file_flag_is_boolean() {
+  local name="$1" value="$2"
+  case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
+    ""|true|false) return 0 ;;
+    *)
+      echo "${name} must be true or false; .env has '${value}'" >&2
+      return 1
+      ;;
+  esac
+}
+
+require_email_transport_env_keys() {
+  local use_ses use_relay use_capture enabled_count=0 role
+
+  use_ses="$(trim_whitespace "$(get_env_file_value USE_AWS_SES)")"
+  use_relay="$(trim_whitespace "$(get_env_file_value USE_SMTP_RELAY)")"
+  use_capture="$(trim_whitespace "$(get_env_file_value USE_LOCAL_CAPTURE)")"
+  require_env_file_flag_is_boolean USE_AWS_SES "$use_ses"
+  require_env_file_flag_is_boolean USE_SMTP_RELAY "$use_relay"
+  require_env_file_flag_is_boolean USE_LOCAL_CAPTURE "$use_capture"
+  env_file_flag_is_true "$use_ses" && enabled_count=$((enabled_count + 1))
+  env_file_flag_is_true "$use_relay" && enabled_count=$((enabled_count + 1))
+  env_file_flag_is_true "$use_capture" && enabled_count=$((enabled_count + 1))
+
+  if [ "$enabled_count" -gt 1 ]; then
+    echo "Only one of USE_AWS_SES, USE_SMTP_RELAY and USE_LOCAL_CAPTURE may be true in .env" >&2
+    return 1
+  fi
+  # A flag that is present but false, with no other flag true, is the state
+  # the app's parser refuses ("Exactly one email provider flag must be true"):
+  # only an .env that names NONE of the three falls back to AWS SES. Refuse it
+  # here with the same words, instead of demanding SES keys for a provider the
+  # app would never open.
+  if [ "$enabled_count" -eq 0 ] && [ -n "${use_ses}${use_relay}${use_capture}" ]; then
+    echo "Exactly one email provider flag must be true (USE_AWS_SES, USE_SMTP_RELAY or USE_LOCAL_CAPTURE); .env sets one of them to false and none to true" >&2
+    return 1
+  fi
+
+  if env_file_flag_is_true "$use_capture"; then
+    role="$(trim_whitespace "$(get_env_file_value APP_ENVIRONMENT_ROLE)")"
+    if [ "$role" = "production" ]; then
+      echo "USE_LOCAL_CAPTURE=true is refused on the club's live site (APP_ENVIRONMENT_ROLE=production): a capture mailbox would accept every message and deliver none" >&2
+      return 1
+    fi
+    require_non_placeholder_env_key EMAIL_SERVER_HOST
+    require_non_placeholder_env_key EMAIL_SERVER_PORT
+    return 0
+  fi
+
+  if env_file_flag_is_true "$use_relay"; then
+    require_non_placeholder_env_key EMAIL_SERVER_HOST
+    require_non_placeholder_env_key EMAIL_SERVER_PORT
+    require_non_placeholder_env_key EMAIL_SERVER_USER
+    require_non_placeholder_env_key EMAIL_SERVER_PASSWORD
+    return 0
+  fi
+
+  # USE_AWS_SES=true, or no flag at all (the live site's legacy default).
+  require_non_placeholder_env_key SMTP_HOST
+  require_non_placeholder_env_key SMTP_PORT
+  require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
+  require_non_placeholder_env_key AWS_SES_SECRET_ACCESS_KEY
+  require_non_placeholder_env_key SES_SNS_TOPIC_ARN
+}
+
 validate_host_contract() {
   require_command docker
   require_command curl
@@ -1825,13 +2012,14 @@ validate_env_contract() {
   note_shell_stopped_ack_is_validator_only
   # Stripe credentials moved to encrypted, DB-backed storage (#2082) — no longer
   # required (or read) from .env. Legacy vars are warned about below.
-  require_non_placeholder_env_key SMTP_HOST
-  require_non_placeholder_env_key SMTP_PORT
-  require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
-  require_non_placeholder_env_key AWS_SES_SECRET_ACCESS_KEY
-  require_non_placeholder_env_key SES_SNS_TOPIC_ARN
+  require_email_transport_env_keys
   require_non_placeholder_env_key EMAIL_FROM
-  require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
+  # Caddy's certificate source (CADDY_TLS_MODE): acme (the default) or local.
+  # Any other value makes the Caddyfile's `import tls-<mode>.caddy` fail and
+  # Caddy refuse to start — at step 17, after the migration. Refuse it here.
+  require_caddy_tls_mode_env_key
+  # Optional: blank disables the legacy export bridge (CONFIGURATION.md).
+  require_optional_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
   # Backup configuration moved to the encrypted, DB-backed store in-app (#2095):
   # BACKUP_ENABLED / BACKUP_RETENTION_DAYS / BACKUP_S3_* / BACKUP_RESTORE_VALIDATION_URL
   # are no longer read from .env, so they are not validated here — only warned
@@ -3571,6 +3759,12 @@ write_active_upstream_file() {
     # the app had already closed and a reuse landing on that boundary was reset.
     # A reset POST/PUT cannot be replayed by Caddy's transport, so it reached the
     # browser as a bare 502 and every admin form showed its generic save error.
+    # The app reads the LAST X-Forwarded-For value as the visitor (getClientIp,
+    # src/lib/rate-limit.ts). Set it to Caddy's resolved client IP rather than
+    # appending Caddy's peer: behind a TLS-terminating proxy (CADDY_TLS_MODE=local,
+    # deploy/caddy/tls-local.caddy) the peer is the proxy, and every visitor would
+    # share one rate-limit bucket. With Caddy at the edge the two are the same.
+    echo "  header_up X-Forwarded-For {client_ip}"
     echo "  transport http {"
     echo "    keepalive 30s"
     echo "  }"

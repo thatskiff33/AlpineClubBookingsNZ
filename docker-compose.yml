@@ -388,15 +388,25 @@ services:
       # shadow DB, probes, admin psql). The app role is a superuser, so the 3
       # superuser-reserved slots do NOT protect admin access — see the
       # connection-budget note on x-app-environment and DEPLOYMENT.md.
-      - "max_connections=40"
+      #
+      # POSTGRES_MAX_CONNECTIONS: the ceiling is a setting because the budget
+      # above is not what a live host measured (#4269): a warm-up during a
+      # routine handover was sampled at 39 client connections, one app container
+      # holding 18 against a connection_limit of 10, so three app containers
+      # plus the deploy's probes hit 40 and every page render failed with
+      # "too many clients". A host that sees that raises it in .env and raises
+      # POSTGRES_MEM_LIMIT in step (see DEPLOYMENT.md -> "Connection pool
+      # sizing"); the defaults are unchanged.
+      - "max_connections=${POSTGRES_MAX_CONNECTIONS:-40}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     # 768m (up from 512m) covers the extra backends allowed by max_connections=40
     # plus their per-connection work_mem. ~256m more per host; negligible on any
-    # host with >1GiB free.
-    mem_limit: 768m
+    # host with >1GiB free. A setting so a host that raises
+    # POSTGRES_MAX_CONNECTIONS can raise this with it.
+    mem_limit: ${POSTGRES_MEM_LIMIT:-768m}
     cpus: 0.5
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tac -d tacbookings"]
@@ -446,6 +456,15 @@ services:
       # for a host `docker run`, or a compose service name).
       MEET_HOST: ${MEET_HOST:-meet.localhost}
       MIROTALK_UPSTREAM: ${MIROTALK_UPSTREAM:-host.docker.internal:3010}
+      # How Caddy obtains certificates: acme (Caddy is the public edge; the
+      # default) or local (behind a TLS-terminating proxy, Caddy issues its own
+      # from its internal CA). Selects deploy/caddy/tls-<mode>.caddy; see
+      # CONFIGURATION.md.
+      CADDY_TLS_MODE: ${CADDY_TLS_MODE:-acme}
+      # The proxy addresses or CIDRs Caddy trusts for the visitor's IP in local
+      # mode (deploy/caddy/tls-local.caddy); default private_ranges. Unused in
+      # acme mode. Never a public range: a visitor could then forge their IP.
+      CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-private_ranges}
     # Lets the Caddy container reach a MiroTalk started with its own `docker run`
     # via host.docker.internal (Linux needs this mapping).
     extra_hosts:

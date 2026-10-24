@@ -107,6 +107,28 @@ consumer, a much larger replica count, or enabling the audit-archive client via
 may lower both values, but keep the invariant above whenever you change a pool
 size, `max_connections`, or the replica count.
 
+**The ceiling is a setting, and the pool arithmetic above is not what a live host
+measured.** `POSTGRES_MAX_CONNECTIONS` in `.env` sets `max_connections`
+(default `40`, unchanged); it is applied when the `postgres` container is next
+created, which a blue/green deploy does at step 11 when the compose model has
+changed. It became a setting because a routine handover on a live host was
+sampled, two seconds apart, at **39 client connections**: the serving web slot
+at 11, the cron leader at 18 and the freshly warmed target slot at 8 to 11,
+against documented `connection_limit`s of 10, 5 and 10. One container holding
+18 means the app opens more than one pool per container, which is filed as
+[#4269](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4269) with
+the measurement; until it is pinned and fixed, the 27 budget above is an
+undercount by roughly a factor of two, and the warm-up gate's page renders
+fail with `P2037: too many database connections opened` exactly when three app
+containers are live. A host that sees that error raises the ceiling rather
+than lowering a pool (a smaller pool moves the failure to `P2024` pool
+timeouts under real traffic), and raises `POSTGRES_MEM_LIMIT` with it: each
+backend costs its `work_mem` and connection overhead, so going from 40 to 80
+wants the limit taken from the default `768m` towards `1g`. The pairing
+`POSTGRES_MAX_CONNECTIONS=80` with the default `768m` has run on one fork host
+since mid-October 2026 without memory pressure, which is one host's evidence,
+not a measurement of the headroom.
+
 ## App CPU sizing
 
 The app containers ship with **no CPU control at all** in `docker-compose.yml`
@@ -469,8 +491,15 @@ Minimum production categories:
   Any legacy `XERO_*` credential env vars still present are ignored and flagged
   in setup readiness — see the **Upgrade: DB-only provider credentials** runbook
   below.
-- Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
-  `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`. `EMAIL_FROM` is
+- Email: `EMAIL_FROM`, plus the transport the provider flags declare — exactly
+  one of `USE_AWS_SES`, `USE_SMTP_RELAY` or `USE_LOCAL_CAPTURE` may be true,
+  and the step-3 preflight requires only that provider's keys: `SMTP_HOST`,
+  `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` and
+  `SES_SNS_TOPIC_ARN` for AWS SES (also the default when none of the three
+  flags is named at all), or `EMAIL_SERVER_HOST`, `EMAIL_SERVER_PORT`,
+  `EMAIL_SERVER_USER` and `EMAIL_SERVER_PASSWORD` for an SMTP relay. A flag
+  named but false with no other true is refused, as the app refuses it, and
+  `USE_LOCAL_CAPTURE=true` is refused on a production-role site. `EMAIL_FROM` is
   the only email-identity env var (besides these transport secrets): it is the
   envelope / Return-Path sender and must be a provider-verified (SES) address.
   Email identity — from display name, support address, and contact-form
@@ -578,7 +607,13 @@ preserves Caddy upstream state, then re-enters itself with
 fast-forwards the clean checkout after success.
 
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
-`GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults.
+`GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults —
+either in the shell environment or, more durably, in the source repository's
+`.env`. The shell wins over the file, the file wins over the upstream default,
+and step 3/8 prints which source each name came from, because a default that
+silently points at the upstream registry is how a fork's deploy fails at step
+9 with "not found". Note that `sudo` strips the shell environment; the `.env`
+route survives it.
 
 ### The deploy refuses a commit that exists on no remote (#3539)
 
@@ -732,6 +767,58 @@ Caddy appended closest to the app container, then falls back to `X-Real-IP`.
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
+Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
+{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
+peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
+trusted proxy forwarded — see "Client IPs behind the proxy" below.
+
+### Behind a TLS-terminating proxy: `CADDY_TLS_MODE=local`
+
+The shipped `Caddyfile` assumes Caddy is the public edge: `{$DOMAIN}` is an
+HTTPS site, Caddy obtains its certificates from Let's Encrypt over ports 80 and
+443, and plain HTTP is answered with a `308` to HTTPS. An installation that
+puts another proxy in front — Nginx Proxy Manager, Traefik, a cloud load
+balancer — breaks both halves at once: Let's Encrypt can no longer reach Caddy
+to validate, so a freshly created Caddy container has **no certificate at all**
+and the proxy answers `502`; and if the proxy forwards to port 80 instead, it
+relays Caddy's `308` back to the browser forever. The deploy's outside check
+(`https://<DOMAIN>/api/health/ready`) fails the same way the browser does, so
+step 17 reports an empty health payload and rolls the upstream back.
+
+Set `CADDY_TLS_MODE=local` in `.env` for that shape. The Caddyfile's global
+options import `deploy/caddy/tls-local.caddy`, which turns on `local_certs`:
+Caddy issues every site's certificate from its own internal CA and never
+contacts Let's Encrypt. Then point the proxy at the VM's **443** with scheme
+**https** and tell it to accept a certificate that is not publicly trusted
+(Nginx Proxy Manager: "Ignore Invalid SSL"). The browser only ever sees the
+proxy's certificate. A `.env` change is picked up when the Caddy container is
+next created; to apply it to a running one:
+
+```bash
+docker compose --project-name <project> up -d caddy
+```
+
+Do **not** edit `Caddyfile` on the host for this: the deploy refuses a dirty
+checkout, and the workspace it builds is a clean `git archive` that would drop
+the edit on the next release.
+
+#### Client IPs behind the proxy
+
+Behind another proxy, the only peer Caddy sees is that proxy, so without more
+the app would take the proxy's address as every visitor's: the per-IP rate
+limits on login, registration, forgotten-password and magic-link requests would
+share one bucket for the whole site (ten failed logins from anyone would lock
+every member out for the window), and the audit log would record the proxy's
+IP on every row. `tls-local.caddy` therefore declares the proxy as a trusted
+proxy (`servers { trusted_proxies static … }`, from `CADDY_TRUSTED_PROXIES`,
+default `private_ranges`) and reads the visitor's address from the proxy's
+`X-Forwarded-For`; the app's `reverse_proxy` then sends that resolved address
+as the one `X-Forwarded-For` value the app reads. Set `CADDY_TRUSTED_PROXIES`
+to the proxy's own address or CIDR when it is not on a private range, and
+**never** to a range the public can reach, because a visitor connecting from
+a trusted address can name any IP it likes. The proxy must itself set
+`X-Forwarded-For` (Nginx Proxy Manager does by default).
+
 
 ### Keep-alive windows must stay ordered (#3293)
 

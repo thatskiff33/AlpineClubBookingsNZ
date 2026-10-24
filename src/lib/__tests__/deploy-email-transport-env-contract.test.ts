@@ -1,0 +1,207 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+/*
+  The production deploy's step-3 preflight requires the email transport's
+  credentials PER PROVIDER. Until this change it demanded
+  the AWS SES keys and the SNS topic unconditionally, so a club relaying
+  through its own SMTP provider — `USE_SMTP_RELAY=true`, SES keys legitimately
+  blank, exactly as CONFIGURATION.md documents — could not deploy at all.
+
+  The rule the script now applies is the app's own
+  (`resolveEmailDeliveryConfigFromEnv`, src/lib/email-delivery.ts): exactly one
+  of USE_AWS_SES / USE_SMTP_RELAY / USE_LOCAL_CAPTURE true; none NAMED at all
+  falls back to AWS SES; a flag named but false with no other true is refused.
+  These pins read the script's source, the way the sibling
+  `deploy-environment-role-contract` suite does, because the script cannot be
+  imported. The behaviour was exercised by hand against nine fixture .env files
+  (relay with blank SES keys, relay missing a key, SES blank, SES complete, no
+  flags, explicit false only, two flags, capture on production, capture on a
+  copy) when the change was made.
+*/
+
+const script = readFileSync(
+  join(process.cwd(), "scripts", "run-production-blue-green-deploy.sh"),
+  "utf8",
+);
+
+function functionBody(name: string): string {
+  const start = script.indexOf(`${name}() {`);
+  expect(start, `${name} must be defined in the deploy script`).toBeGreaterThan(0);
+  const end = script.indexOf("\n}\n", start);
+  expect(end, `${name} must have a closing brace`).toBeGreaterThan(start);
+  return script.slice(start, end);
+}
+
+describe("the deploy requires email transport keys per provider", () => {
+  it("invokes the transport check exactly once, inside validate_env_contract", () => {
+    const call = "\n  require_email_transport_env_keys\n";
+    expect(script.split(call).length - 1).toBe(1);
+    expect(functionBody("validate_env_contract")).toContain(call);
+  });
+
+  it("no longer demands the SES keys unconditionally", () => {
+    const contract = functionBody("validate_env_contract");
+    for (const key of [
+      "AWS_SES_ACCESS_KEY_ID",
+      "AWS_SES_SECRET_ACCESS_KEY",
+      "SES_SNS_TOPIC_ARN",
+      "SMTP_HOST",
+      "SMTP_PORT",
+    ]) {
+      expect(contract, `${key} must be required only inside the transport check`).not.toContain(
+        `require_non_placeholder_env_key ${key}`,
+      );
+    }
+    // EMAIL_FROM is provider-independent and stays where it was.
+    expect(contract).toContain("require_non_placeholder_env_key EMAIL_FROM");
+  });
+
+  it("lives in the engine section and calls nothing nested inside the wrapper", () => {
+    // Everything above `run_internal_blue_green_deploy` is nested inside
+    // `run_production_wrapper`, which the `--internal-blue-green-deploy`
+    // re-entry never calls — so a helper defined there (the wrapper's
+    // `env_flag_is_true`) is "command not found" at step 3. That is exactly
+    // how the first cut of this check failed on a live host.
+    const engineStart = script.indexOf("run_internal_blue_green_deploy() {");
+    expect(engineStart).toBeGreaterThan(0);
+    expect(script.indexOf("require_email_transport_env_keys() {")).toBeGreaterThan(engineStart);
+    expect(script.indexOf("env_file_flag_is_true() {")).toBeGreaterThan(engineStart);
+    const body = functionBody("require_email_transport_env_keys");
+    expect(body).not.toMatch(/(^|[^_])env_flag_is_true/);
+    expect(body).toContain("env_file_flag_is_true ");
+  });
+
+  it("reads the three provider flags and requires each provider's own keys", () => {
+    const body = functionBody("require_email_transport_env_keys");
+    for (const flag of ["USE_AWS_SES", "USE_SMTP_RELAY", "USE_LOCAL_CAPTURE"]) {
+      expect(body).toContain(`get_env_file_value ${flag}`);
+    }
+    for (const key of [
+      "AWS_SES_ACCESS_KEY_ID",
+      "AWS_SES_SECRET_ACCESS_KEY",
+      "SES_SNS_TOPIC_ARN",
+      "EMAIL_SERVER_HOST",
+      "EMAIL_SERVER_PORT",
+      "EMAIL_SERVER_USER",
+      "EMAIL_SERVER_PASSWORD",
+    ]) {
+      expect(body).toContain(`require_non_placeholder_env_key ${key}`);
+    }
+  });
+
+  it("treats the legacy dashboard export token as optional, refusing only a placeholder", () => {
+    // .env.example and CONFIGURATION.md both say "leave empty to disable the
+    // bridge", and the route reads an empty token as "bridge off". The
+    // preflight used to demand a value regardless.
+    const contract = functionBody("validate_env_contract");
+    expect(contract).not.toContain("require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN");
+    expect(contract).toContain(
+      "require_optional_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN",
+    );
+    const helper = functionBody("require_optional_non_placeholder_env_key");
+    expect(helper).toContain('if [ -z "$value" ]; then\n    return 0');
+    expect(helper).toContain("placeholder|changeme|example\\.com");
+    expect(helper).not.toContain("require_env_key");
+  });
+
+  it("resolves a fork's image repositories from the shell, then .env, then the upstream default", () => {
+    // The wrapper used to read GHCR_*_IMAGE_REPOSITORY from the shell only and
+    // fall straight back to ghcr.io/thatskiff33, so a fork operator who put
+    // them in .env — or ran the deploy under sudo, which strips the shell
+    // environment — pulled the upstream images and failed at step 9.
+    const wrapperStart = script.indexOf("run_production_wrapper() {");
+    const engineStart = script.indexOf("run_internal_blue_green_deploy() {");
+    const resolver = script.indexOf("resolve_image_repository() {");
+    expect(resolver).toBeGreaterThan(wrapperStart);
+    expect(resolver).toBeLessThan(engineStart);
+    const body = functionBody("resolve_image_repository");
+    expect(body).toContain("read_source_env_value");
+    expect(body).toContain("from the shell environment");
+    expect(body).toContain("using the upstream default");
+    // The provenance note must not leak into the substituted value.
+    expect(body.match(/info "[^"]*" >&2/g)?.length).toBe(3);
+    const refs = functionBody("resolve_image_refs");
+    expect(refs).toContain(
+      'resolve_image_repository GHCR_APP_IMAGE_REPOSITORY "$GHCR_APP_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_APP_IMAGE_REPOSITORY"',
+    );
+    expect(refs).toContain(
+      'resolve_image_repository GHCR_MIGRATE_IMAGE_REPOSITORY "$GHCR_MIGRATE_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY"',
+    );
+    // The wrapper's own .env reader: the engine's is nested out of reach.
+    expect(script.indexOf("read_source_env_value() {")).toBeLessThan(engineStart);
+    expect(functionBody("read_source_env_value")).toContain('"$SOURCE_REPO/.env"');
+  });
+
+  it("refuses a CADDY_TLS_MODE the Caddyfile cannot import, at step 3 rather than at cutover", () => {
+    // The Caddyfile's global options import deploy/caddy/tls-<mode>.caddy, so
+    // the only values that resolve to a file are the snippets that exist.
+    const contract = functionBody("validate_env_contract");
+    expect(contract).toContain("\n  require_caddy_tls_mode_env_key\n");
+    const helper = functionBody("require_caddy_tls_mode_env_key");
+    expect(helper).toContain('""|acme|local) return 0 ;;');
+    expect(helper).toContain("get_env_file_value CADDY_TLS_MODE");
+    // The modes the check accepts are exactly the snippet files shipped.
+    const snippets = ["acme", "local"].map((mode) =>
+      readFileSync(join(process.cwd(), "deploy", "caddy", `tls-${mode}.caddy`), "utf8"),
+    );
+    expect(snippets[0]).not.toMatch(/^\s*local_certs/m);
+    expect(snippets[1]).toMatch(/^local_certs$/m);
+    const caddyfile = readFileSync(join(process.cwd(), "Caddyfile"), "utf8");
+    expect(caddyfile).toContain("import /etc/caddy/deploy/tls-{$CADDY_TLS_MODE:acme}.caddy");
+    const compose = readFileSync(join(process.cwd(), "docker-compose.yml"), "utf8");
+    expect(compose).toContain("CADDY_TLS_MODE: ${CADDY_TLS_MODE:-acme}");
+  });
+
+  it("parses the provider flags exactly as the app does: true or false, case-insensitively", () => {
+    // `USE_SMTP_RELAY=yes` used to pass this preflight and then the app refused
+    // to send a single message; `USE_AWS_SES=True` was refused here and accepted
+    // there. The app's rule is `parseBooleanFlag` (src/lib/email-delivery.ts).
+    const isTrue = functionBody("env_file_flag_is_true");
+    expect(isTrue).toContain("tr '[:upper:]' '[:lower:]'");
+    expect(isTrue).toContain("true) return 0 ;;");
+    expect(isTrue).not.toMatch(/\byes\b|\bon\b|\b1\|/);
+    const isBoolean = functionBody("require_env_file_flag_is_boolean");
+    expect(isBoolean).toContain('""|true|false) return 0 ;;');
+    expect(isBoolean).toContain("must be true or false");
+    const body = functionBody("require_email_transport_env_keys");
+    for (const flag of ["USE_AWS_SES", "USE_SMTP_RELAY", "USE_LOCAL_CAPTURE"]) {
+      expect(body).toContain(`require_env_file_flag_is_boolean ${flag} `);
+    }
+    expect(script.indexOf("require_env_file_flag_is_boolean() {")).toBeGreaterThan(
+      script.indexOf("run_internal_blue_green_deploy() {"),
+    );
+  });
+
+  it("forwards the visitor's IP, not the proxy's, in both TLS modes", () => {
+    // Behind a TLS-terminating proxy the only peer Caddy sees is the proxy, and
+    // the app reads the LAST X-Forwarded-For value (getClientIp), so every
+    // visitor would share one rate-limit bucket. Local mode trusts the proxy
+    // and the app's reverse_proxy forwards Caddy's resolved client IP.
+    const local = readFileSync(join(process.cwd(), "deploy", "caddy", "tls-local.caddy"), "utf8");
+    expect(local).toMatch(/^\s*trusted_proxies static \{\$CADDY_TRUSTED_PROXIES:private_ranges\}$/m);
+    expect(local).toMatch(/^\s*client_ip_headers X-Forwarded-For$/m);
+    const acme = readFileSync(join(process.cwd(), "deploy", "caddy", "tls-acme.caddy"), "utf8");
+    expect(acme).not.toMatch(/trusted_proxies/);
+    const forward = "header_up X-Forwarded-For {client_ip}";
+    expect(readFileSync(join(process.cwd(), "deploy", "caddy", "tacbookings-active.caddy"), "utf8")).toContain(forward);
+    expect(readFileSync(join(process.cwd(), "Caddyfile.staging"), "utf8")).toContain(forward);
+    // Both generators of the active snippet (the wrapper's and the engine's).
+    expect(script.split(`echo "  ${forward}"`).length - 1).toBe(2);
+    const compose = readFileSync(join(process.cwd(), "docker-compose.yml"), "utf8");
+    expect(compose).toContain("CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-private_ranges}");
+  });
+
+  it("refuses the two states the app refuses, in the app's words", () => {
+    const body = functionBody("require_email_transport_env_keys");
+    expect(body).toContain(
+      "Only one of USE_AWS_SES, USE_SMTP_RELAY and USE_LOCAL_CAPTURE may be true",
+    );
+    expect(body).toContain("Exactly one email provider flag must be true");
+    // A capture mailbox on the live site: refused at step 3, not at the
+    // health check.
+    expect(body).toContain("APP_ENVIRONMENT_ROLE");
+    expect(body).toContain("USE_LOCAL_CAPTURE=true is refused on the club's live site");
+  });
+});
