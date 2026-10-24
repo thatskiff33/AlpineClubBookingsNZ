@@ -251,6 +251,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Mock-Xero token-exchange endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; mints fake tokens consumed only by the gated mock OAuth branch.",
   },
+  "src/app/api/webhooks/servernz-availability/route.ts": {
+    boundary: "webhook",
+    reason:
+      "Alpine Central Server signed availability question (#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
+  },
   "src/app/api/webhooks/servernz-posts/route.ts": {
     boundary: "webhook",
     reason:

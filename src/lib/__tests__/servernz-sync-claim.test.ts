@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ updateMany: vi.fn() }));
+const mocks = vi.hoisted(() => ({ updateMany: vi.fn(), warn: vi.fn() }));
+
+vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, info: vi.fn(), error: vi.fn() } }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: { serverNzSettings: { updateMany: mocks.updateMany } },
@@ -67,5 +69,28 @@ describe("withOtherLodgesSyncClaim", () => {
     expect(mocks.updateMany.mock.calls[1][0].data).toEqual({
       otherLodgesSyncStartedAt: null,
     });
+  });
+});
+
+describe("a failed release (#66)", () => {
+  it("never turns a pass that succeeded into a failure: it is logged, and the result returned", async () => {
+    mocks.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockRejectedValueOnce(new Error("connection lost"));
+
+    await expect(withOtherLodgesSyncClaim(async () => "done", NOW)).resolves.toBe("done");
+    expect(mocks.warn).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/freed as stale/));
+  });
+
+  it("never replaces the pass's own error", async () => {
+    mocks.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockRejectedValueOnce(new Error("connection lost"));
+
+    await expect(
+      withOtherLodgesSyncClaim(async () => {
+        throw new Error("the pass failed");
+      }, NOW),
+    ).rejects.toThrow("the pass failed");
   });
 });

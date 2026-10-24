@@ -67,12 +67,12 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *
    * Since #2160 the DEFAULT is no longer the usual case — it is the fallback.
    * Most admin sections render an {@link AdminViewOnlySectionBanner} and pass
-   * `describeReason={false}` here (287 of 378 call sites), and a further 36 pass
+   * `describeReason={false}` here (289 of 381 call sites), and a further 37 pass
    * `describeReason={!ancestorRendersViewOnlyBanner}` because a VOUCHING PARENT
-   * renders the banner instead — 31 vouched at a JSX render site (#2168) and 5
+   * renders the banner instead — 32 vouched at a JSX render site (#2168) and 5
    * through the guided-setup shell's `WizardStepHelpers` channel (#2324), where
    * the shell calls each step from another file and no render site exists.
-   * 323 opt-outs in total.
+   * 326 opt-outs in total.
    * `view-only-banner-contract.test.ts` asserts every one of those figures, so
    * they are measured rather than counted by hand. The default survives in
    * three shapes:

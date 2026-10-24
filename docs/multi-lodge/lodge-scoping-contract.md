@@ -49,7 +49,7 @@ sequencing):
 | `BedAllocationSettings`                                            | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `BookingDefaults`                                                  | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `BookingRequestSettings`                                           | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
-| `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of |
+| `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
 
 ## Club-Wide Defaults With Per-Lodge Overrides
@@ -619,8 +619,10 @@ new ADR:
   club's, so it has no `lodgeId` and nothing here is lodge-scoped: `Booking`
   and `BookingRequest` point AT an `OtherLodge` (restrict FK) and carry their own
   lodge. The same reasoning as `ServerNzSettings` above applies to the sync: the
-  central server has no concept of this club's buildings, so a lodge dimension
-  on these rows would have nowhere to travel. An amenity is a fact about the
+  central server exchanges clubs' lodges with no dimension for THIS club's
+  buildings, so a lodge dimension on these rows would have nowhere to travel;
+  the one link between the two, `Lodge.centralLodgeId` (which of the central
+  server's lodges a club lodge is, for the free-beds answer), sits on `Lodge`. An amenity is a fact about the
   other club's lodge and follows its parent; it is replaced as a whole set, not
   edited per row, so it carries no scoping of its own.
 

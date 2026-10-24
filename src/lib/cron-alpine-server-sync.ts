@@ -12,7 +12,10 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
-import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
+import {
+  OTHER_LODGES_SYNC_RUNNING_CODE,
+  SERVER_VERSION_MISMATCH_CODE,
+} from "@/lib/servernz-api-version";
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import logger from "@/lib/logger";
 
@@ -96,7 +99,7 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
     });
 
     if (!pass) {
-      return { status: "skipped", reason: "sync-already-running" };
+      return { status: "skipped", reason: OTHER_LODGES_SYNC_RUNNING_CODE };
     }
     const { upload, download } = pass;
     logger.info(

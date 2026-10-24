@@ -2017,6 +2017,18 @@ mispricing a booking.
   deliberately **not** taken — the master stays unlocked until step 5, and the
   family-link drift re-check above is what closes that window.
 
+- **Owned-lodge list writer** — `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64):
+  the Other lodges download's record step (`downloadOtherClubsFromServer`)
+  takes `$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE``
+  on the singleton settings row, then re-reads the connection (address and API
+  key stamp) and the cursor and keyed marker under it, so a download that ran
+  while the connection changed, or while another download recorded, writes
+  nothing back. Since #69 the owned list is stored by central id as the server
+  sent it, so an admin's rename of the club's own lodge no longer rewrites it
+  and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
+  from the booking/capacity/credit and money clusters. A missing row (never
+  configured) locks nothing, and its first upsert is the only writer then.
+
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes
   `$executeRaw`SELECT 1 FROM "DeletionRequest" WHERE "id" = $1 FOR UPDATE`` as the

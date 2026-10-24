@@ -108,6 +108,10 @@ Two things worth knowing:
 2. If the new season should charge what an existing one charges, use **New
    season from this** on that season in Fees → Hut Fees rather than retyping the
    grid. See [Fees](fees.md).
+3. Activating, deactivating, editing or deleting a season here, like changing
+   one in Fees, also refreshes your own lodge's non-member rates and season
+   dates in the Other lodges list while its **Rates and season dates from the
+   Fees page** switch is on. See [Lodges](lodges.md#edit-your-own-lodges-details).
 
 ## Settings reference
 

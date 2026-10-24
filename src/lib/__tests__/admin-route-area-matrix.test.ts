@@ -349,6 +349,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // (`lodge:view` / `lodge:edit`) is the one this map already infers and no new
   // prefix is invented for one setting.
   "/api/admin/lodges/[id]/roster-settings": "lodge",
+  "/api/admin/lodges/[id]/central-lodge": "lodge",
   "/api/admin/maintenance-reports": "lodge",
   "/api/admin/maintenance-reports/[id]": "lodge",
   "/api/admin/maintenance-reports/questions": "lodge",
@@ -356,6 +357,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/maintenance-reports/tokens": "lodge",
   "/api/admin/other-lodges": "lodge",
   "/api/admin/other-lodges/[id]": "lodge",
+  "/api/admin/other-lodges/[id]/hide": "lodge",
   "/api/admin/member-applications": "membership",
   "/api/admin/member-applications/[id]": "membership",
   "/api/admin/member-applications/[id]/approval-preview": "membership",

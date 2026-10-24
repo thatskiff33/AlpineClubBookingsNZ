@@ -5198,6 +5198,16 @@ model Lodge {
   // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
   // and an adults-only rule, enforced in the serving serialisers.
   showGuestPhonesOnScreens Boolean @default(false)
+  // Which lodge in the Alpine Central Server's registry THIS lodge is (#62):
+  // the central lodge's permanent id, chosen by an administrator from the
+  // lodges the server says this club owns (`ServerNzSettings
+  // .otherLodgesOwnedLodges`). By id, never by name, because a lodge can be
+  // renamed centrally. Null = not linked; a club with exactly one active lodge
+  // that owns exactly one central lodge is linked by default IN CODE
+  // (`@/lib/central-lodge-link`), never by writing this column. Unique: one
+  // central lodge is one local lodge. Install-specific, so deliberately not in
+  // the config transfer.
+  centralLodgeId String? @unique @db.VarChar(64)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -5252,7 +5262,22 @@ model Lodge {
 // it (there is no active/inactive state — that was dropped as unneeded).
 model OtherLodge {
   id                  String   @id @default(cuid())
-  name                String   @unique
+  // Not unique (#69): two lodges may share a name, and the central id is what
+  // makes them distinct. Drop-downs show the location beside it to tell two
+  // apart.
+  name                String
+  // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
+  // download merges by, so a lodge renamed there is renamed here in place, and
+  // the id an owned lodge is uploaded under (server API 2.3). Null until a
+  // download has matched the row by name once; a row still null after a whole
+  // registry download is one the central server no longer has.
+  centralId           String?  @unique @db.VarChar(64)
+  // Hidden here (#58): set when the central server reports the lodge deleted,
+  // or when an administrator hides a lodge the server does not list. The row
+  // and its data stay, so every booking and booking request that names it
+  // keeps it; it is left out of the Other lodges list and every drop-down.
+  // Never cleared.
+  hiddenAt            DateTime?
   location            String?  @db.VarChar(300)
   bookingOfficerName  String?  @db.VarChar(200)
   bookingOfficerEmail String?  @db.VarChar(320)
@@ -5282,13 +5307,37 @@ model OtherLodge {
   dinnerIncluded         Boolean   @default(false)
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
+  // A season's LAST day (#75, server API 2.6). Seasons recur: only day and
+  // month count. Unset, the season runs up to the other season's start.
+  winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
+  summerSeasonEnd        DateTime? @db.Date
+  // This club's own lodge only (#77): when true, its non-member rates and
+  // season dates are filled from the Fees page (the Non-Member type's rates and
+  // their seasons) and are read-only in the editor. A LOCAL setting: never
+  // sent to or taken from the central server. Ignored for another club's lodge.
+  ratesFromFees          Boolean   @default(true)
+  // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
+  // GST, a winter and a summer rate for each age group (#77). INTEGER
+  // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
+  // set; the central server carries dollars and `@/lib/servernz-rate` is the
+  // one conversion. Display only: nothing is charged from them.
+  winterRateUnder5Cents  Int?
+  winterRate5To11Cents   Int?
+  winterRate12To17Cents  Int?
+  winterRateAdultCents   Int?
+  summerRateUnder5Cents  Int?
+  summerRate5To11Cents   Int?
+  summerRate12To17Cents  Int?
+  summerRateAdultCents   Int?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   amenities           Amenity[]
   bookingRequests     BookingRequest[]
   bookings            Booking[]
+
+  @@index([name])
 }
 
 // Whether an other lodge sleeps guests in private rooms or in dormitories,
@@ -5341,6 +5390,10 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
+  // NO LONGER READ (#69, server API 2.5, which no longer sends the names):
+  // ownership is decided by `otherLodgesOwnedLodges` below, by central id. Kept,
+  // and left as last written, for the draining colour of the upgrade that
+  // stopped reading it; a later release drops it. As it was:
   // The lodge NAMES the central server says this club owns (#52), as it sends
   // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
   // because that is how the registry is keyed. THREE states, and the shape
@@ -5354,6 +5407,18 @@ model ServerNzSettings {
   // last received, so an operator can see how stale it is.
   otherLodgesOwnedNames   Json?
   otherLodgesOwnedNamesAt DateTime?
+  // The same owned lodges with their PERMANENT central ids, `[{ id, name }]`
+  // (server API 2.2 `ownLodges`, #62). Same three states as the names and
+  // written in the same download: NULL = never told (or an older server that
+  // does not send it), [] = owns none. Read by the "Central lodge" setting and
+  // the availability endpoint, which link by id because a name can change.
+  otherLodgesOwnedLodges  Json?
+  // When a WHOLE-registry download last merged to the end (#64): until then
+  // every download asks for the whole registry, so every Other lodges row is
+  // matched by name once and keyed by its central id, and a row still unkeyed
+  // after it is one the server does not list. NULL = not yet (a site just
+  // upgraded, or a connection forgotten); a failed download leaves it NULL.
+  otherLodgesKeyedAt      DateTime?
 
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus

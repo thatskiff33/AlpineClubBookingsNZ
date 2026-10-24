@@ -19,7 +19,7 @@
  */
 
 /** The server API version this release speaks. Bump it when the server does. */
-export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.1";
+export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.6";
 
 /**
  * What is stored when the server answered the version call with 404 (it
@@ -39,6 +39,15 @@ export const NO_KEY_SERVER_VERSION = "0";
  * reader finding any of them finds the same word.
  */
 export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
+
+/**
+ * The one word for "another Other lodges sync holds the claim" (#66): the
+ * nightly job's skip reason and the code on the Upload/Download buttons' 409,
+ * which the setup page reads to show it as a notice rather than an error. Here,
+ * beside the version code, because the setup page (a client module) reads it
+ * and the claim module is server-only.
+ */
+export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
 
 /**
  * How long a recorded answer is trusted before the setup page's version route

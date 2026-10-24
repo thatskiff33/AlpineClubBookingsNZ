@@ -629,6 +629,23 @@ export const AUDIT_CENSUS_TOTALS = {
   // CREATE and DELETE handlers are removed with their `OTHER_LODGE_CREATED`
   // and `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
   // central server says it owns. RE-MEASURED with `npm run audit:census`.
+  // 497 -> 498 (#62): `LODGE_CENTRAL_LINK_UPDATED`, written by the new
+  // `/api/admin/lodges/[id]/central-lodge` PUT with the link before and after.
+  // Categorised `admin` at the site and pinned in the lodge-gated keep.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 498 -> 499 (#58): `OTHER_LODGE_HIDDEN`, written by the new
+  // `/api/admin/other-lodges/[id]/hide` POST with the lodge's id and name. Categorised
+  // `admin` at the site and pinned in the lodge-gated keep beside the registry's
+  // update. RE-MEASURED with `pnpm run audit:census`.
+  // 499 -> 500 (#58): `alpine_server.other_lodges.hidden`, the download's one
+  // record of the lodges it hid because the central server deleted them, and
+  // the club lodges it unlinked from them; written inside the download so the
+  // nightly pass and the Download button share it. `lodge`, like the Download
+  // record beside it. RE-MEASURED with `pnpm run audit:census`.
+  // 500 -> 501 (#77): `OTHER_LODGE_RATES_FROM_FEES`, written when this club's
+  // own Other lodge is refilled from its Fees page (non-member rates and
+  // season dates; no member data). `lodge`, from `other-lodge-fees-sync.ts`,
+  // whichever trigger runs it. RE-MEASURED with `pnpm run audit:census`.
   // 497 -> 498 (#3750): the executed approval of a LOCKED_PERIOD change request
   // on a finished stay (`booking-change-request.approve`, with `executed: true`),
   // one `logAudit` in `src/lib/booking-change-request-admin-decision.ts`,
@@ -674,7 +691,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // RE-MEASURED with `pnpm run audit:census`.
   // 507 -> 508 (#4219): `xero.credit_note.spent_outside_app_converged`, the credit-ledger
   // convergence written with the awaited `createAuditLog` inside its own transaction, under `xero`.
-  writeSites: 508,
+  writeSites: 512, // 508 -> 512 (central-server lane merged with main, 25 Oct 2026): main's 508 plus this lane's +4 (#62, #58 x2, #77), disjoint; RE-MEASURED on the merged tree.
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -865,6 +882,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
+    // 139 -> 140 (#62): the Central lodge link record.
+    // 140 -> 141 (#58): the download's record of the lodges it hid.
+    // 141 -> 142 (#77): the Fees-page refill of this club's own Other lodge.
     // 139 -> 140 (#3372): the paid-another-way close of a dead card refund,
     // awaited on the close's transaction so the row commits with the money.
     // 140 -> 141 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved,
@@ -881,7 +901,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited on the completion's transaction so the row commits with the correction.
     // 145 -> 147 (#4162): the two voided-note writers.
     // 147 -> 148 (#4219): the credit-note convergence's own row, in its transaction.
-    createAuditLog: { total: 148, uncategorised: 0 },
+    createAuditLog: { total: 151, uncategorised: 0 }, // 148 -> 151 (central-server lane merged with main, 25 Oct 2026): main's 148 plus this lane's +3 (#62, #58, #77), disjoint; RE-MEASURED on the merged tree.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -917,7 +937,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
     // transaction beside the writer above, in the same form.
     // 77 -> 75 (#52): the two removed other-lodges writers above.
-    "auditLog.create": { total: 75, uncategorised: 0 },
+    // 75 -> 76 (#58): the Other lodges hide of a row the central server does
+    // not list, in the same form as the registry's update.
+    "auditLog.create": { total: 76, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1232,9 +1254,19 @@ export const AUDIT_CENSUS_TOTALS = {
     // configuration row, the same audience as its sibling lodge-settings write.
     // 109 -> 107 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
     // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
+    // 107 -> 108 (#62): `LODGE_CENTRAL_LINK_UPDATED`. A widening of who can
+    // read what by one site, stated rather than counted: `admin` is readable
+    // with `support:view` alone, so the derived weakest-gate total moves by one.
+    // The row carries two central lodge ids and the administrator's id - no
+    // member data - and is `admin` like every writer in the lodge-records
+    // subsystem (INV-PRIV-013).
+    // 108 -> 109 (#58): `OTHER_LODGE_HIDDEN`, one more `admin` site and so one
+    // more readable with `support:view` alone, stated rather than counted. The
+    // row names the hidden Other lodges entry by id and name only - never its
+    // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 108,
+    admin: 110, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1314,7 +1346,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // recorded nothing at all before. `lodge` is the audit guide's roster row,
     // and these are the lodge roster; the officers who can write them already
     // hold lodge access, so nobody gains a read.
-    lodge: 66,
+    // 66 -> 67 (#58): the download's record of the lodges it hid (lodge names
+    // and a count, no member), `lodge` like the Download record it sits beside.
+    // 67 -> 68 (#77): the record of this club's own Other lodge being filled
+    // from its Fees page (rates and dates, no member), `lodge` likewise.
+    lodge: 68,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
     //
@@ -2713,6 +2749,12 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // but that writer is in the DISPLAY subsystem, which was #2730's split to
   // close; importing its answer here would open a new split inside this one.
   "src/app/api/admin/lodges/[id]/roster-settings/route.ts::PUT#0": "admin",
+  // The Central lodge link (#62): which lodge in the Alpine Central Server's
+  // registry a local lodge is, written by `/api/admin/lodges/[id]/central-lodge`
+  // PUT, before and after. Classified under INV-PRIV-013's uniformity rule, not
+  // re-decided: a fifth writer in the same lodge-records subsystem, which files
+  // `admin`.
+  "src/app/api/admin/lodges/[id]/central-lodge/route.ts::PUT#0": "admin",
 
   // ─── Work parties (gated `lodge:edit`) ──────────────────────────────────────
   "src/app/api/admin/work-parties/route.ts::POST#0": "admin",
@@ -2728,6 +2770,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // next change is deliberate. #52 removed the create and delete handlers (a
   // site changes only its own lodge), so of the trio only the update remains.
   "src/app/api/admin/other-lodges/[id]/route.ts::PATCH#0": "admin",
+  // #58: hiding a row the central server does not list, gated `lodge:edit`,
+  // in the same registry, so `admin` by the same rule.
+  "src/app/api/admin/other-lodges/[id]/hide/route.ts::POST#0": "admin",
 };
 
 /**
@@ -2795,10 +2840,14 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "LODGE_ACTIVATED",
   "LODGE_DEACTIVATED",
   "LODGE_MEMBER_ROSTER_SETTINGS_UPDATED",
+  // #62: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  "LODGE_CENTRAL_LINK_UPDATED",
   "workparty.create",
   "workparty.update",
   "workparty.delete",
   "OTHER_LODGE_UPDATED",
+  // #58: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  "OTHER_LODGE_HIDDEN",
 ];
 
 /**

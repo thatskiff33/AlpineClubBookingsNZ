@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  508
+row-producing sites:  512
 uncategorised:        0
-category values: admin 108, booking 108, xero 40, family 35, payment 60,
-                 lodge 66, account 19, security 25, privacy 21,
+category values: admin 110, booking 108, xero 40, family 35, payment 60,
+                 lodge 68, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
 
@@ -793,6 +793,29 @@ list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
 the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
 anyone's readership changing.
 
+#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
+`pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
+administrator linked a local lodge to its lodge on the Alpine Central Server.
+`admin` under INV-PRIV-013's rule, like every writer in the lodge-records
+subsystem, so the lodge-gated keep grows from seventeen pinned sites to
+eighteen; the row names two central lodge ids and the administrator, no member.
+
+#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
+`pnpm run audit:census`): `OTHER_LODGE_HIDDEN`, the record that an
+administrator hid an Other lodges row the Alpine Central Server does not list.
+`admin` under INV-PRIV-013's rule, beside the registry's update, so the
+lodge-gated keep grows from eighteen pinned sites to nineteen; the row names
+the lodge by id and name only, no member.
+
+#58 also added the download's own record of the lodges it hid because the
+central server deleted them (`alpine_server.other_lodges.hidden`, `lodge`
+66 -> 67, 499 -> 500, MEASURED): lodge names and a count of unlinked club
+lodges, no member. A library writer, so it joins no keep.
+
+#77 added the record that this club's own Other lodge was refilled from its
+Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
+MEASURED): the lodge, the trigger and the fields that changed, no member. A
+library writer, so it joins no keep.
 `main` then added #3750's executed approval of a change request on a finished
 stay (`booking` 107 -> 108, `booking-change-request.approve` with
 `executed: true`). The sync of `main` into epic #3789 composed #3819's addition

@@ -21,6 +21,7 @@
  * claim above is about what this code does, not a promise about the remote.
  */
 
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   getIntegrationCredentialValue,
@@ -105,17 +106,29 @@ export interface ServerNzSetupState {
  * returns the key value. A DB error propagates to the caller.
  */
 export async function getServerNzSetupState(): Promise<ServerNzSetupState> {
-  const row = await prisma.integrationCredential.findFirst({
+  const apiKeyUpdatedAt = await readServerNzApiKeyStamp();
+  return { apiKeySet: apiKeyUpdatedAt !== null, apiKeyUpdatedAt };
+}
+
+/**
+ * When the stored API key was last written, or `null` when there is none —
+ * metadata only, never the key. A new key, or a new server address (which
+ * removes the key), changes it, so it doubles as the CONNECTION's identity: the
+ * Other lodges download compares it before and after (#64) so a download that
+ * outlived a change of connection records nothing. Read through `db` so it can
+ * run under a lock inside the caller's transaction.
+ */
+export async function readServerNzApiKeyStamp(
+  db: Pick<Prisma.TransactionClient, "integrationCredential"> = prisma,
+): Promise<string | null> {
+  const row = await db.integrationCredential.findFirst({
     where: {
       provider: SERVERNZ_PROVIDER,
       key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
     },
     select: { updatedAt: true },
   });
-  return {
-    apiKeySet: Boolean(row),
-    apiKeyUpdatedAt: row ? row.updatedAt.toISOString() : null,
-  };
+  return row ? row.updatedAt.toISOString() : null;
 }
 
 /** True when a ServerNZ API key is configured (readiness helper, fail-closed). */

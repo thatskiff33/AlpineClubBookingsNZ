@@ -378,7 +378,7 @@ describe("resolveOtherLodgeRateElection", () => {
 
 describe("assertOtherLodgeExists", () => {
   it("refuses a lodge id that names nothing, rather than letting the FK fail", async () => {
-    const db = { otherLodge: { findUnique: vi.fn(async () => null) } };
+    const db = { otherLodge: { findFirst: vi.fn(async () => null) } };
     await expect(
       assertOtherLodgeExists(db as never, "lodge-gone"),
     ).rejects.toThrowError(
@@ -390,11 +390,22 @@ describe("assertOtherLodgeExists", () => {
   });
 
   it("reads nothing when no lodge is named", async () => {
-    const findUnique = vi.fn(async () => null);
+    const findFirst = vi.fn(async () => null);
     await expect(
-      assertOtherLodgeExists({ otherLodge: { findUnique } } as never, null),
+      assertOtherLodgeExists({ otherLodge: { findFirst } } as never, null),
     ).resolves.toBeUndefined();
-    expect(findUnique).not.toHaveBeenCalled();
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("refuses a HIDDEN lodge as a new choice (#58): it asks for a visible one", async () => {
+    const findFirst = vi.fn(async () => null);
+    await expect(
+      assertOtherLodgeExists({ otherLodge: { findFirst } } as never, "lodge-hidden"),
+    ).rejects.toThrowError(expect.objectContaining({ status: 400 }));
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { id: "lodge-hidden", hiddenAt: null },
+      select: { id: true },
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
 import {
   NO_KEY_SERVER_VERSION,
+  OTHER_LODGES_SYNC_RUNNING_CODE,
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_MISMATCH_CODE,
   computeServerVersionStatus,
@@ -76,6 +77,35 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
   return stored ?? "not checked yet";
 }
 
+/**
+ * The Download result in one line. Renames (#64) are counted, and a lodge the
+ * download could not place is named (#69): one sent without an id whose name
+ * several lodges here share, or a new one whose id a concurrent download held.
+ */
+function downloadSummaryText(data: {
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged?: number;
+  renamed?: number;
+  nameConflicts?: Array<{ lodge: string | null; wanted: string }>;
+  hiddenLodges?: string[];
+}): string {
+  const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
+  const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
+  const conflicts = (data.nameConflicts ?? []).map((c) => `"${c.wanted}"`);
+  const conflictText = conflicts.length
+    ? ` Not added, because they could not be matched to one lodge here (the next Download tries again): ${conflicts.join(", ")}.`
+    : "";
+  // Lodges the central server deleted (#58): hidden here, kept for the
+  // bookings and requests that name them.
+  const hidden = data.hiddenLodges ?? [];
+  const hiddenText = hidden.length
+    ? ` Deleted on the central server, so hidden here: ${hidden.map((n) => `"${n}"`).join(", ")}.`
+    : "";
+  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}`;
+}
+
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
   const clubTime = useClubTime();
   // Two different permissions, and the page says which is which rather than
@@ -101,7 +131,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   );
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(
+  const [message, setMessage] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(
     null,
   );
 
@@ -246,9 +276,21 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
             `${direction === "upload" ? "Upload" : "Download"} paused: the server is on a different software version - see Server software version above.`,
           );
         }
+        // Another sync holds the claim (#66): nothing failed and nothing was
+        // sent, so it is a notice, not an error.
+        if (data?.code === OTHER_LODGES_SYNC_RUNNING_CODE && typeof data.error === "string") {
+          setMessage({ kind: "warn", text: data.error });
+          return;
+        }
         throw new Error(data?.error ?? `Failed to ${direction}`);
       }
-      if (direction === "upload") {
+      if (direction === "upload" && data.ownedUnknown) {
+        // Nothing was sent or recorded (#69): the last-upload time stays.
+        setMessage({
+          kind: "warn",
+          text: "Nothing uploaded: press Download first, so this site knows which lodge is yours.",
+        });
+      } else if (direction === "upload") {
         setLastUpload(new Date().toISOString());
         setMessage({
           kind: "ok",
@@ -257,8 +299,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       } else {
         setLastDownload(new Date().toISOString());
         setMessage({
-          kind: "ok",
-          text: `Downloaded ${data.fetched} entries: ${data.created} added, ${data.updated} updated, ${data.unchanged ?? 0} unchanged.`,
+          kind: data.nameConflicts?.length ? "warn" : "ok",
+          text: downloadSummaryText(data),
         });
       }
     } catch (e) {
@@ -274,7 +316,13 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     <div className="space-y-6">
       {message ? (
         <p
-          className={`text-sm ${message.kind === "ok" ? "text-success-11" : "text-destructive"}`}
+          className={`text-sm ${
+            message.kind === "ok"
+              ? "text-success-11"
+              : message.kind === "warn"
+                ? "text-warning-11"
+                : "text-destructive"
+          }`}
           role="status"
         >
           {message.text}

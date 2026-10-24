@@ -1,5 +1,6 @@
 import type { Prisma, Role } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
+import { visibleOtherLodgeWhere } from "@/lib/other-lodges";
 
 /**
  * The reciprocal "other club member" rate on a booking (Other Lodges epic,
@@ -393,8 +394,10 @@ export async function assertOtherLodgeExists(
   otherLodgeId: string | null,
 ): Promise<void> {
   if (!otherLodgeId) return;
-  const found = await db.otherLodge.findUnique({
-    where: { id: otherLodgeId },
+  // A hidden lodge (#58) cannot be newly chosen. Callers check only a lodge the
+  // edit CHANGES to (`otherLodgeIdChanged`), so a booking keeps a hidden one.
+  const found = await db.otherLodge.findFirst({
+    where: { id: otherLodgeId, ...visibleOtherLodgeWhere },
     select: { id: true },
   });
   if (!found) {

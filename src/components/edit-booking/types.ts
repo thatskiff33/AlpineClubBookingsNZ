@@ -183,7 +183,7 @@ export interface BookingData {
    * spread). Its presence is what offers the "Member of Other Lodge" control:
    * the panel never guesses the audience, exactly as with `memberWholeLodge`.
    */
-  otherLodges?: Array<{ id: string; name: string }>;
+  otherLodges?: Array<{ id: string; name: string; label: string }>;
   /**
    * #2978: the guests an officer may tick as an other-lodge member - resolved
    * server-side by `resolveOtherLodgeRateEligibleGuestIds`, which is also what

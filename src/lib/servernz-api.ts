@@ -1,8 +1,12 @@
 import "server-only";
-import { ownedOtherLodgeNamesSchema } from "@/lib/other-lodges";
+import {
+  ownedCentralLodgesSchema,
+  type OwnedCentralLodge,
+} from "@/lib/other-lodges";
 import logger from "@/lib/logger";
 import {
   MAX_SERVER_VERSION_CHARS,
+  deletedLodgeSchema,
   distributedLodgeSchema,
   pullEnvelopeSchema,
   pushTargetResultSchema,
@@ -144,13 +148,25 @@ async function resolveConnection(
     // failure on a server-bound path.
     stored = await refreshStoredServerVersion(connection);
   }
+  assertStoredServerVersionMatches(stored);
+  return connection;
+}
+
+/**
+ * Throw the version pause (#49) when the RECORDED server version differs from
+ * the one this site is built for; a version never recorded passes (the gate in
+ * `resolveConnection` asks the server then). The one throw site, used by that
+ * gate and by the Upload and Download buttons BEFORE they take the sync claim
+ * (#66), so a pause neither takes the claim nor is answered as "a sync is
+ * running".
+ */
+export function assertStoredServerVersionMatches(stored: string | null): void {
   if (isStoredServerVersionMismatch(stored)) {
     throw new ServerNzVersionMismatchError(
       SERVERNZ_EXPECTED_SERVER_VERSION,
       stored as string,
     );
   }
-  return connection;
 }
 
 /**
@@ -559,23 +575,31 @@ export async function pullOtherLodges(
   }
 
   // The owned list, validated apart from the rows and the cursor: refused
-  // whole when it breaks its bounds (one name over the bound could never match
-  // a local row, but a list that is wrong in one place is not a list to edit
-  // and upload by), and then reported as not sent rather than failing the pull.
-  let ownLodgeNames: string[] | undefined;
-  let ownLodgeNamesRefused = false;
-  if (envelope.ownLodgeNames !== undefined) {
-    const owned = ownedOtherLodgeNamesSchema.safeParse(envelope.ownLodgeNames);
-    if (owned.success) ownLodgeNames = owned.data;
-    else ownLodgeNamesRefused = true;
+  // whole when it breaks its bounds (a list that is wrong in one place is not
+  // a list to edit and upload by), and then reported as not sent rather than
+  // failing the pull.
+  let ownLodges: OwnedCentralLodge[] | undefined;
+  let ownLodgesRefused = false;
+  if (envelope.ownLodges !== undefined) {
+    const owned = ownedCentralLodgesSchema.safeParse(envelope.ownLodges);
+    if (owned.success) ownLodges = owned.data;
+    else ownLodgesRefused = true;
   }
+
+  // Deletions (#58): each entry on its own, like the rows; one malformed entry
+  // costs that deletion, not the rest.
+  const deletedLodgeIds = envelope.deletedLodges?.flatMap((raw) => {
+    const entry = deletedLodgeSchema.safeParse(raw);
+    return entry.success ? [entry.data.id] : [];
+  });
 
   return {
     lodges,
     cursor: envelope.cursor,
     count: envelope.count,
     dropped,
-    ownLodgeNames,
-    ownLodgeNamesRefused,
+    ownLodges,
+    ownLodgesRefused,
+    deletedLodgeIds,
   };
 }

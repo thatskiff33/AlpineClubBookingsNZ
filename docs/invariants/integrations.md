@@ -571,3 +571,15 @@ Pinned by `servernz-api-version.test.ts`, `servernz-api-version-gate.test.ts`,
 `servernz-version-check.test.ts`, `cron-alpine-server-sync.test.ts`,
 `club-post-sharing.test.ts`, `club-post-mirror.test.ts`,
 `admin-daily-digest-server-version.test.ts`.
+
+## Alpine Central Server free-beds answer (triyder/AlpineClubBookingsNZ#62)
+
+### INV-INT-028
+
+The central server's public lodge search may ask this site how many beds are free at one of its lodges, and the answer is counts only, given only when the club has said yes twice.
+
+- **Two switches, both on.** `GET /api/webhooks/servernz-availability` answers only while the `alpineCentralServer` module is on AND `ServerNzSettings.otherLodgesEnabled` is set; either off is the same 404 as an unknown lodge, so a club that turns the module off (and can no longer reach the setup page) stops answering at once.
+- **Signed before read.** The question is verified with the push secret over a route-specific text (`centralAvailabilitySignedText`) within a five-minute window before its query is parsed, and the posts webhook refuses any body that is not a JSON object before its own check, so a captured request of either route cannot be replayed to the other.
+- **Counts only.** The body is the free beds per night and their minimum, for a lodge the club has linked to its central id (`Lodge.centralLodgeId`, or the one-lodge default); never a guest, member or booking, and every refusal is one 404.
+
+Pinned by `webhooks/servernz-availability/__tests__/route.test.ts`, `webhooks/servernz-posts/__tests__/route.test.ts`, `central-lodge-link.test.ts`.

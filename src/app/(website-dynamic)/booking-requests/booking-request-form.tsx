@@ -74,7 +74,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
   // Other/partner lodges the requester can say they belong to (#2749). Defaults
   // to "" — the "No" option — which is left blank for backwards compatibility.
   const [otherLodges, setOtherLodges] = useState<
-    Array<{ id: string; name: string }>
+    Array<{ id: string; name: string; label: string }>
   >([]);
   const [otherLodgeId, setOtherLodgeId] = useState("");
   // The DB-resolved default-lodge capacity, from the same settings endpoint. See
@@ -380,7 +380,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
                 <option value="">No</option>
                 {otherLodges.map((lodge) => (
                   <option key={lodge.id} value={lodge.id}>
-                    {lodge.name}
+                    {lodge.label}
                   </option>
                 ))}
               </select>

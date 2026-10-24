@@ -80,7 +80,7 @@ export interface GuestsCardOtherLodge {
    * shipped the partner-lodge registry, which it does for admins/officers only.
    */
   available: boolean;
-  lodges: Array<{ id: string; name: string }>;
+  lodges: Array<{ id: string; name: string; label: string }>;
   enabled: boolean;
   lodgeId: string | null;
   flaggedGuestIds: ReadonlySet<string>;

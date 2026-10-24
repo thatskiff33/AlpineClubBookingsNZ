@@ -11,7 +11,8 @@ vi.mock("@/lib/servernz-settings", () => ({
   validateCentralServerBaseUrl: (value: string) => ({ ok: true, value }),
 }));
 
-import { OTHER_LODGE_DATA_FIELDS } from "@/lib/other-lodges";
+import { OTHER_LODGE_DATA_FIELDS, OTHER_LODGE_RATE_FIELDS } from "@/lib/other-lodges";
+import { SERVER_RATE_WIRE_NAMES } from "@/lib/servernz-rate";
 import {
   pullOtherLodges,
   uploadOtherLodges,
@@ -56,7 +57,9 @@ function remoteRow(over: Record<string, unknown> = {}) {
     dinnerIncluded: true,
     cancellationPeriod: "14 days",
     winterSeasonStart: "2026-06-01",
+    winterSeasonEnd: null,
     summerSeasonStart: "2026-11-15",
+    summerSeasonEnd: null,
     amenities: [
       { name: "Drying room", description: "Heated, ground floor" },
       { name: "Sauna", description: null },
@@ -92,7 +95,9 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
       siteUrl: "https://club.test",
       dinnerIncluded: true,
       winterSeasonStart: "2026-06-01",
+      winterSeasonEnd: null,
       summerSeasonStart: "2026-11-15",
+      summerSeasonEnd: null,
       amenities: [
         { name: "Drying room", description: "Heated, ground floor" },
         { name: "Sauna", description: null },
@@ -203,13 +208,14 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
   });
 
   it("accepts an envelope that also carries keys this client does not read yet", async () => {
-    // A later server release adds to the envelope (the owned-lodge list, #52);
-    // a pull must not reject the whole page for a key it has no opinion on.
+    // A later server release adds to the envelope (as the owned-lodge list,
+    // #52, once did); a pull must not reject the whole page for a key it has no
+    // opinion on.
     respondWith({
       lodges: [remoteRow()],
       cursor: "c-3",
       count: 1,
-      ownLodgeNames: ["Aorangi Ski Club"],
+      aFieldFromALaterRelease: ["Aorangi Ski Club"],
     });
 
     const result = await pullOtherLodges(null);
@@ -255,7 +261,18 @@ const SERVER_UPLOAD_ITEM_KEYS = [
   "dinnerIncluded",
   "cancellationPeriod",
   "winterSeasonStart",
+  "winterSeasonEnd",
   "summerSeasonStart",
+  "summerSeasonEnd",
+  // Server API 2.2 (#61): the rates, under the SERVER's names, in dollars.
+  "winterRateUnder5",
+  "winterRate5To11",
+  "winterRate12To17",
+  "winterRateAdult",
+  "summerRateUnder5",
+  "summerRate5To11",
+  "summerRate12To17",
+  "summerRateAdult",
   "amenities",
 ].sort();
 
@@ -290,15 +307,33 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       dinnerIncluded: false,
       cancellationPeriod: null,
       winterSeasonStart: null,
+      winterSeasonEnd: null,
       summerSeasonStart: null,
+      summerSeasonEnd: null,
+      winterRateUnder5: null,
+      winterRate5To11: null,
+      winterRate12To17: null,
+      winterRateAdult: 45.5,
+      summerRateUnder5: null,
+      summerRate5To11: null,
+      summerRate12To17: null,
+      summerRateAdult: null,
       amenities: [],
     };
     expect(Object.keys(item).sort()).toEqual(SERVER_UPLOAD_ITEM_KEYS);
-    // And the sync builds its items from the same list, so it cannot add a key
-    // this pin does not know.
-    expect([...OTHER_LODGE_DATA_FIELDS, "name", "amenities"].sort()).toEqual(
-      SERVER_UPLOAD_ITEM_KEYS,
-    );
+    // And the sync builds its items from the same list — every data column,
+    // with each `…Cents` rate column renamed to the server's key — so it
+    // cannot add a key this pin does not know, nor send a `…Cents` key the
+    // server's strict schema would refuse.
+    const rateFields: ReadonlyArray<string> = OTHER_LODGE_RATE_FIELDS;
+    expect(
+      [
+        ...OTHER_LODGE_DATA_FIELDS.filter((f) => !rateFields.includes(f)),
+        ...OTHER_LODGE_RATE_FIELDS.map((f) => SERVER_RATE_WIRE_NAMES[f]),
+        "name",
+        "amenities",
+      ].sort(),
+    ).toEqual(SERVER_UPLOAD_ITEM_KEYS);
   });
 
   it("posts the lodges as given, under `lodges`, to the other-lodges endpoint", async () => {
@@ -328,7 +363,17 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       dinnerIncluded: true,
       cancellationPeriod: "14 days",
       winterSeasonStart: "2026-06-01",
+      winterSeasonEnd: null,
       summerSeasonStart: null,
+      summerSeasonEnd: null,
+      winterRateUnder5: null,
+      winterRate5To11: 20,
+      winterRate12To17: null,
+      winterRateAdult: 45.5,
+      summerRateUnder5: null,
+      summerRate5To11: null,
+      summerRate12To17: null,
+      summerRateAdult: null,
       amenities: [{ name: "Sauna", description: null }],
     };
 
@@ -341,66 +386,190 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
   });
 });
 
-// ── Pull: the owned list (#52) ─────────────────────────────────────────────
+// ── Pull: the non-member rates (#61) ───────────────────────────────────────
 
-describe("pullOtherLodges — ownLodgeNames (#52)", () => {
-  it("carries the owned list the server sent", async () => {
+describe("pullOtherLodges — non-member rates (#61, server API 2.2)", () => {
+  it("takes the server's dollars and hands the merge cents under this site's column names", async () => {
     respondWith({
-      lodges: [remoteRow()],
+      lodges: [remoteRow({ winterRateAdult: 45.5, winterRate5To11: 20, summerRateUnder5: 0, summerRateAdult: null })],
       cursor: "c-1",
       count: 1,
-      ownLodgeNames: ["Aorangi Ski Club", "Aorangi Ski Club (annex)"],
     });
 
     const result = await pullOtherLodges(null);
 
-    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club", "Aorangi Ski Club (annex)"]);
+    expect(result.dropped).toBe(0);
+    const [row] = result.lodges;
+    expect(row).toMatchObject({
+      winterRateAdultCents: 4550,
+      winterRate5To11Cents: 2000,
+      summerRateUnder5Cents: 0,
+      summerRateAdultCents: null,
+    });
+    // No dollar value survives the boundary, under either name.
+    expect(row).not.toHaveProperty("winterRateAdult");
+    expect(row).not.toHaveProperty("summerRateAdult");
   });
 
-  it("carries an empty list as an empty list: owning nothing is an answer", async () => {
-    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: [] });
+  it("leaves a rate the server did not send ABSENT, so the merge keeps the stored one", async () => {
+    respondWith({ lodges: [remoteRow({ winterRateAdult: 45.5 })], cursor: "c-1", count: 1 });
+
+    const [row] = (await pullOtherLodges(null)).lodges;
+
+    expect(row).toHaveProperty("winterRateAdultCents", 4550);
+    expect(row).not.toHaveProperty("summerRateAdultCents");
+    expect(row).not.toHaveProperty("winterRateUnder5Cents");
+  });
+
+  it("does not take a cents key from the server: only this site writes those", async () => {
+    respondWith({ lodges: [remoteRow({ winterRateAdultCents: 1 })], cursor: "c-1", count: 1 });
+
+    const [row] = (await pullOtherLodges(null)).lodges;
+
+    expect(row).not.toHaveProperty("winterRateAdultCents");
+  });
+
+  it.each([
+    ["three decimal places", { winterRateAdult: 45.555 }],
+    ["a negative rate", { summerRate5To11: -1 }],
+    ["a rate over 99999.99", { winterRate12To17: 100000 }],
+    ["a rate sent as a string", { summerRateAdult: "45.50" }],
+  ])("drops a row with %s and keeps the others, never aborting the pull", async (_label, bad) => {
+    respondWith({
+      lodges: [remoteRow(bad), remoteRow({ id: "srv_2", name: "Ruapehu Hut", winterRateAdult: 30 })],
+      cursor: "c-1",
+      count: 2,
+    });
 
     const result = await pullOtherLodges(null);
 
-    expect(result.ownLodgeNames).toEqual([]);
+    expect(result.dropped).toBe(1);
+    expect(result.lodges.map((l) => l.name)).toEqual(["Ruapehu Hut"]);
+  });
+});
+
+// ── Pull: the owned list (#52) ─────────────────────────────────────────────
+
+describe("pullOtherLodges — ownLodges, the owned lodges with their ids (#52, #62, #69)", () => {
+  it("carries the owned lodges with their permanent ids", async () => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      ownLodges: [{ id: "ol_a", name: "Aorangi Ski Club" }],
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodges).toEqual([{ id: "ol_a", name: "Aorangi Ski Club" }]);
+    expect(result.ownLodgesRefused).toBe(false);
   });
 
-  it("leaves the list `undefined` when the server does not send it, never defaulting to []", async () => {
-    // An older server. The sync must be able to tell "not sent" from "none".
+  it("carries two owned lodges of the same name: the ids tell them apart (#69)", async () => {
+    const ownLodges = [
+      { id: "ol_a", name: "Ruapehu Lodge" },
+      { id: "ol_b", name: "Ruapehu Lodge" },
+    ];
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodges });
+
+    expect((await pullOtherLodges(null)).ownLodges).toEqual(ownLodges);
+  });
+
+  it("carries an empty list as an empty list: owning nothing is an answer", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodges: [] });
+
+    expect((await pullOtherLodges(null)).ownLodges).toEqual([]);
+  });
+
+  it("leaves ownLodges `undefined` when the server does not send it, never defaulting to []", async () => {
     respondWith({ lodges: [], cursor: "c-1", count: 0 });
 
     const result = await pullOtherLodges(null);
 
-    expect(result.ownLodgeNames).toBeUndefined();
-    expect(result).toHaveProperty("ownLodgeNames");
+    expect(result.ownLodges).toBeUndefined();
+    expect(result).toHaveProperty("ownLodges");
+    expect(result.ownLodgesRefused).toBe(false);
+  });
+
+  it("no longer reads the name-only list a 2.4 server sent (#69)", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodges).toBeUndefined();
+    expect(result).not.toHaveProperty("ownLodgeNames");
   });
 
   it.each([
-    ["a name over the lodge-name bound", ["x".repeat(121)]],
-    ["a name carrying NUL", ["Aorangi\u0000Ski Club"]],
-    ["a non-string entry", [42]],
-    ["not a list at all", "Aorangi Ski Club"],
-    ["more names than the bound", Array.from({ length: 101 }, (_, i) => `Lodge ${i}`)],
-  ])("discards an owned list with %s as not sent, and still delivers the rows and the cursor", async (_label, ownLodgeNames) => {
+    ["an empty id", [{ id: "", name: "Aorangi Ski Club" }]],
+    ["an id over 64 characters", [{ id: "x".repeat(65), name: "Aorangi Ski Club" }]],
+    ["the same id twice", [{ id: "ol_a", name: "A" }, { id: "ol_a", name: "B" }]],
+    ["a name over the lodge-name bound", [{ id: "ol_a", name: "x".repeat(121) }]],
+    ["a name carrying NUL", [{ id: "ol_a", name: "Aorangi\u0000Ski Club" }]],
+    ["more lodges than the bound", Array.from({ length: 101 }, (_, i) => ({ id: `ol_${i}`, name: `Lodge ${i}` }))],
+    ["a list that is not a list", "ol_a"],
+  ])("refuses %s on its own, and still delivers the rows and the cursor", async (_label, ownLodges) => {
     // The list decides what may be edited and uploaded, so one that breaks its
     // bounds is refused whole — but on its own. Failing the pull for it would
     // stop every club's details merging and leave the cursor behind because of
     // one bad field, so the rows land, the cursor advances, and the sync is
     // told the list was refused and leaves the stored one alone.
-    respondWith({ lodges: [remoteRow()], cursor: "c-9", count: 1, ownLodgeNames });
+    respondWith({ lodges: [remoteRow()], cursor: "c-9", count: 1, ownLodges });
 
     const result = await pullOtherLodges(null);
 
+    expect(result.ownLodges).toBeUndefined();
+    expect(result.ownLodgesRefused).toBe(true);
     expect(result.lodges).toHaveLength(1);
     expect(result.cursor).toBe("c-9");
-    expect(result.ownLodgeNames).toBeUndefined();
-    expect(result.ownLodgeNamesRefused).toBe(true);
+  });
+});
+
+describe("pullOtherLodges — deletedLodges, lodges deleted on the server (#58, API 2.4)", () => {
+  it("carries the deleted lodges' central ids, in the order sent", async () => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      deletedLodges: [
+        { id: "gone_a", deletedAt: "2026-10-01T00:00:00.000Z" },
+        { id: "gone_b", deletedAt: "2026-10-02T00:00:00.000Z" },
+      ],
+    });
+
+    expect((await pullOtherLodges(null)).deletedLodgeIds).toEqual(["gone_a", "gone_b"]);
   });
 
-  it("reports a well-formed or absent list as not refused", async () => {
-    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
-    expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
+  it("leaves deletedLodgeIds `undefined` when an older server does not send the list", async () => {
     respondWith({ lodges: [], cursor: "c-1", count: 0 });
-    expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
+
+    expect((await pullOtherLodges(null)).deletedLodgeIds).toBeUndefined();
+  });
+
+  it.each([
+    ["an empty id", { id: "", deletedAt: "2026-10-01T00:00:00.000Z" }],
+    ["a padded id", { id: " gone_a", deletedAt: "2026-10-01T00:00:00.000Z" }],
+    ["an over-long id", { id: "x".repeat(65), deletedAt: "2026-10-01T00:00:00.000Z" }],
+    ["no id", { deletedAt: "2026-10-01T00:00:00.000Z" }],
+  ])("drops one entry with %s and keeps the rest", async (_label, bad) => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      deletedLodges: [bad, { id: "gone_b", deletedAt: "2026-10-02T00:00:00.000Z" }],
+    });
+
+    expect((await pullOtherLodges(null)).deletedLodgeIds).toEqual(["gone_b"]);
+  });
+
+  it("fails the whole pull on an over-long list, so the cursor does not move past deletions it never applied", async () => {
+    respondWith({
+      lodges: [],
+      cursor: "c-1",
+      count: 0,
+      deletedLodges: Array.from({ length: 100_001 }, (_, i) => ({ id: `g${i}`, deletedAt: "2026-10-01T00:00:00.000Z" })),
+    });
+
+    await expect(pullOtherLodges(null)).rejects.toThrow();
   });
 });

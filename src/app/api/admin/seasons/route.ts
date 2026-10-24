@@ -9,6 +9,7 @@ import {
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
+import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync"
 import {
   membershipTypeSeasonRateInputSchema,
   validateMembershipTypeSeasonRates,
@@ -156,6 +157,8 @@ export async function POST(req: NextRequest) {
     details: `Created season: ${name}`,
   });
 
+  // This club's own Other lodge follows the Fees page (#77).
+  await syncOwnOtherLodgesFromFees("fees season created", session.user.id)
   revalidatePublicPageContent()
 
   return NextResponse.json(season, { status: 201 })

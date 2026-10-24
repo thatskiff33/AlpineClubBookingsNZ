@@ -108,6 +108,16 @@ describe("POST /api/webhooks/servernz-posts", () => {
     expect(mocks.runMirrorSync).not.toHaveBeenCalled();
   });
 
+  it("refuses a captured free-beds question replayed here, before the signature is judged", async () => {
+    // The availability webhook signs `availability\n<lodge>\n<from>\n<to>` with the
+    // same secret; within the window it would verify, so the body shape is
+    // refused first and the sync never runs.
+    const res = await POST(signedRequest({ body: "availability\nol_a\n2026-07-10\n2026-07-13" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid body" });
+    expect(mocks.runMirrorSync).not.toHaveBeenCalled();
+  });
+
   it("rejects a body tampered with after signing", async () => {
     const res = await POST(signedRequest({ tamper: true }));
     expect(res.status).toBe(401);

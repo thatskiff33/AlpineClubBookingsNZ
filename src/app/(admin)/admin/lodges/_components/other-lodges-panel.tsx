@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, Pencil, Plus, X } from "lucide-react";
+import { Building, EyeOff, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,33 +34,37 @@ import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { isHttpUrl } from "@/lib/http-url";
+import { isSafeHttpUrl } from "@/lib/http-url";
+import { OtherLodgeSiteUrlNote, SITE_URL_NOTE_ID } from "./other-lodge-site-url-note";
 import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
   OTHER_LODGE_NOT_OWNED_CODE,
+  otherLodgeChoiceLabel,
   ownedOtherLodgeEditLabel,
   type AdminOtherLodgesResponse,
   type OwnedOtherLodgeNames,
 } from "@/lib/other-lodges";
 import {
-  DATE_FIELDS,
-  DATE_FIELD_NAMES,
   FACILITY_FIELDS,
   FACILITY_LABELS,
   ROOM_TYPE_CHOICES,
   TEXT_FIELDS,
+  siteUrlBroken,
   TEXT_FIELD_NAMES,
   WHOLE_NUMBER_FIELDS,
   WHOLE_NUMBER_FIELD_NAMES,
   emptyForm,
   formFromLodge,
-  formPayload,
+  formRequestBody,
   formProblem,
   type AmenityFormRow,
   type OtherLodgeFormState,
   type OtherLodgeRecord,
 } from "./other-lodge-form";
+import { OtherLodgeNameCell, OtherLodgeNameField } from "./other-lodge-name";
+import { useHideUnlistedLodge } from "./other-lodge-hide";
+import { OtherLodgeSeasonRates } from "./other-lodge-season-rates";
 
 export function OtherLodgesPanel({
   // #2160/#2168 vouch: the Lodges page renders one lodge-area
@@ -135,6 +139,7 @@ export function OtherLodgesPanel({
   const openerRef = useRef<HTMLElement | null>(null);
 
   function startEdit(lodge: OtherLodgeRecord, opener: HTMLElement) {
+    hiding.clearMessage();
     openerRef.current = opener;
     setEditingId(lodge.id);
     setForm(formFromLodge(lodge));
@@ -181,7 +186,7 @@ export function OtherLodgesPanel({
       const response = await fetch(`/api/admin/other-lodges/${editingId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formPayload(form)),
+        body: JSON.stringify(formRequestBody(form)),
       });
       const data = (await response.json().catch(() => null)) as {
         error?: string;
@@ -222,21 +227,27 @@ export function OtherLodgesPanel({
     }
   }
 
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const hiding = useHideUnlistedLodge({ reload: () => loadLodges(), afterHide: () => headingRef.current?.focus() });
   const showForm = editingId !== null;
+  const editingLodge = lodges.find((l) => l.id === editingId);
+  // An odd address the lodge was SAVED with (#55), flagged as the form opens.
+  const siteUrlFlagged = siteUrlBroken(form.text.siteUrl) && form.text.siteUrl.trim() === (editingLodge?.siteUrl ?? "").trim();
   // The owned rows actually ON SCREEN. A name the server lists that has no
   // local row yet (not downloaded) has no button, so the label counts what the
   // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
   // name on each when several are, and a note below when none is yet.
-  const localOwnedNames = lodges.filter((l) => l.owned).map((l) => l.name);
-  const editLabel = (name: string) => ownedOtherLodgeEditLabel(localOwnedNames, name);
-  const anyOwnedRow = localOwnedNames.length > 0;
+  const localOwned = lodges.filter((l) => l.owned);
+  const editLabel = (lodge: { name: string; location: string | null }) => ownedOtherLodgeEditLabel(localOwned, lodge);
+  const anyOwnedRow = localOwned.length > 0;
   const ownedButNotDownloaded =
     !loading && ownedNames !== null && ownedNames.length > 0 && !anyOwnedRow;
 
   return (
     <div className="space-y-4">
+      {hiding.confirmDialog}
       <div>
-        <h2 className="text-xl font-semibold">Other lodges</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">Other lodges</h2>
         <p className="text-sm text-muted-foreground">
           Details of other clubs&apos; lodges the club recognises. Their names
           will be offered to non-members when they indicate they are a member
@@ -249,7 +260,8 @@ export function OtherLodgesPanel({
           error is shown inside it, directly above Save and Cancel (the form is
           long, and Save is where the administrator's attention is when it
           fails). This one is for everything outside it: a list that could not
-          load. */}
+          load. A Hide reports in its own line, announced, below it (#58). */}
+      <p role="status" className={`text-sm ${hiding.message?.kind === "ok" ? "text-success-11" : "text-destructive"}`}>{hiding.message?.text}</p>
       {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -287,33 +299,20 @@ export function OtherLodgesPanel({
           }}
         >
           <DialogHeader>
-            <DialogTitle>{editLabel(form.name)}</DialogTitle>
+            <DialogTitle>{editLabel(editingLodge ?? { name: form.name, location: null })}</DialogTitle>
             <DialogDescription>
-              Everything here is optional detail that is shared with other clubs
-              through the Alpine Central Server when that connection is on.
+              Apart from the name, everything here is optional detail that is
+              shared with other clubs through the Alpine Central Server when
+              that connection is on.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-name">Name</Label>
-                {/* READ-ONLY: the central server matches lodges by name, so a
-                    new name here would create a second lodge there and strand
-                    this one. The route refuses a change as well. */}
-                <Input
-                  id="other-lodge-name"
-                  value={form.name}
-                  readOnly
-                  aria-describedby="other-lodge-name-note"
-                />
-                <p
-                  id="other-lodge-name-note"
-                  className="text-xs text-muted-foreground"
-                >
-                  The name is set on the central server and cannot be changed
-                  here.
-                </p>
-              </div>
+              <OtherLodgeNameField
+                value={form.name}
+                renamable={editingLodge?.renamable ?? false}
+                onChange={(name) => setForm((prev) => ({ ...prev, name }))}
+              />
               {TEXT_FIELD_NAMES.map((field) => (
                 <div key={field} className="space-y-2">
                   <Label htmlFor={`other-lodge-${field}`}>
@@ -324,6 +323,8 @@ export function OtherLodgesPanel({
                     type={TEXT_FIELDS[field].type}
                     placeholder={TEXT_FIELDS[field].placeholder}
                     maxLength={TEXT_FIELDS[field].maxLength}
+                    aria-describedby={field === "siteUrl" ? SITE_URL_NOTE_ID : undefined}
+                    aria-invalid={field === "siteUrl" && siteUrlFlagged ? true : undefined}
                     value={form.text[field]}
                     onChange={(event) =>
                       setForm((prev) => ({
@@ -332,6 +333,7 @@ export function OtherLodgesPanel({
                       }))
                     }
                   />
+                  {field === "siteUrl" ? <OtherLodgeSiteUrlNote flagged={siteUrlFlagged} /> : null}
                 </div>
               ))}
               {WHOLE_NUMBER_FIELD_NAMES.map((field) => (
@@ -375,23 +377,9 @@ export function OtherLodgesPanel({
                   ))}
                 </div>
               </fieldset>
-              {DATE_FIELD_NAMES.map((field) => (
-                <div key={field} className="space-y-2">
-                  <Label htmlFor={`other-lodge-${field}`}>{DATE_FIELDS[field]}</Label>
-                  <Input
-                    id={`other-lodge-${field}`}
-                    type="date"
-                    value={form.dates[field]}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        dates: { ...prev.dates, [field]: event.target.value },
-                      }))
-                    }
-                  />
-                </div>
-              ))}
             </div>
+
+            <OtherLodgeSeasonRates form={form} setForm={setForm} feesProblem={lodges.find((l) => l.id === editingId)?.feesProblem} />
 
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">Facilities</legend>
@@ -570,10 +558,10 @@ export function OtherLodgesPanel({
               ) : (
                 "your lodges"
               )}{" "}
-              as yours, but {ownedNames?.length === 1 ? "it has" : "they have"}{" "}
-              not been downloaded to this site yet. Press <strong>Download</strong>{" "}
+              as yours, but {ownedNames?.length === 1 ? "it is" : "they are"}{" "}
+              not linked to this site yet. Press <strong>Download</strong>{" "}
               on the Alpine Central Server setup page; the Edit button appears
-              once the entry is here.
+              once it is.
             </p>
           ) : null}
           {loading ? (
@@ -604,14 +592,12 @@ export function OtherLodgesPanel({
                   {lodges.map((lodge) => (
                     <TableRow key={lodge.id}>
                       <TableCell>
-                        <div className="font-medium">{lodge.name}</div>
-                        {lodge.amenities.length > 0 ? (
-                          <div className="text-xs text-muted-foreground">
-                            {lodge.amenities.length}{" "}
-                            {lodge.amenities.length === 1
-                              ? "amenity"
-                              : "amenities"}
-                          </div>
+                        <OtherLodgeNameCell lodge={lodge} />
+                        {lodge.notOnCentralServer ? (
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide({ id: lodge.id, name: otherLodgeChoiceLabel(lodge, lodges) })} disabled={hiding.hidingId !== null} aria-label={`${hiding.hidingId === lodge.id ? "Hiding" : "Hide"} ${otherLodgeChoiceLabel(lodge, lodges)}`}>
+                            <EyeOff className="mr-2 h-4 w-4" />
+                            {hiding.hidingId === lodge.id ? "Hiding…" : "Hide"}
+                          </ViewOnlyActionButton>
                         ) : null}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
@@ -635,9 +621,9 @@ export function OtherLodgesPanel({
                         )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {/* A link only for an http(s) address, which is all the
-                            API accepts; anything else is shown as plain text. */}
-                        {lodge.siteUrl && isHttpUrl(lodge.siteUrl) ? (
+                        {/* A link only for an address that passes the central
+                            server's stricter rule (#55); anything else is text. */}
+                        {lodge.siteUrl && isSafeHttpUrl(lodge.siteUrl) ? (
                           <a
                             href={lodge.siteUrl}
                             target="_blank"
@@ -668,7 +654,7 @@ export function OtherLodgesPanel({
                                 disabled={saving}
                               >
                                 <Pencil className="mr-2 h-4 w-4" />
-                                {editLabel(lodge.name)}
+                                {editLabel(lodge)}
                               </ViewOnlyActionButton>
                             </div>
                           ) : null}

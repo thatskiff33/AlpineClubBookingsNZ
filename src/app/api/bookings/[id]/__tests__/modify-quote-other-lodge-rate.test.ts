@@ -59,7 +59,8 @@ vi.mock("@/lib/prisma", () => ({
     // it asserted before.
     manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: h.bookingFindUnique },
-    otherLodge: { findUnique: h.otherLodgeFindUnique },
+    // `findFirst` (#58): a newly chosen lodge must also be visible.
+    otherLodge: { findUnique: h.otherLodgeFindUnique, findFirst: h.otherLodgeFindUnique },
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },
@@ -600,6 +601,29 @@ describe("modify-quote — other-lodge member rate", () => {
     await POST(req({ checkOut: "2026-08-04" }), { params });
 
     expect(h.resolveOtherLodgeRateEligible).not.toHaveBeenCalled();
+  });
+
+  it("still quotes an unrelated change on a booking whose stored lodge is HIDDEN (#58)", async () => {
+    h.bookingFindUnique.mockResolvedValue(booking({ otherLodgeId: "lodge-hidden" }));
+    h.otherLodgeFindUnique.mockResolvedValue(null); // hidden: not offered anew
+
+    const res = await POST(req({ checkOut: "2026-08-04" }), { params });
+
+    expect(res.status).not.toBe(400);
+    expect(h.otherLodgeFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("still quotes a tick-only change that keeps the booking's HIDDEN lodge (#58)", async () => {
+    h.bookingFindUnique.mockResolvedValue(booking({ otherLodgeId: "lodge-hidden" }));
+    h.otherLodgeFindUnique.mockResolvedValue(null);
+
+    const res = await POST(
+      req({ otherLodgeId: "lodge-hidden", otherLodgeMemberGuestIds: ["g-visitor"] }),
+      { params },
+    );
+
+    expect(res.status).not.toBe(400);
+    expect(h.otherLodgeFindUnique).not.toHaveBeenCalled();
   });
 
   it("refuses a lodge id that names nothing", async () => {
