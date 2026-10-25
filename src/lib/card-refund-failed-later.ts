@@ -72,6 +72,7 @@ import logger from "@/lib/logger";
 import { cardRefundPaidAnotherWayClosesWhere } from "@/lib/manual-refund-task-settlement-rules";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
 import {
+  CARD_REFUND_OPERATION_ORDER_BY,
   CARD_REFUND_OPERATION_WHERE,
   cardRefundPaymentBeforeFailure,
   carriesCardRefundOperationMetadata,
@@ -79,6 +80,7 @@ import {
   cardRefundSliceFilledBy,
   isOpenCardRefundOperationStatus,
   parseRefundAllocationPlan,
+  RECORDED_CARD_REFUND_ORDER_BY,
 } from "@/lib/open-card-refund-owed";
 import {
   isPaymentRecoveryOperationExhausted,
@@ -255,7 +257,11 @@ async function findOwner(
   refund: FailedLaterRefundInput,
 ): Promise<OpenOwner | "owed" | RaisedOwner> {
   const refundId = refund.id;
-  const rows = await tx.paymentRecoveryOperation.findMany({ where: { paymentId: payment.id, ...CARD_REFUND_OPERATION_WHERE } });
+  // #4284: one order on a `createdAt` tie, the owed figure's (`CARD_REFUND_OPERATION_ORDER_BY`).
+  const rows = await tx.paymentRecoveryOperation.findMany({
+    where: { paymentId: payment.id, ...CARD_REFUND_OPERATION_WHERE },
+    orderBy: CARD_REFUND_OPERATION_ORDER_BY,
+  });
   // Already owed, by the one spelling of what a slice is sent for (`cardRefundSliceFailedRefundIds`): any row of
   // its own, open or closed (its key names it, whatever its plan), and an open row's slice that recorded it.
   const sendsFor = (row: PaymentRecoveryOperation, slice: Parameters<typeof cardRefundSliceFailedRefundIds>[1]) =>
@@ -271,6 +277,7 @@ async function findOwner(
   // The payment as it stood before the failure: this refund still counted.
   const refunds = await tx.paymentRefund.findMany({
     where: { paymentId: payment.id },
+    orderBy: RECORDED_CARD_REFUND_ORDER_BY,
     select: { stripeRefundId: true, paymentTransactionId: true, amountCents: true, status: true, createdAt: true, stripeCreatedAt: true },
   });
   const filled = cardRefundSliceFilledBy(cardRefundPaymentBeforeFailure({ ...payment, recoveryOperations: rows, refunds }, refundId), refundId);

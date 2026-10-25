@@ -117,6 +117,7 @@ export async function readApprovedAppealOutcomes(
             refunds: netCollectedCardRefundSelect.refunds,
             recoveryOperations: {
               where: netCollectedCardRefundSelect.recoveryOperations.where,
+              orderBy: netCollectedCardRefundSelect.recoveryOperations.orderBy,
               select: { ...netCollectedCardRefundSelect.recoveryOperations.select, attempts: true, nextRetryAt: true },
             },
           },
