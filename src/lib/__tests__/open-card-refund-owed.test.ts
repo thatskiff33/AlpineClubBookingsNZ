@@ -482,3 +482,43 @@ describe("a re-sent slice marked with its refund fills its own row first (#4312 
     expect(owed(false)).toEqual({ "op-older": 4_000, "op-newer": 0 });
   });
 });
+
+describe("a createdAt tie is attributed the same way whatever order the rows arrive in (#4284)", () => {
+  const slice = (cents: number) => [{ paymentTransactionId: "txn-a", amountCents: cents }];
+  const reversed = <T>(rows: T[]) => [...rows].reverse();
+
+  it("two rows raised at the same instant: one refund fills the same row in both read orders", () => {
+    // Two equal refunds failed later in one ledger write raise two rows with one
+    // createdAt. One re-send is recorded, not yet marked. Which row it fills must
+    // not depend on the order PostgreSQL returns them: `id` breaks the tie.
+    const rows = [
+      operation({ id: "op-a", amountCents: 5_000, allocationPlan: slice(5_000), createdAt: at(10) }),
+      operation({ id: "op-b", amountCents: 5_000, allocationPlan: slice(5_000), createdAt: at(10) }),
+    ];
+    const refunds = [refund({ stripeRefundId: "re-tie-resend", amountCents: 5_000, createdAt: at(20) })];
+    const owed = (ops: CardRefundOperationRow[]) =>
+      Object.fromEntries(openCardRefundOwedByOperation(payment(ops, refunds, { refundedAmountCents: 5_000 })));
+
+    expect(owed(rows)).toEqual({ "op-a": 5_000, "op-b": 0 });
+    expect(owed(reversed(rows))).toEqual({ "op-a": 5_000, "op-b": 0 });
+  });
+
+  it("two refunds recorded at the same instant: each fills the same row in both read orders", () => {
+    // Two rows each owe 5000 on one charge; two 5000 refunds are recorded in one
+    // write. The first in the fixed order goes to the newest row, the second to
+    // the older one - by `stripeRefundId`, never by the order they were read.
+    const rows = [
+      operation({ id: "op-old", amountCents: 5_000, allocationPlan: slice(5_000), createdAt: at(10) }),
+      operation({ id: "op-new", amountCents: 5_000, allocationPlan: slice(5_000), createdAt: at(11) }),
+    ];
+    const refunds = [
+      refund({ stripeRefundId: "re-tie-x", amountCents: 5_000, createdAt: at(20) }),
+      refund({ stripeRefundId: "re-tie-y", amountCents: 5_000, createdAt: at(20) }),
+    ];
+    for (const read of [refunds, reversed(refunds)]) {
+      const state = payment(rows, read, { refundedAmountCents: 10_000 });
+      expect(cardRefundSliceFilledBy(state, "re-tie-x")?.operation.id).toBe("op-new");
+      expect(cardRefundSliceFilledBy(state, "re-tie-y")?.operation.id).toBe("op-old");
+    }
+  });
+});

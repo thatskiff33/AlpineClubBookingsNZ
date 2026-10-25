@@ -2859,6 +2859,10 @@ _Legacy: settles tasks raised before #4317._
     `PartialRefundError`). A superseded intent's row takes any later refund on
     its transaction. A group settlement row (pre-#3653) is never owed on its
     anchor payment.
+  - **A tie has one order** (#4284): rows raised, or refunds recorded, at the
+    same instant are taken by `id` and by `stripeRefundId`, never in the order
+    PostgreSQL returns them (`compareCardRefundOperations`,
+    `compareRecordedCardRefunds`; their reads ask for the same order).
   - **"Refunds owed" is Net Collected's own per-payment figure**
     (`refundsOwedOfCashParts`), so the two agree for every payment. Two parts
     have no booking figure to agree with: a hand-back on a payment that shows
