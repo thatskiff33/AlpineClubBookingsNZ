@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
+import { organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type { PromoInfo, QuoteResult } from "@/components/edit-booking/types";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -346,7 +347,12 @@ export function PriceSummaryCard({
                     : "bg-success-3 text-success-11"
                 }`}
               >
-                {quote.netChargeCents > 0 ? (
+                {quote.netChargeCents > 0 && quote.billedToOrganiser && !quote.chargeRefusal ? (
+                  // #4299 N4: the organiser is invoiced for it on save; nothing is charged here.
+                  <p className="font-medium" data-testid="organiser-billed-notice">
+                    {organiserBilledSentence(formatCents(quote.netChargeCents, format), "quote")}
+                  </p>
+                ) : quote.netChargeCents > 0 ? (
                   <p className="font-medium">
                     Additional charge: {formatCents(quote.netChargeCents, format)}
                   </p>

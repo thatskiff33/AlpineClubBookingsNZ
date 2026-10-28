@@ -144,6 +144,7 @@ import { clubTime } from "@/lib/club-time/server";
 import { readReductionAgainstUnpaidAsk, reductionLeftAfterAskCents } from "@/lib/additional-ask-reduction";
 import { organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
 import { organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing"; // #4299 N-a: what the save refuses
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions, organiserChildChargeRefusal,
@@ -2334,7 +2335,7 @@ export async function POST(
     priceDiffCents,
     changeFeeCents,
     netChargeCents,
-    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }) ?? await organiserCombinedInvoiceRefusal(prisma, booking, netChargeCents), priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents }), // #3653, #3949: what the save refuses
+    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }) ?? await organiserCombinedInvoiceRefusal(prisma, booking, netChargeCents), priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents }), billedToOrganiser: netChargeCents > 0 && paidByOrganiserInternetBanking(booking), // #3653, #3949: what the save refuses; #4299 N4: who it bills
     // #3954: the part of a reduction that cancels or shrinks the unpaid card
     // ask, and what is left of that ask afterwards (0: nothing left to pay).
     unpaidAskOffsetCents: reduction.offsetCents,

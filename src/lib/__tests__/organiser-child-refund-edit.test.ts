@@ -346,6 +346,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // The quote route answers with the SAME predicate the save refuses on.
     const quote = readFileSync(resolve(REPO_ROOT, "src/app/api/bookings/[id]/modify-quote/route.ts"), "utf8");
     expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }) ?? await organiserCombinedInvoiceRefusal(prisma, booking, netChargeCents),");
+    // #4299 N4: and, for a bank place, that the organiser is invoiced for the increase (the panel's `organiser-billed-notice`).
+    expect(quote).toContain("billedToOrganiser: netChargeCents > 0 && paidByOrganiserInternetBanking(booking),");
   });
 
   it("#4299 N-a: the quote and the save refuse only an INCREASE on a bank place whose combined invoice is missing", async () => {

@@ -293,6 +293,11 @@ export interface QuoteResult {
    * stays off while it is set.
    */
   priceChangeRefusal?: string | null;
+  /**
+   * #4299 N4 (`INV-PAY-147`): an increase on a place the group organiser paid for by Internet Banking is invoiced
+   * to the organiser on save, so the panel names who is billed instead of an additional charge.
+   */
+  billedToOrganiser?: boolean;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;

@@ -9,6 +9,7 @@ import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import type { QuoteResult } from "@/components/edit-booking/types";
+import { organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 
 function organiserQuote(organiserRefundByBankTransfer: boolean): QuoteResult {
   return {
@@ -74,5 +75,24 @@ describe("the price summary names how a reduction goes back to the group organis
     renderQuote(organiserQuote(false));
 
     expect(screen.getByTestId("organiser-refund-notice").textContent).toMatch(/^Refunded to the group organiser's card: \$25\.00 \(50%\)/);
+  });
+});
+
+describe("#4299 N4: an increase on a place the organiser paid for by Internet Banking", () => {
+  const increase = { ...organiserQuote(true), netChargeCents: 6_000, settlementOptions: null } as unknown as QuoteResult;
+
+  it("says the organiser will be invoiced, in the email's own words, never 'Additional charge'", () => {
+    renderQuote({ ...increase, billedToOrganiser: true } as QuoteResult);
+
+    expect(screen.getByTestId("organiser-billed-notice").textContent).toBe(organiserBilledSentence("$60.00", "quote"));
+    expect(screen.getByTestId("organiser-billed-notice").textContent).toMatch(/will be invoiced to the group organiser/);
+    expect(screen.queryByText(/Additional charge/)).toBeNull();
+  });
+
+  it("control: any other increase is still an additional charge", () => {
+    renderQuote(increase);
+
+    expect(screen.getByText("Additional charge: $60.00")).toBeTruthy();
+    expect(screen.queryByTestId("organiser-billed-notice")).toBeNull();
   });
 });

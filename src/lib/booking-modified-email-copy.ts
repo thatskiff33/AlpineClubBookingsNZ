@@ -70,10 +70,12 @@ export function organiserByHandRefundSentence(amount: string): string {
  * #4299 (`INV-PAY-147`): an increase on a place the group organiser paid for by
  * Internet Banking is invoiced to the ORGANISER, so the joiner is told there is
  * nothing for them to pay. ONE wording for the "Booking Modified" HTML email and
- * its admin-editable body.
+ * its admin-editable body, and (N4, `quote`) the edit panel's preview of it,
+ * which says what saving will do.
  */
-export function organiserBilledSentence(amount: string): string {
-  return `The extra ${amount} for this change has been invoiced to the group organiser, because the group organiser paid for this booking. There is nothing for you to pay.`;
+export function organiserBilledSentence(amount: string, when: "saved" | "quote" = "saved"): string {
+  const billed = when === "quote" ? "will be invoiced" : "has been invoiced";
+  return `The extra ${amount} for this change ${billed} to the group organiser, because the group organiser paid for this booking. There is nothing for you to pay.`;
 }
 
 /**
