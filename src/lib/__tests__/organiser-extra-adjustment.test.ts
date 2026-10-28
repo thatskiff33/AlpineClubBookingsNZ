@@ -127,6 +127,13 @@ describe("organiser extra adjustment provider execution", () => {
     await executeOrganiserExtraAdjustment(payload(), claim);
     expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 501 }) }));
   });
+  it("S2: a $30 waiver of a $60 extra ($50 + $10 fee, $20 paid) frozen at 50%: the organiser's raced $40 hands back $15.00", async () => {
+    // The organiser paid the remaining $40 before the waiver ran.
+    mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0 };
+    await executeOrganiserExtraAdjustment(payload({ amountCents: 3_000, cashAtPlanCents: 2_000, refundPercentage: 50 }), claim).catch(() => undefined);
+    expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 1_500 }) }));
+    expect(mocks.plans[0]?.requestPayload).toMatchObject({ purpose: "refund", amountCents: 1_500, priceBasisCents: 3_000 });
+  });
   it("refuses an unreadable refreshed invoice before allocating a waiver", async () => {
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [mocks.invoice] } }).mockResolvedValueOnce({ body: { invoices: [] } });
     await expect(executeOrganiserExtraAdjustment(payload(), claim)).rejects.toThrow("unreadable");

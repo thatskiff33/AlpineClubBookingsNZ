@@ -148,6 +148,7 @@ export {
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
 import {
+  modificationCardRefundTier,
   refundableCashForModification,
   resolveSelectedSettlementAmount,
   type BookingModificationSettlementOptions,
@@ -375,9 +376,11 @@ export async function applyPaymentAdjustments(
   }
 
   if (reduction.organiserExtras) {
+    // #4299 S2: the edit's own tier, frozen even with no options (a cut wholly against the unpaid extra).
+    const tier = await modificationCardRefundTier(tx, booking, todayAtClub, reductionUntiered || appliedCreditReturnedByCaller);
     await settleOrganiserExtraReduction(tx, { reduction: reduction.organiserExtras, refundAmountCents,
       refundBasisCents: settlementOptions?.basisAmountCents ?? Math.max(0, -netAmountCents),
-      refundPercentage: settlementOptions?.cardRefundPercentage ?? 100,
+      refundPercentage: settlementOptions?.cardRefundPercentage ?? tier.refundPercentage,
     });
   }
 

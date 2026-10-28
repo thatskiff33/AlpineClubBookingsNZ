@@ -254,6 +254,30 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
         .toEqual([["WAITING_PAYMENT", 500, task.id]]);
     });
 
+    it("S2: a reduction sized wholly against the unpaid extra freezes the policy's 50%, not 100%, for cash that races its waiver", async () => {
+      // +$50 with a $10 fee invoiced to the organiser, $10 of it paid: $50 unpaid.
+      const increase = await prisma.bookingModification.create({ data: { bookingId: BOOKING_ID, memberId: OFFICER_ID, modificationType: "DATE_CHANGE",
+        previousData: {}, newData: {}, priceDiffCents: 5_000, changeFeeCents: 1_000 } });
+      await prisma.payment.update({ where: { bookingId: BOOKING_ID }, data: { changeFeeCents: 1_000 } });
+      await prisma.xeroObjectLink.create({ data: { localModel: "BookingModification", localId: increase.id, xeroObjectType: "INVOICE", xeroObjectId: `${P}-extra`,
+        role: "SUPPLEMENTARY_INVOICE", metadata: { organiserBilling: true, priceDiffCents: 5_000, changeFeeCents: 1_000 } } });
+      await syncCash({ invoiceID: `${P}-extra`, amountPaid: 10, amountDue: 50, total: 60 });
+
+      // One night ($50) comes off, all of it against the unpaid extra: no cash basis, so no settlement options.
+      const result = await dateService.modifyBookingDates({
+        bookingId: BOOKING_ID,
+        actor: { id: OFFICER_ID, role: Role.ADMIN },
+        input: { checkIn: "2026-08-10", checkOut: "2026-08-11" } as never,
+        ipAddress: "127.0.0.1",
+      });
+      await drainXeroWork();
+      expect(result.refundAmountCents).toBe(0);
+      const plans = (await prisma.xeroSyncOperation.findMany({ where: { localId: BOOKING_ID, queueType: "ORGANISER_EXTRA_ADJUSTMENT" } }))
+        .map((row) => row.requestPayload as { purpose: string; amountCents: number; refundPercentage: number });
+      // The edit's own tier is frozen on the waiver, so cash racing it is refunded at 50%.
+      expect(plans.map((row) => [row.purpose, row.amountCents, row.refundPercentage])).toEqual([["waive", 5_000, 50]]);
+    });
+
     it("guest add: an added guest bills the organiser once and asks the joiner nothing", async () => {
       const { NextRequest } = await import("next/server");
       raceSession.current = { user: { id: OFFICER_ID, role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true } };

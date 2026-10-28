@@ -12,6 +12,7 @@ import type { CalendarDate } from "@/lib/club-time";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
+  getRefundTier,
   loadCancellationPolicy,
   type CancellationPolicyDb,
 } from "@/lib/cancellation";
@@ -64,6 +65,24 @@ export async function refundableCashForModification(
     ? effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, reduction.organiserExtras)
     : 0;
   return Math.max(0, cashCents - paidFeeCents);
+}
+
+/**
+ * #4299 S2 (`INV-PAY-147`): the card tier an edit nets organiser extras at,
+ * from the same policy and day `calculateModificationSettlementOptions` reads,
+ * and read even where those options are null: a reduction sized wholly against
+ * an unpaid extra leaves no cash basis, yet cash that races its waiver is
+ * refunded at this tier. 100%, no fee, only for an untiered re-price.
+ */
+export async function modificationCardRefundTier(
+  db: CancellationPolicyDb,
+  booking: Pick<LoadedBookingForModify, "checkIn" | "lodgeId">,
+  todayAtClub: CalendarDate,
+  untiered: boolean,
+): Promise<{ refundPercentage: number; fixedFeeCents: number }> {
+  if (untiered) return { refundPercentage: 100, fixedFeeCents: 0 };
+  const tier = getRefundTier(daysUntilDate(booking.checkIn, todayAtClub), await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db));
+  return { refundPercentage: tier.refundPercentage, fixedFeeCents: tier.fixedFeeCents };
 }
 
 /**
