@@ -36,7 +36,8 @@ security contracts, and the feature hubs. Its most-used pages:
 [`DOMAIN_INVARIANTS.md`](DOMAIN_INVARIANTS.md) ·
 [`STATE_MACHINES.md`](STATE_MACHINES.md) ·
 [`TESTING.md`](TESTING.md) ·
-[`STYLE_GUIDE.md`](STYLE_GUIDE.md).
+[`STYLE_GUIDE.md`](STYLE_GUIDE.md) ·
+[Member money ledger design](design/member-money-ledger.md).
 
 **[Member & Guest Guide](user-guide/README.md)** — plain-English guides for the
 people who use the club: booking a stay, paying, the waitlist, your family, your

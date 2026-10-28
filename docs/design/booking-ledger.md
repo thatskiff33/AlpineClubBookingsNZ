@@ -4,6 +4,8 @@
 Nothing in this document changes runtime behaviour. Its outputs are the model,
 the posting rules, the projection guard, the cut-over order, the invariant gap
 analysis in §9, and the child issues in §10, each of which ships on its own.
+The proposed successor, extending this design to all member money, is the
+[member money ledger design](member-money-ledger.md) (#4461).
 
 **Audience:** developer / agent. An operator reads §1 and §2 and stops.
 

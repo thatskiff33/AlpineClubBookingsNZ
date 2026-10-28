@@ -209,6 +209,10 @@ Larger subsystems keep their own hub, and each links back here.
   `BookingLedgerLine` design from programme #3527 — the model, every money
   event's posting rule, the projection guard, the cut-over order, and the
   invariant gap analysis (#3532). A design, not yet an implementation.
+- **Member money ledger (design)** —
+  [`../design/member-money-ledger.md`](../design/member-money-ledger.md):
+  proposed double-entry accounts, two-way Xero ownership and sync, posting
+  rules, cut-over gates, parked-bug scenarios and ordered children (#4461).
 - **Finance dashboard** —
   [`../finance-dashboard/README.md`](../finance-dashboard/README.md): reporting
   contracts, architecture decisions, data contracts, and the test plan.

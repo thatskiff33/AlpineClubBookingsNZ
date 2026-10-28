@@ -128,7 +128,9 @@ events.
 6. **Decisions.** When work needs the owner:
    - **If the owner is in the session** (a person wrote in this conversation today),
      ask now with a decision pop-up, then record the answer on the issue in the
-     same sitting.
+     same sitting. Every item that needs the owner becomes a pop-up as soon as it
+     is found, batched up to four questions at a time. A status reply never ends
+     with a "waiting on you" list instead (owner, 28 Oct 2026).
    - **Otherwise:**
      - write a `needs-decision` issue, or a section in the existing issue, with
        checkbox options, a **Recommended** default and plain-English stakes;
