@@ -2,8 +2,20 @@
 # Disposable, loopback-only PostgreSQL proof for #4324 and #3403 in Sekreton.
 set -euo pipefail
 
-export PATH="/usr/lib/postgresql/17/bin:$PATH"
-command -v initdb >/dev/null || { echo 'PostgreSQL 17 must be installed by .sekreton/config.toml' >&2; exit 1; }
+# The distribution package chooses its server version. Require all tools from
+# one installation rather than relying on version-specific paths or wrappers.
+postgres_bin=
+for candidate in /usr/lib/postgresql/*/bin; do
+  if [ -x "$candidate/initdb" ] && [ -x "$candidate/pg_ctl" ] && [ -x "$candidate/createdb" ]; then
+    postgres_bin=$candidate
+    break
+  fi
+done
+if [ -z "$postgres_bin" ]; then
+  echo 'PostgreSQL server tools must be installed by .sekreton/config.toml' >&2
+  exit 1
+fi
+export PATH="$postgres_bin:$PATH"
 mkdir -p /tmp/scratch
 race_dir=$(mktemp -d /tmp/scratch/kept-change-realdb.XXXXXX)
 # PostgreSQL refuses root even when the check runner itself is privileged.
