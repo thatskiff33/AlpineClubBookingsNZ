@@ -122,6 +122,13 @@ pnpm run test:e2e:run e2e/booking.spec.ts # one spec
 pnpm run test:e2e:down      # stop the stack and delete its volumes
 ```
 
+A rebuild reuses the previous build's `.next/cache` (a BuildKit cache mount),
+so the second `pnpm run test:e2e` builds faster than the first.
+
+Failures keep a trace and a screenshot. A video is kept for a failure locally;
+in CI only the retry is recorded (`on-first-retry`), because recording every
+test to keep a few cost encoding time on every passing one.
+
 First-time setup: `pnpm exec playwright install chromium` — the same command CI runs (see "How CI installs the browser" below).
 The HTML report lands in `playwright-report/`; traces and screenshots for
 failures land in `test-results/`.
@@ -405,7 +412,7 @@ A run used to take ~29 minutes: each of the two E2E jobs built the app image
 
 | Job | What it does |
 | --- | --- |
-| `E2E app image` | builds the image once and uploads it (`docker save`, zstd) as a run artifact |
+| `E2E app image` | builds the image once and uploads it (`docker save`, zstd) as a run artifact. Turbopack's build cache (`.next/cache`, a BuildKit cache mount in the `Dockerfile`) is restored from the last push to `main` before the build and, on a push, saved after it (`scripts/ci/next-build-cache.sh`). The Docker layer cache is exported only after the upload, so the shards do not wait for it |
 | `E2E seeded database` | in parallel: migrates, runs the single-lodge seeds and dumps the result with its club day (`scripts/e2e-stack.sh snapshot`). It holds **no secrets**: the dump is downloadable from a public repository, so Stripe test credentials are seeded on each runner after the restore |
 | `Playwright E2E` | **required check.** Runs shard 1 itself (`E2E_SHARD=1/3`, with `pre-setup`), then requires `E2E shard (2/3)` and `(3/3)` to pass (`scripts/ci/require-test-shards.mjs --from 2`, the gate `verify` uses for the unit shards) |
 | `E2E shard (2/3)`, `(3/3)` | the other two thirds of the `chromium` spec files, each on its own stack |
@@ -418,7 +425,16 @@ interleaves on a database. Every shard runs `setup`. `pre-setup` runs only in
 shard 1, after that shard's `chromium` slice. Playwright's own `--shard` is not
 used: it keeps the `setup` → `chromium` → `pre-setup` dependency chain whole,
 which put all 203 tests in shard 1. `scripts/ci/e2e-spec-shard.mjs` deals the
-sorted spec files round-robin instead, applied as the project's `testMatch`.
+spec files itself instead, applied as the project's `testMatch`: longest first,
+each to the shard with the least time so far, using the measured seconds in
+`scripts/ci/e2e-spec-durations.mjs` (shard 1 starts charged for `pre-setup`). A
+spec with no measurement is dealt as the median, so a new spec needs no entry.
+When the shards drift apart, refresh the measurements from a green run:
+
+```bash
+gh run view <run-id> --repo thatskiff33/AlpineClubBookingsNZ --log > e2e.log
+node scripts/ci/record-e2e-spec-durations.mjs e2e.log "E2E run <run-id> on main, <date>"
+```
 **A spec must not depend on state another spec file leaves behind**: a shard
 never sees the other shards' files.
 

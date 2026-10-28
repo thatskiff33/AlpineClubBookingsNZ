@@ -90,7 +90,11 @@ export default defineConfig({
     baseURL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    // "retain-on-failure" records every test and deletes the video when it
+    // passes, so CI paid to encode about 200 videos a run to keep a handful. In CI
+    // a failure is retried, and the retry is recorded; the trace above still
+    // covers the first attempt. Locally there are no retries, so keep the old mode.
+    video: process.env.CI ? "on-first-retry" : "retain-on-failure",
   },
   projects: [
     // Signs in the booking persona once (completing TOTP enrollment on a fresh
