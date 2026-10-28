@@ -26,7 +26,7 @@ const params = {
   placeName: "Sam Joiner",
   modificationType: "DATE_CHANGE",
 };
-const send = (overrides: Partial<typeof params> = {}, format = CLUB_FORMAT_TEST) => sendGroupOrganiserExtraInvoiceEmail({ ...params, ...overrides }, format);
+const send = (overrides: Partial<Parameters<typeof sendGroupOrganiserExtraInvoiceEmail>[0]> = {}, format = CLUB_FORMAT_TEST) => sendGroupOrganiserExtraInvoiceEmail({ ...params, ...overrides }, format);
 
 beforeEach(() => {
   sendEmail.mockReset();
