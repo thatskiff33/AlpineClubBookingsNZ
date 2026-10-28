@@ -32,7 +32,7 @@ function organiserQuote(organiserRefundByBankTransfer: boolean): QuoteResult {
   } as unknown as QuoteResult;
 }
 
-function renderQuote(quote: QuoteResult) {
+function renderQuote(quote: QuoteResult, ledgerAppliedCreditCents = 0) {
   return render(
     <PriceSummaryCard
       quote={quote}
@@ -45,7 +45,7 @@ function renderQuote(quote: QuoteResult) {
       overCapacityNightList={[]}
       confirmOverCapacity={false}
       showQuoteSummary
-      ledgerAppliedCreditCents={0}
+      ledgerAppliedCreditCents={ledgerAppliedCreditCents}
       useCredit={false}
       desiredElectionCents={0}
       actingAsAdmin={false}
@@ -94,5 +94,22 @@ describe("#4299 N4: an increase on a place the organiser paid for by Internet Ba
 
     expect(screen.getByText("Additional charge: $60.00")).toBeTruthy();
     expect(screen.queryByTestId("organiser-billed-notice")).toBeNull();
+  });
+});
+
+describe("#4299: what this member has remaining to pay", () => {
+  // A $150 place with $20 of account credit applied, re-priced with no net change.
+  const unchanged = { ...organiserQuote(true), netChargeCents: 0, newFinalPriceCents: 15_000, changeFeeCents: 0, settlementOptions: null } as unknown as QuoteResult;
+
+  it("is nothing on a place the group organiser paid for by Internet Banking: the organiser is billed for it", () => {
+    renderQuote({ ...unchanged, billedToOrganiser: true } as QuoteResult, 2_000);
+
+    expect(screen.getByTestId("remaining-to-pay").textContent).toBe("Remaining to pay$0.00");
+  });
+
+  it("control: the member's own booking still shows its price less the credit applied", () => {
+    renderQuote(unchanged, 2_000);
+
+    expect(screen.getByTestId("remaining-to-pay").textContent).toBe("Remaining to pay$130.00");
   });
 });

@@ -319,16 +319,19 @@ export function PriceSummaryCard({
                           <span>+{formatCents(quote.changeFeeCents, format)}</span>
                         </div>
                       )}
-                      <div className="flex justify-between font-medium">
+                      <div className="flex justify-between font-medium" data-testid="remaining-to-pay">
                         <span>Remaining to pay</span>
                         <span>
                           {formatCents(
-                            Math.max(
-                              0,
-                              quote.newFinalPriceCents -
-                                displayedAppliedCreditCents -
-                                (useCredit ? desiredElectionCents : 0),
-                            ) + quote.changeFeeCents,
+                            // #4299: the group organiser is billed for this place, never this member.
+                            quote.billedToOrganiser
+                              ? 0
+                              : Math.max(
+                                  0,
+                                  quote.newFinalPriceCents -
+                                    displayedAppliedCreditCents -
+                                    (useCredit ? desiredElectionCents : 0),
+                                ) + quote.changeFeeCents,
                             format,
                           )}
                         </span>
