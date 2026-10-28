@@ -80,7 +80,11 @@ function txWithSettlement(settlement: Record<string, unknown> | null, groupStatu
     // #3980: an edit that read no invoice link claims the payment row.
     payment: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     // #3949 review round 5: the organiser's group, read by the mid-cancel price-change refusal.
-    groupBooking: { findUnique: vi.fn(async () => ({ status: groupStatus })) },
+    groupBooking: { findUnique: vi.fn(async () => ({ status: groupStatus,
+      organiserBookingId: "organiser_booking", organiserMemberId: "organiser",
+      organiserMember: { id: "organiser" },
+      settlement: { id: "bank-settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined-invoice" },
+    })) },
     groupBookingSettlement: { findFirst: vi.fn().mockResolvedValue(settlement) },
     // #3809: no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
@@ -221,7 +225,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // No Stripe refund and no organiser card reservation: the door raises the
     // organiser's bank-transfer hand-back for `refundAmountCents`
     // (`raiseEditRefundHandBackIfOwed`, payee the organiser).
-    expect(result).toMatchObject({ refundAmountCents: 1500, accountCreditAmountCents: 0, pendingRefundAmountCents: 0, hasSucceededPayment: false, organiserChildRefund: null });
+    expect(result).toMatchObject({ refundAmountCents: 1500, accountCreditAmountCents: 0, pendingRefundAmountCents: 0, hasSucceededPayment: false, organiserChildRefund: null,
+      settledAgainstPrimaryInvoice: false, hasIssuedXeroInvoice: true });
 
     // Electing credit is refused, as on the card twin.
     await expect(
@@ -287,6 +292,18 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
       changeFeeCents: 0,
     });
     expect(ib.additionalAsk.amountCents).toBe(0);
+    expect(ib.additionalAmountCents).toBe(1000);
+    expect(ib.settledAgainstPrimaryInvoice).toBe(false);
+  });
+
+  it("refuses an organiser bank edit with no combined invoice before mutating its payment", async () => {
+    const tx = txWithSettlement(null);
+    vi.mocked(tx.groupBooking.findUnique).mockResolvedValue(null);
+    await expect(applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(1000),
+      ...SETTLEMENT_DAY, booking: ibChild(), priceDiffCents: 1000, changeFeeCents: 0,
+    })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("combined invoice is not on record") });
+    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
   });
 
   it("the quote shows the refusal the save would meet for an increase, and only for an organiser card child (fix round 2, F3)", () => {
