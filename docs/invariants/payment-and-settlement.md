@@ -3932,7 +3932,7 @@ _Split from `INV-PAY-057` (#3220)._
   `ib-settle-from-cash.realdb.test.ts`.
 
 
-## INV-PAY-146
+## INV-PAY-147
 
 An organiser-paid internet-banking group's place bills each positive edit net
 (price plus recorded late-change fee) to the organiser on one supplementary

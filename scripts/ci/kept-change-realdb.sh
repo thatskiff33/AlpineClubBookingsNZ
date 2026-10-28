@@ -2,16 +2,13 @@
 # Disposable, loopback-only PostgreSQL proof for #4324 and #3403 in Sekreton.
 set -euo pipefail
 
-# Debian and Ubuntu select their supported server through the postgresql meta-package.
-# Server tools are versioned and not placed on PATH by either distribution.
-if ! command -v initdb >/dev/null; then
-  for pg_bin in /usr/lib/postgresql/*/bin; do
-    if [ -x "$pg_bin/initdb" ]; then
-      export PATH="$pg_bin:$PATH"
-      break
-    fi
-  done
-fi
+# Distribution packages install server tools outside PATH (the major varies).
+for pg_bin in /usr/lib/postgresql/*/bin; do
+  if [ -x "$pg_bin/initdb" ]; then
+    export PATH="$pg_bin:$PATH"
+    break
+  fi
+done
 command -v initdb >/dev/null || { echo 'PostgreSQL must be installed by .sekreton/config.toml' >&2; exit 1; }
 mkdir -p /tmp/scratch
 race_dir=$(mktemp -d /tmp/scratch/kept-change-realdb.XXXXXX)

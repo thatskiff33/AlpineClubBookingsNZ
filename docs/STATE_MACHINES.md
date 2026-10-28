@@ -3809,7 +3809,7 @@ unconfirmed environment, and a provider failure — stay distinguishable
 ## Xero Outbox And Reconciliation Lifecycle
 
 An organiser-paid bank-transfer place's extra invoice follows the existing
-supplementary-invoice outbox, anchored on its change (#4299, `INV-PAY-146`). Its
+supplementary-invoice outbox, anchored on its change (#4299, `INV-PAY-147`). Its
 queued create is committed with the edit; provider failure retries the same
 change, and cash reconciliation adds only the extra's actual receipts to the
 place. Its original combined-invoice share is retained.
