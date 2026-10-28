@@ -4,6 +4,9 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   groupBookingFindUnique: vi.fn(),
   sendOrganiserEmail: vi.fn(),
+  // #4299 F4: the organiser extra state the notice is sized from.
+  bookingModificationFindMany: vi.fn(),
+  xeroSyncOperationFindMany: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
   xeroSyncOperationFindUnique: vi.fn(),
@@ -34,7 +37,10 @@ vi.mock("@/lib/prisma", () => ({
     groupBooking: { findUnique: mocks.groupBookingFindUnique },
     bookingModification: {
       findUnique: mocks.bookingModificationFindUnique,
+      findMany: mocks.bookingModificationFindMany,
     },
+    xeroObjectLink: { findMany: async () => [] },
+    paymentTransaction: { findMany: async () => [] },
     manualRefundTask: {
       findMany: mocks.manualRefundTaskFindMany,
       // #3635 round-3 R2: no kept late capture unless a test says so.
@@ -43,11 +49,12 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
       findUnique: mocks.xeroSyncOperationFindUnique,
+      findMany: mocks.xeroSyncOperationFindMany,
     },
   },
 }));
 
-vi.mock("@/lib/organiser-extra-invoice-email", () => ({ sendOrganiserExtraInvoiceEmail: mocks.sendOrganiserEmail }));
+vi.mock("@/lib/email/groups", () => ({ sendGroupOrganiserExtraInvoiceEmail: mocks.sendOrganiserEmail }));
 
 vi.mock("@/lib/logger", () => ({
   default: {
@@ -1021,7 +1028,15 @@ describe("organiser-paid bank group supplementary invoice (#4299)", () => {
     mocks.retryXeroWriteWithContactRepair.mockResolvedValue({ body: { invoices: [{ invoiceID: "extra", invoiceNumber: "INV-EXTRA" }] } });
     mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
     mocks.sendOrganiserEmail.mockResolvedValue({ status: "sent" });
+    mocks.bookingModificationFindMany.mockResolvedValue([{ id: "change", priceDiffCents: 5000, changeFeeCents: 1000 }]);
+    waivers([]);
   });
+  /** The invoice debts a cancel or reduction reserved while this invoice was queued. */
+  const waivers = (amounts: number[]) => mocks.xeroSyncOperationFindMany.mockImplementation(async ({ where }: { where: { queueType: string } }) =>
+    where.queueType === "SUPPLEMENTARY_INVOICE"
+      ? [{ localId: "change", requestPayload: {} }]
+      : amounts.map((amountCents, index) => ({ requestPayload: { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: "child", scopeId: `cut-${index}`,
+        modificationId: "change", invoiceId: null, amountCents, purpose: "waive", cashAtPlanCents: 0, refundPercentage: 50 } })));
   const create = () => createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "child", bookingModificationId: "change",
     priceDiffCents: 5000, changeFeeCents: 1000, recordPayment: true });
   it("bills organiser price plus fee against the combined reference, without recording payment, and emails the organiser", async () => {
@@ -1037,9 +1052,20 @@ describe("organiser-paid bank group supplementary invoice (#4299)", () => {
     expect(invoice.lineItems.reduce((sum: number, line: { unitAmount: number }) => sum + line.unitAmount, 0)).toBe(60);
     expect(createPayments).not.toHaveBeenCalled();
     expect(mocks.sendOrganiserEmail).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 6000, invoiceId: "extra", invoiceNumber: "INV-EXTRA",
-      bookingModificationId: "change", placeName: "Place Member", billing: expect.objectContaining({ organiserMemberId: "organiser" }) }));
+      bookingModificationId: "change", placeName: "Place Member", modificationType: "DATE_CHANGE", billing: expect.objectContaining({ organiserMemberId: "organiser" }) }), CLUB_FORMAT_TEST);
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ extraLinks: expect.arrayContaining([
       expect.objectContaining({ role: "SUPPLEMENTARY_INVOICE", metadata: expect.objectContaining({ organiserBilling: true, combinedInvoiceId: "combined", priceDiffCents: 5000, changeFeeCents: 1000 }) })]) }));
+  });
+  it("F4: names only what is still owed after a waiver reserved while the invoice was queued", async () => {
+    waivers([2000]);
+    expect(await create()).toBe("extra");
+    expect(mocks.sendOrganiserEmail).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000 }), CLUB_FORMAT_TEST);
+  });
+  it("F4: emails nothing when reserved waivers cover the whole invoice", async () => {
+    waivers([4000, 2000]);
+    expect(await create()).toBe("extra");
+    expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
   });
   it("refuses a missing combined record before contacting Xero", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({ settlement: { source: "INTERNET_BANKING", xeroInvoiceId: null } });

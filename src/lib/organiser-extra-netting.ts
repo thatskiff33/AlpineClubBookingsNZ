@@ -1,7 +1,8 @@
 /** N1–N4: reserve unpaid waivers before policy refunds, in the money claim. */
 import type { Prisma } from "@prisma/client";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
-import { organiserExtraPaidPriceCents, organiserExtraUnpaidCents, readOrganiserExtraState, type OrganiserExtraReduction, type OrganiserExtraState } from "@/lib/organiser-extra-state";
+import { organiserExtraPaidPriceCents, organiserExtraUnpaidCents, readOrganiserExtraState, type OrganiserExtraInvoice, type OrganiserExtraReduction, type OrganiserExtraState } from "@/lib/organiser-extra-state";
+import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 
 export function planOrganiserExtraNetting(state: OrganiserExtraState, input: { reductionCents: number; refundAmountCents: number; refundBasisCents: number; cancel?: boolean }) {
   let left = input.cancel ? Number.MAX_SAFE_INTEGER : input.reductionCents;
@@ -34,6 +35,27 @@ async function reserveAdjustment(tx: Prisma.TransactionClient, payload: Organise
     requestPayload: payload, createdByMemberId, store: tx });
 }
 
+/** The queued invoice's statuses a waiver may still retire: not RUNNING, whose create is under way. */
+const SKIPPABLE_QUEUED_INVOICE_STATUSES = ["PENDING", "WAITING_PAYMENT", "FAILED"];
+
+/**
+ * F4: an extra invoice still queued (never raised in Xero) that this waiver
+ * covers in full is not raised at all, so the organiser is never emailed for
+ * a debt already waived. Its operation is SKIPPED, status-guarded so a create
+ * already under way, or one that reached Xero, keeps it; then the waiver is
+ * reserved as usual and voids or credits the invoice once it exists. True when
+ * no live operation is left, and the waiver needs no document.
+ */
+async function skipQueuedInvoiceWaivedInFull(tx: Prisma.TransactionClient, invoice: OrganiserExtraInvoice, amountCents: number): Promise<boolean> {
+  if (invoice.invoiceId !== null || invoice.cashCents > 0 || amountCents < invoice.priceCents + invoice.feeCents) return false;
+  const queued = { localModel: "BookingModification", localId: invoice.modificationId, queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE };
+  await tx.xeroSyncOperation.updateMany({
+    where: { ...queued, status: { in: SKIPPABLE_QUEUED_INVOICE_STATUSES }, xeroObjectId: null },
+    data: { status: "SKIPPED", lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
+  });
+  return (await tx.xeroSyncOperation.count({ where: { ...queued, status: { notIn: ["SKIPPED", "RESOLVED"] } } })) === 0;
+}
+
 /** Whether a netting scope has reserved its invoice debts: the scope's one replay test. */
 export async function hasOrganiserExtraReservation(tx: Pick<Prisma.TransactionClient, "xeroSyncOperation">, bookingId: string, scopeId: string): Promise<boolean> {
   const row = await tx.xeroSyncOperation.findFirst({ where: { localId: bookingId, queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, requestPayload: { path: ["scopeId"], equals: scopeId } }, select: { id: true } });
@@ -51,6 +73,7 @@ export async function reserveOrganiserExtraNetting(tx: Prisma.TransactionClient,
   for (const [purpose, shares] of [["waive", plan.waivers], ["refund", plan.refunds]] as const) {
     for (const share of shares) {
       const { invoice, amountCents } = share;
+      if (purpose === "waive" && (await skipQueuedInvoiceWaivedInFull(tx, invoice, amountCents))) continue;
       await reserveAdjustment(tx, { ...base, purpose, ...("basisCents" in share ? { priceBasisCents: share.basisCents } : {}), modificationId: invoice.modificationId, invoiceId: invoice.invoiceId, amountCents, cashAtPlanCents: invoice.cashCents }, input.createdByMemberId);
     }
   }

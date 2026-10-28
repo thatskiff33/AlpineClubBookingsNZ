@@ -175,22 +175,24 @@ export function groupOrganiserJoinerRefundTemplate(data: {
 
 /**
  * #4299 (`INV-PAY-147`): the organiser's extra invoice when a place in their
- * internet-banking group costs more. Every value arrives formatted.
+ * internet-banking group costs more.
  */
 export function groupOrganiserExtraInvoiceTemplate(data: {
   firstName: string;
   joinerName: string;
   changeSummary: string;
-  additionalAmount: string;
+  amountCents: number;
   xeroInvoiceNumber: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
       ${heading("Extra Invoice for Your Group Booking")}
       ${paragraph(`Hi ${escapeHtml(data.firstName)}, a change to a place in the group you paid for by internet banking has increased its cost. As the group organiser, you are responsible for this extra payment.`)}
       ${infoTable([
         { label: "Place", value: escapeHtml(data.joinerName) },
         { label: "Change", value: escapeHtml(data.changeSummary) },
-        { label: "Extra amount to pay", value: escapeHtml(data.additionalAmount) },
+        { label: "Extra amount to pay", value: formatCents(data.amountCents, format) },
         { label: "Invoice reference", value: escapeHtml(data.xeroInvoiceNumber) },
       ])}
       ${paragraph("Please pay this extra invoice by internet banking, quoting the invoice reference above.")}

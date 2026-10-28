@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { planOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
+import { describe, expect, it, vi } from "vitest";
+import type { Prisma } from "@prisma/client";
+
+const start = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/xero-sync", () => ({ startXeroSyncOperation: start }));
+
+import { planOrganiserExtraNetting, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
 import { effectiveOrganiserPaidChangeFeeCents, organiserExtraPaidPriceCents, organiserExtraUnpaidCents, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 
@@ -74,4 +79,48 @@ describe("organiser extra adjustment queue payload", () => {
   const payload = { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: "child", scopeId: "edit", modificationId: "increase", invoiceId: null, amountCents: 4_000, purpose: "waive", cashAtPlanCents: 2_000, refundPercentage: 50 };
   it("retains the frozen cash, scope and policy across retry", () => expect(readOrganiserExtraAdjustmentPayload(payload)).toEqual(payload));
   it.each([{ amountCents: 0 }, { amountCents: 1.1 }, { amountCents: NaN }, { cashAtPlanCents: -1 }, { refundPercentage: 101 }, { modificationId: null }, { purpose: "anything" }])("refuses malformed money or identity %j", (change) => expect(readOrganiserExtraAdjustmentPayload({ ...payload, ...change })).toBeNull());
+});
+
+describe("F4: a waiver of a still-queued extra invoice", () => {
+  /** A queued (never raised) invoice: no Xero id, no cash, one operation in `status`. */
+  function store(status: string) {
+    const operation = { status, xeroObjectId: null as string | null };
+    const tx = {
+      xeroSyncOperation: {
+        findFirst: vi.fn(async () => null),
+        updateMany: vi.fn(async ({ where, data }: { where: { status: { in: string[] }; xeroObjectId: null }; data: { status: string } }) => {
+          if (!where.status.in.includes(operation.status) || operation.xeroObjectId !== null) return { count: 0 };
+          operation.status = data.status;
+          return { count: 1 };
+        }),
+        count: vi.fn(async ({ where }: { where: { status: { notIn: string[] } } }) => (where.status.notIn.includes(operation.status) ? 0 : 1)),
+      },
+    };
+    return { tx: tx as unknown as Prisma.TransactionClient, operation, updateMany: tx.xeroSyncOperation.updateMany };
+  }
+  const queued = state(invoice({ invoiceId: null, cashCents: 0 }));
+  const cancel = { scopeId: "cancel", reductionCents: 0, refundAmountCents: 0, refundBasisCents: 0, refundPercentage: 50, cancel: true };
+
+  it.each(["PENDING", "WAITING_PAYMENT", "FAILED"])("covered in full: the %s invoice is SKIPPED and no waiver is reserved, so the organiser is never emailed", async (status) => {
+    start.mockClear();
+    const { tx, operation } = store(status);
+    await reserveOrganiserExtraNetting(tx, { ...cancel, state: queued });
+    expect(operation.status).toBe("SKIPPED");
+    expect(start).not.toHaveBeenCalled();
+  });
+  it("a create already under way keeps its invoice, and the waiver is reserved to void it", async () => {
+    start.mockClear();
+    const { tx, operation } = store("RUNNING");
+    await reserveOrganiserExtraNetting(tx, { ...cancel, state: queued });
+    expect(operation.status).toBe("RUNNING");
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", amountCents: 6_000 }) }));
+  });
+  it("a part waiver leaves the invoice queued and reserves the waiver (the notice is sized after it)", async () => {
+    start.mockClear();
+    const { tx, operation, updateMany } = store("PENDING");
+    await reserveOrganiserExtraNetting(tx, { ...cancel, cancel: false, reductionCents: 2_000, state: queued });
+    expect(operation.status).toBe("PENDING");
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", amountCents: 2_000 }) }));
+  });
 });

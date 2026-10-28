@@ -15,7 +15,8 @@ import {
 } from "xero-node";
 import { prisma } from "./prisma";
 import { resolveOrganiserBilling, resolveOrganiserXeroContact } from "@/lib/organiser-billing";
-import { sendOrganiserExtraInvoiceEmail } from "@/lib/organiser-extra-invoice-email";
+import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
+import { readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -499,17 +500,24 @@ export async function createXeroSupplementaryInvoice(params: {
     }
 
     if (organiserBilling) {
-      const place = bookingOwner(booking).member;
-      await sendOrganiserExtraInvoiceEmail({
-        billing: organiserBilling,
-        bookingModificationId,
-        invoiceId: created.invoiceID,
-        invoiceNumber: created.invoiceNumber,
-        amountCents: netAmountCents,
-        format: params.format,
-        placeName: `${place.firstName} ${place.lastName}`.trim(),
-        changeDescription: `Booking change (${(bookingModification?.modificationType ?? "booking modification").replaceAll("_", " ").toLowerCase()})`,
-      });
+      // F4: a cancel or reduction may already have reserved a waiver of this
+      // invoice while it was queued. The organiser is told only what is still
+      // owed after it, and nothing at all when the waiver covers the invoice.
+      const extras = await readOrganiserExtraState(prisma, bookingId);
+      const waivedCents = extras.invoices.find((row) => row.modificationId === bookingModificationId)?.waivedCents ?? 0;
+      const dueCents = netAmountCents - waivedCents;
+      if (dueCents > 0) {
+        const place = bookingOwner(booking).member;
+        await sendGroupOrganiserExtraInvoiceEmail({
+          billing: organiserBilling,
+          bookingModificationId,
+          invoiceId: created.invoiceID,
+          invoiceNumber: created.invoiceNumber,
+          amountCents: dueCents,
+          placeName: `${place.firstName} ${place.lastName}`.trim(),
+          modificationType: bookingModification?.modificationType ?? "BATCH_MODIFY",
+        }, params.format);
+      }
     }
     await completeXeroSyncOperation(operationClaim!, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",

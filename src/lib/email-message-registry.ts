@@ -31,6 +31,7 @@ import {
 import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
+import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
 import {
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
@@ -1835,7 +1836,8 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
-    changeSummary: "Added one night, including the late-change fee",
+    // The sender's own wording of a change (`bookingModificationTypeLabel`).
+    changeSummary: bookingModificationTypeLabel("DATE_CHANGE"),
     additionalAmount: "$65.00",
     xeroInvoiceNumber: "INV-0042",
   },

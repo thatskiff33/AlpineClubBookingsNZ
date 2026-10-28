@@ -6,15 +6,19 @@ import {
   groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
+  groupOrganiserExtraInvoiceTemplate,
   groupOrganiserJoinerRefundTemplate,
   groupSettlementExpiredTemplate,
   groupSettlementReceiptTemplate,
 } from "@/lib/email-templates/groups";
 import { organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
+import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
+import type { OrganiserBilling } from "@/lib/organiser-billing";
 import { CLUB_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail } from "./core";
 import {
+  bookingOwnerEmailContext,
   classifyBookingOwnerContext,
   type BookingEmailSourceContext,
 } from "@/lib/booking-email-contract";
@@ -317,5 +321,54 @@ export async function sendGroupOrganiserJoinerRefundEmail(params: {
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
     },
+  });
+}
+
+/**
+ * #4299 (`INV-PAY-147`): the organiser owes an extra invoice for a place in
+ * their Internet Banking group. Scoped to the organiser's OWN booking, never
+ * the joiner's: its "No emails" switch withholds it, and the admin's choice not
+ * to notify the member on the joiner's edit does not (it is not the member's
+ * email). `sendEmail` persists that identity for retry-time authority. Called
+ * on invoice recovery too, since an existing invoice proves no notice was
+ * queued; the change's id as the log key fences re-drives and racing callers.
+ */
+export async function sendGroupOrganiserExtraInvoiceEmail(params: {
+  billing: Pick<OrganiserBilling, "organiserMemberId" | "organiserBookingId"> & {
+    organiser: Pick<OrganiserBilling["organiser"], "firstName" | "email">;
+  };
+  bookingModificationId: string;
+  invoiceId: string;
+  invoiceNumber?: string | null;
+  /** What the organiser still owes on the invoice, after any waiver already reserved. */
+  amountCents: number;
+  placeName: string;
+  /** The change's `BookingModification.modificationType`, worded by `bookingModificationTypeLabel`. */
+  modificationType: string;
+},
+  format: ClubFormat,
+) {
+  const data = {
+    firstName: params.billing.organiser.firstName,
+    joinerName: params.placeName,
+    changeSummary: bookingModificationTypeLabel(params.modificationType),
+    amountCents: params.amountCents,
+    xeroInvoiceNumber: params.invoiceNumber || params.invoiceId,
+  };
+  return sendEmail({
+    to: params.billing.organiser.email,
+    subject: `Extra invoice for your group booking — ${CLUB_NAME}`,
+    templateName: "group-organiser-extra-invoice",
+    templateData: {
+      firstName: data.firstName,
+      joinerName: data.joinerName,
+      changeSummary: data.changeSummary,
+      additionalAmount: formatMoneyCents(data.amountCents, format),
+      xeroInvoiceNumber: data.xeroInvoiceNumber,
+    },
+    bookingContext: bookingOwnerEmailContext(params.billing.organiserBookingId, params.billing.organiserMemberId),
+    idempotencyKey: params.bookingModificationId,
+    deferDelivery: true,
+    html: await renderEmailHtml(() => groupOrganiserExtraInvoiceTemplate(data, format)),
   });
 }

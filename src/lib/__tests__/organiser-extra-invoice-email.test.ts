@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const sendEmail = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/email/core", () => ({ sendEmail }));
 
-import { sendOrganiserExtraInvoiceEmail } from "@/lib/organiser-extra-invoice-email";
+import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
+import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
 import { getEmailTemplateDefinition } from "@/lib/email-message-registry";
 import { ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES } from "@/lib/booking-email-suppression";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
@@ -22,10 +23,10 @@ const params = {
   invoiceId: "invoice-id",
   invoiceNumber: "INV-0042",
   amountCents: 6500,
-  format: CLUB_FORMAT_TEST,
   placeName: "Sam Joiner",
-  changeDescription: "Added one night, including the late-change fee",
+  modificationType: "DATE_CHANGE",
 };
+const send = (overrides: Partial<typeof params> = {}, format = CLUB_FORMAT_TEST) => sendGroupOrganiserExtraInvoiceEmail({ ...params, ...overrides }, format);
 
 beforeEach(() => {
   sendEmail.mockReset();
@@ -34,7 +35,7 @@ beforeEach(() => {
 
 describe("organiser extra-invoice notice (#4299)", () => {
   it("names the place, change, full extra and invoice, and bills the organiser", async () => {
-    await sendOrganiserExtraInvoiceEmail(params);
+    await send();
     const call = sendEmail.mock.calls[0]?.[0];
     expect(call).toMatchObject({
       to: "alex@example.org",
@@ -43,7 +44,7 @@ describe("organiser extra-invoice notice (#4299)", () => {
       deferDelivery: true,
       templateData: {
         firstName: "Alex", joinerName: "Sam Joiner",
-        changeSummary: params.changeDescription,
+        changeSummary: "Dates Changed",
         additionalAmount: "$65.00", xeroInvoiceNumber: "INV-0042",
       },
       bookingContext: {
@@ -51,7 +52,7 @@ describe("organiser extra-invoice notice (#4299)", () => {
         recipient: { kind: "member", memberId: "organiser-member" },
       },
     });
-    for (const value of [params.placeName, params.changeDescription, "$65.00", "INV-0042", "you are responsible for this extra payment"]) {
+    for (const value of [params.placeName, "Dates Changed", "$65.00", "INV-0042", "you are responsible for this extra payment"]) {
       expect(call.html).toContain(value);
     }
     expect(call.html).not.toContain("private-joiner-booking");
@@ -67,8 +68,15 @@ describe("organiser extra-invoice notice (#4299)", () => {
     expect(definition?.defaultBody).toContain("{{bookingUrl}}");
   });
 
+  it("the registry's sample change is one the sender can produce", () => {
+    const definition = getEmailTemplateDefinition("group-organiser-extra-invoice");
+    const labels = ["DATE_CHANGE", "GUEST_ADD", "GUEST_REMOVE", "EXTEND_STAY", "BATCH_MODIFY"].map(bookingModificationTypeLabel);
+    expect(labels).toContain(definition?.sampleData.changeSummary);
+  });
+
   it("keeps HTML and editable wording aligned and escapes the supplied place and change", async () => {
-    await sendOrganiserExtraInvoiceEmail({ ...params, placeName: "Sam <Joiner>", changeDescription: "Added <script>alert(1)</script>" });
+    // An unknown type falls back to its raw word (`bookingModificationTypeLabel`), so it is escaped too.
+    await send({ placeName: "Sam <Joiner>", modificationType: "Added <script>alert(1)</script>" });
     const call = sendEmail.mock.calls[0]?.[0];
     const definition = getEmailTemplateDefinition("group-organiser-extra-invoice");
     if (!definition) throw new Error("missing organiser invoice template");
@@ -81,7 +89,7 @@ describe("organiser extra-invoice notice (#4299)", () => {
   });
 
   it("uses the club format, and retains an invoice reference when Xero returns no number", async () => {
-    await sendOrganiserExtraInvoiceEmail({ ...params, format: CLUB_FORMAT_TEST_OTHER, invoiceNumber: null });
+    await send({ invoiceNumber: null }, CLUB_FORMAT_TEST_OTHER);
     const call = sendEmail.mock.calls[0]?.[0];
     expect(call.templateData.additionalAmount).toContain("CHF");
     expect(call.templateData.additionalAmount).not.toContain("$");
@@ -91,8 +99,8 @@ describe("organiser extra-invoice notice (#4299)", () => {
 
   it("propagates a missing durable notice so invoice recovery retries it", async () => {
     sendEmail.mockRejectedValueOnce(new Error("queue unavailable"));
-    await expect(sendOrganiserExtraInvoiceEmail(params)).rejects.toThrow("queue unavailable");
-    await sendOrganiserExtraInvoiceEmail(params);
+    await expect(send()).rejects.toThrow("queue unavailable");
+    await send();
     expect(sendEmail).toHaveBeenCalledTimes(2);
     expect(sendEmail.mock.calls[0]?.[0].idempotencyKey).toBe(sendEmail.mock.calls[1]?.[0].idempotencyKey);
   });
