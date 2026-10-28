@@ -62,7 +62,8 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     expect(payment.transactions.map((r) => [r.kind, r.amountCents]).sort()).toEqual([["ADDITIONAL", 2_000], ["PRIMARY", 30_000]]);
     const state = await readOrganiserExtraState(prisma, childId);
     expect(state.invoices[0]).toMatchObject({ cashCents: 2_000, priceCents: 5_000, feeCents: 1_000 });
-  });
+    // The first sync loads the Xero inbound graph on demand: about 4.3s warm, over 5s cold.
+  }, 60_000);
   it("rolls back every reserved invoice debt if the surrounding cancel fails", async () => {
     await expect(prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
