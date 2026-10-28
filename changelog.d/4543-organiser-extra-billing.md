@@ -4,5 +4,6 @@
   the organiser was invoiced. Refuse an increase when the combined invoice
   record is missing. Net later reductions and cancellations against unpaid
   extras first, and refund paid price at policy rates with paid fees excluded.
-  Add reviewed dry-run repair actions for historical missed invoices; old
-  review-charge tasks remain refused.
+  The edit screen says the organiser will be invoiced. Add reviewed dry-run
+  repair actions for historical missed invoices; the repair never invoices the
+  joiner for the place itself. Old review-charge tasks remain refused.
