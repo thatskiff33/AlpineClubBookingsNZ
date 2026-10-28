@@ -64,6 +64,13 @@ describe("historical organiser billing B1", () => {
     expect(mocks.resolve).not.toHaveBeenCalled();
   });
 
+  it("F5: adds nothing - not even an empty summary - for a place with no positive change", async () => {
+    const subject = context();
+    subject.booking.modifications = [change("reduction", -5000)] as typeof subject.booking.modifications;
+    expect(await classifyOrganiserBillingRepair(subject, deps)).toBeNull();
+    expect(mocks.resolve).not.toHaveBeenCalled();
+  });
+
   it.each(["PENDING", "RUNNING", "FAILED", "PARTIAL", "SUCCEEDED", "CANCELLED"])("skips an existing %s invoice operation", async (status) => {
     const subject = context();
     subject.modificationOperationsById.set("increase", [{ id: "existing", direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE", queueType: "SUPPLEMENTARY_INVOICE", status }] as never);

@@ -43,7 +43,7 @@ import { readLateCaptureRefundsPaidAnotherWay } from "@/lib/late-capture-paid-an
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import { labelPaidBackRefundRequests } from "./xero-booking-repair-request-notes";
-import { classifyOrganiserBillingRepair } from "./xero-booking-repair-organiser-billing";
+import { classifyOrganiserBillingRepair, withOrganiserBillingFindings } from "./xero-booking-repair-organiser-billing";
 
 const MAX_APPLY_PASSES = 3;
 
@@ -136,7 +136,9 @@ async function runSinglePass(
   // #4231: each paid-back request's amount in the club's format, for its finding.
   const bookings = [];
   for (const context of contexts) {
-    bookings.push(await classifyOrganiserBillingRepair(context, deps) ?? classifyBookingContext(labelPaidBackRefundRequests(context, format)));
+    // #4299 (F5): an organiser-paid bank place's billing findings join its ordinary ones.
+    const ordinary = classifyBookingContext(labelPaidBackRefundRequests(context, format));
+    bookings.push(withOrganiserBillingFindings(ordinary, await classifyOrganiserBillingRepair(context, deps)));
   }
   return buildPassReport(pass, bookings);
 }

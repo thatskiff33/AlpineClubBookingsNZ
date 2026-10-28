@@ -8,7 +8,7 @@ import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "./xero-operation-outbox-
 import { buildBookingSummary } from "./xero-booking-repair-findings";
 import { loadAuditData } from "./xero-booking-repair-load";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
-import type { BookingClassificationContext, BookingXeroRepairAction, MutableFinding } from "./xero-booking-repair-types";
+import type { BookingClassificationContext, BookingXeroRepairAction, BookingXeroRepairBookingSummary, MutableFinding } from "./xero-booking-repair-types";
 
 export async function classifyOrganiserBillingRepair(context: BookingClassificationContext, deps: RepairDependencies) {
   const { booking } = context;
@@ -16,7 +16,7 @@ export async function classifyOrganiserBillingRepair(context: BookingClassificat
   const findings: MutableFinding[] = [];
   const actions = new Map<string, BookingXeroRepairAction>();
   const changes = booking.modifications.filter((row) => row.priceDiffCents + row.changeFeeCents > 0);
-  if (changes.length === 0) return buildBookingSummary(context, findings, actions);
+  if (changes.length === 0) return null;
 
   // No contact resolution, provider request, task write or outbox write in a dry run.
   let billing: Awaited<ReturnType<typeof resolveOrganiserBilling>>;
@@ -71,6 +71,18 @@ export async function classifyOrganiserBillingRepair(context: BookingClassificat
       details: evidence, actionKeys: [key] });
   }
   return buildBookingSummary(context, findings, actions);
+}
+
+/**
+ * F5: organiser billing ADDS to a place's ordinary findings, never replaces
+ * them, so every other repair the place needs is still reported and applied.
+ */
+export function withOrganiserBillingFindings(
+  ordinary: BookingXeroRepairBookingSummary,
+  organiser: BookingXeroRepairBookingSummary | null,
+): BookingXeroRepairBookingSummary {
+  if (!organiser) return ordinary;
+  return { ...ordinary, findings: [...ordinary.findings, ...organiser.findings], actions: [...ordinary.actions, ...organiser.actions] };
 }
 
 export async function applyHistoricalOrganiserInvoiceRepair(action: BookingXeroRepairAction, deps: RepairDependencies) {
