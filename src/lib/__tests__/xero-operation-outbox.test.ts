@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  executeOrganiserExtraAdjustment: vi.fn(),
   readPaidAnotherWayCloseShare: vi.fn(),
   createAuditLog: vi.fn(),
   findFirstLink: vi.fn(),
@@ -70,6 +71,8 @@ const mocks = vi.hoisted(() => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   executeRaw: vi.fn(),
 }));
+
+vi.mock("@/lib/organiser-extra-adjustment", () => ({ executeOrganiserExtraAdjustment: mocks.executeOrganiserExtraAdjustment }));
 
 /**
  * #3193 fix round: the double-bill regression below drives the REAL
@@ -2417,7 +2420,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       // #3954 round 8 and #3953 round 3: rows waiting their turn are spaced out.
       AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })],
     });
-    expect(args.where.queueType.in).toHaveLength(18);
+    expect(args.where.queueType.in).toEqual([...XERO_OUTBOX_QUEUE_TYPES]);
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -3547,6 +3550,13 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       handler: mocks.createXeroMembershipSubscriptionInvoice,
     },
     // #3635: a late capture a treasurer kept, anchored on its approval task.
+    ORGANISER_EXTRA_ADJUSTMENT: {
+      op: {
+        id: "op_organiser_adjustment_1", localId: "booking_1", localModel: "Booking", createdByMemberId: "admin_1",
+        requestPayload: { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: "booking_1", scopeId: "cancel", modificationId: "mod_1", invoiceId: "extra_1", amountCents: 4000, purpose: "waive", cashAtPlanCents: 2000, refundPercentage: 50 },
+      },
+      handler: mocks.executeOrganiserExtraAdjustment,
+    },
     KEPT_LATE_CAPTURE_INVOICE: {
       op: {
         id: "op_kept_late_capture_1",
@@ -3587,6 +3597,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     vi.clearAllMocks();
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     // Every dispatch target resolves so a routed op reports success.
+    mocks.executeOrganiserExtraAdjustment.mockResolvedValue(undefined);
     mocks.createXeroEntranceFeeInvoice.mockResolvedValue("inv");
     mocks.createXeroInvoiceForBooking.mockResolvedValue("inv");
     mocks.updateXeroBookingInvoiceForBooking.mockResolvedValue("inv");
