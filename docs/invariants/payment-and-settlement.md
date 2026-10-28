@@ -3961,38 +3961,34 @@ _Split from `INV-PAY-057` (#3220)._
 
 An organiser-paid internet-banking group's place bills each positive edit net
 (price plus recorded late-change fee) to the organiser on one supplementary
-invoice anchored on its `BookingModification` (#4299, owner decisions of
-October 2026). `resolveOrganiserBilling` owns payer and combined-invoice
-resolution. The joiner is asked for nothing: the edit's emails and responses say
-the organiser was invoiced (`billedToOrganiserCents`). Only an increase with no
-combined invoice is refused; a provider outage leaves the queued invoice
-retryable. No payment is posted to Xero; no primary-invoice update is queued or
-skipped. The organiser's notice is scoped to the organiser's booking: its "No
-emails" switch withholds it, an admin's notify-member choice on the joiner's
-edit does not. It names only what is owed after reserved waivers, and is not
-sent when nothing is.
+invoice anchored on its `BookingModification` (#4299);
+`resolveOrganiserBilling` resolves payer and combined invoice.
+The joiner is asked for nothing; emails, responses and the quote say the
+organiser is invoiced (`billedToOrganiserCents`). Only an increase with no
+combined invoice is refused; an outage leaves the queued invoice retryable. No
+payment is posted to Xero and no primary-invoice update queued: the place never
+has a primary invoice, and `enqueueXeroBookingInvoiceOperation` refuses one. The
+organiser's notice follows the organiser booking's "No emails" switch, not the
+admin's notify-member choice, and names only what reserved waivers leave owed.
 
 Reductions take unpaid extras first, fee included, at no policy percentage. A
-never-attempted queued invoice waived whole is never raised: the enqueue and
-the create refuse its change under the anchor key. A `FAILED` one keeps the
-reserved waiver. An invoice with no payment or
-credit (`classifyGroupSettlementInvoiceState`) is voided when fully released;
-otherwise the release is credited. Cash pays the fee first; only paid price
-joins the refundable share, at the policy percentage, and cash racing a waiver
-is refunded the same way, at the edit's own tier even when the cut fell wholly
-on unpaid extras, less the tier's fixed fee the plan's basis left unabsorbed. Cancels, the organiser's group cancel included,
-release every unpaid extra, exclude paid fees and record refunds on the
-payment's rows. Refund notes (combined invoice for the share, extra invoice for
-extra cash) wait for their bound bank-transfer hand-back. Xero cash is imported
-idempotently; reversed refunded cash raises a treasurer review.
+never-attempted queued invoice waived whole is never raised (enqueue and create
+refuse it); a `FAILED` one keeps the reserved waiver. A
+fully released invoice with no payment or credit
+(`classifyGroupSettlementInvoiceState`) is voided, else credited. Cash pays the
+fee first; only paid price joins the refundable share at the policy percentage.
+Cash racing a waiver is refunded at the edit's tier, less any fixed fee the
+plan left unabsorbed. Cancels, group
+cancel included, release every unpaid extra, exclude paid fees and record
+refunds on the payment's rows. Refund notes (combined invoice for the share,
+extra invoice for extra cash) wait for their bound bank-transfer hand-back. Xero
+cash is imported idempotently; reversed refunded cash raises a treasurer review.
 
 Historical repair needs reviewed dry-run keys, shows later reductions and
 refunds, bills every recorded positive net (B1's accepted over-billing), skips
-billed or queued changes, and adds to the place's other findings. The place
-never gets a primary invoice: the classifier reports it settled on the combined
-invoice, and `enqueueXeroBookingInvoiceOperation` refuses it. Legacy review
-charges stay refused. Tests: `organiser-extra-netting.test.ts`,
-`organiser-extra-adjustment.test.ts`, `organiser-extra-doors.realdb.test.ts`,
+billed or queued changes and adds to the place's other findings. Legacy review charges stay refused. Tests:
+`organiser-extra-netting.test.ts`, `organiser-extra-adjustment.test.ts`,
+`organiser-extra-doors.realdb.test.ts`,
 `organiser-extra-group-cancel.realdb.test.ts`,
 `organiser-extra-netting.realdb.test.ts` and
 `xero-booking-repair-organiser-billing.test.ts`.
