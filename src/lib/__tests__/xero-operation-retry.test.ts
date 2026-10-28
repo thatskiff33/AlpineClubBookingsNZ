@@ -4032,6 +4032,19 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       );
     });
 
+    it.each(["FAILED", "PARTIAL"])("reports claim lost when a %s note's recorded-payment completion returns null", async (status) => {
+      mocks.findUniqueOperation.mockResolvedValue({
+        ...failedRefundNote(), status, responsePayload: { refundPaymentSkipped: true },
+      });
+      mocks.completeXeroSyncOperation.mockResolvedValueOnce(null);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
+      });
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+      expect(mocks.finishRefundCreditNoteSettlement).not.toHaveBeenCalled();
+    });
+
     // #4356: a row another caller completed PARTIAL after the read is not this repair's to take.
     it("MUTATION: a row that went PARTIAL after its read is already claimed, and it settles nothing", async () => {
       mocks.findUniqueOperation

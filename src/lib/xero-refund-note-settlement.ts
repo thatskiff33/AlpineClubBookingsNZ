@@ -598,9 +598,9 @@ export async function finishRefundCreditNoteSettlement(input: {
   refundRequestId?: string | null;
   /** #4256: the row is a retry's claim (`operation`); complete onto that claim only. */
   retryClaim?: true;
-}): Promise<RefundNoteSettlementOutcome> {
+}): Promise<RefundNoteSettlementOutcome & { completionClaimLost: boolean }> {
   const settled = await settleRefundNoteFromXero(input);
-  await completeXeroSyncOperation(
+  const completed = await completeXeroSyncOperation(
     input.operation,
     refundCreditNoteCompletion({
       paymentId: input.paymentId,
@@ -616,5 +616,5 @@ export async function finishRefundCreditNoteSettlement(input: {
     }),
     input.retryClaim ? { retryClaim: true } : undefined,
   );
-  return settled.outcome;
+  return { ...settled.outcome, completionClaimLost: completed === null };
 }

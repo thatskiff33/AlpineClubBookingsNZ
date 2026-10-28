@@ -1,0 +1,1 @@
+- **Xero refund-note repairs report when a reset prevents completion (#4440).** If an operation is reset while its repair runs, the officer now sees the same retry message as an invoice repair instead of a success message. Retry once to close the operation.

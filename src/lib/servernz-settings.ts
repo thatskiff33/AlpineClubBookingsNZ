@@ -46,10 +46,9 @@ export interface ServerNzSettingsValues {
   /**
    * True when the column HOLDS a value that does not parse as the owned list.
    * `otherLodgesOwnedLodges` is then `null` — read-only everywhere, like
-   * never-told. The upload sends nothing on `null` either way; the committee
-   * sync, which on never-told falls back to its pre-#52 building-name rule,
-   * reads this flag and writes NOTHING instead (fail closed): a column that
-   * was written and is now unreadable is a defect, not a fresh install.
+   * never-told. The upload sends nothing and the committee sync writes nothing
+   * on `null` either way (fail closed). A column that was written and is now
+   * unreadable is a defect, not a fresh install.
    */
   otherLodgesOwnedLodgesUnreadable: boolean;
   /**
@@ -92,9 +91,9 @@ export interface StoredOwnedOtherLodges {
  * The stored owned list, read back through the same schema it was validated
  * with on the way in. A value that does not parse reads as UNKNOWN
  * (`lodges: null`) so that nothing treats junk as a lodge or as "owns
- * nothing", AND is flagged `unreadable` so the writers that have a permissive
- * fallback on `null` (the upload, the committee officer sync) can fail closed
- * instead. Exported so the committee sync, which runs inside a caller's
+ * nothing". It is also flagged `unreadable` to distinguish corrupt data from
+ * ownership not yet recorded. Upload and committee sync both fail closed on
+ * `null`. Exported so the committee sync, which runs inside a caller's
  * transaction and cannot use `loadServerNzSettings`, reads the column through
  * the same rule.
  */

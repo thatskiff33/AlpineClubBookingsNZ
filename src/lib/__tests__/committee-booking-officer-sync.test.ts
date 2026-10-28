@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
+import logger from "@/lib/logger";
 import { syncBookingOfficerForRole } from "@/lib/committee-booking-officer-sync";
+
+vi.mock("@/lib/logger", () => ({ default: { info: vi.fn() } }));
 
 // The sync accepts a narrow Prisma-shaped client, so we drive it with a hand-built
 // fake instead of mocking the module. Each test wires the reads it needs and
@@ -80,7 +83,7 @@ describe("syncBookingOfficerForRole", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("writes the holder's contact into the OtherLodge row matching the lodge name", async () => {
+  it("writes the holder's contact into the OtherLodge row with the owned central id", async () => {
     const { db, update } = makeDb({
       roles: [{ id: "role_bo" }],
       holder: {
@@ -88,10 +91,11 @@ describe("syncBookingOfficerForRole", () => {
         member: MEMBER,
         committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
       },
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [
         {
           id: "ol1",
+          centralId: "c-ours",
           bookingOfficerName: null,
           bookingOfficerEmail: null,
           bookingOfficerPhone: null,
@@ -122,10 +126,11 @@ describe("syncBookingOfficerForRole", () => {
         member: MEMBER,
         committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
       },
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [
         {
           id: "ol1",
+          centralId: "c-ours",
           bookingOfficerName: "Andy Schulz",
           bookingOfficerEmail: ROLE_CONTACT_EMAIL,
           bookingOfficerPhone: "64 27 4224115",
@@ -142,10 +147,11 @@ describe("syncBookingOfficerForRole", () => {
     const { db, update } = makeDb({
       roles: [{ id: "role_bo" }],
       holder: null,
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [
         {
           id: "ol1",
+          centralId: "c-ours",
           bookingOfficerName: "Andy Schulz",
           bookingOfficerEmail: "andy@example.com",
           bookingOfficerPhone: "64 27 4224115",
@@ -174,7 +180,7 @@ describe("syncBookingOfficerForRole", () => {
         member: MEMBER,
         committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
       },
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [],
     });
     await syncBookingOfficerForRole(db as never, "role_bo");
@@ -197,7 +203,7 @@ describe("syncBookingOfficerForRole", () => {
         member: MEMBER,
         committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
       },
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [],
     });
 
@@ -225,10 +231,11 @@ describe("syncBookingOfficerForRole", () => {
         showPhone: false,
         committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
       },
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [
         {
           id: "ol1",
+          centralId: "c-ours",
           bookingOfficerName: null,
           bookingOfficerEmail: null,
           bookingOfficerPhone: null,
@@ -256,10 +263,11 @@ describe("syncBookingOfficerForRole", () => {
         showPhone: false,
         committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
       },
-      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-ours", name: "Whakapapa Lodge" }],
       otherLodges: [
         {
           id: "ol1",
+          centralId: "c-ours",
           bookingOfficerName: "Andy Schulz",
           bookingOfficerEmail: ROLE_CONTACT_EMAIL,
           bookingOfficerPhone: "64 27 4224115",
@@ -281,7 +289,7 @@ describe("syncBookingOfficerForRole", () => {
 // Once the central server has said which lodges this club owns, THAT list
 // decides which registry rows take the officer's contact — through the same
 // `ownsOtherLodge` rule as the admin edit route and the upload — and the
-// building-name match is only the fallback for a site the server has not told.
+// sync writes nothing until the server has told the site which ids it owns.
 
 describe("writes only the rows the central server says are ours (#52, by central id #69)", () => {
   const holder = {
@@ -378,19 +386,88 @@ describe("writes only the rows the central server says are ours (#52, by central
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("falls back to the building-name rule only while the server has not said", async () => {
+  it.each([
+    { action: "assigning", currentHolder: holder },
+    { action: "clearing", currentHolder: null },
+  ])("writes nothing before the first Download when $action, even with two exact-name matches", async ({ currentHolder }) => {
     const { db, update } = makeDb({
       roles: [{ id: "role_bo" }],
-      holder,
+      holder: currentHolder,
       lodges: [{ name: "Whakapapa Lodge" }],
-      // No owned list: no settings row, never told.
-      otherLodges: [{ id: "ol1", name: "Whakapapa Lodge", ...blank }],
+      // No settings row: no Download has recorded ownership yet.
+      otherLodges: [
+        { id: "ours", name: "Whakapapa Lodge", centralId: "c-ours", ...blank },
+        {
+          id: "theirs", name: "Whakapapa Lodge", centralId: "c-theirs",
+          bookingOfficerName: "Their Officer",
+          bookingOfficerEmail: "officer@other.test",
+          bookingOfficerPhone: "64 21 1234567",
+        },
+      ],
     });
 
     const result = await syncBookingOfficerForRole(db as never, "role_bo");
 
-    expect(result).toEqual({ updated: 1, holderMemberId: "m1" });
-    expect(update.mock.calls[0][0].where).toEqual({ id: "ol1" });
+    expect(result).toEqual({ updated: 0, holderMemberId: currentHolder?.memberId ?? null });
+    expect(update).not.toHaveBeenCalled();
+    expect(db.otherLodge.findMany).not.toHaveBeenCalled();
+    expect(db.lodge.findMany).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("owned-lodge list is unknown"));
+
+    // Download records the owned id. Only that row may now be assigned.
+    db.serverNzSettings.findUnique.mockResolvedValue({
+      otherLodgesOwnedLodges: [{ id: "c-ours", name: "Whakapapa Lodge" }],
+    });
+    const afterDownload = await syncBookingOfficerForRole(db as never, "role_bo");
+    expect(afterDownload).toEqual({
+      updated: currentHolder ? 1 : 0,
+      holderMemberId: currentHolder?.memberId ?? null,
+    });
+    if (currentHolder) {
+      expect(update).toHaveBeenCalledExactlyOnceWith({
+        where: { id: "ours" },
+        data: {
+          bookingOfficerName: "Andy Schulz",
+          bookingOfficerEmail: ROLE_CONTACT_EMAIL,
+          bookingOfficerPhone: "64 27 4224115",
+        },
+      });
+    } else {
+      expect(update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("stops after a connection change clears ownership until the next Download", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      lodges: [{ name: "Whakapapa Lodge" }],
+      owned: [{ id: "c-old", name: "Whakapapa Lodge" }],
+      otherLodges: [
+        { id: "old", name: "Whakapapa Lodge", centralId: "c-old", ...blank },
+        { id: "new", name: "Whakapapa Lodge", centralId: "c-new", ...blank },
+      ],
+    });
+    await syncBookingOfficerForRole(db as never, "role_bo");
+    expect(update).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ where: { id: "old" } }),
+    );
+    update.mockClear();
+
+    // Connection changes persist database NULL, read back as null by the loader.
+    db.serverNzSettings.findUnique.mockResolvedValue({ otherLodgesOwnedLodges: null });
+    expect(await syncBookingOfficerForRole(db as never, "role_bo"))
+      .toEqual({ updated: 0, holderMemberId: "m1" });
+    expect(update).not.toHaveBeenCalled();
+
+    db.serverNzSettings.findUnique.mockResolvedValue({
+      otherLodgesOwnedLodges: [{ id: "c-new", name: "Whakapapa Lodge" }],
+    });
+    expect(await syncBookingOfficerForRole(db as never, "role_bo"))
+      .toEqual({ updated: 1, holderMemberId: "m1" });
+    expect(update).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ where: { id: "new" } }),
+    );
   });
 
   it("writes nothing when the stored list is present but unreadable (fail closed)", async () => {

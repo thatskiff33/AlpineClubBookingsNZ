@@ -208,11 +208,11 @@ the owned lodges' ids beside their names, and they are forgotten with the list.
 The same list decides which entries your **Booking Officer** committee role is
 written into: when a member takes or leaves that role, the officer's name,
 role email and (if published) phone are written into the lodge entries the
-central server names as yours — and, until it has named any, into entries whose
-name exactly matches one of your own lodges. That name rule is the one place a
-lodge is still taken as yours by its name: once a **Download** has said which
-lodges are yours, only their ids count, and another club's lodge of the same
-name is never written into.
+central server names as yours, matched only by their ids. Until a **Download**
+has recorded that list, the sync writes nothing and logs why it skipped.
+Disconnecting, replacing the API key or changing the server address clears the
+list, so the sync again writes nothing until the next **Download** records it.
+Another club's lodge of the same name is never treated as yours.
 
 Only one sync with the central server runs at a time, across every copy of
 the site: the nightly job, the **Upload** button and the **Download** button

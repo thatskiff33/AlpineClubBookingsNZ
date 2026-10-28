@@ -412,7 +412,7 @@ providers, and fell four behind as the rest landed. Anything that turns on
   panel. A row not yet keyed by a central id is never owned (two lodges may
   share a name). Until that answer has been received the upload sends
   nothing, the admin edit route refuses everything, and the committee sync
-  keeps its pre-#52 rule of matching the club's building names. In the other
+  writes nothing and logs that ownership is unknown (#4489). In the other
   direction the pull is held to the same `otherLodgeDataShape` the local admin
   is validated with (`src/lib/other-lodges.ts`), so the remote cannot place an
   over-long value, a non-`http(s)` site URL or an unbounded amenity list into

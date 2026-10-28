@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { formatCommitteeMemberPhone } from "@/lib/committee";
 import { ownsOtherLodge, visibleOtherLodgeWhere } from "@/lib/other-lodges";
+import logger from "@/lib/logger";
 import { loadOwnedOtherLodges } from "@/lib/servernz-settings";
 
 /**
@@ -9,8 +10,7 @@ import { loadOwnedOtherLodges } from "@/lib/servernz-settings";
  * currently holds the Booking Officer committee role.
  *
  * When a member is assigned (or removed from) the Booking Officer committee role,
- * the OtherLodge rows the central server says this club OWNS (#52) — or, until
- * it has said, whose `name` matches one of the club's own lodges — have their
+ * the OtherLodge rows the central server says this club OWNS (#52) have their
  * bookingOfficerName / bookingOfficerEmail / bookingOfficerPhone (and, via Prisma's
  * `@updatedAt`, `updatedAt`) refreshed. Name and phone come from the assigned
  * member; the email is the ROLE's shared contact address (e.g. bookings@club), not
@@ -35,7 +35,7 @@ const BOOKING_OFFICER_ROLE_NAME = "Booking Officer";
 // lets callers pass either `prisma` or an interactive-transaction client (`tx`).
 type CommitteeSyncClient = Pick<
   Prisma.TransactionClient,
-  "committeeRole" | "committeeAssignment" | "lodge" | "otherLodge" | "serverNzSettings"
+  "committeeRole" | "committeeAssignment" | "otherLodge" | "serverNzSettings"
 >;
 
 interface BookingOfficerContact {
@@ -138,43 +138,22 @@ async function applyBookingOfficerContact(
       }
     : EMPTY_CONTACT;
 
-  // WHICH ROWS ARE OURS. The central server's answer, when it has given one
-  // (#52): the owned list on `ServerNzSettings`, read through the same rule the
-  // admin edit route, the upload and the panel apply (`ownsOtherLodge`, by
-  // central id since #69: two lodges may share a name). That
-  // closes the collision this block used to carry as a known limitation: a
-  // `Lodge` is a BUILDING while an `OtherLodge` is a CLUB, so a club that named
-  // one of its buildings exactly as another club's registry row had its booking
-  // officer written into that club's row, and then uploaded. With the owned
-  // list known, only rows the server names for this site are written, whatever
-  // the buildings are called.
-  //
-  // UNTIL the server has said (not connected, never downloaded, or an older
-  // server that does not send the list) the pre-#52 name rule stands: rows whose
-  // name exactly matches one of the club's lodges — no normalisation, no case
-  // folding — so the exposure above is bounded to a deliberate collision. A
-  // stored list that is present but UNREADABLE writes nothing (fail closed, the
-  // same answer the upload gives): the column is wrong, not the install new.
+  // Ownership is established only by the central server's recorded ids, through
+  // the same rule the admin edit route and upload apply. Building names cannot
+  // establish ownership: another club may use exactly the same name (#4489).
   const owned = await loadOwnedOtherLodges(db);
-  if (owned.unreadable) {
+  if (owned.lodges === null) {
+    logger.info(
+      "Booking-officer sync skipped: owned-lodge list is unknown or unreadable. Download from the Alpine Central Server to record it.",
+    );
     return { updated: 0, holderMemberId: holder?.memberId ?? null };
   }
-  let candidates: Prisma.OtherLodgeWhereInput;
-  if (owned.lodges !== null) {
-    if (owned.lodges.length === 0) {
-      return { updated: 0, holderMemberId: holder?.memberId ?? null };
-    }
-    // The owned rows, by central id only (#69): a row not keyed yet may be
-    // another club's lodge of the same name.
-    candidates = { centralId: { in: owned.lodges.map((l) => l.id) } };
-  } else {
-    const lodges = await db.lodge.findMany({ select: { name: true } });
-    const names = [...new Set(lodges.map((lodge) => lodge.name))];
-    if (names.length === 0) {
-      return { updated: 0, holderMemberId: holder?.memberId ?? null };
-    }
-    candidates = { name: { in: names } };
+  if (owned.lodges.length === 0) {
+    return { updated: 0, holderMemberId: holder?.memberId ?? null };
   }
+  const candidates: Prisma.OtherLodgeWhereInput = {
+    centralId: { in: owned.lodges.map((l) => l.id) },
+  };
 
   // Hidden lodges (#58) are not written into: they are deleted lodges kept.
   const rows = await db.otherLodge.findMany({
@@ -193,7 +172,7 @@ async function applyBookingOfficerContact(
   for (const row of rows) {
     // The query above already selects the owned rows; this is the ONE rule
     // applied at the write, so the decision is `ownsOtherLodge`'s, not the query's.
-    if (owned.lodges !== null && !ownsOtherLodge(owned.lodges, row)) continue;
+    if (!ownsOtherLodge(owned.lodges, row)) continue;
     if (
       row.bookingOfficerName === contact.bookingOfficerName &&
       row.bookingOfficerEmail === contact.bookingOfficerEmail &&
