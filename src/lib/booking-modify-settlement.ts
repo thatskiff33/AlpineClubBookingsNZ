@@ -1,4 +1,3 @@
-import { effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
 // Split out of src/lib/booking-modify.ts (issue #1138): settlement handoff
 // (refund vs account credit), payment adjustments, and booking lifecycle
 // transitions after a modification. Code moved verbatim; import via the
@@ -56,7 +55,6 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
-import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import {
@@ -144,6 +142,7 @@ export {
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
 import {
+  refundableCashForModification,
   resolveSelectedSettlementAmount,
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
@@ -223,7 +222,7 @@ export async function applyPaymentAdjustments(
   const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
-  const remainingRefundableCents = Math.max(0, await refundableCashNetOfOpenHandBacks(tx, booking.payment) - (reduction.organiserExtras && booking.payment ? effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, reduction.organiserExtras) : 0));
+  const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,

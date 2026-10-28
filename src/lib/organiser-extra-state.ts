@@ -15,7 +15,7 @@ export type OrganiserExtraInvoice = {
   cashCents: number;
   waivedCents: number;
   refundedCents: number;
-  releasedPriceCents?: number;
+  releasedPriceCents: number;
 };
 export type OrganiserExtraState = { bookingId: string; invoices: OrganiserExtraInvoice[] };
 export type OrganiserExtraReduction = OrganiserExtraState & { scopeId: string; offsetCents: number; reductionCents: number };
@@ -29,7 +29,7 @@ export function effectiveOrganiserPaidChangeFeeCents(recordedFeeCents: number, s
   return Math.max(0, recordedFeeCents - state.invoices.reduce((sum, invoice) => sum + Math.max(0, invoice.feeCents - invoice.cashCents), 0));
 }
 export function organiserExtraPaidPriceCents(invoice: OrganiserExtraInvoice): number {
-  return Math.max(0, Math.min(invoice.priceCents, invoice.cashCents - invoice.feeCents) - (invoice.releasedPriceCents ?? invoice.refundedCents));
+  return Math.max(0, Math.min(invoice.priceCents, invoice.cashCents - invoice.feeCents) - invoice.releasedPriceCents);
 }
 
 /** All reads are local, after the caller's existing global money lock. */

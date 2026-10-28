@@ -138,7 +138,7 @@ async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPaylo
     const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: payload.bookingId }, select: { id: true } });
     const task = await tx.manualRefundTask.create({ data: { bookingId: payload.bookingId, paymentId: payment.id, kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey, amountCents: additionalRefundCents, raisedAmountCents: additionalRefundCents, reason: "Refund the group organiser by bank transfer: an extra invoice was paid while its cancellation or reduction was being processed." }, select: { id: true } });
     const scopeId = `racing-cash:${operationId}:${cashCents}`;
-    await reserveOrganiserExtraNetting(tx, { state: { bookingId: payload.bookingId, invoices: [{ modificationId: payload.modificationId!, invoiceId: payload.invoiceId, priceCents: modification.priceDiffCents, feeCents: modification.changeFeeCents, cashCents, waivedCents: 0, refundedCents: 0 }] }, scopeId, reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage });
+    await reserveOrganiserExtraNetting(tx, { state: { bookingId: payload.bookingId, invoices: [{ modificationId: payload.modificationId!, invoiceId: payload.invoiceId, priceCents: modification.priceDiffCents, feeCents: modification.changeFeeCents, cashCents, waivedCents: 0, refundedCents: 0, releasedPriceCents: 0 }] }, scopeId, reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage });
     await bindOrganiserExtraRefundToHandBack(tx, { bookingId: payload.bookingId, handBackTaskId: task.id, scopeId });
   });
 }

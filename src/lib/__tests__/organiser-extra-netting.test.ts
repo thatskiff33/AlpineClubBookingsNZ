@@ -3,7 +3,7 @@ import { planOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
 import { effectiveOrganiserPaidChangeFeeCents, organiserExtraPaidPriceCents, organiserExtraUnpaidCents, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 
-const invoice = (overrides: Partial<OrganiserExtraInvoice> = {}): OrganiserExtraInvoice => ({ modificationId: "increase", invoiceId: "extra", priceCents: 5_000, feeCents: 1_000, cashCents: 2_000, waivedCents: 0, refundedCents: 0, ...overrides });
+const invoice = (overrides: Partial<OrganiserExtraInvoice> = {}): OrganiserExtraInvoice => ({ modificationId: "increase", invoiceId: "extra", priceCents: 5_000, feeCents: 1_000, cashCents: 2_000, waivedCents: 0, refundedCents: 0, releasedPriceCents: 0, ...overrides });
 const state = (extra = invoice()) => ({ bookingId: "child", invoices: [extra] });
 
 describe("organiser bank-transfer extra netting (N1–N4)", () => {
@@ -48,7 +48,7 @@ describe("organiser bank-transfer extra netting (N1–N4)", () => {
     expect(effectiveOrganiserPaidChangeFeeCents(1_000, state(invoice({ cashCents: 500 })))).toBe(500);
   });
   it("reservations prevent later edits from waiving or refunding the same extra twice", () => {
-    const extra = invoice({ waivedCents: 4_000, refundedCents: 1_000 });
+    const extra = invoice({ waivedCents: 4_000, refundedCents: 1_000, releasedPriceCents: 1_000 });
     const result = planOrganiserExtraNetting(state(extra), { reductionCents: 1_000, refundAmountCents: 500, refundBasisCents: 1_000 });
     expect(result.waivers).toEqual([]);
     expect(result.refunds).toEqual([]);

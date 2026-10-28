@@ -53,6 +53,19 @@ export type BookingModificationSettlementOptions = {
   organiserRefundByBankTransfer: boolean;
 };
 
+/** One cash cap for the quote and save, after unpaid asks have been netted. */
+export async function refundableCashForModification(
+  db: OpenNonCancellationHandBackDb,
+  payment: LoadedBookingForModify["payment"],
+  reduction: ReductionAgainstUnpaidAsk,
+): Promise<number> {
+  const cashCents = await refundableCashNetOfOpenHandBacks(db, payment);
+  const paidFeeCents = reduction.organiserExtras && payment
+    ? effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, reduction.organiserExtras)
+    : 0;
+  return Math.max(0, cashCents - paidFeeCents);
+}
+
 /**
  * `db` is REQUIRED and reads the cancellation policy set: this module is
  * transaction-scoped and imports no module-level client, so a default would hide
@@ -102,7 +115,7 @@ export async function calculateModificationSettlementOptions({
   const basisAmountCents = settlementBasisCents(
     booking,
     reduction.netChargeLeftCents,
-    Math.max(0, await refundableCashNetOfOpenHandBacks(db, booking.payment) - (reduction.organiserExtras && booking.payment ? effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, reduction.organiserExtras) : 0)),
+    await refundableCashForModification(db, booking.payment, reduction),
   );
   if (basisAmountCents === null) return null;
 
