@@ -219,7 +219,8 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
     zeroDollarCardIncrease;
-  const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
+  // #4299: the one home's answer, or the organiser's combined invoice standing for it.
+  const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
