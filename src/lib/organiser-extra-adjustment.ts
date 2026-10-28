@@ -11,28 +11,47 @@ import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import { bindOrganiserExtraRefundToHandBack, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
+import { organiserExtraPaidPriceCents, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
+import { calculateRefundAmount } from "@/lib/policies/cancellation";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import type { OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 
+const WAIVER_LINE = "Unpaid organiser extra released; no cancellation percentage applies";
+const REFUND_LINE = "Refund paid back to the group organiser by bank transfer";
+
 export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdjustmentPayload, claim: XeroOperationClaim): Promise<void> {
-  const operation = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: claim.id }, select: { xeroObjectId: true, correlationKey: true } });
+  const operation = await prisma.xeroSyncOperation.findUniqueOrThrow({
+    where: { id: claim.id },
+    select: { xeroObjectId: true, correlationKey: true },
+  });
   let invoiceId = payload.invoiceId;
   if (!invoiceId && payload.modificationId) {
-    const link = await prisma.xeroObjectLink.findFirst({ where: { localModel: "BookingModification", localId: payload.modificationId, role: "SUPPLEMENTARY_INVOICE", active: true }, select: { xeroObjectId: true } });
+    const link = await prisma.xeroObjectLink.findFirst({
+      where: { localModel: "BookingModification", localId: payload.modificationId, role: "SUPPLEMENTARY_INVOICE", active: true },
+      select: { xeroObjectId: true },
+    });
     invoiceId = link?.xeroObjectId ?? null;
   }
   if (!invoiceId) throw new XeroAppliedCreditOperationBusyError("Organiser extra adjustment waits for its queued invoice", "PENDING");
+  const extraInvoiceId = invoiceId;
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const invoiceResponse = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, invoiceId!), { operation: "getInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `organiser extra ${invoiceId}` });
-  const invoice = invoiceResponse.body.invoices?.[0];
+  const readInvoice = async (context: string) => {
+    const response = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, extraInvoiceId), {
+      operation: "getInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `${context} ${extraInvoiceId}`,
+    });
+    return response.body.invoices?.[0];
+  };
+  const invoice = await readInvoice("organiser extra");
   if (!invoice?.invoiceID) throw new Error("Organiser extra invoice was not found");
   let dueCents = providerAmountToCents(invoice.amountDue);
   const { classifyXeroInvoiceCashEvidence, quantifyXeroInvoiceCashCents } = await import("@/lib/xero-inbound/invoice-paid-effects");
   const cash = quantifyXeroInvoiceCashCents(invoice);
   let cashCents = cash.knownCents;
-  if (dueCents === null || !cash.complete || classifyXeroInvoiceCashEvidence(invoice) === "indeterminate") throw new Error("Organiser extra invoice amounts are unreadable");
+  if (dueCents === null || !cash.complete || classifyXeroInvoiceCashEvidence(invoice) === "indeterminate") {
+    throw new Error("Organiser extra invoice amounts are unreadable");
+  }
   if (payload.modificationId) await syncOrganiserExtraInvoiceCash(invoice);
   const key = operation.correlationKey ?? claim.id;
   const date = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
@@ -42,17 +61,25 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     // A bank-feed reconciliation may race the app's local read. Recognise that
     // cash and reserve its policy refund before completing the old waiver.
     await reserveCashThatRacedWaiver(payload, cashCents, Math.max(0, payload.amountCents - dueCents), claim.id);
-    if (String(invoice.status) === "VOIDED" || String(invoice.status) === "DELETED") {
+    // F3: Xero voids only an invoice with no money on it - no payment, and no
+    // credit allocated (an earlier waiver's note is one). The combined
+    // invoice's own classifier answers that (`INV-SSOT`).
+    const { classifyGroupSettlementInvoiceState } = await import("@/lib/xero-group-settlement-invoice-voids");
+    const state = classifyGroupSettlementInvoiceState(invoice);
+    if (state.kind === "void") {
       await completeXeroSyncOperation(claim, { responsePayload: { alreadyVoided: true } });
       return;
     }
-    if (cashCents === 0 && dueCents > 0 && payload.amountCents >= dueCents) {
-      await callXeroApi(() => xero.accountingApi.updateInvoice(tenantId, invoiceId!, { invoices: [{ invoiceID: invoiceId!, status: Invoice.StatusEnum.VOIDED }] }, undefined, `${key}:void`), { operation: "updateInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `void organiser extra ${invoiceId}` });
-      await completeXeroSyncOperation(claim, { responsePayload: { voided: true, invoiceId } });
+    if (state.kind === "open" && dueCents > 0 && payload.amountCents >= dueCents) {
+      await callXeroApi(
+        () => xero.accountingApi.updateInvoice(tenantId, extraInvoiceId, { invoices: [{ invoiceID: extraInvoiceId, status: Invoice.StatusEnum.VOIDED }] }, undefined, `${key}:void`),
+        { operation: "updateInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `void organiser extra ${extraInvoiceId}` },
+      );
+      await completeXeroSyncOperation(claim, { responsePayload: { voided: true, invoiceId: extraInvoiceId } });
       return;
     }
     if (dueCents <= 0) {
-      await completeXeroSyncOperation(claim, { responsePayload: { nothingDue: true, invoiceId } });
+      await completeXeroSyncOperation(claim, { responsePayload: { nothingDue: true, invoiceId: extraInvoiceId } });
       return;
     }
   }
@@ -70,31 +97,48 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
   if (!noteId) {
     const account = await getResolvedAccountMapping("hutFeeRefunds");
     if (!invoice.contact?.contactID) throw new Error("Organiser invoice has no Xero contact");
-    const created = await callXeroApi(() => xero.accountingApi.createCreditNotes(tenantId, { creditNotes: [{ type: CreditNote.TypeEnum.ACCRECCREDIT, contact: { contactID: invoice.contact!.contactID }, date, status: CreditNote.StatusEnum.AUTHORISED, lineAmountTypes: LineAmountTypes.Inclusive,
-      reference: `Booking ${payload.bookingId} — ${payload.purpose === "waive" ? "unpaid extra waived" : "organiser bank-transfer refund"} (${invoice.invoiceNumber ?? invoiceId})`,
-      lineItems: [{ description: payload.purpose === "waive" ? "Unpaid organiser extra released; no cancellation percentage applies" : "Refund paid back to the group organiser by bank transfer", quantity: 1, unitAmount: amountCents / 100, accountCode: account.code ?? "200" }],
-    }] }, undefined, undefined, `${key}:credit-note`), { operation: "createCreditNotes", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `credit organiser invoice ${invoiceId}` });
+    const waive = payload.purpose === "waive";
+    const reference = `Booking ${payload.bookingId} — ${waive ? "unpaid extra waived" : "organiser bank-transfer refund"} (${invoice.invoiceNumber ?? extraInvoiceId})`;
+    const created = await callXeroApi(
+      () => xero.accountingApi.createCreditNotes(tenantId, { creditNotes: [{
+        type: CreditNote.TypeEnum.ACCRECCREDIT, contact: { contactID: invoice.contact!.contactID }, date,
+        status: CreditNote.StatusEnum.AUTHORISED, lineAmountTypes: LineAmountTypes.Inclusive, reference,
+        lineItems: [{ description: waive ? WAIVER_LINE : REFUND_LINE, quantity: 1, unitAmount: amountCents / 100, accountCode: account.code ?? "200" }],
+      }] }, undefined, undefined, `${key}:credit-note`),
+      { operation: "createCreditNotes", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `credit organiser invoice ${extraInvoiceId}` },
+    );
     noteId = created.body.creditNotes?.[0]?.creditNoteID ?? null;
     if (!noteId) throw new Error("Xero did not create the organiser credit note");
     // Persist the returned identity BEFORE allocation/payment. A retry never
     // depends solely on the provider's expiring idempotency cache.
-    const saved = await prisma.xeroSyncOperation.updateMany({ where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt }, data: { xeroObjectId: noteId, xeroObjectType: "CREDIT_NOTE" } });
+    const saved = await prisma.xeroSyncOperation.updateMany({
+      where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
+      data: { xeroObjectId: noteId, xeroObjectType: "CREDIT_NOTE" },
+    });
     if (saved.count !== 1) throw new Error("Organiser adjustment lost its operation claim");
   }
+  const creditNoteId = noteId;
   if (payload.purpose === "waive") {
-    const noteResponse = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, noteId!), { operation: "getCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `read waiver ${noteId}` });
+    const noteResponse = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, creditNoteId), {
+      operation: "getCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `read waiver ${creditNoteId}`,
+    });
     const note = noteResponse.body.creditNotes?.[0];
-    if (!note?.creditNoteID || String(note.status) === "VOIDED" || String(note.status) === "DELETED") throw new Error("Organiser waiver credit note is missing or voided");
+    if (!note?.creditNoteID || String(note.status) === "VOIDED" || String(note.status) === "DELETED") {
+      throw new Error("Organiser waiver credit note is missing or voided");
+    }
     // Note creation/read can take long enough for a bank-feed payment to land.
     // Size the allocation from a fresh invoice, not the pre-create snapshot.
-    const latestResponse = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, invoiceId!), { operation: "getInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `refresh organiser extra ${invoiceId}` });
-    const latestInvoice = latestResponse.body.invoices?.[0];
+    const latestInvoice = await readInvoice("refresh organiser extra");
     const latestCash = latestInvoice && quantifyXeroInvoiceCashCents(latestInvoice);
     dueCents = latestInvoice ? providerAmountToCents(latestInvoice.amountDue) : null;
-    if (!latestInvoice?.invoiceID || dueCents === null || !latestCash?.complete || classifyXeroInvoiceCashEvidence(latestInvoice) === "indeterminate") throw new Error("Organiser extra invoice amounts are unreadable");
+    if (!latestInvoice?.invoiceID || dueCents === null || !latestCash?.complete || classifyXeroInvoiceCashEvidence(latestInvoice) === "indeterminate") {
+      throw new Error("Organiser extra invoice amounts are unreadable");
+    }
     cashCents = latestCash.knownCents;
     if (payload.modificationId) await syncOrganiserExtraInvoiceCash(latestInvoice);
-    const alreadyAllocated = (note.allocations ?? []).reduce((sum, a) => sum + (a.invoice?.invoiceID === invoiceId ? providerAmountToCents(a.amount) ?? 0 : 0), 0);
+    const alreadyAllocated = (note.allocations ?? []).reduce(
+      (sum, a) => sum + (a.invoice?.invoiceID === extraInvoiceId ? providerAmountToCents(a.amount) ?? 0 : 0), 0,
+    );
     let totalCents = providerAmountToCents(note.total);
     if (totalCents === null) throw new Error("Organiser waiver note total is unreadable");
     // A payment between create and allocate can make the first note too large.
@@ -103,45 +147,91 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     await reserveCashThatRacedWaiver(payload, cashCents, Math.max(0, payload.amountCents - dueCents - alreadyAllocated), claim.id);
     const revisedTotalCents = Math.min(totalCents, dueCents + alreadyAllocated);
     if (revisedTotalCents < totalCents) {
-      if (alreadyAllocated > 0 || (note.payments?.length ?? 0) > 0 || (note.allocations?.length ?? 0) > 0) throw new Error("Organiser waiver was settled elsewhere before it could be resized");
-      await callXeroApi(() => xero.accountingApi.updateCreditNote(tenantId, noteId!, { creditNotes: [{ creditNoteID: noteId!,
-        ...(revisedTotalCents === 0 ? { status: CreditNote.StatusEnum.VOIDED } : { lineItems: [{ ...note.lineItems?.[0], description: "Unpaid organiser extra released; no cancellation percentage applies", quantity: 1, unitAmount: revisedTotalCents / 100 }] }),
-      }] }, undefined, `${key}:resize:${cashCents}:${revisedTotalCents}`), { operation: "updateCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `resize organiser waiver ${noteId}` });
+      if (alreadyAllocated > 0 || (note.payments?.length ?? 0) > 0 || (note.allocations?.length ?? 0) > 0) {
+        throw new Error("Organiser waiver was settled elsewhere before it could be resized");
+      }
+      const resized = revisedTotalCents === 0
+        ? { status: CreditNote.StatusEnum.VOIDED }
+        : { lineItems: [{ ...note.lineItems?.[0], description: WAIVER_LINE, quantity: 1, unitAmount: revisedTotalCents / 100 }] };
+      await callXeroApi(
+        () => xero.accountingApi.updateCreditNote(tenantId, creditNoteId, { creditNotes: [{ creditNoteID: creditNoteId, ...resized }] }, undefined, `${key}:resize:${cashCents}:${revisedTotalCents}`),
+        { operation: "updateCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `resize organiser waiver ${creditNoteId}` },
+      );
       totalCents = revisedTotalCents;
     }
     const remainingCents = totalCents - alreadyAllocated;
     if (remainingCents > 0) {
-      await callXeroApi(() => xero.accountingApi.createCreditNoteAllocation(tenantId, noteId!, { allocations: [{ invoice: { invoiceID: invoiceId! }, amount: remainingCents / 100, date }] }, undefined, `${key}:allocation:${remainingCents}`), { operation: "createCreditNoteAllocation", resourceType: "ALLOCATION", workflow: "organiserExtraAdjustment", context: `allocate organiser waiver ${noteId}` });
+      await callXeroApi(
+        () => xero.accountingApi.createCreditNoteAllocation(tenantId, creditNoteId, { allocations: [{ invoice: { invoiceID: extraInvoiceId }, amount: remainingCents / 100, date }] }, undefined, `${key}:allocation:${remainingCents}`),
+        { operation: "createCreditNoteAllocation", resourceType: "ALLOCATION", workflow: "organiserExtraAdjustment", context: `allocate organiser waiver ${creditNoteId}` },
+      );
     }
-    await completeXeroSyncOperation(claim, { xeroObjectId: noteId, xeroObjectType: "CREDIT_NOTE", responsePayload: { invoiceId, amountCents: totalCents, allocated: true }, extraLinks: [{ localModel: "Booking", localId: payload.bookingId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: noteId, role: "ORGANISER_EXTRA_WAIVER", metadata: { invoiceId, amountCents: totalCents } }] });
+    await completeXeroSyncOperation(claim, {
+      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE",
+      responsePayload: { invoiceId: extraInvoiceId, amountCents: totalCents, allocated: true },
+      extraLinks: [{ localModel: "Booking", localId: payload.bookingId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_WAIVER", metadata: { invoiceId: extraInvoiceId, amountCents: totalCents } }],
+    });
   } else {
-    const settlement = await settleRefundNoteFromXero({ paymentId: payment.id, creditNoteId: noteId, creationKeys: [key], refundMethod: "internet-banking", refundMethodRecorded: true, fallbackPaymentDate: async () => date });
+    const settlement = await settleRefundNoteFromXero({
+      paymentId: payment.id, creditNoteId, creationKeys: [key], refundMethod: "internet-banking", refundMethodRecorded: true, fallbackPaymentDate: async () => date,
+    });
     if (settlement.outcome.refundPaymentErr) throw settlement.outcome.refundPaymentErr;
-    await completeXeroSyncOperation(claim, { xeroObjectId: noteId, xeroObjectType: "CREDIT_NOTE", responsePayload: { invoiceId, amountCents, refundPayment: settlement.outcome.refundPaymentResponseBody, refundPaymentSkipped: settlement.outcome.refundPaymentSkipReason }, extraLinks: [{ localModel: "Payment", localId: payment.id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: noteId, role: "ORGANISER_EXTRA_REFUND", metadata: { invoiceId, amountCents, handBackTaskId: payload.handBackTaskId } }] });
+    await completeXeroSyncOperation(claim, {
+      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE",
+      responsePayload: { invoiceId: extraInvoiceId, amountCents, refundPayment: settlement.outcome.refundPaymentResponseBody, refundPaymentSkipped: settlement.outcome.refundPaymentSkipReason },
+      extraLinks: [{ localModel: "Payment", localId: payment.id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_REFUND", metadata: { invoiceId: extraInvoiceId, amountCents, handBackTaskId: payload.handBackTaskId } }],
+    });
   }
+}
+
+/**
+ * Correctness 8, N-c: a raced payment's refund is the cancel's own computation
+ * (`calculateRefundAmount`, its rounding) at the plan's frozen percentage. The
+ * plan already charged the tier's fixed fee once, so none is charged again.
+ */
+function racedCashRefundCents(basisCents: number, refundPercentage: number): number {
+  const frozenTier = { daysBeforeStay: 0, refundPercentage, creditRefundPercentage: refundPercentage, fixedFeeCents: 0, creditFixedFeeCents: 0 };
+  return calculateRefundAmount(basisCents, 0, [frozenTier], "card").refundAmountCents;
 }
 
 async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPayload, cashCents: number, waivedCentsNowPaid: number, operationId: string): Promise<void> {
   if (!payload.modificationId || cashCents <= payload.cashAtPlanCents || waivedCentsNowPaid <= 0) return;
-  const modification = await prisma.bookingModification.findUniqueOrThrow({ where: { id: payload.modificationId }, select: { priceDiffCents: true, changeFeeCents: true } });
-  const newlyPaidPriceCents = Math.max(0, Math.min(cashCents, modification.priceDiffCents + modification.changeFeeCents) - Math.max(modification.changeFeeCents, payload.cashAtPlanCents));
+  const modificationId = payload.modificationId;
+  const modification = await prisma.bookingModification.findUniqueOrThrow({ where: { id: modificationId }, select: { priceDiffCents: true, changeFeeCents: true } });
+  // The paid price the new cash adds, the fee settled first (N4): the one paid-price rule.
+  const asPaid = (paidCents: number): OrganiserExtraInvoice => ({
+    modificationId, invoiceId: payload.invoiceId, priceCents: modification.priceDiffCents, feeCents: modification.changeFeeCents,
+    cashCents: paidCents, waivedCents: 0, refundedCents: 0, releasedPriceCents: 0,
+  });
+  const newlyPaidPriceCents = Math.max(0, organiserExtraPaidPriceCents(asPaid(cashCents)) - organiserExtraPaidPriceCents(asPaid(payload.cashAtPlanCents)));
   const racedBasisCents = Math.min(waivedCentsNowPaid, newlyPaidPriceCents);
-  const refundCents = Math.floor(racedBasisCents * payload.refundPercentage / 100);
-  if (refundCents <= 0) return;
+  if (racedCashRefundCents(racedBasisCents, payload.refundPercentage) <= 0) return;
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const occurrenceKey = editRefundHandBackOccurrenceKey(`organiser-extra-racing-cash:${operationId}:${cashCents}`);
     const previous = await tx.manualRefundTask.findUnique({ where: { occurrenceKey }, select: { id: true } });
     if (previous) return;
     const priorPlans = await tx.xeroSyncOperation.findMany({ where: { queueType: payload.queueType, localId: payload.bookingId }, select: { requestPayload: true } });
-    const reservedBasisCents = priorPlans.map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)).reduce((sum, plan) => sum + (plan?.scopeId.startsWith(`racing-cash:${operationId}:`) ? plan.priceBasisCents ?? 0 : 0), 0);
+    const reservedBasisCents = priorPlans
+      .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload))
+      .reduce((sum, plan) => sum + (plan?.scopeId.startsWith(`racing-cash:${operationId}:`) ? plan.priceBasisCents ?? 0 : 0), 0);
     const additionalBasisCents = Math.max(0, racedBasisCents - reservedBasisCents);
-    const additionalRefundCents = Math.floor(additionalBasisCents * payload.refundPercentage / 100);
+    const additionalRefundCents = racedCashRefundCents(additionalBasisCents, payload.refundPercentage);
     if (additionalRefundCents <= 0) return;
     const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: payload.bookingId }, select: { id: true } });
-    const task = await tx.manualRefundTask.create({ data: { bookingId: payload.bookingId, paymentId: payment.id, kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey, amountCents: additionalRefundCents, raisedAmountCents: additionalRefundCents, reason: "Refund the group organiser by bank transfer: an extra invoice was paid while its cancellation or reduction was being processed." }, select: { id: true } });
+    const task = await tx.manualRefundTask.create({
+      data: {
+        bookingId: payload.bookingId, paymentId: payment.id, kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey,
+        amountCents: additionalRefundCents, raisedAmountCents: additionalRefundCents,
+        reason: "Refund the group organiser by bank transfer: the organiser paid an extra invoice while its cancellation or reduction was being processed, and that payment is refunded at the cancellation policy's percentage.",
+      },
+      select: { id: true },
+    });
     const scopeId = `racing-cash:${operationId}:${cashCents}`;
-    await reserveOrganiserExtraNetting(tx, { state: { bookingId: payload.bookingId, invoices: [{ modificationId: payload.modificationId!, invoiceId: payload.invoiceId, priceCents: modification.priceDiffCents, feeCents: modification.changeFeeCents, cashCents, waivedCents: 0, refundedCents: 0, releasedPriceCents: 0 }] }, scopeId, reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage });
+    await reserveOrganiserExtraNetting(tx, {
+      state: { bookingId: payload.bookingId, invoices: [asPaid(cashCents)] }, scopeId,
+      reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage,
+    });
     await bindOrganiserExtraRefundToHandBack(tx, { bookingId: payload.bookingId, handBackTaskId: task.id, scopeId });
   });
 }

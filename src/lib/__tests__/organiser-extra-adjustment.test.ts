@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Invoice, type CreditNote } from "xero-node";
 import type { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
@@ -43,8 +43,16 @@ const payload = (overrides: Partial<OrganiserExtraAdjustmentPayload> = {}): Orga
 const claim = { id: "operation", startedAt: new Date("2026-07-01T00:00:00.000Z") };
 
 describe("organiser extra adjustment provider execution", () => {
+  // The executor loads the Xero inbound graph on demand. Load it once here, so
+  // no case's own budget pays for a cold import (the one flaky cold run).
+  beforeAll(async () => {
+    await import("@/lib/xero-inbound/invoice-paid-effects");
+    await import("@/lib/xero-group-settlement-invoice-voids");
+  }, 60_000);
   beforeEach(() => {
     vi.clearAllMocks();
+    // Drop any once-queued answer a failed case left behind, so cases cannot leak into each other.
+    for (const fn of Object.values(mocks)) if (vi.isMockFunction(fn)) fn.mockReset();
     mocks.operation = { xeroObjectId: null, correlationKey: "scope" };
     mocks.plans = [];
     mocks.start.mockImplementation(async (input: { requestPayload: unknown }) => { mocks.plans.push(input); return { id: "raced-refund" }; });
@@ -74,6 +82,16 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.updateInvoice.mock.calls[0]?.[2]).toMatchObject({ invoices: [{ invoiceID: "extra", status: "VOIDED" }] });
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
   });
+  it("F3: a second waiver of an invoice an earlier waiver credited is a credit note, never a void Xero refuses", async () => {
+    // The first waiver credited $30 of the unpaid $60; the second covers the other $30.
+    mocks.invoice = { ...mocks.invoice, amountPaid: 0, amountCredited: 30, amountDue: 30, total: 60 };
+    mocks.note = { creditNoteID: "second-waiver", total: 30, allocations: [] };
+    mocks.createCreditNoteAllocation.mockImplementation(async () => ({ body: {} }));
+    await executeOrganiserExtraAdjustment(payload({ scopeId: "second-cut", cashAtPlanCents: 0, amountCents: 3_000 }), claim);
+    expect(mocks.updateInvoice).not.toHaveBeenCalled();
+    expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ lineItems: [{ unitAmount: 30 }] }] });
+    expect(mocks.createCreditNoteAllocation.mock.calls[0]?.[2]).toMatchObject({ allocations: [{ invoice: { invoiceID: "extra" }, amount: 30 }] });
+  });
   it("a retry after allocation recovers its recorded note and records no second document or allocation", async () => {
     await executeOrganiserExtraAdjustment(payload(), claim);
     await executeOrganiserExtraAdjustment(payload(), claim);
@@ -99,8 +117,15 @@ describe("organiser extra adjustment provider execution", () => {
     await executeOrganiserExtraAdjustment(payload(), claim);
     expect(mocks.updateCreditNote.mock.calls[0]?.[2]).toMatchObject({ creditNotes: [{ lineItems: [{ unitAmount: 30 }] }] });
     expect(mocks.createCreditNoteAllocation.mock.calls[0]?.[2]).toMatchObject({ allocations: [{ amount: 30 }] });
-    expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 500 }) }));
+    expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 500, reason: expect.stringContaining("the organiser paid an extra invoice") }) }));
     expect(mocks.plans[0]?.requestPayload).toMatchObject({ purpose: "refund", amountCents: 500, priceBasisCents: 1_000, modificationId: "increase" });
+  });
+  it("N-c: a raced payment's refund rounds as the cancel's policy does, never down", async () => {
+    // $10.01 of newly paid price at 50% is $5.005: the policy rounds it to $5.01.
+    mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [{ ...mocks.invoice }] } });
+    mocks.invoice = { ...mocks.invoice, amountPaid: 30.01, amountDue: 29.99 };
+    await executeOrganiserExtraAdjustment(payload(), claim);
+    expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 501 }) }));
   });
   it("refuses an unreadable refreshed invoice before allocating a waiver", async () => {
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [mocks.invoice] } }).mockResolvedValueOnce({ body: { invoices: [] } });
