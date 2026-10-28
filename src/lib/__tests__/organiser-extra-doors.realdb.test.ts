@@ -286,7 +286,7 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
       await syncCash({ invoiceID: `${P}-extra`, amountPaid: 20, amountDue: 40, total: 60 });
       const before = await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID } });
       await syncCash({ invoiceID: `${P}-extra`, amountPaid: 5, amountDue: 55, total: 60 });
-      expect(await prisma.xeroSyncOperation.count({ where: { localId: increase.id, entityType: "REVIEW" } })).toBe(0);
+      expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [BOOKING_ID, increase.id] }, entityType: "REVIEW" } })).toBe(0);
       expect((await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID } })).amountCents).toBe(before.amountCents - 1_500);
     });
 

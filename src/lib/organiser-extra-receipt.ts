@@ -114,7 +114,8 @@ async function raiseCashReversedAfterRefundReview(
   await tx.xeroSyncOperation.create({
     data: {
       direction: "INBOUND", entityType: "REVIEW", operationType: "ORGANISER_EXTRA_CASH_REVERSED",
-      localModel: "BookingModification", localId: input.modificationId, status: "FAILED", correlationKey, replayable: false,
+      // N6: anchored on the Booking, as `raisePrimaryInvoiceReviewTask`'s are, so the booking shows it; the change rides in the payload.
+      localModel: "Booking", localId: input.bookingId, status: "FAILED", correlationKey, replayable: false,
       lastErrorCode: "ORGANISER_EXTRA_CASH_REVERSED",
       lastErrorMessage:
         `Cash on the group organiser's extra invoice ${reference} for Booking ${input.bookingId.slice(0, 8)} was reversed in Xero ` +

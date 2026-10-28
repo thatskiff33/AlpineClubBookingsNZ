@@ -107,8 +107,10 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     // Xero now shows the $20 reversed. Neither the inbound event nor a re-delivery throws.
     await syncCash({ invoiceID: invoiceId, invoiceNumber: "EXTRA-1", amountPaid: 0, amountDue: 60, total: 60 });
     await syncCash({ invoiceID: invoiceId, invoiceNumber: "EXTRA-1", amountPaid: 0, amountDue: 60, total: 60 });
-    const reviews = await prisma.xeroSyncOperation.findMany({ where: { localId: modificationId, entityType: "REVIEW" } });
+    // N6: on the Booking, so the booking's page lists it; once, however often the event arrives.
+    const reviews = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Booking", localId: childId, entityType: "REVIEW" } });
     expect(reviews.map((row) => [row.operationType, row.status, row.replayable])).toEqual([["ORGANISER_EXTRA_CASH_REVERSED", "FAILED", false]]);
+    expect(reviews[0]!.requestPayload).toMatchObject({ modificationId });
     expect(reviews[0]!.lastErrorMessage).toContain("EXTRA-1");
     // Nothing recorded as paid changed: the treasurer reconciles it in Xero.
     expect((await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: extra.id } })).status).toBe("SUCCEEDED");
