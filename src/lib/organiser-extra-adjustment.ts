@@ -28,10 +28,10 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
   const invoiceResponse = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, invoiceId!), { operation: "getInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `organiser extra ${invoiceId}` });
   const invoice = invoiceResponse.body.invoices?.[0];
   if (!invoice?.invoiceID) throw new Error("Organiser extra invoice was not found");
-  const dueCents = providerAmountToCents(invoice.amountDue);
+  let dueCents = providerAmountToCents(invoice.amountDue);
   const { classifyXeroInvoiceCashEvidence, quantifyXeroInvoiceCashCents } = await import("@/lib/xero-inbound/invoice-paid-effects");
   const cash = quantifyXeroInvoiceCashCents(invoice);
-  const cashCents = cash.knownCents;
+  let cashCents = cash.knownCents;
   if (dueCents === null || !cash.complete || classifyXeroInvoiceCashEvidence(invoice) === "indeterminate") throw new Error("Organiser extra invoice amounts are unreadable");
   if (payload.modificationId) await syncOrganiserExtraInvoiceCash(invoice);
   const key = operation.correlationKey ?? claim.id;
@@ -82,6 +82,15 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     const noteResponse = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, noteId!), { operation: "getCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `read waiver ${noteId}` });
     const note = noteResponse.body.creditNotes?.[0];
     if (!note?.creditNoteID || String(note.status) === "VOIDED" || String(note.status) === "DELETED") throw new Error("Organiser waiver credit note is missing or voided");
+    // Note creation/read can take long enough for a bank-feed payment to land.
+    // Size the allocation from a fresh invoice, not the pre-create snapshot.
+    const latestResponse = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, invoiceId!), { operation: "getInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `refresh organiser extra ${invoiceId}` });
+    const latestInvoice = latestResponse.body.invoices?.[0];
+    const latestCash = latestInvoice && quantifyXeroInvoiceCashCents(latestInvoice);
+    dueCents = latestInvoice ? providerAmountToCents(latestInvoice.amountDue) : null;
+    if (!latestInvoice?.invoiceID || dueCents === null || !latestCash?.complete || classifyXeroInvoiceCashEvidence(latestInvoice) === "indeterminate") throw new Error("Organiser extra invoice amounts are unreadable");
+    cashCents = latestCash.knownCents;
+    if (payload.modificationId) await syncOrganiserExtraInvoiceCash(latestInvoice);
     const alreadyAllocated = (note.allocations ?? []).reduce((sum, a) => sum + (a.invoice?.invoiceID === invoiceId ? providerAmountToCents(a.amount) ?? 0 : 0), 0);
     let totalCents = providerAmountToCents(note.total);
     if (totalCents === null) throw new Error("Organiser waiver note total is unreadable");
