@@ -52,7 +52,7 @@ import {
 } from "@/lib/night-adjustment-write";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { ApiError as SharedApiError } from "@/lib/api-error";
-import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
@@ -1026,7 +1026,7 @@ export async function POST(
 
       // #3980 (`INV-PAY-136`): this door settles for itself, so it makes the edits'
       // one payment write itself (no fee: an add charges none); 409 if the link moved.
-      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0, settledAgainstCombinedInvoice: organiserBilling !== null });
+      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0, settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking) });
 
       // This route only adds guests, so the no-adult rule can only change
       // from flagged → cleared (by adding an adult). When that happens, wipe

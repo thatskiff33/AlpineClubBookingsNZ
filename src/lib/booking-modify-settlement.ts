@@ -62,7 +62,7 @@ import {
   planOrganiserChildModificationRefund,
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
-import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 
 export type PaymentAdjustmentResult = {
@@ -389,7 +389,8 @@ export async function applyPaymentAdjustments(
     payment: booking.payment,
     changeFeeCents: feeRecordedHereCents,
     refusalMessage: primaryInvoiceRaisedMessage,
-    settledAgainstCombinedInvoice: organiserBilling !== null,
+    // #4299 N3: the place itself, not its combined invoice's record: a reduction with none on record claims no primary either.
+    settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking),
   });
 
   // #3653: refused here, before the edit commits, when the organiser's combined

@@ -290,6 +290,25 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
       expect((await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID } })).amountCents).toBe(before.amountCents - 1_500);
     });
 
+    it("N3: a reduction with no combined invoice on record saves, and claims no primary invoice the place never has", async () => {
+      await prisma.groupBookingSettlement.updateMany({ where: { groupBookingId: GROUP_ID }, data: { xeroInvoiceId: null } });
+      try {
+        await dateService.modifyBookingDates({
+          bookingId: BOOKING_ID,
+          actor: { id: OFFICER_ID, role: Role.ADMIN },
+          input: { checkIn: "2026-08-10", checkOut: "2026-08-11" } as never,
+          ipAddress: "127.0.0.1",
+        });
+        await drainXeroWork();
+        const { recordedPrimaryInvoiceSettlement } = await import("@/lib/booking-primary-invoice-claim");
+        const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+        expect(modification!.priceDiffCents).toBeLessThan(0);
+        expect(recordedPrimaryInvoiceSettlement(modification!.newData)).toBeNull();
+      } finally {
+        await prisma.groupBookingSettlement.updateMany({ where: { groupBookingId: GROUP_ID }, data: { xeroInvoiceId: COMBINED_INVOICE_ID } });
+      }
+    });
+
     it("guest add: an added guest bills the organiser once and asks the joiner nothing", async () => {
       const { NextRequest } = await import("next/server");
       raceSession.current = { user: { id: OFFICER_ID, role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true } };
