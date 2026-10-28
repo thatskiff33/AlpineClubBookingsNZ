@@ -259,9 +259,10 @@ migration and E2E gates before merge. What a Sekreton lane owns on GitHub, from
 its claim to the merge, is in
 [`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) (#4392).
 
-The `kept-change-realdb` sandbox check installs the declared PostgreSQL 17
-package and runs `bash scripts/ci/kept-change-realdb.sh` against a fresh,
-loopback-only disposable database. It runs the kept-change, superseded-invoice
+The `kept-change-realdb` sandbox check installs the distribution's `postgresql`
+package, discovers its server tools under `/usr/lib/postgresql/*/bin` (highest
+installed version first), and runs `bash scripts/ci/kept-change-realdb.sh`
+against a fresh, loopback-only disposable database. It runs the kept-change, superseded-invoice
 carry, change-receipt and primary-invoice race suites serially, then checks the
 Vitest JSON report with `unexercisedRealdbFiles`: every named suite must pass
 and none may skip. The script stops its database on exit. When the check runs
