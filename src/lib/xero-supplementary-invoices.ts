@@ -14,6 +14,8 @@ import {
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { resolveOrganiserBilling, resolveOrganiserXeroContact } from "@/lib/organiser-billing";
+import { sendOrganiserExtraInvoiceEmail } from "@/lib/organiser-extra-invoice-email";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -110,7 +112,7 @@ export async function createXeroSupplementaryInvoice(params: {
     bookingModificationId,
     shortfallReviewTaskId,
     createdByMemberId,
-    recordPayment = true,
+    recordPayment: requestedRecordPayment = true,
     repairExistingLink,
     syncOperation,
   } = params;
@@ -152,7 +154,11 @@ export async function createXeroSupplementaryInvoice(params: {
     include: { payment: true, member: true, organisation: { select: { name: true, email: true } } },
   });
 
-  if (!booking?.payment?.xeroInvoiceId) {
+  const organiserBilling = booking ? await resolveOrganiserBilling(prisma, booking) : null;
+  const originalInvoiceId = organiserBilling?.combinedInvoiceId ?? booking?.payment?.xeroInvoiceId;
+  const recordPayment = organiserBilling ? false : requestedRecordPayment;
+
+  if (!booking || !originalInvoiceId) {
     if (syncOperation) {
       await completeXeroSyncOperation(syncOperation, {
         responsePayload: {
@@ -169,10 +175,13 @@ export async function createXeroSupplementaryInvoice(params: {
   // A supplementary invoice bills the same customer the original invoice did,
   // and on a returning school that customer is the school. Where no
   // organisation is linked, this is the same member resolved the same way.
-  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
-    createdByMemberId,
-    repairExistingLink,
-  });
+  const contactOptions = { createdByMemberId, repairExistingLink };
+  const contactId = organiserBilling
+    ? await resolveOrganiserXeroContact(organiserBilling, contactOptions)
+    : await findOrCreateXeroContactForInvoicedParty(booking, contactOptions);
+  const invoiceParty = organiserBilling
+    ? { memberId: organiserBilling.organiserMemberId, organisationId: null }
+    : booking;
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
@@ -183,7 +192,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const bookingModification = await prisma.bookingModification.findUnique({
     where: { id: bookingModificationId },
-    select: { createdAt: true, ...MODIFICATION_DOCUMENT_LINES_SELECT },
+    select: { createdAt: true, modificationType: true, ...MODIFICATION_DOCUMENT_LINES_SELECT },
   });
 
   /**
@@ -285,7 +294,9 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems,
     date: supplementaryInvoiceIssueDate,
     dueDate: supplementaryInvoiceDueDate,
-    reference: shortfallReviewTaskId
+    reference: organiserBilling
+      ? `Group place ${bookingId.slice(0, 8)} extra (combined invoice: ${originalInvoiceId})`
+      : shortfallReviewTaskId
       ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
       : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
@@ -381,10 +392,10 @@ export async function createXeroSupplementaryInvoice(params: {
   let createdInvoiceId: string;
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: bookingOwner(booking).memberId,
+      memberId: organiserBilling?.organiserMemberId ?? bookingOwner(booking).memberId,
       currentContactId: contactId,
       // The repair entity matches the invoiced party (#3368, `INV-INT-019`).
-      repairContactLink: invoicedPartyContactRepair(booking),
+      repairContactLink: invoicedPartyContactRepair(invoiceParty),
       workflow: "createXeroSupplementaryInvoice",
       operationId: operationId!,
       repairExistingLink,
@@ -487,6 +498,19 @@ export async function createXeroSupplementaryInvoice(params: {
       );
     }
 
+    if (organiserBilling) {
+      const place = bookingOwner(booking).member;
+      await sendOrganiserExtraInvoiceEmail({
+        billing: organiserBilling,
+        bookingModificationId,
+        invoiceId: created.invoiceID,
+        invoiceNumber: created.invoiceNumber,
+        amountCents: netAmountCents,
+        format: params.format,
+        placeName: `${place.firstName} ${place.lastName}`.trim(),
+        changeDescription: `Booking change (${(bookingModification?.modificationType ?? "booking modification").replaceAll("_", " ").toLowerCase()})`,
+      });
+    }
     await completeXeroSyncOperation(operationClaim!, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
@@ -509,6 +533,13 @@ export async function createXeroSupplementaryInvoice(params: {
           xeroObjectNumber: created.invoiceNumber ?? null,
           xeroObjectUrl: buildXeroInvoiceUrl(created.invoiceID),
           role: "SUPPLEMENTARY_INVOICE",
+          ...(organiserBilling ? { metadata: {
+            organiserBilling: true,
+            priceDiffCents,
+            changeFeeCents,
+            combinedInvoiceId: organiserBilling.combinedInvoiceId,
+            bookingId,
+          } } : {}),
         },
         ...(paymentResponseBody?.paymentID
           ? [

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
+  groupBookingFindUnique: vi.fn(),
+  sendOrganiserEmail: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
   xeroSyncOperationFindUnique: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.bookingFindUnique,
       findUniqueOrThrow: mocks.bookingFindUniqueOrThrow,
     },
+    groupBooking: { findUnique: mocks.groupBookingFindUnique },
     bookingModification: {
       findUnique: mocks.bookingModificationFindUnique,
     },
@@ -43,6 +46,8 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
+
+vi.mock("@/lib/organiser-extra-invoice-email", () => ({ sendOrganiserExtraInvoiceEmail: mocks.sendOrganiserEmail }));
 
 vi.mock("@/lib/logger", () => ({
   default: {
@@ -993,5 +998,59 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
       await sendReleasedChange(null);
       expect(mocks.queueWaitingPaidAnotherWayNote).not.toHaveBeenCalled();
     });
+  });
+});
+
+
+describe("organiser-paid bank group supplementary invoice (#4299)", () => {
+  const createPayments = vi.fn();
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+    mocks.bookingFindUnique.mockResolvedValue({ id: "child", memberId: "joiner", organisationId: null,
+      member: { id: "joiner", firstName: "Place", lastName: "Member" }, organisation: null,
+      organiserSettled: true, parentBookingId: "organiser-booking", payment: { source: "INTERNET_BANKING", xeroInvoiceId: null } });
+    mocks.groupBookingFindUnique.mockResolvedValue({ organiserBookingId: "organiser-booking", organiserMemberId: "organiser",
+      organiserMember: { id: "organiser", firstName: "Group", lastName: "Organiser", email: "organiser@example.test" },
+      settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+    mocks.bookingModificationFindUnique.mockResolvedValue({ createdAt: new Date("2026-07-01T00:00:00.000Z"), modificationType: "DATE_CHANGE" });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi: { createPayments } }, tenantId: "tenant" });
+    mocks.findOrCreateXeroContact.mockResolvedValue("organiser-contact");
+    mocks.getResolvedAccountMapping.mockResolvedValue({ code: "200", codeExplicitlyConfigured: true });
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "operation" });
+    mocks.retryXeroWriteWithContactRepair.mockResolvedValue({ body: { invoices: [{ invoiceID: "extra", invoiceNumber: "INV-EXTRA" }] } });
+    mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
+    mocks.sendOrganiserEmail.mockResolvedValue({ status: "sent" });
+  });
+  const create = () => createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "child", bookingModificationId: "change",
+    priceDiffCents: 5000, changeFeeCents: 1000, recordPayment: true });
+  it("bills organiser price plus fee against the combined reference, without recording payment, and emails the organiser", async () => {
+    expect(await create()).toBe("extra");
+    expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith("organiser", expect.any(Object));
+    const request = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(request.localModel).toBe("BookingModification");
+    expect(request.localId).toBe("change");
+    const invoice = request.requestPayload.invoices[0];
+    expect(invoice.contact.contactID).toBe("organiser-contact");
+    expect(invoice.reference).toContain("combined");
+    expect(invoice.reference).toContain("child");
+    expect(invoice.lineItems.reduce((sum: number, line: { unitAmount: number }) => sum + line.unitAmount, 0)).toBe(60);
+    expect(createPayments).not.toHaveBeenCalled();
+    expect(mocks.sendOrganiserEmail).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 6000, invoiceId: "extra", invoiceNumber: "INV-EXTRA",
+      bookingModificationId: "change", placeName: "Place Member", billing: expect.objectContaining({ organiserMemberId: "organiser" }) }));
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ extraLinks: expect.arrayContaining([
+      expect.objectContaining({ role: "SUPPLEMENTARY_INVOICE", metadata: expect.objectContaining({ organiserBilling: true, combinedInvoiceId: "combined", priceDiffCents: 5000, changeFeeCents: 1000 }) })]) }));
+  });
+  it("refuses a missing combined record before contacting Xero", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({ settlement: { source: "INTERNET_BANKING", xeroInvoiceId: null } });
+    await expect(create()).rejects.toThrow("combined invoice is not on record");
+    expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+    expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
+  });
+  it("keeps invoice work retryable when a durable organiser notice cannot be recorded", async () => {
+    mocks.sendOrganiserEmail.mockRejectedValue(new Error("email queue unavailable"));
+    await expect(create()).rejects.toThrow("email queue unavailable");
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
   });
 });

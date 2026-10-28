@@ -1,3 +1,4 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -1000,6 +1001,7 @@ export async function removeBookingGuestInTransaction({
 
   // #3582: the same before and after, per night, on the booking ledger — under
   // the `lock(1)` this function took first.
+  await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
     store: tx,
     bookingId,

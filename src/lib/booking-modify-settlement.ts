@@ -1,8 +1,10 @@
+import { effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
 // Split out of src/lib/booking-modify.ts (issue #1138): settlement handoff
 // (refund vs account credit), payment adjustments, and booking lifecycle
 // transitions after a modification. Code moved verbatim; import via the
 // "@/lib/booking-modify" barrel.
 
+import { settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   BookingStatus,
@@ -55,6 +57,7 @@ import {
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
+import { resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import {
   OrganiserChildRefundRefusedError,
@@ -202,6 +205,7 @@ export async function applyPaymentAdjustments(
 ): Promise<PaymentAdjustmentResult> {
   // #3949 review round 5: the one place a price change is refused mid group cancel (every door settles through here).
   await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents });
+  const organiserBilling = await resolveOrganiserBilling(tx, booking);
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
@@ -216,10 +220,10 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
     zeroDollarCardIncrease;
-  const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
+  const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
-  const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
+  const remainingRefundableCents = Math.max(0, await refundableCashNetOfOpenHandBacks(tx, booking.payment) - (reduction.organiserExtras && booking.payment ? effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, reduction.organiserExtras) : 0));
 
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
@@ -249,7 +253,7 @@ export async function applyPaymentAdjustments(
         })
       : null;
   const xeroRefundAmountCents =
-    hasIssuedXeroInvoice && netAmountCents < 0
+    !organiserBilling && hasIssuedXeroInvoice && netAmountCents < 0
       ? hasSettledPayment
         ? selectedSettlement.amountCents
         : creditGiveBack
@@ -360,11 +364,19 @@ export async function applyPaymentAdjustments(
     additionalAmountCents = xeroAdditionalAmountCents;
   }
 
+  if (reduction.organiserExtras) {
+    await settleOrganiserExtraReduction(tx, { reduction: reduction.organiserExtras, refundAmountCents,
+      refundBasisCents: settlementOptions?.basisAmountCents ?? Math.max(0, -netAmountCents),
+      refundPercentage: settlementOptions?.cardRefundPercentage ?? 100,
+    });
+  }
+
   // #3980 (`INV-PAY-136`): the fee, and the claim on an unlinked invoice (409 if it moved).
   const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
     payment: booking.payment,
     changeFeeCents: feeRecordedHereCents,
     refusalMessage: primaryInvoiceRaisedMessage,
+    settledAgainstCombinedInvoice: organiserBilling !== null,
   });
 
   // #3653: refused here, before the edit commits, when the organiser's combined

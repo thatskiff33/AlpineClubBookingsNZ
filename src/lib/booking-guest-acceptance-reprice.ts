@@ -1,3 +1,4 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { Role, type Prisma } from "@prisma/client";
 
 import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
@@ -496,6 +497,7 @@ export async function repriceBookingAfterGuestAcceptance(
       ...(priceLines ? { priceLines } : {}),
     },
   });
+  await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
     store: tx,
     bookingId,

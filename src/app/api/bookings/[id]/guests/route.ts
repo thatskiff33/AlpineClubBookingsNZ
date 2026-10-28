@@ -1,3 +1,4 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -74,6 +75,7 @@ import {
 } from "@/lib/additional-payment-ask";
 import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
 import { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
+import { resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { primaryInvoiceSettlementHistory, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import { additionalAmountToName, createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
@@ -967,7 +969,8 @@ export async function POST(
        * `applyPaymentAdjustments`; this door used to hold its own copy of it.
        */
       const hasSucceededPayment = canAskCardForIncrease(booking);
-      const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
+      const organiserBilling = await resolveOrganiserBilling(tx, booking);
+      const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
 
       /**
        * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
@@ -1021,7 +1024,7 @@ export async function POST(
 
       // #3980 (`INV-PAY-136`): this door settles for itself, so it makes the edits'
       // one payment write itself (no fee: an add charges none); 409 if the link moved.
-      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0 });
+      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0, settledAgainstCombinedInvoice: organiserBilling !== null });
 
       // This route only adds guests, so the no-adult rule can only change
       // from flagged → cleared (by adding an adult). When that happens, wipe
@@ -1177,6 +1180,7 @@ export async function POST(
 
       // #3582: the same before and after, per night, on the booking ledger —
       // under the `lock(1)` this transaction took first.
+      await queueOrganiserExtraForChange(tx, booking, bookingModification);
       await postModificationLedgerLines({
         store: tx,
         bookingId,
