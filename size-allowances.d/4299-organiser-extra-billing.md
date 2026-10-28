@@ -25,7 +25,7 @@ lines: 2417
 reason: This is the existing authoritative template catalogue: required tokens, default wording and audit metadata belong beside the other entries. Splitting this one template would introduce a second registration path.
 
 file: src/lib/group-cancel.ts
-lines: 1064
+lines: 1066
 reason: Freeze invoice debts beside the existing durable group refund plan with its one planner, record each refund on the child's payment rows and bind the debts at its child hand-back claim (review F2, N-e). Splitting that money claim would obscure lock ownership and restart behavior; invoice arithmetic and execution already live in shared modules.
 
 file: src/lib/xero-operation-outbox.ts

@@ -634,17 +634,19 @@ export async function settleGroupBookingOnOrganiserCancel(
         // #3653: a per-child refund's mirror and note are its executor's.
         if (mirrorPlan && refundForChild > 0 && payment) {
           const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
-          if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id } })) > 0) {
+          if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id, reason: ORGANISER_SHARE_RECEIPT_REASON } })) > 0) {
             // #4299 (F2): an extra invoice's cash gave this child payment
-            // `PaymentTransaction` rows (`syncOrganiserExtraInvoiceCash`), which
-            // are then the record; a mirror write would be undone by the next
-            // aggregate reconcile. The refund goes on the rows, the combined
-            // share's first, as the cancel's does (`foldMirrorRefundIntoLedger`).
+            // `PaymentTransaction` rows (`syncOrganiserExtraInvoiceCash` writes
+            // the combined share's row first), which are then the record; a
+            // mirror write would be undone by the next aggregate reconcile. The
+            // refund goes on the rows, the share's first, as the cancel's does.
             await recordGroupCancelRefundOnRows(tx, payment, nextRefunded - payment.refundedAmountCents);
           } else {
-            // A child with no rows (paid only through the combined settlement,
-            // never a per-child intent or extra invoice): the per-child
-            // refundedAmountCents is the record for these refunds.
+            // Ledger bypass is acceptable here: these organiser-settled child
+            // payments have no PaymentTransaction rows (they were paid via the
+            // combined settlement PI, not per-child intents), so there is no
+            // ledger to post against — the per-child refundedAmountCents is the
+            // record of record for these refunds.
             await tx.payment.update({
               where: { id: payment.id },
               data: {
