@@ -1,5 +1,6 @@
 /** A supplementary organiser invoice's actual cash joins the child's paid mirror. */
 import type { Invoice } from "xero-node";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { resolveOrganiserBilling } from "@/lib/organiser-billing";
@@ -23,7 +24,11 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
       const paymentId = (await tx.payment.findUniqueOrThrow({ where: { bookingId: modification.bookingId }, select: { id: true } })).id;
       await lockPaymentForRefundedTotal(tx, paymentId);
       const payment = await tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
-      const previous = await tx.paymentTransaction.findMany({ where: { paymentId, xeroInvoiceId: invoice.invoiceID, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, select: { id: true, amountCents: true, refundedAmountCents: true }, orderBy: [{ createdAt: "desc" }, { insertionSeq: "desc" }] });
+      const previous = await tx.paymentTransaction.findMany({
+        where: { paymentId, xeroInvoiceId: invoice.invoiceID, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+        select: { id: true, amountCents: true, refundedAmountCents: true },
+        orderBy: [{ createdAt: "desc" }, { insertionSeq: "desc" }],
+      });
       const previousCashCents = previous.reduce((sum, row) => sum + row.amountCents, 0);
       const delta = cashCents - previousCashCents;
       if (cashCents > 0) {
@@ -34,18 +39,33 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
           const booking = await tx.booking.findUniqueOrThrow({ where: { id: modification.bookingId }, include: { payment: true } });
           const billing = await resolveOrganiserBilling(tx, booking);
           if (!billing) throw new Error("Extra receipt has no organiser settlement");
-          await tx.paymentTransaction.create({ data: { paymentId: payment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: originalCents, refundedAmountCents: Math.min(payment.refundedAmountCents, originalCents), status: payment.refundedAmountCents >= originalCents ? "REFUNDED" : payment.refundedAmountCents > 0 ? "PARTIALLY_REFUNDED" : "SUCCEEDED", xeroInvoiceId: billing.combinedInvoiceId, reason: ORGANISER_SHARE_RECEIPT_REASON } });
+          await tx.paymentTransaction.create({
+            data: {
+              paymentId: payment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: originalCents,
+              refundedAmountCents: Math.min(payment.refundedAmountCents, originalCents),
+              status: payment.refundedAmountCents >= originalCents ? "REFUNDED" : payment.refundedAmountCents > 0 ? "PARTIALLY_REFUNDED" : "SUCCEEDED",
+              xeroInvoiceId: billing.combinedInvoiceId, reason: ORGANISER_SHARE_RECEIPT_REASON,
+            },
+          });
         }
       }
-      const receipt = async (amountCents: number) => tx.paymentTransaction.create({ data: { paymentId, kind: "ADDITIONAL", source: "INTERNET_BANKING", amountCents, status: "SUCCEEDED", xeroInvoiceId: invoice.invoiceID, xeroInvoiceNumber: invoice.invoiceNumber ?? null, reason: ORGANISER_EXTRA_RECEIPT_REASON } });
+      const receipt = async (amountCents: number) => tx.paymentTransaction.create({
+        data: { paymentId, kind: "ADDITIONAL", source: "INTERNET_BANKING", amountCents, status: "SUCCEEDED", xeroInvoiceId: invoice.invoiceID, xeroInvoiceNumber: invoice.invoiceNumber ?? null, reason: ORGANISER_EXTRA_RECEIPT_REASON },
+      });
       if (delta > 0) await receipt(delta);
+      if (delta < 0 && reversalTouchesRefundedCash(previous, -delta)) {
+        // N-d: cash the organiser was partly refunded from cannot be unwound
+        // here. Record nothing, raise one treasurer task, and let the rest of
+        // the inbound event (and every later one) proceed.
+        await raiseCashReversedAfterRefundReview(tx, { invoice, modificationId: link.localId, bookingId: modification.bookingId, cashCents });
+        return;
+      }
       if (delta < 0) {
         // Captures are immutable ledger sources. Reverse affected receipts and
         // re-record a partially reversed row's surviving cash as a new source.
         let reversedCents = -delta;
         for (const row of previous) {
           if (reversedCents <= 0) break;
-          if (row.refundedAmountCents > 0) throw new Error("Organiser extra cash was reversed after it was refunded; reconcile this invoice by hand");
           await tx.paymentTransaction.update({ where: { id: row.id }, data: { status: "FAILED" } });
           const survivingCents = Math.max(0, row.amountCents - reversedCents);
           reversedCents = Math.max(0, reversedCents - row.amountCents);
@@ -60,6 +80,46 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
       }
     });
   }
+}
+
+/** The receipts a reversal of `reversedCents` unwinds, newest first, as the reversal walks them. */
+function reversalTouchesRefundedCash(rows: ReadonlyArray<{ amountCents: number; refundedAmountCents: number }>, reversedCents: number): boolean {
+  let left = reversedCents;
+  for (const row of rows) {
+    if (left <= 0) return false;
+    if (row.refundedAmountCents > 0) return true;
+    left -= row.amountCents;
+  }
+  return false;
+}
+
+/**
+ * N-d: the treasurer's task in Xero Operations - a non-replayable FAILED
+ * review row, as `raisePrimaryInvoiceReviewTask` raises - when cash on an
+ * organiser's extra invoice is reversed after part of it was refunded. One per
+ * invoice and cash figure, so a later, different reversal raises its own.
+ */
+async function raiseCashReversedAfterRefundReview(
+  tx: Prisma.TransactionClient,
+  input: { invoice: Invoice; modificationId: string; bookingId: string; cashCents: number },
+): Promise<void> {
+  const correlationKey = `organiser-extra-cash-reversed:${input.invoice.invoiceID}:${input.cashCents}`;
+  if (await tx.xeroSyncOperation.findFirst({ where: { correlationKey, entityType: "REVIEW" }, select: { id: true } })) return;
+  const now = new Date();
+  const reference = input.invoice.invoiceNumber ?? input.invoice.invoiceID;
+  await tx.xeroSyncOperation.create({
+    data: {
+      direction: "INBOUND", entityType: "REVIEW", operationType: "ORGANISER_EXTRA_CASH_REVERSED",
+      localModel: "BookingModification", localId: input.modificationId, status: "FAILED", correlationKey, replayable: false,
+      lastErrorCode: "ORGANISER_EXTRA_CASH_REVERSED",
+      lastErrorMessage:
+        `Cash on the group organiser's extra invoice ${reference} for Booking ${input.bookingId.slice(0, 8)} was reversed in Xero ` +
+        "after part of it had been refunded to the organiser, so the app has left what it records as paid unchanged. Check the invoice, " +
+        "the reversal and the refund in Xero, recover or write off the difference there, then choose Resolve (fixed in Xero).",
+      requestPayload: { invoiceId: input.invoice.invoiceID ?? null, bookingId: input.bookingId, modificationId: input.modificationId, cashCents: input.cashCents },
+      startedAt: now, completedAt: now,
+    },
+  });
 }
 
 /** Avoid requiring cash fields on unrelated/subscription invoice payloads. */
