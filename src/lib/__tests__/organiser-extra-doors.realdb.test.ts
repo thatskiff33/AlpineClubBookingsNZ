@@ -121,7 +121,7 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
   expect(payment.additionalPaymentStatus).toBeNull();
   expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
   expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
-  expect(await prisma.xeroSyncOperation.count({ where: { localId: BOOKING_ID, entityType: "INVOICE", operationType: "UPDATE" } })).toBe(0);
+  expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [BOOKING_ID, modification!.id] }, entityType: "INVOICE", operationType: "UPDATE" } })).toBe(0);
 }
 
 (RUN ? describe : describe.skip)(
