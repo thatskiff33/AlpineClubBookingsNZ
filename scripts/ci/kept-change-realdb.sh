@@ -5,9 +5,11 @@ set -euo pipefail
 # Debian and Ubuntu select their supported server through the postgresql meta-package.
 # Server tools are versioned and not placed on PATH by either distribution.
 if ! command -v initdb >/dev/null; then
-  pg_initdb_paths=(/usr/lib/postgresql/*/bin/initdb)
-  for pg_initdb in "${pg_initdb_paths[@]}"; do
-    if [ -x "$pg_initdb" ]; then export PATH="${pg_initdb%/initdb}:$PATH"; fi
+  for pg_bin in /usr/lib/postgresql/*/bin; do
+    if [ -x "$pg_bin/initdb" ]; then
+      export PATH="$pg_bin:$PATH"
+      break
+    fi
   done
 fi
 command -v initdb >/dev/null || { echo 'PostgreSQL must be installed by .sekreton/config.toml' >&2; exit 1; }

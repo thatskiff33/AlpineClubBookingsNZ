@@ -35,6 +35,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noEmit": true,
+    // Backup helpers also run in plain Node's TypeScript loader (memory test).
+    // Explicit relative .ts imports work there without aliases or a bundler.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

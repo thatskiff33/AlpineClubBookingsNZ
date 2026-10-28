@@ -259,8 +259,9 @@ migration and E2E gates before merge. What a Sekreton lane owns on GitHub, from
 its claim to the merge, is in
 [`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) (#4392).
 
-The `kept-change-realdb` sandbox check installs the declared PostgreSQL
-meta-package (using the distribution-supported version) and runs `bash scripts/ci/kept-change-realdb.sh` against a fresh,
+The `kept-change-realdb` sandbox check installs the distribution's declared
+`postgresql` meta-package (using its supported version) and runs
+`bash scripts/ci/kept-change-realdb.sh` against a fresh,
 loopback-only disposable database. It runs the kept-change, superseded-invoice
 carry, change-receipt and primary-invoice race suites serially, then checks the
 Vitest JSON report with `unexercisedRealdbFiles`: every named suite must pass
@@ -268,6 +269,7 @@ and none may skip. The script stops its database on exit. When the check runs
 as root, only PostgreSQL commands run as the package's unprivileged `postgres`
 account, which owns the fresh cluster directory; migrations and tests retain
 the caller's checkout permissions. Non-root checks use their own account.
+The script discovers the installed server tools under `/usr/lib/postgresql/*/bin`.
 A missing PostgreSQL binary fails explicitly; unit-shard success is not database evidence. The
 broader `realdb-all` job's discovery and no-skip check on GitHub remain advisory,
 so cite that job's actual result separately before making the PR ready.

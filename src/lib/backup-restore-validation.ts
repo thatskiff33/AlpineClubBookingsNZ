@@ -4,13 +4,12 @@
  * streaming form. Kept free of `server-only` and of the environment so the unit
  * and real-PostgreSQL suites run them as shipped.
  */
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { createReadStream } from "node:fs";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { StringDecoder } from "node:string_decoder";
 import { createGunzip } from "node:zlib";
+import { streamDatabaseTool } from "./backup-db-tool.ts";
 
 /**
  * The database a connection string names, as libpq resolves it: a `dbname`
@@ -179,51 +178,25 @@ export async function restoreDumpWithoutOwnershipOrPrivileges(input: {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
 }): Promise<void> {
-  const psql = spawn("psql", [input.argvUrl, "-q", "-v", "ON_ERROR_STOP=1"], {
+  await streamDatabaseTool({
+    command: "psql",
+    args: [input.argvUrl, "-q", "-v", "ON_ERROR_STOP=1"],
     env: input.env,
-    stdio: ["pipe", "ignore", "pipe"],
-  });
-  let stderr = "";
-  psql.stderr.on("data", (chunk: Buffer) => {
-    if (stderr.length < 65_536) stderr += chunk.toString("utf8");
-  });
-  const exited = new Promise<number | null>((resolve, reject) => {
-    psql.on("error", reject);
-    psql.on("close", (code) => resolve(code));
-  });
-  // A spawn failure (no psql on PATH) rejects `exited` while nothing awaits it;
-  // mark it handled here and surface the cause below, not as an unhandled
-  // rejection that would take the whole process down (#4453 review R1).
-  exited.catch(() => {});
-  try {
-    await once(psql, "spawn");
-  } catch (error) {
-    throw new Error(
+    timeoutMs: input.timeoutMs,
+    direction: "stdin",
+    stream: (sink, signal) => pipeline(
+      createReadStream(input.sourcePath),
+      createGunzip(),
+      createOwnershipAndPrivilegeStripStream(),
+      sink,
+      { signal },
+    ),
+    exitError: (code, _signal, stderr) => new Error(
+      `Restore-validation psql exited ${code ?? "on a signal"}: ${stderr}`,
+    ),
+    spawnError: (error) => new Error(
       `Could not start psql for the restore validation: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
-    );
-  }
-  const timer = setTimeout(() => psql.kill("SIGKILL"), input.timeoutMs);
-  try {
-    let streamError: unknown;
-    try {
-      await pipeline(
-        createReadStream(input.sourcePath),
-        createGunzip(),
-        createOwnershipAndPrivilegeStripStream(),
-        psql.stdin,
-      );
-    } catch (error) {
-      // psql stopping early (ON_ERROR_STOP) closes its stdin: report psql's
-      // reason, not the broken pipe it caused.
-      streamError = error;
-    }
-    const code = await exited;
-    if (code !== 0) {
-      throw new Error(`Restore-validation psql exited ${code ?? "on a signal"}: ${stderr.trim()}`);
-    }
-    if (streamError) throw streamError;
-  } finally {
-    clearTimeout(timer);
-  }
+    ),
+  });
 }

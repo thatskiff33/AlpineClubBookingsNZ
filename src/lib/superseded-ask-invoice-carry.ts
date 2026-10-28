@@ -81,6 +81,7 @@ import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } fro
 
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
 import { anchorCaptureHasReceipt, captureChangeId } from "@/lib/additional-capture-receipt-link";
+import { keptCaptureAnchorId } from "@/lib/kept-late-capture-change-receipt";
 import { findActiveSupplementaryInvoiceLink } from "@/lib/late-capture-xero-receipt";
 import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -286,7 +287,7 @@ export async function followSupersededAskInvoicesToCarrier({
         bookingId: payment.bookingId,
         paymentId,
         anchorId,
-        carrier: { id: carrier.id, paymentIntentId: carrierIntentId, key: captureChangeId(carrier) ?? payment.bookingId },
+        carrier: { id: carrier.id, paymentIntentId: carrierIntentId, key: keptCaptureAnchorId(carrier, payment.bookingId) },
       });
       if (verdict.moved > 0) movedHere += verdict.moved;
       else if (verdict.refusal) result.refusals.push({ anchorId, reason: verdict.refusal });
