@@ -52,8 +52,10 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
   afterAll(async () => { if (prisma) await cleanup(); });
 
   it("imports partial cash exactly once, materialising original share so aggregate repair preserves 320", async () => {
-    await syncCash({ invoiceID: invoiceId, amountPaid: 20, amountDue: 40, total: 60 });
-    await syncCash({ invoiceID: invoiceId, amountPaid: 20, amountDue: 40, total: 60 });
+    await Promise.all([
+      syncCash({ invoiceID: invoiceId, amountPaid: 20, amountDue: 40, total: 60 }),
+      syncCash({ invoiceID: invoiceId, amountPaid: 20, amountDue: 40, total: 60 }),
+    ]);
     await reconcile({ paymentId: `${P}-payment` });
     const payment = await prisma.payment.findUniqueOrThrow({ where: { bookingId: childId }, include: { transactions: true } });
     expect(payment.amountCents).toBe(32_000);

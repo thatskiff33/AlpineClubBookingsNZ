@@ -57,6 +57,10 @@ any code.
   <img src="docs/images/readme/demo-booking.gif" alt="Animated demo of the member booking flow showing stay dates being chosen on the availability calendar and the priced booking summary with payment options" width="90%">
 </p>
 
+Organiser-paid bank-transfer groups bill later price increases and change fees
+to the organiser, with unpaid extras cleared before policy refunds. See the
+[booking payment guide](docs/guides/bookings.md#chase-money-still-owed-after-a-booking-change).
+
 ## What's in the box
 
 | | |

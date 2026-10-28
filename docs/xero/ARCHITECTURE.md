@@ -3990,7 +3990,8 @@ allocated note for the unpaid portion. Cash pays fees first; paid price refunds
 follow policy, with notes split between extra and combined invoices. Refund
 notes wait for their bank-transfer hand-back to complete; a settled invoice's
 note is settled through the existing refund-note settlement helper. The worker
-re-reads invoice amounts before execution to recognise cash that raced a waiver.
+re-reads invoice amounts after creating or recovering the waiver note, before
+allocation, to recognise cash that raced the provider call and shrink the note.
 Inbound extra receipts retain the original paid share and add actual cash once.
 No synthetic bank payment is posted to Xero.
 

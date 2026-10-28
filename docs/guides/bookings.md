@@ -316,6 +316,21 @@ or contact the member before chasing it. The admin panel and automatic card
 reminders below keep their existing scope; bank supplements do not join those
 reminders. Linked guests see a neutral stay confirmation.
 
+For a place the group organiser paid for by internet banking, an increase bills
+the organiser on a separate Xero invoice, including any late-change fee. The
+organiser receives an app email naming the place, change, amount and invoice.
+Reconcile their transfer in Xero. A missing combined invoice blocks the edit;
+restore its record first. A Xero outage leaves the invoice queued for retry.
+
+A later reduction takes unpaid extras off first, including unpaid fees, without
+a policy percentage. Cancellation clears all unpaid extras. A part-paid
+invoice's unpaid remainder is credited; its cash pays the change fee first.
+Paid price refunds follow the cancellation policy and go back to the organiser
+by bank transfer. Complete the matching refund task after making that transfer;
+the app then records the notes against the combined and extra invoices. Old
+review-charge tasks remain refused. Historical missed bills use the reviewed
+dry-run procedure in [Maintenance](../MAINTENANCE.md#reconcile-booking-and-xero-records).
+
 When a change increases a booking's price after the booking has been confirmed —
 adding a non-member guest to a paid booking, say — the difference becomes an
 **additional payment** the member has to make from their own booking page. That

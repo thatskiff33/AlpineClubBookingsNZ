@@ -3791,6 +3791,13 @@ application rollback -> old worker cannot select quarantined new-version booking
 exhausted or suppressed -> admin-visible failure/suppression
 ```
 
+The organiser's extra-invoice notice (#4299) starts as a durable `FAILED` row
+with a pending-delivery reason, retained retry HTML, and an id derived from the
+template and booking change. Only the retry worker sends it, after its normal
+15-minute backoff and recipient checks. Replaying invoice creation finds the
+same email row; failure to persist that row leaves the invoice operation
+retryable. This avoids a synchronous send racing email recovery.
+
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
 page-fragment/bearer preservation, rollback isolation, which business-critical

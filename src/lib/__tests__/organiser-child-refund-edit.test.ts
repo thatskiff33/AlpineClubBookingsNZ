@@ -15,7 +15,7 @@ import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/l
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
-import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -186,6 +186,29 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
       payment: { ...booking.payment!, source: PaymentSource.INTERNET_BANKING },
     } as unknown as LoadedBookingForModify;
   }
+
+  it.each([
+    { cut: 3_000, cash: 2_000, offset: 3_000, basis: 0, refund: 0 },
+    { cut: 5_000, cash: 2_000, offset: 4_000, basis: 1_000, refund: 500 },
+    { cut: 40_000, cash: 2_000, offset: 4_000, basis: 31_000, refund: 15_500 },
+    { cut: 40_000, cash: 0, offset: 6_000, basis: 30_000, refund: 15_000 },
+  ])("N4 edit quote nets unpaid extra first: cut $cut / paid extra $cash", async ({ cut, cash, offset, basis, refund }) => {
+    const booking = ibChild();
+    booking.payment = { ...booking.payment!, amountCents: 30_000 + cash, changeFeeCents: 1_000 };
+    const db = {
+      ...POLICY_DB,
+      bookingModification: { findMany: vi.fn(async () => [{ id: "increase", priceDiffCents: 5_000, changeFeeCents: 1_000 }]) },
+      xeroObjectLink: { findMany: vi.fn(async () => [{ localId: "increase", xeroObjectId: "extra", metadata: { organiserBilling: true } }]) },
+      paymentTransaction: { findMany: vi.fn(async () => [{ xeroInvoiceId: "extra", amountCents: cash }]) },
+      xeroSyncOperation: { findMany: vi.fn(async () => []) },
+      cancellationPolicy: { findMany: vi.fn(async () => [{ lodgeId: "lodge_1", daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 }]) },
+    };
+    const reduction = await readReductionAgainstUnpaidAsk(db as never, booking, -cut);
+    expect(reduction.offsetCents).toBe(offset);
+    const options = await calculateModificationSettlementOptions({ booking, netChargeCents: -cut, reduction, db: db as typeof POLICY_DB, todayAtClub: SETTLEMENT_DAY.todayAtClub });
+    if (basis === 0) expect(options).toBeNull();
+    else expect(options).toMatchObject({ basisAmountCents: basis, cardRefundAmountCents: refund, organiserRefundByBankTransfer: true, accountCreditAmountCents: 0 });
+  });
 
   it("quotes the organiser's card only for a child the organiser paid for BY CARD", async () => {
     const todayAtClub = requireCalendarDate("2026-07-01");
