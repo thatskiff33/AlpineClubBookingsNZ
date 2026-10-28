@@ -25,6 +25,16 @@ export function planOrganiserExtraNetting(state: OrganiserExtraState, input: { r
   return { waivers, refunds, combinedRefundCents: refundLeft };
 }
 
+/**
+ * N1: the tier's fixed fee the plan's own refund did not absorb. The policy
+ * charges it once, against the tiered basis (`calculateRefundAmount`); what the
+ * basis could not cover is still owed, so cash racing the plan's waiver pays it
+ * before any of that cash is handed back.
+ */
+export function organiserFixedFeeRemainderCents(fixedFeeCents: number, refundBasisCents: number, refundPercentage: number): number {
+  return Math.max(0, fixedFeeCents - Math.round((refundBasisCents * refundPercentage) / 100));
+}
+
 async function reserveAdjustment(tx: Prisma.TransactionClient, payload: OrganiserExtraAdjustmentPayload, createdByMemberId?: string): Promise<void> {
   const key = `organiser-extra:${payload.bookingId}:${payload.scopeId}:${payload.purpose}:${payload.modificationId ?? payload.invoiceId}`;
   const existing = await tx.xeroSyncOperation.findFirst({ where: { correlationKey: key }, select: { id: true } });
@@ -71,11 +81,15 @@ export async function hasOrganiserExtraReservation(tx: Pick<Prisma.TransactionCl
 export async function reserveOrganiserExtraNetting(tx: Prisma.TransactionClient, input: {
   state: OrganiserExtraState; scopeId: string; reductionCents: number; refundAmountCents: number;
   refundBasisCents: number; refundPercentage: number; cancel?: boolean; createdByMemberId?: string;
+  /** N1: the tier's fixed fee (card), so the part its refund did not absorb is frozen with the plan. */
+  fixedFeeCents?: number;
 }): Promise<void> {
   if (input.state.invoices.length === 0) return;
   if (await hasOrganiserExtraReservation(tx, input.state.bookingId, input.scopeId)) return;
   const plan = planOrganiserExtraNetting(input.state, input);
-  const base = { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: input.state.bookingId, scopeId: input.scopeId, refundPercentage: input.refundPercentage } as const;
+  const fixedFeeRemainderCents = organiserFixedFeeRemainderCents(input.fixedFeeCents ?? 0, input.refundBasisCents, input.refundPercentage);
+  const base = { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: input.state.bookingId, scopeId: input.scopeId, refundPercentage: input.refundPercentage,
+    ...(fixedFeeRemainderCents > 0 ? { fixedFeeRemainderCents } : {}) } as const;
   for (const [purpose, shares] of [["waive", plan.waivers], ["refund", plan.refunds]] as const) {
     for (const share of shares) {
       const { invoice, amountCents } = share;
@@ -93,13 +107,13 @@ export async function reserveOrganiserExtraNetting(tx: Prisma.TransactionClient,
 }
 
 export async function settleOrganiserExtraReduction(tx: Prisma.TransactionClient, input: {
-  reduction: OrganiserExtraReduction; refundAmountCents: number; refundBasisCents: number; refundPercentage: number; createdByMemberId?: string;
+  reduction: OrganiserExtraReduction; refundAmountCents: number; refundBasisCents: number; refundPercentage: number; fixedFeeCents?: number; createdByMemberId?: string;
 }): Promise<void> {
   await reserveOrganiserExtraNetting(tx, { ...input, state: input.reduction, scopeId: input.reduction.scopeId, reductionCents: input.reduction.reductionCents });
 }
 
 export async function reserveOrganiserExtraCancellation(tx: Prisma.TransactionClient, input: {
-  bookingId: string; scopeId: string; refundAmountCents: number; refundBasisCents: number; refundPercentage: number; createdByMemberId?: string;
+  bookingId: string; scopeId: string; refundAmountCents: number; refundBasisCents: number; refundPercentage: number; fixedFeeCents?: number; createdByMemberId?: string;
 }): Promise<void> {
   await reserveOrganiserExtraNetting(tx, { ...input, state: await readOrganiserExtraState(tx, input.bookingId), reductionCents: 0, cancel: true });
 }

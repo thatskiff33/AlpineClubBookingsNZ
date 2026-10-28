@@ -76,6 +76,7 @@ import { processRefund, cancelPaymentIntentIfCancellable, listRefundsForPaymentI
 import {
   calculateRefundAmount,
   daysUntilDate,
+  getRefundTier,
   loadCancellationPolicy,
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
@@ -426,7 +427,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           if (refund.refundAmountCents > 0) planned.set(child.id, refund.refundAmountCents);
           if (withExtras) {
             await reserveOrganiserExtraCancellation(tx, { bookingId: child.id, scopeId: groupCancelExtraScope(settlement.id, child.id), refundAmountCents: refund.refundAmountCents,
-              refundBasisCents: refund.basisCents, refundPercentage: refund.refundPercentage, createdByMemberId: sessionUserId });
+              refundBasisCents: refund.basisCents, refundPercentage: refund.refundPercentage, fixedFeeCents: getRefundTier(days, policy).fixedFeeCents, createdByMemberId: sessionUserId });
           }
         }
         await tx.groupBookingSettlement.update({ where: { id: settlement.id }, data: { refundPlan: Object.fromEntries(planned) } });

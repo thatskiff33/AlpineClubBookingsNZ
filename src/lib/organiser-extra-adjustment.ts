@@ -186,11 +186,14 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
 
 /**
  * Correctness 8, N-c: a raced payment's refund is the cancel's own computation
- * (`calculateRefundAmount`, its rounding) at the plan's frozen percentage. The
- * plan already charged the tier's fixed fee once, so none is charged again.
+ * (`calculateRefundAmount`, its rounding) at the plan's frozen percentage. N1:
+ * the plan charged the tier's fixed fee once, against its own basis; the part
+ * that basis could not absorb (`fixedFeeRemainderCents`) is charged against the
+ * raced cash, and never more than once.
  */
-function racedCashRefundCents(basisCents: number, refundPercentage: number): number {
-  const frozenTier = { daysBeforeStay: 0, refundPercentage, creditRefundPercentage: refundPercentage, fixedFeeCents: 0, creditFixedFeeCents: 0 };
+function racedCashRefundCents(basisCents: number, payload: Pick<OrganiserExtraAdjustmentPayload, "refundPercentage" | "fixedFeeRemainderCents">): number {
+  const { refundPercentage } = payload;
+  const frozenTier = { daysBeforeStay: 0, refundPercentage, creditRefundPercentage: refundPercentage, fixedFeeCents: payload.fixedFeeRemainderCents ?? 0, creditFixedFeeCents: 0 };
   return calculateRefundAmount(basisCents, 0, [frozenTier], "card").refundAmountCents;
 }
 
@@ -205,18 +208,20 @@ async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPaylo
   });
   const newlyPaidPriceCents = Math.max(0, organiserExtraPaidPriceCents(asPaid(cashCents)) - organiserExtraPaidPriceCents(asPaid(payload.cashAtPlanCents)));
   const racedBasisCents = Math.min(waivedCentsNowPaid, newlyPaidPriceCents);
-  if (racedCashRefundCents(racedBasisCents, payload.refundPercentage) <= 0) return;
+  const racedRefundCents = racedCashRefundCents(racedBasisCents, payload);
+  if (racedRefundCents <= 0) return;
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const occurrenceKey = editRefundHandBackOccurrenceKey(`organiser-extra-racing-cash:${operationId}:${cashCents}`);
     const previous = await tx.manualRefundTask.findUnique({ where: { occurrenceKey }, select: { id: true } });
     if (previous) return;
     const priorPlans = await tx.xeroSyncOperation.findMany({ where: { queueType: payload.queueType, localId: payload.bookingId }, select: { requestPayload: true } });
-    const reservedBasisCents = priorPlans
+    const reserved = priorPlans
       .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload))
-      .reduce((sum, plan) => sum + (plan?.scopeId.startsWith(`racing-cash:${operationId}:`) ? plan.priceBasisCents ?? 0 : 0), 0);
-    const additionalBasisCents = Math.max(0, racedBasisCents - reservedBasisCents);
-    const additionalRefundCents = racedCashRefundCents(additionalBasisCents, payload.refundPercentage);
+      .filter((plan) => plan?.purpose === "refund" && plan.scopeId.startsWith(`racing-cash:${operationId}:`));
+    const additionalBasisCents = Math.max(0, racedBasisCents - reserved.reduce((sum, plan) => sum + (plan?.priceBasisCents ?? 0), 0));
+    // Measured on all the raced cash so far, so the frozen fee remainder is charged once.
+    const additionalRefundCents = Math.max(0, racedRefundCents - reserved.reduce((sum, plan) => sum + (plan?.amountCents ?? 0), 0));
     if (additionalRefundCents <= 0) return;
     const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: payload.bookingId }, select: { id: true } });
     const task = await tx.manualRefundTask.create({

@@ -380,7 +380,7 @@ export async function applyPaymentAdjustments(
     const tier = await modificationCardRefundTier(tx, booking, todayAtClub, reductionUntiered || appliedCreditReturnedByCaller);
     await settleOrganiserExtraReduction(tx, { reduction: reduction.organiserExtras, refundAmountCents,
       refundBasisCents: settlementOptions?.basisAmountCents ?? Math.max(0, -netAmountCents),
-      refundPercentage: settlementOptions?.cardRefundPercentage ?? tier.refundPercentage,
+      refundPercentage: settlementOptions?.cardRefundPercentage ?? tier.refundPercentage, fixedFeeCents: tier.fixedFeeCents,
     });
   }
 

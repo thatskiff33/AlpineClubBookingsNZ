@@ -13,6 +13,8 @@ export interface OrganiserExtraAdjustmentPayload {
   priceBasisCents?: number;
   cashAtPlanCents: number;
   refundPercentage: number;
+  /** N1: the plan's tier fixed fee its own refund did not absorb; raced cash pays it before any hand-back. */
+  fixedFeeRemainderCents?: number;
   /** A refund is released only once this bank-transfer hand-back is completed. */
   handBackTaskId?: string;
 }
@@ -27,11 +29,13 @@ export function readOrganiserExtraAdjustmentPayload(value: unknown): OrganiserEx
     typeof p.refundPercentage !== "number" || !Number.isFinite(p.refundPercentage) || p.refundPercentage < 0 || p.refundPercentage > 100) return null;
   if (p.amountCents === 0 && !(p.purpose === "refund" && typeof p.priceBasisCents === "number" && p.priceBasisCents > 0)) return null;
   if (p.priceBasisCents !== undefined && (typeof p.priceBasisCents !== "number" || !Number.isSafeInteger(p.priceBasisCents) || p.priceBasisCents < 0)) return null;
+  if (p.fixedFeeRemainderCents !== undefined && (typeof p.fixedFeeRemainderCents !== "number" || !Number.isSafeInteger(p.fixedFeeRemainderCents) || p.fixedFeeRemainderCents < 0)) return null;
   const modificationId = readString(p.modificationId);
   const invoiceId = readString(p.invoiceId);
   if (!modificationId && !invoiceId) return null;
   return { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId, scopeId, modificationId, invoiceId,
     amountCents: p.amountCents, purpose: p.purpose, ...(typeof p.priceBasisCents === "number" ? { priceBasisCents: p.priceBasisCents } : {}), cashAtPlanCents: p.cashAtPlanCents, refundPercentage: p.refundPercentage,
+    ...(typeof p.fixedFeeRemainderCents === "number" ? { fixedFeeRemainderCents: p.fixedFeeRemainderCents } : {}),
     ...(readString(p.handBackTaskId) ? { handBackTaskId: readString(p.handBackTaskId)! } : {}),
   };
 }

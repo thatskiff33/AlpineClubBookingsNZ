@@ -10,7 +10,7 @@ import {
   hasOutstandingAdditionalPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import { isXeroConnected } from "./xero";
-import { daysUntilDate, loadCancellationPolicy } from "./cancellation";
+import { daysUntilDate, getRefundTier, loadCancellationPolicy } from "./cancellation";
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { closeRefundRowRecordingEvent, recordBookingEvent } from "./booking-events";
@@ -1870,7 +1870,10 @@ async function performBookingCancellation(
     const organiserName = branch === "manual" && organiserByHand && fresh.parentBookingId
       ? bookingOwnerName(await tx.booking.findUniqueOrThrow({ where: { id: fresh.parentBookingId }, select: BOOKING_OWNER_NAME_SELECT })) : null;
     if (organiserExtraState && organiserExtraState.invoices.length > 0) {
-      await reserveOrganiserExtraCancellation(tx, { bookingId, scopeId: `cancel:${bookingId}`, refundAmountCents, refundBasisCents: refundableBaseCents, refundPercentage, createdByMemberId: sessionUserId });
+      // N1: the tier's fee for this refund method, frozen with the plan for cash that races its waivers.
+      const tier = getRefundTier(days, policy);
+      await reserveOrganiserExtraCancellation(tx, { bookingId, scopeId: `cancel:${bookingId}`, refundAmountCents, refundBasisCents: refundableBaseCents, refundPercentage,
+        fixedFeeCents: refundMethod === "credit" ? tier.creditFixedFeeCents : tier.fixedFeeCents, createdByMemberId: sessionUserId });
     }
     if (branch === "manual") {
       const task = await tx.manualRefundTask.create({
