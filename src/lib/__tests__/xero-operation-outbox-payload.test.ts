@@ -261,6 +261,7 @@ describe("xero operation outbox payload parsing", () => {
     // this list and the dispatch switch routes exactly these members. Locking
     // the wire values guards the scan/dispatch domain against drift.
     expect([...XERO_OUTBOX_QUEUE_TYPES]).toEqual([
+      "ORGANISER_EXTRA_ADJUSTMENT",
       "ENTRANCE_FEE_INVOICE",
       "BOOKING_INVOICE",
       "BOOKING_INVOICE_UPDATE",
@@ -372,6 +373,7 @@ describe("xero operation outbox payload parsing", () => {
     // Every queueType the scan selects must resolve to a concrete claim guard,
     // so the column scan can never surface a type the dispatch path lacks.
     const expectedEntityTypes = new Map<string, string>([
+      ["ORGANISER_EXTRA_ADJUSTMENT", "CREDIT_NOTE"],
       ["ENTRANCE_FEE_INVOICE", "INVOICE"],
       ["BOOKING_INVOICE", "INVOICE"],
       ["BOOKING_INVOICE_UPDATE", "INVOICE"],

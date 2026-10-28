@@ -3801,6 +3801,22 @@ unconfirmed environment, and a provider failure — stay distinguishable
 
 ## Xero Outbox And Reconciliation Lifecycle
 
+An organiser-paid bank-transfer place's extra invoice follows the existing
+supplementary-invoice outbox, anchored on its change (#4299, `INV-PAY-146`). Its
+queued create is committed with the edit; provider failure retries the same
+change, and cash reconciliation adds only the extra's actual receipts to the
+place. Its original combined-invoice share is retained.
+
+`ORGANISER_EXTRA_ADJUSTMENT` releases unpaid extras before policy refunds.
+Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
+`PENDING` only when the matching bank-transfer hand-back is `COMPLETED`. The
+worker claims `RUNNING` before provider work and completes under that claim.
+Fully unpaid releases void the invoice; part-paid releases allocate a credit
+note. Cash that races a release is recognised and its policy refund reserved.
+Refund notes target the invoice that held each paid share. The organiser's app
+notice is a separate durable email row, sent by the email retry lifecycle.
+
+
 ```text
 local business event -> Xero outbox operation queued
   one ACTIVE (PENDING/RUNNING/WAITING_PAYMENT) operation per correlation key

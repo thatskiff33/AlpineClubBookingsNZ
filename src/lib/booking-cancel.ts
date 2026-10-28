@@ -1,3 +1,5 @@
+import { readOrganiserExtraState, effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
+import { reserveOrganiserExtraCancellation, bindOrganiserExtraRefundToHandBack } from "@/lib/organiser-extra-netting";
 import { prisma } from "./prisma";
 import { cancelPaymentIntentIfCancellableWithResult, cancelSetupIntentIfCancellable } from "./stripe";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
@@ -1666,7 +1668,8 @@ async function performBookingCancellation(
     const restoreMemberId = bookingOwner(fresh).memberId;
     const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     // #3836: a mirror the inbound repair clamped to the card amount reads the ledger.
-    const tieredPayment = { ...payment, creditAppliedCents: cancelTieredAppliedCreditCents(payment, appliedCreditCents) };
+    const organiserExtraState = organiserByHand ? await readOrganiserExtraState(tx, bookingId) : null;
+    const tieredPayment = { ...payment, ...(organiserExtraState ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, organiserExtraState) } : {}), creditAppliedCents: cancelTieredAppliedCreditCents(payment, appliedCreditCents) };
     const money = paidCancellationMoney({
       payment: organiserCard
         ? { ...tieredPayment, refundedAmountCents: organiserCard.committedRefundCents }
@@ -1866,6 +1869,9 @@ async function performBookingCancellation(
     // #3949 review round 4: the organiser it is repaid to, named in the task's reason and the admins' alert.
     const organiserName = branch === "manual" && organiserByHand && fresh.parentBookingId
       ? bookingOwnerName(await tx.booking.findUniqueOrThrow({ where: { id: fresh.parentBookingId }, select: BOOKING_OWNER_NAME_SELECT })) : null;
+    if (organiserExtraState && organiserExtraState.invoices.length > 0) {
+      await reserveOrganiserExtraCancellation(tx, { bookingId, scopeId: `cancel:${bookingId}`, refundAmountCents, refundBasisCents: refundableBaseCents, refundPercentage, createdByMemberId: sessionUserId });
+    }
     if (branch === "manual") {
       const task = await tx.manualRefundTask.create({
         data: {
@@ -1883,6 +1889,7 @@ async function performBookingCancellation(
         select: { id: true },
       });
       manualRefundTaskId = task.id;
+      if (organiserExtraState && organiserExtraState.invoices.length > 0) await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: `cancel:${bookingId}` });
     } else if (branch === "credit") {
       await applyLocalRefundAllocation({
         paymentId: payment.id,

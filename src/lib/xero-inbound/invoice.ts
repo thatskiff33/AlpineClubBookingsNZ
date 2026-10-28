@@ -1,3 +1,4 @@
+import { reconcileOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { type Invoice } from "xero-node";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
@@ -85,6 +86,7 @@ export async function reconcileXeroInvoice(
     throw new Error(`Xero invoice ${invoiceId} was not found`);
   }
 
+  await reconcileOrganiserExtraInvoiceCash(invoice);
   const invoiceUrl = buildXeroInvoiceUrl(invoice.invoiceID);
   const [existingLinks, recoveredBookingScopedLinks] = await Promise.all([
     prisma.xeroObjectLink.findMany({

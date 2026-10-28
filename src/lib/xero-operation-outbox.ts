@@ -1,3 +1,6 @@
+import { resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
+import { XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 import { PaymentSource, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import {
@@ -1607,9 +1610,12 @@ async function enqueueSupplementaryInvoiceForAnchor(
     where: { id: bookingId },
     select: {
       id: true,
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           xeroInvoiceId: true,
+          source: true,
         },
       },
     },
@@ -1619,7 +1625,8 @@ async function enqueueSupplementaryInvoiceForAnchor(
     throw new Error(`Booking not found: ${bookingId}`);
   }
 
-  if (!booking.payment?.xeroInvoiceId) {
+  const organiserBilling = await resolveOrganiserBilling(store ?? prisma, booking);
+  if (!booking.payment?.xeroInvoiceId && !organiserBilling) {
     return {
       queueOperationId: null,
       outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome,
@@ -3143,6 +3150,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       } else if (payload?.queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) {
         // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
+      } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
+        await executeOrganiserExtraAdjustment(payload, claimed);
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
           bookingId: payload.bookingId,
@@ -3402,4 +3411,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
   }
 
   return result;
+}
+
+/** #4299: the edit queues its organiser invoice in its own transaction. */
+export async function enqueueOrganiserExtraInvoiceInTransaction(params: { bookingId: string; bookingModificationId: string; priceDiffCents: number; changeFeeCents: number; createdByMemberId?: string }, store: Prisma.TransactionClient) {
+  return enqueueSupplementaryInvoiceForAnchor(params, { recordPayment: false, createdByMemberId: params.createdByMemberId }, store);
 }

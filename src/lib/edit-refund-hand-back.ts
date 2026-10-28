@@ -1,3 +1,4 @@
+import { bindOrganiserExtraRefundToHandBack } from "@/lib/organiser-extra-netting";
 import {
   ManualRefundTaskKind,
   type Prisma,
@@ -126,6 +127,10 @@ export async function raiseEditRefundHandBackIfOwed(
     ],
     skipDuplicates: true,
   });
+  if (payee === "organiser") {
+    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true } });
+    await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
+  }
   return true;
 }
 

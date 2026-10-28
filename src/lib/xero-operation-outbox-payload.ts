@@ -1,3 +1,4 @@
+import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import type { EntranceFeeCategory } from "@prisma/client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
@@ -37,11 +38,10 @@ export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INV
  * item 4 of #1208). Single source of truth: the pending-outbox scan
  * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this
  * list, and the canonical per-type parse switch in `readQueuedOutboxPayload`
- * covers exactly these members. Ordered to mirror the historical scan
- * predicate for an obvious 1:1 audit. REQUEUE/BACKFILL/inbound rows carry no
- * queueType and are intentionally excluded.
+ * covers exactly these members. REQUEUE/BACKFILL/inbound rows have no queueType.
  */
 export const XERO_OUTBOX_QUEUE_TYPES = [
+  XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE,
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
@@ -237,6 +237,7 @@ interface QueuedKeptLateCaptureInvoiceOutboxPayload {
 }
 
 export type QueuedOutboxPayload =
+  | OrganiserExtraAdjustmentPayload
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
   | QueuedBookingInvoiceUpdateOutboxPayload
@@ -307,6 +308,8 @@ export function readQueuedOutboxPayload(
   if (!queueType) {
     return null;
   }
+
+  if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
 
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
@@ -652,6 +655,7 @@ export function getQueuedOutboxExpectedOperation(
   }
 
   if (
+    queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE ||
     queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
@@ -662,6 +666,7 @@ export function getQueuedOutboxExpectedOperation(
       entityType: "CREDIT_NOTE",
       operationType: "CREATE",
       localModels:
+        queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE ||
         queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
         queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
           ? ["Booking", "BookingModification"]

@@ -129,6 +129,16 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   {
+    site: "syncOrganiserExtraInvoiceCash#1", tier: "GLOBAL",
+    reason: "#4299: record supplementary organiser bank-transfer cash against the child's payment and materialise its original combined-invoice share once. Serialises with edits/cancels; takes Payment row after global and re-reads the money. No provider calls in the transaction.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "reserveCashThatRacedWaiver#1", tier: "GLOBAL",
+    reason: "#4299: cash that arrived while an extra waiver was queued reserves one policy-tiered organiser hand-back and its refund note atomically. The occurrence key and re-read prevent two workers reserving the same raced cash; provider calls run outside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",
@@ -742,6 +752,12 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   },
   {
     site: "settleGroupBookingOnOrganiserCancel#3",
+    tier: "GLOBAL",
+    reason: "#4299: freeze organiser bank-transfer child refunds and their extra-invoice waiver/refund debts atomically with the group plan. Inbound cash imports and edit writers take this key; all provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "settleGroupBookingOnOrganiserCancel#4",
     tier: "GLOBAL",
     reason:
       "Each child's cancel and its refund credit-note enqueue commit inside one transaction on the settlement cohort's key, and reconcile that child's allocations through the lock-held seam. #4042: on an Internet Banking settlement the same claim books the joiner's share on the organiser's hand-back task (create, grow while OPEN, or a supplementary task once closed), which this key makes single.",

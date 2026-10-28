@@ -102,6 +102,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.settlementUpdate,
       findUnique: mocks.settlementFindUnique,
     },
+    bookingModification: { findMany: vi.fn(async () => []) },
     paymentRecoveryOperation: { findUnique: mocks.recoveryOperationFindUnique },
     // #3827 (composed by #3829): no open by-hand refund task on any child.
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },

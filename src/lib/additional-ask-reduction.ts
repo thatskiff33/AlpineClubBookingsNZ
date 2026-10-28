@@ -59,6 +59,8 @@ import {
   type Prisma,
 } from "@prisma/client";
 
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { readOrganiserExtraReduction, organiserExtraUnpaidCents, type OrganiserExtraReduction } from "@/lib/organiser-extra-state";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { reductionLeftAfterUnpaidAskCents, setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
 import { pendingAskRecoveries, type AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveries";
@@ -180,6 +182,7 @@ export const NO_UNPAID_PRICE_ASK: UnpaidPriceAsk = { askCents: 0, rows: [], reco
 export type ReductionAgainstUnpaidAsk = {
   readonly netChargeCents: number;
   readonly ask: UnpaidPriceAsk;
+  readonly organiserExtras?: OrganiserExtraReduction;
 } & ReturnType<typeof setReductionAgainstUnpaidAsk>;
 
 /**
@@ -218,6 +221,10 @@ export async function readReductionAgainstUnpaidAsk(
   netChargeCents: number,
 ): Promise<ReductionAgainstUnpaidAsk> {
   if (netChargeCents >= 0) return noReductionAgainstUnpaidAsk(netChargeCents);
+  if (paidByOrganiserInternetBanking({ organiserSettled: booking.organiserSettled ?? false, parentBookingId: booking.parentBookingId ?? null, payment: booking.payment?.source ? { source: booking.payment.source } : null })) {
+    const organiserExtras = await readOrganiserExtraReduction(db, booking.id, -netChargeCents);
+    if (organiserExtras.invoices.length > 0) return { netChargeCents, ask: NO_UNPAID_PRICE_ASK, organiserExtras, ...setReductionAgainstUnpaidAsk({ netChargeCents, unpaidAskCents: organiserExtras.invoices.reduce((sum, invoice) => sum + organiserExtraUnpaidCents(invoice), 0) }) };
+  }
   const ask = await readUnpaidPriceAsk(db, booking);
   return {
     netChargeCents,
@@ -245,13 +252,16 @@ export function assertReductionReadForNet(
 export type UnpaidAskDb = Pick<
   Prisma.TransactionClient,
   // #4217: `$executeRaw` for the Payment row lock a fold-close takes first.
-  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation" | "$executeRaw"
+  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation" | "$executeRaw" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 export type UnpaidAskBooking = {
   id: string;
   status: string;
+  organiserSettled?: boolean;
+  parentBookingId?: string | null;
   payment: {
+    source?: string;
     id: string;
     additionalAmountCents: number;
     additionalPaymentStatus: string | null;

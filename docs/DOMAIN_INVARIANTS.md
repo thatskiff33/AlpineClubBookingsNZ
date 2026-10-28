@@ -351,6 +351,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
 | `INV-PAY-145` | Charge-backed refund recovery checks Stripe and holds unexpected dashboard refunds |
+| `INV-PAY-146` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |

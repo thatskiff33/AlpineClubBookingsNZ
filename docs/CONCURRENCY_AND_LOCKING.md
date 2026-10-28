@@ -124,6 +124,31 @@ transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
+### Organiser bank-transfer extra invoices (#4299)
+
+Extras are money writers in the existing global cohort (`INV-LOCK-001`).
+Each edit queues its change-anchored invoice after writing the change history,
+inside its existing global → lodge → member locks, then takes the existing
+supplementary-anchor key last (`INV-LOCK-002`). Historical repair uses that
+same anchor protocol without booking or payment mutations. Contact resolution,
+invoice creation and app email delivery happen outside these transactions.
+
+`syncOrganiserExtraInvoiceCash` takes global then the child's Payment row,
+materialises its original combined-invoice share before introducing extra cash
+transactions, and records only the cash delta. Cancellation and reduction
+planners reserve waived amounts and invoice-specific refund notes under their
+existing global claims; group cancellation freezes this plan under global and
+re-reads each Payment under its row lock. A raced waiver's compensating
+hand-back also takes global and uses a unique occurrence key. These new sites
+are registered under `INV-LOCK-003`; no new advisory namespace is introduced.
+
+Provider execution uses the committed outbox's guarded RUNNING claim and
+claim token. Invoice reads, voids, credit creation, allocation and refund-note
+settlement run outside database transactions. Refund notes wait for the
+matching bank-transfer hand-back's completion; a lost outbox claim cannot save
+its outcome. This composes with the existing cancel/capture/refund cohort and
+with the supplementary-anchor protocol rather than holding a lock across Xero.
+
 ### One refund credit note in flight per payment, by claim order (#3880)
 
 A delta refund note sizes itself off the notes already recorded on its payment

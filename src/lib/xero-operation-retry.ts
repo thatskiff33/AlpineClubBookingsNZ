@@ -1,3 +1,4 @@
+import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import { supplementaryReplayMayRecordPayment } from "@/lib/additional-capture-receipt-gate";
 import {
@@ -1033,6 +1034,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     };
   }
 
+  if (readOrganiserExtraAdjustmentPayload(operation.requestPayload)) {
+    return ["FAILED", "PARTIAL"].includes(operation.status)
+      ? { supported: true, reason: null }
+      : { supported: false, reason: "Only a failed organiser invoice adjustment can be retried." };
+  }
+
   if (
     appliedCreditRequeueType(operation) &&
     (operation.status === "FAILED" || operation.status === "PARTIAL")
@@ -1367,6 +1374,12 @@ export async function retryXeroSyncOperation(
     throw new XeroOperationRetryError(retryMeta.reason ?? "This Xero operation cannot be retried.");
   }
   if (await isRetryOfVoidedRefundRequestNote(operation, prisma)) throw new XeroOperationRetryError(VOIDED_REQUEST_NOTE_RETRY_REASON, 409);
+
+  const organiserExtra = readOrganiserExtraAdjustmentPayload(operation.requestPayload);
+  if (organiserExtra) {
+    await requeueOutboxRowForRetry(operation, organiserExtra, ["FAILED", "PARTIAL"], "organiser invoice adjustment");
+    return { message: "Queued organiser invoice adjustment retry." };
+  }
 
   const appliedCreditType = appliedCreditRequeueType(operation);
   if (appliedCreditType) {

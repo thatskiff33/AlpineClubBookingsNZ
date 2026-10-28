@@ -1,3 +1,6 @@
+import { readOrganiserExtraState, effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
+import { reserveOrganiserExtraCancellation, bindOrganiserExtraRefundToHandBack } from "@/lib/organiser-extra-netting";
+import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 /**
  * Group bookings — organiser-cancel cleanup.
  *
@@ -327,6 +330,12 @@ export async function settleGroupBookingOnOrganiserCancel(
   // plan frozen before #3653 (one Stripe refund for the whole group, finished
   // the way it started), and an Internet Banking settlement, whose refund the
   // club pays by hand and which no Stripe refund can back.
+  const bankChildrenWithExtras = new Set<string>();
+  if (settlement && !settlement.stripePaymentIntentId) {
+    for (const child of children) {
+      if ((await readOrganiserExtraState(prisma, child.id)).invoices.length > 0) bankChildrenWithExtras.add(child.id);
+    }
+  }
   const settled = settlement?.status === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
   // #3653: a per-child refund this run could not complete. Still owed - the
@@ -341,6 +350,32 @@ export async function settleGroupBookingOnOrganiserCancel(
     // Reuse it verbatim; NEVER recompute.
     refundByChildId = deserializeRefundPlan(settlement.refundPlan);
   } else if (settlement && mirrorPlan && settled && children[0]) {
+    if (!settlement.stripePaymentIntentId && bankChildrenWithExtras.size > 0) {
+      // Freeze the bank-transfer plan and all invoice debts with the same
+      // global money fence. Inbound cash cannot land between sizing and reserve.
+      refundByChildId = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        const persisted = await tx.groupBookingSettlement.findUniqueOrThrow({ where: { id: settlement.id }, select: { refundPlan: true } });
+        if (persisted.refundPlan !== null) return deserializeRefundPlan(persisted.refundPlan);
+        const planned = new Map<string, number>();
+        for (const child of children) {
+          if (child.status !== BookingStatus.PAID || !child.payment) continue;
+          await lockPaymentForRefundedTotal(tx, child.payment.id);
+          const payment = await tx.payment.findUniqueOrThrow({ where: { id: child.payment.id } });
+          if (!hasCapturedPayment(payment)) continue;
+          const extras = await readOrganiserExtraState(tx, child.id);
+          const basisCents = cancelRefundableBaseCents({ ...payment,
+            changeFeeCents: effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, extras),
+            openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id), finalPriceCents: child.finalPriceCents });
+          const policy = await loadCancellationPolicy(child.checkIn, child.lodgeId, tx);
+          const refund = calculateRefundAmount(basisCents, daysUntilDate(child.checkIn, todayAtClub), policy, "card");
+          if (refund.refundAmountCents > 0) planned.set(child.id, refund.refundAmountCents);
+          await reserveOrganiserExtraCancellation(tx, { bookingId: child.id, scopeId: `group-cancel:${settlement.id}:${child.id}`, refundAmountCents: refund.refundAmountCents, refundBasisCents: basisCents, refundPercentage: refund.refundPercentage, createdByMemberId: sessionUserId });
+        }
+        await tx.groupBookingSettlement.update({ where: { id: settlement.id }, data: { refundPlan: Object.fromEntries(planned) } });
+        return planned;
+      });
+    } else {
     const [firstChild] = children;
     const days = daysUntilDate(firstChild.checkIn, todayAtClub);
     const policy = await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId);
@@ -368,6 +403,7 @@ export async function settleGroupBookingOnOrganiserCancel(
         where: { id: settlement.id },
         data: { refundPlan: Object.fromEntries(refundByChildId) as unknown as Prisma.InputJsonValue },
       });
+    }
     }
   } else if (settlement?.stripePaymentIntentId) {
     ({ refunded: refundByChildId, owed: owedByChildId } = await refundOrganiserCancelChildren({
@@ -594,14 +630,14 @@ export async function settleGroupBookingOnOrganiserCancel(
           // Cancels` selects on the ORGANISER BOOKING being CANCELLED plus a still
           // -active organiser-settled child, over the same status set this loop
           // claims. `GroupBooking.status` is not in that query at all.
-          const queued = await enqueueXeroRefundCreditNoteOperation(
-            payment.id,
-            refundForChild,
-            { createdByMemberId: sessionUserId, store: tx }
-          );
-          queuedOperationId = queued.queueOperationId;
-          // #4042: an Internet Banking settlement's refund is the club's to repay by hand.
-          if (settlement && !settlement.stripePaymentIntentId) raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
+          if (settlement && !settlement.stripePaymentIntentId && bankChildrenWithExtras.has(child.id)) {
+            raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
+            if (raised.handBack) await bindOrganiserExtraRefundToHandBack(tx, { bookingId: child.id, handBackTaskId: raised.handBack.id, scopeId: `group-cancel:${settlement.id}:${child.id}` });
+          } else {
+            const queued = await enqueueXeroRefundCreditNoteOperation(payment.id, refundForChild, { createdByMemberId: sessionUserId, store: tx });
+            queuedOperationId = queued.queueOperationId;
+            if (settlement && !settlement.stripePaymentIntentId) raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
+          }
         }
 
         // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION

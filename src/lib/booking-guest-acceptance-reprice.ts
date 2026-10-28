@@ -96,9 +96,7 @@ import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-c
  *   CONFIRMED booking (its invoice issued, nothing yet paid) has the invoice
  *   corrected for the whole reduction and its applied credit left as it was,
  *   exactly as an ordinary edit of a CONFIRMED booking leaves it.
- * The ledger posting, the history row, the Xero correction (queued after commit
- * by `settleGuestAcceptanceRepriceAfterCommit`), the member's email and the
- * audit row are the ordinary edit's own.
+ * History, ledger, notices and audit follow ordinary edits; organiser invoices queue with history.
  *
  * FREE NIGHTS ARE USED ONLY FOR WHAT IS RETURNED. The re-price is decided under
  * the locks and WRITTEN only once the settlement above is known to return the

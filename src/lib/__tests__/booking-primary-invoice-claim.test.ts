@@ -224,3 +224,15 @@ it("refuses an organiser-paid edit before payment writes if its combined invoice
   expect(payment.update).not.toHaveBeenCalled();
   expect(payment.updateMany).not.toHaveBeenCalled();
 });
+
+
+it("organiser refunds never queue a generic note against the joiner's absent primary invoice", async () => {
+  const booking = paidBooking(null);
+  booking.organiserSettled = true;
+  booking.parentBookingId = "parent";
+  booking.payment!.source = PaymentSource.INTERNET_BANKING;
+  groupBookingFindUnique.mockResolvedValue({ status: "OPEN", organiserBookingId: "parent", organiserMemberId: "organiser", organiserMember: {},
+    settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+  const result = await adjust(booking, -1000, 0, { appliedCreditReturnedByCaller: true });
+  expect(result).toMatchObject({ xeroRefundAmountCents: 0, pendingRefundAmountCents: 0, refundAmountCents: 1000 });
+});

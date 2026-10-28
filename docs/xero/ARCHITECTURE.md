@@ -3968,3 +3968,36 @@ once, by card, and Xero is told about the payment without a second invoice.
 
 Rules: `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-049`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
 
+
+
+## Organiser-paid bank-transfer extras (#4299)
+
+A change to a place paid through the group's combined invoice bills the
+organiser, including its late-change fee. `organiser-billing.ts` resolves the
+settlement, combined invoice and organiser; contact resolution runs outside the
+edit transaction. Every edit door calls `queueOrganiserExtraForChange` after
+creating its change history, inside its existing global money claim. The
+supplementary invoice uses that change's existing anchor lock, so after-commit
+kicks and historical repair find the same invoice. Its link records the payer,
+combined invoice and signed price/fee figures. Missing combined-invoice records
+refuse the edit; disconnected Xero leaves an unpaid queued invoice. The joiner's
+payment has no primary invoice and its history is not marked as settling one.
+
+`organiser-extra-state` and `organiser-extra-netting` reserve unpaid releases
+before policy refunds. `ORGANISER_EXTRA_ADJUSTMENT` operations execute voids or
+credit notes outside the money transaction. A part-paid invoice receives an
+allocated note for the unpaid portion. Cash pays fees first; paid price refunds
+follow policy, with notes split between extra and combined invoices. Refund
+notes wait for their bank-transfer hand-back to complete; a settled invoice's
+note is settled through the existing refund-note settlement helper. The worker
+re-reads invoice amounts before execution to recognise cash that raced a waiver.
+Inbound extra receipts retain the original paid share and add actual cash once.
+No synthetic bank payment is posted to Xero.
+
+The app notice uses `group-organiser-extra-invoice`, is addressed and attributed
+to the organiser's booking, and names the place, change, amount and invoice.
+It is durably queued for the normal email retry worker (15-minute backoff), with
+a change-stable identity. Suppression and recipient authority still run; the
+joiner's private booking URL is never included. Xero does not email this invoice.
+Historical B1 billing is an explicit reviewed repair action, described in
+[Maintenance](../MAINTENANCE.md).

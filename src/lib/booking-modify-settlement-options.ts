@@ -1,3 +1,4 @@
+import { effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
 // Split out of src/lib/booking-modify-settlement.ts (#3829, composing epic
 // #3813 with main): what a booking reduction may return and how - the
 // policy-tiered options, the untiered full-reduction options (D-3813-5) and
@@ -101,7 +102,7 @@ export async function calculateModificationSettlementOptions({
   const basisAmountCents = settlementBasisCents(
     booking,
     reduction.netChargeLeftCents,
-    await refundableCashNetOfOpenHandBacks(db, booking.payment),
+    Math.max(0, await refundableCashNetOfOpenHandBacks(db, booking.payment) - (reduction.organiserExtras && booking.payment ? effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, reduction.organiserExtras) : 0)),
   );
   if (basisAmountCents === null) return null;
 

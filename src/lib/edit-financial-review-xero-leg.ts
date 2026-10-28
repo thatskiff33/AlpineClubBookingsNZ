@@ -1,3 +1,4 @@
+import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting";
 import "server-only";
 
 import { BookingStatus, ManualRefundTaskKind, type Prisma } from "@prisma/client";
@@ -152,6 +153,7 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
   actingMemberId: string;
   store: Prisma.TransactionClient;
 }): Promise<void> {
+  if (await releaseOrganiserExtraRefundNotes(store, task.id)) return;
   const invoiceId = cancelledBookingRefundInvoiceId(task);
   if (isCancelCardShortfallTask(task)) {
     if (invoiceId !== null && route?.kind === "local-allocation" && route.refundCents > 0) await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", paidAnotherWayTaskId: task.id, store });
@@ -163,10 +165,7 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
     await enqueueCancelledReviewRefundNote(noted, task.id, actingMemberId, store);
     return;
   }
-  // #3827 (`INV-PAY-117`, D-3813-8): only a CANCELLATION's hand-back takes the
-  // payment's refund note. An edit refund hand-back owes Xero nothing (its edit
-  // queued the note), and a refund request's queues its own note
-  // (`queueRefundRequestCreditNoteInTransaction`).
+  // #3827: only a cancellation takes this note; edits and refund requests own theirs.
   if (
     task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK &&
     !isNonCancellationHandBackTask(task) &&

@@ -3930,3 +3930,31 @@ _Split from `INV-PAY-057` (#3220)._
   `xero-repair-known-modification-refund.test.ts`,
   `kept-settle-correction-recount.test.ts` and
   `ib-settle-from-cash.realdb.test.ts`.
+
+
+## INV-PAY-146
+
+An organiser-paid internet-banking group's place bills each positive edit net
+(price plus recorded late-change fee) to the organiser on one supplementary
+invoice anchored on its `BookingModification` (#4299; owner decisions 22/25/28
+October 2026). `resolveOrganiserBilling` owns the combined-invoice and payer
+resolution for this and refund notes. A missing combined invoice refuses the
+edit; a provider outage leaves the committed outbox debt retryable. No payment
+is posted to Xero. The app queues the organiser an invoice notice. The change
+never marks the joiner's absent primary invoice as its settlement.
+
+Reductions take unpaid extras first, fee included, without a policy percentage.
+A wholly unpaid invoice is voided when fully released; a smaller release is
+credited. A part-paid invoice's unpaid balance is credited, never voided. Cash
+pays its fee first; only paid price joins the refundable share, at the policy
+percentage. Cancellation releases every unpaid extra and excludes paid fees
+from its refund. Notes target the combined invoice for the original share and
+the extra invoice for extra cash; settled-invoice notes are paid out against the
+recorded bank-transfer hand-back. Cash is imported idempotently from Xero.
+
+Historical repair requires reviewed dry-run action keys, shows later reductions
+and refunds, bills every recorded positive net unchanged (including cancelled
+places), and skips any already-billed or queued change. This deliberately
+accepts the owner's B1 over-billing consequence. Legacy review charges stay
+refused. Tests cover missing-invoice refusal, signed invoice totals, fee-first
+part-payments, netting, replay, and reviewed repair keys.

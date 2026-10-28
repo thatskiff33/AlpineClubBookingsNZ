@@ -1,3 +1,4 @@
+import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting";
 import "server-only";
 
 import {
@@ -470,6 +471,8 @@ export async function resolveManualRefundTask(
       // #4162: a re-confirmed bank refund's answer (refused when missing or misplaced): its fresh note, or the hand-made note it tracks.
       await recordBankRefundVoidAnswerInTransaction({ task, route: settlementRoute, answer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null, actingMemberId, store: tx });
     }
+
+    if (resolution === "completed") await releaseOrganiserExtraRefundNotes(tx, task.id);
 
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
     // inside this claim, so a replayed dismissal queues nothing.
