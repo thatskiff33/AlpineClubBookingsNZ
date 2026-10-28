@@ -5,7 +5,7 @@ const start = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/xero-sync", () => ({ startXeroSyncOperation: start }));
 
 import { planOrganiserExtraNetting, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
-import { effectiveOrganiserPaidChangeFeeCents, organiserExtraPaidPriceCents, organiserExtraUnpaidCents, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
+import { effectiveOrganiserPaidChangeFeeCents, organiserExtraPaidPriceCents, organiserExtraUnpaidCents, readOrganiserExtraState, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 
 const invoice = (overrides: Partial<OrganiserExtraInvoice> = {}): OrganiserExtraInvoice => ({ modificationId: "increase", invoiceId: "extra", priceCents: 5_000, feeCents: 1_000, cashCents: 2_000, waivedCents: 0, refundedCents: 0, releasedPriceCents: 0, ...overrides });
@@ -122,5 +122,25 @@ describe("F4: a waiver of a still-queued extra invoice", () => {
     expect(operation.status).toBe("PENDING");
     expect(updateMany).not.toHaveBeenCalled();
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", amountCents: 2_000 }) }));
+  });
+});
+
+describe("F4: an extra invoice a waiver retired before it was raised", () => {
+  it("reads as waived whole: nothing owed, nothing paid, and its fee never kept", async () => {
+    const db = {
+      bookingModification: { findMany: vi.fn(async () => [{ id: "increase", priceDiffCents: 5_000, changeFeeCents: 1_000 }]) },
+      xeroObjectLink: { findMany: vi.fn(async () => []) },
+      xeroSyncOperation: { findMany: vi.fn(async ({ where }: { where: { queueType: string } }) =>
+        where.queueType === "SUPPLEMENTARY_INVOICE" ? [{ localId: "increase", requestPayload: { priceDiffCents: 5_000, changeFeeCents: 1_000 }, status: "SKIPPED" }] : []) },
+      paymentTransaction: { findMany: vi.fn(async () => []) },
+    };
+    const state = await readOrganiserExtraState(db as never, "child");
+    expect(state.invoices).toMatchObject([{ invoiceId: null, waivedCents: 6_000, cashCents: 0 }]);
+    expect(organiserExtraUnpaidCents(state.invoices[0]!)).toBe(0);
+    expect(organiserExtraPaidPriceCents(state.invoices[0]!)).toBe(0);
+    // The $10 recorded fee was never collected, so a later cancel keeps none of it.
+    expect(effectiveOrganiserPaidChangeFeeCents(1_000, state)).toBe(0);
+    // A later reduction finds nothing left to waive on it.
+    expect(planOrganiserExtraNetting(state, { reductionCents: 3_000, refundAmountCents: 0, refundBasisCents: 0 }).waivers).toEqual([]);
   });
 });

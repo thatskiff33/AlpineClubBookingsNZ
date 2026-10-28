@@ -1,7 +1,7 @@
 /** N1–N4: reserve unpaid waivers before policy refunds, in the money claim. */
 import type { Prisma } from "@prisma/client";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
-import { organiserExtraPaidPriceCents, organiserExtraUnpaidCents, readOrganiserExtraState, type OrganiserExtraInvoice, type OrganiserExtraReduction, type OrganiserExtraState } from "@/lib/organiser-extra-state";
+import { ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, organiserExtraPaidPriceCents, organiserExtraUnpaidCents, readOrganiserExtraState, type OrganiserExtraInvoice, type OrganiserExtraReduction, type OrganiserExtraState } from "@/lib/organiser-extra-state";
 import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 
 export function planOrganiserExtraNetting(state: OrganiserExtraState, input: { reductionCents: number; refundAmountCents: number; refundBasisCents: number; cancel?: boolean }) {
@@ -44,14 +44,15 @@ const SKIPPABLE_QUEUED_INVOICE_STATUSES = ["PENDING", "WAITING_PAYMENT", "FAILED
  * a debt already waived. Its operation is SKIPPED, status-guarded so a create
  * already under way, or one that reached Xero, keeps it; then the waiver is
  * reserved as usual and voids or credits the invoice once it exists. True when
- * no live operation is left, and the waiver needs no document.
+ * no live operation is left, and the waiver needs no document; the state then
+ * reads the invoice as waived whole, so its unpaid fee is never kept.
  */
 async function skipQueuedInvoiceWaivedInFull(tx: Prisma.TransactionClient, invoice: OrganiserExtraInvoice, amountCents: number): Promise<boolean> {
   if (invoice.invoiceId !== null || invoice.cashCents > 0 || amountCents < invoice.priceCents + invoice.feeCents) return false;
   const queued = { localModel: "BookingModification", localId: invoice.modificationId, queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE };
   await tx.xeroSyncOperation.updateMany({
     where: { ...queued, status: { in: SKIPPABLE_QUEUED_INVOICE_STATUSES }, xeroObjectId: null },
-    data: { status: "SKIPPED", lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
+    data: { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
   });
   return (await tx.xeroSyncOperation.count({ where: { ...queued, status: { notIn: ["SKIPPED", "RESOLVED"] } } })) === 0;
 }

@@ -7,6 +7,8 @@ import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUST
 
 export const ORGANISER_SHARE_RECEIPT_REASON = "organiser-combined-invoice-share";
 export const ORGANISER_EXTRA_RECEIPT_REASON = "organiser-extra-invoice-cash";
+/** F4: the code on a queued extra invoice a waiver retired whole before it was raised. */
+export const ORGANISER_EXTRA_WAIVED_UNRAISED_CODE = "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED";
 export type OrganiserExtraInvoice = {
   modificationId: string;
   invoiceId: string | null;
@@ -42,7 +44,11 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
   const ids = modifications.map((m) => m.id);
   const [links, issuedOrQueued, receipts, adjustments] = await Promise.all([
     db.xeroObjectLink.findMany({ where: { localModel: "BookingModification", localId: { in: ids }, role: "SUPPLEMENTARY_INVOICE", active: true }, select: { localId: true, xeroObjectId: true, metadata: true } }),
-    db.xeroSyncOperation.findMany({ where: { localModel: "BookingModification", localId: { in: ids }, queueType: "SUPPLEMENTARY_INVOICE", status: { notIn: ["SKIPPED", "RESOLVED"] } }, select: { localId: true, requestPayload: true } }),
+    db.xeroSyncOperation.findMany({
+      where: { localModel: "BookingModification", localId: { in: ids }, queueType: "SUPPLEMENTARY_INVOICE",
+        OR: [{ status: { notIn: ["SKIPPED", "RESOLVED"] } }, { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE }] },
+      select: { localId: true, requestPayload: true, status: true },
+    }),
     db.paymentTransaction.findMany({ where: { payment: { bookingId }, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, select: { xeroInvoiceId: true, amountCents: true } }),
     db.xeroSyncOperation.findMany({ where: { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, localId: bookingId }, select: { requestPayload: true } }),
   ]);
@@ -57,9 +63,11 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
     const priceCents = typeof metadata?.priceDiffCents === "number" ? metadata.priceDiffCents : typeof payload?.priceDiffCents === "number" ? payload.priceDiffCents : modification.priceDiffCents;
     const feeCents = typeof metadata?.changeFeeCents === "number" ? metadata.changeFeeCents : typeof payload?.changeFeeCents === "number" ? payload.changeFeeCents : modification.changeFeeCents;
     const plans = adjustments.map((a) => readOrganiserExtraAdjustmentPayload(a.requestPayload)).filter((a) => a?.modificationId === modification.id);
+    // F4: never raised because a waiver covered it whole - owed nothing, its fee never paid.
+    const waivedUnraisedCents = !link && queued?.status === "SKIPPED" ? priceCents + feeCents : 0;
     invoices.push({ modificationId: modification.id, invoiceId: link?.xeroObjectId ?? null, priceCents, feeCents,
       cashCents: receipts.filter((r) => r.xeroInvoiceId === link?.xeroObjectId).reduce((s, r) => s + r.amountCents, 0),
-      waivedCents: plans.reduce((s, p) => s + (p?.purpose === "waive" ? p.amountCents : 0), 0),
+      waivedCents: waivedUnraisedCents + plans.reduce((s, p) => s + (p?.purpose === "waive" ? p.amountCents : 0), 0),
       releasedPriceCents: plans.reduce((s, p) => s + (p?.purpose === "refund" ? p.priceBasisCents ?? p.amountCents : 0), 0),
       refundedCents: plans.reduce((s, p) => s + (p?.purpose === "refund" ? p.amountCents : 0), 0),
     });
