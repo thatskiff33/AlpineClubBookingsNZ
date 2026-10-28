@@ -180,9 +180,6 @@ export async function createXeroSupplementaryInvoice(params: {
   const contactId = organiserBilling
     ? await resolveOrganiserXeroContact(organiserBilling, contactOptions)
     : await findOrCreateXeroContactForInvoicedParty(booking, contactOptions);
-  const invoiceParty = organiserBilling
-    ? { memberId: organiserBilling.organiserMemberId, organisationId: null }
-    : booking;
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
@@ -416,8 +413,9 @@ export async function createXeroSupplementaryInvoice(params: {
     const response = await retryXeroWriteWithContactRepair({
       memberId: organiserBilling?.organiserMemberId ?? bookingOwner(booking).memberId,
       currentContactId: contactId,
-      // The repair entity matches the invoiced party (#3368, `INV-INT-019`).
-      repairContactLink: invoicedPartyContactRepair(invoiceParty),
+      // The repair entity matches the invoiced party (#3368, `INV-INT-019`): the
+      // organiser is a member, repaired by the default member-keyed repair.
+      repairContactLink: organiserBilling ? undefined : invoicedPartyContactRepair(booking),
       workflow: "createXeroSupplementaryInvoice",
       operationId: operationId!,
       repairExistingLink,
