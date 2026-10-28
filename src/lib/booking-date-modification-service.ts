@@ -1,4 +1,5 @@
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -1542,6 +1543,7 @@ async function dispatchDatePostTransactionSideEffects({
     bookingModificationId: result.bookingModificationId,
     createdByMemberId: actorMemberId,
     hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    organiserBankPlace: paidByOrganiserInternetBanking(result.booking), // #4299 N-b
     originalPaymentStatus: result.paymentStatus,
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,

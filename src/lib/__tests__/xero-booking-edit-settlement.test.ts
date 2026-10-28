@@ -16,15 +16,10 @@ vi.mock("@/lib/xero-operation-outbox", () => mocks);
 // aggregate status alone would refuse an invoice correction. Default: one was
 // (the answer the aggregate gave before #3979).
 const receiptFindFirst = vi.hoisted(() => vi.fn());
-// #4299 (N-b): whether the booking is an organiser-paid bank place, read only
-// when a primary-invoice update would be queued or recorded skipped. Default: not.
-const bookingFindUnique = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/prisma", () => ({ prisma: { paymentTransaction: { findFirst: receiptFindFirst }, booking: { findUnique: bookingFindUnique } } }));
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentTransaction: { findFirst: receiptFindFirst } } }));
 beforeEach(() => {
   receiptFindFirst.mockReset();
   receiptFindFirst.mockResolvedValue({ id: "ptx-captured" });
-  bookingFindUnique.mockReset();
-  bookingFindUnique.mockResolvedValue({ organiserSettled: false, parentBookingId: null, payment: { source: "STRIPE" } });
 });
 
 vi.mock("@/lib/logger", () => ({
@@ -428,8 +423,8 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
   });
 
   it("#4299 N-b: records no primary-invoice update, queued or skipped, for an organiser-paid bank place", async () => {
-    bookingFindUnique.mockResolvedValue({ organiserSettled: true, parentBookingId: "organiser-booking", payment: { source: "INTERNET_BANKING" } });
     const decision = await queueXeroBookingEditSettlement({
+      organiserBankPlace: true,
       bookingId: "place_1",
       bookingModificationId: "mod_place",
       hasIssuedXeroInvoice: true,

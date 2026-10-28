@@ -5,12 +5,12 @@ lines: 1605
 reason: Keep the organiser invoice check and enqueue at the existing guest-add money claim, and carry the organiser-billed figure to the joiner's email and the response (review F1); the new billing policy is already in shared modules. Moving these call sites would split the transaction boundary.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2753
-reason: The shared invoice queue must be invoked beside creation of the change inside the existing edit transaction, and the organiser-billed figure carried to the result and the joiner's email (review F1). Extracting these integration lines would hide their required atomicity.
+lines: 2755
+reason: The shared invoice queue must be invoked beside creation of the change inside the existing edit transaction, the organiser-billed figure carried to the result and the joiner's email (review F1), and the organiser-place flag passed to its Xero leg (review N-b). Extracting these integration lines would hide their required atomicity.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2261
-reason: The shared invoice queue must be invoked beside creation of the date change inside its existing money claim, and the organiser-billed figure carried to the result and the joiner's email (review F1). The organiser policy lives outside this service already.
+lines: 2263
+reason: The shared invoice queue must be invoked beside creation of the date change inside its existing money claim, the organiser-billed figure carried to the result and the joiner's email (review F1), and the organiser-place flag passed to its Xero leg (review N-b). The organiser policy lives outside this service already.
 
 file: src/lib/booking-guest-removal-service.ts
 lines: 1247

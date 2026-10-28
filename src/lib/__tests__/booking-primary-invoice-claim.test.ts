@@ -208,7 +208,8 @@ it("bills organiser extra price plus fee and never marks the child's missing pri
   groupBookingFindUnique.mockResolvedValue({ status: "OPEN", organiserBookingId: "parent", organiserMemberId: "organiser", organiserMember: {},
     settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
   const result = await adjust(booking, 5000, 1000);
-  expect(result).toMatchObject({ additionalAmountCents: 6000, xeroAdditionalAmountCents: 6000, hasIssuedXeroInvoice: true,
+  // #4299 (F1): billed to the organiser, so nothing is asked of the joiner.
+  expect(result).toMatchObject({ additionalAmountCents: 0, billedToOrganiserCents: 6000, xeroAdditionalAmountCents: 6000, hasIssuedXeroInvoice: true,
     hasSucceededPayment: false, settledAgainstPrimaryInvoice: false });
   expect(payment.updateMany).not.toHaveBeenCalled();
   expect(payment.update).toHaveBeenCalledWith({ where: { id: "payment_1" }, data: { changeFeeCents: { increment: 1000 } } });
