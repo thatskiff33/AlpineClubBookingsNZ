@@ -1021,6 +1021,37 @@ describe("runBookingXeroRepair", () => {
     expect(types).toContain("QUEUE_HISTORICAL_ORGANISER_INVOICE");
   });
 
+  it("#4299 B1: a PAID organiser-paid bank place with no invoice of its own queues no primary invoice to the joiner", async () => {
+    const booking = makeBooking({
+      status: "PAID",
+      organiserSettled: true,
+      parentBookingId: "organiser_booking",
+      payment: { ...makeBooking().payment, source: "INTERNET_BANKING", status: "SUCCEEDED", xeroInvoiceId: null, xeroInvoiceNumber: null,
+        stripePaymentIntentId: null, stripePaymentMethodId: null, stripeCustomerId: null, manuallyMarkedPaidAt: null },
+      modifications: [{ id: "mod_increase", bookingId: "booking_1", modificationType: "DATE_CHANGE", priceDiffCents: 5000, changeFeeCents: 1000,
+        previousData: {}, newData: {}, createdAt: new Date("2026-05-02T00:00:00Z") }],
+    });
+    const deps = createDependencies({ bookings: [booking] });
+    Object.assign(deps.prisma, {
+      groupBooking: { findUnique: vi.fn().mockResolvedValue({ organiserBookingId: "organiser_booking", organiserMemberId: "organiser",
+        organiserMember: { id: "organiser", firstName: "Group", lastName: "Organiser", email: "organiser@example.com" },
+        settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } }) },
+      bookingEvent: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true }, apply: true });
+
+    const findings = report.passes[0].bookings[0].findings;
+    const codes = findings.map((finding) => finding.code);
+    expect(codes).not.toContain("MISSING_PRIMARY_INVOICE");
+    const settled = findings.find((finding) => finding.code === "ORGANISER_SETTLED_ON_COMBINED_INVOICE");
+    expect(settled).toMatchObject({ severity: "info", safeToAutoApply: false, actions: [] });
+    expect(report.passes[0].bookings[0].actions.map((action) => action.type)).not.toContain("QUEUE_PRIMARY_INVOICE");
+    // --apply raises nothing to the joiner; the organiser's historical bill still needs its reviewed key.
+    expect(deps.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    expect(codes).toContain("MISSING_SUPPLEMENTARY_INVOICE");
+  });
+
   it("classifies cancelled unpaid bookings with an open invoice", async () => {
     const booking = makeBooking({
       status: "CANCELLED",

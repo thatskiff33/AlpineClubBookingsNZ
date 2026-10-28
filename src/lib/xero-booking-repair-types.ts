@@ -61,6 +61,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // action — that action would mint (and email) an awaiting-payment invoice for
   // money the club already holds.
   "MANUALLY_SETTLED_NO_XERO_EXPECTED",
+  // #4299 B1: the same shape for a place the group organiser paid by internet
+  // banking - settled on the organiser's combined invoice, so it has no
+  // invoice of its own and none may be queued for the joiner.
+  "ORGANISER_SETTLED_ON_COMBINED_INVOICE",
   // #3635 (orchestrator decision 2): informational, never actionable. An
   // officer resolved the operation in Xero and the club's records hold no
   // document for it: done, never re-run, but still seen.

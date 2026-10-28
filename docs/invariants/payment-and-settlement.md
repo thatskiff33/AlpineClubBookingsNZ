@@ -3985,7 +3985,9 @@ idempotently; reversed refunded cash raises a treasurer review.
 
 Historical repair needs reviewed dry-run keys, shows later reductions and
 refunds, bills every recorded positive net (B1's accepted over-billing), skips
-billed or queued changes, and adds to the place's other findings. Legacy review
+billed or queued changes, and adds to the place's other findings. The place
+never gets a primary invoice: the classifier reports it settled on the combined
+invoice, and `enqueueXeroBookingInvoiceOperation` refuses it. Legacy review
 charges stay refused. Tests: `organiser-extra-netting.test.ts`,
 `organiser-extra-adjustment.test.ts`, `organiser-extra-doors.realdb.test.ts`,
 `organiser-extra-group-cancel.realdb.test.ts`,

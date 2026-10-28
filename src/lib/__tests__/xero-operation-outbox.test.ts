@@ -322,6 +322,7 @@ import {
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroSecondSupplementaryInvoiceOperation,
   enqueueXeroBookingInvoiceOperation,
+  ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
@@ -524,6 +525,32 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
       queueOperationId: "op_booking_1",
       overrodeResolvedInXeroOperationId: "op_resolved_invoice",
     });
+  });
+
+  it("#4299 B1: refuses, with no row, a place the group organiser paid by internet banking", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      organiserSettled: true,
+      parentBookingId: "organiser_booking",
+      payment: { id: "payment_1", xeroInvoiceId: null, manuallyMarkedPaidAt: null, source: "INTERNET_BANKING" },
+    });
+
+    await expect(enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null, overrideResolvedInXero: true }))
+      .resolves.toMatchObject({ queueOperationId: null, refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { organiserSettled: true, parentBookingId: "organiser_booking", source: "STRIPE" },
+    { organiserSettled: false, parentBookingId: null, source: "INTERNET_BANKING" },
+  ])("#4299 B1: still queues $source / organiserSettled=$organiserSettled", async ({ organiserSettled, parentBookingId, source }) => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1", organiserSettled, parentBookingId,
+      payment: { id: "payment_1", xeroInvoiceId: null, manuallyMarkedPaidAt: null, source },
+    });
+
+    await expect(enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null }))
+      .resolves.toMatchObject({ queueOperationId: "op_booking_1" });
   });
 
   it("skips queueing when the booking payment is already linked to Xero", async () => {

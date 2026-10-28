@@ -1,4 +1,5 @@
 import { resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
 import { XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 import { PaymentSource, Prisma } from "@prisma/client";
@@ -443,6 +444,9 @@ async function inheritedBookingInvoiceEmailInstruction(params: {
   return readXeroInvoiceEmailInstruction(previous?.invoiceEmailDelivery);
 }
 
+/** #4299 B1: the typed refusal for a place settled on the organiser's combined invoice. */
+export const ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL = "ORGANISER_PAID_INTERNET_BANKING" as const;
+
 export async function enqueueXeroBookingInvoiceOperation(
   bookingId: string,
   options: {
@@ -484,11 +488,14 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           id: true,
           xeroInvoiceId: true,
           manuallyMarkedPaidAt: true,
+          source: true,
         },
       },
     },
@@ -546,6 +553,25 @@ export async function enqueueXeroBookingInvoiceOperation(
       queueOperationId: null,
       message:
         "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+    };
+  }
+
+  // #4299 B1 (`INV-PAY-147`): a place the group organiser paid by internet
+  // banking is settled on the organiser's combined invoice and has no invoice
+  // of its own by design. A primary invoice here would bill, and email, the
+  // joiner for the whole place, so no enqueuer may mint one - the same
+  // choke-point placement as the manual-settlement fence above. Its extras go
+  // to the organiser on supplementary invoices, never through here.
+  if (paidByOrganiserInternetBanking(booking)) {
+    logger.warn(
+      { bookingId, paymentId: booking.payment.id },
+      "Refusing to queue a Xero booking invoice for an organiser-paid internet-banking place (#4299)"
+    );
+    return {
+      queueOperationId: null,
+      refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL,
+      message:
+        "The group organiser paid this place by internet banking; it is settled on the organiser's combined invoice, so no invoice of its own is queued.",
     };
   }
 
