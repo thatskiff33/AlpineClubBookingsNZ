@@ -26,6 +26,7 @@ import {
   type RefundMethod,
 } from "@/lib/xero-refund-method";
 import { followSupersededAskInvoicesForIntentSafely } from "@/lib/superseded-ask-invoice-carry";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 type XeroBookingEditFinancialAction =
   | { type: "none"; reason: string }
@@ -362,6 +363,20 @@ function mayCorrectDespiteCapturedAggregate(input: ClassifyXeroBookingEditSettle
   );
 }
 
+/**
+ * #4299 (N-b): a place the group organiser paid for by Internet Banking has no
+ * primary invoice of its own - its `hasIssuedXeroInvoice` is the organiser's
+ * combined invoice, which this edit never updates - so neither a primary
+ * update nor a "skipped" one is recorded for it. Read only when one would be.
+ */
+async function isOrganiserBankPlace(bookingId: string): Promise<boolean> {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: { organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } },
+  });
+  return booking !== null && paidByOrganiserInternetBanking(booking);
+}
+
 /** Whether any Internet Banking PRIMARY receipt of the booking's payment was captured. */
 async function readInternetBankingReceiptCaptured(bookingId: string): Promise<boolean> {
   const captured = await prisma.paymentTransaction.findFirst({
@@ -385,6 +400,12 @@ export async function queueXeroBookingEditSettlement(
       : input,
   );
   let supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome = "none";
+  if (decision.primaryInvoiceUpdateAction.type !== "none" && (await isOrganiserBankPlace(input.bookingId))) {
+    decision.primaryInvoiceUpdateAction = {
+      type: "none",
+      reason: "An organiser-paid Internet Banking place has no primary invoice of its own; the group's combined invoice is not updated.",
+    };
+  }
 
   if (decision.financialAction.type === "primary-invoice") {
     const queued = await enqueueXeroBookingInvoiceOperation(input.bookingId, {

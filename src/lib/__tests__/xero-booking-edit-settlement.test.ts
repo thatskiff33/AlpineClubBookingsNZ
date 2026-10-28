@@ -16,10 +16,15 @@ vi.mock("@/lib/xero-operation-outbox", () => mocks);
 // aggregate status alone would refuse an invoice correction. Default: one was
 // (the answer the aggregate gave before #3979).
 const receiptFindFirst = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/prisma", () => ({ prisma: { paymentTransaction: { findFirst: receiptFindFirst } } }));
+// #4299 (N-b): whether the booking is an organiser-paid bank place, read only
+// when a primary-invoice update would be queued or recorded skipped. Default: not.
+const bookingFindUnique = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentTransaction: { findFirst: receiptFindFirst }, booking: { findUnique: bookingFindUnique } } }));
 beforeEach(() => {
   receiptFindFirst.mockReset();
   receiptFindFirst.mockResolvedValue({ id: "ptx-captured" });
+  bookingFindUnique.mockReset();
+  bookingFindUnique.mockResolvedValue({ organiserSettled: false, parentBookingId: null, payment: { source: "STRIPE" } });
 });
 
 vi.mock("@/lib/logger", () => ({
@@ -420,6 +425,22 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
     expect(followForIntent).toHaveBeenCalledWith("pi_additional");
+  });
+
+  it("#4299 N-b: records no primary-invoice update, queued or skipped, for an organiser-paid bank place", async () => {
+    bookingFindUnique.mockResolvedValue({ organiserSettled: true, parentBookingId: "organiser-booking", payment: { source: "INTERNET_BANKING" } });
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "place_1",
+      bookingModificationId: "mod_place",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      datesChanged: true,
+    });
+    expect(decision.primaryInvoiceUpdateAction.type).toBe("none");
+    expect(mocks.recordSkippedXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
   });
 
   it("queues a mixed-sign supplementary invoice with the signed price reduction (#1356)", async () => {
