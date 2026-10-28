@@ -2,14 +2,7 @@ import { CLUB_NAME } from "@/config/club-identity";
 import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendEmail } from "@/lib/email/core";
-import { escapeHtml } from "@/lib/email-templates/escape";
-import {
-  heading,
-  infoTable,
-  layout,
-  paragraph,
-  supportContactSentence,
-} from "@/lib/email-templates/layout";
+import { groupOrganiserExtraInvoiceTemplate } from "@/lib/email-templates/groups";
 import { renderEmailHtml } from "@/lib/email-theme";
 import type { OrganiserBilling } from "@/lib/organiser-billing";
 import { formatCents } from "@/lib/utils";
@@ -51,17 +44,6 @@ export async function sendOrganiserExtraInvoiceEmail(params: {
     ),
     idempotencyKey: params.bookingModificationId,
     deferDelivery: true,
-    html: await renderEmailHtml(() => layout(`
-      ${heading("Extra Invoice for Your Group Booking")}
-      ${paragraph(`Hi ${escapeHtml(data.firstName)}, a change to a place in the group you paid for by internet banking has increased its cost. As the group organiser, you are responsible for this extra payment.`)}
-      ${infoTable([
-        { label: "Place", value: escapeHtml(data.joinerName) },
-        { label: "Change", value: escapeHtml(data.changeSummary) },
-        { label: "Extra amount to pay", value: escapeHtml(data.additionalAmount) },
-        { label: "Invoice reference", value: escapeHtml(data.xeroInvoiceNumber) },
-      ])}
-      ${paragraph("Please pay this extra invoice by internet banking, quoting the invoice reference above.")}
-      ${supportContactSentence("If you need the club's bank details or think this invoice is wrong, contact the club at ")}
-    `)),
+    html: await renderEmailHtml(() => groupOrganiserExtraInvoiceTemplate(data)),
   });
 }
