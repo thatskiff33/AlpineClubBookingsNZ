@@ -1318,7 +1318,8 @@ apply reads the local evidence again before queueing. Re-run the dry run after
 any change. An edit with any earlier invoice link (including an inactive one)
 or invoice operation is skipped. Repair or retry a failed operation through
 **Admin → Xero → Operations**, rather than requesting another invoice. Missing
-combined invoices are reported for manual review, with no billing action.
+combined invoices are reported for manual review, with no billing action. These
+findings sit beside the place's ordinary repair findings, which still apply.
 
 Each selected edit uses the ordinary supplementary-invoice queue and its
 per-change lock: one invoice on the joiner's change, addressed to the organiser,

@@ -3968,8 +3968,6 @@ once, by card, and Xero is told about the payment without a second invoice.
 
 Rules: `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-049`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
 
-
-
 ## Organiser-paid bank-transfer extras (#4299)
 
 A change to a place paid through the group's combined invoice bills the
@@ -3979,27 +3977,39 @@ edit transaction. Every edit door calls `queueOrganiserExtraForChange` after
 creating its change history, inside its existing global money claim. The
 supplementary invoice uses that change's existing anchor lock, so after-commit
 kicks and historical repair find the same invoice. Its link records the payer,
-combined invoice and signed price/fee figures. Missing combined-invoice records
-refuse the edit; disconnected Xero leaves an unpaid queued invoice. The joiner's
-payment has no primary invoice and its history is not marked as settling one.
+combined invoice and signed price/fee figures. A missing combined-invoice record
+refuses an increase only; disconnected Xero leaves an unpaid queued invoice. The
+joiner is asked for nothing (`billedToOrganiserCents` tells the edit's emails
+and response who was billed). The joiner's payment has no primary invoice: its
+history is not marked as settling one, and the edit's Xero leg queues or records
+no primary-invoice update for it.
 
 `organiser-extra-state` and `organiser-extra-netting` reserve unpaid releases
 before policy refunds. `ORGANISER_EXTRA_ADJUSTMENT` operations execute voids or
-credit notes outside the money transaction. A part-paid invoice receives an
-allocated note for the unpaid portion. Cash pays fees first; paid price refunds
+credit notes outside the money transaction. Only an invoice with no payment and
+no credit (`classifyGroupSettlementInvoiceState`) is voided; any other receives
+an allocated note for the unpaid portion. A still-queued invoice a waiver covers
+whole is marked `SKIPPED` before it reaches Xero, status-guarded so a create
+already running keeps it. Cash pays fees first; paid price refunds
 follow policy, with notes split between extra and combined invoices. Refund
 notes wait for their bank-transfer hand-back to complete and for the target
 invoice to have nothing due; a delayed waiver keeps payout pending. A settled invoice's
 note is settled through the existing refund-note settlement helper. The worker
 re-reads invoice amounts after creating or recovering the waiver note, before
 allocation, to recognise cash that raced the provider call and shrink the note.
-Inbound extra receipts retain the original paid share and add actual cash once.
-No synthetic bank payment is posted to Xero.
+Inbound extra receipts retain the original paid share and add actual cash once;
+a reversal of cash already partly refunded records nothing and raises one
+non-replayable review row in Xero Operations instead of failing the event. Once
+receipts exist, refunds (the organiser's group cancel included) are recorded on
+the payment's transaction rows, never on its mirror alone. No synthetic bank
+payment is posted to Xero.
 
 The app notice uses `group-organiser-extra-invoice`, is addressed and attributed
 to the organiser's booking, and names the place, change, amount and invoice.
 It is durably queued for the normal email retry worker (15-minute backoff), with
-a change-stable identity. Suppression and recipient authority still run; the
+a change-stable identity, names only what is owed after reserved waivers, and is
+not sent when nothing is. Suppression and recipient authority still run; the
 joiner's private booking URL is never included. Xero does not email this invoice.
 Historical B1 billing is an explicit reviewed repair action, described in
-[Maintenance](../MAINTENANCE.md).
+[Maintenance](../MAINTENANCE.md); its findings join the place's ordinary repair
+findings rather than replacing them.

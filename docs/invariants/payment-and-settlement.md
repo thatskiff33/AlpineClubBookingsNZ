@@ -3957,30 +3957,37 @@ _Split from `INV-PAY-057` (#3220)._
   `kept-settle-correction-recount.test.ts` and
   `ib-settle-from-cash.realdb.test.ts`.
 
-
 ## INV-PAY-147
 
 An organiser-paid internet-banking group's place bills each positive edit net
 (price plus recorded late-change fee) to the organiser on one supplementary
-invoice anchored on its `BookingModification` (#4299; owner decisions 22/25/28
-October 2026). `resolveOrganiserBilling` owns the combined-invoice and payer
-resolution for this and refund notes. A missing combined invoice refuses the
-edit; a provider outage leaves the committed outbox debt retryable. No payment
-is posted to Xero. The app queues the organiser an invoice notice. The change
-never marks the joiner's absent primary invoice as its settlement.
+invoice anchored on its `BookingModification` (#4299, owner decisions of
+October 2026). `resolveOrganiserBilling` owns payer and combined-invoice
+resolution. The joiner is asked for nothing: the edit's emails and responses say
+the organiser was invoiced (`billedToOrganiserCents`). Only an increase with no
+combined invoice is refused; a provider outage leaves the queued invoice
+retryable. No payment is posted to Xero; no primary-invoice update is queued or
+skipped. The organiser's notice is scoped to the organiser's booking: its "No
+emails" switch withholds it, an admin's notify-member choice on the joiner's
+edit does not. It names only what is owed after reserved waivers, and is not
+sent when nothing is.
 
-Reductions take unpaid extras first, fee included, without a policy percentage.
-A wholly unpaid invoice is voided when fully released; a smaller release is
-credited. A part-paid invoice's unpaid balance is credited, never voided. Cash
-pays its fee first; only paid price joins the refundable share, at the policy
-percentage. Cancellation releases every unpaid extra and excludes paid fees
-from its refund. Notes target the combined invoice for the original share and
-the extra invoice for extra cash; settled-invoice notes are paid out against the
-recorded bank-transfer hand-back. Cash is imported idempotently from Xero.
+Reductions take unpaid extras first, fee included, at no policy percentage. A
+still-queued invoice waived whole is never raised. An invoice with no payment or
+credit (`classifyGroupSettlementInvoiceState`) is voided when fully released;
+otherwise the release is credited. Cash pays the fee first; only paid price
+joins the refundable share, at the policy percentage, and cash racing a waiver
+is refunded the same way. Cancels, the organiser's group cancel included,
+release every unpaid extra, exclude paid fees and record refunds on the
+payment's rows. Refund notes (combined invoice for the share, extra invoice for
+extra cash) wait for their bound bank-transfer hand-back. Xero cash is imported
+idempotently; reversed refunded cash raises a treasurer review.
 
-Historical repair requires reviewed dry-run action keys, shows later reductions
-and refunds, bills every recorded positive net unchanged (including cancelled
-places), and skips any already-billed or queued change. This deliberately
-accepts the owner's B1 over-billing consequence. Legacy review charges stay
-refused. Tests cover missing-invoice refusal, signed invoice totals, fee-first
-part-payments, netting, replay, and reviewed repair keys.
+Historical repair needs reviewed dry-run keys, shows later reductions and
+refunds, bills every recorded positive net (B1's accepted over-billing), skips
+billed or queued changes, and adds to the place's other findings. Legacy review
+charges stay refused. Tests: `organiser-extra-netting.test.ts`,
+`organiser-extra-adjustment.test.ts`, `organiser-extra-doors.realdb.test.ts`,
+`organiser-extra-group-cancel.realdb.test.ts`,
+`organiser-extra-netting.realdb.test.ts` and
+`xero-booking-repair-organiser-billing.test.ts`.

@@ -139,8 +139,13 @@ transactions, and records only the cash delta. Cancellation and reduction
 planners reserve waived amounts and invoice-specific refund notes under their
 existing global claims; group cancellation freezes this plan under global and
 re-reads each Payment under its row lock. A raced waiver's compensating
-hand-back also takes global and uses a unique occurrence key. These new sites
-are registered under `INV-LOCK-003`; no new advisory namespace is introduced.
+hand-back also takes global and uses a unique occurrence key. A queued invoice
+waived whole is retired by a status-guarded `updateMany` inside the reserving
+claim, so a create the worker has already claimed `RUNNING` keeps its invoice.
+The group cancel records each child's refund on its payment rows under the
+child's claim (global, then the Payment row in `applyLocalRefundAllocation`).
+These new sites are registered under `INV-LOCK-003`; no new advisory namespace
+is introduced.
 
 Provider execution uses the committed outbox's guarded RUNNING claim and
 claim token. Invoice reads, voids, credit creation, allocation and refund-note

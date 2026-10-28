@@ -3818,12 +3818,16 @@ place. Its original combined-invoice share is retained.
 Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
 `PENDING` only when the matching bank-transfer hand-back is `COMPLETED`. The
 worker claims `RUNNING` before provider work and completes under that claim.
-Fully unpaid releases void the invoice; part-paid releases allocate a credit
-note. Cash that races a release is recognised and its policy refund reserved.
+A full release of an invoice with no payment or credit voids it; any other
+release allocates a credit note. A still-queued extra invoice a release covers
+whole goes from `PENDING`, `WAITING_PAYMENT` or `FAILED` to `SKIPPED` and is
+never raised. Cash that races a release
+is recognised and its policy refund reserved. A reversal of cash already partly
+refunded raises a `REVIEW` row (`FAILED`, not replayable) that a treasurer
+resolves in Xero Operations.
 Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
-
 
 ```text
 local business event -> Xero outbox operation queued
