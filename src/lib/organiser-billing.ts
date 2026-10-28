@@ -57,16 +57,20 @@ export type OrganiserBilling = NonNullable<Awaited<ReturnType<typeof resolveOrga
  * (`resolveOrganiserBillingForNet`) and the quote that previews it.
  */
 export async function organiserCombinedInvoiceRefusal(db: BillingStore, booking: OrganiserPlace, netChargeCents: number): Promise<string | null> {
-  if (netChargeCents <= 0) return null;
-  return (await readOrganiserBilling(db, booking)) === "missing" ? ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE : null;
+  return combinedInvoiceRefusalFor(await readOrganiserBilling(db, booking), netChargeCents);
 }
 
-/** The save's read: the billing, or null; refuses (409) only an increase with no combined invoice. */
+/** N5: the one "an increase, and no combined invoice" rule, over one read. */
+function combinedInvoiceRefusalFor(billing: Awaited<ReturnType<typeof readOrganiserBilling>>, netChargeCents: number): string | null {
+  return netChargeCents > 0 && billing === "missing" ? ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE : null;
+}
+
+/** The save's read: the billing, or null; refuses (409) what the quote's refusal names. */
 export async function resolveOrganiserBillingForNet(db: BillingStore, booking: OrganiserPlace, netChargeCents: number) {
   const billing = await readOrganiserBilling(db, booking);
-  if (billing !== "missing") return billing;
-  if (netChargeCents > 0) throw new ApiError(ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE, 409);
-  return null;
+  const refusal = combinedInvoiceRefusalFor(billing, netChargeCents);
+  if (refusal) throw new ApiError(refusal, 409);
+  return billing === "missing" ? null : billing;
 }
 
 /** Provider contact lookup/repair; call only outside a database transaction. */
