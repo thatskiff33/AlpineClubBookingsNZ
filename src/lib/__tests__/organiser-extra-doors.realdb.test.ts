@@ -49,6 +49,7 @@ let batchService: typeof import("@/lib/booking-batch-modification-service");
 let dateService: typeof import("@/lib/booking-date-modification-service");
 let clubTimeServer: typeof import("@/lib/club-time/server");
 let guestsRoute: typeof import("@/app/api/bookings/[id]/guests/route");
+let syncCash: (typeof import("@/lib/organiser-extra-receipt"))["syncOrganiserExtraInvoiceCash"];
 const pendingXeroWork: Promise<unknown>[] = [];
 let restoreXeroQueue: (() => void) | undefined;
 
@@ -136,6 +137,7 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
       dateService = await import("@/lib/booking-date-modification-service");
       clubTimeServer = await import("@/lib/club-time/server");
       guestsRoute = await import("@/app/api/bookings/[id]/guests/route");
+      ({ syncOrganiserExtraInvoiceCash: syncCash } = await import("@/lib/organiser-extra-receipt"));
       const xeroQueue = await import("@/lib/xero-booking-edit-settlement");
       const queue = xeroQueue.queueXeroBookingEditSettlement;
       const spy = vi.spyOn(xeroQueue, "queueXeroBookingEditSettlement").mockImplementation((input) => {
@@ -223,6 +225,33 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
         ipAddress: "127.0.0.1",
       });
       await expectOrganiserBilledOnce(result);
+    });
+
+    it("a reduction nets the unpaid extra first and binds the paid part's refund to the organiser's hand-back", async () => {
+      // An earlier +$50 change with a $10 fee, invoiced to the organiser, $20 of it paid.
+      const increase = await prisma.bookingModification.create({ data: { bookingId: BOOKING_ID, memberId: OFFICER_ID, modificationType: "DATE_CHANGE",
+        previousData: {}, newData: {}, priceDiffCents: 5_000, changeFeeCents: 1_000 } });
+      await prisma.payment.update({ where: { bookingId: BOOKING_ID }, data: { changeFeeCents: 1_000 } });
+      await prisma.xeroObjectLink.create({ data: { localModel: "BookingModification", localId: increase.id, xeroObjectType: "INVOICE", xeroObjectId: `${P}-extra`,
+        role: "SUPPLEMENTARY_INVOICE", metadata: { organiserBilling: true, priceDiffCents: 5_000, changeFeeCents: 1_000 } } });
+      await syncCash({ invoiceID: `${P}-extra`, amountPaid: 20, amountDue: 40, total: 60 });
+
+      // One night ($50) comes off: $40 waives the unpaid extra, the other $10 is paid extra price refunded at 50%.
+      const result = await dateService.modifyBookingDates({
+        bookingId: BOOKING_ID,
+        actor: { id: OFFICER_ID, role: Role.ADMIN },
+        input: { checkIn: "2026-08-10", checkOut: "2026-08-11" } as never,
+        ipAddress: "127.0.0.1",
+      });
+      await drainXeroWork();
+      expect(result.refundAmountCents).toBe(500);
+      const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID } });
+      expect(task.amountCents).toBe(500);
+      const plans = (await prisma.xeroSyncOperation.findMany({ where: { localId: BOOKING_ID, queueType: "ORGANISER_EXTRA_ADJUSTMENT" } }))
+        .map((row) => ({ status: row.status, payload: row.requestPayload as { purpose: string; amountCents: number; handBackTaskId?: string } }));
+      expect(plans.filter((row) => row.payload.purpose === "waive").map((row) => [row.status, row.payload.amountCents])).toEqual([["PENDING", 4_000]]);
+      expect(plans.filter((row) => row.payload.purpose === "refund").map((row) => [row.status, row.payload.amountCents, row.payload.handBackTaskId]))
+        .toEqual([["WAITING_PAYMENT", 500, task.id]]);
     });
 
     it("guest add: an added guest bills the organiser once and asks the joiner nothing", async () => {

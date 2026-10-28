@@ -41,6 +41,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let syncCash: (typeof import("@/lib/organiser-extra-receipt"))["syncOrganiserExtraInvoiceCash"];
 let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAggregates"];
 let groupCancel: typeof import("@/lib/group-cancel");
+let bookingCancel: typeof import("@/lib/booking-cancel");
+let resolution: typeof import("@/lib/manual-refund-task-resolution");
 
 (RUN ? describe : describe.skip)("organiser extra invoices in the organiser's group cancel - real PostgreSQL", { timeout: 60_000 }, () => {
   async function cleanup() {
@@ -93,6 +95,8 @@ let groupCancel: typeof import("@/lib/group-cancel");
     ({ syncOrganiserExtraInvoiceCash: syncCash } = await import("@/lib/organiser-extra-receipt"));
     ({ reconcilePaymentAggregates: reconcile } = await import("@/lib/payment-transactions"));
     groupCancel = await import("@/lib/group-cancel");
+    bookingCancel = await import("@/lib/booking-cancel");
+    resolution = await import("@/lib/manual-refund-task-resolution");
   }, 60_000);
   beforeEach(seed, 60_000);
   afterAll(async () => { if (prisma) await cleanup(); });
@@ -119,6 +123,48 @@ let groupCancel: typeof import("@/lib/group-cancel");
       .toEqual([["WAITING_PAYMENT", 15_000, task.id], ["WAITING_PAYMENT", 500, task.id]].sort());
     // The debts carry the Xero side: no ordinary refund note beside them.
     expect(await prisma.xeroSyncOperation.count({ where: { localId: paymentId, queueType: "REFUND_CREDIT_NOTE" } })).toBe(0);
+  });
+
+  /** The officer marks the organiser's hand-back paid, through the real resolver. */
+  async function completeHandBack(task: { id: string; amountCents: number | null }) {
+    await resolution.resolveManualRefundTask({
+      taskId: task.id, resolution: "completed", note: null, actingMemberId: memberId, confirmedAmountCents: task.amountCents, direction: null, recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+  }
+
+  it("completing the group cancel's hand-back releases exactly its bound refunds", async () => {
+    await groupCancel.settleGroupBookingOnOrganiserCancel(organiserId, memberId, "127.0.0.1", CLUB_FORMAT_TEST);
+    const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: organiserId } });
+    await completeHandBack(task);
+    const debts = await plans();
+    expect(debts.filter((row) => row.payload!.purpose === "refund").map((row) => row.status)).toEqual(["PENDING", "PENDING"]);
+    expect(await prisma.xeroSyncOperation.count({ where: { localId: paymentId, queueType: "REFUND_CREDIT_NOTE" } })).toBe(0);
+  });
+
+  it("booking cancel: the joiner's own cancel reserves the debts, binds its refunds to its hand-back, and completion releases them", async () => {
+    await bookingCancel.cancelBooking(childId, memberId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+    const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: childId } });
+    // The same 50% of $320 less the $10 fee paid first, by bank transfer to the organiser.
+    expect(task.amountCents).toBe(15_500);
+    const debts = await plans();
+    expect(debts.filter((row) => row.payload!.purpose === "waive").map((row) => [row.status, row.payload!.amountCents])).toEqual([["PENDING", 4_000]]);
+    expect(debts.filter((row) => row.payload!.purpose === "refund").map((row) => [row.status, row.payload!.amountCents, row.payload!.handBackTaskId]).sort())
+      .toEqual([["WAITING_PAYMENT", 15_000, task.id], ["WAITING_PAYMENT", 500, task.id]].sort());
+    await completeHandBack(task);
+    expect((await plans()).filter((row) => row.payload!.purpose === "refund").map((row) => row.status)).toEqual(["PENDING", "PENDING"]);
+    expect(await prisma.xeroSyncOperation.count({ where: { localId: paymentId, queueType: "REFUND_CREDIT_NOTE" } })).toBe(0);
+  });
+
+  it("a completed hand-back whose child mirror names an invoice still takes no second refund note beside its released ones", async () => {
+    // A child payment that carries an invoice id (legacy data): the cancellation
+    // hand-back's own note would be queued for it, on top of the reserved ones.
+    await prisma.payment.update({ where: { id: paymentId }, data: { xeroInvoiceId: combinedInvoiceId } });
+    await bookingCancel.cancelBooking(childId, memberId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+    const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: childId } });
+    const notesBefore = await prisma.xeroSyncOperation.count({ where: { localId: paymentId, queueType: "REFUND_CREDIT_NOTE" } });
+    await completeHandBack(task);
+    expect((await plans()).filter((row) => row.payload!.purpose === "refund").map((row) => row.status)).toEqual(["PENDING", "PENDING"]);
+    expect(await prisma.xeroSyncOperation.count({ where: { localId: paymentId, queueType: "REFUND_CREDIT_NOTE" } })).toBe(notesBefore);
   });
 
   it("N-e: a plan frozen without the debts by an earlier run is finished the old way - one refund note, no debts", async () => {
