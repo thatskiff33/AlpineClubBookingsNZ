@@ -360,4 +360,17 @@ Note that branch protection still has `enforce_admins` off, so an admin merge ca
 
 ## Historical Migrations
 
-The April 2026 migration history contains single-step destructive changes that predate this policy. Those files are not edited retroactively because Prisma records migration checksums after deployment. If any environment still has one of those migrations pending, do not run it through the normal blue/green path; treat it as a bootstrap or maintenance migration with an explicit operator plan.
+Committed migrations are never edited once applied. Measured on Prisma 7.10.1,
+an applied migration's checksum mismatch goes unnoticed by production deploys:
+`prisma migrate deploy` exits 0 with "No pending migrations to apply", and
+`prisma migrate status` reports "Database schema is up to date!". Every
+development database that applied it is affected: `prisma migrate dev` says it
+"was modified after it was applied" and offers a destructive schema reset,
+losing all data. Editing also breaks the audit trail because the file no longer
+records what actually ran. Correct an applied migration with a new migration.
+
+The April 2026 migration history contains single-step destructive changes that
+predate this policy. Those files remain unchanged under the same rule. If any
+environment still has one of those migrations pending, do not run it through
+the normal blue/green path; treat it as a bootstrap or maintenance migration
+with an explicit operator plan.

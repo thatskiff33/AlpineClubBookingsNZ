@@ -505,16 +505,15 @@ rules first written here. #2765 extended it with the measured-audience half.
   the #2751 backfill's literal action list and the writers pinned in
   `REVIEWED_ADMIN_CATEGORIES_2730` stop naming the same events in either
   direction, so adding a 23rd bed-allocation writer without covering its rows
-  fails CI by name. **The remedy for that failure is a NEW backfill migration, or
-  a filed issue — not an edit to the #2751 one**, because
-  `docs/BLUE_GREEN_MIGRATION_POLICY.md` binds committed migrations never to be
-  edited retroactively: Prisma records a checksum per applied migration, so
-  editing one breaks `prisma migrate deploy` on every fork that already ran it.
-  Extending the existing literal list is correct only while that migration is
-  still unreleased and unapplied anywhere. A GENERAL "did a reclassification ship
-  without a
-  backfill" check is **not available**, and pretending otherwise would be worse
-  than having none: the audit-writer census pins only 130 of its 523 write sites
+  fails CI by name. **The remedy is a NEW backfill migration or a filed issue,
+  not an edit to #2751**: [migration policy](../BLUE_GREEN_MIGRATION_POLICY.md)
+  forbids editing committed migrations once applied. Measured on Prisma 7.10.1,
+  `prisma migrate deploy` ignores checksum mismatches; `prisma migrate dev`
+  demands a destructive reset on every development database that applied it.
+  Editing also breaks the audit trail: the file no longer records what ran.
+  Extend the literal list only while unreleased and unapplied anywhere.
+  A GENERAL "did a reclassification ship without a backfill" check is
+  **not available**: the audit-writer census pins only 130 of its 523 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
