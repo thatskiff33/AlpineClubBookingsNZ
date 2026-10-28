@@ -2,6 +2,7 @@ import { EMAIL_FROM } from "../email-sender";
 import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -43,6 +44,10 @@ import {
 } from "@/lib/email-theme";
 
 export type EmailSendOutcome =
+  // A durable event already has a log row; FAILED rows remain owned by the
+  // retry worker. This says recorded, not delivered.
+  | { status: "already_recorded"; emailLogId: string }
+  | { status: "queued"; emailLogId: string }
   | {
       status: "sent";
       emailLogId: string | null;
@@ -239,6 +244,8 @@ export async function sendEmail({
   logRecipient,
   lodgeId,
   bookingContext,
+  idempotencyKey,
+  deferDelivery,
 }: {
   to: string;
   subject: string;
@@ -257,7 +264,13 @@ export async function sendEmail({
   // message that passes `"none"` escapes the per-booking "No emails" switch, so
   // thread the real id wherever one exists.
   bookingContext: EmailBookingContext;
-}): Promise<EmailSendOutcome> {
+} & (
+  // Stable business-event identity makes logging mandatory before delivery;
+  // the EmailLog primary key serializes concurrent re-drives. Deferred mail
+  // is sent exclusively by the retry worker and must carry such an identity.
+  | { deferDelivery: true; idempotencyKey: string }
+  | { deferDelivery?: false; idempotencyKey?: string }
+)): Promise<EmailSendOutcome> {
   // Backstop for the render gate (#2900). Callers build `html` inside
   // `renderEmailHtml()`, so the palette is normally loaded before this line —
   // this await then costs nothing. It still matters for the renders that happen
@@ -320,6 +333,9 @@ export async function sendEmail({
   const recipientRedactedInLogs = emailLogRecipient !== to;
   const persistHtmlBody =
     !recipientRedactedInLogs && shouldPersistEmailHtml(templateName);
+  if (deferDelivery && (!idempotencyKey || !persistHtmlBody || attachments?.length)) {
+    throw new Error("Deferred email requires an event key, retained retry-safe HTML and no attachments");
+  }
   const sanitizedSubject = sanitizeEmailSubject(prepared.subject);
 
   assertNoCrlf(from, "from");
@@ -327,11 +343,15 @@ export async function sendEmail({
   assertNoCrlf(normalizedRecipient, "to");
   assertNoCrlf(emailLogRecipient, "logRecipient");
 
-  // Create EmailLog record (fire-and-forget logging won't break email delivery)
+  // Logging is best effort unless this event opts into durable idempotency.
   let emailLogId: string | null = null;
+  const durableLogId = idempotencyKey
+    ? `email:${templateName}:${idempotencyKey}`
+    : null;
   try {
     const log = await prisma.emailLog.create({
       data: {
+        ...(durableLogId ? { id: durableLogId } : {}),
         to: emailLogRecipient,
         subject: sanitizedSubject,
         templateName,
@@ -341,7 +361,11 @@ export async function sendEmail({
         // initial send. Sensitive templates remain unretained in both fields.
         htmlBody:
           bookingContext === "none" && persistHtmlBody ? prepared.html : null,
-        status: "QUEUED",
+        // Deferred durable notices are owned exclusively by the retry worker.
+        // FAILED makes an interrupted enqueue recoverable by its existing
+        // 15-minute backoff; no synchronous SMTP send can race that worker.
+        status: deferDelivery ? "FAILED" : "QUEUED",
+        ...(deferDelivery ? { errorMessage: "Delivery pending; queued for the email retry worker" } : {}),
         lastAttemptAt: new Date(),
         // #2258: booking attribution on every booking-scoped message, not just
         // withheld ones — the retry cron re-evaluates the switch from this
@@ -366,6 +390,21 @@ export async function sendEmail({
     });
     emailLogId = log.id;
   } catch (err) {
+    if (durableLogId) {
+      // A P2002 on some other constraint is not evidence this notice exists.
+      if (isPrismaUniqueConstraintError(err)) {
+        const existing = await prisma.emailLog.findUnique({
+          where: { id: durableLogId },
+          select: { id: true },
+        });
+        if (existing) {
+          return { status: "already_recorded", emailLogId: existing.id };
+        }
+      }
+      // The caller must retry the business operation if no durable notice was
+      // recorded. Sending here would make the next re-drive send it again.
+      throw err;
+    }
     logger.error({ err }, "Failed to create EmailLog record");
   }
 
@@ -511,6 +550,10 @@ export async function sendEmail({
       emailLogId,
       reason: environmentGate.reason,
     };
+  }
+
+  if (deferDelivery && emailLogId) {
+    return { status: "queued", emailLogId };
   }
 
   if (process.env.NODE_ENV === "development") {
