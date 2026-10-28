@@ -55,7 +55,7 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
-import { resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import {
   OrganiserChildRefundRefusedError,
@@ -107,6 +107,12 @@ export type PaymentAdjustmentResult = {
   foldedReissuedAsks: FoldedReissuedAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
+  /**
+   * #4299 (`INV-PAY-147`): the increase invoiced to the group organiser of an
+   * internet-banking group place; 0 otherwise. The joiner is asked for none of
+   * it (`additionalAmountCents` excludes it), and the emails say who was billed.
+   */
+  billedToOrganiserCents: number;
 } & UnpaidAskSettlement; // #3954: what the reduction did to the unpaid ask
 
 /**
@@ -204,7 +210,6 @@ export async function applyPaymentAdjustments(
 ): Promise<PaymentAdjustmentResult> {
   // #3949 review round 5: the one place a price change is refused mid group cancel (every door settles through here).
   await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents });
-  const organiserBilling = await resolveOrganiserBilling(tx, booking);
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
@@ -212,6 +217,8 @@ export async function applyPaymentAdjustments(
   assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
   assertOptionsSizedAfterUnpaidAsk(settlementOptions, reduction, booking.id, format);
   const netAmountCents = reduction.netChargeLeftCents;
+  // #4299 (N-a): only an increase needs the combined invoice, to bill the organiser.
+  const organiserBilling = await resolveOrganiserBillingForNet(tx, booking, netAmountCents);
   // #3502 (owner, 6 Oct 2026): a credit- or promo-paid ($0) booking's INCREASE is
   // asked by card, as a card-paid one's; every REDUCTION reads `hasSettledPayment`.
   const zeroDollarCardIncrease =
@@ -262,6 +269,9 @@ export async function applyPaymentAdjustments(
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
+  // #4299 (`INV-PAY-147`): the organiser is invoiced for the increase, so the
+  // joiner is asked for nothing; the emails and responses say who was billed.
+  const billedToOrganiserCents = organiserBilling ? xeroAdditionalAmountCents : 0;
 
   let refundAmountCents = 0;
   let accountCreditAmountCents = 0;
@@ -354,14 +364,14 @@ export async function applyPaymentAdjustments(
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else {
-        additionalAmountCents = xeroAdditionalAmountCents;
+        additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
       }
     }
 
     // #3954 x #3750: once - a caller that records it on the amount owed did.
     if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
-    additionalAmountCents = xeroAdditionalAmountCents;
+    additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
 
   if (reduction.organiserExtras) {
@@ -406,6 +416,7 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     foldedReissuedAsks,
     settledAgainstPrimaryInvoice,
+    billedToOrganiserCents,
     ...unpaidAskSettlement,
   };
 }

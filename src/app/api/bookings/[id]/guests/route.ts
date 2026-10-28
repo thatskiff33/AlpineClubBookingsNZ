@@ -75,7 +75,7 @@ import {
 } from "@/lib/additional-payment-ask";
 import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
 import { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
-import { resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { primaryInvoiceSettlementHistory, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import { additionalAmountToName, createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
@@ -969,8 +969,10 @@ export async function POST(
        * `applyPaymentAdjustments`; this door used to hold its own copy of it.
        */
       const hasSucceededPayment = canAskCardForIncrease(booking);
-      const organiserBilling = await resolveOrganiserBilling(tx, booking);
+      const organiserBilling = await resolveOrganiserBillingForNet(tx, booking, priceDiffCents); // #4299 N-a: refuses only an increase
       const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
+      // #4299 (`INV-PAY-147`): an organiser-paid bank place's add is invoiced to the organiser, never asked of the joiner.
+      const billedToOrganiserCents = organiserBilling && priceDiffCents > 0 ? priceDiffCents : 0;
 
       /**
        * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
@@ -1019,7 +1021,7 @@ export async function POST(
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
-        additionalAmountCents = priceDiffCents;
+        additionalAmountCents = priceDiffCents - billedToOrganiserCents;
       }
 
       // #3980 (`INV-PAY-136`): this door settles for itself, so it makes the edits'
@@ -1195,6 +1197,7 @@ export async function POST(
         addedGuests: createdGuests,
         priceDiffCents,
         additionalAmountCents,
+        billedToOrganiserCents,
         additionalAsk,
         // An add never lowers the price (#3954 retires asks only on a reduction).
         retiredAdditionalAsks: [],
@@ -1407,6 +1410,7 @@ export async function POST(
         refundByBankTransfer: null,
         appliedCreditGivenBackCents: 0,
         additionalAmountCents: namedAdditionalCents,
+        billedToOrganiserCents: result.billedToOrganiserCents, // #4299
         // A guest add only raises a price.
         unpaidAskCancelled: false,
         additionalPaymentMethod:
@@ -1434,6 +1438,7 @@ export async function POST(
       addedGuests: result.addedGuests,
       priceDiffCents: result.priceDiffCents,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents, // #4299: the organiser was invoiced, not this member
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
       promoRemoved: result.promoRemoved,
       // #2390: who the promotion still covers, and who it does not. Null unless

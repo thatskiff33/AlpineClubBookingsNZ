@@ -129,6 +129,8 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-147`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   /**
    * #3371: the minter's own value, carrying what minting it would absorb. The
    * plain figure above is what the emails and the response body read; the two
@@ -1092,6 +1094,7 @@ export async function removeBookingGuestInTransaction({
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
+    billedToOrganiserCents: paymentImpact.billedToOrganiserCents,
     additionalAsk: paymentImpact.additionalAsk,
     retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
     unpaidAskCancelled: paymentImpact.unpaidAskCancelled,

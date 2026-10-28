@@ -14,6 +14,7 @@ import {
 import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
+import { ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE, organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
@@ -315,7 +316,9 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
       changeFeeCents: 0,
     });
     expect(ib.additionalAsk.amountCents).toBe(0);
-    expect(ib.additionalAmountCents).toBe(1000);
+    // #4299 (F1): billed to the organiser, so nothing is asked of the joiner.
+    expect(ib.additionalAmountCents).toBe(0);
+    expect(ib.billedToOrganiserCents).toBe(1000);
     expect(ib.settledAgainstPrimaryInvoice).toBe(false);
   });
 
@@ -342,7 +345,23 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     ).toBeNull();
     // The quote route answers with the SAME predicate the save refuses on.
     const quote = readFileSync(resolve(REPO_ROOT, "src/app/api/bookings/[id]/modify-quote/route.ts"), "utf8");
-    expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }),");
+    expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }) ?? await organiserCombinedInvoiceRefusal(prisma, booking, netChargeCents),");
+  });
+
+  it("#4299 N-a: the quote and the save refuse only an INCREASE on a bank place whose combined invoice is missing", async () => {
+    const missing = { groupBooking: { findUnique: vi.fn(async () => null) } } as never;
+    expect(await organiserCombinedInvoiceRefusal(missing, ibChild(), 1000)).toBe(ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE);
+    expect(await organiserCombinedInvoiceRefusal(missing, ibChild(), 0)).toBeNull();
+    expect(await organiserCombinedInvoiceRefusal(missing, ibChild(), -1500)).toBeNull();
+    expect(await organiserCombinedInvoiceRefusal(missing, child(), 1000)).toBeNull();
+    // The save: a reduction and a no-price change still save, with no organiser billing.
+    for (const net of [-1500, 0]) {
+      const tx = txWithSettlement(null);
+      vi.mocked(tx.groupBooking.findUnique).mockResolvedValue(null);
+      const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(net), ...SETTLEMENT_DAY, booking: ibChild(), priceDiffCents: net, changeFeeCents: 0,
+        ...(net < 0 ? { settlementOptions: { ...ORGANISER_OPTIONS, organiserRefundByBankTransfer: true } } : {}) });
+      expect(result, String(net)).toMatchObject({ billedToOrganiserCents: 0, additionalAmountCents: 0 });
+    }
   });
 
   it("#3949 review round 6: the quote shows the mid-group-cancel refusal the save would meet, from the save's own answer", async () => {

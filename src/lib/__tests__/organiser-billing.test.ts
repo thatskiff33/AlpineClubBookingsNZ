@@ -30,6 +30,8 @@ describe("organiser billing identity", () => {
     expect(billing).toEqual({ settlementId: "settlement", combinedInvoiceId: "combined", organiserBookingId: child.parentBookingId,
       organiserMemberId: "organiser", organiser, placeBookingId: "place" });
     expect(group).toHaveBeenCalledWith(expect.objectContaining({ where: { organiserBookingId: "organiser-booking" } }));
+    // Never the whole Member row: it holds the password hash and TOTP secret.
+    expect(group.mock.calls[0]?.[0].select.organiserMember).toEqual({ select: { id: true, firstName: true, lastName: true, email: true } });
     expect(contact).not.toHaveBeenCalled();
     expect(await resolveOrganiserXeroContact(billing!, { repairExistingLink: true })).toBe("organiser-contact");
     expect(contact).toHaveBeenCalledWith("organiser", { repairExistingLink: true });

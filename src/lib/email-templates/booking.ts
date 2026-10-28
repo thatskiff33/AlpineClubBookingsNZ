@@ -31,6 +31,7 @@ import {
   type BookingModifiedRefundDestination,
   bookingModifiedRefundPending,
   bookingModifiedRefundSentence,
+  organiserBilledSentence,
 } from "@/lib/booking-modified-email-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
@@ -454,6 +455,7 @@ export function bookingModifiedTemplate(params: {
   /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  billedToOrganiserCents?: number; // #4299: invoiced to the group organiser instead (see `sendBookingModifiedEmail`)
   unpaidAskCancelled: boolean; // #3954: the drop cancelled the unpaid additional payment; required, like financialReviewPending
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
@@ -609,6 +611,8 @@ export function bookingModifiedTemplate(params: {
         "warning"
       );
     }
+  } else if ((params.billedToOrganiserCents ?? 0) > 0) {
+    settlementNote = alertBox(organiserBilledSentence(formatCents(params.billedToOrganiserCents!, format)), "info");
   }
 
   // #3809: beside the settlement note (both apply to card plus credit).

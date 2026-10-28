@@ -209,6 +209,7 @@ type BatchModificationTransactionResult =
      * consumers want a number and the minter must not be handed one.
      */
     additionalAmountCents: number;
+    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
     booking: ModifiedBooking;
     /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
     pendingHostingReconcile?: () => Promise<void>;
@@ -320,6 +321,8 @@ export type BatchModificationResponse = {
   /** #3809: applied credit the reduction gave back, as account credit. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-147`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   /**
    * Whether this edit's settlement needs a card-or-credit choice at all (#3232).
@@ -2172,6 +2175,7 @@ export async function modifyBookingBatch({
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
+      billedToOrganiserCents: payments.billedToOrganiserCents,
       // #3371: the minter's own parameter, carried rather than re-derived. The
       // plain figure above is the emails' and the Xero leg's; they are not
       // interchangeable.
@@ -2420,6 +2424,7 @@ export async function modifyBookingBatch({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
@@ -2465,6 +2470,7 @@ export async function modifyBookingBatch({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: null,
@@ -2715,6 +2721,7 @@ async function dispatchBatchPostTransactionSideEffects({
     accountCreditAmountCents: result.accountCreditAmountCents,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     additionalAmountCents: namedAdditionalCents,
+    billedToOrganiserCents: result.billedToOrganiserCents, // #4299
     unpaidAskCancelled: result.unpaidAskCancelled,
     additionalPaymentMethod:
       namedAdditionalCents > 0 &&

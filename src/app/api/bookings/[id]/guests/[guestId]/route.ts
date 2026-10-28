@@ -378,6 +378,7 @@ export async function DELETE(
         // price change still shows via old/new total. #3954 round 9: nor is an
         // ask a reduction retired before it was offered named as due.
         additionalAmountCents: namedAdditionalCents,
+        billedToOrganiserCents: result.billedToOrganiserCents, // #4299
         additionalPaymentMethod:
           namedAdditionalCents > 0 && additionalPaymentIntentId
             ? "STRIPE"
@@ -417,6 +418,7 @@ export async function DELETE(
       policyRetainedAmountCents: result.policyRetainedAmountCents,
       stripeRefundId: refund.stripeRefundId ?? null,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents, // #4299: the organiser was invoiced, not this member
       // The payer is the booking owner. Hand the client secret only to them
       // (or an admin acting on their behalf); a linked guest self-removing
       // must not receive a secret for someone else's payment — the owner

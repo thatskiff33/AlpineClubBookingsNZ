@@ -67,6 +67,16 @@ export function organiserByHandRefundSentence(amount: string): string {
 }
 
 /**
+ * #4299 (`INV-PAY-147`): an increase on a place the group organiser paid for by
+ * Internet Banking is invoiced to the ORGANISER, so the joiner is told there is
+ * nothing for them to pay. ONE wording for the "Booking Modified" HTML email and
+ * its admin-editable body.
+ */
+export function organiserBilledSentence(amount: string): string {
+  return `The extra ${amount} for this change has been invoiced to the group organiser, because the group organiser paid for this booking. There is nothing for you to pay.`;
+}
+
+/**
  * #3973: a refund on a joiner's booking that goes to the group ORGANISER, not
  * the joiner. Paid by card, to the organiser's card (#3653): made
  * (`organiser_card`), still on its way (`organiser_card_pending`), or carried by

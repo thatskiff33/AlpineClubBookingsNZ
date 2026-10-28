@@ -492,3 +492,30 @@ describe("#3954: a cancelled unpaid additional payment is named in the Booking M
     expect(await paymentNoteFromSender({ additionalAmountCents: 3000 })).not.toContain(SENTENCE);
   });
 });
+
+/*
+  #4299 (`INV-PAY-147`, F1): an increase on a place the group organiser paid for
+  by Internet Banking is invoiced to the organiser. The joiner's email names no
+  payment to make, and says who was invoiced, in both the HTML and flat body.
+*/
+describe("#4299: an increase invoiced to the group organiser asks the joiner for nothing", () => {
+  const SENTENCE = "The extra $60.00 for this change has been invoiced to the group organiser, because the group organiser paid for this booking. There is nothing for you to pay.";
+
+  it("MUTATION: the HTML email and the flat body both say the organiser was invoiced", async () => {
+    const html = bookingModifiedTemplate(params({ billedToOrganiserCents: 6000 }), CLUB_FORMAT_TEST);
+    expect(html).toContain(SENTENCE);
+    expect(html).not.toContain("additional");
+    expect(await paymentNoteFromSender({ billedToOrganiserCents: 6000 })).toBe(SENTENCE);
+  });
+
+  it("says nothing of it when no organiser was invoiced", async () => {
+    expect(bookingModifiedTemplate(params(), CLUB_FORMAT_TEST)).not.toContain("invoiced to the group organiser");
+    expect(await paymentNoteFromSender({ billedToOrganiserCents: 0 })).toBe("");
+  });
+
+  it("the three edit doors pass the transaction's organiser-billed figure to the email", () => {
+    for (const file of ["src/lib/booking-date-modification-service.ts", "src/lib/booking-batch-modification-service.ts", "src/app/api/bookings/[id]/guests/route.ts"]) {
+      expect(readFileSync(resolve(__dirname, "../../..", file), "utf8"), file).toContain("billedToOrganiserCents: result.billedToOrganiserCents, // #4299");
+    }
+  });
+});
