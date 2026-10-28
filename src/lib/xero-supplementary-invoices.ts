@@ -16,7 +16,7 @@ import {
 import { prisma } from "./prisma";
 import { resolveOrganiserBilling, resolveOrganiserXeroContact } from "@/lib/organiser-billing";
 import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
-import { readOrganiserExtraState } from "@/lib/organiser-extra-state";
+import { ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, organiserExtraWaivedBeforeRaised, readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -388,6 +388,27 @@ export async function createXeroSupplementaryInvoice(params: {
     });
     operationId = operation.id;
     operationClaim = operation;
+  }
+
+  // #4299 S1 (`INV-PAY-147`): a waiver may have retired this organiser extra
+  // whole before it was raised - after this row was queued, or before an
+  // officer's retry or requeue minted it. Asked under the change's anchor lock
+  // (the key the waiver's enqueue refusal reads under), immediately before the
+  // Xero call; such a row is closed SKIPPED with the waiver's code and raises nothing.
+  if (organiserBilling && localModel === "BookingModification") {
+    const claim = operationClaim!;
+    const waived = await prisma.$transaction(async (tx) => {
+      const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+      await lockSupplementaryInvoiceAnchor(tx, localId);
+      if (!(await organiserExtraWaivedBeforeRaised(tx, localId))) return false;
+      await tx.xeroSyncOperation.updateMany({
+        where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
+        data: { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, completedAt: new Date(),
+          lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
+      });
+      return true;
+    });
+    if (waived) return null;
   }
 
   let createdInvoiceId: string;

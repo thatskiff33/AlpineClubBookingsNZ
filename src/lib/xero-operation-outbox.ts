@@ -1,5 +1,6 @@
 import { resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { organiserExtraWaivedBeforeRaised } from "@/lib/organiser-extra-state";
 import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
 import { XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 import { PaymentSource, Prisma } from "@prisma/client";
@@ -1700,6 +1701,10 @@ async function enqueueSupplementaryInvoiceForAnchor(
     // #4324 (4384-R2, `INV-PAY-144`): a gap invoice bills every anchor its amount covers, so it takes each one's key, sorted (the one order), before asking whether a kept capture's own invoice bills any of them.
     const billedChangeIds = [...new Set([localId, ...(options?.primaryInvoiceGap?.billedChangeIds ?? [])])].sort();
     for (const anchorId of billedChangeIds) await lockSupplementaryInvoiceAnchor(tx, anchorId);
+    // #4299 S1 (`INV-PAY-147`): a waiver retired this organiser extra whole before it was raised; nothing is owed, so no row raises it.
+    if (organiserBilling && localModel === "BookingModification" && (await organiserExtraWaivedBeforeRaised(tx, localId))) {
+      return { queueOperationId: null, outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome, refusedBy: "organiser-extra-waived" as const, message: "This organiser extra was waived whole before it was raised, so no invoice is queued." };
+    }
 
     const existingLink = await tx.xeroObjectLink.findFirst({
       where: {

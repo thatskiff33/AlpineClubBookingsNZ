@@ -26,10 +26,20 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskFindUnique: vi.fn(),
   readStripeCaptureDocumentDate: vi.fn(),
   queueWaitingPaidAnotherWayNote: vi.fn(),
+  // #4299 S1: the anchor-locked check just before the Xero call.
+  lockAnchor: vi.fn(),
+  xeroSyncOperationFindFirst: vi.fn(),
+  xeroSyncOperationUpdateMany: vi.fn(),
 }));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #4299 S1: the organiser create's short anchor-locked transaction.
+    $transaction: async (run: (tx: unknown) => unknown) => run({
+      xeroSyncOperation: { findFirst: mocks.xeroSyncOperationFindFirst, updateMany: mocks.xeroSyncOperationUpdateMany },
+    }),
     booking: {
       findUnique: mocks.bookingFindUnique,
       findUniqueOrThrow: mocks.bookingFindUniqueOrThrow,
@@ -1029,6 +1039,7 @@ describe("organiser-paid bank group supplementary invoice (#4299)", () => {
     mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
     mocks.sendOrganiserEmail.mockResolvedValue({ status: "sent" });
     mocks.bookingModificationFindMany.mockResolvedValue([{ id: "change", priceDiffCents: 5000, changeFeeCents: 1000 }]);
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue(null);
     waivers([]);
   });
   /** The invoice debts a cancel or reduction reserved while this invoice was queued. */
@@ -1066,6 +1077,26 @@ describe("organiser-paid bank group supplementary invoice (#4299)", () => {
     expect(await create()).toBe("extra");
     expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+  });
+  it("S1: a retry or re-enqueue after a waiver retired the extra whole is refused under the anchor lock, before createInvoices", async () => {
+    const startedAt = new Date("2026-07-01T00:00:00.000Z");
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "retry-row", startedAt });
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue({ id: "skipped-original" });
+    expect(await create()).toBeNull();
+    expect(mocks.lockAnchor).toHaveBeenCalledWith(expect.anything(), "change");
+    expect(mocks.xeroSyncOperationFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      localModel: "BookingModification", localId: "change", status: "SKIPPED", lastErrorCode: "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" }) }));
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
+    // Its own row is closed with the waiver's code, so the state reads the extra waived, not owed.
+    expect(mocks.xeroSyncOperationUpdateMany).toHaveBeenCalledWith({ where: { id: "retry-row", status: "RUNNING", startedAt },
+      data: expect.objectContaining({ status: "SKIPPED", lastErrorCode: "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" }) });
+  });
+  it("S1: with no waiver on the change the anchor check passes and the invoice is raised", async () => {
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue(null);
+    expect(await create()).toBe("extra");
+    expect(mocks.lockAnchor).toHaveBeenCalledOnce();
+    expect(mocks.xeroSyncOperationUpdateMany).not.toHaveBeenCalled();
   });
   it("refuses a missing combined record before contacting Xero", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({ settlement: { source: "INTERNET_BANKING", xeroInvoiceId: null } });

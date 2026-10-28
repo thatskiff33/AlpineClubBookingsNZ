@@ -3973,7 +3973,9 @@ edit does not. It names only what is owed after reserved waivers, and is not
 sent when nothing is.
 
 Reductions take unpaid extras first, fee included, at no policy percentage. A
-still-queued invoice waived whole is never raised. An invoice with no payment or
+never-attempted queued invoice waived whole is never raised: the enqueue and
+the create refuse its change under the anchor key. A `FAILED` one keeps the
+reserved waiver. An invoice with no payment or
 credit (`classifyGroupSettlementInvoiceState`) is voided when fully released;
 otherwise the release is credited. Cash pays the fee first; only paid price
 joins the refundable share, at the policy percentage, and cash racing a waiver

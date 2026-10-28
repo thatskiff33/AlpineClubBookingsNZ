@@ -9,6 +9,23 @@ export const ORGANISER_SHARE_RECEIPT_REASON = "organiser-combined-invoice-share"
 export const ORGANISER_EXTRA_RECEIPT_REASON = "organiser-extra-invoice-cash";
 /** F4: the code on a queued extra invoice a waiver retired whole before it was raised. */
 export const ORGANISER_EXTRA_WAIVED_UNRAISED_CODE = "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED";
+/**
+ * S1 (b): whether a waiver retired this change's queued extra invoice whole
+ * before it was raised. Asked under the change's supplementary-anchor lock by
+ * the enqueue and by the create just before its Xero call, so no later row -
+ * an edit's after-commit re-enqueue or an officer's retry - raises it.
+ */
+export async function organiserExtraWaivedBeforeRaised(db: Pick<Prisma.TransactionClient, "xeroSyncOperation">, bookingModificationId: string): Promise<boolean> {
+  const row = await db.xeroSyncOperation.findFirst({
+    where: { localModel: "BookingModification", localId: bookingModificationId, queueType: "SUPPLEMENTARY_INVOICE", status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE },
+    select: { id: true },
+  });
+  return row !== null;
+}
+/** S1 (c): the one row a change's extra is read from - a linked or authorised row first, then oldest. */
+function extraInvoiceRowRank(row: { status: string; xeroObjectId: string | null }): number {
+  return row.xeroObjectId !== null || row.status === "SUCCEEDED" || row.status === "PARTIAL" ? 0 : 1;
+}
 export type OrganiserExtraInvoice = {
   modificationId: string;
   invoiceId: string | null;
@@ -47,7 +64,8 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
     db.xeroSyncOperation.findMany({
       where: { localModel: "BookingModification", localId: { in: ids }, queueType: "SUPPLEMENTARY_INVOICE",
         OR: [{ status: { notIn: ["SKIPPED", "RESOLVED"] } }, { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE }] },
-      select: { localId: true, requestPayload: true, status: true },
+      select: { id: true, localId: true, requestPayload: true, status: true, xeroObjectId: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
     db.paymentTransaction.findMany({ where: { payment: { bookingId }, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, select: { xeroInvoiceId: true, amountCents: true } }),
     db.xeroSyncOperation.findMany({ where: { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, localId: bookingId }, select: { requestPayload: true } }),
@@ -56,7 +74,7 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
   for (const modification of modifications) {
     if (modification.priceDiffCents + modification.changeFeeCents <= 0) continue;
     const link = links.find((l) => l.localId === modification.id);
-    const queued = issuedOrQueued.find((op) => op.localId === modification.id);
+    const queued = issuedOrQueued.filter((op) => op.localId === modification.id).sort((a, b) => extraInvoiceRowRank(a) - extraInvoiceRowRank(b))[0];
     if (!link && !queued) continue;
     const metadata = asRecord(link?.metadata);
     const payload = asRecord(queued?.requestPayload);

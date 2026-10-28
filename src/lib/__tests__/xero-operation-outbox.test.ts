@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   executeOrganiserExtraAdjustment: vi.fn(),
+  findUniqueGroupBooking: vi.fn(),
   readPaidAnotherWayCloseShare: vi.fn(),
   createAuditLog: vi.fn(),
   findFirstLink: vi.fn(),
@@ -112,6 +113,8 @@ vi.mock("@/lib/prisma", () => {
     groupBookingSettlement: {
       findUnique: mocks.findUniqueGroupSettlement,
     },
+    // #4299: an organiser-paid place's combined invoice (none unless a case says so).
+    groupBooking: { findUnique: mocks.findUniqueGroupBooking },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
     },
@@ -886,6 +889,22 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
     expect(locks).toEqual([expect.stringContaining("mod_a_second"), expect.stringContaining("mod_b_first")]);
     expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(mocks.keptInvoiceBillsChangeCapture.mock.invocationCallOrder[0]!);
     mocks.keptInvoiceBillsChangeCapture.mockReset();
+  });
+
+  it("#4299 S1: refuses, under the anchor lock, an organiser extra a waiver retired whole before it was raised", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({ id: "booking_1", organiserSettled: true, parentBookingId: "organiser_booking", payment: { xeroInvoiceId: null, source: "INTERNET_BANKING" } });
+    mocks.findUniqueGroupBooking.mockResolvedValue({ organiserBookingId: "organiser_booking", organiserMemberId: "organiser", organiserMember: null,
+      settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+    mocks.findFirstOperation.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.status === "SKIPPED" && where.lastErrorCode === "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" && where.localId === "mod_1" ? { id: "op_skipped" } : null);
+    mocks.executeRaw.mockClear();
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({ bookingId: "booking_1", priceDiffCents: 5000, changeFeeCents: 1000, bookingModificationId: "mod_1" }, { recordPayment: false }),
+    ).resolves.toMatchObject({ queueOperationId: null, outcome: "none", refusedBy: "organiser-extra-waived" });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.findFirstOperation.mock.invocationCallOrder[0]!);
+    mocks.findFirstOperation.mockReset();
+    mocks.findUniqueGroupBooking.mockReset();
   });
 
   it("4384-R2 control: an ordinary change invoice takes its own key alone", async () => {

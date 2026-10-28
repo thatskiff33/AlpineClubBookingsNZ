@@ -83,13 +83,14 @@ describe("organiser extra adjustment queue payload", () => {
 
 describe("F4: a waiver of a still-queued extra invoice", () => {
   /** A queued (never raised) invoice: no Xero id, no cash, one operation in `status`. */
-  function store(status: string) {
-    const operation = { status, xeroObjectId: null as string | null };
+  function store(status: string, startedAt: Date | null = null) {
+    const operation = { status, startedAt, xeroObjectId: null as string | null };
     const tx = {
       xeroSyncOperation: {
         findFirst: vi.fn(async () => null),
-        updateMany: vi.fn(async ({ where, data }: { where: { status: { in: string[] }; xeroObjectId: null }; data: { status: string } }) => {
+        updateMany: vi.fn(async ({ where, data }: { where: { status: { in: string[] }; startedAt: null; xeroObjectId: null }; data: { status: string } }) => {
           if (!where.status.in.includes(operation.status) || operation.xeroObjectId !== null) return { count: 0 };
+          if (where.startedAt !== null || operation.startedAt !== null) return { count: 0 };
           operation.status = data.status;
           return { count: 1 };
         }),
@@ -101,12 +102,22 @@ describe("F4: a waiver of a still-queued extra invoice", () => {
   const queued = state(invoice({ invoiceId: null, cashCents: 0 }));
   const cancel = { scopeId: "cancel", reductionCents: 0, refundAmountCents: 0, refundBasisCents: 0, refundPercentage: 50, cancel: true };
 
-  it.each(["PENDING", "WAITING_PAYMENT", "FAILED"])("covered in full: the %s invoice is SKIPPED and no waiver is reserved, so the organiser is never emailed", async (status) => {
+  it.each(["PENDING", "WAITING_PAYMENT"])("covered in full: the never-attempted %s invoice is SKIPPED and no waiver is reserved, so the organiser is never emailed", async (status) => {
     start.mockClear();
     const { tx, operation } = store(status);
     await reserveOrganiserExtraNetting(tx, { ...cancel, state: queued });
     expect(operation.status).toBe("SKIPPED");
     expect(start).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["FAILED", null],
+    ["PENDING", new Date("2026-07-01T00:00:00.000Z")],
+  ] as const)("S1: an attempted %s invoice (startedAt %s) may exist in Xero, so it is kept and the waiver is reserved", async (status, startedAt) => {
+    start.mockClear();
+    const { tx, operation } = store(status, startedAt);
+    await reserveOrganiserExtraNetting(tx, { ...cancel, state: queued });
+    expect(operation.status).toBe(status);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", amountCents: 6_000 }) }));
   });
   it("a create already under way keeps its invoice, and the waiver is reserved to void it", async () => {
     start.mockClear();
@@ -142,5 +153,24 @@ describe("F4: an extra invoice a waiver retired before it was raised", () => {
     expect(effectiveOrganiserPaidChangeFeeCents(1_000, state)).toBe(0);
     // A later reduction finds nothing left to waive on it.
     expect(planOrganiserExtraNetting(state, { reductionCents: 3_000, refundAmountCents: 0, refundBasisCents: 0 }).waivers).toEqual([]);
+  });
+
+  it("S1 (c): reads one row deterministically - oldest first, an authorised row before a skipped one", async () => {
+    const rows = [
+      { id: "a-skipped", localId: "increase", requestPayload: { priceDiffCents: 5_000, changeFeeCents: 1_000 }, status: "SKIPPED", xeroObjectId: null },
+      { id: "b-raised", localId: "increase", requestPayload: { priceDiffCents: 5_000, changeFeeCents: 1_000 }, status: "SUCCEEDED", xeroObjectId: null },
+    ];
+    const findMany = vi.fn(async ({ where }: { where: { queueType: string } }) => (where.queueType === "SUPPLEMENTARY_INVOICE" ? rows : []));
+    const db = {
+      bookingModification: { findMany: vi.fn(async () => [{ id: "increase", priceDiffCents: 5_000, changeFeeCents: 1_000 }]) },
+      xeroObjectLink: { findMany: vi.fn(async () => []) },
+      xeroSyncOperation: { findMany },
+      paymentTransaction: { findMany: vi.fn(async () => []) },
+    };
+    const read = await readOrganiserExtraState(db as never, "child");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ queueType: "SUPPLEMENTARY_INVOICE" }), orderBy: [{ createdAt: "asc" }, { id: "asc" }] }));
+    // The authorised row wins over the older skipped one: the extra is still owed.
+    expect(read.invoices).toMatchObject([{ waivedCents: 0 }]);
+    expect(organiserExtraUnpaidCents(read.invoices[0]!)).toBe(6_000);
   });
 });

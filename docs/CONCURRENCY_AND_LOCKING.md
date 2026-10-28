@@ -141,7 +141,12 @@ existing global claims; group cancellation freezes this plan under global and
 re-reads each Payment under its row lock. A raced waiver's compensating
 hand-back also takes global and uses a unique occurrence key. A queued invoice
 waived whole is retired by a status-guarded `updateMany` inside the reserving
-claim, so a create the worker has already claimed `RUNNING` keeps its invoice.
+claim, only while never attempted (`PENDING` or `WAITING_PAYMENT`, no
+`startedAt`), so a `RUNNING` or `FAILED` create keeps its invoice and the
+waiver is reserved against it. The supplementary enqueue refuses a change so
+retired under its anchor key, and the create re-asks in a short transaction
+holding that key alone, just before its Xero call, so neither an edit's
+after-commit re-enqueue nor an officer's retry raises it.
 The group cancel records each child's refund on its payment rows under the
 child's claim (global, then the Payment row in `applyLocalRefundAllocation`).
 These new sites are registered under `INV-LOCK-003`; no new advisory namespace

@@ -35,14 +35,19 @@ async function reserveAdjustment(tx: Prisma.TransactionClient, payload: Organise
     requestPayload: payload, createdByMemberId, store: tx });
 }
 
-/** The queued invoice's statuses a waiver may still retire: not RUNNING, whose create is under way. */
-const SKIPPABLE_QUEUED_INVOICE_STATUSES = ["PENDING", "WAITING_PAYMENT", "FAILED"];
+/**
+ * The queued invoice rows a waiver may still retire: never attempted. Not
+ * RUNNING, whose create is under way, and not FAILED, whose invoice may exist
+ * in Xero after a timeout, a stale-RUNNING reset or an email throw; those keep
+ * the reserved-waiver path, which voids or credits whatever was raised.
+ */
+const SKIPPABLE_QUEUED_INVOICE_STATUSES = ["PENDING", "WAITING_PAYMENT"];
 
 /**
  * F4: an extra invoice still queued (never raised in Xero) that this waiver
  * covers in full is not raised at all, so the organiser is never emailed for
  * a debt already waived. Its operation is SKIPPED, status-guarded so a create
- * already under way, or one that reached Xero, keeps it; then the waiver is
+ * attempted, under way, or one that reached Xero, keeps it; then the waiver is
  * reserved as usual and voids or credits the invoice once it exists. True when
  * no live operation is left, and the waiver needs no document; the state then
  * reads the invoice as waived whole, so its unpaid fee is never kept.
@@ -51,7 +56,7 @@ async function skipQueuedInvoiceWaivedInFull(tx: Prisma.TransactionClient, invoi
   if (invoice.invoiceId !== null || invoice.cashCents > 0 || amountCents < invoice.priceCents + invoice.feeCents) return false;
   const queued = { localModel: "BookingModification", localId: invoice.modificationId, queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE };
   await tx.xeroSyncOperation.updateMany({
-    where: { ...queued, status: { in: SKIPPABLE_QUEUED_INVOICE_STATUSES }, xeroObjectId: null },
+    where: { ...queued, status: { in: SKIPPABLE_QUEUED_INVOICE_STATUSES }, startedAt: null, xeroObjectId: null },
     data: { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
   });
   return (await tx.xeroSyncOperation.count({ where: { ...queued, status: { notIn: ["SKIPPED", "RESOLVED"] } } })) === 0;
