@@ -1,7 +1,7 @@
 schema = 1
 
 [environment]
-packages = ["postgresql-17"]
+packages = ["postgresql"]
 
 [setup]
 run = '''
