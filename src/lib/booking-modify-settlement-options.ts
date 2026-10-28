@@ -1,4 +1,3 @@
-import { effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
 // Split out of src/lib/booking-modify-settlement.ts (#3829, composing epic
 // #3813 with main): what a booking reduction may return and how - the
 // policy-tiered options, the untiered full-reduction options (D-3813-5) and
@@ -22,6 +21,7 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify-validation";
 import { ApiError } from "@/lib/api-error";
+import { effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import {
   refundableCashNetOfOpenHandBacks,

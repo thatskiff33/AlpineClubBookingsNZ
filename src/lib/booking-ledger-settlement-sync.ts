@@ -1,4 +1,3 @@
-import { ORGANISER_SHARE_RECEIPT_REASON } from "@/lib/organiser-extra-state";
 /**
  * POST THE SETTLEMENT LINES A PAYMENT'S ROWS IMPLY (#3581, programme #3527).
  *
@@ -31,6 +30,7 @@ import { findPostedSettlementLines } from "@/lib/booking-ledger-read";
 import { planSettlementLines } from "@/lib/booking-ledger-settlement-posting";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
+import { ORGANISER_SHARE_RECEIPT_REASON } from "@/lib/organiser-extra-state";
 
 export type SettlementSyncStore = Pick<Prisma.TransactionClient, "payment" | "bookingLedgerLine">;
 

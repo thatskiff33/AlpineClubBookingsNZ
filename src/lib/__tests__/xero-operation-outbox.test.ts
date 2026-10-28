@@ -2420,7 +2420,9 @@ describe("processQueuedXeroOutboxOperations", () => {
       // #3954 round 8 and #3953 round 3: rows waiting their turn are spaced out.
       AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })],
     });
-    expect(args.where.queueType.in).toEqual([...XERO_OUTBOX_QUEUE_TYPES]);
+    // #4299: the eighteen pinned types and the organiser extra adjustment.
+    expect(args.where.queueType.in).toHaveLength(19);
+    expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -3549,7 +3551,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createXeroMembershipSubscriptionInvoice,
     },
-    // #3635: a late capture a treasurer kept, anchored on its approval task.
+    // #4299: an organiser's extra-invoice waiver, run by its own executor.
     ORGANISER_EXTRA_ADJUSTMENT: {
       op: {
         id: "op_organiser_adjustment_1", localId: "booking_1", localModel: "Booking", createdByMemberId: "admin_1",
@@ -3557,6 +3559,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.executeOrganiserExtraAdjustment,
     },
+    // #3635: a late capture a treasurer kept, anchored on its approval task.
     KEPT_LATE_CAPTURE_INVOICE: {
       op: {
         id: "op_kept_late_capture_1",

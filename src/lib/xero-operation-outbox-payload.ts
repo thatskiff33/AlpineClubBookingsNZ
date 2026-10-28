@@ -1,5 +1,5 @@
-import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import type { EntranceFeeCategory } from "@prisma/client";
+import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
   parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
@@ -38,10 +38,11 @@ export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INV
  * item 4 of #1208). Single source of truth: the pending-outbox scan
  * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this
  * list, and the canonical per-type parse switch in `readQueuedOutboxPayload`
- * covers exactly these members. REQUEUE/BACKFILL/inbound rows have no queueType.
+ * covers exactly these members. Ordered to mirror the historical scan
+ * predicate for an obvious 1:1 audit, later types appended. REQUEUE/BACKFILL/
+ * inbound rows carry no queueType and are intentionally excluded.
  */
 export const XERO_OUTBOX_QUEUE_TYPES = [
-  XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE,
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
@@ -60,6 +61,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+  XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-147`)
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -310,7 +312,6 @@ export function readQueuedOutboxPayload(
   }
 
   if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
-
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
     return bookingId ? { queueType, bookingId } : null;

@@ -167,18 +167,19 @@ export async function GET(
     }
 
     const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
-    // #3653: match cancellation's card basis, net of refunds made AND owed;
-    // an organiser payment that holds no money returns nothing.
+    // #3653: a joiner's booking the organiser paid for by card is refunded to
+    // the organiser from what remains after refunds made AND owed - the base
+    // the cancel itself tiers - and from nothing once the organiser's payment
+    // no longer holds money.
     const organiserCard = paidByOrganiserCard(booking) ? await organiserChildCancelBasis(prisma, booking, booking.payment) : null;
     const organiserByBank = paidByOrganiserInternetBanking(booking); // #3949: refunded to the organiser by hand, on the card tiers
-    const organiserExtras = organiserByBank ? await readOrganiserExtraState(prisma, booking.id) : null;
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
         : {
             ...booking.payment,
-            ...(organiserExtras ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, organiserExtras) } : {}),
+            ...(organiserByBank ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, await readOrganiserExtraState(prisma, booking.id)) } : {}), // #4299 N4
             ...(organiserCard
               ? { refundedAmountCents: organiserCard.settlement ? organiserCard.committedRefundCents : booking.payment.amountCents }
               : {}),
@@ -216,10 +217,7 @@ export async function GET(
           creditRefundPercentage: 0,
           keptAmountCents: preview.keptAmountCents + preview.refundAmountCents,
           groupCancellationRefundCents: groupDebt.amountCents,
-          groupCancellationRefundNote: groupCancellationRefundNote(
-            groupDebt,
-            await clubFormatValues(),
-          ),
+          groupCancellationRefundNote: groupCancellationRefundNote(groupDebt, await clubFormatValues()),
         }
       : {};
 

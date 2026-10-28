@@ -12,9 +12,7 @@ import { PartialRefundError } from "@/lib/payment-transactions";
 import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { classifyEditReviewChargeCapture } from "./xero-booking-repair-payments";
-import type {
-  BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus,
-} from "./xero-booking-repair-types";
+import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
 import { LATE_CAPTURE_REPAIR_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { describeRefusedRepairedLateCaptureRefund, describeRepairedLateCaptureRefund, madeRepairRefunds } from "@/lib/late-capture-repair-result-message";
@@ -435,7 +433,8 @@ async function applyQueuedAction(
     case "QUEUE_ADDITIONAL_CAPTURE_RECEIPT": return applyAdditionalCaptureReceiptAction(action, deps); // #3953
     case "QUEUE_KEPT_LATE_CAPTURE_RECORD": return applyKeptChangeCaptureRecordAction(action, deps); // #4324
     case "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE": {
-      // #3924: reserve the waiting note once under the approval task row lock.
+      // #3924 round 8: the one note step, under the approval task's row lock;
+      // it reads the receipt and the close again there and queues at most once.
       const queuedId = await deps.queueWaitingPaidAnotherWayNote(String(action.payload.paymentIntentId));
       action.status = queuedId ? "queued" : "skipped";
       action.resultMessage = queuedId
@@ -456,9 +455,11 @@ async function applyQueuedAction(
       /**
        * #3187: the payment half of the ask travels WITH it.
        *
-       * Default `recordPayment: true` suits a captured card increase, but a
-       * completed review's invoice may itself be the unpaid ask. The classifier
-       * decides from the ledger
+       * The enqueue defaults `recordPayment` to true, which is right for the
+       * arm this action was built for - an ordinary price increase whose card
+       * was captured before the invoice was queued - and wrong for a booking
+       * edit priced by a completed financial review, where the invoice may BE
+       * the unpaid ask. The classifier decides that from the ledger
        * (`planEditReviewChargeInvoicePayment`) and puts its answer on the
        * payload; an action carrying no answer keeps the enqueue's own defaults,
        * so nothing the tool already repaired changes behaviour.

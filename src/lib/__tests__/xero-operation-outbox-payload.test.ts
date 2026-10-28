@@ -261,7 +261,6 @@ describe("xero operation outbox payload parsing", () => {
     // this list and the dispatch switch routes exactly these members. Locking
     // the wire values guards the scan/dispatch domain against drift.
     expect([...XERO_OUTBOX_QUEUE_TYPES]).toEqual([
-      "ORGANISER_EXTRA_ADJUSTMENT",
       "ENTRANCE_FEE_INVOICE",
       "BOOKING_INVOICE",
       "BOOKING_INVOICE_UPDATE",
@@ -280,6 +279,7 @@ describe("xero operation outbox payload parsing", () => {
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
       "KEPT_LATE_CAPTURE_INVOICE",
       "ADDITIONAL_CAPTURE_RECEIPT",
+      "ORGANISER_EXTRA_ADJUSTMENT",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length

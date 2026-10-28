@@ -1,11 +1,7 @@
-import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { Role, type Prisma } from "@prisma/client";
 
 import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
-import {
-  readReductionAgainstUnpaidAsk,
-  type RetiredAdditionalAsk,
-} from "@/lib/additional-ask-reduction";
+import { readReductionAgainstUnpaidAsk, type RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import { NO_ADDITIONAL_ASK, type AdditionalAsk } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
@@ -55,6 +51,7 @@ import { editRefundBankTransferPayee, raiseEditRefundHandBackIfOwed } from "@/li
 import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import logger from "@/lib/logger";
 import {
   clampAppliedCreditToBookingPrice,
@@ -96,7 +93,10 @@ import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-c
  *   CONFIRMED booking (its invoice issued, nothing yet paid) has the invoice
  *   corrected for the whole reduction and its applied credit left as it was,
  *   exactly as an ordinary edit of a CONFIRMED booking leaves it.
- * History, ledger, notices and audit follow ordinary edits; organiser invoices queue with history.
+ * The ledger posting, the history row, the Xero correction (queued after commit
+ * by `settleGuestAcceptanceRepriceAfterCommit`), the member's email and the
+ * audit row are the ordinary edit's own; an organiser's extra invoice (#4299)
+ * is queued with the history row.
  *
  * FREE NIGHTS ARE USED ONLY FOR WHAT IS RETURNED. The re-price is decided under
  * the locks and WRITTEN only once the settlement above is known to return the

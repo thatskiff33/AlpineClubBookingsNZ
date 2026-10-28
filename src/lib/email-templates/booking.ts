@@ -24,15 +24,8 @@ import {
 } from "@/lib/booking-money-lines";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
-import {
-  bookingCancelledRefundMade,
-  bookingCancelledRefundSentence,
-  type BookingCancelledRefundMethod,
-  type BookingModifiedRefundDestination,
-  bookingModifiedRefundPending,
-  bookingModifiedRefundSentence,
-  organiserBilledSentence,
-} from "@/lib/booking-modified-email-copy";
+import { bookingCancelledRefundMade, bookingCancelledRefundSentence, type BookingCancelledRefundMethod } from "@/lib/booking-modified-email-copy";
+import { type BookingModifiedRefundDestination, bookingModifiedRefundPending, bookingModifiedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
