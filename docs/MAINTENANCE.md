@@ -1322,7 +1322,7 @@ combined invoices are reported for manual review, with no billing action. These
 findings sit beside the place's ordinary repair findings, which still apply.
 The place's missing primary invoice is not one of them: it reports
 `ORGANISER_SETTLED_ON_COMBINED_INVOICE` (info, no action), so a plain `--apply`
-never invoices the joiner, and the invoice queue refuses such a place.
+never invoices the joiner, and the invoice queue and its handler refuse such a place.
 
 Each selected edit uses the ordinary supplementary-invoice queue and its
 per-change lock: one invoice on the joiner's change, addressed to the organiser,

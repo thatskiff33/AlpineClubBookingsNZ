@@ -3967,7 +3967,7 @@ The joiner is asked for nothing; emails, responses and the quote say the
 organiser is invoiced (`billedToOrganiserCents`). Only an increase with no
 combined invoice is refused; an outage leaves the queued invoice retryable. No
 payment is posted to Xero and no primary-invoice update queued: the place never
-has a primary invoice, and `enqueueXeroBookingInvoiceOperation` refuses one. The
+has a primary invoice; its enqueue and `createXeroInvoiceForBooking` refuse one. The
 organiser's notice follows the organiser booking's "No emails" switch, not the
 admin's notify-member choice, and names only what reserved waivers leave owed.
 

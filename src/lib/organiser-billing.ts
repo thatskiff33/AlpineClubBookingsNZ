@@ -7,6 +7,16 @@ import type { findOrCreateXeroContact } from "@/lib/xero-contacts";
 export const ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE =
   "The group organiser's combined invoice is not on record, so this booking cannot be changed. Contact the club to restore the invoice record first.";
 
+/**
+ * #4299 B1 (`INV-PAY-147`): a place the group organiser paid by internet banking
+ * is settled on the organiser's combined invoice and never gets a primary
+ * invoice of its own. The one refusal code and sentence for both fences: the
+ * enqueue choke point and the invoice handler behind it.
+ */
+export const ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL = "ORGANISER_PAID_INTERNET_BANKING" as const;
+export const ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE =
+  "The group organiser paid this place by internet banking; it is settled on the organiser's combined invoice, so no invoice of its own is raised.";
+
 type OrganiserPlace = Parameters<typeof paidByOrganiserInternetBanking>[0] & { id: string };
 type BillingStore = Pick<Prisma.TransactionClient, "groupBooking">;
 

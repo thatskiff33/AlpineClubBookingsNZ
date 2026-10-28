@@ -1,4 +1,4 @@
-import { resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL, resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { organiserExtraWaivedBeforeRaised } from "@/lib/organiser-extra-state";
 import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
@@ -445,9 +445,6 @@ async function inheritedBookingInvoiceEmailInstruction(params: {
   return readXeroInvoiceEmailInstruction(previous?.invoiceEmailDelivery);
 }
 
-/** #4299 B1: the typed refusal for a place settled on the organiser's combined invoice. */
-export const ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL = "ORGANISER_PAID_INTERNET_BANKING" as const;
-
 export async function enqueueXeroBookingInvoiceOperation(
   bookingId: string,
   options: {
@@ -571,8 +568,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     return {
       queueOperationId: null,
       refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL,
-      message:
-        "The group organiser paid this place by internet banking; it is settled on the organiser's combined invoice, so no invoice of its own is queued.",
+      message: ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE,
     };
   }
 

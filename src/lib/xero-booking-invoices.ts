@@ -18,6 +18,8 @@ import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import { getStayNights } from "./pricing";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -468,6 +470,22 @@ export async function createXeroInvoiceForBooking(
       await completeXeroSyncOperation(options.syncOperation, {
         status: "CANCELLED",
         responsePayload: { skipped: true, reason: skipReason },
+      });
+    }
+    return null;
+  }
+
+  // #4299 B1 (`INV-PAY-147`), the handler half of the enqueue choke point's
+  // fence: a row that reaches here for a place the group organiser paid by
+  // internet banking (an earlier row, a retry, a future enqueuer) closes
+  // without raising - and emailing the joiner - an invoice for the whole
+  // place, which the organiser's combined invoice already bills. Loud, as above.
+  if (paidByOrganiserInternetBanking(booking)) {
+    logger.warn({ bookingId, paymentId: booking.payment.id, syncOperationId: options?.syncOperation?.id ?? null }, ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE);
+    if (options?.syncOperation) {
+      await completeXeroSyncOperation(options.syncOperation, {
+        status: "CANCELLED",
+        responsePayload: { skipped: true, refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL, reason: ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE },
       });
     }
     return null;
