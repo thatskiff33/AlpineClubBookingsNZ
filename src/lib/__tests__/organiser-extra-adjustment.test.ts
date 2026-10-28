@@ -115,10 +115,23 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.complete).not.toHaveBeenCalled();
   });
   it("holds a refund until the organiser's bank-transfer hand-back completes", async () => {
+    mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
     mocks.task.mockResolvedValue({ status: "PENDING" });
     await expect(executeOrganiserExtraAdjustment(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim)).rejects.toThrow("awaits its bank-transfer hand-back");
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.settle).not.toHaveBeenCalled();
+  });
+  it("waits for a failed or delayed waiver before paying the refund note", async () => {
+    const refund = payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" });
+    await expect(executeOrganiserExtraAdjustment(refund, claim)).rejects.toThrow("awaits its unpaid-balance waiver");
+    expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+    expect(mocks.settle).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
+
+    mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
+    await executeOrganiserExtraAdjustment(refund, claim);
+    expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
+    expect(mocks.settle).toHaveBeenCalledOnce();
   });
   it("pays out a settled invoice's refund note using the completed bank-transfer record", async () => {
     mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: "PAID" as Invoice.StatusEnum };
@@ -129,6 +142,7 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.complete).toHaveBeenCalledWith(claim, expect.objectContaining({ responsePayload: expect.objectContaining({ invoiceId: "extra", amountCents: 500 }) }));
   });
   it("does not mark a failed refund-note payout complete, and retries its recorded note", async () => {
+    mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
     mocks.settle.mockResolvedValueOnce({ outcome: { refundPaymentErr: new Error("bank unavailable") } });
     const refund = payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" });
     await expect(executeOrganiserExtraAdjustment(refund, claim)).rejects.toThrow("bank unavailable");

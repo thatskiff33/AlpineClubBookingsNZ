@@ -58,6 +58,9 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
   }
 
   if (payload.purpose === "refund") {
+    // Refund notes mirror a bank transfer already sent. Do not pay one out
+    // while a delayed/failed waiver still leaves this invoice collectible.
+    if (dueCents > 0) throw new XeroAppliedCreditOperationBusyError("Organiser refund awaits its unpaid-balance waiver", "PENDING");
     if (!payload.handBackTaskId) throw new Error("Organiser refund note has no completed bank-transfer hand-back");
     const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: payload.handBackTaskId }, select: { status: true } });
     if (task.status !== "COMPLETED") throw new XeroAppliedCreditOperationBusyError("Organiser refund awaits its bank-transfer hand-back", "PENDING");

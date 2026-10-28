@@ -3820,7 +3820,8 @@ Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
 worker claims `RUNNING` before provider work and completes under that claim.
 Fully unpaid releases void the invoice; part-paid releases allocate a credit
 note. Cash that races a release is recognised and its policy refund reserved.
-Refund notes target the invoice that held each paid share. The organiser's app
+Refund notes target the invoice that held each paid share and wait for its
+unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
 
 

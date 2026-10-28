@@ -3988,7 +3988,8 @@ before policy refunds. `ORGANISER_EXTRA_ADJUSTMENT` operations execute voids or
 credit notes outside the money transaction. A part-paid invoice receives an
 allocated note for the unpaid portion. Cash pays fees first; paid price refunds
 follow policy, with notes split between extra and combined invoices. Refund
-notes wait for their bank-transfer hand-back to complete; a settled invoice's
+notes wait for their bank-transfer hand-back to complete and for the target
+invoice to have nothing due; a delayed waiver keeps payout pending. A settled invoice's
 note is settled through the existing refund-note settlement helper. The worker
 re-reads invoice amounts after creating or recovering the waiver note, before
 allocation, to recognise cash that raced the provider call and shrink the note.
