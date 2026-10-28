@@ -34,12 +34,18 @@ async function reserveAdjustment(tx: Prisma.TransactionClient, payload: Organise
     requestPayload: payload, createdByMemberId, store: tx });
 }
 
+/** Whether a netting scope has reserved its invoice debts: the scope's one replay test. */
+export async function hasOrganiserExtraReservation(tx: Pick<Prisma.TransactionClient, "xeroSyncOperation">, bookingId: string, scopeId: string): Promise<boolean> {
+  const row = await tx.xeroSyncOperation.findFirst({ where: { localId: bookingId, queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, requestPayload: { path: ["scopeId"], equals: scopeId } }, select: { id: true } });
+  return row !== null;
+}
+
 export async function reserveOrganiserExtraNetting(tx: Prisma.TransactionClient, input: {
   state: OrganiserExtraState; scopeId: string; reductionCents: number; refundAmountCents: number;
   refundBasisCents: number; refundPercentage: number; cancel?: boolean; createdByMemberId?: string;
 }): Promise<void> {
   if (input.state.invoices.length === 0) return;
-  if (await tx.xeroSyncOperation.findFirst({ where: { localId: input.state.bookingId, queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, requestPayload: { path: ["scopeId"], equals: input.scopeId } }, select: { id: true } })) return;
+  if (await hasOrganiserExtraReservation(tx, input.state.bookingId, input.scopeId)) return;
   const plan = planOrganiserExtraNetting(input.state, input);
   const base = { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: input.state.bookingId, scopeId: input.scopeId, refundPercentage: input.refundPercentage } as const;
   for (const [purpose, shares] of [["waive", plan.waivers], ["refund", plan.refunds]] as const) {
