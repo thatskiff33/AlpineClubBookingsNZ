@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { asRecord } from "@/lib/xero-json";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 
@@ -67,7 +68,7 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
       select: { id: true, localId: true, requestPayload: true, status: true, xeroObjectId: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
-    db.paymentTransaction.findMany({ where: { payment: { bookingId }, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, select: { xeroInvoiceId: true, amountCents: true } }),
+    db.paymentTransaction.findMany({ where: { payment: { bookingId }, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, orderBy: [...LEDGER_ROWS_OLDEST_FIRST], select: { xeroInvoiceId: true, amountCents: true } }),
     db.xeroSyncOperation.findMany({ where: { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, localId: bookingId }, select: { requestPayload: true } }),
   ]);
   const invoices: OrganiserExtraInvoice[] = [];

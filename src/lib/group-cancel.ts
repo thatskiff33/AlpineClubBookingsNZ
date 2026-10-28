@@ -154,7 +154,7 @@ async function recordGroupCancelRefundOnRows(
     (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }),
   );
   if (refundCents <= 0) return;
-  const shareRows = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, reason: ORGANISER_SHARE_RECEIPT_REASON }, select: { id: true } });
+  const shareRows = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, reason: ORGANISER_SHARE_RECEIPT_REASON }, orderBy: [...LEDGER_ROWS_OLDEST_FIRST], select: { id: true } });
   await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundCents, preferTransactionIds: shareRows.map((row) => row.id), store: tx });
 }
 

@@ -7,6 +7,7 @@ import { resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { asRecord } from "@/lib/xero-json";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { ORGANISER_SHARE_RECEIPT_REASON, ORGANISER_EXTRA_RECEIPT_REASON, organiserExtraPaidPriceCents, readOrganiserExtraState, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 
 export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<void> {
@@ -27,14 +28,14 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
       const previous = await tx.paymentTransaction.findMany({
         where: { paymentId, xeroInvoiceId: invoice.invoiceID, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
         select: { id: true, amountCents: true, refundedAmountCents: true },
-        orderBy: [{ createdAt: "desc" }, { insertionSeq: "desc" }],
+        orderBy: [...LEDGER_ROWS_NEWEST_FIRST], // the reversal below walks the newest receipt first
       });
       const previousCashCents = previous.reduce((sum, row) => sum + row.amountCents, 0);
       const delta = cashCents - previousCashCents;
       if (cashCents > 0) {
         const primary = await tx.paymentTransaction.findFirst({ where: { paymentId: payment.id, kind: "PRIMARY", source: "INTERNET_BANKING" }, select: { id: true } });
         if (!primary) {
-          const extras = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, select: { amountCents: true } });
+          const extras = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, reason: ORGANISER_EXTRA_RECEIPT_REASON, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } }, orderBy: [...LEDGER_ROWS_OLDEST_FIRST], select: { amountCents: true } });
           const originalCents = Math.max(0, payment.amountCents - extras.reduce((sum, row) => sum + row.amountCents, 0));
           const booking = await tx.booking.findUniqueOrThrow({ where: { id: modification.bookingId }, include: { payment: true } });
           const billing = await resolveOrganiserBilling(tx, booking);
