@@ -23,6 +23,7 @@ import { applyAdditionalCaptureReceiptAction, applyKeptChangeCaptureRecordAction
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
+import { applyHistoricalOrganiserInvoiceRepair } from "./xero-booking-repair-organiser-billing";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
@@ -451,6 +452,7 @@ async function applyQueuedAction(
       action.resultMessage = result.message;
       return;
     }
+    case "QUEUE_HISTORICAL_ORGANISER_INVOICE": return applyHistoricalOrganiserInvoiceRepair(action, deps);
     case "QUEUE_SUPPLEMENTARY_INVOICE": {
       /**
        * #3187: the payment half of the ask travels WITH it.

@@ -43,6 +43,7 @@ import { readLateCaptureRefundsPaidAnotherWay } from "@/lib/late-capture-paid-an
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import { labelPaidBackRefundRequests } from "./xero-booking-repair-request-notes";
+import { classifyOrganiserBillingRepair } from "./xero-booking-repair-organiser-billing";
 
 const MAX_APPLY_PASSES = 3;
 
@@ -133,7 +134,10 @@ async function runSinglePass(
   const loaded = await withPaidAnotherWayCloses(await loadAuditData(scope, deps), deps, format);
   const contexts = await withLateCaptureCardRefundsByHand(loaded, deps, format);
   // #4231: each paid-back request's amount in the club's format, for its finding.
-  const bookings = contexts.map((context) => classifyBookingContext(labelPaidBackRefundRequests(context, format)));
+  const bookings = [];
+  for (const context of contexts) {
+    bookings.push(await classifyOrganiserBillingRepair(context, deps) ?? classifyBookingContext(labelPaidBackRefundRequests(context, format)));
+  }
   return buildPassReport(pass, bookings);
 }
 
@@ -154,6 +158,9 @@ export async function runBookingXeroRepair(
   const scope = options?.scope ?? { all: true };
   const apply = options?.apply ?? false;
   const forcedActionKeys = new Set(apply ? options?.applyActionKeys ?? [] : []);
+  if ([...forcedActionKeys].filter((key) => key.startsWith("queue:organiser-historical:")).length > 50) {
+    throw new Error("Review and apply at most 50 historical organiser invoices per run.");
+  }
   const deps = getDependencies(options?.dependencies);
   const startedAt = new Date();
   const xeroConnectionAvailable = await deps.isXeroConnected().catch(() => false);

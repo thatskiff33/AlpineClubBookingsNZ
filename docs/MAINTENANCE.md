@@ -1291,6 +1291,41 @@ CREATED on 30 June was covered — it was not. Re-run any sweep whose check-in
 dates mattered; the created/updated/modified findings in an archived report can
 be taken at face value.
 
+**Bill historical increases to an organiser (#4299 B1).** A place paid through
+its organiser's combined internet-banking invoice has no primary invoice of its
+own. For these places the tool reports every recorded positive net change
+(price difference plus late-change fee), including places later reduced or
+cancelled. The JSON finding shows the combined invoice, organiser, amount to
+bill, later reductions, cancellation/refund/credit events, and the payment's
+recorded refunded total. The refunded total covers the whole booking; the dated
+events beside it identify later activity where recorded. Old financial-review
+tasks stay refused and are never turned into charges by this repair.
+
+Review that JSON before billing: **the whole recorded increase is billed even
+when a later reduction or cancellation means the organiser may be over-billed**
+(the owner's B1 decision). This repair does not net those historical cases.
+Copy each selected `queue:organiser-historical:…` action key from the dry run:
+
+```bash
+pnpm run xero:booking-repair --booking <bookingId> --dry-run
+pnpm run xero:booking-repair --booking <bookingId> --apply --apply-action '<exact-action-key>'
+```
+
+A plain `--apply` does not back-bill these changes. Repeat `--apply-action` for
+at most 50 reviewed changes per run. Each key includes a digest of the figures,
+payer, combined invoice and displayed history; stale keys match nothing, and
+apply reads the local evidence again before queueing. Re-run the dry run after
+any change. An edit with any earlier invoice link (including an inactive one)
+or invoice operation is skipped. Repair or retry a failed operation through
+**Admin → Xero → Operations**, rather than requesting another invoice. Missing
+combined invoices are reported for manual review, with no billing action.
+
+Each selected edit uses the ordinary supplementary-invoice queue and its
+per-change lock: one invoice on the joiner's change, addressed to the organiser,
+with no payment recorded and no card wait. The existing outbox worker sends it
+and the organiser notice; reconciliation records the organiser's transfer.
+Dry run makes only local reads and raises no invoice, email or contact.
+
 **A supplementary invoice is only offered when the main invoice went out
 FIRST (#3199).** When a booking edit adds money the club normally raises a small
 extra Xero invoice for the difference, and whether that is right depends on

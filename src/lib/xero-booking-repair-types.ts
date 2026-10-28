@@ -83,6 +83,7 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "QUEUE_PRIMARY_INVOICE",
   "QUEUE_PRIMARY_INVOICE_UPDATE",
   "QUEUE_SUPPLEMENTARY_INVOICE",
+  "QUEUE_HISTORICAL_ORGANISER_INVOICE",
   "QUEUE_MODIFICATION_CREDIT_NOTE",
   "QUEUE_ACCOUNT_CREDIT_NOTE",
   "QUEUE_REFUND_CREDIT_NOTE",
@@ -230,6 +231,8 @@ export interface BookingXeroRepairRunReport {
 
 export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
   id: true,
+  organiserSettled: true,
+  parentBookingId: true,
   memberId: true,
   // #3369: the owner may be an Organisation; bookingOwner() reads both.
   organisation: { select: { name: true, email: true } },
