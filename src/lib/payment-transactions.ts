@@ -41,7 +41,7 @@ import {
   isRefusedRefundStatus,
   LEGACY_ADDITIONAL_BACKFILL_REASON,
   LEGACY_PRIMARY_BACKFILL_REASON,
-  latestTransactionOfKind,
+  latestTransactionOfKind, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -1512,7 +1512,7 @@ export async function refundPaymentTransactions({
     const derived = buildRefundAllocationSlices(stripeTransactions, amountCents);
 
     if (amountCents > derived.totalRefundableCents) {
-      throw new Error("Refund amount exceeds captured Stripe payments");
+      throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
     }
 
     slices = derived.slices;

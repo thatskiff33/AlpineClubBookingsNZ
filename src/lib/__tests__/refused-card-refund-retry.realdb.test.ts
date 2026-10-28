@@ -31,6 +31,7 @@
  * to its seam, and the cancel's to the harness's one shared `@/lib/stripe`
  * double (`support/stripe-race-double.ts`), a pass-through unless hooked.
  */
+import type Stripe from "stripe";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
@@ -275,6 +276,55 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
     afterAll(async () => {
       if (!prisma) return;
       await deleteFixtures();
+    });
+
+    it("an edit's made-but-unrecorded refund replays its frozen key after charge.refunded (#3984)", async () => {
+      const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
+      const { syncRefundsFromStripeCharge } = await import("@/lib/payment-transactions");
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      await deletePaymentRows();
+      await prisma.payment.create({ data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 10000, source: "STRIPE", status: "SUCCEEDED" } });
+      await prisma.paymentTransaction.create({ data: { id: PRIMARY_TXN, paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE",
+        stripePaymentIntentId: "pi_race_4083_primary", amountCents: 10000, status: "SUCCEEDED" } });
+      const refunds = new Map<string, Stripe.Refund>();
+      const keys: string[] = [];
+      let restoreFault: (() => void) | undefined;
+      resetStripeRaceHooks();
+      stripeRaceHooks.refund = async (request) => {
+        const key = request.idempotencyKey!;
+        keys.push(key);
+        if (!refunds.has(key)) refunds.set(key, { id: `re_race_3984_${refunds.size}`, amount: request.amountCents,
+          currency: "nzd", status: "succeeded", payment_intent: request.paymentIntentId, charge: "ch_race_3984",
+          created: 1782864000, metadata: request.metadata } as Stripe.Refund);
+        if (keys.length === 1) {
+          const fault = vi.spyOn(prisma, "$transaction").mockRejectedValueOnce(new Error("recording failed after Stripe succeeded"));
+          restoreFault = () => fault.mockRestore();
+        }
+        return refunds.get(key);
+      };
+      try {
+        const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID,
+          result: { pendingRefundAmountCents: 8000, paymentId: PAYMENT_ID, bookingModificationId: MODIFICATION_ID, organiserChildRefund: null } as never,
+          idempotencyKeyPrefix: `mod_dates_refund_${BOOKING_ID}`, failureMessage: "test refund failed", recoveryFailureMessage: "test enqueue failed" });
+        restoreFault?.();
+        expect(outcome.refundDestination).toBe("own_card_pending");
+        expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
+        const row = await queuedRow();
+        expect(row.allocationPlan).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: 8000 }]);
+
+        await syncRefundsFromStripeCharge({ stripeChargeId: "ch_race_3984", paymentIntentId: "pi_race_4083_primary",
+          refundedAmountCents: 8000, refunds: [...refunds.values()] });
+        expect((await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: PRIMARY_TXN } })).refundedAmountCents).toBe(8000);
+        expect(await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+        expect(keys).toHaveLength(2);
+        expect(keys[1]).toBe(keys[0]);
+        expect([...refunds.values()].reduce((sum, refund) => sum + refund.amount, 0)).toBe(8000);
+        expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(1);
+        expect((await queuedRow()).status).toBe("SUCCEEDED");
+      } finally {
+        restoreFault?.();
+        resetStripeRaceHooks();
+      }
     });
 
     it("a second enqueue of the edit's refusal writes no second row, and never re-plans a row a worker holds", async () => {

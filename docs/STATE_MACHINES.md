@@ -4264,13 +4264,14 @@ A refund Stripe answers `failed` or `canceled` on a booking edit, a cancellation
 or an approved refund request never closes its row (#4083, #4096, #4102,
 `INV-PAY-128`). Stripe answers a repeated key with the original refusal for 24
 hours, so whoever reads a refusal moves that slice to a fresh idempotency key
-(`refused1`, `refused2`, ...). An edit queues a row whose plan is exactly the
-refused slices, when Stripe answered every slice; on a partial failure, the
-remainder, planned by the runner. A cancellation re-plans its pre-persisted row
-the same way while it is still `PENDING` with no attempt. An approved refund
-request queues its whole plan after the attempt: refused slices on their next
-key, unanswered ones keep their key, made ones marked with their refund
-(`madeRefundId`). If no row can be written once Stripe was asked, its approval
+(`refused1`, `refused2`, ...). An edit freezes its plan before Stripe and queues
+its whole read plan after success or throw if any slice is unmade (#3984,
+`INV-PAY-146`), even if the webhook has since recorded a refund. A cancellation
+re-plans its pre-persisted row the same way while it is still `PENDING` with no
+attempt. An approved refund request also queues its whole plan after the attempt:
+refused slices on their next key, unanswered ones keep their key, made ones
+marked with their refund (`madeRefundId`). If no row can be written once Stripe
+was asked by a refund-request approval, its approval
 stands, and the officers' alert and its audit row split what is not made into
 what Stripe refused (refund it another way) and what got no answer (it may have
 been made: check Stripe first); the Xero credit note covers only what went back.

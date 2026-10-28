@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 import { NextRequest } from "next/server";
 
 // --- Mocks ---
@@ -255,6 +257,7 @@ vi.mock("@/lib/payment-transactions", async (importActual) => ({
   },
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
@@ -328,7 +331,7 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY } from "@/lib/stripe-charge-currency";
 import {
   ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
@@ -706,6 +709,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+  mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
     mockMemberCount.mockResolvedValue(1);
     mockMemberFindUnique.mockResolvedValue({
       id: "m1",
@@ -1294,7 +1298,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
     mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op_refund" });
-    primeOwnCardRefund(mockRefundPaymentTransactions, answer);
+    primeOwnCardRefund(mockRefundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
 
     const res = await PUT(
       new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
@@ -1306,7 +1310,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
     expect(res.status).toBe(200);
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "p1", amountCents: 3000 }));
-    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000);
+    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000, answer);
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination, refundByBankTransfer: null }),

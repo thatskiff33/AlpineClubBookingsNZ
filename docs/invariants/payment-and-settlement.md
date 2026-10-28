@@ -1415,9 +1415,8 @@ one, check the other.
   - **Whoever reads a refusal moves that slice to a fresh key**
     (`refundSliceStripeIdempotencyKey`): Stripe replays a key's refusal for 24
     hours. A slice never read refused keeps its key.
-  - **The edit doors** queue the refused slices, or the remainder; **a
-    cancellation** re-plans its unclaimed row; **a refund request** queues its
-    whole plan (#4117).
+  - **Edit doors and refund requests** queue their whole read plan
+    (`INV-PAY-146`, #4117); **a cancellation** re-plans its unclaimed row.
   - **The runner never closes a row on a refusal**: it re-plans on the attempt
     it holds and fails it.
   - **A slice made beside a refusal or a failure stays, marked**
@@ -1818,6 +1817,33 @@ release).
 - Proven by `card-refund-resend-preflight.test.ts`, `payment-recovery.test.ts`,
   `stripe.test.ts`, `recorded-card-refund-notes.test.ts` and the existing webhook
   contracts.
+
+## INV-PAY-146
+
+**Related: `INV-PAY-128`** (refused slices) and **`INV-PAY-145`** (recovery preflight).
+
+- A booking edit's own-card refund freezes its allocation with
+  `planStripeRefundAllocation` before asking Stripe, rejects a shortfall with
+  the existing exceeds-captured error, and sends exactly those slices through
+  `refundPaymentTransactions` (#3984).
+- On success or throw, `inlineRefundAfterAttempt` reads that same plan. If any
+  cents remain unmade, recovery keeps the whole read plan and its total:
+  completed slices marked `madeRefundId`, refused slices moved to their next
+  key, unanswered slices on their original key. Within Stripe's 24-hour
+  idempotency window, a recording failure after Stripe succeeds therefore
+  replays the same refund even if `charge.refunded` records it first (a later
+  replay is #4510). Ledger progress must not change the request's amount or
+  Stripe key.
+- Limit: on a multi-charge payment, a concurrent refund on the same charge can
+  leave a frozen slice larger than its headroom; the row then dies owed and
+  alerts, and never over-refunds.
+- Planning failures occur before Stripe; they retain the existing whole-debt
+  recovery. Refused slices still alert when the row is newly written or cannot
+  be written, and an incomplete refund reports `own_card_pending`.
+- Date edits, batch edits, guest removals and guest-acceptance reprice share this
+  door. Edit-financial-review uses its separate pre-persisted plan.
+- Proven by `modification-refund-replay-reason.test.ts`, `payment-recovery.test.ts`
+  and `refused-card-refund-retry.realdb.test.ts`.
 
 ## INV-PAY-144
 

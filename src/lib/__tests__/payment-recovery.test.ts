@@ -340,7 +340,10 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
 
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  PartialRefundError: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).PartialRefundError,
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   // #4359: the preflight's no-plan fallback and the executor share this pure filter.
   capturedStripeTransactions: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).capturedStripeTransactions,
   // #4217: the runner's claim hold locks the Payment row before the recovery row.
@@ -1448,6 +1451,48 @@ describe("payment recovery worker", () => {
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
       expect(mockProcessRefund).not.toHaveBeenCalled();
     });
+  });
+
+  // Mutation proof: dropping the door's allocationPlan made this refund 10000, not 8000 cents.
+  it("replays the edit's same Stripe key after recording fails and the webhook records it (#3984)", async () => {
+    const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
+    const { PartialRefundError } = await import("@/lib/payment-transactions");
+    const { refundSliceStripeIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+    const slice = { paymentTransactionId: "txn-1", amountCents: 8000 };
+    mockPlanStripeRefundAllocation.mockResolvedValue({ slices: [slice], plannedAmountCents: 8000, totalRefundableCents: 10000 });
+    const transaction = { id: "txn-1", source: "STRIPE", stripePaymentIntentId: "pi_original", amountCents: 10000,
+      refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED as PaymentStatus, createdAt: new Date("2026-05-01T00:00:00Z") };
+    mockPaymentFindUnique.mockResolvedValue({ id: "payment-1", transactions: [transaction] });
+    const stripe = new Map<string, { id: string; amount: number; status: string; payment_intent: string; metadata: Record<string, string>; created: number }>();
+    const requests: string[] = [];
+    mockRefundPaymentTransactions.mockImplementation(async ({ allocation, idempotencyKeyPrefix, metadata }) => {
+      const sent = allocation[0];
+      const key = refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, sent);
+      requests.push(key);
+      if (!stripe.has(key)) stripe.set(key, { id: `re_${stripe.size}`, amount: sent.amountCents, status: "succeeded",
+        payment_intent: "pi_original", metadata, created: 1782864000 });
+      const refund = stripe.get(key)!;
+      if (requests.length === 1) throw new PartialRefundError({
+        completedRefundCents: 0, refunds: [], refusedSlices: [], cause: new Error("recording failed after Stripe succeeded"), format: CLUB_FORMAT_TEST,
+      });
+      return { refunds: [{ refundId: refund.id, paymentIntentId: "pi_original", amountCents: refund.amount, status: refund.status, slice: sent }] };
+    });
+
+    const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: "booking-1",
+      result: { pendingRefundAmountCents: 8000, paymentId: "payment-1", bookingModificationId: "mod-1", organiserChildRefund: null } as never,
+      idempotencyKeyPrefix: "mod_dates_refund_booking-1", failureMessage: "refund failed", recoveryFailureMessage: "enqueue failed" });
+    expect(outcome.refundDestination).toBe("own_card_pending");
+    const data = mockPaymentRecoveryCreateMany.mock.calls[0][0].data[0];
+
+    // charge.refunded has now recorded the $80; only $20 headroom remains.
+    transaction.refundedAmountCents = 8000;
+    transaction.status = PaymentStatus.PARTIALLY_REFUNDED;
+    mockListRefundsForPaymentIntent.mockResolvedValue([...stripe.values()]);
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({ ...data, id: "recovery-1", status: "PROCESSING", attempts: 1 }));
+    expect(await runPaymentRecoveryOperationNow("recovery-1", CLUB_FORMAT_TEST)).toBe("succeeded");
+    expect([...stripe.values()].reduce((sum, refund) => sum + refund.amount, 0)).toBe(8000);
+    expect(requests).toEqual(["mod_dates_refund_booking-1_mod-1_txn-1_8000", "mod_dates_refund_booking-1_mod-1_txn-1_8000"]);
+    expect(data.allocationPlan).toEqual([slice]);
   });
 
   it("processes a booking modification refund recovery by replaying refundPaymentTransactions", async () => {

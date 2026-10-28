@@ -5623,6 +5623,14 @@ Stripe call:
   that has claimed the row; that worker reads the refusal and moves it itself.
   It reads the row's plan and writes compare-and-set on it, skipping a slice
   already moved, so two deliveries of one refusal move it, and alert, once.
+- **The edit refund door** (`executeBookingModificationRefund`, #3984,
+  `INV-PAY-146`) freezes its plan before Stripe, outside the edit transaction.
+  After success or throw it queues the whole read plan if any slice is unmade:
+  made slices marked, refusals moved, unanswered slices on their original key.
+  The lockless `charge.refunded` recorder may update the ledger before recovery;
+  the worker still sends the original slices and keys. Recording keeps the
+  canonical Payment row lock; no advisory key, lock order, guarded transition
+  or outbox participant changes (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
 - **The ledger refund enqueue** inserts if absent (`createMany`,
   `skipDuplicates`) and refreshes only a `PENDING` row, so a repeat enqueue
   never re-plans a row a worker has picked up. A fresh plan with no refusal in

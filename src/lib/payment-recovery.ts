@@ -346,7 +346,7 @@ export async function enqueueBookingModificationRefundRecovery({
    * Stripe but was never recorded locally is replayed, not re-minted.
    */
   stripeKeyPrefix?: string | null;
-  /** #4083: the slices Stripe refused, exactly as sent; omitted, the worker derives its plan. */
+  /** #3984: the whole read plan, with made slices marked; omitted only before Stripe or by legacy callers. */
   allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
@@ -2104,10 +2104,10 @@ async function processBookingModificationRefundOperation(
     );
   }
 
-  // The allocation is frozen on the operation before its first Stripe call:
-  // booking-cancellation (#1349) and refund-request (#1510) recoveries persist
-  // the inline attempt's own slices at ENQUEUE time, while a booking-
-  // modification recovery freezes them the first time it is processed (#1097).
+  // The allocation freezes before Stripe: cancellations (#1349), refund
+  // requests (#1510) and edits (#3984) persist the inline attempt's slices.
+  // Only a legacy row or pre-Stripe planning failure freezes its plan on first
+  // processing (#1097).
   // A retry then re-requests exactly those per-transaction slices — with the
   // identical Stripe idempotency keys, which Stripe answers with the original
   // refunds and the ledger dedupes by refund id — never a re-derived allocation

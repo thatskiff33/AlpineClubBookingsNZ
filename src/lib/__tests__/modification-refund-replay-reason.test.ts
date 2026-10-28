@@ -28,16 +28,23 @@ import {
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 
 const h = vi.hoisted(() => ({
+  alertPaymentRecoveryOfficers: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   enqueueBookingModificationRefundRecovery: vi.fn(),
 }));
 
+vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: h.alertPaymentRecoveryOfficers }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
+  planStripeRefundAllocation: vi.fn(async ({ amountCents }: { amountCents: number }) => ({
+    slices: [{ paymentTransactionId: "txn_refund", amountCents }],
+    plannedAmountCents: amountCents,
+    totalRefundableCents: amountCents,
+  })),
   refundPaymentTransactions: h.refundPaymentTransactions,
 }));
 vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
@@ -46,6 +53,7 @@ vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
     h.enqueueBookingModificationRefundRecovery,
 }));
 
+import { planStripeRefundAllocation, PartialRefundError } from "@/lib/payment-transactions";
 import { executeBookingModificationRefund } from "@/lib/booking-modification-settlement";
 import {
   bookingModificationRefundReasonForKeyPrefix,
@@ -196,4 +204,59 @@ describe("INV-MOD-061: a booking edit's card refund and its replay send one requ
       ).toEqual(inline.metadata);
     },
   );
+});
+
+// #3984: the plan carries progress for every slice, even on a thrown attempt.
+describe("an edit's frozen refund plan after a partial attempt (#3984)", () => {
+  const plan = [
+    { paymentTransactionId: "made", amountCents: 2000 },
+    { paymentTransactionId: "refused", amountCents: 3000 },
+    { paymentTransactionId: "unanswered", amountCents: 3000 },
+  ];
+  const execute = () => executeBookingModificationRefund({
+    format: CLUB_FORMAT_TEST, bookingId: "booking-1",
+    result: { pendingRefundAmountCents: 8000, paymentId: "pay-1", bookingModificationId: "mod-1", organiserChildRefund: null } as never,
+    idempotencyKeyPrefix: "mod_dates_refund_booking-1", failureMessage: "refund failed", recoveryFailureMessage: "enqueue failed",
+  });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(planStripeRefundAllocation).mockResolvedValue({ slices: plan, plannedAmountCents: 8000, totalRefundableCents: 8000 });
+    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ created: true });
+    h.refundPaymentTransactions.mockRejectedValue(new PartialRefundError({
+      completedRefundCents: 2000,
+      refunds: [
+        { paymentIntentId: "pi_made", refundId: "re_made", amountCents: 2000 },
+        { paymentIntentId: "pi_refused", refundId: "re_refused", amountCents: 3000 },
+      ],
+      refusedSlices: [plan[1]], cause: new Error("third slice lost its reply"), format: CLUB_FORMAT_TEST,
+    }));
+  });
+
+  it("keeps the whole plan: made marked, refused on a fresh key, unanswered on its original key", async () => {
+    expect((await execute()).refundDestination).toBe("own_card_pending");
+    expect(h.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ allocation: plan }));
+    expect(h.enqueueBookingModificationRefundRecovery).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 8000, allocationPlan: [
+      { ...plan[0], madeRefundId: "re_made" }, { ...plan[1], stripeKeySuffix: "refused1" }, plan[2],
+    ] }));
+    expect(h.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 3000, paymentIntentId: "pi_refused" }), CLUB_FORMAT_TEST);
+  });
+
+  it("still alerts a refused slice when writing recovery also fails (#4117)", async () => {
+    h.enqueueBookingModificationRefundRecovery.mockRejectedValue(new Error("enqueue failed too"));
+    expect((await execute()).refundDestination).toBe("own_card_pending");
+    expect(h.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not repeat the refusal alert when the recovery row already exists", async () => {
+    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ created: false });
+    await execute();
+    expect(h.alertPaymentRecoveryOfficers).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original shortfall failure before Stripe and queues the full debt", async () => {
+    vi.mocked(planStripeRefundAllocation).mockResolvedValue({ slices: [plan[0]], plannedAmountCents: 2000, totalRefundableCents: 2000 });
+    expect((await execute()).refundDestination).toBe("own_card_pending");
+    expect(h.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(h.enqueueBookingModificationRefundRecovery).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 8000, allocationPlan: undefined }));
+  });
 });

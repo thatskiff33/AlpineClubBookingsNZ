@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -267,6 +269,7 @@ vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   applyLocalRefundAllocation: (...args: unknown[]) =>
@@ -746,6 +749,7 @@ const TX_MODE_PRE_TRANSACTION = {
 describe("PUT /api/bookings/[id]/modify", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
     mockCalculateBookingPrice.mockReset();
     mockCalculateBookingPrice.mockReturnValue({
       totalPriceCents: 5000,
@@ -3633,6 +3637,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // The recovery row carries the route's exact Stripe key prefix (#1152)
       // so retries replay identical keys.
       stripeKeyPrefix: "mod_batch_refund_bk1_mod_1",
+      allocationPlan: [{ paymentTransactionId: "txn_refund", amountCents: 5000 }],
     });
     // Nonzero price changes supersede pending primary intents stranded at
     // any other amount (#1161).
@@ -3755,7 +3760,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       totalPriceCents: 5000,
       guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
     });
-    primeOwnCardRefund(mockRefundPaymentTransactions, answer);
+    primeOwnCardRefund(mockRefundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
 
     const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
     const response = await PUT(
@@ -3768,7 +3773,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
     expect(response.status).toBe(200);
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay_1", amountCents: 5000 }));
-    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 5000);
+    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 5000, answer);
     await new Promise((resolve) => setTimeout(resolve, 0));
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(

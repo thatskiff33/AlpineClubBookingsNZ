@@ -277,3 +277,6 @@ export function predatesRefundLedger(
   if (typeof createdSeconds !== "number") return undated === "pre-ledger";
   return ledgerStartSeconds !== null && createdSeconds < ledgerStartSeconds;
 }
+
+/** The card-refund shortfall refusal, shared by the inline planner and the edit door (#3984). */
+export const STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE = "Refund amount exceeds captured Stripe payments";
