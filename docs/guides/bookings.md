@@ -325,6 +325,7 @@ restore its record first. A Xero outage leaves the invoice queued for retry.
 A later reduction takes unpaid extras off first, including unpaid fees, without
 a policy percentage. Cancellation clears all unpaid extras. A part-paid
 invoice's unpaid remainder is credited; its cash pays the change fee first.
+The cancellation preview excludes only fees actually paid, matching the refund.
 Paid price refunds follow the cancellation policy and go back to the organiser
 by bank transfer. Complete the matching refund task after making that transfer;
 the app then records the notes against the combined and extra invoices. Old

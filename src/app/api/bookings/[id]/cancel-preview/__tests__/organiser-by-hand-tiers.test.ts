@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   paymentEligibleForPaidCancelPath: vi.fn(),
   checkRateLimit: vi.fn(),
   transaction: vi.fn(),
+  modifications: vi.fn(),
+  receipts: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -28,7 +30,10 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: mocks.bookingFindUnique },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: null } }) },
-    bookingModification: { findMany: async () => [], findFirst: async () => null },
+    bookingModification: { findMany: mocks.modifications, findFirst: async () => null },
+    paymentTransaction: { findMany: mocks.receipts },
+    xeroObjectLink: { findMany: async () => [{ localId: "increase", xeroObjectId: "extra", metadata: { organiserBilling: true, priceDiffCents: 5_000, changeFeeCents: 1_000 } }] },
+    xeroSyncOperation: { findMany: async () => [] },
     // A card-shortfall read would open a snapshot here; the organiser's refund by hand never asks for one.
     $transaction: mocks.transaction,
   },
@@ -100,6 +105,8 @@ async function preview() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.modifications.mockResolvedValue([]);
+  mocks.receipts.mockResolvedValue([]);
   mocks.checkRateLimit.mockResolvedValue({ success: true, limit: 60, remaining: 59, resetAt: Date.now() + 60_000 });
   mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
@@ -131,5 +138,28 @@ describe("#3949: the cancel preview for a joiner the organiser paid for by inter
     const { body } = await preview();
 
     expect(body).toMatchObject({ refundMethodForced: "credit", creditRefundAmountCents: 30_000, creditRefundPercentage: 75 });
+  });
+});
+
+
+describe("#4299: preview only withholds extra-invoice fees actually paid", () => {
+  it.each([
+    { cashCents: 0, refundCents: 15_000 },
+    { cashCents: 500, refundCents: 15_000 },
+    { cashCents: 2_000, refundCents: 15_500 },
+    { cashCents: 6_000, refundCents: 17_500 },
+  ])("matches cancellation for $cashCents cents paid on the extra", async ({ cashCents, refundCents }) => {
+    const booking = joinerBooking(true);
+    booking.finalPriceCents = 35_000;
+    booking.payment.amountCents = 30_000 + cashCents;
+    booking.payment.changeFeeCents = 1_000;
+    mocks.bookingFindUnique.mockResolvedValue(booking);
+    mocks.modifications.mockResolvedValue([{ id: "increase", priceDiffCents: 5_000, changeFeeCents: 1_000 }]);
+    mocks.receipts.mockResolvedValue([{ xeroInvoiceId: "extra", amountCents: cashCents }]);
+
+    const { status, body } = await preview();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ refundMethodForced: "organiser_by_hand", refundAmountCents: refundCents, refundPercentage: 50 });
   });
 });
