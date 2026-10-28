@@ -205,7 +205,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     };
     const reduction = await readReductionAgainstUnpaidAsk(db as never, booking, -cut);
     expect(reduction.offsetCents).toBe(offset);
-    const options = await calculateModificationSettlementOptions({ booking, netChargeCents: -cut, reduction, db: db as typeof POLICY_DB, todayAtClub: SETTLEMENT_DAY.todayAtClub });
+    const options = await calculateModificationSettlementOptions({ booking, netChargeCents: -cut, reduction, db: db as unknown as typeof POLICY_DB, todayAtClub: SETTLEMENT_DAY.todayAtClub });
     if (basis === 0) expect(options).toBeNull();
     else expect(options).toMatchObject({ basisAmountCents: basis, cardRefundAmountCents: refund, organiserRefundByBankTransfer: true, accountCreditAmountCents: 0 });
   });

@@ -1377,7 +1377,7 @@ export async function retryXeroSyncOperation(
 
   const organiserExtra = readOrganiserExtraAdjustmentPayload(operation.requestPayload);
   if (organiserExtra) {
-    await requeueOutboxRowForRetry(operation, organiserExtra, ["FAILED", "PARTIAL"], "organiser invoice adjustment");
+    await requeueOutboxRowForRetry(operation, { ...organiserExtra }, ["FAILED", "PARTIAL"], "organiser invoice adjustment");
     return { message: "Queued organiser invoice adjustment retry." };
   }
 

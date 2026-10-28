@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CreditNote, Invoice } from "xero-node";
+import { Invoice, type CreditNote } from "xero-node";
 import type { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
   operation: { xeroObjectId: null as string | null, correlationKey: "scope" },
@@ -50,13 +50,13 @@ describe("organiser extra adjustment provider execution", () => {
     mocks.start.mockImplementation(async (input: { requestPayload: unknown }) => { mocks.plans.push(input); return { id: "raced-refund" }; });
     mocks.task.mockResolvedValue({ id: "hand-back", status: "COMPLETED" });
     mocks.settle.mockResolvedValue({ outcome: { refundPaymentErr: null, refundPaymentResponseBody: { paymentID: "bank-refund" }, refundPaymentSkipReason: null } });
-    mocks.invoice = { invoiceID: "extra", invoiceNumber: "EXTRA-1", contact: { contactID: "organiser" }, amountPaid: 20, amountDue: 40, total: 60, status: "AUTHORISED" as Invoice.StatusEnum };
+    mocks.invoice = { invoiceID: "extra", invoiceNumber: "EXTRA-1", contact: { contactID: "organiser" }, amountPaid: 20, amountDue: 40, total: 60, status: Invoice.StatusEnum.AUTHORISED };
     mocks.note = { creditNoteID: "waiver", total: 40, allocations: [] };
     mocks.getInvoice.mockImplementation(async () => ({ body: { invoices: [mocks.invoice] } }));
     mocks.getCreditNote.mockImplementation(async () => ({ body: { creditNotes: [mocks.note] } }));
     mocks.createCreditNotes.mockImplementation(async () => ({ body: { creditNotes: [mocks.note] } }));
     mocks.save.mockImplementation(async (input: { data: { xeroObjectId: string } }) => { mocks.operation.xeroObjectId = input.data.xeroObjectId; return { count: 1 }; });
-    mocks.createCreditNoteAllocation.mockImplementation(async () => { mocks.note.allocations = [{ invoice: { invoiceID: "extra" }, amount: 40 }]; return { body: {} }; });
+    mocks.createCreditNoteAllocation.mockImplementation(async () => { mocks.note.allocations = [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }]; return { body: {} }; });
     mocks.updateInvoice.mockResolvedValue({ body: {} });
     mocks.updateCreditNote.mockResolvedValue({ body: {} });
   });
@@ -134,7 +134,7 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.settle).toHaveBeenCalledOnce();
   });
   it("pays out a settled invoice's refund note using the completed bank-transfer record", async () => {
-    mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: "PAID" as Invoice.StatusEnum };
+    mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID };
     await executeOrganiserExtraAdjustment(payload({ purpose: "refund", amountCents: 500, cashAtPlanCents: 6_000, handBackTaskId: "hand-back" }), claim);
     expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ reference: expect.stringContaining("EXTRA-1"), lineItems: [{ unitAmount: 5 }] }] });
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
