@@ -98,9 +98,11 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     // The next reduction sees no unpaid amount and the paid extra refund spoken for.
     expect((await readOrganiserExtraState(prisma, childId)).invoices[0]).toMatchObject({ waivedCents: 4_000, refundedCents: 500 });
   });
-  it("N-d: a reversal of cash already partly refunded raises one treasurer task and blocks nothing", async () => {
+  it("N-d / N2: a reversal of cash already partly refunded raises one treasurer task and blocks nothing", async () => {
+    // F2 records a refund on the combined share's row first, so the extra's own receipt shows none
+    // refunded: the $5 refund of its paid price is read from the netting's plans (released above).
     const extra = await prisma.paymentTransaction.findFirstOrThrow({ where: { paymentId: `${P}-payment`, kind: "ADDITIONAL", status: "SUCCEEDED" } });
-    await prisma.paymentTransaction.update({ where: { id: extra.id }, data: { refundedAmountCents: 500, status: "PARTIALLY_REFUNDED" } });
+    expect(extra.refundedAmountCents).toBe(0);
     const before = await prisma.payment.findUniqueOrThrow({ where: { bookingId: childId } });
     // Xero now shows the $20 reversed. Neither the inbound event nor a re-delivery throws.
     await syncCash({ invoiceID: invoiceId, invoiceNumber: "EXTRA-1", amountPaid: 0, amountDue: 60, total: 60 });
@@ -109,7 +111,7 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     expect(reviews.map((row) => [row.operationType, row.status, row.replayable])).toEqual([["ORGANISER_EXTRA_CASH_REVERSED", "FAILED", false]]);
     expect(reviews[0]!.lastErrorMessage).toContain("EXTRA-1");
     // Nothing recorded as paid changed: the treasurer reconciles it in Xero.
-    expect((await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: extra.id } })).status).toBe("PARTIALLY_REFUNDED");
+    expect((await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: extra.id } })).status).toBe("SUCCEEDED");
     expect((await prisma.payment.findUniqueOrThrow({ where: { bookingId: childId } })).amountCents).toBe(before.amountCents);
   });
 });

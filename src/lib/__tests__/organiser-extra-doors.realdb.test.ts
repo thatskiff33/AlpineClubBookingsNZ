@@ -278,6 +278,18 @@ async function expectOrganiserBilledOnce(result: { additionalAmountCents: number
       expect(plans.map((row) => [row.purpose, row.amountCents, row.refundPercentage])).toEqual([["waive", 5_000, 50]]);
     });
 
+    it("N2 control: a reversal of extra cash nothing was refunded from unwinds the receipt and raises no review", async () => {
+      const increase = await prisma.bookingModification.create({ data: { bookingId: BOOKING_ID, memberId: OFFICER_ID, modificationType: "DATE_CHANGE",
+        previousData: {}, newData: {}, priceDiffCents: 5_000, changeFeeCents: 1_000 } });
+      await prisma.xeroObjectLink.create({ data: { localModel: "BookingModification", localId: increase.id, xeroObjectType: "INVOICE", xeroObjectId: `${P}-extra`,
+        role: "SUPPLEMENTARY_INVOICE", metadata: { organiserBilling: true, priceDiffCents: 5_000, changeFeeCents: 1_000 } } });
+      await syncCash({ invoiceID: `${P}-extra`, amountPaid: 20, amountDue: 40, total: 60 });
+      const before = await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID } });
+      await syncCash({ invoiceID: `${P}-extra`, amountPaid: 5, amountDue: 55, total: 60 });
+      expect(await prisma.xeroSyncOperation.count({ where: { localId: increase.id, entityType: "REVIEW" } })).toBe(0);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID } })).amountCents).toBe(before.amountCents - 1_500);
+    });
+
     it("guest add: an added guest bills the organiser once and asks the joiner nothing", async () => {
       const { NextRequest } = await import("next/server");
       raceSession.current = { user: { id: OFFICER_ID, role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true } };

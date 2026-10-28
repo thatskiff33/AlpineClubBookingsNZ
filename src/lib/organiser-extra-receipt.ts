@@ -7,7 +7,7 @@ import { resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { asRecord } from "@/lib/xero-json";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
-import { ORGANISER_SHARE_RECEIPT_REASON, ORGANISER_EXTRA_RECEIPT_REASON } from "@/lib/organiser-extra-state";
+import { ORGANISER_SHARE_RECEIPT_REASON, ORGANISER_EXTRA_RECEIPT_REASON, organiserExtraPaidPriceCents, readOrganiserExtraState, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 
 export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<void> {
   if (!invoice.invoiceID) return;
@@ -53,7 +53,10 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
         data: { paymentId, kind: "ADDITIONAL", source: "INTERNET_BANKING", amountCents, status: "SUCCEEDED", xeroInvoiceId: invoice.invoiceID, xeroInvoiceNumber: invoice.invoiceNumber ?? null, reason: ORGANISER_EXTRA_RECEIPT_REASON },
       });
       if (delta > 0) await receipt(delta);
-      if (delta < 0 && reversalTouchesRefundedCash(previous, -delta)) {
+      // N2: what was refunded from this invoice's cash is the netting's own record, not the
+      // receipt rows - a refund lands on the combined share's row first (F2).
+      const extra = delta < 0 ? (await readOrganiserExtraState(tx, modification.bookingId)).invoices.find((row) => row.invoiceId === invoice.invoiceID) : undefined;
+      if (delta < 0 && reversalTouchesRefundedCash(extra, cashCents)) {
         // N-d: cash the organiser was partly refunded from cannot be unwound
         // here. Record nothing, raise one treasurer task, and let the rest of
         // the inbound event (and every later one) proceed.
@@ -82,15 +85,16 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
   }
 }
 
-/** The receipts a reversal of `reversedCents` unwinds, newest first, as the reversal walks them. */
-function reversalTouchesRefundedCash(rows: ReadonlyArray<{ amountCents: number; refundedAmountCents: number }>, reversedCents: number): boolean {
-  let left = reversedCents;
-  for (const row of rows) {
-    if (left <= 0) return false;
-    if (row.refundedAmountCents > 0) return true;
-    left -= row.amountCents;
-  }
-  return false;
+/**
+ * N2: whether a reversal down to `cashAfterCents` takes back paid price this
+ * invoice's refunds were already sized on (`releasedPriceCents`, its refund
+ * plans, `readOrganiserExtraState`). The fee is paid first (N4), so the price
+ * still paid after it is what is left once the fee is covered. A plan that
+ * refunded nothing handed no cash back, so its reversal unwinds as usual.
+ */
+function reversalTouchesRefundedCash(extra: OrganiserExtraInvoice | undefined, cashAfterCents: number): boolean {
+  if (!extra || extra.refundedCents <= 0) return false;
+  return organiserExtraPaidPriceCents({ ...extra, cashCents: cashAfterCents, releasedPriceCents: 0 }) < extra.releasedPriceCents;
 }
 
 /**
