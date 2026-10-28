@@ -299,6 +299,21 @@ function summarizeQueuedPayload(
       };
     }
 
+    case "ORGANISER_EXTRA_ADJUSTMENT":
+      // #4299 (`INV-PAY-147`): an organiser's extra invoice waived, or a
+      // bank-transfer refund to the organiser recorded as a note.
+      facts
+        .add("Purpose", req.purpose === "waive" ? "Waive the unpaid extra" : req.purpose === "refund" ? "Refund the organiser by bank transfer" : readString(req.purpose))
+        .add("Booking", shortId(req.bookingId))
+        .add("Xero invoice", shortId(req.invoiceId))
+        .add("Booking modification", shortId(req.modificationId))
+        .add("Amount", formatCentsValue(req.amountCents, format))
+        .add("Hand-back task", shortId(req.handBackTaskId));
+      return {
+        title: req.purpose === "waive" ? "Queued: waive an organiser's extra invoice" : "Queued: record an organiser bank-transfer refund",
+        facts: facts.build(),
+      };
+
     case "MEMBERSHIP_CANCELLATION_CREDIT_NOTE":
       facts
         .add("Subscription", shortId(req.subscriptionId))
