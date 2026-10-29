@@ -134,8 +134,8 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
-    site: "reserveCashThatRacedWaiver#1", tier: "GLOBAL",
-    reason: "#4299: cash that arrived while an extra waiver was queued reserves one policy-tiered organiser hand-back and its refund note atomically. The occurrence key and re-read prevent two workers reserving the same raced cash; provider calls run outside.",
+    site: "reserveOrganiserExtraRacedCash#1", tier: "GLOBAL",
+    reason: "#4299: cash that arrived while extra waivers were queued reserves every plan's policy-tiered organiser hand-back and refund note atomically. Each plan's reservation is a delta over the rows re-read under this key, so two waivers of one invoice (or of one plan) never reserve the same raced cash; the scope and occurrence keys back it. Provider calls run outside.",
     invariant: "INV-LOCK-001",
   },
   {
