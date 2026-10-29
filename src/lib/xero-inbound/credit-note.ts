@@ -438,16 +438,19 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // the app made is already recorded when the mirror asks which spend is the app's own. It
   // reuses the note read above, writes only the credit ledger, and never fails the event:
   // the links are already written and a replay would only repeat them.
+  let mirrorFailed = false;
   try {
     const mirrorEvidence = creditNoteMirrorEvidenceFrom(creditNote);
     if (mirrorEvidence) await mirrorCreditNoteOutsideSpend(mirrorEvidence);
   } catch (err) {
+    mirrorFailed = true;
     logger.error({ err, creditNoteId: creditNote.creditNoteID }, "Mirroring a credit note spent outside the app failed; the sweep will try again");
   }
 
   return {
     handled: true,
     kind: "CREDIT_NOTE",
+    mirrorFailed,
     // #4095: a refunded total whose claim was lost twice was left unwritten; a
     // stored event fails on it after every write above, so it is retried.
     ...(refundedPaymentRepair.unsettledPaymentIds

@@ -1,3 +1,4 @@
+vi.mock("@/lib/xero-webhook-health", () => ({ recordXeroWebhookReceived: vi.fn().mockResolvedValue(undefined) }));
 import { createHmac } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -453,5 +454,26 @@ describe("Xero webhook route", () => {
           "xero:webhook:INVOICE:UPDATE:invoice-1:2026-05-29T00:00:00.000Z",
       })
     );
+  });
+});
+
+
+describe("Xero webhook health receipt", () => {
+  it("records a signed valid receipt, including an empty verification ping, but never an invalid signature", async () => {
+    const { recordXeroWebhookReceived } = await import("@/lib/xero-webhook-health");
+    vi.mocked(recordXeroWebhookReceived).mockResolvedValue(undefined);
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    expect((await POST(signedRequest({ events: [] }, "bad-signature"))).status).toBe(401);
+    expect(recordXeroWebhookReceived).not.toHaveBeenCalled();
+    expect((await POST(signedRequest({ events: [] }))).status).toBe(200);
+    expect(recordXeroWebhookReceived).toHaveBeenCalledOnce();
+  });
+  it("rejects an invalid complete batch before recording a receipt", async () => {
+    const { recordXeroWebhookReceived } = await import("@/lib/xero-webhook-health");
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    expect((await POST(signedRequest({ events: [{ invalid: true }] }))).status).toBe(400);
+    expect(recordXeroWebhookReceived).not.toHaveBeenCalled();
   });
 });

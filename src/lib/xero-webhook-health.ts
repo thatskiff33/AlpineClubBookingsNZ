@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 
-export const DEFAULT_SILENT_WEBHOOK_HOURS = 24;
+import { DEFAULT_SILENT_WEBHOOK_HOURS } from "@/lib/xero-webhook-policy";
 
 export function isXeroWebhookSilent({ connected, lastReceivedAt, connectedAt, hours, now }: {
   connected: boolean; lastReceivedAt: Date | null; connectedAt: Date | null; hours: number; now: Date;

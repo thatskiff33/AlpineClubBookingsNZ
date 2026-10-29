@@ -8,7 +8,7 @@ import { PolicyFeedback } from "@/components/admin/booking-policies/policy-feedb
 
 type Scope = { scope: "member" | "booking"; id: string } | { scope: "club" };
 
-export function XeroSyncNowButton({ target, onSynced }: { target: Scope; onSynced?: () => void | Promise<void> }) {
+export function XeroSyncNowButton({ target, onSynced, renderViewOnlyBanner = true }: { target: Scope; onSynced?: () => void | Promise<void>; renderViewOnlyBanner?: boolean }) {
   const canEdit = useAdminAreaEditAccess("finance");
   const canView = useAdminAreaViewAccess("finance");
   const router = useRouter();
@@ -33,7 +33,7 @@ export function XeroSyncNowButton({ target, onSynced }: { target: Scope; onSynce
   }
   if (canView !== true) return null;
   return <section className="space-y-2" aria-label="Sync from Xero">
-    <AdminViewOnlySectionBanner canEdit={canEdit}>Finance edit access is required to sync.</AdminViewOnlySectionBanner>
+    {renderViewOnlyBanner && <AdminViewOnlySectionBanner canEdit={canEdit}>Finance edit access is required to sync.</AdminViewOnlySectionBanner>}
     <PolicyFeedback error={error} success={success} onClearError={() => setError("")} onClearSuccess={() => setSuccess("")} />
     <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" disabled={busy} onClick={() => void sync()}>
       {busy ? "Syncing from Xero…" : target.scope === "club" ? "Sync everything from Xero now" : "Sync from Xero now"}

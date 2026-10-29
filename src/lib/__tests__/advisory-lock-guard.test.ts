@@ -1148,8 +1148,6 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // booking/money/lifecycle key; counterpart analysis in
   // docs/CONCURRENCY_AND_LOCKING.md.
   "src/lib/backup-run.ts": 1,
-  // #4432: short run-claim transaction only; no domain locks or provider calls.
-  "src/lib/cron-run-claim.ts": 1,
   "src/lib/booking-member-night-conflicts.ts": 1,
   // #calendar-recurring: lockCalendarSeries takes calendar-series:{seriesId} for
   // the milliseconds of a whole-series regenerate/propagate/collapse/delete so
@@ -2091,6 +2089,19 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "writers, and acquisition order in docs/CONCURRENCY_AND_LOCKING.md, " +
         "then update this inventory with PR compatibility evidence.",
     ).toEqual(SCOPED_ADVISORY_LOCK_INVENTORY);
+  });
+
+  it("keeps whole-cycle session advisory claims in their explicit inventory", () => {
+    const found: Record<string, number> = {};
+    for (const { rel, text } of sources) {
+      const count = countCodeOccurrences(text, /pg_(?:try_)?advisory_lock\(/g);
+      if (count > 0) found[rel] = count;
+    }
+    // #4432: one dedicated autocommit connection, outside every domain
+    // transaction; scheduled inbound, HTTP cron and the whole-club button
+    // exclude one another. Connection death recovers the claim, without a
+    // lease expiry admitting another live cycle. INV-LOCK-001/002/003.
+    expect(found).toEqual({ "src/lib/cron-run-claim.ts": 1 });
   });
 
   it("keeps every SELECT row-lock protocol inside the reviewed inventory", () => {

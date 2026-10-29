@@ -476,7 +476,7 @@ export async function runXeroCronTaskList(
   if (!taskList.some((task) => task === "inbound" || task === "credit-note-mirror")) {
     return runXeroCronTaskListUnderClaim(taskList, dependencies);
   }
-  const outcome = await withCronRunClaim("xero-inbound-reconcile", (assertRunOwned) =>
+  const outcome = await withCronRunClaim(XERO_CRON_JOB_NAMES.inbound, (assertRunOwned) =>
     runXeroCronTaskListUnderClaim(taskList, { ...dependencies, assertRunOwned }),
   );
   return outcome.claimed ? outcome.result : {
@@ -485,6 +485,11 @@ export async function runXeroCronTaskList(
     skipped: true,
     reason: "already-running",
   } as XeroCronRunnerPayload;
+}
+
+/** One task list for the scheduled callback and whole-club officer action. */
+export function runXeroInboundCronCycle(dependencies: XeroCronRunnerDependencies = {}) {
+  return runXeroCronTaskList(["inbound", "credit-note-mirror"], { ...dependencies, taskLabel: "inbound" });
 }
 
 export async function runXeroCronTasks(

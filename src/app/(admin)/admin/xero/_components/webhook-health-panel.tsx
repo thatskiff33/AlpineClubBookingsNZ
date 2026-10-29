@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { MIN_SILENT_WEBHOOK_HOURS, MAX_SILENT_WEBHOOK_HOURS, silentWebhookHoursSchema } from "@/lib/xero-webhook-policy";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { PolicyFeedback } from "@/components/admin/booking-policies/policy-feedback";
 import { Button } from "@/components/ui/button";
@@ -15,6 +18,7 @@ const ENDPOINT = "/api/admin/xero/webhook-health";
 
 export function WebhookHealthPanel() {
   const canEdit = useAdminAreaEditAccess("finance");
+  const clubTime = useClubTime();
   const [health, setHealth] = useState<Health | null>(null);
   const section = useSectionEditState<{ hours: number }>({
     load: async (signal) => {
@@ -32,7 +36,7 @@ export function WebhookHealthPanel() {
       setHealth(result);
       return { hours: result.hours };
     },
-    isValid: (draft) => Number.isInteger(draft.hours) && draft.hours >= 1 && draft.hours <= 720,
+    isValid: (draft) => silentWebhookHoursSchema.safeParse(draft.hours).success,
     successMessage: "Webhook warning threshold saved.",
   });
   return <section className="my-6 space-y-3 rounded-lg border p-4" {...section.sectionRegionProps}>
@@ -41,16 +45,16 @@ export function WebhookHealthPanel() {
     <h2 className="text-lg font-semibold" {...section.titleProps}>Inbound sync and webhook health</h2>
     {section.loading && <p>Loading webhook health…</p>}
     {health && <>
-      <p>Last webhook received: {health.lastReceivedAt ? <time dateTime={health.lastReceivedAt}>{health.lastReceivedAt}</time> : "none recorded"}.</p>
+      <p>Last webhook received: {health.lastReceivedAt ? <time dateTime={health.lastReceivedAt}>{clubTime.instantDateTime(requireInstant(health.lastReceivedAt))}</time> : "none recorded"}.</p>
       {health.silent && <p role="alert" className="rounded-md border border-warning-6 bg-warning-3 p-3 text-warning-11">No Xero webhook has arrived for more than {health.hours} hours. Check the webhook subscription in Xero; use sync now to catch up.</p>}
       <p className="text-sm text-muted-foreground">Sync now reads Xero using the scheduled reconciliation paths. It can take a few minutes.</p>
-      <XeroSyncNowButton target={{ scope: "club" }} />
+      <XeroSyncNowButton target={{ scope: "club" }} renderViewOnlyBanner={false} />
     </>}
     {section.draft && <div className="space-y-2">
       <Label htmlFor="xero-silent-hours">Warn after hours without a webhook</Label>
-      <Input id="xero-silent-hours" className="max-w-40" type="number" min={1} max={720} value={section.draft.hours} disabled={!section.editing || section.saving || canEdit !== true} onChange={(event) => section.setDraft({ hours: Number(event.target.value) })} />
+      <Input id="xero-silent-hours" className="max-w-40" type="number" min={MIN_SILENT_WEBHOOK_HOURS} max={MAX_SILENT_WEBHOOK_HOURS} value={section.draft.hours} disabled={!section.editing || section.saving || canEdit !== true} onChange={(event) => section.setDraft({ hours: Number(event.target.value) })} />
       {!section.editing ? <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" onClick={section.startEditing} {...section.editTriggerProps}>Edit</ViewOnlyActionButton> : <div className="flex gap-2">
-        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={!section.dirty || section.saving || !Number.isInteger(section.draft.hours) || section.draft.hours < 1 || section.draft.hours > 720} onClick={() => void section.save()}>Save</ViewOnlyActionButton>
+        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={!section.dirty || section.saving || !silentWebhookHoursSchema.safeParse(section.draft.hours).success} onClick={() => void section.save()}>Save</ViewOnlyActionButton>
         <Button variant="outline" disabled={section.saving} onClick={section.cancelEditing}>Cancel</Button>
       </div>}
     </div>}

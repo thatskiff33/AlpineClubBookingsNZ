@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
@@ -9,7 +10,7 @@ import { reconcileXeroContact } from "@/lib/xero-inbound/contact";
 import { reconcileXeroInvoice } from "@/lib/xero-inbound/invoice";
 import { reconcileXeroCreditNote } from "@/lib/xero-inbound/credit-note";
 import { failIfRecountLeftUnsettled } from "@/lib/xero-inbound/recount-left-unsettled";
-import { runXeroCronTaskList } from "@/lib/xero-cron-runner";
+import { runXeroInboundCronCycle } from "@/lib/xero-cron-runner";
 import type { CreditNote, Invoice } from "xero-node";
 
 export class XeroSyncNowError extends Error {
@@ -42,7 +43,9 @@ async function businessSnapshot(memberId: string | null, bookingIds: string[]) {
       orderBy: { id: "asc" }, select: { id: true, amountCents: true, xeroCreditNoteId: true, appliedToBookingId: true },
     }),
   ]);
-  return new Map([...payments, ...credits, ...bookings, ...slices].map((row) => [row.id, JSON.stringify(row)]));
+  return new Map<string, string>([payments, credits, bookings, slices].flatMap((rows, kind) =>
+    rows.map((row): [string, string] => [`${kind}:${row.id}`, JSON.stringify(row)]),
+  ));
 }
 
 function changesBetween(before: Map<string, string>, after: Map<string, string>) {
@@ -80,7 +83,10 @@ async function reconcileDocuments(invoiceIds: Set<string>, noteIds: Set<string>)
   const format = await clubFormatValues();
   for (const id of invoiceIds) failIfRecountLeftUnsettled(await reconcileXeroInvoice(id, format));
   // Includes allocation repair and the #4270 mirror, in their existing order.
-  for (const id of noteIds) failIfRecountLeftUnsettled(await reconcileXeroCreditNote(id));
+  for (const id of noteIds) {
+    const result = failIfRecountLeftUnsettled(await reconcileXeroCreditNote(id));
+    if (result.mirrorFailed) throw new XeroSyncNowError("Some records updated, but a credit-note mirror could not finish. It is safe to retry.", 502);
+  }
 }
 
 function summary(changed: number, invoices: number, creditNotes: number, contactFields = 0) {
@@ -112,7 +118,7 @@ export async function syncMemberFromXeroNow(memberId: string) {
 export async function syncBookingFromXeroNow(bookingId: string) {
   await requireConnection();
   const booking = await prisma.booking.findUnique({
-    where: { id: bookingId }, select: { memberId: true, payment: { select: { id: true, xeroInvoiceId: true } } },
+    where: { id: bookingId }, select: { memberId: true, payment: { select: { id: true, xeroInvoiceId: true, xeroRefundCreditNoteId: true } } },
   });
   if (!booking) throw new XeroSyncNowError("Booking not found.", 404);
   const [modifications, tasks] = await Promise.all([
@@ -120,21 +126,22 @@ export async function syncBookingFromXeroNow(bookingId: string) {
     prisma.manualRefundTask.findMany({ where: { bookingId }, select: { id: true } }),
   ]);
   const links = await prisma.xeroObjectLink.findMany({ where: {
-    active: true, xeroObjectType: "INVOICE", OR: [
+    active: true, xeroObjectType: { in: ["INVOICE", "CREDIT_NOTE"] }, OR: [
       { localModel: "Booking", localId: bookingId },
       ...(booking.payment ? [{ localModel: "Payment", localId: booking.payment.id }] : []),
       { localModel: "BookingModification", localId: { in: modifications.map((row) => row.id) } },
       { localModel: "ManualRefundTask", localId: { in: tasks.map((row) => row.id) } },
     ],
-  }, select: { xeroObjectId: true } });
-  const invoiceIds = new Set(links.map((link) => link.xeroObjectId));
+  }, select: { xeroObjectId: true, xeroObjectType: true } });
+  const invoiceIds = new Set(links.filter((link) => link.xeroObjectType === "INVOICE").map((link) => link.xeroObjectId));
+  const noteIds = new Set(links.filter((link) => link.xeroObjectType === "CREDIT_NOTE").map((link) => link.xeroObjectId));
+  if (booking.payment?.xeroRefundCreditNoteId) noteIds.add(booking.payment.xeroRefundCreditNoteId);
   if (booking.payment?.xeroInvoiceId) invoiceIds.add(booking.payment.xeroInvoiceId);
-  if (invoiceIds.size === 0) throw new XeroSyncNowError("This booking has no linked Xero invoices.", 409);
-  const before = await businessSnapshot(booking.memberId, [bookingId]);
+  if (invoiceIds.size + noteIds.size === 0) throw new XeroSyncNowError("This booking has no linked Xero invoices or credit notes.", 409);
+  const before = await businessSnapshot(bookingOwner(booking).memberId, [bookingId]);
   // The invoice's credit-note summaries identify notes without reading another
   // contact's documents. Include historical allocation links for deleted allocations.
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const noteIds = new Set<string>();
   for (const id of invoiceIds) {
     const response = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, id), {
       operation: "getInvoice", resourceType: "INVOICE", workflow: "syncFromXeroNow", context: "syncFromXeroNow booking invoice",
@@ -149,11 +156,32 @@ export async function syncBookingFromXeroNow(bookingId: string) {
     if (parsed.success) noteIds.add(parsed.data.creditNoteId);
   }
   await reconcileDocuments(invoiceIds, noteIds);
-  return summary(changesBetween(before, await businessSnapshot(booking.memberId, [bookingId])), invoiceIds.size, noteIds.size);
+  return summary(changesBetween(before, await businessSnapshot(bookingOwner(booking).memberId, [bookingId])), invoiceIds.size, noteIds.size);
 }
 
 export async function syncClubFromXeroNow() {
   await requireConnection();
-  const result = await runXeroCronTaskList(["inbound", "credit-note-mirror"], { taskLabel: "inbound" });
-  return { message: result.message, result };
+  const result = await runXeroInboundCronCycle();
+  if ("skipped" in result) return { message: result.message, result };
+  const object = (value: unknown): Record<string, unknown> => {
+    const parsed = z.record(z.string(), z.unknown()).safeParse(value);
+    return parsed.success ? parsed.data : {};
+  };
+  const count = (value: unknown, key: string) => {
+    const amount = object(value)[key];
+    return typeof amount === "number" ? amount : 0;
+  };
+  const inbound = object(result.inboundReconciliation);
+  const mirror = result.creditNoteMirror;
+  const errors = count(inbound.inbound, "failed") + count(inbound.contactReconciliation, "errors")
+    + count(inbound.membershipReconciliation, "errors") + count(inbound.invoiceReconciliation, "failed")
+    + count(mirror, "readFailures") + count(mirror, "mirrorFailures");
+  if (errors > 0) throw new XeroSyncNowError(`The sync partly completed with ${errors} failed read(s) or repair(s). Check Xero Sync and retry.`, 502);
+  const events = count(inbound.inbound, "succeeded");
+  const records = count(inbound.contactReconciliation, "created") + count(inbound.contactReconciliation, "updated") + count(inbound.membershipReconciliation, "updated");
+  const writtenDown = count(mirror, "writtenDown");
+  const restored = count(mirror, "restored");
+  const message = events + records + writtenDown + restored === 0 ? "Already in step."
+    : `Reconciled ${events} event(s), updated ${records} contact or membership record(s), and mirrored ${writtenDown + restored} credit note(s).`;
+  return { message, events, records, writtenDown, restored, result };
 }
