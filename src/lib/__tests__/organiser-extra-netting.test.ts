@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 const start = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/xero-sync", () => ({ startXeroSyncOperation: start }));
 
-import { organiserFixedFeeRemainderCents, planOrganiserExtraNetting, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
+import { planOrganiserExtraNetting, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
 import { effectiveOrganiserPaidChangeFeeCents, organiserExtraPaidPriceCents, organiserExtraUnpaidCents, readOrganiserExtraState, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 
@@ -78,8 +78,8 @@ describe("organiser bank-transfer extra netting (N1–N4)", () => {
 describe("organiser extra adjustment queue payload", () => {
   const payload = { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: "child", scopeId: "edit", modificationId: "increase", invoiceId: null, amountCents: 4_000, purpose: "waive", cashAtPlanCents: 2_000, refundPercentage: 50 };
   it("retains the frozen cash, scope and policy across retry", () => expect(readOrganiserExtraAdjustmentPayload(payload)).toEqual(payload));
-  it("N1: retains the frozen fee remainder", () => expect(readOrganiserExtraAdjustmentPayload({ ...payload, fixedFeeRemainderCents: 2_500 })).toMatchObject({ fixedFeeRemainderCents: 2_500 }));
-  it.each([{ amountCents: 0 }, { amountCents: 1.1 }, { amountCents: NaN }, { cashAtPlanCents: -1 }, { refundPercentage: 101 }, { fixedFeeRemainderCents: -1 }, { fixedFeeRemainderCents: 0.5 }, { modificationId: null }, { purpose: "anything" }])("refuses malformed money or identity %j", (change) => expect(readOrganiserExtraAdjustmentPayload({ ...payload, ...change })).toBeNull());
+  it("N1: retains the plan's frozen basis, fee and kind", () => expect(readOrganiserExtraAdjustmentPayload({ ...payload, planBasisCents: 10_000, fixedFeeCents: 5_000, planCancels: true })).toMatchObject({ planBasisCents: 10_000, fixedFeeCents: 5_000, planCancels: true }));
+  it.each([{ amountCents: 0 }, { amountCents: 1.1 }, { amountCents: NaN }, { cashAtPlanCents: -1 }, { refundPercentage: 101 }, { planBasisCents: -1 }, { fixedFeeCents: 0.5 }, { planCancels: "yes" }, { modificationId: null }, { purpose: "anything" }])("refuses malformed money or identity %j", (change) => expect(readOrganiserExtraAdjustmentPayload({ ...payload, ...change })).toBeNull());
 });
 
 describe("F4: a waiver of a still-queued extra invoice", () => {
@@ -120,12 +120,11 @@ describe("F4: a waiver of a still-queued extra invoice", () => {
     expect(operation.status).toBe(status);
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", amountCents: 6_000 }) }));
   });
-  it("N1: a 25% tier with a $50 fixed fee on a $100 basis refunds $0 and freezes the $25 the basis left unabsorbed", async () => {
+  it("N1: a 25% tier with a $50 fixed fee on a $100 basis refunds $0 and freezes its basis, fee and kind with the waiver", async () => {
     start.mockClear();
     const { tx } = store("RUNNING");
     await reserveOrganiserExtraNetting(tx, { ...cancel, refundPercentage: 25, refundBasisCents: 10_000, refundAmountCents: 0, fixedFeeCents: 5_000, state: queued });
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", refundPercentage: 25, fixedFeeRemainderCents: 2_500 }) }));
-    expect(organiserFixedFeeRemainderCents(5_000, 30_000, 25)).toBe(0);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ requestPayload: expect.objectContaining({ purpose: "waive", refundPercentage: 25, planBasisCents: 10_000, fixedFeeCents: 5_000, planCancels: true }) }));
   });
   it("a create already under way keeps its invoice, and the waiver is reserved to void it", async () => {
     start.mockClear();

@@ -9,13 +9,9 @@ import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
-import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
-import { bindOrganiserExtraRefundToHandBack, hasOrganiserExtraReservation, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
-import { organiserExtraPaidPriceCents, organiserExtraReleasedPriceCents, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
-import { calculateRefundAmount } from "@/lib/policies/cancellation";
+import { reserveOrganiserExtraRacedCash } from "@/lib/organiser-extra-raced-cash";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
-import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import type { OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 
 const WAIVER_LINE = "Unpaid organiser extra released; no cancellation percentage applies";
@@ -60,7 +56,7 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
   if (payload.purpose === "waive" && !operation.xeroObjectId) {
     // A bank-feed reconciliation may race the app's local read. Recognise that
     // cash and reserve its policy refund before completing the old waiver.
-    await reserveCashThatRacedWaiver(payload, cashCents, Math.max(0, payload.amountCents - dueCents), claim.id);
+    if (payload.modificationId) await reserveOrganiserExtraRacedCash(payload.bookingId, { modificationId: payload.modificationId, invoiceId: extraInvoiceId, cashCents });
     // F3: Xero voids only an invoice with no money on it - no payment, and no
     // credit allocated (an earlier waiver's note is one). The combined
     // invoice's own classifier answers that (`INV-SSOT`).
@@ -143,8 +139,7 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     if (totalCents === null) throw new Error("Organiser waiver note total is unreadable");
     // A payment between create and allocate can make the first note too large.
     // Re-read on every attempt and shrink an unallocated note before applying it.
-    // Add OUR allocation back to due when measuring raced cash on a retry.
-    await reserveCashThatRacedWaiver(payload, cashCents, Math.max(0, payload.amountCents - dueCents - alreadyAllocated), claim.id);
+    if (payload.modificationId) await reserveOrganiserExtraRacedCash(payload.bookingId, { modificationId: payload.modificationId, invoiceId: extraInvoiceId, cashCents });
     const revisedTotalCents = Math.min(totalCents, dueCents + alreadyAllocated);
     if (revisedTotalCents < totalCents) {
       if (alreadyAllocated > 0 || (note.payments?.length ?? 0) > 0 || (note.allocations?.length ?? 0) > 0) {
@@ -182,83 +177,4 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
       extraLinks: [{ localModel: "Payment", localId: payment.id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_REFUND", metadata: { invoiceId: extraInvoiceId, amountCents, handBackTaskId: payload.handBackTaskId } }],
     });
   }
-}
-
-/**
- * Correctness 8, N-c: a raced payment's refund is the cancel's own computation
- * (`calculateRefundAmount`, its rounding) at the plan's frozen percentage. N1:
- * the plan charged the tier's fixed fee once, against its own basis; the part
- * that basis could not absorb (`fixedFeeRemainderCents`) is charged against the
- * raced cash, and never more than once.
- */
-function racedCashRefundCents(basisCents: number, payload: Pick<OrganiserExtraAdjustmentPayload, "refundPercentage" | "fixedFeeRemainderCents">): number {
-  const { refundPercentage } = payload;
-  const frozenTier = { daysBeforeStay: 0, refundPercentage, creditRefundPercentage: refundPercentage, fixedFeeCents: payload.fixedFeeRemainderCents ?? 0, creditFixedFeeCents: 0 };
-  return calculateRefundAmount(basisCents, 0, [frozenTier], "card").refundAmountCents;
-}
-
-/**
- * Cash that arrived while this waiver was queued is refunded at the plan's
- * tier. N1 (fix delta): measured per PLAN, not per waiver - every waiver of
- * one cancel or reduction shares its fixed-fee remainder, so the refund is the
- * tier over ALL the raced paid price of the plan's waivers, less every refund
- * already reserved for it. Each waiver's raced basis is therefore recorded even
- * when it refunds nothing yet (a 0 refund row), or a second waiver could not
- * count it. Every raced row carries its plan (`racedPlanScopeId`). Across
- * plans, cash is refunded once: a waiver's raced price is capped at the paid
- * price no other refund - another plan's policy refund or raced cash - has
- * released, so two plans waiving one invoice never refund its fee.
- */
-async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPayload, cashCents: number, waivedCentsNowPaid: number, operationId: string): Promise<void> {
-  if (!payload.modificationId || cashCents <= payload.cashAtPlanCents || waivedCentsNowPaid <= 0) return;
-  const modificationId = payload.modificationId;
-  const modification = await prisma.bookingModification.findUniqueOrThrow({ where: { id: modificationId }, select: { priceDiffCents: true, changeFeeCents: true } });
-  // The paid price the new cash adds, the fee settled first (N4): the one paid-price rule.
-  const asPaid = (paidCents: number, releasedPriceCents = 0): OrganiserExtraInvoice => ({
-    modificationId, invoiceId: payload.invoiceId, priceCents: modification.priceDiffCents, feeCents: modification.changeFeeCents,
-    cashCents: paidCents, waivedCents: 0, refundedCents: 0, releasedPriceCents,
-  });
-  const newlyPaidPriceCents = Math.max(0, organiserExtraPaidPriceCents(asPaid(cashCents)) - organiserExtraPaidPriceCents(asPaid(payload.cashAtPlanCents)));
-  const newlyRacedCents = Math.min(waivedCentsNowPaid, newlyPaidPriceCents);
-  if (newlyRacedCents <= 0) return;
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const scopeId = `racing-cash:${operationId}:${cashCents}`;
-    if (await hasOrganiserExtraReservation(tx, payload.bookingId, scopeId)) return;
-    const occurrenceKey = editRefundHandBackOccurrenceKey(`organiser-extra-racing-cash:${operationId}:${cashCents}`);
-    const previous = await tx.manualRefundTask.findUnique({ where: { occurrenceKey }, select: { id: true } });
-    if (previous) return;
-    const priorPlans = (await tx.xeroSyncOperation.findMany({ where: { queueType: payload.queueType, localId: payload.bookingId }, select: { requestPayload: true } }))
-      .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload));
-    const reserved = priorPlans.filter((plan): plan is OrganiserExtraAdjustmentPayload => plan?.purpose === "refund" && plan.racedPlanScopeId === payload.scopeId);
-    const basisOf = (rows: OrganiserExtraAdjustmentPayload[]) => rows.reduce((sum, plan) => sum + (plan.priceBasisCents ?? 0), 0);
-    const thisWaiverBasisCents = basisOf(reserved.filter((plan) => plan.modificationId === modificationId));
-    // Cash is refunded once: never more raced price than the paid price every other refund left unreleased.
-    const releasedElsewhereCents = organiserExtraReleasedPriceCents(priorPlans, modificationId) - thisWaiverBasisCents;
-    const racedBasisCents = Math.min(newlyRacedCents, organiserExtraPaidPriceCents(asPaid(cashCents, releasedElsewhereCents)));
-    const additionalBasisCents = Math.max(0, racedBasisCents - thisWaiverBasisCents);
-    // No new raced price on this waiver: nothing new to refund (a refund is never reserved without its basis).
-    if (additionalBasisCents <= 0) return;
-    // This waiver's raced price now, plus what the plan's other waivers recorded.
-    const planBasisCents = racedBasisCents + basisOf(reserved.filter((plan) => plan.modificationId !== modificationId));
-    const additionalRefundCents = Math.max(0, racedCashRefundCents(planBasisCents, payload) - reserved.reduce((sum, plan) => sum + plan.amountCents, 0));
-    const netting = { state: { bookingId: payload.bookingId, invoices: [asPaid(cashCents)] }, scopeId, racedPlanScopeId: payload.scopeId,
-      reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage };
-    if (additionalRefundCents <= 0) {
-      // Nothing to hand back yet: record the basis, so the plan's next raced cash counts it.
-      await reserveOrganiserExtraNetting(tx, netting);
-      return;
-    }
-    const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: payload.bookingId }, select: { id: true } });
-    const task = await tx.manualRefundTask.create({
-      data: {
-        bookingId: payload.bookingId, paymentId: payment.id, kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey,
-        amountCents: additionalRefundCents, raisedAmountCents: additionalRefundCents,
-        reason: "Refund the group organiser by bank transfer: the organiser paid an extra invoice while its cancellation or reduction was being processed, and that payment is refunded at the cancellation policy's percentage.",
-      },
-      select: { id: true },
-    });
-    await reserveOrganiserExtraNetting(tx, netting);
-    await bindOrganiserExtraRefundToHandBack(tx, { bookingId: payload.bookingId, handBackTaskId: task.id, scopeId });
-  });
 }

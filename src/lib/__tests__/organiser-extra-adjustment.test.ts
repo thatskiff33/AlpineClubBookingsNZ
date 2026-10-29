@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   getInvoice: vi.fn(), getCreditNote: vi.fn(), createCreditNotes: vi.fn(), createCreditNoteAllocation: vi.fn(), updateInvoice: vi.fn(),
   complete: vi.fn(), save: vi.fn(), start: vi.fn(), settle: vi.fn(),
   updateCreditNote: vi.fn(), task: vi.fn(),
-  plans: [] as { requestPayload: unknown }[],
+  // Every adjustment row of the booking, oldest first: the waivers' own rows and what they reserve.
+  plans: [] as { requestPayload: unknown; correlationKey?: string }[],
   // N1 fix delta: each extra's own change (default: +$50 with a $10 fee).
   modifications: {} as Record<string, { priceDiffCents: number; changeFeeCents: number }>,
 }));
@@ -17,7 +18,11 @@ const transactionStore = {
   manualRefundTask: { findUnique: vi.fn(async () => null), create: mocks.task },
   payment: { findUniqueOrThrow: vi.fn(async () => ({ id: "child-payment" })) },
   xeroSyncOperation: {
-    findMany: vi.fn(async () => mocks.plans), findFirst: vi.fn(async () => null),
+    findMany: vi.fn(async () => mocks.plans),
+    // A reservation's replay test: its scope, or its correlation key, already on a row.
+    findFirst: vi.fn(async ({ where }: { where: { correlationKey?: string; requestPayload?: { equals: string } } }) =>
+      mocks.plans.find((row) => (where.correlationKey !== undefined && row.correlationKey === where.correlationKey) ||
+        (where.requestPayload !== undefined && (row.requestPayload as { scopeId?: string }).scopeId === where.requestPayload.equals)) ? { id: "row" } : null),
     update: vi.fn(),
   },
 };
@@ -114,95 +119,131 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.updateInvoice).not.toHaveBeenCalled();
   });
+  /** A waiver runs with its own row on the booking, as the outbox runs it. */
+  const run = async (waiver: OrganiserExtraAdjustmentPayload, operation = claim) => {
+    const same = (row: { requestPayload: unknown }) => {
+      const queued = row.requestPayload as OrganiserExtraAdjustmentPayload;
+      return queued.purpose === waiver.purpose && queued.scopeId === waiver.scopeId && queued.modificationId === waiver.modificationId;
+    };
+    if (!mocks.plans.some(same)) mocks.plans.push({ requestPayload: waiver });
+    await executeOrganiserExtraAdjustment(waiver, operation);
+  };
+  const handBacks = () => mocks.task.mock.calls.map(([input]) => (input as { data: { amountCents: number } }).data.amountCents);
+  const racedRows = () => mocks.plans.map((row) => row.requestPayload as OrganiserExtraAdjustmentPayload).filter((row) => row.racedPlanScopeId);
+  const racedBasisCents = () => racedRows().reduce((sum, row) => sum + (row.priceBasisCents ?? 0), 0);
+
   it("re-reads cash after creating a waiver, shrinks it, and reserves only the new paid price at policy", async () => {
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [{ ...mocks.invoice }] } });
     mocks.invoice = { ...mocks.invoice, amountPaid: 30, amountDue: 30 };
-    await executeOrganiserExtraAdjustment(payload(), claim);
+    await run(payload());
     expect(mocks.updateCreditNote.mock.calls[0]?.[2]).toMatchObject({ creditNotes: [{ lineItems: [{ unitAmount: 30 }] }] });
     expect(mocks.createCreditNoteAllocation.mock.calls[0]?.[2]).toMatchObject({ allocations: [{ amount: 30 }] });
     expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 500, reason: expect.stringContaining("the organiser paid an extra invoice") }) }));
-    expect(mocks.plans[0]?.requestPayload).toMatchObject({ purpose: "refund", amountCents: 500, priceBasisCents: 1_000, modificationId: "increase" });
+    expect(racedRows()).toMatchObject([{ purpose: "refund", amountCents: 500, priceBasisCents: 1_000, modificationId: "increase", racedPlanScopeId: "cut" }]);
   });
   it("N-c: a raced payment's refund rounds as the cancel's policy does, never down", async () => {
     // $10.01 of newly paid price at 50% is $5.005: the policy rounds it to $5.01.
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [{ ...mocks.invoice }] } });
     mocks.invoice = { ...mocks.invoice, amountPaid: 30.01, amountDue: 29.99 };
-    await executeOrganiserExtraAdjustment(payload(), claim);
-    expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 501 }) }));
+    await run(payload());
+    expect(handBacks()).toEqual([501]);
   });
   it("S2: a $30 waiver of a $60 extra ($50 + $10 fee, $20 paid) frozen at 50%: the organiser's raced $40 hands back $15.00", async () => {
     // The organiser paid the remaining $40 before the waiver ran.
     mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0 };
-    await executeOrganiserExtraAdjustment(payload({ amountCents: 3_000, cashAtPlanCents: 2_000, refundPercentage: 50 }), claim).catch(() => undefined);
-    expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: 1_500 }) }));
-    expect(mocks.plans[0]?.requestPayload).toMatchObject({ purpose: "refund", amountCents: 1_500, priceBasisCents: 3_000 });
+    await run(payload({ amountCents: 3_000, cashAtPlanCents: 2_000, refundPercentage: 50 })).catch(() => undefined);
+    expect(handBacks()).toEqual([1_500]);
+    expect(racedRows()).toMatchObject([{ purpose: "refund", amountCents: 1_500, priceBasisCents: 3_000 }]);
   });
   it.each([
-    { fixedFeeRemainderCents: 2_500, handBackCents: null },
-    { fixedFeeRemainderCents: undefined, handBackCents: 1_250 },
-  ])("N1: a 25% tier whose 5000c fee its 10000c basis left 2500c short: 5000c of raced paid price hands back $handBackCents (remainder $fixedFeeRemainderCents)", async ({ fixedFeeRemainderCents, handBackCents }) => {
+    { frozen: { planBasisCents: 10_000, fixedFeeCents: 5_000 }, handBackCents: [] },
+    { frozen: {}, handBackCents: [1_250] },
+  ])("N1: a 25% tier, its 5000c fee frozen with a 10000c basis or none ($frozen): 5000c of raced price hands back $handBackCents", async ({ frozen, handBackCents }) => {
     // The fee was paid at plan time; the organiser then paid the $50 price the waiver covered.
     mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0 };
-    await executeOrganiserExtraAdjustment(payload({ amountCents: 5_000, cashAtPlanCents: 1_000, refundPercentage: 25, ...(fixedFeeRemainderCents ? { fixedFeeRemainderCents } : {}) }), claim).catch(() => undefined);
-    if (handBackCents === null) expect(mocks.task).not.toHaveBeenCalled();
-    else expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: handBackCents }) }));
+    await run(payload({ amountCents: 5_000, cashAtPlanCents: 1_000, refundPercentage: 25, ...frozen })).catch(() => undefined);
+    expect(handBacks()).toEqual(handBackCents);
   });
   it.each([
     { extraCents: 20_000, handBacks: [2_500, 5_000] }, // policy: (10000 + 40000) x 25% - 5000 = 7500
     { extraCents: 8_000, handBacks: [1_500] }, // policy: (10000 + 16000) x 25% - 5000 = 1500
-  ])("N1 fix delta: two raced extras of $extraCents under one plan pay its 2500c fee remainder once: hand-backs $handBacks", async ({ extraCents, handBacks }) => {
-    // 25% tier, $50 fee, $100 basis: the plan refunded $0 and left $25 of its fee unabsorbed.
-    const plan = { scopeId: "cancel", refundPercentage: 25, fixedFeeRemainderCents: 2_500, cashAtPlanCents: 0, amountCents: extraCents };
+  ])("N1 fix delta: two raced extras of $extraCents under one plan charge its 5000c fee once: hand-backs $handBacks", async ({ extraCents, handBacks: expected }) => {
+    // 25% tier, $50 fee, $100 basis: the plan refunded $0, its fee unabsorbed.
+    const plan = { scopeId: "cancel", refundPercentage: 25, planBasisCents: 10_000, fixedFeeCents: 5_000, planCancels: true, cashAtPlanCents: 0, amountCents: extraCents };
+    const waivers = ["a", "b"].map((id) => payload({ ...plan, modificationId: `increase-${id}`, invoiceId: `extra-${id}` }));
     for (const id of ["a", "b"]) mocks.modifications[`increase-${id}`] = { priceDiffCents: extraCents, changeFeeCents: 0 };
-    for (const id of ["a", "b"]) {
+    for (const waiver of waivers) mocks.plans.push({ requestPayload: waiver });
+    for (const [index, id] of ["a", "b"].entries()) {
       // Each extra was paid in full while its waiver was queued.
       mocks.invoice = { ...mocks.invoice, invoiceID: `extra-${id}`, amountPaid: extraCents / 100, amountDue: 0, total: extraCents / 100 };
-      await executeOrganiserExtraAdjustment(payload({ ...plan, modificationId: `increase-${id}`, invoiceId: `extra-${id}` }), { ...claim, id: `waiver-${id}` }).catch(() => undefined);
+      await run(waivers[index]!, { ...claim, id: `waiver-${id}` }).catch(() => undefined);
     }
-    expect(mocks.task.mock.calls.map(([input]) => (input as { data: { amountCents: number } }).data.amountCents)).toEqual(handBacks);
+    expect(handBacks()).toEqual(expected);
     // Every raced price is recorded against the plan, a $0 hand-back included.
-    const raced = mocks.plans.map((row) => row.requestPayload as { racedPlanScopeId?: string; priceBasisCents?: number });
-    expect(raced.every((row) => row.racedPlanScopeId === "cancel")).toBe(true);
-    expect(raced.reduce((sum, row) => sum + (row.priceBasisCents ?? 0), 0)).toBe(2 * extraCents);
+    expect(racedRows().every((row) => row.racedPlanScopeId === "cancel")).toBe(true);
+    expect(racedBasisCents()).toBe(2 * extraCents);
   });
-  describe("item 5: one $60 extra ($50 + $10 fee) waived by a 50% reduction, then a 25% cancel, the organiser paying all $60 in between", () => {
-    // Had the $60 arrived before the reduction, it pays the fee first: the reduction refunds its $30 at 50% ($15),
-    // the cancel the $20 of price left at 25% ($5), and the $10 fee is kept. Cash is refunded once, never twice.
-    const reduction = payload({ scopeId: "reduction", amountCents: 3_000, cashAtPlanCents: 0, refundPercentage: 50 });
-    const cancel = payload({ scopeId: "cancel", amountCents: 3_000, cashAtPlanCents: 0, refundPercentage: 25 });
-    const handBacks = () => mocks.task.mock.calls.map(([input]) => (input as { data: { amountCents: number } }).data.amountCents);
-    const racedBasisCents = () => mocks.plans.reduce((sum, row) => sum + ((row.requestPayload as { priceBasisCents?: number }).priceBasisCents ?? 0), 0);
-    beforeEach(() => { mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID }; });
+  describe("item 5: one $60 extra ($50 + $10 fee) waived $30 by a reduction, then $30 by a cancel", () => {
+    // Policy: as if the cash had arrived before the reduction. Cash pays the fee first; the reduction then
+    // refunds its covered $30 at its tier, the cancel the price left at its tier, and the fee is kept.
+    const reduction = (refundPercentage = 50) => payload({ scopeId: "reduction", amountCents: 3_000, cashAtPlanCents: 0, refundPercentage });
+    const cancel = (refundPercentage = 25) => payload({ scopeId: "cancel", amountCents: 3_000, cashAtPlanCents: 0, refundPercentage, planCancels: true });
+    const paid = (cents: number) => { mocks.invoice = { ...mocks.invoice, amountPaid: cents / 100, amountDue: 0, status: Invoice.StatusEnum.PAID }; };
+    /** Both plans' waivers queued, oldest plan first, then run in `order`. */
+    const runBoth = async (order: "reduction-first" | "cancel-first", plans = { reduction: reduction(), cancel: cancel() }) => {
+      for (const waiver of [plans.reduction, plans.cancel]) {
+        if (!mocks.plans.some((row) => (row.requestPayload as OrganiserExtraAdjustmentPayload).scopeId === waiver.scopeId)) mocks.plans.push({ requestPayload: waiver });
+      }
+      const runs = order === "reduction-first" ? [plans.reduction, plans.cancel] : [plans.cancel, plans.reduction];
+      for (const waiver of runs) await run(waiver, { ...claim, id: `${waiver.scopeId}-waiver` });
+    };
 
-    it("both waivers queued when the cash lands: $15 then $5, and only the $50 of paid price is released", async () => {
-      await executeOrganiserExtraAdjustment(reduction, { ...claim, id: "reduction-waiver" });
-      await executeOrganiserExtraAdjustment(cancel, { ...claim, id: "cancel-waiver" });
+    it.each(["reduction-first", "cancel-first"] as const)("all 6000c paid while both were queued, %s: 1500c at 50% and 500c at 25%, in plan order", async (order) => {
+      paid(6_000);
+      await runBoth(order);
+      // Whichever waiver runs reserves both plans, oldest first.
       expect(handBacks()).toEqual([1_500, 500]);
-      expect(racedBasisCents()).toBe(5_000);
+      expect(racedRows().map((row) => [row.racedPlanScopeId, row.priceBasisCents, row.amountCents])).toEqual([["reduction", 3_000, 1_500], ["cancel", 2_000, 500]]);
     });
 
-    it("the cancel's waiver runs first: still only the $50 of paid price is released, the fee never refunded", async () => {
-      await executeOrganiserExtraAdjustment(cancel, { ...claim, id: "cancel-waiver" });
-      await executeOrganiserExtraAdjustment(reduction, { ...claim, id: "reduction-waiver" });
-      expect(racedBasisCents()).toBe(5_000);
+    it.each(["reduction-first", "cancel-first"] as const)("only 3000c paid, %s: the reduction's waiver is set against the 3000c still unpaid; the cancel hands back 2000c of price at 25%", async (order) => {
+      paid(3_000);
+      await runBoth(order);
+      expect(handBacks()).toEqual([500]);
+      expect(racedRows().map((row) => [row.racedPlanScopeId, row.priceBasisCents])).toEqual([["cancel", 2_000]]);
     });
 
-    it("a waiver re-run on more raced cash counts its own earlier raced price once, never as another plan's release", async () => {
+    it("the cancel's tier higher than the reduction's, its waiver first: $7.50 at 25% and $10 at 50%", async () => {
+      paid(6_000);
+      await runBoth("cancel-first", { reduction: reduction(25), cancel: cancel(50) });
+      expect(handBacks()).toEqual([750, 1_000]);
+    });
+
+    it("a replay reserves nothing more", async () => {
+      paid(6_000);
+      await runBoth("cancel-first");
+      await runBoth("reduction-first");
+      expect(handBacks()).toEqual([1_500, 500]);
+    });
+
+    it("a waiver re-run on more raced cash counts its own earlier raced price once", async () => {
       // $40 of the $60 paid when the $40 waiver (planned at $20 paid) first runs; all $60 when it runs again.
       mocks.invoice = { ...mocks.invoice, amountPaid: 40, amountDue: 0, status: Invoice.StatusEnum.AUTHORISED };
-      await executeOrganiserExtraAdjustment(payload(), claim);
-      mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID };
-      await executeOrganiserExtraAdjustment(payload(), claim);
-      // $20 of newly paid price at 50%, then the other $20: $40 of the $50 (the $10 the plan saw paid is not raced).
+      await run(payload());
+      paid(6_000);
+      await run(payload());
+      // $20 then $20 more of the waiver's $40 covered, at 50%.
       expect(handBacks()).toEqual([1_000, 1_000]);
       expect(racedBasisCents()).toBe(4_000);
     });
 
-    it("the cancel saw the cash and refunded all $50 of paid price itself: the reduction's waiver refunds nothing more", async () => {
-      mocks.plans.push({ requestPayload: { ...payload({ scopeId: "cancel", purpose: "refund", amountCents: 1_250, priceBasisCents: 5_000, cashAtPlanCents: 6_000, refundPercentage: 25 }) } });
-      await executeOrganiserExtraAdjustment(reduction, { ...claim, id: "reduction-waiver" });
-      expect(mocks.task).not.toHaveBeenCalled();
-      expect(mocks.plans).toHaveLength(1);
+    it("the cancel saw the cash and its own refund was laid against the extra: the reduction's queued waiver still hands back its $15", async () => {
+      // The cancel's base never held the reduction's $30 (the booking's price fell by it), so the reduction keeps its raced cash.
+      mocks.plans.push({ requestPayload: reduction() });
+      mocks.plans.push({ requestPayload: payload({ scopeId: "cancel", purpose: "refund", amountCents: 1_250, priceBasisCents: 5_000, cashAtPlanCents: 6_000, refundPercentage: 25, planCancels: true }) });
+      paid(6_000);
+      await run(reduction(), { ...claim, id: "reduction-waiver" });
+      expect(handBacks()).toEqual([1_500]);
     });
   });
   it("refuses an unreadable refreshed invoice before allocating a waiver", async () => {

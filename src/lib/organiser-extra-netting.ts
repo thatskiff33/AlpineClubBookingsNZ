@@ -25,16 +25,6 @@ export function planOrganiserExtraNetting(state: OrganiserExtraState, input: { r
   return { waivers, refunds, combinedRefundCents: refundLeft };
 }
 
-/**
- * N1: the tier's fixed fee the plan's own refund did not absorb. The policy
- * charges it once, against the tiered basis (`calculateRefundAmount`); what the
- * basis could not cover is still owed, so cash racing the plan's waiver pays it
- * before any of that cash is handed back.
- */
-export function organiserFixedFeeRemainderCents(fixedFeeCents: number, refundBasisCents: number, refundPercentage: number): number {
-  return Math.max(0, fixedFeeCents - Math.round((refundBasisCents * refundPercentage) / 100));
-}
-
 async function reserveAdjustment(tx: Prisma.TransactionClient, payload: OrganiserExtraAdjustmentPayload, createdByMemberId?: string): Promise<void> {
   const key = `organiser-extra:${payload.bookingId}:${payload.scopeId}:${payload.purpose}:${payload.modificationId ?? payload.invoiceId}`;
   const existing = await tx.xeroSyncOperation.findFirst({ where: { correlationKey: key }, select: { id: true } });
@@ -78,20 +68,22 @@ export async function hasOrganiserExtraReservation(tx: Pick<Prisma.TransactionCl
   return row !== null;
 }
 
+/** A raced-cash refund row (`organiser-extra-raced-cash.ts`), reserved like any other: under the caller's money claim. */
+export async function reserveOrganiserExtraRacedRefund(tx: Prisma.TransactionClient, payload: OrganiserExtraAdjustmentPayload): Promise<void> {
+  await reserveAdjustment(tx, payload);
+}
+
 export async function reserveOrganiserExtraNetting(tx: Prisma.TransactionClient, input: {
   state: OrganiserExtraState; scopeId: string; reductionCents: number; refundAmountCents: number;
   refundBasisCents: number; refundPercentage: number; cancel?: boolean; createdByMemberId?: string;
-  /** N1: the tier's fixed fee (card), so the part its refund did not absorb is frozen with the plan. */
+  /** N1: the tier's fixed fee (card), frozen with the plan's basis so cash racing its waivers is tiered with the plan. */
   fixedFeeCents?: number;
-  /** N1: the plan whose waiver this raced cash met (its refund rows carry it). */
-  racedPlanScopeId?: string;
 }): Promise<void> {
   if (input.state.invoices.length === 0) return;
   if (await hasOrganiserExtraReservation(tx, input.state.bookingId, input.scopeId)) return;
   const plan = planOrganiserExtraNetting(input.state, input);
-  const fixedFeeRemainderCents = organiserFixedFeeRemainderCents(input.fixedFeeCents ?? 0, input.refundBasisCents, input.refundPercentage);
   const base = { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: input.state.bookingId, scopeId: input.scopeId, refundPercentage: input.refundPercentage,
-    ...(fixedFeeRemainderCents > 0 ? { fixedFeeRemainderCents } : {}), ...(input.racedPlanScopeId ? { racedPlanScopeId: input.racedPlanScopeId } : {}) } as const;
+    planBasisCents: Math.max(0, input.refundBasisCents), fixedFeeCents: input.fixedFeeCents ?? 0, ...(input.cancel ? { planCancels: true } : {}) } as const;
   for (const [purpose, shares] of [["waive", plan.waivers], ["refund", plan.refunds]] as const) {
     for (const share of shares) {
       const { invoice, amountCents } = share;
