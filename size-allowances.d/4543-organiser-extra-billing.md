@@ -29,7 +29,7 @@ lines: 1067
 reason: Freeze invoice debts beside the existing durable group refund plan with its one planner, record each refund on the child's payment rows and bind the debts at its child hand-back claim (review F2, N-e). Splitting that money claim would obscure lock ownership and restart behavior; invoice arithmetic and execution already live in shared modules.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3450
+lines: 3446
 reason: Keep queue dispatch and the transaction-aware wrapper beside the existing supplementary-anchor enqueue implementation. The new adjustment executor is a separate module; exporting a private enqueue solely to relocate its wrapper would widen its API. Review B1 and S1 add two refusals at the existing choke points they guard - the booking-invoice enqueue (no invoice of its own for an organiser-paid bank place) and the anchor-locked supplementary decision (no invoice for an extra waived before it was raised) - where every enqueuer already funnels; elsewhere they could be bypassed.
 
 file: src/lib/xero-operation-retry.ts
@@ -51,3 +51,7 @@ reason: The Booking Modified sender composes its money note in one place for the
 file: src/lib/xero-booking-repair-classify.ts
 lines: 2417
 reason: Review B1: the organiser-paid bank place's "settled on the combined invoice" arm sits beside the manually-settled arm it mirrors, inside the one sequential classifier, so the missing-primary-invoice arm can never be reached for such a place. A separate pass could not stop that arm firing.
+
+file: src/lib/xero-booking-invoices.ts
+lines: 1681
+reason: Review B1, defence in depth: the primary-invoice handler refuses an organiser-paid bank place beside the manual-settlement handler fence it mirrors, before any provider work, so a row that reached it without the enqueue's choke point still raises no invoice to the joiner. A fence outside the handler could be bypassed by the very rows it exists for.
