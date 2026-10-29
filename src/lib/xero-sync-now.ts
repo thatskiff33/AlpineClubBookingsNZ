@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { asRecord } from "@/lib/xero-json";
 import { prisma } from "@/lib/prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
@@ -163,15 +164,11 @@ export async function syncClubFromXeroNow() {
   await requireConnection();
   const result = await runXeroInboundCronCycle();
   if ("skipped" in result) return { message: result.message, result };
-  const object = (value: unknown): Record<string, unknown> => {
-    const parsed = z.record(z.string(), z.unknown()).safeParse(value);
-    return parsed.success ? parsed.data : {};
-  };
   const count = (value: unknown, key: string) => {
-    const amount = object(value)[key];
+    const amount = asRecord(value)?.[key];
     return typeof amount === "number" ? amount : 0;
   };
-  const inbound = object(result.inboundReconciliation);
+  const inbound = asRecord(result.inboundReconciliation) ?? {};
   const mirror = result.creditNoteMirror;
   const errors = count(inbound.inbound, "failed") + count(inbound.contactReconciliation, "errors")
     + count(inbound.membershipReconciliation, "errors") + count(inbound.invoiceReconciliation, "failed")

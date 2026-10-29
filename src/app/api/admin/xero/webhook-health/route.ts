@@ -1,4 +1,4 @@
-import { silentWebhookHoursSchema } from "@/lib/xero-webhook-policy";
+import { MIN_SILENT_WEBHOOK_HOURS, MAX_SILENT_WEBHOOK_HOURS, silentWebhookHoursSchema } from "@/lib/xero-webhook-policy";
 import { checkRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -21,7 +21,7 @@ export async function PUT(request: Request) {
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON." }, { status: 400 }); }
   const parsed = z.object({ hours: silentWebhookHoursSchema }).safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: "Enter a whole number of hours from 1 to 720." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: `Enter a whole number of hours from ${MIN_SILENT_WEBHOOK_HOURS} to ${MAX_SILENT_WEBHOOK_HOURS}.` }, { status: 400 });
   await prisma.$transaction(async (tx) => {
     await tx.xeroInboundSettings.upsert({ where: { id: "default" }, create: { id: "default", silentWebhookHours: parsed.data.hours }, update: { silentWebhookHours: parsed.data.hours } });
     await createAuditLog({ action: "XERO_WEBHOOK_THRESHOLD_UPDATED", category: "xero", memberId: guard.session.user.id, metadata: { hours: parsed.data.hours } }, tx);
