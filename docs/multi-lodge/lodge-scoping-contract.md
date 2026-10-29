@@ -52,6 +52,23 @@ sequencing):
 | `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
 
+## Member money journal (#4513)
+
+`MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
+`MemberMoneyApplication`, `MemberMoneySourceLink` and `MemberMoneySourcePosting` are club-wide economic
+records: one receipt may cover several lodges. `MemberMoneyLine` carries optional
+`bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
+cascade. A booking dimension requires its actual lodge (checked on insert).
+Non-booking money can have a lodge dimension or be club-wide. No default lodge
+is silently assigned. `MemberMoneyEvent.actorMemberId` is an actor snapshot, as
+on the booking ledger. A leg's or obligation's debtor (one member or one
+organisation) is not: it says whose balance the row moves. A member merge
+leaves posted journal rows untouched and moves the merged-away member's open
+balances to the survivor by an explicit journal transfer with an audit trail
+([decision D4](../design/member-money-ledger.md#d4-member-merge-transfer-open-balances-explicitly);
+posted from M3 on, for charges (M3), refunds owed (M4) and member credit (M5);
+M1 posts nothing).
+
 ## Club-Wide Defaults With Per-Lodge Overrides
 
 `CancellationPolicy`, `MinimumStayPolicy`, and `BookingPeriod` gain a

@@ -189,6 +189,10 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MaintenanceReport.resolvedById",
   "MaintenanceReport.photoDeletedById",
   "LodgeMaintenanceReportToken.rotatedById",
+  // #4513 (M1): the actor recorded on an immutable member-money event. A bare
+  // String the detector cannot see; the database refuses any UPDATE of a posted
+  // event, so a merge could not rewrite it even if it tried.
+  "MemberMoneyEvent.actorMemberId",
   //
   // A NINTH column found by the same sweep is deliberately NOT here, because it
   // is not a snapshot at all: `BookingRequest.convertedMemberId` is the identity
@@ -290,6 +294,18 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "XeroGroupingSettings.updatedByMemberId",
   "XeroMemberGroupingDryRun.createdByMemberId",
   "XeroSyncOperation.createdByMemberId",
+  // #4513 (M1): the DEBTOR on a posted journal leg and on an obligation. Listed
+  // here because merge must leave it alone, NOT because it is an actor snapshot:
+  // it says whose balance the row moves. The database refuses UPDATE and DELETE
+  // on these tables, so merge leaves posted rows untouched; the survivor takes
+  // over the merged-away member's open balances through an explicit journal
+  // transfer with an audit trail (owner decision D4, 28 Oct 2026,
+  // docs/design/member-money-ledger.md section 10; posted from M3 on, for
+  // charges (M3), refunds owed (M4) and member credit (M5), while M1 posts
+  // nothing). See docs/multi-lodge/lodge-scoping-contract.md, "Member money
+  // journal".
+  "MemberMoneyLine.memberId",
+  "MemberMoneyObligation.memberId",
 ];
 
 // ---------------------------------------------------------------------------

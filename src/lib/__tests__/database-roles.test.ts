@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { AUDIT_ANONYMISED_REQUEST_COLUMNS } from "@/lib/audit-retention-classes";
 import {
+  APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES,
   APPEND_ONLY_RELATIONS,
   buildDatabaseRolesSql,
   DEFAULT_DATABASE_ROLE_NAMES,
@@ -88,7 +89,7 @@ describe("buildDatabaseRolesSql (#4453)", () => {
     expect(strip).toBeLessThan(grant);
     expect(grant).toBeLessThan(narrow);
     for (const relation of APPEND_ONLY_RELATIONS) {
-      expect(statements[narrow]).toContain(`REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE "public"."${relation}" FROM "tac_app"`);
+      expect(statements[narrow]).toContain(`REVOKE ${APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES} ON TABLE "public"."${relation}" FROM "tac_app"`);
     }
     expect(statements[narrow]).toContain(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE "public"."${MIGRATION_HISTORY_RELATION}" FROM "tac_app"`);
   });

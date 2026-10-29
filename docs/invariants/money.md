@@ -539,11 +539,11 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
 
   **The balance is derived, never stored.** `booking-ledger-balance.ts` is the
   one place charged, settled, adjusted and owed are summed. No running total
-  and no status: a stored copy of a derived figure is the mirror this table
+  or status: a stored copy of a derived figure is the mirror this table
   retires.
 
-  **`booking-ledger-write.ts` is the only door**, it exposes creation alone,
-  and every posting goes inside the transaction of the writer whose act it
+  **`booking-ledger-write.ts` is the only door**, exposing creation alone;
+  every posting goes inside the transaction of the writer whose act it
   records — a settle that rolls back leaves no line saying it did not.
   Building rows is pure and may be refused safely; writing them is a statement
   and is never wrapped, because a refused statement has already aborted the
@@ -559,6 +559,8 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   nothing reads them: `INV-PAY-047`'s mirror is still the answer until the
   reads move (#3584). A strand with an unpriced night posts nothing, because
   `INV-MOD-028` says a blank is not evidence of an amount.
+
+  Member journal: `INV-MONEY-041`, `INV-MONEY-042`.
 
 ## INV-MONEY-033
 
@@ -585,6 +587,8 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
 
   `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
   transaction and the fence against PostgreSQL itself.
+
+  Whole-batch keys in the member journal: `INV-MONEY-041`, `INV-MONEY-042`.
 
 ## INV-MONEY-034
 
@@ -976,3 +980,54 @@ check the others.
   link upsert would then fail on the partial unique index — leaving an orphan
   invoice in Xero (no local double-link, so no local double-charge) that needs
   operator reconciliation.
+
+## INV-MONEY-041
+
+A member-money event has exactly one complete journal at commit. Every line has
+positive integer cents and a source link in that journal; the event's own
+source kind, identity and version have a durable link. Debits equal credits in
+the header's single currency. The header's declared line, obligation and
+application counts must match. A nonzero event has at least two legs; an
+explicit zero event has none. `effectiveDate` is the club civil date of
+`effectiveAt`, derived through the club-time kernel (`INV-DATE`,
+`INV-CONFIG-002`); a date more than a day from the instant's UTC date is refused.
+A debtor is exactly one member or one organisation, as a booking's owner is.
+Receivable, credit and refund-payable legs name one, a member-credit leg names a
+member, never an organisation, and a leg or application tied to an obligation
+names the obligation's debtor. Tax evidence is either
+absent or a complete, nonnegative gross/net/tax split with gross = net + tax and
+a tax code. A taxed revenue leg carries its net cents, and on each side a
+batch's `GST_PAYABLE` legs sum to the tax its taxed revenue legs record.
+Corrections reverse exact frozen legs, swapping debit/credit; each original
+batch and line can be reversed only once. Reversals preserve currency, coding,
+policy, dimensions and evidence.
+
+PostgreSQL CHECKs, foreign keys, unique indexes and deferred constraint triggers
+enforce this even through direct SQL. `member_money_batch_errors` is the shared
+validation rule used by the triggers and the read-only verifier.
+M1 is inert: no legacy writer cohort is activated and no old source is required
+to have a journal link. Mandatory legacy links need backfill and worker drain
+in their writer milestone; a nullable bridge is never universal posting proof.
+
+## INV-MONEY-042
+
+A journal header records its creating PostgreSQL transaction id and the
+cluster's system identifier, both stamped by a trigger rather than trusted from
+a caller. Lines, obligations and applications can only be inserted in that
+transaction on that cluster, so a restore into a new cluster, which reuses
+transaction ids, cannot reopen a batch. A later balanced pair cannot extend a
+sealed batch. Immutable source links may be appended later to associate legacy
+confirmation evidence with an existing charge, without posting another charge.
+Every bridge to `BookingLedgerLine` retains its exact source identity through a
+unique RESTRICT foreign key. Its `MemberMoneySourcePosting` rows name exact
+legs in that same journal; a bridge to a nonzero journal requires leg coverage.
+Posted financial parents use RESTRICT with no
+update cascade. No existing legacy cascade is changed by M1; M2 owns that work.
+
+The account chart uses stable internal enums; Xero account codes remain settings
+in the existing mapping registry. Keys the chart only proposes live in
+`PROPOSED_MEMBER_MONEY_MAPPING_KEYS`, outside every settings list, until the
+step that first reads one registers it. System receivables, member-credit and
+tax controls are reached through document/control bridges, never direct
+journals. An unset mapping cannot prevent local posting. No provider adapter is
+activated by registering an account.
