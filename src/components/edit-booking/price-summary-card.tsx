@@ -350,8 +350,8 @@ export function PriceSummaryCard({
                     : "bg-success-3 text-success-11"
                 }`}
               >
-                {quote.netChargeCents > 0 && quote.billedToOrganiser && !quote.chargeRefusal ? (
-                  // #4299 N4: the organiser is invoiced for it on save; nothing is charged here.
+                {quote.netChargeCents > 0 && quote.billedToOrganiser && !quote.chargeRefusal && !quote.priceChangeRefusal ? (
+                  // #4299 N4: the organiser is invoiced for it on save; nothing is charged here. Never promised where the save refuses it.
                   <p className="font-medium" data-testid="organiser-billed-notice">
                     {organiserBilledSentence(formatCents(quote.netChargeCents, format), "quote")}
                   </p>

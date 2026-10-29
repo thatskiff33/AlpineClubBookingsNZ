@@ -89,6 +89,13 @@ describe("#4299 N4: an increase on a place the organiser paid for by Internet Ba
     expect(screen.queryByText(/Additional charge/)).toBeNull();
   });
 
+  it("promises no organiser invoice while the save would refuse the change (a group cancel part-way through)", () => {
+    renderQuote({ ...increase, billedToOrganiser: true, priceChangeRefusal: "The group organiser is cancelling this group." } as QuoteResult);
+
+    expect(screen.queryByTestId("organiser-billed-notice")).toBeNull();
+    expect(screen.getByTestId("organiser-price-change-refusal").textContent).toBe("The group organiser is cancelling this group.");
+  });
+
   it("control: any other increase is still an additional charge", () => {
     renderQuote(increase);
 
