@@ -14,9 +14,9 @@ import {
 } from "@/lib/organiser-extra-adjustment-payload";
 
 /** One extra invoice's figures: its change's price and fee, and the cash Xero shows paid on it. */
-export type OrganiserExtraRacedInvoice = { modificationId: string; invoiceId: string; priceCents: number; feeCents: number; cashCents: number };
+type OrganiserExtraRacedInvoice = { modificationId: string; invoiceId: string; priceCents: number; feeCents: number; cashCents: number };
 /** What one plan is owed for cash that raced its waiver of this invoice. */
-export type OrganiserExtraRacedReservation = {
+type OrganiserExtraRacedReservation = {
   planScopeId: string;
   /** Idempotency: the plan, the change and the plan's whole raced price on it, so a replay finds its row. */
   scopeId: string;
@@ -35,7 +35,7 @@ export type OrganiserExtraRacedReservation = {
  * never meets a later cancel's waiver: a cancel waives only what is unpaid,
  * and a reduction refunds from the extra only once nothing is.)
  */
-export function organiserExtraRacedPriceByPlan(invoice: OrganiserExtraRacedInvoice, rows: readonly OrganiserExtraAdjustmentPayload[]): Map<string, number> {
+function organiserExtraRacedPriceByPlan(invoice: OrganiserExtraRacedInvoice, rows: readonly OrganiserExtraAdjustmentPayload[]): Map<string, number> {
   let unpaidCents = Math.max(0, invoice.priceCents + invoice.feeCents - invoice.cashCents);
   let paidPriceLeftCents = Math.max(0, Math.min(invoice.priceCents, invoice.cashCents - invoice.feeCents));
   const racedByPlan = new Map<string, number>();
@@ -65,7 +65,7 @@ function planRefundCents(plan: Pick<OrganiserExtraAdjustmentPayload, "refundPerc
  * reserved by whichever of the invoice's waivers runs, so none is lost when the
  * plan's own waiver found nothing due.
  */
-export function planOrganiserExtraRacedCash(invoice: OrganiserExtraRacedInvoice, rows: readonly OrganiserExtraAdjustmentPayload[]): OrganiserExtraRacedReservation[] {
+function planOrganiserExtraRacedCash(invoice: OrganiserExtraRacedInvoice, rows: readonly OrganiserExtraAdjustmentPayload[]): OrganiserExtraRacedReservation[] {
   const reservations: OrganiserExtraRacedReservation[] = [];
   for (const [planScopeId, racedCents] of organiserExtraRacedPriceByPlan(invoice, rows)) {
     const raced = rows.filter((row) => row.purpose === "refund" && row.racedPlanScopeId === planScopeId);
