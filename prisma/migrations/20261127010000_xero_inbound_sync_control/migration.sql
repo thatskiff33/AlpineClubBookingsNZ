@@ -1,4 +1,4 @@
--- Additive only: the previous release names neither table. No backfill.
+-- Additive only: the previous release does not name this table. No backfill.
 CREATE TABLE "XeroInboundSettings" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "silentWebhookHours" INTEGER NOT NULL DEFAULT 24,

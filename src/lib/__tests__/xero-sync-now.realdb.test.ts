@@ -74,15 +74,17 @@ const spies: Array<{ mockRestore(): void }> = [];
   });
   it("rate-limits all scopes per officer and persists the Xero audit rows", async () => {
     await seed();
-    const guards = await import("@/lib/session-guards");
-    const guard = vi.spyOn(guards, "requireAdmin").mockResolvedValue({ ok: true, session: { user: { id: MEMBER } } } as never);
+    // Only authentication is doubled here; the limiter and audit writer use PostgreSQL.
+    vi.doMock("@/lib/session-guards", () => ({
+      requireAdmin: async () => ({ ok: true, session: { user: { id: MEMBER } } }),
+    }));
     try {
       const { POST } = await import("@/app/api/admin/xero/sync-now/route");
       const request = () => new Request("http://localhost/api/admin/xero/sync-now", { method: "POST", body: JSON.stringify({ scope: "member", id: MEMBER }) });
       for (let attempt = 0; attempt < 3; attempt++) expect((await POST(request())).status).toBe(200);
       expect((await POST(request())).status).toBe(429);
       expect(await db.auditLog.count({ where: { action: "XERO_SYNC_NOW", memberId: MEMBER, category: "xero" } })).toBe(3);
-    } finally { guard.mockRestore(); }
+    } finally { vi.doUnmock("@/lib/session-guards"); }
   });
 
 });
