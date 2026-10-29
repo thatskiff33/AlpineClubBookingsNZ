@@ -4002,30 +4002,27 @@ invoice anchored on its `BookingModification` (#4299);
 `resolveOrganiserBilling` resolves payer and combined invoice.
 The joiner is asked for nothing; emails, responses and quote say the
 organiser is invoiced (`billedToOrganiserCents`). Only an increase with no
-combined invoice is refused; an outage leaves the queued invoice retryable. No
-payment is posted to Xero and no primary-invoice update queued: the place never
-has one; its enqueue and `createXeroInvoiceForBooking` refuse it. The
+combined invoice is refused; an outage leaves the queued invoice retryable. The
+place never has a primary invoice: no Xero payment or primary update is queued;
+its enqueue and `createXeroInvoiceForBooking` refuse one. The
 organiser's notice follows the organiser booking's "No emails" switch, not the
 admin's notify-member choice, and names only what reserved waivers leave owed.
 
-Reductions take unpaid extras first, fee included, at no policy percentage. A
+Reductions take unpaid extras first, fee included, at no percentage. A
 never-attempted queued invoice waived whole is never raised (enqueue and create
 refuse it); a `FAILED` one keeps the reserved waiver. A
 fully released invoice with no payment or credit
 (`classifyGroupSettlementInvoiceState`) is voided, else credited. Cash pays the
 fee first; only paid price joins the refundable share at the policy percentage.
-Cash racing a waiver is refunded once, at its plan's tier, less any fixed fee
-that plan left unabsorbed. Cancels, group
+Cash paid while waivers queue refunds as if paid before the oldest plan:
+oldest waiver first against the unpaid, the rest at its plan's tier (a
+cancel's capped at paid price), fixed fee once per plan, any run order. Cancels, group
 cancels included, release every unpaid extra, exclude paid fees and record
 refunds on the payment's rows. Refund notes (combined invoice for the share,
 extra invoice for extra cash) wait for their bound bank-transfer hand-back. Xero
 cash is imported idempotently; reversed refunded cash raises a treasurer review.
 
 Historical repair needs reviewed dry-run keys, shows later reductions and
-refunds, bills every recorded positive net (B1's accepted over-billing), skips
-billed or queued changes and adds to the place's other findings. Legacy review charges stay refused. Tests:
-`organiser-extra-netting.test.ts`, `organiser-extra-adjustment.test.ts`,
-`organiser-extra-doors.realdb.test.ts`,
-`organiser-extra-group-cancel.realdb.test.ts`,
-`organiser-extra-netting.realdb.test.ts` and
-`xero-booking-repair-organiser-billing.test.ts`.
+refunds, bills each recorded positive net (B1's accepted over-billing), skips
+billed or queued changes and joins the place's other findings. Legacy review charges stay refused. Tests:
+the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.ts`.
