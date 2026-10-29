@@ -179,9 +179,10 @@ export async function syncClubFromXeroNow() {
   if (errors > 0) throw new XeroSyncNowError(`The sync partly completed with ${errors} failed read(s) or repair(s). Check Xero Sync and retry.`, 502);
   const events = count(inbound.inbound, "succeeded");
   const records = count(inbound.contactReconciliation, "created") + count(inbound.contactReconciliation, "updated") + count(inbound.membershipReconciliation, "updated");
+  const invoices = count(inbound.invoiceReconciliation, "succeeded");
   const writtenDown = count(mirror, "writtenDown");
   const restored = count(mirror, "restored");
-  const message = events + records + writtenDown + restored === 0 ? "Already in step."
-    : `Reconciled ${events} event(s), updated ${records} contact or membership record(s), and mirrored ${writtenDown + restored} credit note(s).`;
-  return { message, events, records, writtenDown, restored, result };
+  const message = events + records + invoices + writtenDown + restored === 0 ? "Already in step."
+    : `Reconciled ${events} event(s), updated ${records} contact or membership record(s), checked ${invoices} invoice(s), and mirrored ${writtenDown + restored} credit note(s).`;
+  return { message, events, records, invoices, writtenDown, restored, result };
 }

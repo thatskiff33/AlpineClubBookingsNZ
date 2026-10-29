@@ -70,6 +70,12 @@ describe("sync-now uses only the existing inbound entry points", () => {
     await expect(syncMemberFromXeroNow("member")).rejects.toThrow("not connected");
     expect(h.contact).not.toHaveBeenCalled();
   });
+  it("reports incremental invoice repairs even when no webhook events were pending", async () => {
+    h.cron.mockResolvedValue({ inboundReconciliation: { invoiceReconciliation: { succeeded: 1 } } });
+    const result = await syncClubFromXeroNow();
+    expect(result.message).toContain("checked 1 invoice(s)");
+    expect(result.message).not.toBe("Already in step.");
+  });
   it("whole-club sync uses the shared runner and preserves its overlap refusal", async () => {
     h.cron.mockResolvedValue({ skipped: true, message: "A sync is already running." });
     expect(await syncClubFromXeroNow()).toMatchObject({ message: "A sync is already running." });
