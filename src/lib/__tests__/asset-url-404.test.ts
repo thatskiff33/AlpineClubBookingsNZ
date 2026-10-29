@@ -717,8 +717,8 @@ describe("the /api namespace keeps #2405's module-state parity", () => {
  *
  * What is pinned is the whole of what is true — status, empty body, no
  * `content-type`. The reason the remaining difference does not matter is a
- * reason rather than a measurement: with `kiosk` off, `/lodge` ITSELF answers an
- * empty 404 while with it on the same address answers a 200 page, so the flag is
+ * reason rather than a measurement: with `kiosk` off, `/lodge` ITSELF answers a
+ * 404 while with it on the same address answers a 200 page, so the flag is
  * already readable from the bare prefix and the asset-shaped sibling adds no
  * bit. The response FRAMING does differ (a middleware short-circuit is chunked,
  * a route handler sends `Content-Length: 0`); that is recorded in the doc rather

@@ -66,6 +66,8 @@ if (shard && excludedSpecs.length > 0) {
 }
 const shardSpecs = shard ? shardTestMatch(E2E_DIR, shard) : null;
 const includePreSetup = !shard || shard.index === 1;
+// Run once per prepared database (shard 1), before the destructive setup gate.
+const includeMobile = !shard || shard.index === 1;
 
 export default defineConfig({
   testDir: E2E_DIR,
@@ -113,6 +115,18 @@ export default defineConfig({
       testMatch: shardSpecs ?? PLAYWRIGHT_TEST_FILE,
       testIgnore: [notChromiumIgnore(E2E_DIR), ...excludedSpecs],
     },
+    ...(includeMobile
+      ? [{
+          name: "mobile",
+          use: { ...devices["Pixel 7"] },
+          testMatch: /\/(?:member-notices|booking|stripe-payment)\.spec\.ts$/,
+          testIgnore: excludedSpecs,
+          // Desktop completes first: both projects share module settings and
+          // personas. Booking resets its own pending window; Stripe uses
+          // disjoint mobile windows and retains its test-key prerequisite.
+          dependencies: ["chromium"],
+        }]
+      : []),
     // The pre-setup gate on the wire (#2420). Runs LAST — `dependencies` on the
     // main project — because it un-completes site-style setup, which makes every
     // public address answer 503 until it restores the row in afterAll. Safe
@@ -126,7 +140,7 @@ export default defineConfig({
             testMatch: specsUnder(PRE_SETUP_DIR),
             testIgnore: excludedSpecs,
             use: { ...devices["Desktop Chrome"] },
-            dependencies: ["chromium"],
+            dependencies: ["chromium", ...(includeMobile ? ["mobile"] : [])],
           },
         ]
       : []),

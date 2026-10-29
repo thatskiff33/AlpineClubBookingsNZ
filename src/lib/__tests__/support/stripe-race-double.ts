@@ -9,6 +9,7 @@
  * case has hooked runs the REAL function.
  */
 import type * as StripeModule from "@/lib/stripe";
+import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 
 type Stripe = typeof StripeModule;
 type StripeRefund = Awaited<ReturnType<Stripe["processRefund"]>>;
@@ -89,7 +90,9 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
         : actual.cancelPaymentIntentIfCancellableWithResult(...args)) as Stripe["cancelPaymentIntentIfCancellableWithResult"],
     processRefund: (async (args: Parameters<Stripe["processRefund"]>[0]) => {
       if (!stripeRaceHooks.refund) return actual.processRefund(args);
-      const refund = await stripeRaceHooks.refund(args);
+      // #4510 (INV-PAY-147): a case's hook answers for Stripe, so it is handed
+      // the metadata Stripe receives - the slice-key evidence stamped in.
+      const refund = await stripeRaceHooks.refund({ ...args, metadata: refundRequestStripeMetadata(args) });
       recordRefundMade(args.paymentIntentId, refund);
       return refund;
     }) as Stripe["processRefund"],

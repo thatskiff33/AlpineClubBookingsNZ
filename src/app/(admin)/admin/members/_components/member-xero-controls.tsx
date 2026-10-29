@@ -84,12 +84,12 @@ function XeroContactSearchControls({
       </div>
       {(xeroSearchResults.length > 0 || helper) && (
         <div className="space-y-2">
-          <Label>Available Xero contacts</Label>
+          <Label htmlFor="member-xero-contact-choice">Available Xero contacts</Label>
           <Select
             value={selectedXeroContactId || undefined}
             onValueChange={onChangeSelectedXeroContactId}
           >
-            <SelectTrigger>
+            <SelectTrigger id="member-xero-contact-choice">
               <SelectValue placeholder={xeroSearchResults.length > 0 ? "Select a Xero contact" : placeholder} />
             </SelectTrigger>
             <SelectContent>
@@ -244,7 +244,7 @@ export function MemberXeroControls({
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">This member is not linked to a Xero contact.</p>
           <Select value={xeroChoice || undefined} onValueChange={(value) => onChangeXeroChoice(value as "link" | "create")}>
-            <SelectTrigger>
+            <SelectTrigger aria-label="Xero contact">
               <SelectValue placeholder="Link or create a Xero contact..." />
             </SelectTrigger>
             <SelectContent>
@@ -318,12 +318,12 @@ export function MemberXeroControls({
       {!editingMember && (
         <>
           <div className="space-y-2">
-            <Label>After creating this member</Label>
+            <Label htmlFor="member-xero-after-create">After creating this member</Label>
             <Select
               value={xeroChoice || undefined}
               onValueChange={(value) => onChangeXeroChoice(value as "link" | "create")}
             >
-              <SelectTrigger>
+              <SelectTrigger id="member-xero-after-create">
                 <SelectValue placeholder="Choose whether to link or create a Xero contact" />
               </SelectTrigger>
               <SelectContent>

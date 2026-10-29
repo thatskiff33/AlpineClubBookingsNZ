@@ -405,9 +405,9 @@ export function ContactSyncPanel({
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
             <div className="space-y-1">
-              <Label>Sync target</Label>
+              <Label htmlFor="xero-force-sync-target">Sync target</Label>
               <Select value={forceSyncType} onValueChange={(value) => changeForceSyncType(value as ForceSyncType)} disabled={recoveryActive}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="xero-force-sync-target"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CONTACT">Member contact</SelectItem>
                   <SelectItem value="INVOICE">Booking invoice</SelectItem>

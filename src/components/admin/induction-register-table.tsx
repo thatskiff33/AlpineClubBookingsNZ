@@ -322,8 +322,9 @@ export function InductionRegisterTable() {
               Search
             </Button>
             <div className="space-y-1">
-              <label className="text-xs">Type</label>
+              <label htmlFor="induction-register-new-kind" className="text-xs">Type</label>
               <select
+                id="induction-register-new-kind"
                 value={newKind}
                 onChange={(e) => setNewKind(e.target.value as InductionKind)}
                 className="h-9 rounded-md border bg-background px-2 text-sm"
@@ -442,6 +443,7 @@ export function InductionRegisterTable() {
               className="w-56"
             />
             <select
+              aria-label="Filter by status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="h-9 rounded-md border bg-background px-2 text-sm"

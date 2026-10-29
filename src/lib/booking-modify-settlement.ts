@@ -108,7 +108,7 @@ export type PaymentAdjustmentResult = {
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
   /**
-   * #4299 (`INV-PAY-147`): the increase invoiced to the group organiser of an
+   * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
    * internet-banking group place; 0 otherwise. The joiner is asked for none of
    * it (`additionalAmountCents` excludes it), and the emails say who was billed.
    */
@@ -270,7 +270,7 @@ export async function applyPaymentAdjustments(
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
-  // #4299 (`INV-PAY-147`): the organiser is invoiced for the increase, so the
+  // #4299 (`INV-PAY-148`): the organiser is invoiced for the increase, so the
   // joiner is asked for nothing; the emails and responses say who was billed.
   const billedToOrganiserCents = organiserBilling ? xeroAdditionalAmountCents : 0;
 

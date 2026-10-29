@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import {
   ADDITIONAL_OWED_AMOUNT_CENTS,

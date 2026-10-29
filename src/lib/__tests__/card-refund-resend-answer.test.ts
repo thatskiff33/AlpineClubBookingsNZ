@@ -25,6 +25,8 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
     coverByRefund.get(where.OR[0]!.requestPayload!.equals) ?? 0,
 }));
 
+import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 import { pairResendRecordedFirst, readFailedRefundsAnsweredBy, unmarkedResendSlicesFor, type ResendRow } from "@/lib/card-refund-resend-answer";
 
 const PAYMENT = "payment-1";
@@ -251,6 +253,13 @@ describe("a re-send charge.refunded records before its slice is marked (#4312 ro
     // A row raised dead was never claimed, so it sent nothing.
     expect(unmarkedResendSlicesFor([resendRow("row-1", { dead: true, status: "PENDING" })], recorded)).toEqual([]);
     expect(unmarkedResendSlicesFor([{ ...row1, createdAt: new Date(MADE.getTime() + 1_000) }], recorded)).toEqual([]);
+  });
+
+  it("recognises keyed resend metadata while rejecting unrelated extra fields (#4510)", () => {
+    const operation = resendRow("row-1");
+    const metadata = { ...runnerMetadata, [REFUND_SLICE_KEY_METADATA]: refundSliceStripeIdempotencyKey(DUPLICATE_PREFIX, { paymentTransactionId: TXN, amountCents: 4_000, stripeKeySuffix: "refused1" }) };
+    expect(unmarkedResendSlicesFor([operation], { ...recorded, metadata })).toEqual([{ operation, sliceIndex: 0 }]);
+    expect(unmarkedResendSlicesFor([operation], { ...recorded, metadata: { ...metadata, extra: "x" } })).toEqual([]);
   });
 
   /** `written`: what each write matches in turn (the last repeats); `reread`: the row a lost write reads again. */

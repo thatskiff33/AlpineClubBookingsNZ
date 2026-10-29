@@ -221,6 +221,9 @@ export function PromoCodeList({
     <div
       ref={containerRef}
       tabIndex={-1}
+      // A role is what lets the label count: `aria-label` is prohibited on a
+      // plain div (#4466, axe aria-prohibited-attr).
+      role="group"
       aria-label="Promo codes"
       className="space-y-3 focus:outline-none"
     >

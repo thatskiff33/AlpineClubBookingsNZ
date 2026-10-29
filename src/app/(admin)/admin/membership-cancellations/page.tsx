@@ -638,7 +638,7 @@ export default function MembershipCancellationsPage() {
             value={filter}
             onValueChange={(value) => setFilter(value as RequestFilter)}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-40" aria-label="Filter requests">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

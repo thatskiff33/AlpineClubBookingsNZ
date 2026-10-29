@@ -73,7 +73,10 @@ const AccordionContent = React.forwardRef<
     className="overflow-hidden text-sm transition-all data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down"
     {...props}
   >
-    <div className={cn("pb-4 pt-0", className)}>{children}</div>
+    {/* `pt-1`, not `pt-0` (#4466): the trigger's own py-4 hit area ends where
+        the content starts, so a small control first in the content (a 16px
+        checkbox) sat flush against it and failed WCAG 2.5.8's 24px spacing. */}
+    <div className={cn("pb-4 pt-1", className)}>{children}</div>
   </AccordionPrimitive.Content>
 ));
 AccordionContent.displayName = AccordionPrimitive.Content.displayName;

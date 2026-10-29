@@ -298,9 +298,9 @@ describe("an open row that counted it as made owes it again (money 1)", () => {
   // The metadata this row's runner sends (`cardRefundOperationRefundMetadata`).
   const RUNNERS = { ...REFUND, metadata: { bookingId: "booking-1", reason: "booking_modification_refund_recovery" } };
 
-  it("MUTATION: an UNMARKED slice the owed figure fills with it, as the payment stood before the failure", async () => {
+  it.each<Record<string, string>>([{}, { refundSliceKey: "payment_recovery_modification_refund_op-open_txn-1_4000" }])("MUTATION: an UNMARKED slice the owed figure fills with it, including keyed evidence %j", async (evidence) => {
     const tx = fakeTx({ rows: [row()] });
-    expect(await keep(tx, RUNNERS)).toMatchObject({ debt: { outcome: "re-planned", operationId: "op-open" } });
+    expect(await keep(tx, { ...RUNNERS, metadata: { ...RUNNERS.metadata, ...evidence } })).toMatchObject({ debt: { outcome: "re-planned", operationId: "op-open" } });
     expect(tx.paymentRecoveryOperation.createMany).not.toHaveBeenCalled();
     expect(replan(tx)?.data.allocationPlan).toEqual([
       { paymentTransactionId: "txn-1", amountCents: 4_000, stripeKeySuffix: "refused1", failedRefundIds: ["re_1"] },

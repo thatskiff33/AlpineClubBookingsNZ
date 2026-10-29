@@ -21,9 +21,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as fixtures from "../../../prisma/e2e-fixtures";
 
-// The highest stayWindow index any spec reaches (base 28, attempt 2, stride 16 —
-// see e2e/locked-out-pickup-and-pay.spec.ts and RETRY_WINDOW_STRIDE).
-const HIGHEST_INDEX_IN_USE = 60;
+// The highest stayWindow index any spec reaches (mobile Stripe base 31, attempt 2, stride 16 —
+// see e2e/stripe-payment.spec.ts and RETRY_WINDOW_STRIDE).
+const HIGHEST_INDEX_IN_USE = 63;
 // A full year plus a week crosses weekday, month, DST and the
 // winter/summer season edge for the higher indexes.
 const RUN_DATES = 371;

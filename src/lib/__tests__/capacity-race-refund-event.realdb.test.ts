@@ -280,10 +280,12 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id }, select: { status: true } })).status).not.toBe("SUCCEEDED");
       expect(await refundedEvents()).toEqual([]);
 
-      // Its retry comes due: Stripe answers the same keys with the same refund, and the close and event commit.
+      // Its retry comes due. #4510 (INV-PAY-147): Stripe lists the refund with
+      // this slice's key as its evidence, so the runner adopts it and asks Stripe
+      // nothing more, and the close and event commit.
       await prisma.paymentRecoveryOperation.update({ where: { id: row.id }, data: { nextRetryAt: new Date("2020-01-01T00:00:00.000Z") } });
       expect(await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST)).toBe("succeeded");
-      expect(asked.count).toBe(2);
+      expect(asked.count).toBe(1);
       expect(await refundedEvents()).toEqual([{ amountCents: PLANNED_CENTS, reason: CAPACITY_RACE_REFUND_EVENT_REASON, actorMemberId: null }]);
       expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(1);
     });

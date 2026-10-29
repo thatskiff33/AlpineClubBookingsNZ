@@ -1789,7 +1789,7 @@ release).
 ## INV-PAY-145
 
 **Related: `INV-PAY-103`** (the one refund writer), **`INV-PAY-128`**
-(refused and failed-later debts).
+(refused and failed-later debts), **`INV-PAY-147`** (slice evidence).
 
 - Before an ordinary charge-backed recovery re-sends an unmarked slice, it
   reads Stripe's refunds for that slice's intent outside every transaction:
@@ -1810,7 +1810,7 @@ release).
   audit entry. It neither closes the debt nor adopts the dashboard refund.
   Officers check the booking and Stripe; any outstanding payment is recorded
   with **Paid another way**, never a new dashboard refund.
-- Existing request bodies, Stripe keys and owed attribution stay unchanged.
+- Stripe keys stay unchanged; slice evidence is adopted under `INV-PAY-147`.
   Specialised organiser-child and legacy group-settlement executors are outside
   this charge-backed rule. A dashboard refund made after the provider read can
   still race the send; this read is not a Stripe-side lock.
@@ -1820,7 +1820,8 @@ release).
 
 ## INV-PAY-146
 
-**Related: `INV-PAY-128`** (refused slices) and **`INV-PAY-145`** (recovery preflight).
+**Related: `INV-PAY-128`** (refused slices), **`INV-PAY-145`** (preflight),
+and **`INV-PAY-147`** (slice evidence).
 
 - A booking edit's own-card refund freezes its allocation with
   `planStripeRefundAllocation` before asking Stripe, rejects a shortfall with
@@ -1831,9 +1832,9 @@ release).
   completed slices marked `madeRefundId`, refused slices moved to their next
   key, unanswered slices on their original key. Within Stripe's 24-hour
   idempotency window, a recording failure after Stripe succeeds therefore
-  replays the same refund even if `charge.refunded` records it first (a later
-  replay is #4510). Ledger progress must not change the request's amount or
-  Stripe key.
+  replays the same refund even if `charge.refunded` records it first. Beyond
+  that window, `INV-PAY-147` closes this gap for refunds carrying slice evidence.
+  Ledger progress must not change the request's amount or Stripe key.
 - Limit: on a multi-charge payment, a concurrent refund on the same charge can
   leave a frozen slice larger than its headroom; the row then dies owed and
   alerts, and never over-refunds.
@@ -1844,6 +1845,42 @@ release).
   door. Edit-financial-review uses its separate pre-persisted plan.
 - Proven by `modification-refund-replay-reason.test.ts`, `payment-recovery.test.ts`
   and `refused-card-refund-retry.realdb.test.ts`.
+
+## INV-PAY-147
+
+**Related: `INV-PAY-130`** (refusal generations), **`INV-PAY-145`** (preflight),
+**`INV-PAY-146`** (frozen edit allocation).
+
+- Every slice sent by `refundPaymentTransactions` with `idempotencyKeyPrefix`
+  carries Stripe metadata `refundSliceKey`, exactly the key produced by
+  `refundSliceStripeIdempotencyKey`. Its name constant and stamp live in
+  `src/lib/refund-slice-evidence.ts`. Existing metadata entries and idempotency keys are
+  preserved; the evidence depends only on that key. The name fits Stripe's
+  40-character limit; a value exceeding 500 characters is refused, never cut.
+  An unkeyed send adds no slice evidence.
+- Before recovery sends again, its preflight marks an unmarked stored-plan
+  slice `madeRefundId` only when a listed refund's slice key equals that
+  slice's key under this row's own sending prefix. Status must count under
+  `isRecordedRefundStatus`; the ledger's stored refusal overrides a stale
+  counted listing. Amount, charge, time and edit metadata are never matching
+  evidence. A failed or canceled refund never marks a slice.
+- The mark is one `onPlanWhere` compare-and-set on the stored plan as read
+  (later charges: the plan just written), `PROCESSING` and the runner's
+  `processingStartedAt`. A changed plan or lost claim refuses the attempt;
+  no slice is sent and no existing mark is overwritten. Both runners use the
+  returned plan and send only unmarked slices; a wholly marked row completes.
+- No new advisory lock (`INV-LOCK-001` through `INV-LOCK-003`). Provider reads
+  remain outside transactions; canonical ledger recording keeps its Payment
+  row lock. Refusal generations and prefix selection are unchanged.
+- A keyed send Stripe refuses with `idempotency_error` is resent once under
+  that key with the caller's metadata alone, the pre-evidence body, answered
+  with any refund made then. A second refusal moves no money.
+- Limit: legacy refunds without slice evidence cannot be matched; past
+  Stripe's 24-hour key expiry, one never recorded can be refunded again.
+  Unmatched evidence retains existing handling, including the outside-app hold.
+- Proven by `card-refund-resend-preflight.test.ts`,
+  `payment-transactions-refunds.test.ts`, `payment-recovery.test.ts` and
+  `stripe.test.ts`.
 
 ## INV-PAY-144
 
@@ -3957,7 +3994,7 @@ _Split from `INV-PAY-057` (#3220)._
   `kept-settle-correction-recount.test.ts` and
   `ib-settle-from-cash.realdb.test.ts`.
 
-## INV-PAY-147
+## INV-PAY-148
 
 An organiser-paid internet-banking group's place bills each positive edit net
 (price plus recorded late-change fee) to the organiser on one supplementary

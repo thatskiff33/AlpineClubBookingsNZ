@@ -395,7 +395,7 @@ function AccountMappingRow({
       <div className="col-span-2">
         {isEditingMappings ? (
           <Select value={currentCode ?? "__none__"} onValueChange={(value) => setMappings((prev) => prev ? { ...prev, [mappingKey]: { ...prev[mappingKey], code: value === "__none__" ? null : value } } : prev)}>
-            <SelectTrigger><SelectValue placeholder="Select account..." /></SelectTrigger>
+            <SelectTrigger aria-label={`${MAPPING_LABELS[mappingKey]} account`}><SelectValue placeholder="Select account..." /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__"><span className="text-muted-foreground">Not configured (use default)</span></SelectItem>
               {filtered.map((account) => <SelectItem key={account.code} value={account.code}>{account.code} - {account.name}</SelectItem>)}
@@ -469,7 +469,7 @@ function CreditItemRow({
       <div className="col-span-2">
         {isEditingMappings ? (
           <Select value={currentItemCode ?? "__none__"} onValueChange={(value) => setMappings((prev) => prev ? { ...prev, [mappingKey]: { ...prev[mappingKey], itemCode: value === "__none__" ? null : value } } : prev)}>
-            <SelectTrigger><SelectValue placeholder="Select item..." /></SelectTrigger>
+            <SelectTrigger aria-label={`${MAPPING_LABELS[mappingKey]} item`}><SelectValue placeholder="Select item..." /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__"><span className="text-muted-foreground">Not configured</span></SelectItem>
               {items.map((item) => <SelectItem key={item.code} value={item.code}>{item.code} - {item.name}</SelectItem>)}
@@ -499,11 +499,11 @@ function HutFeeTable({
   ageTiers: Array<{ tier: string; label: string }>
 }) {
   const tierValues = ageTiers.map((t) => t.tier)
-  const renderCell = (mapKey: string) => {
+  const renderCell = (mapKey: string, label: string) => {
     const currentCode = codes[mapKey]?.itemCode ?? null
     const matchedItem = items.find((item) => item.code === currentCode)
     return isEditingMappings ? (
-      <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateHutFeeMap(prev, mapKey, value))} />
+      <ItemSelect currentCode={currentCode} items={items} label={label} onChange={(value) => setCodes((prev) => updateHutFeeMap(prev, mapKey, value))} />
     ) : (
       <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem?.code ?? currentCode ?? "Not set"}</span>
     )
@@ -559,7 +559,14 @@ function HutFeeTable({
                         className="p-2"
                         colSpan={cell === HUT_FEE_FLAT_KEY ? ageTiers.length : 1}
                       >
-                        {renderCell(hutFeeCellKey(type.id, season, cell))}
+                        {renderCell(
+                          hutFeeCellKey(type.id, season, cell),
+                          `${type.name}, ${season === "WINTER" ? "Winter" : "Summer"}, ${
+                            cell === HUT_FEE_FLAT_KEY
+                              ? "all ages"
+                              : ageTiers.find((t) => t.tier === cell)?.label ?? cell
+                          }`,
+                        )}
                       </td>
                     ))}
                   </tr>
@@ -596,7 +603,7 @@ function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEdi
               return (
                 <tr key={key} className="border-b last:border-0">
                   <td className="p-2 font-medium text-foreground">{label}</td>
-                  <td className="p-2">{isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateEntranceItem(prev, key, value))} /> : <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem ? matchedItem.code : currentCode || "Not set"}</span>}</td>
+                  <td className="p-2">{isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} label={`${label} joining fee`} onChange={(value) => setCodes((prev) => updateEntranceItem(prev, key, value))} /> : <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem ? matchedItem.code : currentCode || "Not set"}</span>}</td>
                 </tr>
               )
             })}
@@ -607,10 +614,12 @@ function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEdi
   )
 }
 
-function ItemSelect({ currentCode, items, onChange }: { currentCode: string | null; items: XeroItem[]; onChange: (value: string) => void }) {
+// `label` names the table cell the select sits in (row and column), because a
+// cell's headers are not a select's accessible name (#4466, axe button-name).
+function ItemSelect({ currentCode, items, onChange, label }: { currentCode: string | null; items: XeroItem[]; onChange: (value: string) => void; label: string }) {
   return (
     <Select value={currentCode ?? "__none__"} onValueChange={onChange}>
-      <SelectTrigger className="w-full min-w-[140px]"><SelectValue placeholder="Not set" /></SelectTrigger>
+      <SelectTrigger className="w-full min-w-[140px]" aria-label={`Xero item for ${label}`}><SelectValue placeholder="Not set" /></SelectTrigger>
       <SelectContent>
         <SelectItem value="__none__"><span className="text-muted-foreground">Not set</span></SelectItem>
         {items.map((item) => <SelectItem key={item.code} value={item.code}>{item.code} - {item.name}</SelectItem>)}

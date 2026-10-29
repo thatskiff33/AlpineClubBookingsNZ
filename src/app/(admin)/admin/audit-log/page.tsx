@@ -673,7 +673,7 @@ export default function AuditLogPage() {
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-4">
         <div className="space-y-1">
-          <Label className="text-xs">Event Type</Label>
+          <Label htmlFor="audit-filter-event-type" className="text-xs">Event Type</Label>
           <Select
             value={eventType}
             onValueChange={(value) => {
@@ -681,7 +681,7 @@ export default function AuditLogPage() {
               resetPage();
             }}
           >
-            <SelectTrigger className="w-64">
+            <SelectTrigger id="audit-filter-event-type" className="w-64">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -696,7 +696,7 @@ export default function AuditLogPage() {
         </div>
 
         <div className="space-y-1">
-          <Label className="text-xs">Category</Label>
+          <Label htmlFor="audit-filter-category" className="text-xs">Category</Label>
           <Select
             value={category}
             onValueChange={(value) => {
@@ -704,7 +704,7 @@ export default function AuditLogPage() {
               resetPage();
             }}
           >
-            <SelectTrigger className="w-44">
+            <SelectTrigger id="audit-filter-category" className="w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -731,7 +731,7 @@ export default function AuditLogPage() {
         />
 
         <div className="space-y-1">
-          <Label className="text-xs">Member Scope</Label>
+          <Label htmlFor="audit-filter-member-scope" className="text-xs">Member Scope</Label>
           <Select
             value={memberScope}
             onValueChange={(value) => {
@@ -739,7 +739,7 @@ export default function AuditLogPage() {
               resetPage();
             }}
           >
-            <SelectTrigger className="w-36">
+            <SelectTrigger id="audit-filter-member-scope" className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -765,7 +765,7 @@ export default function AuditLogPage() {
         />
 
         <div className="space-y-1">
-          <Label className="text-xs">Outcome</Label>
+          <Label htmlFor="audit-filter-outcome" className="text-xs">Outcome</Label>
           <Select
             value={outcome}
             onValueChange={(value) => {
@@ -773,7 +773,7 @@ export default function AuditLogPage() {
               resetPage();
             }}
           >
-            <SelectTrigger className="w-36">
+            <SelectTrigger id="audit-filter-outcome" className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -788,7 +788,7 @@ export default function AuditLogPage() {
         </div>
 
         <div className="space-y-1">
-          <Label className="text-xs">Severity</Label>
+          <Label htmlFor="audit-filter-severity" className="text-xs">Severity</Label>
           <Select
             value={severity}
             onValueChange={(value) => {
@@ -796,7 +796,7 @@ export default function AuditLogPage() {
               resetPage();
             }}
           >
-            <SelectTrigger className="w-36">
+            <SelectTrigger id="audit-filter-severity" className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -811,7 +811,7 @@ export default function AuditLogPage() {
         </div>
 
         <div className="space-y-1">
-          <Label className="text-xs">Entity</Label>
+          <Label htmlFor="audit-filter-entity" className="text-xs">Entity</Label>
           <Select
             value={entityType}
             onValueChange={(value) => {
@@ -819,7 +819,7 @@ export default function AuditLogPage() {
               resetPage();
             }}
           >
-            <SelectTrigger className="w-44">
+            <SelectTrigger id="audit-filter-entity" className="w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

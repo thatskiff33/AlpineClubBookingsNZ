@@ -294,7 +294,9 @@ export function AddressAutocomplete({
         aria-controls={
           showPanel && suggestions.length > 0 ? listboxId : undefined
         }
-        aria-expanded={showPanel}
+        // Expanded only while the listbox it controls is rendered: a panel
+        // showing just a status line has no listbox to point at (#4466).
+        aria-expanded={showPanel && suggestions.length > 0}
         aria-haspopup="listbox"
         autoComplete={autoComplete}
         className={className}

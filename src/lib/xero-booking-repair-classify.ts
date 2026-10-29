@@ -287,7 +287,7 @@ export function classifyBookingContext(
         actionKeys: [],
       });
     } else if (payment && !primaryInvoice && paidByOrganiserInternetBanking(booking)) {
-      // #4299 B1 (`INV-PAY-147`): the organiser paid this place by internet
+      // #4299 B1 (`INV-PAY-148`): the organiser paid this place by internet
       // banking, so its money sits on the organiser's combined invoice and the
       // place has no invoice of its own BY DESIGN. Queuing a primary invoice
       // would raise, and email the joiner, an awaiting-payment invoice for the

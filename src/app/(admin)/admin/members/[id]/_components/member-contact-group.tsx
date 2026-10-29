@@ -313,7 +313,7 @@ export function MemberContactGroup({
             </div>
           ) : (
             <div className="space-y-2">
-              <Label>Age Tier</Label>
+              <Label htmlFor="contact-ageTier">Age Tier</Label>
               <Select
                 value={
                   form.ageTier === "NOT_APPLICABLE"
@@ -324,7 +324,7 @@ export function MemberContactGroup({
                 }
                 onValueChange={(v) => updateForm((f) => ({ ...f, ageTier: v }))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="contact-ageTier">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

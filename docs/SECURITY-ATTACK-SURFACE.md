@@ -2057,8 +2057,12 @@ lobby TV display (fork #54) and the global 404 (#2356).
     on", 404 meant "off". `getFeatureFlagBlockResponse()` now takes the request
     method and mirrors the bare 400 for `/api` paths. Scoped to `/api`: a page
     is served by a different Next module with different verb handling, so the
-    gate keeps its bodyless 404 there rather than claiming a parity nobody
-    measured.
+    gate keeps a 404 there rather than claiming a parity nobody measured.
+    Since #4466 a page-shaped `GET`/`HEAD` gets that 404 with a fixed,
+    script-free "Page not found" document (`lang`, `<title>`, no club or module
+    name; `src/lib/module-disabled-page.ts`), because an empty body rendered as
+    a blank, untitled page; every other verb and every asset-shaped path keeps
+    the empty 404.
   - The parity is asserted verb-by-verb in
     `src/app/__tests__/unmatched-url-status.test.ts`, comparing status, raw
     response text (not parsed JSON — parsing hides key order and whitespace) and
@@ -2493,8 +2497,8 @@ on this URL in either state and the composition rule above gives its headers
 precedence. They are still not byte-identical on the wire, and the difference is
 stated rather than glossed: a middleware short-circuit is sent chunked while the
 terminal route handler sends `Content-Length: 0`. That is no
-new module-state oracle, because with the module off `/lodge` ITSELF answers an
-empty 404 while with it on the same address answers a 200 page — a strictly
+new module-state oracle, because with the module off `/lodge` ITSELF answers a
+404 while with it on the same address answers a 200 page — a strictly
 louder signal on the identical flag, and one the module gate cannot avoid. It
 does mean a static file placed under a gated prefix would become gated; nothing
 in `public/` sits under one today.

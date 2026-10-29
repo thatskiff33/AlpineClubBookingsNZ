@@ -68,7 +68,7 @@ export async function refundableCashForModification(
 }
 
 /**
- * #4299 S2 (`INV-PAY-147`): the card tier an edit nets organiser extras at,
+ * #4299 S2 (`INV-PAY-148`): the card tier an edit nets organiser extras at,
  * from the same policy and day `calculateModificationSettlementOptions` reads,
  * and read even where those options are null: a reduction sized wholly against
  * an unpaid extra leaves no cash basis, yet cash that races its waiver is

@@ -971,7 +971,7 @@ export async function POST(
       const hasSucceededPayment = canAskCardForIncrease(booking);
       const organiserBilling = await resolveOrganiserBillingForNet(tx, booking, priceDiffCents); // #4299 N-a: refuses only an increase
       const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
-      // #4299 (`INV-PAY-147`): an organiser-paid bank place's add is invoiced to the organiser, never asked of the joiner.
+      // #4299 (`INV-PAY-148`): an organiser-paid bank place's add is invoiced to the organiser, never asked of the joiner.
       const billedToOrganiserCents = organiserBilling && priceDiffCents > 0 ? priceDiffCents : 0;
 
       /**

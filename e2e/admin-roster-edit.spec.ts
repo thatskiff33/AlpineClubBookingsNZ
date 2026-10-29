@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { DEMO_BOOKING_WINDOWS, E2E_ADMIN } from "./helpers/fixtures";
 

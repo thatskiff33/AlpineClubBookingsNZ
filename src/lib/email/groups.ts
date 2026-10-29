@@ -325,7 +325,7 @@ export async function sendGroupOrganiserJoinerRefundEmail(params: {
 }
 
 /**
- * #4299 (`INV-PAY-147`): the organiser owes an extra invoice for a place in
+ * #4299 (`INV-PAY-148`): the organiser owes an extra invoice for a place in
  * their Internet Banking group. Scoped to the organiser's OWN booking, never
  * the joiner's: its "No emails" switch withholds it, and the admin's choice not
  * to notify the member on the joiner's edit does not (it is not the member's

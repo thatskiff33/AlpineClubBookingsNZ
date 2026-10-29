@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for #4299 (`INV-PAY-147`, review finding F1): an edit
+ * Real-PostgreSQL proof for #4299 (`INV-PAY-148`, review finding F1): an edit
  * that raises the price of a place the group organiser paid for by Internet
  * Banking bills the ORGANISER, once, and asks the joiner for nothing.
  *

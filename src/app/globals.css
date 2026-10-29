@@ -304,7 +304,14 @@
   --placeholder-foreground: var(--muted-foreground);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  /* #4466 — red-700, not red-600. `text-destructive` is the app's error ink
+     (inline field errors, alert boxes, destructive menu items), and red-600
+     measured below WCAG 4.5:1 on the surfaces it lands on: 4.47:1 on the app
+     page (#f6f8f7), 4.31:1 on a hovered menu item, 3.74:1 inside its own
+     `bg-destructive/10` alert box. red-700 clears every one of them (lowest
+     4.97:1, on the --accent hover surface) and lifts the solid button's
+     white label from 4.57:1 to 6.15:1. Restated in `.website-theme` below. */
+  --destructive: oklch(0.505 0.213 27.518);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -466,7 +473,8 @@
   --placeholder-foreground: var(--muted-foreground);
   --accent: #e0e3e1;
   --accent-foreground: #1c211d;
-  --destructive: oklch(0.577 0.245 27.325);
+  /* #4466 — the AA error ink; see the `:root` note. */
+  --destructive: oklch(0.505 0.213 27.518);
   --destructive-foreground: oklch(0.985 0 0);
   --border: #d0d3d0;
   --input: #c5c8c5;
@@ -1137,6 +1145,18 @@
     .recharts-cartesian-axis-tick-value tspan
   ) {
   fill: var(--muted-foreground);
+}
+
+/* #4466 — every Recharts legend, app-wide. Recharts writes each legend label's
+   colour as an INLINE style set to its series colour, and the categorical
+   series hues are mark colours, not text colours: on white the cat3 magenta
+   reads 4.12:1, the cat1 indigo 4.34:1 and the success green 3.49:1, all under
+   WCAG 1.4.3. The swatch beside each label keeps the series colour, so the key
+   still matches the marks; only the words move to the text ink. `!important`
+   is what outranks an inline style, and it is scoped to the one class Recharts
+   gives the label. */
+.recharts-legend-item-text {
+  color: var(--foreground) !important;
 }
 
 /* A6 candidate-ii card treatment (#2187 J8): the shadcn Card surface — `bg-card`

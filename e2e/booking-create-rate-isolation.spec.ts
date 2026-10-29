@@ -2,7 +2,7 @@ import {
   type APIRequestContext,
   expect,
   test,
-} from "@playwright/test";
+} from "./helpers/accessibility";
 
 import {
   type BookingCreateIsolation,

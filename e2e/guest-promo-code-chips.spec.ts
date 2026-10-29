@@ -3,7 +3,7 @@ import {
   type BrowserContext,
   expect,
   test,
-} from "@playwright/test";
+} from "./helpers/accessibility";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   completeMemberDetailsGateIfShown,

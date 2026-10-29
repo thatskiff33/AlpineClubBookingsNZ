@@ -1951,9 +1951,11 @@ async function processRefundSupersededPaymentOperation(
     throw new Error("Payment transaction not found for refund recovery");
   }
 
-  await checkCardRefundResend({
+  const persistedPlan = parseRefundAllocationPlan(operation.allocationPlan);
+  const preflightPlan = await checkCardRefundResend({
     operation,
-    plan: parseRefundAllocationPlan(operation.allocationPlan) ?? [{ paymentTransactionId: refreshedTransaction.id, amountCents: operation.amountCents }],
+    stripeKeyPrefix: operation.idempotencyKey,
+    plan: persistedPlan ?? [{ paymentTransactionId: refreshedTransaction.id, amountCents: operation.amountCents }],
     transactions: [refreshedTransaction],
   });
 
@@ -1974,8 +1976,7 @@ async function processRefundSupersededPaymentOperation(
   // #4103 (`INV-PAY-130`): a refusal is never closed or reported. The first ask
   // keeps the row's own key, so a refund made but unrecorded is replayed; a
   // refusal moves to a one-slice plan on a fresh key, which later attempts send.
-  const persistedPlan = parseRefundAllocationPlan(operation.allocationPlan);
-  const plan = persistedPlan ?? [{ paymentTransactionId: refreshedTransaction.id, amountCents: outstandingCents }];
+  const plan = persistedPlan ? preflightPlan : [{ paymentTransactionId: refreshedTransaction.id, amountCents: outstandingCents }];
   await refundPlanOrRetryRefusals({
     operation,
     plan,
@@ -2116,64 +2117,6 @@ async function processBookingModificationRefundOperation(
   // enqueued before their freeze existed carry no plan and derive-at-replay
   // below (single-transaction payments, the dominant case, already share slice
   // keys — see #1510).
-  let plan = parseRefundAllocationPlan(operation.allocationPlan);
-  await checkCardRefundResend({
-    operation,
-    plan:
-      plan ??
-      capturedStripeTransactions(payment.transactions)
-        .filter((row) => row.amountCents - row.refundedAmountCents > 0)
-        .map((row) => ({ paymentTransactionId: row.id, amountCents: row.amountCents })),
-    transactions: payment.transactions,
-  });
-
-  if (!plan) {
-    const refundableTransactions = payment.transactions
-      .filter((transaction) =>
-        isCapturedTransactionStatus(transaction.status),
-      )
-      .filter(
-        (transaction) =>
-          transaction.amountCents - transaction.refundedAmountCents > 0,
-      )
-      .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
-
-    const refundableCents = refundableTransactions.reduce(
-      (sum, transaction) =>
-        sum + (transaction.amountCents - transaction.refundedAmountCents),
-      0,
-    );
-
-    const outstandingCents = Math.min(operation.amountCents, refundableCents);
-
-    if (outstandingCents <= 0) {
-      await completePaymentRecoveryOperation(operation.id);
-      return;
-    }
-
-    let remainingCents = outstandingCents;
-    plan = [];
-    for (const transaction of refundableTransactions) {
-      if (remainingCents <= 0) break;
-      const sliceCents = Math.min(
-        remainingCents,
-        transaction.amountCents - transaction.refundedAmountCents,
-      );
-      plan.push({
-        paymentTransactionId: transaction.id,
-        amountCents: sliceCents,
-      });
-      remainingCents -= sliceCents;
-    }
-
-    // Persist the plan before any Stripe call: if the process dies mid-refund
-    // the retry replays these exact slices instead of re-deriving.
-    await prisma.paymentRecoveryOperation.update({
-      where: { id: operation.id },
-      data: { allocationPlan: plan as unknown as Prisma.InputJsonValue },
-    });
-  }
-
   // Recoveries reuse the route's original Stripe idempotency key prefix so a
   // retry after a refund that succeeded on Stripe but was never recorded
   // replays the same refund instead of issuing a new one: refund-request
@@ -2227,6 +2170,66 @@ async function processBookingModificationRefundOperation(
     idempotencyKeyPrefix =
       operation.stripeKeyPrefix ??
       buildLegacyModificationRefundStripeKeyPrefix(operation.id);
+  }
+
+  let plan = parseRefundAllocationPlan(operation.allocationPlan);
+  const preflightPlan = await checkCardRefundResend({
+    operation,
+    stripeKeyPrefix: idempotencyKeyPrefix,
+    plan:
+      plan ??
+      capturedStripeTransactions(payment.transactions)
+        .filter((row) => row.amountCents - row.refundedAmountCents > 0)
+        .map((row) => ({ paymentTransactionId: row.id, amountCents: row.amountCents })),
+    transactions: payment.transactions,
+  });
+  if (plan) plan = preflightPlan;
+
+  if (!plan) {
+    const refundableTransactions = payment.transactions
+      .filter((transaction) =>
+        isCapturedTransactionStatus(transaction.status),
+      )
+      .filter(
+        (transaction) =>
+          transaction.amountCents - transaction.refundedAmountCents > 0,
+      )
+      .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
+
+    const refundableCents = refundableTransactions.reduce(
+      (sum, transaction) =>
+        sum + (transaction.amountCents - transaction.refundedAmountCents),
+      0,
+    );
+
+    const outstandingCents = Math.min(operation.amountCents, refundableCents);
+
+    if (outstandingCents <= 0) {
+      await completePaymentRecoveryOperation(operation.id);
+      return;
+    }
+
+    let remainingCents = outstandingCents;
+    plan = [];
+    for (const transaction of refundableTransactions) {
+      if (remainingCents <= 0) break;
+      const sliceCents = Math.min(
+        remainingCents,
+        transaction.amountCents - transaction.refundedAmountCents,
+      );
+      plan.push({
+        paymentTransactionId: transaction.id,
+        amountCents: sliceCents,
+      });
+      remainingCents -= sliceCents;
+    }
+
+    // Persist the plan before any Stripe call: if the process dies mid-refund
+    // the retry replays these exact slices instead of re-deriving.
+    await prisma.paymentRecoveryOperation.update({
+      where: { id: operation.id },
+      data: { allocationPlan: plan as unknown as Prisma.InputJsonValue },
+    });
   }
 
   // #4083 (`INV-PAY-128`): a slice Stripe refused fails the attempt, retried under a fresh key.

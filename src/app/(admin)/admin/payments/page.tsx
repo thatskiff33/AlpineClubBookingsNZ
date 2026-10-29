@@ -904,9 +904,9 @@ export default function PaymentsPage() {
         primary={
           <>
             <div>
-              <Label className="text-xs">Status</Label>
+              <Label htmlFor="payments-filter-status" className="text-xs">Status</Label>
               <Select value={status} onValueChange={(v) => { setStatus(v); resetPage(); }}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="payments-filter-status" className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
                   <SelectItem value="PENDING">Pending</SelectItem>
@@ -919,9 +919,9 @@ export default function PaymentsPage() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Source</Label>
+              <Label htmlFor="payments-filter-source" className="text-xs">Source</Label>
               <Select value={source} onValueChange={(v) => { setSource(getSourceFilter(v)); resetPage(); }}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="payments-filter-source" className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All sources</SelectItem>
                   <SelectItem value="STRIPE">Stripe</SelectItem>
@@ -930,9 +930,9 @@ export default function PaymentsPage() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Xero</Label>
+              <Label htmlFor="payments-filter-xero" className="text-xs">Xero</Label>
               <Select value={xeroState} onValueChange={(v) => { setXeroState(v); resetPage(); }}>
-                <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="payments-filter-xero" className="w-52"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Xero states</SelectItem>
                   <SelectItem value="invoiceLinked">Invoice linked</SelectItem>
@@ -944,9 +944,9 @@ export default function PaymentsPage() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Settlement</Label>
+              <Label htmlFor="payments-filter-settlement" className="text-xs">Settlement</Label>
               <Select value={settlement} onValueChange={(v) => { setSettlement(v); resetPage(); }}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="payments-filter-settlement" className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All settlements</SelectItem>
                   <SelectItem value="none">None</SelectItem>
@@ -1324,7 +1324,7 @@ export default function PaymentsPage() {
                           })}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="inline-flex min-h-6 items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
                           <ExternalLink className="h-3 w-3" />
@@ -1337,7 +1337,7 @@ export default function PaymentsPage() {
                       ) : isInternetBanking ? (
                         <Link
                           href={xeroActivityHref}
-                          className="inline-flex rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="inline-flex min-h-6 items-center rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           Missing Xero invoice
                         </Link>
@@ -1350,7 +1350,7 @@ export default function PaymentsPage() {
                               ? ADMIN_VIEW_ONLY_ACTION_REASON
                               : undefined
                           }
-                          className="inline-flex items-center gap-1 rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          className="inline-flex min-h-6 items-center gap-1 rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                         >
                           <FileText className="h-3 w-3" />
                           {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
@@ -1360,7 +1360,7 @@ export default function PaymentsPage() {
                       )}
                       <Link
                         href={xeroActivityHref}
-                        className="inline-flex rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="inline-flex min-h-6 items-center rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         View activity
                       </Link>

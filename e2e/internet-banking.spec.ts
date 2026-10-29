@@ -1,4 +1,4 @@
-import { type BrowserContext, expect, test } from "@playwright/test";
+import { type BrowserContext, expect, test } from "./helpers/accessibility";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN, IB_BOOKING_ID, WAITLISTER } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";

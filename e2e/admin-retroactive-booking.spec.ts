@@ -1,4 +1,4 @@
-import { type BrowserContext, expect, test, type Page } from "@playwright/test";
+import { type BrowserContext, expect, test, type Page } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import {
   overrideSingleLodgeAutoAllocation,

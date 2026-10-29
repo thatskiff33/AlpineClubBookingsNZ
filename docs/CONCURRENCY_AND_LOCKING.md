@@ -4324,10 +4324,14 @@ the pre-#4217 code). Now:
   unique index on an active correlation key, so one row stands. It adds no key.
   The mark that pairs a re-send with its failures (`madeRefundId`, round 8) is
   one compare-and-set on the recovery row's `allocationPlan`, no lock: the
-  runner's (`markResentSlices`) on the plan its attempt sent from, and
+  runner's (`markResentSlices`) on the plan its attempt sent from,
   `charge.refunded`'s on a dead row (`pairResendRecordedFirst`) on the plan,
-  status and attempts it read. Any plan written in between (a re-plan, a
-  refusal's move, the other mark) fails it; a refusal's move stays fenced on
+  status and attempts it read, and the resend preflight's slice-evidence mark
+  (`checkCardRefundResend`, #4510, `INV-PAY-147`) on the stored plan it read
+  (a later charge's on the plan it just wrote), `PROCESSING` and the claim's
+  `processingStartedAt`, after its provider read and ledger write; a lost
+  preflight write sends nothing. Any plan written in between (a re-plan, a
+  refusal's move, another mark) fails it; a refusal's move stays fenced on
   the holder's attempt. Unlike the failed-later re-plan (#4104), a mark never
   takes the `Payment` row, so that lock does not order it against "Paid
   another way"'s owed read. The close's claim carries the plan it read that
@@ -5728,9 +5732,11 @@ composed or reordered (`INV-LOCK-002`) and no Tier-2 site is added
 A dashboard hold uses the runner's existing terminal failure writer,
 `markPaymentRecoveryOperationFailed`, fenced by live status, the claimed attempt
 and a non-null processing start. A lost hold claim sends no refund, alert or
-audit. The row's amount and plan are retained. All involved unsent charges are
-checked before any slice is sent. No new status or refunded-total writer is
-introduced; specialised combined-group executors are unchanged.
+audit. The hold keeps the row's amount and writes no plan; the only plan write
+is the preflight's own slice-evidence mark below, made before any hold. All
+involved unsent charges are checked before any slice is sent. No new status or
+refunded-total writer is introduced; specialised combined-group executors are
+unchanged.
 
 Once recorded evidence requires a hold, the check stops immediately. A read or
 recording failure on a later charge cannot replace that hold with normal retry
@@ -5740,6 +5746,19 @@ The read cannot exclude a Stripe dashboard action made after it returns. Stripe
 has no lock shared with the database, so holding a database transaction during
 the call would not close that race. Mixed old/new workers retain the old
 worker's behaviour; this protection applies only to attempts on the new code.
+
+Slice evidence (#4510, `INV-PAY-147`) adds one writer and no key. Once a
+charge's provider read and ledger write have finished, the preflight marks the
+slices whose `refundSliceKey` it found in one compare-and-set of
+`allocationPlan`, guarded on the stored plan as read (a later charge's on the
+plan just written), `PROCESSING` and the runner's `processingStartedAt`. It
+takes no lock; a lost write sends nothing and overwrites no mark. Across mixed
+workers, a key an old worker sent without evidence is refused by Stripe for 24
+hours when sent with it (`idempotency_error`). `refundPaymentTransactions` then
+sends that key once more with the old body, which Stripe answers with the
+original refund; a second refusal moves no money. Limit: past the key's 24-hour
+expiry, a legacy refund that was never recorded carries no evidence to adopt,
+and its slice can be refunded again.
 
 Counterparts reconciled for this change: open #4472 and the ten latest merged
 refund PRs #4495, #4490, #4437, #4424, #4419, #4327, #4341, #4307, #4228 and

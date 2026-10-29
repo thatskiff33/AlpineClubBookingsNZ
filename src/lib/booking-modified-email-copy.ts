@@ -67,7 +67,7 @@ export function organiserByHandRefundSentence(amount: string): string {
 }
 
 /**
- * #4299 (`INV-PAY-147`): an increase on a place the group organiser paid for by
+ * #4299 (`INV-PAY-148`): an increase on a place the group organiser paid for by
  * Internet Banking is invoiced to the ORGANISER, so the joiner is told there is
  * nothing for them to pay. ONE wording for the "Booking Modified" HTML email and
  * its admin-editable body, and (N4, `quote`) the edit panel's preview of it,

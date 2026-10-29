@@ -184,7 +184,7 @@ export default function CommunicationsPage() {
                 value={recipientFilter}
                 onValueChange={setRecipientFilter}
               >
-                <SelectTrigger>
+                <SelectTrigger id="recipientFilter">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

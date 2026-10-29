@@ -267,15 +267,13 @@ export function linkedMoveStayWindows(window: Pick<StayWindow, "checkIn">): {
 //  - Seeded seasons. They cover 66–73 usable Mondays from the first window,
 //    depending on the weekday of the run date (winter runs to +239 days, summer
 //    from +270 to +599 — see SEEDED_SEASONS — less the Mondays whose nights a
-//    seeded booking holds, #4002). The highest index in use today (base 28
-//    attempt 2 = 60, at most ≈ +550 days) therefore has at least 5 Mondays of
-//    headroom; stayWindow still throws loudly if a run date ever changes that.
+//    seeded booking holds, #4002). The highest index in use today (mobile
+//    Stripe base 31, attempt 2 = 63) has at least 2 Mondays of headroom; stayWindow still throws loudly if a run date ever changes that.
 //  - Calendar month hops. A spec reaches these dates by clicking the booking
 //    calendar's "Next ›" one month at a time, bounded by MAX_MONTH_HOPS in
-//    e2e/helpers/booking.ts (24). Stay index 60 is at most 19 month hops (measured over a year of run dates), so
-//    even a calendar-driven spec clears it — and the specs on the highest bases
-//    (locked-out-pickup-and-pay) create their bookings over the API and never
-//    open the calendar at all. This ceiling was missed when the stride was first
+//    e2e/helpers/booking.ts (24). Stay index 63 is within the 24-hop bound, so
+//    even the mobile Stripe journey can reach its last retry. This ceiling
+//    was missed when the stride was first
 //    chosen: the old bound of 12 hops was already the exact worst case of the
 //    windows in use and one short of base 9 attempt 2, and it failed as a
 //    timeout on the day button rather than on the navigation.

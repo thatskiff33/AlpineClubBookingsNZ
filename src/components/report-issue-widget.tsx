@@ -182,6 +182,9 @@ export function ReportIssueWidget({
           className="gap-2 rounded-full px-4 shadow-lg"
           disabled={capturing}
           onClick={startReport}
+          // The words are hidden below `sm:`, which left the icon-only phone
+          // button unnamed (#4466, axe button-name).
+          aria-label={capturing ? "Capturing..." : "Report issue"}
         >
           {capturing ? (
             <LoaderCircle className="h-4 w-4 animate-spin" />

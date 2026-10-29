@@ -494,7 +494,7 @@ describe("#3954: a cancelled unpaid additional payment is named in the Booking M
 });
 
 /*
-  #4299 (`INV-PAY-147`, F1): an increase on a place the group organiser paid for
+  #4299 (`INV-PAY-148`, F1): an increase on a place the group organiser paid for
   by Internet Banking is invoiced to the organiser. The joiner's email names no
   payment to make, and says who was invoiced, in both the HTML and flat body.
 */

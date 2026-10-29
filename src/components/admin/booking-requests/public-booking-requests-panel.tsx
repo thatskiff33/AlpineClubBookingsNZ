@@ -1813,7 +1813,7 @@ export function PublicBookingRequestsPanel({
                       </p>
                       <p className="mt-1">{request.responseMessage}</p>
                       {request.responseMessageAt ? (
-                        <p className="mt-1 text-xs opacity-80">
+                        <p className="mt-1 text-xs">
                           Sent {formatDateTime(request.responseMessageAt)}
                         </p>
                       ) : null}

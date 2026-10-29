@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { bookingStatusLabel } from "@/lib/status-colors";
+import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { getAdminCalendarBookingDayRange } from "@/lib/admin-booking-calendar-ranges";
 import { useClubTime } from "@/components/club-time-provider";
@@ -34,10 +35,9 @@ interface CalendarBooking {
   guestCount: number;
 }
 
-// Solid calendar swatches: one step-9 categorical/semantic fill per status (the
-// bars carry white text, so every fill is a mode-independent saturated step-9 or
-// a mode-inverting neutral surface that stays dark under white text in dark
-// mode). #2190 P4 evicts the last two raw utilities: DRAFT's raw light-grey
+// Solid calendar swatches: one step-9 categorical/semantic fill per status, used
+// only where no text sits on it (legend swatches, the bars' status stripe, the
+// day dialog's dots; #4466 took the bars' names off it). #2190 P4 evicts the last two raw utilities: DRAFT's raw light-grey
 // utility becomes the theme-following `bg-muted` (a faint, de-emphasised draft
 // surface in both modes), and WAITLIST_OFFERED's raw Tailwind teal fill becomes
 // the categorical `bg-cat6-9` (#2218 — the same teal 6th scale its chip uses,
@@ -54,6 +54,26 @@ export const STATUS_COLORS: Record<string, string> = {
   BUMPED: "bg-warning-9",
   WAITLISTED: "bg-cat1-9",
   WAITLIST_OFFERED: "bg-cat6-9",
+};
+
+// The status filter pills and the bars carry TEXT, so they cannot sit on the step-9 fills
+// above: white on the warning-9 amber measured 2.16:1, on the success-9 green
+// 3.49:1, on DRAFT's `bg-muted` 1.19:1 (#4466; step-9 is for text-free fills,
+// see brand-color-source-contract.test.ts). A pressed pill instead takes the
+// SAME scale's chip pair (step-3 tint, step-11 text), which the theme guarantee
+// sweep holds at AA for every scale in both modes (G2b), so each pill and bar
+// still reads as its status's colour family.
+const STATUS_CHIP_TONES: Record<keyof typeof STATUS_COLORS, ChipTone> = {
+  DRAFT: "neutral",
+  PENDING: "warning",
+  PAYMENT_PENDING: "warning",
+  CONFIRMED: "success",
+  PAID: "info",
+  COMPLETED: "cat1",
+  CANCELLED: "danger",
+  BUMPED: "warning",
+  WAITLISTED: "cat1",
+  WAITLIST_OFFERED: "cat6",
 };
 
 const ALL_STATUSES = Object.keys(STATUS_COLORS);
@@ -440,7 +460,7 @@ export function AdminBookingCalendar() {
               onClick={() => toggleStatus(status)}
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors border ${
                 isOn
-                  ? `${STATUS_COLORS[status]} text-white border-transparent`
+                  ? `${CHIP_TONE_CLASSES[STATUS_CHIP_TONES[status] ?? "neutral"]} border-transparent`
                   : "bg-card text-muted-foreground border-border"
               }`}
             >
@@ -526,8 +546,12 @@ export function AdminBookingCalendar() {
             const rowTop = rowOffsets[seg.row] ?? 0;
             const rowHeight = rowHeights[seg.row];
             const top = rowTop + BAR_TOP_OFFSET + seg.laneIdx * LANE_STRIDE;
-            // A segment fully in the past dims with its cells; a segment that
-            // still reaches today or the future stays at full strength.
+            // A segment fully in the past recedes to the neutral surface with its
+            // cells; a segment that still reaches today or the future keeps its
+            // status tint. The bar carries a name, so (like the pills) its text
+            // sits on the scale's AA chip pair, and the status's solid step-9
+            // colour rides a decorative stripe; white on step-9, faded to 50%
+            // for a past stay, measured 1.48:1 (#4466).
             const lastDayStr = cellDateStr(seg.row * 7 + seg.colEnd);
             const isPastSeg = lastDayStr !== "" && lastDayStr < todayStr;
 
@@ -539,8 +563,10 @@ export function AdminBookingCalendar() {
                 data-row-top={rowTop}
                 data-row-height={rowHeight}
                 className={`absolute rounded pointer-events-auto cursor-pointer hover:brightness-110 transition-all flex items-center overflow-hidden ${
-                  isPastSeg ? "opacity-50 " : ""
-                }${STATUS_COLORS[booking.status] || "bg-muted"}`}
+                  isPastSeg
+                    ? "bg-muted text-muted-foreground"
+                    : CHIP_TONE_CLASSES[STATUS_CHIP_TONES[booking.status] ?? "neutral"]
+                }`}
                 style={{
                   left: `calc(${leftPct}% + 2px)`,
                   width: `calc(${widthPct}% - 4px)`,
@@ -550,8 +576,12 @@ export function AdminBookingCalendar() {
                 title={`${booking.memberName} (${booking.status}) — ${booking.checkIn} to ${booking.checkOut}, ${booking.guestCount} guest(s)`}
                 onClick={() => router.push(buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath))}
               >
+                <span
+                  aria-hidden="true"
+                  className={`absolute inset-y-0 left-0 w-1 ${STATUS_COLORS[booking.status] || "bg-muted"}`}
+                />
                 {firstVisibleRowByBooking.get(booking.id) === seg.row && (
-                  <span className="text-white text-[11px] font-medium leading-none truncate px-1.5">
+                  <span className="text-[11px] font-medium leading-none truncate pl-2.5 pr-1.5">
                     {booking.memberName}
                     {seg.spanDays > 2 && ` · ${booking.guestCount}g`}
                   </span>
@@ -646,9 +676,14 @@ export function AdminBookingCalendar() {
       {/* Legend (click toggles above to filter) */}
       <div className="flex flex-wrap gap-4 px-3 py-2.5 border-t text-xs">
         {Object.entries(STATUS_COLORS).map(([status, color]) => (
-          <div key={status} className={`flex items-center gap-1.5 ${enabledStatuses.has(status) ? "" : "opacity-30"}`}>
-            <div className={`w-3.5 h-2.5 rounded-sm ${color}`} />
-            <span className="text-muted-foreground">{bookingStatusLabel(status)}</span>
+          // A hidden status dims its SWATCH and strikes its label through. The
+          // whole item used to be `opacity-30`, which took the label to 1.53:1
+          // (#4466); the label stays at full muted ink so it can still be read.
+          <div key={status} className="flex items-center gap-1.5">
+            <div className={`w-3.5 h-2.5 rounded-sm ${color} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
+            <span className={`text-muted-foreground ${enabledStatuses.has(status) ? "" : "line-through"}`}>
+              {bookingStatusLabel(status)}
+            </span>
           </div>
         ))}
       </div>

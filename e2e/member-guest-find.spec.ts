@@ -4,7 +4,7 @@ import {
   type Page,
   expect,
   test,
-} from "@playwright/test";
+} from "./helpers/accessibility";
 import { loginPersona } from "./helpers/auth";
 import {
   completeMemberDetailsGateIfShown,

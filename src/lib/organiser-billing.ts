@@ -8,7 +8,7 @@ export const ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE =
   "The group organiser's combined invoice is not on record, so this booking cannot be changed. Contact the club to restore the invoice record first.";
 
 /**
- * #4299 B1 (`INV-PAY-147`): a place the group organiser paid by internet banking
+ * #4299 B1 (`INV-PAY-148`): a place the group organiser paid by internet banking
  * is settled on the organiser's combined invoice and never gets a primary
  * invoice of its own. The one refusal code and sentence for both fences: the
  * enqueue choke point and the invoice handler behind it.

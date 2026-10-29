@@ -387,7 +387,7 @@ export async function createXeroSupplementaryInvoice(params: {
     operationClaim = operation;
   }
 
-  // #4299 S1 (`INV-PAY-147`): a waiver may have retired this organiser extra
+  // #4299 S1 (`INV-PAY-148`): a waiver may have retired this organiser extra
   // whole before it was raised - after this row was queued, or before an
   // officer's retry or requeue minted it. Asked under the change's anchor lock
   // (the key the waiver's enqueue refusal reads under), immediately before the

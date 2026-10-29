@@ -278,7 +278,7 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
       await deleteFixtures();
     });
 
-    it("an edit's made-but-unrecorded refund replays its frozen key after charge.refunded (#3984)", async () => {
+    it("an edit's made-but-unrecorded refund is marked by slice evidence after charge.refunded (#3984, #4510)", async () => {
       const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
       const { syncRefundsFromStripeCharge } = await import("@/lib/payment-transactions");
       const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
@@ -316,13 +316,50 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
           refundedAmountCents: 8000, refunds: [...refunds.values()] });
         expect((await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: PRIMARY_TXN } })).refundedAmountCents).toBe(8000);
         expect(await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST)).toBe("succeeded");
-        expect(keys).toHaveLength(2);
-        expect(keys[1]).toBe(keys[0]);
+        expect(keys).toEqual([`mod_dates_refund_${BOOKING_ID}_${MODIFICATION_ID}_${PRIMARY_TXN}_8000`]);
+        expect((await queuedRow()).allocationPlan).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: 8000, madeRefundId: "re_race_3984_0" }]);
         expect([...refunds.values()].reduce((sum, refund) => sum + refund.amount, 0)).toBe(8000);
         expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(1);
         expect((await queuedRow()).status).toBe("SUCCEEDED");
       } finally {
         restoreFault?.();
+        resetStripeRaceHooks();
+      }
+    });
+
+    it.each(["unchanged", "plan", "status", "claim"])("slice evidence is guarded by the real stored plan and runner claim: %s (#4510)", async (change) => {
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const { refundSliceStripeIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+      await queueRefusedSlice([REFUSED_SLICE]);
+      const row = await queuedRow();
+      const refund = { id: "re_race_4510", amount: REFUSED_CENTS, currency: "nzd", status: "succeeded",
+        charge: "ch_race_4510", payment_intent: "pi_race_4083_primary", created: 1782604800,
+        metadata: { bookingId: BOOKING_ID, reason: "date_change_price_decrease", refundSliceKey: refundSliceStripeIdempotencyKey(row.stripeKeyPrefix!, REFUSED_SLICE) },
+      } as unknown as Stripe.Refund;
+      resetStripeRaceHooks();
+      stripeRaceHooks.listRefunds = async () => [refund];
+      const send = vi.fn(async () => { throw new Error("a marked or lost-claim slice must never be sent"); });
+      stripeRaceHooks.refund = send;
+      const updateMany = prisma.paymentRecoveryOperation.updateMany.bind(prisma.paymentRecoveryOperation);
+      const guardedWrite = vi.spyOn(prisma.paymentRecoveryOperation, "updateMany").mockImplementation((async (args: Parameters<typeof updateMany>[0]) => {
+        if (args.data.allocationPlan && change !== "unchanged") {
+          await prisma.paymentRecoveryOperation.update({ where: { id: row.id }, data:
+            change === "plan" ? { allocationPlan: [{ ...REFUSED_SLICE, stripeKeySuffix: "refused1" }] } :
+            change === "status" ? { status: "FAILED" } :
+            { processingStartedAt: new Date("2026-07-01T00:00:01.000Z") },
+          });
+        }
+        return updateMany(args);
+      }) as unknown as typeof updateMany);
+      try {
+        expect(await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST)).toBe(change === "unchanged" ? "succeeded" : "failed");
+        expect(send).not.toHaveBeenCalled();
+        const after = await queuedRow();
+        expect(after.allocationPlan).toEqual(change === "unchanged" ? [{ ...REFUSED_SLICE, madeRefundId: refund.id }] :
+          change === "plan" ? [{ ...REFUSED_SLICE, stripeKeySuffix: "refused1" }] : [REFUSED_SLICE]);
+        expect(await prisma.paymentRefund.count({ where: { stripeRefundId: refund.id } })).toBe(1);
+      } finally {
+        guardedWrite.mockRestore();
         resetStripeRaceHooks();
       }
     });
@@ -603,7 +640,7 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
         await settledRecords(0);
         expect(await lostCloseAlerts()).toEqual([]);
 
-        // The runner replays the same keys; Stripe answers with the same refund.
+        // Preflight adopts Stripe's slice evidence; no refund is sent again.
         const asked: Array<string | undefined> = [];
         stripeRaceHooks.refund = async (args) => {
           asked.push(args.idempotencyKey);
@@ -611,8 +648,8 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
         };
         const { processPaymentRecoveryOperations } = await import("@/lib/payment-recovery");
         await processPaymentRecoveryOperations({ limit: 50 });
-        expect(asked).toHaveLength(1);
-        expect(await rowNow()).toMatchObject({ status: "SUCCEEDED" });
+        expect(asked).toEqual([]);
+        expect(await rowNow()).toMatchObject({ status: "SUCCEEDED", allocationPlan: [{ ...REFUSED_SLICE, madeRefundId: MADE_REFUND }] });
         await settledRecords(1);
         const [record] = await prisma.auditLog.findMany({ where: { targetId: BOOKING_ID, action: RECORD_ACTION } });
         expect(JSON.parse(record!.details ?? "{}")).toMatchObject({ refundId: MADE_REFUND, amountCents: REFUSED_CENTS });

@@ -1381,7 +1381,7 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // callers (the supersede's cancel step, the minters after their cancels, an
   // edit's Xero leg, the reaper, the release) hold nothing there. Still no new
   // raw site, no new key.
-  // #4299 S1 (`INV-PAY-147`): the enqueue refuses, under this key, a change
+  // #4299 S1 (`INV-PAY-148`): the enqueue refuses, under this key, a change
   // whose organiser extra a waiver retired whole before it was raised, and
   // the organiser create re-asks in a short transaction holding this key
   // alone, from the outbox worker or an officer's retry holding nothing,

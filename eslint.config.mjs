@@ -2,6 +2,9 @@ import { fixupConfigRules } from "@eslint/compat";
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import jsxA11y from "eslint-plugin-jsx-a11y";
+import css from "@eslint/css";
+import accessibility from "./scripts/eslint/accessibility.mjs";
 
 // #2264 — the three date-rendering restrictions, named so the "Number
 // formatting only" block below can re-state the two date ones while dropping
@@ -2737,8 +2740,9 @@ function operatorSeedRestrictedSyntax() {
 }
 
 const eslintConfig = defineConfig([
-  ...fixupConfigRules(nextVitals),
-  ...fixupConfigRules(nextTs),
+  // Next has a global rules block; keep its JavaScript rules off CSS ASTs.
+  ...fixupConfigRules([...nextVitals, ...nextTs]).map((config) => config.rules
+    ? { ...config, ignores: [...(config.ignores ?? []), "**/*.css"] } : config),
   {
     rules: {
       // The current admin/lodge UI relies on effect-driven fetch/reset flows.
@@ -3185,6 +3189,32 @@ const eslintConfig = defineConfig([
     files: ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
     plugins: { scan: SCAN_COVERAGE_LOCAL_RULES },
     rules: { "scan/no-semgrep-unparsable-import-type": "error" },
+  },
+  {
+    files: ["e2e/**/*.spec.ts", "e2e/**/*.setup.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { paths: [{
+        name: "@playwright/test",
+        importNames: ["test"],
+        message: "Import test from the shared e2e/helpers/accessibility fixture so every journey is audited (#4466).",
+      }] }],
+    },
+  },
+  {
+    files: ["**/*.{jsx,tsx}"],
+    rules: jsxA11y.flatConfigs.recommended.rules,
+  },
+  {
+    files: ["src/**/*.{js,jsx,ts,tsx}"],
+    plugins: { accessibility },
+    rules: { "accessibility/minimum-text-size": "error" },
+  },
+  {
+    files: ["src/**/*.css"],
+    plugins: { css, accessibility },
+    language: "css/css",
+    languageOptions: { tolerant: true },
+    rules: { "accessibility/minimum-text-size": "error" },
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([

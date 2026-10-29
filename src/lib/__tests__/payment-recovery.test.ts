@@ -1361,6 +1361,44 @@ describe("payment recovery worker", () => {
       return op;
     }
 
+    it.each([PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION, PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT])("%s completes when preflight marks every slice", async (type) => {
+      const op = { ...queueRefund(type), stripeKeyPrefix: "slice_test" };
+      const prefix = type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT ? op.idempotencyKey : op.stripeKeyPrefix;
+      mockPaymentRecoveryFindUnique.mockResolvedValue(op);
+      mockListRefundsForPaymentIntent.mockResolvedValue([{ ...dashboardRefund, metadata: { refundSliceKey: `${prefix}_txn-1_4000` } }]);
+      mockRefundPaymentTransactions.mockResolvedValueOnce({ refunds: [], totalRefundedAmountCents: 4000 });
+      expect(await runPaymentRecoveryOperationNow(op.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ allocation: [], amountCents: 0 }));
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SUCCEEDED" }) }));
+    });
+
+    it.each([PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION, PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT])("%s sends only slices left unmarked by preflight", async (type) => {
+      const plan = [{ paymentTransactionId: "txn-1", amountCents: 4000 }, { paymentTransactionId: "txn-1", amountCents: 2000 }];
+      const op = { ...queueRefund(type), allocationPlan: plan, amountCents: 6000, stripeKeyPrefix: "slice_test" };
+      const prefix = type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT ? op.idempotencyKey : op.stripeKeyPrefix;
+      mockPaymentRecoveryFindUnique.mockResolvedValue(op);
+      mockListRefundsForPaymentIntent.mockResolvedValue([{ ...dashboardRefund, metadata: { refundSliceKey: `${prefix}_txn-1_4000` } }]);
+      expect(await runPaymentRecoveryOperationNow(op.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ allocation: [plan[1]], amountCents: 2000, idempotencyKeyPrefix: prefix }));
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ status: "PROCESSING", allocationPlan: { equals: plan } }),
+        data: { allocationPlan: [{ ...plan[0], madeRefundId: "re_dashboard" }, plan[1]] },
+      }));
+    });
+
+    it.each([PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION, PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT])("%s sends nothing after losing the preflight plan compare-and-set", async (type) => {
+      const op = { ...queueRefund(type), stripeKeyPrefix: "slice_test" };
+      const prefix = type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT ? op.idempotencyKey : op.stripeKeyPrefix;
+      mockPaymentRecoveryFindUnique.mockResolvedValue(op);
+      mockListRefundsForPaymentIntent.mockResolvedValue([{ ...dashboardRefund, metadata: { refundSliceKey: `${prefix}_txn-1_4000` } }]);
+      mockPaymentRecoveryUpdateMany.mockImplementation(({ data, where }) => Promise.resolve({ count: data.allocationPlan ? 0 : where?.id ? 1 : 0 }));
+      expect(await runPaymentRecoveryOperationNow(op.id, CLUB_FORMAT_TEST)).toBe("failed");
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+    });
+
     it.each([PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION, PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT])("holds %s on the first runner attempt, without sending or closing it", async (type) => {
       const op = queueRefund(type);
       mockListRefundsForPaymentIntent.mockResolvedValue([dashboardRefund]);

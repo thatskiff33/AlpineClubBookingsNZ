@@ -300,7 +300,7 @@ function summarizeQueuedPayload(
     }
 
     case "ORGANISER_EXTRA_ADJUSTMENT":
-      // #4299 (`INV-PAY-147`): an organiser's extra invoice waived, or a
+      // #4299 (`INV-PAY-148`): an organiser's extra invoice waived, or a
       // bank-transfer refund to the organiser recorded as a note.
       facts
         .add("Purpose", req.purpose === "waive" ? "Waive the unpaid extra" : req.purpose === "refund" ? "Refund the organiser by bank transfer" : readString(req.purpose))

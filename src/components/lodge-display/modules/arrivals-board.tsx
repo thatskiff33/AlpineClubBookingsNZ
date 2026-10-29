@@ -319,12 +319,19 @@ export function ArrivalsBoard({
         ].filter((group) => group.rows.length > 0 || group.heading !== "Unassigned");
 
   return (
+    // A complete ARIA table (#4466): the head and room rows always carried
+    // row/columnheader/rowheader roles, but with no `table` around them and no
+    // `row` on the room lines those roles were orphans (axe
+    // aria-required-parent). Each room line is a row of its room header and
+    // one cell holding that room's bars.
     <div
       className="display-arrivals-board"
+      role="table"
+      aria-label="Arrivals board"
       style={{ "--display-days": windowDates.length } as CSSProperties}
     >
       <div className="display-board-head" role="row">
-        <span className="display-board-corner">Room</span>
+        <span className="display-board-corner" role="columnheader">Room</span>
         {windowDates.map((date, index) => (
           <span
             key={date}
@@ -339,14 +346,14 @@ export function ArrivalsBoard({
       {rowGroups.map((group, groupIndex) => {
         const room = group.heading === null ? null : splitRoomName(group.heading);
         return (
-          <div className="display-board-row" key={group.heading ?? `group-${groupIndex}`}>
+          <div className="display-board-row" role="row" key={group.heading ?? `group-${groupIndex}`}>
             {room !== null && (
               <span className="display-board-room" role="rowheader">
                 {room.tag && <span className="display-board-room-tag">{room.tag}</span>}
                 {room.label}
               </span>
             )}
-            <div className="display-board-lanes">
+            <div className="display-board-lanes" role="cell">
               {group.rows.flatMap((row) => {
                 const grouped = row.guests === null;
                 // One bar per contiguous run of the row's nights (#2735), so a

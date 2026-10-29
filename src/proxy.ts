@@ -27,6 +27,7 @@ import {
 } from "./lib/public-website-paths";
 import { getPublicWebsiteNonce } from "./lib/release-nonce";
 import { getSetupInProgressResponse } from "./lib/setup-gate";
+import { moduleDisabledPageResponse } from "./lib/module-disabled-page";
 import {
   hasSignedInHint,
   serialiseSignedInHintCookie,
@@ -710,9 +711,8 @@ export function getFeatureFlagBlockResponse(
     return null;
   }
 
-  if (!pathname.startsWith("/api/")) {
-    return new NextResponse(null, { status: 404 });
-  }
+  // A page path: the #4466 "Page not found" document, or an empty 404 (see there).
+  if (!pathname.startsWith("/api/")) return moduleDisabledPageResponse(method, isPageShapedPath(normalisePathname(pathname)));
 
   return STANDARD_HTTP_METHODS.has(method)
     ? NextResponse.json({ error: "Not found" }, { status: 404 })

@@ -1,4 +1,4 @@
-import { type APIRequestContext, expect, test } from "@playwright/test";
+import { type APIRequestContext, expect, test } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import {
   CHANGE_REQUEST_FINISHED_BOOKING_ID,

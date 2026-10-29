@@ -844,10 +844,11 @@ export default function KioskPage() {
       {/* Admin tier preview dropdown */}
       {access?.tier === "admin" && (
         <div className="flex items-center justify-end mb-3 gap-2">
-          <span className="text-sm text-kiosk-muted-fg">
+          <label htmlFor="kiosk-view-as" className="text-sm text-kiosk-muted-fg">
             Viewing as:
-          </span>
+          </label>
           <select
+            id="kiosk-view-as"
             value={viewAs ?? "admin"}
             onChange={(e) => {
               const val = e.target.value as KioskTier;

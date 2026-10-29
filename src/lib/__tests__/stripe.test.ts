@@ -327,6 +327,28 @@ describe("Stripe library", () => {
       });
       expect(result.id).toBe("re_test_123");
     });
+
+    it("#4510 (INV-PAY-147): stamps the request's own key as refundSliceKey only when asked", async () => {
+      mockRefundsCreate.mockResolvedValue({ id: "re_test_123", amount: 5000 });
+      const metadata = { bookingId: "booking_1", reason: "cancellation" };
+      const request = { paymentIntentId: "pi_test_123", amountCents: 5000, metadata, idempotencyKey: "prefix_txn_1_5000" };
+      const params = { payment_intent: "pi_test_123", amount: 5000, reason: "requested_by_customer" };
+
+      await processRefund({ ...request, stampRefundSliceKey: true });
+      await processRefund({ ...request, stampRefundSliceKey: false });
+      await processRefund(request);
+
+      expect(mockRefundsCreate.mock.calls).toEqual([
+        [{ ...params, metadata: { ...metadata, refundSliceKey: "prefix_txn_1_5000" } }, { idempotencyKey: "prefix_txn_1_5000" }],
+        [{ ...params, metadata }, { idempotencyKey: "prefix_txn_1_5000" }],
+        [{ ...params, metadata }, { idempotencyKey: "prefix_txn_1_5000" }],
+      ]);
+      expect(metadata).toEqual({ bookingId: "booking_1", reason: "cancellation" });
+      // A stamp with no key would name no request: refused before Stripe is asked.
+      mockRefundsCreate.mockClear();
+      await expect(processRefund({ ...request, idempotencyKey: undefined, stampRefundSliceKey: true })).rejects.toThrow(/INV-PAY-147/);
+      expect(mockRefundsCreate).not.toHaveBeenCalled();
+    });
   });
 
   describe("getPaymentIntent", () => {

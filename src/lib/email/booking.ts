@@ -1434,7 +1434,7 @@ export async function sendBookingModifiedEmail(params: {
    */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
-  /** #4299 (`INV-PAY-147`): the increase invoiced to the group organiser instead (`billedToOrganiserCents`); 0 or absent where none was. */
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead (`billedToOrganiserCents`); 0 or absent where none was. */
   billedToOrganiserCents?: number;
   /**
    * #3954: this edit's price drop cancelled the member's unpaid additional payment

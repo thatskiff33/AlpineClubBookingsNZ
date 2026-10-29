@@ -129,7 +129,7 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
-  /** #4299 (`INV-PAY-147`): the increase invoiced to the group organiser instead of this member. */
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
   billedToOrganiserCents: number;
   /**
    * #3371: the minter's own value, carrying what minting it would absorb. The

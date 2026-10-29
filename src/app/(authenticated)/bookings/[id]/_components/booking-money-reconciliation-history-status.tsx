@@ -46,7 +46,7 @@ export function BookingMoneyReconciliationHistoryStatus({
       ) : (
         <p>{BOOKING_MONEY_RECONCILIATION_COPY.reconciledDetail}</p>
       )}
-      <p className="text-xs opacity-80">
+      <p className="text-xs">
         {BOOKING_MONEY_RECONCILIATION_COPY.derivedStateNote}
       </p>
     </div>

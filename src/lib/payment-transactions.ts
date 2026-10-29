@@ -7,6 +7,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { processRefund } from "@/lib/stripe";
+import { stripeErrorApiType } from "@/lib/stripe-errors";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
@@ -1528,18 +1529,39 @@ export async function refundPaymentTransactions({
 
   for (const { transaction, amountCents: refundAmountForTransaction, stripeKeySuffix } of slices) {
     const slice: RefundAllocationSlice = { paymentTransactionId: transaction.id, amountCents: refundAmountForTransaction, ...(stripeKeySuffix ? { stripeKeySuffix } : {}) };
+    const idempotencyKey = idempotencyKeyPrefix
+      ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
+      : undefined;
     let refund;
     try {
-      refund = await processRefund({
+      // Stripe metadata values allow 500 characters. Never truncate the evidence.
+      if (idempotencyKey && idempotencyKey.length > 500) {
+        throw new Error("Refund slice key exceeds Stripe metadata value limit");
+      }
+      const sendSlice = (stampRefundSliceKey: boolean) => processRefund({
         paymentIntentId: transaction.stripePaymentIntentId,
         amountCents: refundAmountForTransaction,
         reason:
           typeof reason === "string" ? reason : "requested_by_customer",
         metadata,
-        idempotencyKey: idempotencyKeyPrefix
-          ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
-          : undefined,
+        idempotencyKey,
+        // INV-PAY-147: a keyed slice carries its own key as `refundSliceKey`.
+        stampRefundSliceKey,
       });
+      try {
+        refund = await sendSlice(idempotencyKey !== undefined);
+      } catch (err) {
+        if (!idempotencyKey || stripeErrorApiType(err) !== "idempotency_error") throw err;
+        // #4510 review (F1): code before the evidence sent this key with the
+        // body alone, and Stripe refuses another body under it for 24 hours.
+        // That exact body once more is answered with the original refund, and
+        // a key cannot make a second one. Its error too moves no money.
+        logger.warn(
+          { paymentId, paymentTransactionId: transaction.id, idempotencyKey },
+          "Stripe refused this key as reused with a different body; resending the pre-evidence body once (INV-PAY-147)",
+        );
+        refund = await sendSlice(false);
+      }
     } catch (err) {
       throw new PartialRefundError({
         completedRefundCents,

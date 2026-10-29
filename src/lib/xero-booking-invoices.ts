@@ -475,7 +475,7 @@ export async function createXeroInvoiceForBooking(
     return null;
   }
 
-  // #4299 B1 (`INV-PAY-147`), the handler half of the enqueue choke point's
+  // #4299 B1 (`INV-PAY-148`), the handler half of the enqueue choke point's
   // fence: a row that reaches here for a place the group organiser paid by
   // internet banking (an earlier row, a retry, a future enqueuer) closes
   // without raising - and emailing the joiner - an invoice for the whole

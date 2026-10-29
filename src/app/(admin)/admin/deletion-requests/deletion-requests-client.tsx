@@ -635,7 +635,7 @@ export default function DeletionRequestsClient({
                   setAdminInitiatedPage(1);
                 }}
               >
-                <SelectTrigger className="w-36">
+                <SelectTrigger className="w-36" aria-label="Filter by status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

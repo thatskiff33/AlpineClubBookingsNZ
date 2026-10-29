@@ -441,12 +441,12 @@ export default function MembersPage() {
                   {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
                 </ViewOnlyActionButton>
               )}
-              <a href={exportUrl}>
-                <Button variant="outline" size="sm">
+              <Button asChild variant="outline" size="sm">
+                <a href={exportUrl}>
                   <Download className="h-4 w-4 mr-1" />
                   Export CSV
-                </Button>
-              </a>
+                </a>
+              </Button>
               <ViewOnlyActionButton
                 canEdit={canEditMembership}
                 describeReason={false}

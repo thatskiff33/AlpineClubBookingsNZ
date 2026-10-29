@@ -784,6 +784,7 @@ export default function RosterSetupWizard() {
                                 className="flex items-center gap-3 bg-kiosk-inset rounded-lg px-4 py-3 min-h-[56px]"
                               >
                                 <select
+                                  aria-label={`Person for ${template.name}`}
                                   value={allocation.bookingGuestId}
                                   onChange={(e) =>
                                     reassignGuest(globalIndex, e.target.value)

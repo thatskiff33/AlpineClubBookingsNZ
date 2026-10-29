@@ -1,4 +1,4 @@
-import { test as setup } from "@playwright/test";
+import { test as setup } from "./helpers/accessibility";
 import { loginPersona, signIn, storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";

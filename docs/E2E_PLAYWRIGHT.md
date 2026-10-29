@@ -79,6 +79,52 @@ so the gaps are not silently implied as covered):
   role *boundary* matrix is covered by `e2e/admin-roles.spec.ts`, but role
   *management* is not yet browser-tested (deferred from #1134).
 
+## Accessibility and mobile checks (#4466)
+
+Every journey imports `test` from
+[`e2e/helpers/accessibility.ts`](../e2e/helpers/accessibility.ts). ESLint refuses
+imports of the base Playwright `test` in specs and setup files. The shared
+fixture instruments the default page, manually created browser contexts and
+popups, including contexts kept by `beforeAll` hooks.
+
+Axe audits each visited HTTP(S) page before every locator action or explicit
+navigation, and again before close and at test teardown. Audits are tracked per
+page so concurrent actions cannot skip another page, and same-URL wizard steps
+are audited again after their content changes. These checkpoints let
+the journey's assertions settle streaming content first; no fixed sleeps or
+`networkidle` waits are added. Before each audit the fixture lets running
+finite CSS transitions and animations finish (capped at two seconds; infinite
+ones such as spinners are ignored), so a toast fading in or an overlay fading
+out is measured at its settled colours, and waits (with the same cap) for the
+`<title>` Next streams in after an in-app navigation. Results are collected until teardown so a failure
+does not interrupt the journey's cleanup. Serious and critical violations tagged
+`wcag2a`, `wcag2aa` or `wcag22aa` fail the test. The `axe-report` JSON attachment
+contains the full axe result for each failing page, or an audit execution error.
+This is automated page coverage, not proof of complete WCAG conformance.
+
+The sole exception list is
+[`accessibility-allowlist.ts`](../e2e/helpers/accessibility-allowlist.ts), initially
+empty. Review an actual report before adding an exact pathname/rule pair with a
+reason and follow-up issue URL (or explicit `TODO(issue)` placeholder). Never
+turn off a rule globally. Fix small, clear violations in the same change.
+
+The `mobile` project uses Pixel 7 and selects only `member-notices.spec.ts`,
+`booking.spec.ts` and `stripe-payment.spec.ts`. It runs after desktop Chromium
+and before `pre-setup`, once in shard 1 (or on an unsharded local run). The booking
+journey resets its pending window; Stripe uses separate mobile stay windows for
+each attempt. Stripe retains its test-mode credential prerequisite and loud skip
+when keys are absent. Neither project uses live provider credentials.
+
+For a small, database-free test of the fixture, run
+`pnpm run test:e2e:a11y-fixture`. It serves synthetic pages through Playwright
+routing and checks both clean pages and expected axe failures with attached
+reports. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser
+for this contract test. CI does not run it, so run it locally before pushing any
+change to `e2e/helpers/accessibility.ts`, its allowlist or the Playwright
+config: without it, broken instrumentation would leave the journeys green. Run real journeys against a prepared local stack via
+`E2E_PRESERVE_AUTH_STATE=1 pnpm run test:e2e:run --project=mobile --no-deps` (setup storage states must
+already exist). CI discovers mobile through the existing Playwright config.
+
 ## Running locally
 
 ```bash

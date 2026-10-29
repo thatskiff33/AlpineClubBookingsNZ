@@ -1,5 +1,5 @@
 /** Stripe evidence before a charge-backed recovery sends again (INV-PAY-145). */
-import type { PaymentRecoveryOperation, PaymentTransaction } from "@prisma/client";
+import { Prisma, type PaymentRecoveryOperation, type PaymentTransaction } from "@prisma/client";
 import { listRefundsForPaymentIntent } from "@/lib/stripe";
 import { recordStripeRefundsAgainstTransaction, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
@@ -7,6 +7,11 @@ import logger from "@/lib/logger";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { queueRecordedCardRefundNotes } from "@/lib/recorded-card-refund-notes";
 import { cardRefundDoorOf } from "@/lib/card-refund-own-note-share";
+import { prisma } from "@/lib/prisma";
+import { onPlanWhere } from "@/lib/refused-card-refund-retry";
+import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
+import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
 import { stripeReferenceId } from "@/lib/stripe-references";
 
 export class UnattributedCardRefundBeforeResendError extends Error {
@@ -31,11 +36,16 @@ export async function checkCardRefundResend({
   operation,
   plan,
   transactions,
+  stripeKeyPrefix,
 }: {
-  operation: Pick<PaymentRecoveryOperation, "paymentId" | "bookingId" | "createdAt">;
+  operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "bookingId" | "createdAt" | "allocationPlan" | "processingStartedAt">;
   plan: readonly RefundAllocationSlice[];
   transactions: readonly Charge[];
-}): Promise<void> {
+  stripeKeyPrefix: string;
+}): Promise<RefundAllocationSlice[]> {
+  let updatedPlan = [...plan];
+  // What the row holds now: the stored plan as read, then each plan written here.
+  let storedPlan: Parameters<typeof onPlanWhere>[0] = operation.allocationPlan;
   const unmadeIds = new Set(plan.filter((slice) => !slice.madeRefundId).map((slice) => slice.paymentTransactionId));
   const charges = transactions.filter((row) => unmadeIds.has(row.id));
   if (charges.length !== unmadeIds.size) throw new Error("Refund preflight could not find every planned charge (INV-PAY-145)");
@@ -56,6 +66,47 @@ export async function checkCardRefundResend({
       fallbackPaymentIntentId: charge.stripePaymentIntentId,
     });
     if (!recorded.payment) throw new Error("Refund preflight could not reconcile the payment (INV-PAY-145)");
+    const matched = new Set<string>();
+    const marked = updatedPlan.map((slice) => {
+      if (slice.madeRefundId) return slice;
+      const key = refundSliceStripeIdempotencyKey(stripeKeyPrefix, slice);
+      const refund = onCharge.find((each) =>
+        isRecordedRefundStatus(each.status ?? "unknown") &&
+        !recorded.readAsRefused.includes(each.id) &&
+        each.metadata?.[REFUND_SLICE_KEY_METADATA] === key,
+      );
+      if (!refund) return slice;
+      matched.add(refund.id);
+      return { ...slice, madeRefundId: refund.id };
+    });
+    let markError: Error | undefined;
+    try {
+      if (matched.size > 0 && parseRefundAllocationPlan(operation.allocationPlan)) {
+        // Same plan guard as card-refund-resend-answer, on the stored plan as
+        // read (a later charge's, on the plan written for the one before), and
+        // this runner's claim. Provider reads and the Payment-row-locked ledger
+        // write finished; one compare-and-set, and a lost one sends nothing.
+        const written = await prisma.paymentRecoveryOperation.updateMany({
+          where: {
+            id: operation.id,
+            status: "PROCESSING",
+            processingStartedAt: operation.processingStartedAt,
+            ...onPlanWhere(storedPlan),
+          },
+          data: { allocationPlan: marked as unknown as Prisma.InputJsonValue },
+        });
+        if (written.count !== 1) throw new Error("Refund preflight plan or claim changed (INV-PAY-147)");
+        updatedPlan = marked;
+        storedPlan = marked;
+      } else {
+        // A legacy row without a stored plan has no slice evidence to adopt.
+        matched.clear();
+      }
+    } catch (error) {
+      // The ledger committed already: its accounting correction and any
+      // outside-app hold still run, but this attempt must send nothing.
+      markError = error instanceof Error ? error : new Error(String(error));
+    }
     await queueRecordedCardRefundNotes({
       payment: recorded.payment,
       paymentIntentId: charge.stripePaymentIntentId,
@@ -76,6 +127,7 @@ export async function checkCardRefundResend({
     for (const refund of onCharge) {
       if (isRecordedRefundStatus(refund.status ?? "unknown") &&
         !recorded.readAsRefused.includes(refund.id) &&
+        !matched.has(refund.id) &&
         cardRefundDoorOf(refund.metadata) === "outside-app" &&
         refund.created >= Math.floor(operation.createdAt.getTime() / 1000)) {
         unexpected.push(refund.id);
@@ -84,5 +136,7 @@ export async function checkCardRefundResend({
     // Conclusive evidence must hold the row even if another charge's read
     // would fail. No further provider reads are needed to refuse every slice.
     if (unexpected.length > 0) throw new UnattributedCardRefundBeforeResendError(unexpected);
+    if (markError) throw markError;
   }
+  return updatedPlan;
 }

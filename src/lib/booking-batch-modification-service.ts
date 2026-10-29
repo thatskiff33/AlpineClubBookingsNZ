@@ -322,7 +322,7 @@ export type BatchModificationResponse = {
   /** #3809: applied credit the reduction gave back, as account credit. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
-  /** #4299 (`INV-PAY-147`): the increase invoiced to the group organiser instead of this member. */
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
   billedToOrganiserCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   /**

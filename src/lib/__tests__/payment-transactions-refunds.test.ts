@@ -4,6 +4,8 @@ import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 
 const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
+  listRefunds: vi.fn(),
+  prisma: {} as Record<string, unknown>,
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
 }));
@@ -18,11 +20,12 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: {},
+  prisma: mocks.prisma,
 }));
 
 vi.mock("@/lib/stripe", () => ({
   processRefund: mocks.processRefund,
+  listRefundsForPaymentIntent: mocks.listRefunds,
 }));
 
 // #4104: the failed-later debt and its alert, observed here; their own rules are
@@ -55,6 +58,9 @@ import {
   recordStripeRefundsAgainstTransaction,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
+vi.mock("@/lib/recorded-card-refund-notes", () => ({ queueRecordedCardRefundNotes: vi.fn().mockResolvedValue({ queueOperationId: null }) }));
+import { checkCardRefundResend } from "@/lib/card-refund-resend-preflight";
+import { refundPlanOrRetryRefusals } from "@/lib/refused-card-refund-retry";
 import { predatesRefundLedger } from "@/lib/payment-transaction-status";
 import {
   cancelRefundableBaseCents,
@@ -62,6 +68,8 @@ import {
 } from "@/lib/booking-payment-state";
 import { calculateRefundAmount } from "@/lib/policies/cancellation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
+import { createReplayWriter } from "@/test/providers/replay-write";
 
 function createRefundStore() {
   const payment = {
@@ -739,6 +747,147 @@ describe("multi-transaction refund allocation (#1097)", () => {
       payment_intent: paymentIntent,
     };
   }
+
+  it.each([undefined, "slice_evidence"])("carries exact slice-key evidence only on keyed sends (%s)", async (prefix) => {
+    const { store } = twoTransactionStore();
+    mocks.processRefund.mockImplementation(async (args) => ({
+      ...stripeRefund(`re_${args.paymentIntentId}`, args.amountCents, args.paymentIntentId, `ch_${args.paymentIntentId}`), metadata: refundRequestStripeMetadata(args),
+    }));
+    const metadata = { bookingId: "booking_1", reason: "date_change_price_decrease" };
+    await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 6000, metadata, idempotencyKeyPrefix: prefix, store: store as never });
+    expect(mocks.processRefund).toHaveBeenCalledTimes(2);
+    for (const [index, transactionId] of ["txn_2", "txn_1"].entries()) {
+      const key = prefix ? `${prefix}_${transactionId}_3000` : undefined;
+      expect(mocks.processRefund).toHaveBeenNthCalledWith(index + 1, {
+        paymentIntentId: index === 0 ? "pi_2" : "pi_1", amountCents: 3000, reason: "requested_by_customer",
+        metadata, idempotencyKey: key, stampRefundSliceKey: key !== undefined,
+      });
+      // The body Stripe receives: the caller's metadata, plus the slice's own key as evidence when keyed.
+      expect(refundRequestStripeMetadata(mocks.processRefund.mock.calls[index]![0])).toEqual(key ? { ...metadata, refundSliceKey: key } : metadata);
+    }
+    expect(metadata).toEqual({ bookingId: "booking_1", reason: "date_change_price_decrease" });
+  });
+
+  it("rejects slice evidence beyond Stripe's metadata limit before sending it", async () => {
+    const { store } = twoTransactionStore();
+    await expect(refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 1000, idempotencyKeyPrefix: "x".repeat(501), store: store as never })).rejects.toBeInstanceOf(PartialRefundError);
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+
+  describe("a key first sent without slice evidence (#4510 review F1, INV-PAY-147)", () => {
+    const PREFIX = "booking_cancel_refund_booking_1";
+    const KEY = `${PREFIX}_txn_1_3000`;
+    const metadata = { bookingId: "booking_1", reason: "cancellation" };
+    const allocation = [{ paymentTransactionId: "txn_1", amountCents: 3000 }];
+
+    /** Stripe for 24 hours: a key answers its first body's refund again, and refuses any other body. */
+    function stripeRemembersBodies() {
+      const made: Array<ReturnType<typeof stripeRefund> & { metadata: Record<string, string> }> = [];
+      const write = createReplayWriter(() => Object.assign(
+        new Error("Keys for idempotent requests can only be used with the same parameters they were first used with."),
+        { type: "StripeIdempotencyError", rawType: "idempotency_error" },
+      ));
+      const stripe = async (args: Parameters<typeof refundRequestStripeMetadata>[0] & { paymentIntentId: string; amountCents: number; reason?: string }) => {
+        const body = refundRequestStripeMetadata(args);
+        return write(args.idempotencyKey!, [args.paymentIntentId, args.amountCents, args.reason, body], () => {
+          const refund = { ...stripeRefund(`re_made_${made.length + 1}`, args.amountCents, args.paymentIntentId, `ch_${args.paymentIntentId}`), metadata: body };
+          made.push(refund);
+          return refund;
+        });
+      };
+      mocks.processRefund.mockImplementation(stripe);
+      return { made, stripe };
+    }
+
+    const send = (store: unknown) => refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 3000, allocation, metadata, idempotencyKeyPrefix: PREFIX, store: store as never });
+
+    it("a legacy body's key is answered with its original refund once more, and no second refund is made", async () => {
+      const { store, refunds } = twoTransactionStore();
+      const { made, stripe } = stripeRemembersBodies();
+      // Code before the evidence sent this slice's key with the body alone, and recorded nothing.
+      await stripe({ paymentIntentId: "pi_1", amountCents: 3000, reason: "requested_by_customer", metadata, idempotencyKey: KEY });
+      expect(made).toHaveLength(1);
+
+      const result = await send(store);
+
+      expect(mocks.processRefund).toHaveBeenCalledTimes(2);
+      expect(mocks.processRefund.mock.calls.map(([args]) => args.stampRefundSliceKey)).toEqual([true, false]);
+      expect(mocks.processRefund.mock.calls.map(([args]) => args.idempotencyKey)).toEqual([KEY, KEY]);
+      expect(made).toHaveLength(1);
+      expect(result.refunds.map(({ refundId, amountCents }) => ({ refundId, amountCents }))).toEqual([{ refundId: "re_made_1", amountCents: 3000 }]);
+      expect([...refunds.values()].map((refund) => refund.stripeRefundId)).toEqual(["re_made_1"]);
+      expect(mocks.loggerWarn).toHaveBeenCalledWith(
+        { paymentId: "payment_1", paymentTransactionId: "txn_1", idempotencyKey: KEY },
+        expect.stringContaining("resending the pre-evidence body once"),
+      );
+    });
+
+    it("a key first sent with a different body still fails, and moves no money", async () => {
+      const { store, refunds } = twoTransactionStore();
+      const { made, stripe } = stripeRemembersBodies();
+      await stripe({ paymentIntentId: "pi_1", amountCents: 3000, reason: "requested_by_customer", metadata: { bookingId: "booking_1", reason: "date_change_price_decrease" }, idempotencyKey: KEY });
+
+      const thrown = await send(store).catch((error: unknown) => error);
+
+      expect(thrown).toBeInstanceOf(PartialRefundError);
+      expect((thrown as PartialRefundError).completedRefundCents).toBe(0);
+      expect(((thrown as PartialRefundError).cause as { rawType?: string }).rawType).toBe("idempotency_error");
+      expect(mocks.processRefund.mock.calls.map(([args]) => args.stampRefundSliceKey)).toEqual([true, false]);
+      expect(made).toHaveLength(1);
+      expect(refunds.size).toBe(0);
+    });
+
+    it("any other Stripe error is never sent again under the legacy body", async () => {
+      const { store, refunds } = twoTransactionStore();
+      mocks.processRefund.mockRejectedValueOnce(Object.assign(new Error("Stripe is unavailable"), { type: "StripeAPIError", rawType: "api_error" }));
+
+      await expect(send(store)).rejects.toBeInstanceOf(PartialRefundError);
+
+      expect(mocks.processRefund).toHaveBeenCalledTimes(1);
+      expect(refunds.size).toBe(0);
+    });
+  });
+
+  it("a recording fault followed by replay past key expiry refunds only the unmade slice", async () => {
+    const ctx = twoTransactionStore();
+    const plan = [{ paymentTransactionId: "txn_1", amountCents: 2000 }, { paymentTransactionId: "txn_2", amountCents: 1000 }];
+    const operation = { id: "recovery-test", idempotencyKey: "mod_dates_refund_b1_m1", bookingId: "booking_1", paymentId: "payment_1", paymentIntentId: "pi_1", createdAt: new Date("2026-06-28T00:00:00.000Z"), processingStartedAt: new Date("2026-07-01T00:00:00.000Z"), allocationPlan: plan };
+    const row = { ...operation, status: "PROCESSING" };
+    const recoveryStore = {
+      updateMany: vi.fn(async ({ where, data }) => {
+        expect(where).toEqual({ id: row.id, status: row.status, processingStartedAt: row.processingStartedAt, allocationPlan: { equals: row.allocationPlan } });
+        Object.assign(row, data);
+        return { count: 1 };
+      }),
+    };
+    Object.assign(mocks.prisma, ctx.store, { paymentRecoveryOperation: recoveryStore });
+    const made: Array<ReturnType<typeof stripeRefund> & { metadata: Record<string, string> }> = [];
+    const remembered = new Map<string, (typeof made)[number]>();
+    mocks.processRefund.mockImplementation(async (args) => {
+      const previous = remembered.get(args.idempotencyKey);
+      if (previous) return previous;
+      const refund = { ...stripeRefund(`re_made_${made.length}`, args.amountCents, args.paymentIntentId, `ch_${args.paymentIntentId}`),
+        created: new Date("2026-06-29T00:00:00.000Z").getTime() / 1000, metadata: refundRequestStripeMetadata(args) };
+      made.push(refund);
+      remembered.set(args.idempotencyKey, refund);
+      return refund;
+    });
+    mocks.listRefunds.mockImplementation(async (intent) => made.filter((refund) => refund.payment_intent === intent));
+    const send = (allocation: typeof plan) => refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: allocation.reduce((sum, slice) => sum + slice.amountCents, 0), allocation, idempotencyKeyPrefix: operation.idempotencyKey, metadata: { bookingId: "booking_1", reason: "date_change_price_decrease" }, store: ctx.store as never });
+    ctx.store.paymentRefund.createMany.mockRejectedValueOnce(new Error("recording failed after Stripe made A"));
+    await expect(send(plan)).rejects.toBeInstanceOf(PartialRefundError);
+    expect(made).toHaveLength(1);
+    expect(ctx.refunds.size).toBe(0);
+    // Stripe forgot its keys after 24 hours. Every subsequent send is new money.
+    remembered.clear();
+    const after = await checkCardRefundResend({ operation, plan, stripeKeyPrefix: operation.idempotencyKey, transactions: ctx.transactions });
+    expect(after).toEqual([{ ...plan[0], madeRefundId: "re_made_0" }, plan[1]]);
+    await refundPlanOrRetryRefusals({ operation, plan: after, format: CLUB_FORMAT_TEST, refund: send });
+    expect(mocks.processRefund).toHaveBeenCalledTimes(2);
+    expect(mocks.processRefund.mock.calls[1]![0]).toMatchObject({ paymentIntentId: "pi_2", amountCents: 1000 });
+    expect(made.reduce((sum, refund) => sum + refund.amount, 0)).toBe(3000);
+    expect([...ctx.refunds.values()].reduce((sum, refund) => sum + Number(refund.amountCents), 0)).toBe(3000);
+  });
 
   it("recovers a partial-success-then-fail refund to exactly the approved amount across retries", async () => {
     const { store, refunds } = twoTransactionStore();

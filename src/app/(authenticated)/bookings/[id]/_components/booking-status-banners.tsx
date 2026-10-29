@@ -137,7 +137,7 @@ export function BookingStatusBanners({
               {financialReviewPendingDescription}
             </p>
           ) : null}
-          {!neutralFinancialNarrative ? <p className="opacity-80">{bookingNarrative.nextStep}</p> : null}
+          {!neutralFinancialNarrative ? <p>{bookingNarrative.nextStep}</p> : null}
         </div>
       ) : null}
 
@@ -237,7 +237,7 @@ export function BookingStatusBanners({
                 ? `The member's ${money.cents(booking.creditElectionCents)} credit choice is saved and will be applied when they confirm.`
                 : `Your ${money.cents(booking.creditElectionCents)} credit choice is saved and will be applied when you confirm.`}
             </p>
-            <p className="opacity-80">
+            <p>
               {creditNoticeAudience === "admin"
                 ? "No credit has been taken from their balance yet — it is applied at payment, against the balance and price at that moment."
                 : "Nothing has been taken from your balance yet — your credit is applied when you pay, against your balance and the price at that moment."}

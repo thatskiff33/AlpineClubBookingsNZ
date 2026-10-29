@@ -3809,7 +3809,7 @@ unconfirmed environment, and a provider failure — stay distinguishable
 ## Xero Outbox And Reconciliation Lifecycle
 
 An organiser-paid bank-transfer place's extra invoice follows the existing
-supplementary-invoice outbox, anchored on its change (#4299, `INV-PAY-147`). Its
+supplementary-invoice outbox, anchored on its change (#4299, `INV-PAY-148`). Its
 queued create is committed with the edit; provider failure retries the same
 change, and cash reconciliation adds only the extra's actual receipts to the
 place. Its original combined-invoice share is retained.
@@ -4276,8 +4276,13 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
 Before an ordinary charge-backed recovery sends any unmarked slice, its
 preflight reads Stripe once per involved intent, outside every transaction
 (`INV-PAY-145`). It records the returned charge refunds through the canonical
-writer and queues their existing accounting corrections. A counted outside-app
-refund since the debt's creation second stops the whole row for an officer;
+writer and queues their existing accounting corrections. Exact `refundSliceKey`
+evidence marks an unmarked stored-plan slice with its refund, compare-and-set
+on the plan and the runner's `PROCESSING` claim (`INV-PAY-147`); a lost guard
+sends nothing. Both runners send only the returned plan's unmarked slices,
+including after Stripe forgets the key; a wholly marked row completes. A
+counted outside-app refund without a matching slice key since the debt's
+creation second stops the whole row for an officer;
 there is no amount matching, automatic adoption or debt close. An incomplete
 page or unavailable evidence fails the attempt without sending, using normal
 backoff. Marked slices are not sent or checked. The specialised combined-group

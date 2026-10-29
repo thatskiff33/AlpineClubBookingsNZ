@@ -174,7 +174,7 @@ export function groupOrganiserJoinerRefundTemplate(data: {
 }
 
 /**
- * #4299 (`INV-PAY-147`): the organiser's extra invoice when a place in their
+ * #4299 (`INV-PAY-148`): the organiser's extra invoice when a place in their
  * internet-banking group costs more.
  */
 export function groupOrganiserExtraInvoiceTemplate(data: {

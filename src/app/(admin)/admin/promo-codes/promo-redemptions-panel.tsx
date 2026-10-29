@@ -577,10 +577,11 @@ export function PromoRedemptionsPanel({
           />
           {multiLodge ? (
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">
+              <label htmlFor="promo-redemptions-lodge" className="text-xs font-medium text-muted-foreground">
                 Lodge
               </label>
               <select
+                id="promo-redemptions-lodge"
                 value={lodgeId}
                 onChange={(event) =>
                   applyFilterChange(() => setLodgeId(event.target.value))

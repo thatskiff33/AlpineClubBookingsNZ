@@ -15,6 +15,7 @@ import {
   refuseBelowStripeMinimum,
   stripeChargeCurrency,
 } from "@/lib/stripe-charge-currency";
+import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -214,19 +215,22 @@ export async function processRefund({
   reason = "requested_by_customer",
   metadata,
   idempotencyKey,
+  stampRefundSliceKey,
 }: {
   paymentIntentId: string;
   amountCents: number;
   reason?: Stripe.RefundCreateParams.Reason;
   metadata?: Record<string, string>;
   idempotencyKey?: string;
+  /** #4510 (`INV-PAY-147`): also send `idempotencyKey` as the refund's `refundSliceKey` evidence. */
+  stampRefundSliceKey?: boolean;
 }): Promise<Stripe.Refund> {
   const stripe = await getStripe();
   const params = {
     payment_intent: paymentIntentId,
     amount: amountCents,
     reason,
-    metadata: metadata ?? {},
+    metadata: refundRequestStripeMetadata({ metadata, idempotencyKey, stampRefundSliceKey }),
   };
 
   if (idempotencyKey) {

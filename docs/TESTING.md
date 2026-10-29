@@ -14,6 +14,30 @@ an unreachable dummy is correct and a live seeded database is not — so
 `prisma.config.ts` resolves. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for
 the full local gate.
 
+## Accessibility lint ratchets (#4466)
+
+The full `eslint-plugin-jsx-a11y` recommended configuration applies to JSX/TSX.
+The local `accessibility/minimum-text-size` rule rejects static sizes below 12px
+in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
+`@apply` classes. Absolute CSS units (including `pt`) are converted to pixels;
+`rem`/`em` literals assume 16px. Runtime sizes and computed
+expressions still need browser/design review. CSS uses the tolerant parser for
+Tailwind syntax; it is not a general CSS validity gate.
+
+[`eslint-suppressions.json`](../eslint-suppressions.json) records existing debt
+using ESLint's built-in per-file/per-rule counts. Normal `pnpm run lint` applies
+it automatically: new files and increased counts fail, and unused suppressions
+also fail. It is a count ratchet: replacing a violation in the same file with
+another of the same rule does not increase the count. Do not regenerate or grow
+the baseline to pass lint. After fixing debt, run
+`pnpm exec eslint src --prune-suppressions` and commit the reductions. Check
+commands do not modify it.
+
+Focused rule and ratchet contracts run with
+`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs`.
+The shared axe fixture and mobile project are described in
+[`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md#accessibility-and-mobile-checks-4466).
+
 ## Stateful Xero and Stripe fakes
 
 Tests can keep provider state across a whole money journey instead of returning

@@ -251,7 +251,7 @@ export default function AdminIssueReportsPage() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-40">
+                <SelectTrigger className="w-40" aria-label="Filter by status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

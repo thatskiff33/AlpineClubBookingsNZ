@@ -1149,7 +1149,7 @@ export const WysiwygEditor = forwardRef<
                 }}
                 disabled={loadingPickerDirs}
               >
-                <SelectTrigger className="flex-1 text-xs">
+                <SelectTrigger className="flex-1 text-xs" aria-label="Image folder">
                   <SelectValue placeholder="Select folder…" />
                 </SelectTrigger>
                 <SelectContent>

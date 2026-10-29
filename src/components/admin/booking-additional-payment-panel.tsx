@@ -117,7 +117,7 @@ export async function BookingAdditionalPaymentPanel({
         </p>
         <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Amount due
             </dt>
             <dd className="font-medium tabular-nums">
@@ -125,7 +125,7 @@ export async function BookingAdditionalPaymentPanel({
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Status
             </dt>
             <dd className="font-medium">
@@ -133,7 +133,7 @@ export async function BookingAdditionalPaymentPanel({
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Requested
             </dt>
             <dd className="font-medium">
@@ -147,7 +147,7 @@ export async function BookingAdditionalPaymentPanel({
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Member last emailed
             </dt>
             <dd className="font-medium">
@@ -163,7 +163,7 @@ export async function BookingAdditionalPaymentPanel({
         {canResend ? (
           <ResendAdditionalPaymentButton bookingId={bookingId} />
         ) : (
-          <p className="text-sm opacity-90">{ADMIN_VIEW_ONLY_ACTION_REASON}</p>
+          <p className="text-sm">{ADMIN_VIEW_ONLY_ACTION_REASON}</p>
         )}
         {canWithdraw ? (
           <WithdrawAdditionalPaymentButton

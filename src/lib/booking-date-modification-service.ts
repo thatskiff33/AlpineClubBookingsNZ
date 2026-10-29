@@ -244,7 +244,7 @@ export type DateModificationResponse = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   additionalAmountCents: number;
-  /** #4299 (`INV-PAY-147`): the increase invoiced to the group organiser instead of this member. */
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
   billedToOrganiserCents: number;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;

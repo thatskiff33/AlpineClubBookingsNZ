@@ -20,6 +20,6 @@
     // unit-test project (tsconfig.test.json) is the one that stays off, and
     // #3363 is the one home for how many diagnostics it holds.
   },
-  "include": ["e2e/**/*.ts", "playwright.config.ts"],
+  "include": ["e2e/**/*.ts", "playwright.config.ts", "scripts/e2e-contracts/**/*.ts"],
   "exclude": ["node_modules"]
 }

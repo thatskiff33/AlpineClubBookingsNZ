@@ -1270,6 +1270,7 @@ function ModuleOptions(props: {
             {d.type === "int" && (
               <Input
                 type="number"
+                aria-label={d.label}
                 min={d.min}
                 max={d.max}
                 value={Number(current)}
@@ -1279,6 +1280,7 @@ function ModuleOptions(props: {
             )}
             {d.type === "bool" && (
               <select
+                aria-label={d.label}
                 className={selectClass}
                 value={String(current === true)}
                 disabled={!props.canEdit}
@@ -1290,6 +1292,7 @@ function ModuleOptions(props: {
             )}
             {d.type === "enum" && (
               <select
+                aria-label={d.label}
                 className={selectClass}
                 value={String(current)}
                 disabled={!props.canEdit}
