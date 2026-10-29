@@ -53,7 +53,7 @@ export function adminAlertSendOutcome(result: AdminAlertSendResult): AdminAlertS
 
 /**
  * What a once-only caller reads after an UNMUTEABLE alert's send returned
- * (#4149): `sendUnmuteableAdminAlert` returns nothing, sends to a fallback
+ * (#4149): the caller discards the unmuteable sender's outcome; it sends to a fallback
  * audience when the owning area has nobody, and records its own escalation when
  * no copy went out, so a send that returns has done all it can and the claim is
  * kept. One that throws is given back by `sendAdminAlertOnceEver`.

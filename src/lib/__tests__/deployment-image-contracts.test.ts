@@ -107,7 +107,8 @@ describe("deployment image contracts", () => {
     expect(workflow).toContain(
       "MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}",
     );
-    expect(workflow).toContain("uses: docker/build-push-action@v7");
+    // #4455: pinned to a commit SHA, with the version as its comment.
+    expect(workflow).toMatch(/uses: docker\/build-push-action@[0-9a-f]{40} # v7\n/);
     expect(workflow).toContain("target: builder");
   });
 
@@ -126,7 +127,7 @@ describe("deployment image contracts", () => {
       "GITLEAKS_IMAGE=ghcr.io/gitleaks/gitleaks:v8.28.0@sha256:" +
         "cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854",
     );
-    expect(workflow).toContain("uses: aquasecurity/trivy-action@v0.36.0");
+    expect(workflow).toMatch(/uses: aquasecurity\/trivy-action@[0-9a-f]{40} # v0\.36\.0\n/);
     for (const file of filesUnder(".github/workflows", [".yml", ".yaml"])) {
       expect(
         readRepoFile(file),
@@ -963,11 +964,21 @@ describe("package manager contract (#3673)", () => {
       "auditConfig",
       "registry",
       "registries",
-      "minimumReleaseAge",
       "onlyBuiltDependencies",
       "neverBuiltDependencies",
     ]) {
       expect(topLevelKeys, `pnpm-workspace.yaml must not set \`${forbidden}\``).not.toContain(forbidden);
+    }
+    // #4455: a release-age hold may only be STRICTER than pnpm's one-day
+    // default, and any exemption names one exact version, like allowBuilds.
+    const releaseAge = /^minimumReleaseAge: (\d+)$/m.exec(workspace);
+    if (topLevelKeys.includes("minimumReleaseAge")) {
+      expect(releaseAge, "minimumReleaseAge must be a whole number of minutes").not.toBeNull();
+      expect(Number(releaseAge?.[1])).toBeGreaterThanOrEqual(1440);
+    }
+    const excluded = /^minimumReleaseAgeExclude:\n((?: {2}- .+\n)*)/m.exec(workspace)?.[1] ?? "";
+    for (const entry of excluded.split("\n").filter(Boolean)) {
+      expect(entry, "a release-age exemption names one exact version").toMatch(/^ {2}- (@?[\w.-]+(?:\/[\w.-]+)?)@\d+\.\d+\.\d+$/);
     }
     // Nested spellings too, e.g. an ignore list under some other key.
     expect(workspace).not.toMatch(/ignoreGhsas|ignoreCves/);

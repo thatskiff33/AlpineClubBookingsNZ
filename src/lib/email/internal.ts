@@ -240,6 +240,8 @@ const NON_RETRYABLE_EMAIL_LOG_TEMPLATES = new Set([
   // The hosting incident/outbox is the retry authority for this message. Keeping
   // a second EmailLog retry authority could replay a successful incident send.
   "hosting-coverage-lost",
+  // #4446: the settlement marker owns bounded retries and durable escalation.
+  "admin-bank-transfer-settlement-figure",
   "admin-email-failure",
 ]);
 

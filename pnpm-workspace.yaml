@@ -8,6 +8,14 @@
 # nobody flips it to `hoisted` thinking it is unset.
 nodeLinker: isolated
 
+# Match the npm cooldown in .github/dependabot.yml: 7 days in minutes.
+minimumReleaseAge: 10080
+# Grandfather only the version already locked on main when this policy landed
+# (#4455). Published 22 Oct 2026, it otherwise blocks frozen installs on 28 Oct.
+# Future versions still wait seven days; remove this after the next update.
+minimumReleaseAgeExclude:
+  - nodemailer@10.2.1
+
 # The single home of the version range for these two direct dependencies
 # (pnpm's "catalog"). package.json names both as `catalog:`, and the nodemailer
 # overrides below point here too, so each range is written exactly once; bump

@@ -28,6 +28,7 @@ import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { retryCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 const XERO_CRON_TASKS = [
@@ -357,11 +358,16 @@ export async function runXeroCronTaskList(
         payload.inboundReconciliation = await runRecordedXeroTask({
           task,
           recordCronRun,
-          work: async () =>
-            connected
-              ? await (taskDependencies.runXeroInboundReconciliationCycle ??
-                  runXeroInboundReconciliationCycle)()
-              : { skipped: true, reason: "Xero not connected" },
+          work: async () => {
+            // Local committed markers remain owed even if Xero disconnects.
+            const settlementAlertCandidates = await retryCashSettlementAlerts(format);
+            if (!connected) return settlementAlertCandidates > 0
+              ? { settlementAlertCandidates }
+              : { skipped: true, reason: "Xero not connected" };
+            const result = await (taskDependencies.runXeroInboundReconciliationCycle ??
+              runXeroInboundReconciliationCycle)();
+            return { ...result, settlementAlertCandidates };
+          },
         });
       } else if (task === "backfill") {
         payload.linkBackfill = await runRecordedXeroTask({

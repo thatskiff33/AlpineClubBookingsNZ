@@ -128,7 +128,7 @@ export async function sendAdminBankTransferSettlementFigureAlert(data: {
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
 
-  await sendUnmuteableAdminAlert({
+  return sendUnmuteableAdminAlert({
     subject: `Bank transfer amount needs checking: ${data.memberName}`,
     html: await renderEmailHtml(() =>
       adminBankTransferSettlementFigureTemplate({ ...data, xeroInvoiceUrl, bookingUrl, reviewUrl }, format),

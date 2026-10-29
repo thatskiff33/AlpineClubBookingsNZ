@@ -180,7 +180,8 @@ function splitKey(content) {
 const BLOCK_SCALAR_HEADER = /^[|>][-+]?\d*$/;
 
 function parseMapping(state, indent) {
-  const map = {};
+  // YAML keys are data: even `__proto__` must remain an enumerable own key.
+  const map = Object.create(null);
   for (;;) {
     const next = peekSignificant(state);
     if (!next || next.indent < indent) break;

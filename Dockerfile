@@ -1,4 +1,4 @@
-FROM node:24.17-alpine AS base
+FROM node:24.17-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 AS base
 # pnpm, at exactly the version package.json pins in `packageManager` (#3673).
 # Read from package.json rather than written here a second time, so the image
 # cannot drift from CI and the lockfile; only that one field is copied in, so
@@ -129,7 +129,7 @@ RUN pnpm exec prisma generate
 RUN pnpm run build
 
 # Production image
-FROM node:24.17-alpine AS runner
+FROM node:24.17-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

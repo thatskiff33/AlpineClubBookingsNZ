@@ -65,6 +65,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/dependency-mitigation.test.mjs",
   // #4364: the `.mjs` allowBuilds/lockfile gate runs with a bare `node` before
   // the install, so its suite stays JavaScript like the others here.
+  "scripts/ci/check-action-pins.test.mjs",
   "scripts/ci/check-allow-builds.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",

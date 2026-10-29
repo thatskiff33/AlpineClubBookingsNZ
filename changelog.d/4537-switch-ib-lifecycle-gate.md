@@ -1,0 +1,1 @@
+- **Old payment tabs no longer offer bank details for unavailable bookings (#4365).** An Internet Banking booking that has been cancelled or deleted now returns an unavailable-booking message instead of its old payment reference. Active bookings keep their existing reference and payment hold when the request is repeated.

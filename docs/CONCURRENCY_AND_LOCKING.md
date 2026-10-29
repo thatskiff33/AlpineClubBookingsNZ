@@ -2187,6 +2187,15 @@ mispricing a booking.
   and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
   from the booking/capacity/credit and money clusters. A missing settings row
   refuses every fenced write (no stored address matches).
+- **Other lodges upload watermark** — `uploadOtherClubsToServer` (#4485)
+  records through `serverNzAnswerWriter` using the identity from the sender
+  captured by `prepareOtherLodgesUpload`. Row selection uses its settings snapshot,
+  so replacement before capture cannot carry an old watermark
+  onto the new connection. The provider call finishes before the settings-row
+  fence is taken; the order is settings row, credential read, watermark write.
+  A replaced connection refuses the write. Connection replacement clears both
+  Other lodges transfer positions and the shared-feed cursor and poison tracking
+  in the same transaction as the address or key change.
 - **Central lodge link writer** — `PUT /api/admin/lodges/[id]/central-lodge`
   (#62; #4262 review): in one transaction it first takes the settings row lock
   (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a

@@ -1,3 +1,4 @@
+import { countExhaustedCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { countBankRefundVoidsToAnswer } from "@/lib/bank-refund-void-follow-up";
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
@@ -151,6 +152,7 @@ export interface StuckStateDashboardDependencies {
   countActiveLodges: () => Promise<number>;
   /** #4162: how many voided bank refund notes wait for a person (`countBankRefundVoidsToAnswer`). */
   countBankRefundVoidsToAnswer: () => Promise<number>;
+  countExhaustedCashSettlementAlerts: () => Promise<number>;
 }
 
 const DOMAIN_LABELS: Record<StuckStateDomain, string> = {
@@ -196,6 +198,7 @@ const defaultDependencies: StuckStateDashboardDependencies = {
   loadHutLeaderLookaheadDays,
   countActiveLodges: () => countActiveLodges(prisma),
   countBankRefundVoidsToAnswer,
+  countExhaustedCashSettlementAlerts,
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
@@ -969,6 +972,17 @@ export async function getStuckStateDashboard(input?: {
   ]);
 
   buildPaymentItems(items, paymentCounts);
+  const exhaustedSettlementAlerts = await deps.countExhaustedCashSettlementAlerts();
+  addItem(items, {
+    id: "payment-settlement-alert-undelivered",
+    domain: "payment",
+    title: "Bank transfer amount alerts not delivered",
+    severity: "critical",
+    owner: "Finance",
+    count: exhaustedSettlementAlerts,
+    href: "/admin/payments",
+    summary: `${exhaustedSettlementAlerts} settlement figure alerts exhausted their retries. Check the bank transfer amounts against Xero and the staff booking timeline; no further alert emails are attempted.`,
+  });
 
   // School attendee lists inside their confirmation window (#1101): the
   // school has been prompted (or is about to be) but has not confirmed who

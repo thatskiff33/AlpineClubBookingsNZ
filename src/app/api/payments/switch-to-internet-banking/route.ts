@@ -74,6 +74,9 @@ class CreditCoversWholeBookingError extends Error {
  * PAID, exactly like a booking created with Internet Banking. Internet Banking is
  * an optional module, so this 400s when it is off.
  */
+// #4365: one refusal for a booking that can no longer switch, early or under the locks.
+const NOT_SWITCHABLE_BODY = { error: "This booking can no longer switch to Internet Banking." };
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -135,7 +138,13 @@ export async function POST(request: NextRequest) {
   // Already on Internet Banking → idempotent success, re-queueing the invoice
   // a live booking may still lack (`queueSwitchInvoiceAfterCommit`).
   if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
-    if (isLiveSwitchState(booking)) await queueSwitchInvoiceAfterCommit(booking.id, session.user.id);
+    if (!isLiveSwitchState(booking)) {
+      return NextResponse.json(
+        NOT_SWITCHABLE_BODY,
+        { status: 409 },
+      );
+    }
+    await queueSwitchInvoiceAfterCommit(booking.id, session.user.id);
     return NextResponse.json(alreadySwitchedBody(booking.payment, reference));
   }
 
@@ -510,7 +519,7 @@ export async function POST(request: NextRequest) {
     // we waited on the locks (#1881), or the status-guarded CONFIRMED claim
     // lost. Nothing was written; report a conflict.
     return NextResponse.json(
-      { error: "This booking can no longer switch to Internet Banking." },
+      NOT_SWITCHABLE_BODY,
       { status: 409 },
     );
   }

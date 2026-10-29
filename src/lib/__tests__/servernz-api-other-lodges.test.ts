@@ -22,6 +22,7 @@ vi.mock("@/lib/servernz-settings", () => ({
 import { OTHER_LODGE_DATA_FIELDS, OTHER_LODGE_RATE_FIELDS } from "@/lib/other-lodges";
 import { SERVER_RATE_WIRE_NAMES } from "@/lib/servernz-rate";
 import {
+  prepareOtherLodgesUpload,
   pullOtherLodges,
   uploadOtherLodges,
   type OtherLodgeUploadItem,
@@ -385,7 +386,11 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       amenities: [{ name: "Sauna", description: null }],
     };
 
-    await uploadOtherLodges([item]);
+    const answer = await uploadOtherLodges([item]);
+    expect(answer.sentOn).toEqual({
+      baseUrl: "https://central.test",
+      credentialVersion: "test-credential-version",
+    });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("https://central.test/api/v1/other-lodges");
@@ -636,5 +641,20 @@ describe("pullOtherLodges — the names of dropped rows", () => {
     // srv_gone is deleted; srv_other is not, so its name still counts.
     expect(pull.droppedNames).toEqual(["Kea Lodge"]);
     expect(pull.deletedLodgeIds).toEqual(["srv_gone"]);
+  });
+});
+
+
+describe("upload connection capture (#4485)", () => {
+  it("keeps its captured sender when the stored address changes after selection starts", async () => {
+    const { loadServerNzSettings } = await import("@/lib/servernz-settings");
+    const prepared = await prepareOtherLodgesUpload();
+    expect(prepared.settings.baseUrl).toBe("https://central.test");
+    vi.mocked(loadServerNzSettings).mockResolvedValueOnce({ baseUrl: "https://new.test" } as never);
+    expect((await loadServerNzSettings()).baseUrl).toBe("https://new.test");
+    respondWith({ created: 0, updated: 0, unchanged: 0, skipped: 0, results: [] });
+    const answer = await prepared.upload([]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://central.test/api/v1/other-lodges");
+    expect(answer.sentOn.baseUrl).toBe("https://central.test");
   });
 });

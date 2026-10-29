@@ -59,16 +59,20 @@ const mockPullSnapshot = vi.fn();
 vi.mock("@/lib/servernz-api", () => ({
   // A 2.5 server answers every item with its lodge's id; a fixture that leaves
   // the id out gets the item's own, so only a test about a WRONG id sets one.
-  uploadOtherLodges: async (items: Array<{ id?: string }>) => {
-    const answer = await mockUploadOtherLodges(items);
-    if (!answer?.results) return answer;
-    return {
-      ...answer,
-      results: answer.results.map((r: { id?: unknown }, i: number) =>
-        "id" in r ? r : { ...r, ...(items[i]?.id ? { id: items[i].id } : {}) },
-      ),
-    };
-  },
+  prepareOtherLodgesUpload: async () => ({
+    settings: await mockLoadSettings(),
+    upload: async (items: Array<{ id?: string }>) => {
+      const answer = await mockUploadOtherLodges(items);
+      if (!answer?.results) return answer;
+      return {
+        ...answer,
+        sentOn: SENT_ON,
+        results: answer.results.map((r: { id?: unknown }, i: number) =>
+          "id" in r ? r : { ...r, ...(items[i]?.id ? { id: items[i].id } : {}) },
+        ),
+      };
+    },
+  }),
   // The pull reads the stored settings in the same fenced read as its
   // connection (#4262 review): `since` may be a function of them, and the
   // answer carries them as `snapshot`. Here the stored settings are whatever
@@ -359,9 +363,11 @@ describe("uploadOtherClubsToServer", () => {
       }),
     );
     expect(result.sent).toBe(2);
+    expect(mockAnswerWriter).toHaveBeenCalledWith(SENT_ON);
+    expect(mockFence).toHaveBeenCalledWith(SENT_ON);
     // The watermark advances to the newest row actually sent, on the database's
     // own clock — never to wall-clock now(), which could outrun an uncommitted edit.
-    expect(mockRecordUpload).toHaveBeenCalledWith(newer);
+    expect(mockRecordUpload).toHaveBeenCalledWith(newer, expect.objectContaining({ serverNzSettings: expect.anything() }));
   });
 
   it("refills this club's own lodge from its Fees page BEFORE reading the changed rows (#77)", async () => {
@@ -1285,7 +1291,7 @@ describe("own lodges only (#52)", () => {
     expect(result.sent).toBe(1);
     // The watermark is the newest OWNED row that was accepted, not the other
     // club's newer row that was never sent.
-    expect(mockRecordUpload).toHaveBeenCalledWith(ours);
+    expect(mockRecordUpload).toHaveBeenCalledWith(ours, expect.objectContaining({ serverNzSettings: expect.anything() }));
   });
 
   it("sends nothing at all when the list is known and empty, even with changed rows", async () => {
@@ -2517,7 +2523,7 @@ describe("upload leaves out a booking page address the server would refuse (#55)
       expect.stringMatching(/without their booking page address/i),
     );
     // The lodge was accepted, so the watermark moves past it.
-    expect(mockRecordUpload).toHaveBeenCalledWith(new Date("2026-08-12T00:00:00.000Z"));
+    expect(mockRecordUpload).toHaveBeenCalledWith(new Date("2026-08-12T00:00:00.000Z"), expect.objectContaining({ serverNzSettings: expect.anything() }));
   });
 
   it("warns about nothing when every address is fine", async () => {

@@ -130,8 +130,8 @@ export async function loadOwnedOtherLodges(
  * Every answer writer goes through the one fence built on it,
  * `withCurrentServerNzConnection` / `serverNzAnswerWriter`
  * (`servernz-version-record.ts`): the version recorder and every write of the
- * Other lodges download (#4262 review). The Central lodge link writer takes it
- * before its `Lodge` row to re-check the owned list.
+ * Other lodges download and upload watermark (#4485). The Central lodge link
+ * writer takes it before its `Lodge` row to re-check the owned list.
  */
 export async function lockServerNzSettings(
   db: Pick<Prisma.TransactionClient, "$executeRaw">,
@@ -259,11 +259,14 @@ export async function updateServerNzSettings(input: {
  * `otherLodgesLastUploadAt` doubles as the incremental-upload watermark: the
  * next upload only sends local rows whose `updatedAt` is newer than this. Pass
  * the newest `updatedAt` among the rows just uploaded so the watermark advances
- * on the same clock as the rows themselves (both DB-generated). Falls back to
- * `now()` when no explicit watermark is given.
+ * on the same clock as the rows themselves (both DB-generated). `db` must be
+ * the upload response's fenced transaction (`serverNzAnswerWriter`).
  */
-export async function recordOtherLodgesUpload(at: Date = new Date()): Promise<void> {
-  await prisma.serverNzSettings.upsert({
+export async function recordOtherLodgesUpload(
+  at: Date,
+  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
+): Promise<void> {
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: {
       id: SERVERNZ_SETTINGS_ID,
@@ -408,10 +411,10 @@ export async function clearServerVersionCheck(): Promise<void> {
 
 /**
  * Forget everything the central server told this connection, in ONE write:
- * the owned-lodge list (#52) and the last reported version (#49). Called when
- * the connection ends - the key is removed or replaced, or the address moves -
- * because both answers belonged to it. One upsert rather than the two
- * single-purpose writers above in sequence, so a crash between them cannot
+ * the owned-lodge list (#52), transfer cursors and last reported version (#49).
+ * Called when the connection ends - the key is removed or replaced, or the
+ * address moves - because all answers and sync positions belonged to it. One
+ * upsert rather than separate writes, so a crash between them cannot
  * leave the row half-forgotten: a stale version pausing a new connection, or a
  * stale owned list editable under a new key. `db` is a fenced client (#4436):
  * the connection change it belongs to runs in
@@ -429,6 +432,15 @@ export async function forgetServerConnectionAnswers(
       otherLodgesOwnedNamesAt: null,
       // The owned ids are the same connection's answer (#62).
       otherLodgesOwnedLodges: Prisma.DbNull,
+      // Neither transfer may resume from the previous connection's position.
+      otherLodgesLastUploadAt: null,
+      otherLodgesLastDownloadAt: null,
+      otherLodgesCursor: null,
+      commsCursorSince: null,
+      commsCursorSinceId: null,
+      commsLastSyncAt: null,
+      commsPoisonChangeId: null,
+      commsPoisonCount: 0,
       // A new connection keys the registry again with a whole download (#64).
       otherLodgesKeyedAt: null,
       serverVersion: null,

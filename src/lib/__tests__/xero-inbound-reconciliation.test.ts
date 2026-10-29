@@ -192,6 +192,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.groupSettlementFindUnique,
     },
     bookingEvent: {
+      findUnique: async () => ({ snapshot: mocks.txBookingEventCreate.mock.calls.at(-1)?.[0]?.data.snapshot }),
       update: mocks.bookingEventUpdate,
     },
     // #4215: the refunded-total recount reads refund requests paid back; none here.

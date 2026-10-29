@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   memberCreditCreate: vi.fn(),
   bookingEventFindFirst: vi.fn(),
+  bookingEventFindUnique: vi.fn(),
   recordBookingEvent: vi.fn(),
   claimAlertCooldown: vi.fn(),
   sendAdminSecondInstrumentSettlementConflictAlert: vi.fn(),
@@ -71,8 +72,12 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingEvent: {
       findFirst: (...a: unknown[]) => mocks.bookingEventFindFirst(...a),
+      // #4446: the sender re-reads the marker after its cooldown claim.
+      findUnique: (...a: unknown[]) => mocks.bookingEventFindUnique(...a),
       // #3638: the alert is recorded on the marker once it is sent.
       update: (...a: unknown[]) => mocks.bookingEventUpdate(...a),
+      // #4446: a failed alert send counts the attempt on the marker.
+      updateMany: async () => ({ count: 1 }),
     },
   },
 }));
@@ -375,6 +380,10 @@ beforeEach(() => {
   mocks.paymentUpdate.mockResolvedValue({});
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingEventFindFirst.mockResolvedValue(null);
+  mocks.bookingEventFindUnique.mockImplementation(
+    async ({ where }: { where: { id: string } }) =>
+      markerRows.find((candidate) => candidate.id === where.id) ?? null,
+  );
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.claimAlertCooldown.mockResolvedValue(true);
   mocks.sendAdminSecondInstrumentSettlementConflictAlert.mockResolvedValue(undefined);

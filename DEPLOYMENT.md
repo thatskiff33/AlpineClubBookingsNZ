@@ -737,6 +737,40 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
+### Supply chain
+
+Builds use reviewed, immutable inputs. Every third-party Action is pinned to a
+full commit SHA with its version in a comment; the CI Lint job rejects unpinned
+workflow and composite-action references, including `docker://` actions.
+External images in the Dockerfile and Compose files keep readable tags and pin
+the multi-architecture index digest. Dependabot proposes Action and Docker
+updates for review. The pnpm minimum release age matches the npm Dependabot
+cooldown: seven days (`10080` minutes).
+The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
+installs work during rollout; remove it after the next Nodemailer update.
+
+Both published images include a BuildKit SBOM and maximum build provenance,
+plus a GitHub build provenance attestation tied to the pushed image digest.
+Before deploying a published image, verify it with GitHub CLI (replace the
+placeholders with the registry owner, image name and release tag):
+
+```bash
+gh attestation verify oci://ghcr.io/<owner>/<image>:<tag> --owner <owner>
+```
+
+Check that the verified repository and workflow are the expected publisher.
+For an immutable deployment reference, set `APP_IMAGE` and `MIGRATE_IMAGE` to
+the verified images' `ghcr.io/<owner>/<image>@sha256:<digest>` references.
+Their Compose defaults remain local build outputs, whose digests exist only
+after building. Verify the first published image after this change merges and
+record the result in the release close-out.
+
+The weekly and main-push OpenSSF Scorecard workflow uploads advisory SARIF
+findings to code scanning; it is never a required check. App containers
+(including staging and blue/green slots) drop all Linux capabilities and use
+`no-new-privileges`. PostgreSQL and Caddy retain their existing capabilities;
+Caddy binds privileged ports 80/443 and needs `NET_BIND_SERVICE`.
+
 ## First Bootstrap
 
 From the target host:

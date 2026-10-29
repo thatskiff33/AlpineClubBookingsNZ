@@ -171,8 +171,13 @@ export const IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND = "ib_settlement_figure_check
 export const IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON =
   "Xero reported this booking's bank-transfer invoice paid, but the amount the app recorded needs checking: it kept the stored figure, or the cash is not what the booking owes. The booking was not cancelled.";
 
+/** Three failed sends, as for organiser hand-back alerts (#4446). */
+export const CASH_SETTLEMENT_ALERT_MAX_UNDELIVERED = 3;
+
 export interface IbSettlementFigureCheckEventSnapshot {
   kind: typeof IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND;
+  /** Failed sends; absent on markers written before #4446. */
+  alertUndeliveredCount?: number;
   invoiceId: string | null;
   invoiceNumber: string | null;
   /** Why the stored figure was kept (`CashSettlementRefusal`), or null when it was not. */

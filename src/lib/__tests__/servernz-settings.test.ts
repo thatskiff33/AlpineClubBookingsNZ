@@ -27,6 +27,7 @@ import {
   loadOwnedOtherLodges,
   readOwnedOtherLodges,
   recordOtherLodgesDownload,
+  recordOtherLodgesUpload,
   recordServerVersionCheck,
   validateCentralServerBaseUrl,
   type ServerNzConnectionTx,
@@ -188,7 +189,7 @@ describe("the server's reported API version (#49)", () => {
     expect(args.update).toEqual({ serverVersion: null, serverVersionCheckedAt: null });
   });
 
-  it("forgets the owned list AND the version in ONE write when the connection ends", async () => {
+  it("forgets the owned list, transfer cursors AND the version in ONE write when the connection ends", async () => {
     // The writer's own write, on the mocked client. Only the connection fence
     // mints this type in production (#4436); `servernz-config.test.ts` covers it.
     const unfencedClientForUnitTest = prisma as unknown as ServerNzConnectionTx;
@@ -200,6 +201,14 @@ describe("the server's reported API version (#49)", () => {
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedLodges: Prisma.DbNull,
+      otherLodgesLastUploadAt: null,
+      otherLodgesLastDownloadAt: null,
+      otherLodgesCursor: null,
+      commsCursorSince: null,
+      commsCursorSinceId: null,
+      commsLastSyncAt: null,
+      commsPoisonChangeId: null,
+      commsPoisonCount: 0,
       // A new connection keys the registry again with a whole download (#64).
       otherLodgesKeyedAt: null,
       serverVersion: null,
@@ -353,3 +362,16 @@ describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
   });
 });
 
+describe("recordOtherLodgesUpload", () => {
+  it("records the accepted watermark through the caller's transaction", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const at = new Date("2026-06-01T00:00:00.000Z");
+    await recordOtherLodgesUpload(at, { serverNzSettings: { upsert } } as never);
+    expect(upsert).toHaveBeenCalledWith({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      create: { id: SERVERNZ_SETTINGS_ID, otherLodgesLastUploadAt: at },
+      update: { otherLodgesLastUploadAt: at },
+    });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+});

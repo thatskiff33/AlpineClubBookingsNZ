@@ -41,6 +41,16 @@ by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
    owner, and a count. Click **Open** to go straight to the screen that resolves
    it. An empty queue shows "No stuck states found."
 
+### Bank transfer amount alerts not delivered
+
+This critical Finance item means a bank-transfer settlement figure alert failed
+three times. The existing Xero inbound job retries unsent markers older than ten
+minutes, using the same cooldown claim as invoice deliveries. After three failed
+sends it stops emailing; the item remains visible in Stuck States. Open Payments,
+check the amount against Xero, and read the booking's staff timeline for the
+settlement figure marker. No payment amount or booking status is changed by the
+retry (#4446).
+
 ### Close a card refund Stripe gave up on
 
 When the club refunds a card and Stripe fails, the app retries the refund

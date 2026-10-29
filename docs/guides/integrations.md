@@ -287,7 +287,11 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
   that download is forgotten, so your own lodge is neither uploaded nor
   editable until a later download links it again, and another club's is
   marked **Not found**. A download that was running while
-  the address or key changed records nothing.
+  the address or key changed records nothing. The upload watermark and download
+  cursor are cleared too, along with the shared-feed sync position and failed
+  change tracking, so the first upload after relinking sends all your
+  owned lodges. An upload already in flight cannot advance the new connection's
+  watermark.
 - **Your lodge's name is yours.** If the central server's administrator renames
   your own lodge, this site keeps the name you gave it, and your next upload
   of that lodge sets it back on the server.

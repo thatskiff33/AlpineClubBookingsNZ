@@ -344,6 +344,7 @@ x-app-service: &app-service
     # directory is web-served without a session check, and these images are
     # members-only.
     - ${POST_IMAGE_HOST_DIR:-post_image_data}:${POST_IMAGE_DIR:-/images}
+  cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
   mem_limit: 1g
@@ -374,7 +375,7 @@ x-app-service: &app-service
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     restart: unless-stopped
     logging:
       driver: json-file
@@ -462,7 +463,7 @@ services:
       CRON_ENABLED: "false"
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     restart: unless-stopped
     mem_limit: 128m
     cpus: 0.2

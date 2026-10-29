@@ -15,7 +15,7 @@ import logger from "@/lib/logger";
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
 import { prisma } from "@/lib/prisma";
 import {
-  uploadOtherLodges,
+  prepareOtherLodgesUpload,
   pullOtherLodges,
   type OtherLodgesUploadResult,
 } from "@/lib/servernz-api";
@@ -101,7 +101,13 @@ const LODGE_DATA_SELECT = {
  * value happens to be `null`.
  */
 export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
-  const settings = await loadServerNzSettings();
+  // Keep the unconfigured/unknown-owned-list no-op, then use the settings
+  // captured WITH the request identity for every selection decision below.
+  const initial = await loadServerNzSettings();
+  if (initial.otherLodgesOwnedLodges === null && !initial.otherLodgesOwnedLodgesUnreadable) {
+    return { ...NOTHING_UPLOADED, ownedUnknown: true };
+  }
+  const { settings, upload } = await prepareOtherLodgesUpload();
   if (settings.otherLodgesOwnedLodgesUnreadable) {
     logger.warn(
       "The stored owned-lodge list cannot be read; uploading nothing until the next download rewrites it",
@@ -146,7 +152,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // the rest of the lodge, and every other lodge, still goes up. A refused
   // item would fail the whole upload. One warning names the lodges.
   const oddSiteUrls: string[] = [];
-  const result = await uploadOtherLodges(
+  const { sentOn, ...result } = await upload(
     lodges.map((l) => {
       const data = serializeOtherLodgeData(l);
       const { siteUrl, ...rest } = omitRateFields(data);
@@ -218,7 +224,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
       watermark = new Date(oldestSkipped.getTime() - 1);
     }
     if (!since || watermark > since) {
-      await recordOtherLodgesUpload(watermark);
+      await serverNzAnswerWriter(sentOn)((tx) => recordOtherLodgesUpload(watermark, tx));
     }
   }
 
