@@ -1,4 +1,5 @@
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import { supplementaryReplayMayRecordPayment } from "@/lib/additional-capture-receipt-gate";
 import {
@@ -1706,9 +1707,15 @@ export async function retryXeroSyncOperation(
         }),
       );
       if (invoiceId === null) {
-        // The handler abandoned the mint (manual mark-paid provenance re-check)
-        // and already closed the operation CANCELLED with the reason. Report
-        // honestly — this retry created nothing and never will.
+        // The handler abandoned the mint and already closed the operation
+        // CANCELLED with the reason. Report honestly — this retry created
+        // nothing and never will. #4299 B1: the reason it recorded says which
+        // fence: a place the group organiser paid by internet banking, or the
+        // manual mark-paid provenance re-check.
+        const closed = await prisma.xeroSyncOperation.findUnique({ where: { id: operation.id }, select: { responsePayload: true } });
+        if (asRecord(closed?.responsePayload)?.refusal === ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL) {
+          return { message: `No invoice was created: ${ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE} The operation was closed.` };
+        }
         return {
           message:
             "No invoice was created: this booking's payment was manually marked paid (cash / off-Xero), so no Xero invoice is expected. The operation was closed.",
