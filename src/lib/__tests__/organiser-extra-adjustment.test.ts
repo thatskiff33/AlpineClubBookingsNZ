@@ -140,7 +140,7 @@ describe("organiser extra adjustment provider execution", () => {
   it.each([
     { fixedFeeRemainderCents: 2_500, handBackCents: null },
     { fixedFeeRemainderCents: undefined, handBackCents: 1_250 },
-  ])("N1: a 25% tier whose $50 fee its $100 basis left $25 short: $50 of raced paid price hands back $handBackCents (remainder $fixedFeeRemainderCents)", async ({ fixedFeeRemainderCents, handBackCents }) => {
+  ])("N1: a 25% tier whose 5000c fee its 10000c basis left 2500c short: 5000c of raced paid price hands back $handBackCents (remainder $fixedFeeRemainderCents)", async ({ fixedFeeRemainderCents, handBackCents }) => {
     // The fee was paid at plan time; the organiser then paid the $50 price the waiver covered.
     mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0 };
     await executeOrganiserExtraAdjustment(payload({ amountCents: 5_000, cashAtPlanCents: 1_000, refundPercentage: 25, ...(fixedFeeRemainderCents ? { fixedFeeRemainderCents } : {}) }), claim).catch(() => undefined);
@@ -150,7 +150,7 @@ describe("organiser extra adjustment provider execution", () => {
   it.each([
     { extraCents: 20_000, handBacks: [2_500, 5_000] }, // policy: (10000 + 40000) x 25% - 5000 = 7500
     { extraCents: 8_000, handBacks: [1_500] }, // policy: (10000 + 16000) x 25% - 5000 = 1500
-  ])("N1 fix delta: two raced extras of $extraCents under one plan pay its $25 fee remainder once: hand-backs $handBacks", async ({ extraCents, handBacks }) => {
+  ])("N1 fix delta: two raced extras of $extraCents under one plan pay its 2500c fee remainder once: hand-backs $handBacks", async ({ extraCents, handBacks }) => {
     // 25% tier, $50 fee, $100 basis: the plan refunded $0 and left $25 of its fee unabsorbed.
     const plan = { scopeId: "cancel", refundPercentage: 25, fixedFeeRemainderCents: 2_500, cashAtPlanCents: 0, amountCents: extraCents };
     for (const id of ["a", "b"]) mocks.modifications[`increase-${id}`] = { priceDiffCents: extraCents, changeFeeCents: 0 };
