@@ -554,6 +554,12 @@ export function getAdminCronJobDefinitions(
       },
       globalDisabledReason
     ),
+    ...([ ["privacy-data-prune", "Email and rejected-application retention"],
+      ["former-member-anonymisation", "Former member anonymisation"] ] as const).map(([jobName, label]) =>
+      defineCronJob({ jobName, label, schedule: "30 3 * * *", timezone: clubTimeZone,
+        expectedLocalTime: `03:30 daily in ${clubTimeZone}`, staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
+        note: "Ships off. Review Admin → Privacy retention before enabling; disabled jobs record SKIPPED.",
+      }, globalDisabledReason)),
     defineCronJob(
       {
         jobName: "draft-cleanup",

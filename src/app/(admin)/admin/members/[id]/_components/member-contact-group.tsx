@@ -352,6 +352,24 @@ export function MemberContactGroup({
             Used for finance and Xero-linked member history.
           </p>
         </div>
+        {!member.active && (
+          <div className="space-y-2">
+            <Label htmlFor="contact-leavingDate">Leaving Date</Label>
+            <Input
+              id="contact-leavingDate"
+              type="date"
+              value={form.leavingDate}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, leavingDate: e.target.value }))
+              }
+              aria-describedby="contact-leavingDate-hint"
+            />
+            <p id="contact-leavingDate-hint" className="text-xs text-muted-foreground">
+              The recorded day this member left. This starts the retention period;
+              leave it blank when the departure date is unknown.
+            </p>
+          </div>
+        )}
         {showOccupation && form.ageTier === "ADULT" && (
           <div className="space-y-2">
             <Label htmlFor="contact-occupation">Occupation</Label>
@@ -506,6 +524,16 @@ export function MemberContactGroup({
             )}
           </dd>
         </div>
+        {!member.active && (
+          <div>
+            <dt className="text-muted-foreground">Leaving Date</dt>
+            <dd className="font-medium">
+              {member.leavingDate
+                ? formatStayDateOrNull(member.leavingDate, clubTime.format) ?? "—"
+                : "Unknown — retention clock has not started"}
+            </dd>
+          </div>
+        )}
         {showOccupation && (
           <div>
             <dt className="text-muted-foreground">Occupation</dt>

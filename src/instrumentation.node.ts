@@ -955,6 +955,20 @@ export async function register() {
         const auditRetention = await runStep("audit-retention", () =>
           runAuditLogRetentionJob(),
         );
+        const { runPersonalDataPruneJob, runFormerMemberAnonymisationJob } = await import("./lib/privacy-retention-jobs");
+        const { runRecordedCronTask } = await import("./lib/cron-recorded-task");
+        for (const [jobName, work] of [
+          ["privacy-data-prune", runPersonalDataPruneJob],
+          ["former-member-anonymisation", runFormerMemberAnonymisationJob],
+        ] as const) {
+          await runStep(jobName, async () => {
+            const outcome = await runRecordedCronTask({
+              jobName, work,
+              statusFor: result => result.skipped ? "SKIPPED" : "SUCCESS",
+            });
+            if (!outcome.ok) throw outcome.error;
+          });
+        }
         await runStep("prune-email-verification-tokens", () =>
           prisma.emailVerificationToken.deleteMany({
             where: { expiresAt: { lt: new Date() } },

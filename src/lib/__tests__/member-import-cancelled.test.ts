@@ -155,6 +155,7 @@ describe("issue #1946 — importing cancelled members", () => {
     expect((created.cancelledAt as Date).toISOString()).toBe(
       "2020-06-30T00:00:00.000Z",
     );
+    expect(created.leavingDate).toEqual(created.cancelledAt);
     // No cancellation request exists for a legacy import.
     expect(created.cancelledViaRequestId).toBeUndefined();
 

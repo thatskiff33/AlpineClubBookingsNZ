@@ -119,6 +119,19 @@ address.
    **Approve Archive** or **Reject**. If *you* raised the archive request, you
    cannot review it — a different admin must (this is enforced on the server too).
 
+### Record a leaving date
+
+Deactivating or cancelling a member records their leaving day in club time.
+Archiving an inactive member preserves a leaving date already recorded, and
+reactivating an ordinary inactive member clears it for their next departure.
+Older inactive records keep an unknown date; the system never guesses one from
+when the record was last edited. Automatic retention skips these records.
+
+To supply a known historical date, open **Admin → Members → the member →
+Contact → Edit**, set **Leaving Date**, and save that group. You need membership
+edit permission. Use the actual departure day, today or earlier; leave it blank
+when unknown. This date starts the retention period, so check it before saving.
+
 ### Cancellation copy and Xero settings
 
 The member-facing cancellation wording and Xero handling live on a separate

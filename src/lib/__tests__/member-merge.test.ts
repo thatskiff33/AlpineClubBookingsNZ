@@ -50,6 +50,15 @@ function baseMember(overrides: Record<string, unknown> = {}) {
 }
 
 describe("mergeMemberFields", () => {
+  it("never carries a losing account's departure into the active master (#4457)", () => {
+    const { patch, diff } = mergeMemberFields(
+      baseMember({ active: true, leavingDate: null }),
+      baseMember({ active: false, leavingDate: new Date("2018-02-28") }),
+    );
+    expect(patch).not.toHaveProperty("leavingDate");
+    expect(diff.some((row) => row.field === "leavingDate")).toBe(false);
+  });
+
   it("fills a blank master field from the loser", () => {
     const { patch, diff } = mergeMemberFields(
       baseMember({ occupation: null }),

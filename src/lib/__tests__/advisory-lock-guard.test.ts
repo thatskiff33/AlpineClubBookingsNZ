@@ -129,6 +129,10 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   {
+    site: "anonymiseFormerMember#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "Retention tests open booking money before erasing identity, excluding capture/cancel/refund; global then member lifecycle and credit, then the Xero Member row fence. Preserves all money and booking references.",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",

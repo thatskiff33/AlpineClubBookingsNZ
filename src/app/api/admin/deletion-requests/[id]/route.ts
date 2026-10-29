@@ -1,3 +1,4 @@
+import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
 /**
  * F-COMP-04: Admin — Approve, Reject, or Release a Deletion Request
  * POST /api/admin/deletion-requests/[id]
@@ -947,6 +948,7 @@ export async function POST(
           postalCountry: null,
           passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
           active: false,
+          leavingDate: leavingDateForDeactivation(member, clubTodayForSweep),
           // #3541: make account erasure structural in the same row write as
           // the anonymisation. No reader consumes this marker until #3542.
           deletedAt: new Date(),

@@ -198,6 +198,7 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
  * patterns.
  */
 const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
+  "src/lib/privacy-retention-anonymise.ts": "the erasure patch only (no grant, no read)",
   "src/app/(authenticated)/profile/page.tsx": "self display grant",
   "src/app/api/profile/route.ts": "self write (profile and onboarding)",
   "src/app/api/member/onboarding/route.ts": "self display grant",

@@ -653,6 +653,7 @@ export async function POST(req: NextRequest) {
               // no CSV column and stays null.
               active: row.cancelledAt ? false : true,
               cancelledAt: row.cancelledAt,
+              leavingDate: row.cancelledAt,
               canLogin: row.canLogin,
               emailVerified: true, // Admin-imported members don't need email verification
               passwordHash: row.passwordHash,
