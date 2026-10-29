@@ -26,7 +26,7 @@ async function requireConnection() {
 
 /** Business fields only: a refreshed cache/link timestamp is not a financial change. */
 async function businessSnapshot(memberId: string | null, bookingIds: string[]) {
-  const [payments, credits, bookings, slices] = await Promise.all([
+  const [payments, credits, bookings, slices, subscriptions] = await Promise.all([
     prisma.payment.findMany({
       where: { bookingId: { in: bookingIds } }, orderBy: { id: "asc" },
       select: { id: true, status: true, amountCents: true, refundedAmountCents: true, creditAppliedCents: true, xeroInvoiceId: true, xeroRefundCreditNoteId: true },
@@ -43,8 +43,12 @@ async function businessSnapshot(memberId: string | null, bookingIds: string[]) {
       where: memberId ? { memberCredit: { memberId } } : { appliedToBookingId: { in: bookingIds } },
       orderBy: { id: "asc" }, select: { id: true, amountCents: true, xeroCreditNoteId: true, appliedToBookingId: true },
     }),
+    prisma.memberSubscription.findMany({
+      where: memberId ? { memberId } : { id: { in: [] } }, orderBy: { id: "asc" },
+      select: { id: true, seasonYear: true, status: true, paidAt: true, xeroInvoiceId: true, voidGeneration: true },
+    }),
   ]);
-  return new Map<string, string>([payments, credits, bookings, slices].flatMap((rows, kind) =>
+  return new Map<string, string>([payments, credits, bookings, slices, subscriptions].flatMap((rows, kind) =>
     rows.map((row): [string, string] => [`${kind}:${row.id}`, JSON.stringify(row)]),
   ));
 }

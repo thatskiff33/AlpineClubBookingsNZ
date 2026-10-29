@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 const h = vi.hoisted(() => ({
-  member: vi.fn(), booking: vi.fn(), bookings: vi.fn(), payments: vi.fn(), credits: vi.fn(), slices: vi.fn(), links: vi.fn(),
+  member: vi.fn(), booking: vi.fn(), bookings: vi.fn(), payments: vi.fn(), credits: vi.fn(), slices: vi.fn(), subscriptions: vi.fn(), links: vi.fn(),
   contact: vi.fn(), invoice: vi.fn(), note: vi.fn(), connected: vi.fn(), enabled: vi.fn(), cron: vi.fn(),
   getInvoices: vi.fn(), getCreditNotes: vi.fn(), getInvoice: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {
   member: { findUnique: h.member }, booking: { findUnique: h.booking, findMany: h.bookings },
   payment: { findMany: h.payments }, memberCredit: { findMany: h.credits }, memberCreditNoteAllocation: { findMany: h.slices },
+  memberSubscription: { findMany: h.subscriptions },
   bookingModification: { findMany: async () => [] }, manualRefundTask: { findMany: async () => [] }, xeroObjectLink: { findMany: h.links },
 } }));
 vi.mock("@/lib/admin-modules", () => ({ isEffectiveModuleEnabled: h.enabled }));
@@ -25,7 +26,7 @@ describe("sync-now uses only the existing inbound entry points", () => {
     h.enabled.mockResolvedValue(true); h.connected.mockResolvedValue(true);
     h.member.mockResolvedValue({ xeroContactId: CONTACT });
     h.booking.mockResolvedValue({ memberId: "member", payment: { id: "payment", xeroInvoiceId: "booking-invoice" } });
-    for (const query of [h.bookings, h.payments, h.credits, h.slices, h.links]) query.mockResolvedValue([]);
+    for (const query of [h.bookings, h.payments, h.credits, h.slices, h.subscriptions, h.links]) query.mockResolvedValue([]);
     h.contact.mockResolvedValue({ backfilledFields: 0 }); h.invoice.mockResolvedValue({ handled: true }); h.note.mockResolvedValue({ mirrorFailed: false });
     h.getInvoices.mockResolvedValue({ body: { invoices: [{ invoiceID: "invoice" }] } });
     h.getCreditNotes.mockResolvedValue({ body: { creditNotes: [{ creditNoteID: "note" }] } });
@@ -45,6 +46,17 @@ describe("sync-now uses only the existing inbound entry points", () => {
     expect(h.getInvoices).toHaveBeenCalledTimes(2);
     expect(h.getInvoices.mock.calls[1]?.[8]).toBe(2);
     expect(h.invoice).toHaveBeenCalledWith("i99", CLUB_FORMAT_TEST);
+  });
+  it("reports a subscription payment repair and then an unchanged subscription as a no-op", async () => {
+    let subscription = { id: "subscription", seasonYear: 2026, status: "UNPAID", paidAt: null as Date | null, xeroInvoiceId: "invoice", voidGeneration: 0 };
+    h.subscriptions.mockImplementation(async () => [{ ...subscription }]);
+    h.invoice.mockImplementation(async () => {
+      subscription = { ...subscription, status: "PAID", paidAt: new Date("2026-07-01T00:00:00.000Z") };
+      return { handled: true };
+    });
+    expect(await syncMemberFromXeroNow("member")).toMatchObject({ changed: 1 });
+    expect(await syncMemberFromXeroNow("member")).toMatchObject({ changed: 0, message: "Already in step." });
+    expect(h.subscriptions).toHaveBeenCalledWith(expect.objectContaining({ where: { memberId: "member" } }));
   });
   it("includes previously linked notes when Xero omits a removed invoice allocation", async () => {
     h.links.mockResolvedValueOnce([]).mockResolvedValueOnce([{ metadata: { creditNoteId: "historical-note" } }]);
