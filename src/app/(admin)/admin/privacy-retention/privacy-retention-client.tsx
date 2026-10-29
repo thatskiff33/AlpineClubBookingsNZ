@@ -1,5 +1,7 @@
 "use client";
 
+import { SENTRY_REPLAY_POLICY_CHANGED } from "@/lib/privacy-retention-replay";
+
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -76,6 +78,7 @@ export function PrivacyRetentionClient({ page }: { page: number }) {
       if (response.status === 403) throw new ForbiddenSaveError();
       if (!response.ok) throw new Error("Could not save retention settings.");
       const saved = await response.json() as { settings: PrivacyRetentionSettingsValues };
+      window.dispatchEvent(new Event(SENTRY_REPLAY_POLICY_CHANGED));
       setPayload(null);
       setPreviewError("");
       try {

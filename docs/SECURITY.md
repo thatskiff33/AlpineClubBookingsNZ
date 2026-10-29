@@ -131,6 +131,11 @@ access settings as part of that disclosure. Ordinary error reporting and
 session replay are separate decisions; enabling error reporting does not
 constitute the club's Replay opt-in.
 
+Open tabs recheck the Replay setting every minute and when they regain focus
+or become visible. Saving retention settings refreshes the current tab
+immediately. A failed policy read stops recording; background browser timer
+throttling can delay the periodic refresh until the tab becomes visible.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.

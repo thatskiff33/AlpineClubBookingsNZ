@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
+import { SENTRY_REPLAY_POLICY_CHANGED } from "@/lib/privacy-retention-replay";
 
 const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined, push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
@@ -79,6 +80,8 @@ describe("privacy retention settings and dry run", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("saves once and refreshes the preview using authoritative returned settings", async () => {
+    const policyChanged = vi.fn();
+    window.addEventListener(SENTRY_REPLAY_POLICY_CHANGED, policyChanged, { once: true });
     const saved = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, emailLogRetentionYears: 4 };
     fetchMock.mockResolvedValueOnce(json(PAYLOAD)).mockResolvedValueOnce(json({ settings: saved })).mockResolvedValueOnce(json({ ...PAYLOAD, settings: saved }));
     renderClient(); await loaded();
@@ -90,6 +93,7 @@ describe("privacy retention settings and dry run", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ ...DEFAULT_PRIVACY_RETENTION_SETTINGS, emailLogRetentionYears: 3 });
     expect(screen.getByLabelText("Email logs (years)")).toHaveValue(4);
     expect(screen.getByLabelText("Email logs (years)")).toBeDisabled();
+    expect(policyChanged).toHaveBeenCalledOnce();
   });
   it.each([false, undefined])("gates edits for permission state %s", async (canEdit) => {
     mocks.canEdit = canEdit;
