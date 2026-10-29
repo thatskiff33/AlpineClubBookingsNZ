@@ -37,7 +37,8 @@ security contracts, and the feature hubs. Its most-used pages:
 [`STATE_MACHINES.md`](STATE_MACHINES.md) ·
 [`TESTING.md`](TESTING.md) ·
 [`STYLE_GUIDE.md`](STYLE_GUIDE.md) ·
-[Member money ledger design](design/member-money-ledger.md).
+[Member money ledger design](design/member-money-ledger.md) ·
+[Personal-data retention schedule](PRIVACY_RETENTION.md).
 
 **[Member & Guest Guide](user-guide/README.md)** — plain-English guides for the
 people who use the club: booking a stay, paying, the waitlist, your family, your
