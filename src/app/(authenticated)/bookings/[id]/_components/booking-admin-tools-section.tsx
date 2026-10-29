@@ -1,4 +1,5 @@
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
+import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
@@ -16,7 +17,8 @@ import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
  * withheld-emails banner beneath it, both inside the same `canSeeAdminTools`
  * gate they always had. The card's inputs are the admin-gated reads in
  * `_lib/booking-detail-admin-tools.ts`; this composes them and nothing more.
- * Moved verbatim from `page.tsx`.
+ * The Xero sync control has its own finance permission gate so finance viewers
+ * can see the disabled control without needing booking edit access.
  */
 export function BookingAdminToolsSection({
   booking,
@@ -51,6 +53,7 @@ export function BookingAdminToolsSection({
   } = adminTools;
   return (
     <>
+      {modules.xeroIntegration && <XeroSyncNowButton target={{ scope: "booking", id: booking.id }} />}
       {canSeeAdminTools && (
         <AdminBookingToolsCard
           bookingId={booking.id}

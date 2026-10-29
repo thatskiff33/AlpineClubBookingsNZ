@@ -384,7 +384,7 @@ says what it would have done.
 
 After recording a payment, changing a credit-note allocation or voiding a note
 in Xero, use **Sync from Xero now** on the member's Xero contact panel or the
-booking's Admin tools. These read Xero and reuse the scheduled inbound repairs
+booking detail page. These read Xero and reuse the scheduled inbound repairs
 and credit-note mirror. The result reports changed financial records (including
 subscription status) and contact fields, or **Already in step**. Refreshing links and caches alone is not counted
 as a financial change. A failed sync may have updated some records; retrying is

@@ -1764,11 +1764,12 @@ accessible form semantics, and destructive/financial-action explanation.
 ### Refresh from Xero now (#4432)
 
 Finance edit users can refresh one member from the member detail Xero panel,
-one booking from its Admin tools, or run the shared scheduled inbound cycle
+one booking from its detail page, or run the shared scheduled inbound cycle
 from **Admin → Finance → Xero Sync**. Each action stays on the page and shows
 its result or retryable error; finance view-only users see disabled buttons and
 one section banner. Requests use `/api/admin/xero/sync-now` and are rate-limited
-and audited. Whole-club runs refuse overlap with the scheduler.
+and audited. Booking sync uses finance permissions independently of booking edit
+access. Whole-club runs refuse overlap with the scheduler.
 
 The Xero Sync page also shows the last verified webhook delivery and a
 connected-only quiet-period warning, linked from Needs Attention and Stuck
