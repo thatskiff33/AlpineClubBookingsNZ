@@ -87,6 +87,16 @@ beforeEach(() => {
 });
 
 describe("privacy retention selection and execution", () => {
+  it("returns the same settings snapshot that selected the preview", async () => {
+    const s = store();
+    s.settings.emailLogRetentionYears = 5;
+    s.data.emailLog.push({ id: "three-years", createdAt: new Date("2023-06-30Z") });
+    const preview = await getPrivacyRetentionPreview({ db: s.db, now: NOW });
+    expect(preview.settings.emailLogRetentionYears).toBe(5);
+    expect(preview.emailLogs.count).toBe(0);
+    expect(s.db.privacyRetentionSettings.findUnique).toHaveBeenCalledOnce();
+  });
+
   it("ships both jobs off and performs no transaction or destructive side effect", async () => {
     const s = store();
     s.data.member.push(member("off"));

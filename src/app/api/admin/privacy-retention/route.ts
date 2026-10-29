@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
-  getPrivacyRetentionSettings,
   savePrivacyRetentionSettings,
 } from "@/lib/privacy-retention-settings";
 import { privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
@@ -22,10 +21,9 @@ export async function GET(request: Request) {
     area: "membership", level: "view",
   });
   const pageSize = 25;
-  const [settings, preview] = await Promise.all([
-    getPrivacyRetentionSettings(),
-    getPrivacyRetentionPreview({ page, pageSize, includeMembers: canViewMembership }),
-  ]);
+  const { settings, ...preview } = await getPrivacyRetentionPreview({
+    page, pageSize, includeMembers: canViewMembership,
+  });
   return NextResponse.json({
     settings,
     preview: {

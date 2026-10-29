@@ -46,6 +46,7 @@ export async function getPrivacyRetentionPreview({
     undatedMembers.rows = rows.map(({ id }) => ({ id, date: null }));
   }
   return {
+    settings,
     emailLogs: { count: emailCount, rows: emailRows.map(row => ({ id: row.id, date: row.createdAt })) },
     rejectedApplications: { count: applicationCount, rows: applicationRows.map(row => ({ id: row.id, date: row.reviewedAt })) },
     formerMembers, blockedMembers, undatedMembers,

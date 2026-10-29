@@ -30,7 +30,7 @@ beforeEach(() => {
   mocks.hasAdminAreaAccess.mockReturnValue(true);
   mocks.getSettings.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
   mocks.saveSettings.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
-  mocks.preview.mockResolvedValue(groups);
+  mocks.preview.mockResolvedValue({ settings: DEFAULT_PRIVACY_RETENTION_SETTINGS, ...groups });
 });
 
 describe("privacy retention admin API", () => {
@@ -47,6 +47,8 @@ describe("privacy retention admin API", () => {
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "support", level: "view" } });
     expect(mocks.preview).toHaveBeenCalledWith({ page: 2, pageSize: 25, includeMembers: true });
     const payload = await response.json();
+    expect(payload.settings).toEqual(DEFAULT_PRIVACY_RETENTION_SETTINGS);
+    expect(mocks.getSettings).not.toHaveBeenCalled();
     expect(payload.preview.formerMembers.rows[0]).toEqual({ id: "former-1", date: "2018-06-01T00:00:00.000Z" });
     expect(payload.preview.blockedMembers.rows[0].reasons).toEqual(["Has account credit"]);
     expect(payload.preview.undatedMembers.rows[0].date).toBeNull();

@@ -132,6 +132,8 @@ function parse(source: string, name = "fixture.ts"): ts.SourceFile {
 // computed fragments fail until classified here; otherwise a helper/spread
 // could hide a deactivation from the closed-world population above.
 const OPAQUE_PAYLOADS = {
+  "anonymiseFormerMember: MEMBER_CONTACT_ERASURE_PATCH": "erases scalar contact details only",
+  "src/app/api/admin/deletion-requests/[id]/route.ts: MEMBER_CONTACT_ERASURE_PATCH": "erases scalar contact details only",
   "anonymiseFormerMember: DIETARY_ERASURE_PATCH": "erases dietary text only; the member is already inactive",
   "createAdminMember: buildDietaryRequirementsPatch()": "single dietary column patch",
   "executeMemberMerge: fieldOutcome.patch": "explicit scalar allowlist excludes lifecycle fields; mergeMemberFields regression test",

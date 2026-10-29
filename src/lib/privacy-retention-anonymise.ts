@@ -1,4 +1,5 @@
 import "server-only";
+import { MEMBER_CONTACT_ERASURE_PATCH } from "@/lib/member-contact-erasure";
 import type { Prisma } from "@prisma/client";
 import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
@@ -27,16 +28,11 @@ export async function anonymiseFormerMember(
   const claim = await tx.member.updateMany({
     where: { AND: [where, { id }] },
     data: {
-      firstName: "Deleted", lastName: "Member", email: `${id}@${DELETED_CONTACT_EMAIL_DOMAIN}`,
+      ...MEMBER_CONTACT_ERASURE_PATCH, email: `${id}@${DELETED_CONTACT_EMAIL_DOMAIN}`,
       deletedAt: now, canLogin: false, passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
       googleSub: null, emailVerified: false, totpSecret: null, twoFactorEnabled: false,
       twoFactorMethod: null, twoFactorEnrolledAt: null, twoFactorLockedUntil: null, twoFactorFailedAttempts: 0,
-      title: null, gender: null, dateOfBirth: null, occupation: null,
-      phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null,
-      streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
-      streetRegion: null, streetPostalCode: null, streetCountry: null,
-      postalAddressLine1: null, postalAddressLine2: null, postalCity: null,
-      postalRegion: null, postalPostalCode: null, postalCountry: null,
+      title: null, gender: null, occupation: null,
       comments: null, cancelledReason: null, archivedReason: null,
       photoImageId: null, photoUpdatedAt: null, photoUpdatedByMemberId: null,
       lodgeScreenPhoneOptIn: false, inheritEmailFromId: null, inheritEmailChoiceId: null,
