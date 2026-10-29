@@ -1148,6 +1148,8 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // booking/money/lifecycle key; counterpart analysis in
   // docs/CONCURRENCY_AND_LOCKING.md.
   "src/lib/backup-run.ts": 1,
+  // #4432: short run-claim transaction only; no domain locks or provider calls.
+  "src/lib/cron-run-claim.ts": 1,
   "src/lib/booking-member-night-conflicts.ts": 1,
   // #calendar-recurring: lockCalendarSeries takes calendar-series:{seriesId} for
   // the milliseconds of a whole-series regenerate/propagate/collapse/delete so

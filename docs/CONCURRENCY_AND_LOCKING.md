@@ -6729,3 +6729,31 @@ operator's copy of that is
   generic is an unchecked cast and a column that does not exist arrives
   `undefined`, not as an error. If a statement genuinely cannot be a model read,
   validate its rows with `decodeRawRows` (`src/lib/raw-sql-rows.ts`).
+
+## Xero inbound cycle run claim (#4432)
+
+Scheduled and whole-club manual inbound syncs share one database lease through
+`runXeroCronTaskList` and `withCronRunClaim("xero-inbound-reconcile", ...)`.
+The HTTP cron and the standalone mirror also participate. A competing caller
+reports “A sync is already running” and performs no provider or domain work.
+
+`withCronRunClaim` takes `hashtext('cron-run-claim'), hashtext(jobName)` only in
+its short create/expired-claim transaction, registered in the scoped lock
+inventory (`INV-LOCK-003`). It holds no domain key (`INV-LOCK-001`) and acquires
+no other lock in that transaction (`INV-LOCK-002`). Provider work and the
+existing reconcile writers run after commit; their global → lodge → member
+order is unchanged. The claim owner is a random token. A 30-second heartbeat
+extends a five-minute lease, checked again between tasks and at completion;
+expired or failed renewal stops the cycle. Renewal and release match the owner,
+so a late predecessor cannot clear its successor. A dead holder is reclaimed
+on the next invocation after expiry. Replay is safe because every domain write
+still uses the existing idempotent inbound paths and their own locks.
+
+Drain the previous release's scheduler at rollout: old code cannot participate
+in a claim added by this release. The additive migration leaves its reads and
+writes compatible. Counterparts reconciled: #4539 (alert retry before inbound),
+#4536 and #4443 (outcome ownership), #4505 (provider fakes), #4384 and #4406
+(receipt routing), #4471 and #4372 (monotone outcomes), #4424 (note cover),
+and #4501 (lane coordination only). No open Xero PR appeared in the pre-edit
+public GitHub query. Scoped sync invokes the inbound handlers directly, without
+advancing the club cursors or taking a whole-cycle claim.

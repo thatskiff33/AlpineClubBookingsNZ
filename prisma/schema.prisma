@@ -8804,3 +8804,18 @@ enum SettlementMethod {
   ACCOUNT_CREDIT
   CASH
 }
+
+// #4432: cross-process lease for a recorded task. Provider work is outside the
+// short claim transaction; ownership fences renewal and release.
+model CronRunClaim {
+  jobName   String   @id
+  owner     String?
+  expiresAt DateTime
+}
+
+// #4432: club-level inbound webhook health, independent of ITR verification.
+model XeroInboundSettings {
+  id                    String    @id @default("default")
+  silentWebhookHours    Int       @default(24)
+  lastWebhookReceivedAt DateTime?
+}
