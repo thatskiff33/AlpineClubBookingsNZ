@@ -204,7 +204,7 @@ function racedCashRefundCents(basisCents: number, payload: Pick<OrganiserExtraAd
  * tier over ALL the raced paid price of the plan's waivers, less every refund
  * already reserved for it. Each waiver's raced basis is therefore recorded even
  * when it refunds nothing yet (a 0 refund row), or a second waiver could not
- * count it. Legacy rows (before `racedPlanScopeId`) are read per operation.
+ * count it. Every raced row carries its plan (`racedPlanScopeId`).
  */
 async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPayload, cashCents: number, waivedCentsNowPaid: number, operationId: string): Promise<void> {
   if (!payload.modificationId || cashCents <= payload.cashAtPlanCents || waivedCentsNowPaid <= 0) return;
@@ -228,8 +228,7 @@ async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPaylo
     const priorPlans = await tx.xeroSyncOperation.findMany({ where: { queueType: payload.queueType, localId: payload.bookingId }, select: { requestPayload: true } });
     const reserved = priorPlans
       .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload))
-      .filter((plan): plan is OrganiserExtraAdjustmentPayload => plan?.purpose === "refund" &&
-        (plan.racedPlanScopeId === payload.scopeId || (!plan.racedPlanScopeId && plan.scopeId.startsWith(`racing-cash:${operationId}:`))));
+      .filter((plan): plan is OrganiserExtraAdjustmentPayload => plan?.purpose === "refund" && plan.racedPlanScopeId === payload.scopeId);
     const basisOf = (rows: OrganiserExtraAdjustmentPayload[]) => rows.reduce((sum, plan) => sum + (plan.priceBasisCents ?? 0), 0);
     const thisWaiverBasisCents = basisOf(reserved.filter((plan) => plan.modificationId === modificationId));
     const additionalBasisCents = Math.max(0, racedBasisCents - thisWaiverBasisCents);
