@@ -1,3 +1,4 @@
+import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminCapacityHoldControls } from "@/components/admin/admin-capacity-hold-controls";
@@ -283,6 +284,7 @@ export function AdminBookingToolsCard({
               isWaitlisted={noEmails.isWaitlisted}
             />
           )}
+          {features.xeroIntegration && <XeroSyncNowButton target={{ scope: "booking", id: bookingId }} />}
           {/* B5 (#2262): record (or reverse) a cash / off-Xero bank-transfer
               payment. Gated finance:edit by the component itself, because the
               route it writes is finance-area despite its bookings-shaped path. */}

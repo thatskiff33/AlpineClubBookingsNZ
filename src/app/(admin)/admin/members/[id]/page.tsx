@@ -1067,6 +1067,7 @@ export default function MemberDetailPage({
             />
             <div className="p-6">
               <MemberXeroContactSummary
+                onSynced={fetchMember}
                 member={member}
                 xeroOrgShortCode={xeroOrgShortCode}
               />

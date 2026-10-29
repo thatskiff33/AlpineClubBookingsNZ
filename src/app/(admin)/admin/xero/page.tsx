@@ -1,5 +1,6 @@
 "use client"
 
+import { WebhookHealthPanel } from "./_components/webhook-health-panel"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
@@ -109,6 +110,7 @@ export default function XeroPage() {
       {connectSuccess && <Message tone="success" message="Xero connected successfully!" onDismiss={() => setConnectSuccess(false)} />}
 
       <WebhookAmberBadge connected={connected} />
+      <WebhookHealthPanel />
 
       <ConnectionStatusPanel status={status} onConnect={handleConnect} onDisconnect={handleDisconnect} />
 
