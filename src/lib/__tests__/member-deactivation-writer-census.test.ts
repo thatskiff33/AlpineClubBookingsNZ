@@ -24,6 +24,11 @@ function scopeOf(node: ts.Node): ts.Node {
 }
 
 type Fields = { active: ts.Expression[]; cancelledAt: ts.Expression[]; leavingDate: ts.Expression[]; opaque: string[] };
+function hasDepartureStamp(fields: Fields): boolean {
+  // A reactivation's clearing write is not evidence that deactivation stamps
+  // a day, even when both branches share the same mutable payload variable.
+  return fields.leavingDate.some((value) => value.kind !== ts.SyntaxKind.NullKeyword && value.getText() !== "undefined");
+}
 function payloadFields(expression: ts.Expression, seen = new Set<ts.Node>()): Fields {
   const result: Fields = { active: [], cancelledAt: [], leavingDate: [], opaque: [] };
   const merge = (other: Fields) => {
@@ -149,7 +154,7 @@ describe("Member deactivation writers record the departure in the same write (#4
       .flatMap((file) => writers(parse(readFileSync(file, "utf8"), file)));
     const lifecycle = found.filter(({ fields }) => fields.active.some((value) => value.kind !== ts.SyntaxKind.TrueKeyword) || fields.cancelledAt.some((value) => value.kind !== ts.SyntaxKind.NullKeyword));
     expect(lifecycle.map((writer) => writer.identity).sort()).toEqual(WRITERS);
-    for (const writer of lifecycle) expect(writer.fields.leavingDate.length, writer.identity).toBeGreaterThan(0);
+    for (const writer of lifecycle) expect(hasDepartureStamp(writer.fields), writer.identity).toBe(true);
     expect([...new Set(found.flatMap(({ identity, fields }) => fields.opaque.map((expression) => `${identity}: ${expression}`)))].sort())
       .toEqual(Object.keys(OPAQUE_PAYLOADS).sort());
   });
@@ -170,6 +175,17 @@ describe("Member deactivation writers record the departure in the same write (#4
     const found = writers(parse("function change() { const patch = helper(); tx.member.update({ data: { ...patch } }); }"));
     expect(found).toHaveLength(1);
     expect(found[0]?.fields.opaque).toEqual(["helper()"]);
+  });
+
+  it("does not count a reactivation's null date as a departure stamp", () => {
+    const found = writers(parse(`function change() {
+      let patch = {};
+      if (deactivate) patch = { active: false };
+      else patch = { active: true, leavingDate: null };
+      tx.member.updateMany({ data: patch });
+    }`));
+    expect(found).toHaveLength(1);
+    expect(hasDepartureStamp(found[0].fields)).toBe(false);
   });
 
   it("ignores read predicates, other delegates, and literal active-only creation", () => {

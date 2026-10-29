@@ -368,5 +368,8 @@ describe("#1604 deletion-request approval — POST /api/admin/deletion-requests/
     const res = await reviewRequest("dr1", { action: "approve" });
     expect(res.status).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalled();
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ active: false, leavingDate: new Date("2026-07-01T00:00:00.000Z") }),
+    }));
   });
 });
