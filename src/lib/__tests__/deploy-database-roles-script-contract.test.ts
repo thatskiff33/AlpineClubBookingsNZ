@@ -198,7 +198,8 @@ describe("verify_least_privilege_role_grants", () => {
 
     const drifted = runWith(stub("HandMadeTable", 0));
     expect(drifted.status).toBe(1);
-    expect(drifted.stderr).toContain("not owned by tac_migrator or not readable by tac_app: HandMadeTable");
+    expect(drifted.stderr).toContain("fail the least-privilege grants check: HandMadeTable");
+    expect(drifted.stderr).toContain("not owned by tac_migrator, not readable by tac_app");
     expect(drifted.stderr).toContain("db:provision-roles --apply");
 
     const unreachable = runWith(stub("", 2));

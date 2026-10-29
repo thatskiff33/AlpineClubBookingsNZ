@@ -124,6 +124,8 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-020` | Look-through on: subscription-invoice selection strong-first, settled, earliest; off keeps first-match |
 | `INV-MONEY-021` | Xero invoice identity persists before email; adoption needs exact AUTHORISED match |
 | `INV-MONEY-022` | At most one joining-fee invoice per member; conflicts surface, never adopted |
+| `INV-MONEY-041` | Member journals commit complete balanced batches with exact reversals |
+| `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
 
 ## Booking Dates And Capacity
 
@@ -958,6 +960,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-003` | Public CI and local validation must use test/demo credentials or placeholders |
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
 | `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
+| `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 
 ## Product Configuration
 

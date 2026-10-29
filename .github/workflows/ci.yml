@@ -1231,6 +1231,21 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/database-roles.realdb.test.ts
 
+      # #4513: PROVE the member-money journal's database enforcement. The
+      # verifier pins each constraint, trigger and unique index as the catalog's
+      # own deparsed text, which only a real PostgreSQL produces, and the
+      # journal's refusals (sealed batches, balance, immutability, grants) are
+      # PostgreSQL's behaviour, not code a mock can run. The suite applies the
+      # shipped migration in a scratch database of its own on the race service
+      # and drops it afterwards. A required step, like the roles proof above;
+      # the advisory realdb-all job runs the same file too. It describe.skip's
+      # itself without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money journal's enforcement against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-journal.realdb.test.ts
+
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
       # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+

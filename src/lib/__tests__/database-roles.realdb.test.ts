@@ -45,7 +45,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { restoreDumpWithoutOwnershipOrPrivileges } from "@/lib/backup-restore-validation";
-import { buildDatabaseRolesSql } from "@/lib/database-roles";
+import { APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES, APPEND_ONLY_SCHEMA_MIGRATION, buildDatabaseRolesSql } from "@/lib/database-roles";
+import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 import { buildAiDiagnosticsRoleSql } from "@/lib/diagnostics/tools/provision-role";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -77,6 +78,7 @@ const DATABASES = {
   upgrade: `${PREFIX}_upgrade`,
   restore: `${PREFIX}_restore`,
   restoreCheck: `${PREFIX}_restorecheck`,
+  journal: `${PREFIX}_journal`,
 } as const;
 
 type RoleKey = keyof typeof ROLES;
@@ -229,6 +231,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
   () => {
     let admin: Client;
     let migrateResult: ReturnType<typeof spawnSync>;
+    let freshCheckBeforeReprovision = "";
     let firstCliRun: ReturnType<typeof spawnSync>;
     let diagnosticsBefore: unknown;
     let appPrisma: PrismaClient;
@@ -282,6 +285,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       if (migrateResult.status !== 0) {
         throw new Error(`prisma migrate deploy as the migration role failed:\n${migrateResult.stdout}\n${migrateResult.stderr}`);
       }
+      freshCheckBeforeReprovision = deployGrantsCheck(DATABASES.fresh);
       await provisionWithBuilder(DATABASES.fresh);
 
       // UPGRADE: the fresh schema re-created with every object owned by the
@@ -416,6 +420,45 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
           expect(await sqlstate(client, `SELECT * FROM "Tac4453Later"`)).toBe(INSUFFICIENT_PRIVILEGE);
           await client.query("ROLLBACK");
         });
+      });
+    });
+
+    describe("the member-money journal migration on a provisioned database (#4513)", () => {
+      it("leaves only the older append-only tables for provisioning on a database provisioned while empty (DEPLOYMENT.md)", async () => {
+        // The journal's migration narrowed its own tables; the deploy check stops
+        // on the two that provisioning narrows, until --apply runs again.
+        expect(freshCheckBeforeReprovision).toBe("AuditLog, BookingLedgerLine");
+        expect(deployGrantsCheck(DATABASES.fresh)).toBe("");
+      });
+
+      it("narrows its own tables as the migration role, so the deploy grants check passes without re-provisioning", async () => {
+        const database = DATABASES.journal;
+        await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
+        // The release before the journal, provisioned: take the journal away again.
+        await withClient(urlFor(database), (client) => client.query(`
+          DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
+          DROP FUNCTION member_money_require_complete(), member_money_batch_errors(text),
+            member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier();
+          DROP TYPE "MemberMoneyAccount", "MemberMoneySide", "MemberMoneyEventKind", "MemberMoneyOrigin",
+            "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind";
+          DELETE FROM "_prisma_migrations" WHERE migration_name = '${APPEND_ONLY_SCHEMA_MIGRATION}'`));
+        expect(deployGrantsCheck(database)).toBe("");
+        // Applied as prisma migrate deploy applies it: one file, as the migration role.
+        await withClient(urlFor(database, "migrator"), (client) => client.query(
+          readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"),
+        ));
+        expect(deployGrantsCheck(database)).toBe("");
+        const { rows } = await withClient(urlFor(database), (client) => client.query(
+          `SELECT t.name, has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'SELECT')
+                    AND has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'INSERT') AS inserts,
+                  has_table_privilege($1, to_regclass(format('public.%I', t.name)), '${APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES}') AS changes,
+                  pg_get_userbyid(c.relowner) AS owner
+             FROM unnest($2::text[]) AS t(name) JOIN pg_class c ON c.oid = to_regclass(format('public.%I', t.name))
+             ORDER BY t.name`,
+          [ROLES.app, [...MEMBER_MONEY_RELATIONS]],
+        ));
+        expect(rows).toEqual([...MEMBER_MONEY_RELATIONS].sort().map((name) => (
+          { name, inserts: true, changes: false, owner: ROLES.migrator })));
       });
     });
 
@@ -833,8 +876,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             `CREATE FUNCTION tac4453_definer() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'`,
             // O-F8: a migrated schema missing an append-only relation.
             `ALTER TABLE "AuditLog" RENAME TO "Tac4453AuditLogMoved"`,
-            // N10: a database still on a release before the ledger existed.
-            `DROP TABLE "BookingLedgerLine" CASCADE; DELETE FROM "_prisma_migrations" WHERE migration_name = '20261006010000_add_booking_ledger_line'`,
+            // N10: a database still on a release before the current append-only schema.
+            `DROP TABLE "BookingLedgerLine" CASCADE; DELETE FROM "_prisma_migrations" WHERE migration_name = '${APPEND_ONLY_SCHEMA_MIGRATION}'`,
           ]) {
             await client.query("BEGIN");
             await client.query(breach);

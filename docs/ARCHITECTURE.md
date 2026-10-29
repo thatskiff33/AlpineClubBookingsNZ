@@ -1896,6 +1896,29 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   school's identity lives in. Added and linked but read by nothing yet — see
   "Organisations, and the school that is currently a person" below.
 
+### Inert member money journal (#4513)
+
+The new journal preserves economic evidence without changing any current money
+reader or writer. `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
+integer-cent `MemberMoneyLine` legs balance in one currency at commit. Headers
+record the transaction and cluster that may insert their complete, counted legs,
+obligations and applications. A debtor is a member or an organisation, never both. Exact reversals append evidence; no row is rewritten.
+`MemberMoneyObligation` retains face terms, `MemberMoneyApplication` attributes
+identified money to an obligation, and `MemberMoneySourceLink` bridges source
+facts, including retained `BookingLedgerLine` ids. `MemberMoneySourcePosting`
+retains each bridge's exact leg coverage, including links attached later. New financial parent links
+use RESTRICT. Existing booking-ledger cascades await M2.
+
+Database CHECKs, deferred triggers and INSERT/SELECT-only application grants
+carry `INV-MONEY-041`, `INV-MONEY-042` and `INV-OPS-016`. No legacy source is made
+mandatory yet. `src/lib/member-money/index.ts` exposes the account registry and
+operator verifier only; implementation lives in `internal/`. No posting API or
+production consumer is enabled. Later writer commands must implement the
+existing advisory tiers (`INV-LOCK-001`–`003`); M1 adds no advisory key, lifecycle
+participant, outbox or provider call. The verifier reads a repeatable-read,
+read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
+and [lodge scoping](multi-lodge/lodge-scoping-contract.md#member-money-journal-4513).
+
 ### Organisations, and the school that is currently a person
 
 **What happens today.** A school is not a thing in this system. When a school's

@@ -53,6 +53,7 @@
  */
 
 import { AUDIT_ANONYMISED_REQUEST_COLUMNS } from "./audit-retention-classes";
+import { MEMBER_MONEY_RELATIONS } from "./member-money-tables";
 import {
   buildCreateLoginRoleIfAbsentSql,
   buildStripAllRoleMembershipsSql,
@@ -67,22 +68,26 @@ export const APPLICATION_SCHEMA = "public";
 /**
  * Relations the application role may only INSERT into and SELECT from. A row in
  * one of these is a fact that is corrected by appending another row, never by
- * rewriting it: the booking ledger (`docs/design/booking-ledger.md` §4) and the
- * audit log. Adding a relation here — or a column to
+ * rewriting it: the booking ledger (`docs/design/booking-ledger.md` §4), the
+ * audit log and the member-money journal. Adding a relation here — or a column to
  * `AUDIT_ANONYMISED_REQUEST_COLUMNS` — is a release that asks every deployment to
- * re-run `pnpm run db:provision-roles --apply`, and its upgrade note says so.
+ * re-run `pnpm run db:provision-roles --apply`, and its upgrade note says so,
+ * unless the migration that creates the relation narrows it itself, as the
+ * journal's does (docs/BLUE_GREEN_MIGRATION_POLICY.md, the carve-out for tables
+ * a migration creates).
  */
-export const APPEND_ONLY_RELATIONS = ["BookingLedgerLine", "AuditLog"] as const;
+export const APPEND_ONLY_RELATIONS = [
+  "BookingLedgerLine", "AuditLog", ...MEMBER_MONEY_RELATIONS,
+] as const;
 
 /** Prisma's migration history: the application reads it, only migrations write it. */
 export const MIGRATION_HISTORY_RELATION = "_prisma_migrations";
 
 /**
- * The migration that creates `BookingLedgerLine`, the newer of the two
- * append-only relations. A database whose history lacks it runs an older
- * release, and provisioning asks for this release's migrations first.
+ * The migration that creates the newest append-only relations. A database whose
+ * history lacks it runs an older release, and provisioning asks for this release's migrations first.
  */
-export const APPEND_ONLY_SCHEMA_MIGRATION = "20261006010000_add_booking_ledger_line";
+export const APPEND_ONLY_SCHEMA_MIGRATION = "20261127010000_member_money_journal";
 
 /**
  * The audit relation the retention role maintains. It may UPDATE only
@@ -92,6 +97,15 @@ export const AUDIT_RETENTION_RELATION = "AuditLog";
 
 /** Table rights the application role holds on an ordinary relation. */
 export const APPLICATION_TABLE_PRIVILEGES = "SELECT, INSERT, UPDATE, DELETE";
+
+/**
+ * Table privileges incompatible with INSERT/SELECT-only financial evidence, as
+ * PostgreSQL's `aclexplode` names them.
+ */
+export const APPEND_ONLY_FORBIDDEN_PRIVILEGE_TYPES = ["UPDATE", "DELETE", "TRUNCATE", "TRIGGER", "REFERENCES"] as const;
+
+/** The same privileges as one list for `has_table_privilege` and `REVOKE`. */
+export const APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES = APPEND_ONLY_FORBIDDEN_PRIVILEGE_TYPES.join(", ");
 
 /**
  * SECURITY DEFINER routines the re-check tolerates in the application schema, as
@@ -151,8 +165,9 @@ export interface DatabaseRolesProvisionInput {
 /**
  * The deploy script's post-migrate check (#4453 review O-F2, N3), as psql runs
  * it with `-v migration_role=… -v app_role=…`: the `public` relations that are
- * not owned by the migration role, not readable by the application role, or a
- * view the application could write through. Empty means the deploy may go on.
+ * not owned by the migration role, not readable by the application role, a
+ * view the application could write through, or an `APPEND_ONLY_RELATIONS`
+ * table it could change beyond INSERT (#4513). Empty means the deploy may go on.
  * Extension members are left out, as the ownership transfer leaves them.
  *
  * ONE definition. Bash cannot import it, so
@@ -173,7 +188,10 @@ WHERE n.nspname = 'public'
   AND (pg_catalog.pg_get_userbyid(c.relowner) <> :'migration_role'
        OR NOT pg_catalog.has_table_privilege(:'app_role', c.oid, 'SELECT')
        OR (c.relkind IN ('v', 'm')
-           AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE')));`;
+           AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE'))
+       OR (c.relname IN (${APPEND_ONLY_RELATIONS.map(quoteLiteral).join(", ")})
+           AND (pg_catalog.has_table_privilege(:'app_role', c.oid, '${APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES}')
+                OR pg_catalog.has_any_column_privilege(:'app_role', c.oid, 'UPDATE'))));`;
 
 /** A relation name in the application schema, quoted for SQL text. */
 function relation(name: string): string {
@@ -283,7 +301,7 @@ function buildRelationNarrowingSql(
   const lines: string[] = [];
   for (const name of APPEND_ONLY_RELATIONS) {
     lines.push(`  IF to_regclass(${regclassLiteral(name)}) IS NOT NULL THEN
-    EXECUTE ${quoteLiteral(`REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ${relation(name)} FROM ${app}`)};
+    EXECUTE ${quoteLiteral(`REVOKE ${APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES} ON TABLE ${relation(name)} FROM ${app}`)};
   ELSE
     RAISE NOTICE 'Relation % does not exist yet: re-run provisioning after the migrations so the application role is narrowed on it.', ${quoteLiteral(name)};
   END IF;`);
@@ -335,9 +353,16 @@ function buildVerificationSql(input: {
   const auditRelation = regclassLiteral(AUDIT_RETENTION_RELATION);
   const appendOnlyChecks = APPEND_ONLY_RELATIONS.map(
     (name) => `  IF to_regclass(${regclassLiteral(name)}) IS NOT NULL AND (
-       pg_catalog.has_table_privilege(${app}, ${regclassLiteral(name)}, 'UPDATE, DELETE, TRUNCATE')
+       pg_catalog.has_table_privilege(${app}, ${regclassLiteral(name)}, '${APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES}')
        OR pg_catalog.has_any_column_privilege(${app}, ${regclassLiteral(name)}, 'UPDATE')) THEN
     RAISE EXCEPTION 'Refusing to commit: the application role can still change rows of %.', ${quoteLiteral(name)};
+  END IF;`,
+  ).join("\n");
+  const moneyRetentionChecks = MEMBER_MONEY_RELATIONS.map(
+    (name) => `  IF to_regclass(${regclassLiteral(name)}) IS NOT NULL AND (
+       pg_catalog.has_table_privilege(${retention}, ${regclassLiteral(name)}, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES')
+       OR pg_catalog.has_any_column_privilege(${retention}, ${regclassLiteral(name)}, 'SELECT, INSERT, UPDATE, REFERENCES')) THEN
+    RAISE EXCEPTION 'Refusing to commit: the audit-retention role has money-table rights on %.', ${quoteLiteral(name)};
   END IF;`,
   ).join("\n");
   const anonymised = AUDIT_ANONYMISED_REQUEST_COLUMNS.map(quoteLiteral).join(", ");
@@ -387,6 +412,7 @@ BEGIN
   END IF;
 
 ${appendOnlyChecks}
+${moneyRetentionChecks}
 
   -- A view or rule that reads an append-only relation and that the application
   -- may write through: its DML would run with the owner's rights (S-F3).
