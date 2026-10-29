@@ -138,8 +138,10 @@ materialises its original combined-invoice share before introducing extra cash
 transactions, and records only the cash delta. Cancellation and reduction
 planners reserve waived amounts and invoice-specific refund notes under their
 existing global claims; group cancellation freezes this plan under global and
-re-reads each Payment under its row lock. A raced waiver's compensating
-hand-back also takes global and uses a unique occurrence key. A queued invoice
+re-reads each Payment under its row lock. Raced cash's compensating
+hand-backs (`reserveOrganiserExtraRacedCash`) also take global: every plan's
+share is a delta over the rows re-read under it, backed by unique scope and
+occurrence keys. A queued invoice
 waived whole is retired by a status-guarded `updateMany` inside the reserving
 claim, only while never attempted (`PENDING` or `WAITING_PAYMENT`, no
 `startedAt`), so a `RUNNING` or `FAILED` create keeps its invoice and the
