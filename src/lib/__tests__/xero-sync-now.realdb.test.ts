@@ -1,6 +1,7 @@
 /** #4432: real inbound writers; only Xero's client and non-financial config are doubled. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { assertSafeRaceDbUrl } from "./support/race-db-url";
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const MEMBER = "race-4432-member";
@@ -35,8 +36,7 @@ const spies: Array<{ mockRestore(): void }> = [];
   }
   const amounts = () => db.memberCredit.findMany({ where: { memberId: MEMBER }, select: { amountCents: true, type: true }, orderBy: [{ amountCents: "asc" }, { type: "asc" }] });
   beforeAll(async () => {
-    const url = new URL(DB_URL);
-    if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || Number(url.port) < 55442 || !url.pathname.includes("concurrency_race_1881")) throw new Error("Use only the dedicated loopback concurrency_race_1881 database on port 55442+.");
+    assertSafeRaceDbUrl(DB_URL, "Xero sync now");
     process.env.DATABASE_URL = DB_URL;
     ({ prisma: db } = await import("@/lib/prisma"));
     const api = await import("@/lib/xero-api-client");

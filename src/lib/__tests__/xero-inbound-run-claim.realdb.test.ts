@@ -1,6 +1,7 @@
 /** #4432: use only the existing disposable concurrency database, never DATABASE_URL. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const URL_TEXT = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -13,10 +14,7 @@ const cycle = { inbound: { batches: 1, found: 0, processed: 0, succeeded: 0, fai
 
 (RUN ? describe : describe.skip)("Xero inbound shared run claim, real PostgreSQL", () => {
   beforeAll(async () => {
-    const url = new URL(URL_TEXT);
-    if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || Number(url.port) < 55442 || !url.pathname.includes("concurrency_race_1881")) {
-      throw new Error("Use a dedicated loopback concurrency_race_1881 database on port 55442+.");
-    }
+    assertSafeRaceDbUrl(URL_TEXT, "Xero inbound shared run claim");
     process.env.DATABASE_URL = URL_TEXT;
     runner = await import("@/lib/xero-cron-runner");
     service = await import("@/lib/xero-sync-now");
