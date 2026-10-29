@@ -33,8 +33,8 @@ lines: 3446
 reason: Keep queue dispatch and the transaction-aware wrapper beside the existing supplementary-anchor enqueue implementation. The new adjustment executor is a separate module; exporting a private enqueue solely to relocate its wrapper would widen its API. Review B1 and S1 add two refusals at the existing choke points they guard - the booking-invoice enqueue (no invoice of its own for an organiser-paid bank place) and the anchor-locked supplementary decision (no invoice for an extra waived before it was raised) - where every enqueuer already funnels; elsewhere they could be bypassed.
 
 file: src/lib/xero-operation-retry.ts
-lines: 2097
-reason: The existing retry dispatcher must recognize the new typed operation and re-use the shared executor. Extracting only this dispatch arm would distribute retry ownership without moving any business logic.
+lines: 2104
+reason: The existing retry dispatcher must recognize the new typed operation and re-use the shared executor. Extracting only this dispatch arm would distribute retry ownership without moving any business logic. The booking-invoice retry also reads which fence closed its row, so an organiser-paid bank place is not reported as a cash settlement (fix-delta review).
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
 lines: 554
