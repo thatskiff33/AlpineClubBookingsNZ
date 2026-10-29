@@ -191,6 +191,13 @@ see [backups](guides/backups.md), the
 | `SchoolMemberClassification` | Booking organisation contacts, linked people and classification evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingLedgerLine` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PrivacyRetentionSettings` | Club retention periods, opt-in switches and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `MemberMoneyEvent` | Immutable financial event, officer attribution and source evidence | Kept for financial records | Keep |
+| `MemberMoneyJournal` | Financial journal batch and linked member transactions | Kept for financial records | Keep |
+| `MemberMoneySourceLink` | Financial source identities and booking-ledger links | Kept for financial records | Keep |
+| `MemberMoneyLine` | Member or organisation debtor, booking and financial evidence | Kept for financial records | Keep |
+| `MemberMoneyObligation` | Member or organisation charge and refund obligations | Kept for financial records | Keep |
+| `MemberMoneyApplication` | Receipt, refund and credit attribution to financial obligations | Kept for financial records | Keep |
+| `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 
 ## Maintaining coverage
 

@@ -207,4 +207,11 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   SchoolMemberClassification: "personal",
   BookingLedgerLine: "personal",
   PrivacyRetentionSettings: "personal",
+  MemberMoneyEvent: "personal",
+  MemberMoneyJournal: "personal",
+  MemberMoneySourceLink: "personal",
+  MemberMoneyLine: "personal",
+  MemberMoneyObligation: "personal",
+  MemberMoneyApplication: "personal",
+  MemberMoneySourcePosting: "personal",
 } as const;

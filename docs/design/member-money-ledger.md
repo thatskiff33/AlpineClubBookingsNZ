@@ -85,7 +85,11 @@ or export conflicts visibly. No guessed account code is sent.
 
 Extend the existing registry in `src/lib/xero-account-mapping-keys.ts`; its
 settings, resolver, API, defaults and warnings stay one source (`INV-SSOT-001`,
-`INV-INT-021`). New keys above are proposals, not implemented settings. With
+`INV-INT-021`). New keys above are proposals, not implemented settings: M1
+names them once in `PROPOSED_MEMBER_MONEY_MAPPING_KEYS`, outside every list the
+registry derives, and each key is registered as a setting, with its account
+class, while-unset behaviour and setup-screen copy, by the step that first
+reads it, in the same change that removes it from that list. With
 Xero disabled no code mapping is required. Connecting it later validates the
 mappings and creates an export baseline; existing invoices and notes are adopted
 by exact identity and coverage before any missing document is rendered. History
@@ -95,7 +99,9 @@ unsettled note, never a payment from Stripe. A mapping change affects future
 render plans; replay uses its frozen mapping version.
 
 Tax is recorded in integer cents with the charge: gross = net + tax, and
-reversal uses those exact cents, tax code and coding version. Use the existing
+reversal uses those exact cents, tax code and coding version. In the journal a
+taxed revenue leg posts its net cents, and the batch's `GST_PAYABLE` legs carry
+the tax on the same side (`INV-MONEY-041`). Use the existing
 money boundary helpers (`INV-MONEY-001`, `INV-MONEY-003`); do not calculate tax
 with new floating-point arithmetic. Preserve current inclusive tax treatment
 and subscription component rounding. Section 10 asks how the journal's tax and
@@ -108,10 +114,10 @@ records and constraints, not a Prisma schema to apply in this documentation PR.
 
 | Record | Contract |
 | --- | --- |
-| `MemberMoneyEvent` | Immutable kind enum, origin enum, source identity/version, deterministic event key, payload hash, actor, reason, effective instant/date and recording time; links a journal batch, including explicit zero-money events |
-| `MemberMoneyJournal` | One immutable header per event/batch, currency, policy/coding version, expected line count and optional unique reversal target; no editable draft or balance column |
-| `MemberMoneyLine` | Header, account enum, Dr/Cr enum, positive integer cents, member/debtor, obligation, booking/lodge where applicable, credit lot, charge/refund identity, original posting reference, tax and frozen descriptive evidence |
-| `MemberMoneyObligation` | Exact charge/refund identity and source, immutable face terms; settlements and reductions refer to it explicitly; remaining amount is derived |
+| `MemberMoneyEvent` | Immutable kind enum, origin enum, source kind/identity/version, deterministic event key, payload hash, actor, reason, effective instant and club civil date and recording time; links a journal batch, including explicit zero-money events |
+| `MemberMoneyJournal` | One immutable header per event/batch, currency, policy/coding version, expected line, obligation and application counts, creating transaction and cluster, and optional unique reversal target; no editable draft or balance column |
+| `MemberMoneyLine` | Header, account enum, Dr/Cr enum, positive integer cents, debtor (a member or an organisation, never both), obligation, booking/lodge where applicable, credit lot, charge/refund identity, original posting reference, tax and frozen descriptive evidence |
+| `MemberMoneyObligation` | Exact charge/refund identity and source, its debtor, immutable face terms; settlements and reductions refer to it explicitly; remaining amount is derived |
 | `MemberMoneyApplication` | Immutable attribution of a receipt/refund/credit to an obligation, amount, and optional unique reversal target; no timing/amount heuristic |
 | `MemberMoneySourceLink` | Durable link from existing booking line, credit row, subscription component, capture, refund or Xero fact to the event; unique per source fact, not per coincident amount |
 | Export manifest | Immutable render revision, payload hash, frozen mapping and exact posting/application coverage identities; retries preserve this evidence |
@@ -579,9 +585,10 @@ rendering are active and its test passes; this design closes no bug by itself.
 ## 10. Decisions
 
 The scope, two-way direction, ledger-first priority and bank-transfer method
-were settled on 27 Oct 2026. The three narrower choices below were decided by the
+were settled on 27 Oct 2026. The narrower choices D1–D3 below were decided by the
 owner on 28 Oct 2026 (decision pop-ups in the Sekreton orchestrator session,
-[recorded on #4461](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6472136228)).
+[recorded on #4461](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6472136228));
+D4 was decided later that day and carries its own record.
 
 ### D1. Financial history when a booking is deleted (#4482): keep it
 
@@ -618,6 +625,19 @@ permanent block. Receipts and refunds post their full known gross cents. The
 scope still excludes GST returns and does not assume every adopting club is
 GST-registered. Not taken: a new universal tax or recognition basis.
 
+### D4. Member merge: transfer open balances explicitly
+
+Decided by the owner on 28 Oct 2026 ([recorded on #4461](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6479558948)).
+When duplicate members are merged, the merge posts an explicit journal transfer
+of every open balance from the merged-away member to the survivor, with an
+audit trail. M1 posts nothing.
+
+What follows for the journal: merge leaves posted journal rows untouched, so
+they keep the merged-away member's id. The debtor says whose balance a row
+moved; it is not an actor snapshot, and the database refuses to rewrite it.
+The transfer is posted from M3 on, for the balances each step posts: charges
+(M3), refunds owed (M4) and member credit (M5).
+
 ## 11. Proposed children, in shipping order
 
 The owner approves this design before these issues are filed or built. Labels
@@ -631,9 +651,9 @@ than opening a competing implementation lane.
 | --- | --- | --- | --- |
 | M1 — Protect and verify balanced member journals | Add inert journal/events/applications/source bridge, balance/seal/mandatory-link constraints, account registry, grants and verifier; prove direct SQL refusal and no late batch extension. Extend #4453 provisioning. | Design approval; D1 (decided: RESTRICT and archive) for deletion contract; #4453 available | High: schema/security |
 | M2 — Retain ledger history across booking deletion | Deliver chosen #4482 solution for old booking lines and new financial parents; update archive/erase flows, retained identity and adopter notes. Prove every parent DELETE/UPDATE route. | M1, D1, approved retention compatibility | High: lifecycle/schema |
-| M3 — Post payable booking charges and edits once | R01–R04/R21 with existing line/source bridge, draft/quote boundary, bank-transfer-before-settle charges, fees and promotion evidence; comparison report, no reader change. | M1 | High: prices/lifecycle |
-| M4 — Post captures, refund obligations and exact cash answers | R05–R08/R12–R14/R24, provider-status reversals, durable attempts and application caps; preserve #4361 holds/answers/keys and markers. Keep old decision projections. | M1, M3; reconcile current #4361 children | Critical: payout/double-pay |
-| M5 — Post member credit through one liability | R09–R11/R22 planning, funding lots, approvals, restore provenance and compatibility `MemberCredit` linkage; conservation report, no new provider authority. | M1, M3; M4 for refund-to-credit obligations | High: credit/money |
+| M3 — Post payable booking charges and edits once | R01–R04/R21 with existing line/source bridge, draft/quote boundary, bank-transfer-before-settle charges, fees and promotion evidence; organisation debtors for organisation-owned bookings; D4's member-merge transfer for the balances it posts; comparison report, no reader change. | M1, D4 (decided) | High: prices/lifecycle |
+| M4 — Post captures, refund obligations and exact cash answers | R05–R08/R12–R14/R24, provider-status reversals, durable attempts and application caps; preserve #4361 holds/answers/keys and markers; D4's member-merge transfer for the refunds owed (M4) it posts. Keep old decision projections. | M1, M3; reconcile current #4361 children; D4 (decided) | Critical: payout/double-pay |
+| M5 — Post member credit through one liability | R09–R11/R22 planning, funding lots, approvals, restore provenance and compatibility `MemberCredit` linkage; D4's member-merge transfer for the balances it posts; conservation report, no new provider authority. | M1, M3; M4 for refund-to-credit obligations; D4 (decided) | High: credit/money |
 | M6 — Post organiser receipts and child obligations | R15 with combined invoice/source coverage, one cash receipt and frozen child applications/refunds; prove group sums and avoid child double counting. | M3–M5 | High: group settlement |
 | M7 — Post subscriptions and joining/member fees | R18–R20 from immutable snapshots, family recipient/coverage, manual-paid/cancellation behaviour; local charge evidence works without Xero delivery. | M1; M4 for settlement adapters; D3 before tax activation | High: membership/money |
 | M8 — Record provider fees and clearing transfers | R16/R17, source-identity fee/payout evidence and reversal, settings/account coding; clearing report without bank-reconciliation UI. | M1, M4; #4460 contract fixtures before provider activation | High: provider/accounting |

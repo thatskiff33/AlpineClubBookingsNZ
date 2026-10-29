@@ -2891,7 +2891,10 @@ validate_prisma_schema_matches_migrations() {
 # `DEPLOY_GRANTS_CHECK_SQL` in src/lib/database-roles.ts, which
 # deploy-database-roles-script-contract.test.ts pins this copy equal to. A view the app could write through is refused too: a new view
 # gets the default table grants, and DML through a view runs with its owner's
-# rights, so it must be narrowed to SELECT first. The fix is a re-run of `db:provision-roles --apply`. The SQL
+# rights, so it must be narrowed to SELECT first. So is an append-only relation
+# (`APPEND_ONLY_RELATIONS`: BookingLedgerLine, AuditLog, the member-money
+# journal) the app could change beyond INSERT: UPDATE, DELETE, TRUNCATE, TRIGGER,
+# REFERENCES or a column UPDATE. The fix is a re-run of `db:provision-roles --apply`. The SQL
 # between the markers is run as shipped by database-roles.realdb.test.ts.
 verify_least_privilege_role_grants() {
   local app_user
@@ -2917,7 +2920,10 @@ WHERE n.nspname = 'public'
   AND (pg_catalog.pg_get_userbyid(c.relowner) <> :'migration_role'
        OR NOT pg_catalog.has_table_privilege(:'app_role', c.oid, 'SELECT')
        OR (c.relkind IN ('v', 'm')
-           AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE')));
+           AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE'))
+       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting')
+           AND (pg_catalog.has_table_privilege(:'app_role', c.oid, 'UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES')
+                OR pg_catalog.has_any_column_privilege(:'app_role', c.oid, 'UPDATE'))));
 SQL
 )"
   # END least-privilege-grants-check
@@ -2931,7 +2937,8 @@ SQL
     return 1
   fi
   if [ -n "$offending" ]; then
-    echo "After the migrate, these relations are not owned by $migration_user or not readable by $app_user: $offending" >&2
+    echo "After the migrate, these relations fail the least-privilege grants check: $offending" >&2
+    echo "Each one is not owned by $migration_user, not readable by $app_user, a view $app_user could write through, or an append-only relation (BookingLedgerLine, AuditLog, the member-money journal) $app_user could change beyond INSERT." >&2
     echo "Re-run 'pnpm run db:provision-roles --apply' as the operator (DEPLOYMENT.md \"Least-privilege database roles\"), then deploy again." >&2
     return 1
   fi

@@ -177,6 +177,31 @@ export type AccountMappingKey =
   (typeof XERO_ACCOUNT_MAPPING_DEFINITIONS)[number]["key"];
 
 /**
+ * Account-mapping keys the member-money ledger design PROPOSES (#4513, M1),
+ * named once so the inert journal's account chart can point at them. They are
+ * NOT settings: none is in `XERO_ACCOUNT_MAPPING_DEFINITIONS`, so none reaches
+ * the picker, the API allowlist, the seed, the setup checklist or any other
+ * list derived from it. Each is registered as a full definition by the ledger
+ * step that first reads it (docs/design/member-money-ledger.md, section 2),
+ * and leaves this list in that same change.
+ */
+export const PROPOSED_MEMBER_MONEY_MAPPING_KEYS = [
+  "memberReceivable",
+  "memberReceiptsBankAccount",
+  "memberCashAccount",
+  "memberCreditLiability",
+  "memberRefundPayable",
+  "joiningFeeIncome",
+  "memberFeesIncome",
+  "memberGstPayable",
+  "memberExternalControl",
+  "memberOpeningControl",
+] as const;
+
+export type ProposedMemberMoneyMappingKey =
+  (typeof PROPOSED_MEMBER_MONEY_MAPPING_KEYS)[number];
+
+/**
  * Keys on the same table that carry ONLY an item code — they select a Xero
  * Item, never an account, so `INV-INT-021`'s account-type filter does not
  * apply to them. `entranceFeeAmountCents` is deliberately absent (#1931, E5):

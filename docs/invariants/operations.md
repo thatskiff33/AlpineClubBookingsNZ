@@ -717,3 +717,28 @@ behaviourally.
   docblock — chiefly that stubbing the seam's own collaborators (a ledger read
   answering `[]`) leaves the seam "real" and inert, which is why the witness
   suite exists.
+
+## INV-OPS-016
+
+Every immutable member-money relation in `MEMBER_MONEY_RELATIONS` gives the
+application role INSERT and SELECT only. It holds no ownership, mutation,
+TRUNCATE, TRIGGER or REFERENCES privilege on those tables, including through
+PUBLIC, role membership, a writable view or a SECURITY DEFINER escape. The
+migration role owns the objects; audit retention gains no money-table rights.
+Row mutation and statement-level TRUNCATE triggers additionally refuse accidental
+operator changes. Deliberate operator repairs remain a separate controlled task.
+
+Default privileges give a new table broader rights, so the migration that
+creates the journal narrows its own tables for every non-owner grantee, naming
+no role; re-running `db:provision-roles --apply` is the repair if anything
+widens them. Merging a migration is not evidence of restricted effective grants:
+the blue/green deploy check refuses an append-only table the application could
+change beyond INSERT. `member-money:verify` checks batch integrity, mandatory
+event links, the exact definitions of the enforcement functions (with their
+settings), constraints, triggers and unique indexes (each validated, enabled or
+valid), no unpinned or disabled trigger, and effective application table
+privileges in a read-only snapshot. For a superuser or owner role the per-role
+grant check is not applicable; the check that no grantee but the owner, PUBLIC
+included, holds a right that changes a row always runs. It does not prove
+historical parity, writer-cohort coverage or accounting policy; those activate
+in later milestones.

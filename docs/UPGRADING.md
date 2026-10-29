@@ -138,6 +138,25 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Member money journal foundation (#4513)
+
+**What changes.** Migration `20261127010000_member_money_journal` adds seven
+new, empty, append-only journal tables. Nothing reads or writes them yet: no
+money reader or writer changes in this release, and old code stays compatible.
+
+**Single-role clubs** (no `APP_DB_USER` in `.env`) need do nothing beyond the
+normal deploy.
+
+**Clubs on the [least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles)**
+(`APP_DB_USER` set) need no provisioning step either: the migration narrows its
+own tables, so the application role gets only INSERT and SELECT on them and the
+audit-retention role gets nothing. The deploy's post-migrate grants check now
+also refuses an append-only relation the application could change beyond
+INSERT. If it ever names a journal table, re-run `pnpm run db:provision-roles
+--apply` and deploy again. Afterwards, `pnpm run member-money:verify` with the
+application connection should report no findings
+([details](../DEPLOYMENT.md#member-money-journal-grants-m1)).
+
 ### Nightly backups stream to a disk-backed spool volume (#4487)
 
 **What changes.** The nightly backup no longer holds the whole `pg_dump` output in

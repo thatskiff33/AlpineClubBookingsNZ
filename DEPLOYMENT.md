@@ -122,7 +122,7 @@ purpose: **deleting a booking still deletes its ledger lines** (below).
 | --- | --- | --- | --- |
 | Operator | `tac` (`POSTGRES_USER`) | people: provisioning, restores, repairs | everything (superuser) |
 | Migration | `tac_migrator` | the `migrate` service | own every object in schema `public`; run `prisma migrate deploy`; create temporary tables |
-| Application | `tac_app` | both web slots and the cron leader | SELECT, INSERT, UPDATE, DELETE on ordinary tables; only SELECT on views; only **INSERT and SELECT** on `BookingLedgerLine` and `AuditLog`; only SELECT on `_prisma_migrations`; temporary tables |
+| Application | `tac_app` | both web slots and the cron leader | SELECT, INSERT, UPDATE, DELETE on ordinary tables; only SELECT on views; only **INSERT and SELECT** on `BookingLedgerLine`, `AuditLog` and the member-money journal tables; only SELECT on `_prisma_migrations`; temporary tables |
 | Audit retention | `tac_audit_retention` | the nightly audit retention job, on the cron leader only | SELECT and DELETE on `AuditLog`; UPDATE of `ipAddress` and `userAgent`, which a trigger lets it set only to empty |
 
 None of the three new roles is a superuser, may create roles or databases, or is a
@@ -208,10 +208,12 @@ stack in [Staging](#staging)), then repeat on production.
    `migrate` service now runs as the migration role, and the new colour and the cron
    leader start as the application role. The old colour keeps its superuser
    connection until it is stopped, and no grant it relies on is removed. After the
-   migrate, the deploy script checks two things: every relation in `public` is
-   owned by the migration role and readable by the application role, and no view
-   is writable by the application role. If either fails, it stops before the new
-   colour starts and tells you to re-run `--apply`.
+   migrate, the deploy script checks the grants: every relation in `public` is
+   owned by the migration role and readable by the application role, no view is
+   writable by the application role, and the application role can only INSERT
+   and SELECT each append-only relation (`BookingLedgerLine`, `AuditLog` and the
+   member-money journal). If any of that fails, it stops before the new colour
+   starts and tells you to re-run `--apply`.
 5. **Check**: the next `data-pruning` cron run succeeds, and
    `psql -U tac -d tacbookings -c "\du"` lists the three roles without
    `Superuser`.
@@ -234,7 +236,14 @@ needs the new password. So rotate in this order:
 A "repair" re-run with a freshly generated password is a rotation too.
 
 **Re-run `--apply`** in these cases:
-- after the first migration of a brand-new database;
+- after the first migration of a brand-new database. If you provisioned the
+  database while it was empty (step 2 on a new install), the first deploy's
+  migrate creates `BookingLedgerLine` and `AuditLog` with the application's
+  default UPDATE and DELETE, and the post-migrate check stops the deploy at
+  step 13 naming both. The migrations have applied and, if an old colour
+  exists, it is still serving: run the step 2 `--apply` command, then run the
+  deploy again.
+  Its migrate has nothing left to do, and the check passes;
 - after a release whose upgrade note changes `APPEND_ONLY_RELATIONS` or
   `AUDIT_ANONYMISED_REQUEST_COLUMNS` (`src/lib/database-roles.ts`,
   `src/lib/audit-retention-classes.ts`);
@@ -310,6 +319,52 @@ wants the limit taken from the default `768m` towards `1g`. The pairing
 `POSTGRES_MAX_CONNECTIONS=80` with the default `768m` has run on one fork host
 since mid-October 2026 without memory pressure, which is one host's evidence,
 not a measurement of the headroom.
+
+### Member money journal grants (M1)
+
+The journal is inert: this release changes no production money reader or writer.
+#4453's append-only treatment now covers `MemberMoneyEvent`, `MemberMoneyJournal`,
+`MemberMoneyLine`, `MemberMoneyObligation`, `MemberMoneyApplication`,
+`MemberMoneySourceLink` and `MemberMoneySourcePosting`: the migration role owns
+them, the app gets INSERT and SELECT only, and audit retention gets no rights.
+
+No provisioning step is needed. Migration `20261127010000_member_money_journal`
+narrows its own seven tables itself: it revokes UPDATE, DELETE, TRUNCATE, TRIGGER
+and REFERENCES from every role but their owner, so the post-migrate check passes
+as it stands. On a single-role install, or one whose app connects as the owner,
+it revokes nothing, and nothing changes. If the check ever names a journal
+table, re-running `pnpm run db:provision-roles --apply` (step 2 above) is the
+repair. A deployment still using the operator as its app connection has not
+established least privilege.
+
+Run `pnpm run member-money:verify` with the application `DATABASE_URL`. If running
+through a separate read-only/operator connection, set `APP_DB_USER` to the actual
+application role to check its effective grants. The command opens a read-only
+repeatable-read transaction and reports structural findings and exits nonzero
+on unsafe grants; a missing, disabled, changed or unexpected journal trigger;
+a disabled foreign-key trigger, on a journal table or its parent; an
+enforcement function whose body, volatility, security mode or `SET search_path`
+changed; a missing, unvalidated or changed constraint; a missing, invalid,
+unready or changed unique index; orphan events or invalid batches.
+Constraint, trigger and index definitions are compared, as text, with the ones
+the migration installs on PostgreSQL 16; a changed or unexpected one is printed
+as found.
+When the role it checks is a superuser or owns the journal, as on a
+single-role install, it prints `"grantCheck": "not_applicable"` for that role:
+no grant can narrow it. Whichever role it checks, it still fails if any role
+but the owner, PUBLIC included, holds UPDATE, DELETE, TRUNCATE, TRIGGER or
+REFERENCES on a journal table, or one of those rights on a column.
+A successful empty journal is valid M1 evidence, not proof of backfill,
+legacy posting coverage, historical parity or readiness to switch readers.
+No provider credentials are needed. Source links can later attach legacy
+confirmation evidence without extending sealed legs. M2 owns the existing
+booking-ledger deletion cascade; this migration does not change old writers.
+
+M1 adds no Xero account-mapping setting and changes nothing on the Xero
+setup screen. The internal chart in `src/lib/member-money/` names the mapping
+keys the design proposes in one list, `PROPOSED_MEMBER_MONEY_MAPPING_KEYS`; the
+ledger step that first reads a key registers it as a setting. Nothing exports
+in M1.
 
 ## App CPU sizing
 

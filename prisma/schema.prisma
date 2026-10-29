@@ -2035,6 +2035,7 @@ model Booking {
   @@index([lodgeId])
   @@index([otherLodgeId])
   @@index([organisationId])
+  memberMoneyLines MemberMoneyLine[]
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -5292,6 +5293,7 @@ model Lodge {
   // QR token with it, because neither means anything without the building.
   maintenanceReports      MaintenanceReport[]
   maintenanceReportToken  LodgeMaintenanceReportToken?
+  memberMoneyLines MemberMoneyLine[]
 }
 
 // Registry of EXTERNAL / partner lodges the club recognises (e.g. for the
@@ -8740,6 +8742,7 @@ model BookingLedgerLine {
   @@index([bookingGuestId])
   @@index([postedByMemberId])
   @@index([lodgeId])
+  memberMoneySourceLink MemberMoneySourceLink?
 }
 
 /// A line prices the stay, moves money, or records a person's decision.
@@ -8819,4 +8822,221 @@ model PrivacyRetentionSettings {
   anonymiseStartedAt                DateTime?
   updatedByMemberId                  String?
   updatedAt                         DateTime @updatedAt
+}
+
+enum MemberMoneyAccount {
+  MEMBER_RECEIVABLE
+  STRIPE_CLEARING
+  BANK
+  CASH
+  MEMBER_CREDIT
+  REFUND_PAYABLE
+  BOOKING_REVENUE
+  SUBSCRIPTION_REVENUE
+  JOINING_FEE_REVENUE
+  FEE_REVENUE
+  GST_PAYABLE
+  STRIPE_FEES
+  GOODWILL
+  EXTERNAL_CONTROL
+  OPENING_CONTROL
+}
+
+enum MemberMoneySide {
+  DEBIT
+  CREDIT
+}
+
+enum MemberMoneyEventKind {
+  CHARGE
+  RECEIPT
+  REFUND_OBLIGATION
+  REFUND
+  CREDIT_GRANT
+  CREDIT_APPLICATION
+  CREDIT_RESTORE
+  FEE
+  TRANSFER
+  ADJUSTMENT
+  OPENING
+  REVERSAL
+  ZERO
+}
+
+enum MemberMoneyOrigin {
+  APP
+  OFFICER
+  STRIPE
+  XERO
+  LEGACY
+}
+
+enum MemberMoneySourceKind {
+  BOOKING_LEDGER
+  BOOKING
+  PAYMENT
+  REFUND
+  CREDIT
+  SUBSCRIPTION
+  PROVIDER_FACT
+  OFFICER_FACT
+  OPENING
+}
+
+enum MemberMoneyObligationKind {
+  CHARGE
+  REFUND
+}
+
+/// Who owes: a member or an organisation, as a booking's owner is exactly one.
+enum MemberMoneyDebtorKind {
+  MEMBER
+  ORGANISATION
+}
+
+/// Inert M1 foundation. No production writer or reader is enabled.
+model MemberMoneyEvent {
+  id String @id @default(cuid())
+  eventKey String @unique
+  kind MemberMoneyEventKind
+  origin MemberMoneyOrigin
+  /// The mandatory source link matches kind, identity and version together.
+  sourceKind MemberMoneySourceKind
+  sourceIdentity String
+  sourceVersion String
+  payloadHash String
+  actorMemberId String?
+  reason String
+  effectiveAt DateTime
+  /// Club civil date of effectiveAt, derived through the club-time kernel (INV-DATE).
+  effectiveDate DateTime @db.Date
+  recordedAt DateTime @default(now())
+  journal MemberMoneyJournal?
+}
+
+model MemberMoneyJournal {
+  id String @id @default(cuid())
+  eventId String @unique
+  currency String @db.VarChar(3)
+  policyVersion String
+  codingVersion String
+  expectedLineCount Int
+  expectedObligationCount Int
+  expectedApplicationCount Int
+  /// Database trigger stamps/checks this; descendants may only post in this tx.
+  creatingTransaction BigInt @default(dbgenerated("txid_current()"))
+  /// Stamped with the transaction id: the cluster, so a restore cannot reopen a batch.
+  creatingSystemIdentifier BigInt @default(dbgenerated("member_money_system_identifier()"))
+  reversesJournalId String? @unique
+  event MemberMoneyEvent @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reverses MemberMoneyJournal? @relation("MemberMoneyReversal", fields: [reversesJournalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy MemberMoneyJournal? @relation("MemberMoneyReversal")
+  lines MemberMoneyLine[]
+  sources MemberMoneySourceLink[]
+  obligations MemberMoneyObligation[]
+  applications MemberMoneyApplication[]
+}
+
+model MemberMoneySourceLink {
+  id String @id @default(cuid())
+  journalId String
+  sourceKind MemberMoneySourceKind
+  sourceId String
+  sourceVersion String
+  bookingLedgerLineId String? @unique
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  bookingLedgerLine BookingLedgerLine? @relation(fields: [bookingLedgerLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines MemberMoneyLine[]
+  @@unique([sourceKind, sourceId, sourceVersion])
+  @@unique([id, journalId])
+  @@index([journalId])
+  postings MemberMoneySourcePosting[]
+}
+
+model MemberMoneyLine {
+  id String @id @default(cuid())
+  journalId String
+  sourceLinkId String
+  account MemberMoneyAccount
+  side MemberMoneySide
+  amountCents Int
+  /// Debtor identity: exactly the id its kind names, or none. Not foreign keys.
+  debtorKind MemberMoneyDebtorKind?
+  memberId String?
+  organisationId String?
+  obligationId String?
+  bookingId String?
+  lodgeId String?
+  creditLotId String?
+  chargeIdentity String?
+  refundIdentity String?
+  originalLineId String? @unique
+  /// Frozen charge split when present; all three or none. Never recomputed.
+  grossCents Int?
+  netCents Int?
+  taxCents Int?
+  taxCode String?
+  evidence Json
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  source MemberMoneySourceLink @relation(fields: [sourceLinkId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
+  obligation MemberMoneyObligation? @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  original MemberMoneyLine? @relation("MemberMoneyOriginalLine", fields: [originalLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy MemberMoneyLine? @relation("MemberMoneyOriginalLine")
+  applications MemberMoneyApplication[]
+  @@index([journalId])
+  @@index([memberId, account])
+  @@index([organisationId, account])
+  @@index([bookingId])
+  @@index([lodgeId])
+  @@index([obligationId])
+  sourcePostings MemberMoneySourcePosting[]
+  @@unique([id, journalId])
+}
+
+model MemberMoneyObligation {
+  id String @id @default(cuid())
+  journalId String
+  obligationKey String @unique
+  kind MemberMoneyObligationKind
+  debtorKind MemberMoneyDebtorKind
+  memberId String?
+  organisationId String?
+  faceCents Int
+  evidence Json
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines MemberMoneyLine[]
+  applications MemberMoneyApplication[]
+  @@index([journalId])
+}
+
+model MemberMoneyApplication {
+  id String @id @default(cuid())
+  applicationKey String @unique
+  journalId String
+  sourceLineId String
+  obligationId String
+  amountCents Int
+  reversesApplicationId String? @unique
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceLine MemberMoneyLine @relation(fields: [sourceLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  obligation MemberMoneyObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reverses MemberMoneyApplication? @relation("MemberMoneyApplicationReversal", fields: [reversesApplicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy MemberMoneyApplication? @relation("MemberMoneyApplicationReversal")
+  @@index([journalId])
+  @@index([sourceLineId])
+  @@index([obligationId])
+}
+
+/// Immutable exact leg coverage, including compatibility links created later.
+model MemberMoneySourcePosting {
+  id String @id @default(cuid())
+  sourceLinkId String
+  lineId String
+  journalId String
+  source MemberMoneySourceLink @relation(fields: [sourceLinkId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
+  line MemberMoneyLine @relation(fields: [lineId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([sourceLinkId, lineId])
+  @@index([lineId, journalId])
 }
