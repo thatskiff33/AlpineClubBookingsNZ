@@ -341,8 +341,11 @@ export function PriceSummaryCard({
                 })()}
             </div>
 
-            {/* Net charge/refund */}
-            {quote.netChargeCents !== 0 && (
+            {/* Net charge/refund. #4299: an increase on a place the organiser is billed for
+                is never shown to the joiner as their "Additional charge"; where the save
+                refuses it, the refusal below is the whole message. */}
+            {quote.netChargeCents !== 0 &&
+              !(quote.netChargeCents > 0 && quote.billedToOrganiser && (quote.chargeRefusal || quote.priceChangeRefusal)) && (
               <div
                 className={`rounded-md p-3 text-sm ${
                   quote.netChargeCents > 0
@@ -350,8 +353,8 @@ export function PriceSummaryCard({
                     : "bg-success-3 text-success-11"
                 }`}
               >
-                {quote.netChargeCents > 0 && quote.billedToOrganiser && !quote.chargeRefusal && !quote.priceChangeRefusal ? (
-                  // #4299 N4: the organiser is invoiced for it on save; nothing is charged here. Never promised where the save refuses it.
+                {quote.netChargeCents > 0 && quote.billedToOrganiser ? (
+                  // #4299 N4: the organiser is invoiced for it on save; nothing is charged here. Never promised where the save refuses it (hidden above).
                   <p className="font-medium" data-testid="organiser-billed-notice">
                     {organiserBilledSentence(formatCents(quote.netChargeCents, format), "quote")}
                   </p>

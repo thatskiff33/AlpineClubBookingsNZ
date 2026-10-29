@@ -94,6 +94,27 @@ describe("#4299 N4: an increase on a place the organiser paid for by Internet Ba
 
     expect(screen.queryByTestId("organiser-billed-notice")).toBeNull();
     expect(screen.getByTestId("organiser-price-change-refusal").textContent).toBe("The group organiser is cancelling this group.");
+    expect(screen.queryByText(/Additional charge/)).toBeNull();
+  });
+
+  it.each([
+    { refusal: "priceChangeRefusal", testId: "organiser-price-change-refusal" },
+    { refusal: "chargeRefusal", testId: "organiser-charge-refusal" },
+  ])("a refused increase ($refusal) never shows the joiner an 'Additional charge' they are never asked for", ({ refusal, testId }) => {
+    // With account credit applied, so the "Remaining to pay" line renders too.
+    renderQuote({ ...increase, billedToOrganiser: true, [refusal]: "The save refuses this change." } as QuoteResult, 2_000);
+
+    expect(screen.queryByText(/Additional charge/)).toBeNull();
+    expect(screen.queryByTestId("organiser-billed-notice")).toBeNull();
+    expect(screen.getByTestId(testId).textContent).toBe("The save refuses this change.");
+    expect(screen.getByTestId("remaining-to-pay").textContent).toBe("Remaining to pay$0.00");
+  });
+
+  it("control: a refused increase on the member's own booking still shows the additional charge", () => {
+    renderQuote({ ...increase, chargeRefusal: "The save refuses this change." } as QuoteResult);
+
+    expect(screen.getByText("Additional charge: $60.00")).toBeTruthy();
+    expect(screen.getByTestId("organiser-charge-refusal").textContent).toBe("The save refuses this change.");
   });
 
   it("control: any other increase is still an additional charge", () => {
