@@ -6,6 +6,7 @@ import { addUtcYears } from "@/lib/retention-calendar";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { hasMemberContactChangeMergeBlocker } from "@/lib/xero-contact-create-recovery";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
+import { ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES } from "@/lib/additional-payment-chase";
 import type { PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
 
 export type RetentionDb = Prisma.TransactionClient;
@@ -35,7 +36,7 @@ export async function formerMemberRetentionBlockers(db: RetentionDb, memberId: s
     db.booking.count({ where: {
       OR: [{ memberId }, { guests: { some: { memberId } } }],
       AND: [{ OR: [
-        { status: { notIn: ["CANCELLED", "COMPLETED"] } },
+        { status: { notIn: [...ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES, "COMPLETED"] } },
         buildAdditionalOwedWhere(),
         { payment: { is: { OR: [
           { status: { in: ["PENDING", "PROCESSING"] } },

@@ -14,7 +14,7 @@ vi.mock("@/lib/xero-contact-create-recovery", () => ({
 }));
 vi.mock("@/lib/member-dietary", () => ({ DIETARY_ERASURE_PATCH: { dietaryRequirements: null } }));
 vi.mock("@/lib/member-photo", () => ({ deleteOwnedMemberPhotoBlobs: vi.fn() }));
-vi.mock("@/lib/member-email-inheritance", () => ({ retireInheritedEmailCopies: vi.fn() }));
+vi.mock("@/lib/member-email-inheritance", () => ({ retireInheritedEmailCopies: vi.fn(), reconcileEmailInheritanceForMemberChange: vi.fn() }));
 
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import { runFormerMemberAnonymisationJob, runPersonalDataPruneJob } from "@/lib/privacy-retention-jobs";
@@ -23,6 +23,7 @@ import { createAuditLog } from "@/lib/audit";
 import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { addUtcYears } from "@/lib/retention-calendar";
+import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 
 type Row = Record<string, unknown> & { id: string };
 type Args = { where?: WhereInput; data?: Record<string, unknown>; take?: number; skip?: number; select?: Record<string, boolean> };
@@ -184,6 +185,31 @@ describe("privacy retention selection and execution", () => {
     ]));
     expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 0, blocked: 2 });
     expect(createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("allows ended bumped stays but still blocks their pending money", async () => {
+    const s = store();
+    s.settings.anonymiseMembersEnabled = true;
+    s.data.member.push(member("bumped-settled"), member("bumped-pending"));
+    s.data.booking.push(
+      { id: "settled", memberId: "bumped-settled", guests: [], status: "BUMPED", payment: null },
+      { id: "pending", memberId: "bumped-pending", guests: [], status: "BUMPED", payment: { status: "PENDING", recoveryOperations: [], manualRefundTasks: [] } },
+    );
+    const preview = await getPrivacyRetentionPreview({ db: s.db, now: NOW });
+    expect(preview.formerMembers.rows.map(row => row.id)).toEqual(["bumped-settled"]);
+    expect(preview.blockedMembers.rows.map(row => row.id)).toEqual(["bumped-pending"]);
+    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 1, blocked: 1 });
+  });
+
+  it("clears the inherited mailbox choice and flag before reconciling descendants", async () => {
+    const s = store();
+    s.settings.anonymiseMembersEnabled = true;
+    s.data.member.push(member("departing"), member("child", {
+      active: true, inheritEmailFromId: "departing", inheritEmailChoiceId: "departing", inheritParentEmail: true,
+    }));
+    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 1 });
+    expect(s.data.member[1]).toMatchObject({ inheritEmailFromId: null, inheritEmailChoiceId: null, inheritParentEmail: false });
+    expect(reconcileEmailInheritanceForMemberChange).toHaveBeenCalledWith(s.db, ["departing"], { trigger: "lifecycle-eligibility-change" });
   });
 
   it("rechecks a changed application status inside the delete predicate", async () => {

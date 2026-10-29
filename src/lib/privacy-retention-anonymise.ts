@@ -7,7 +7,7 @@ import { lockMemberForAccountDeletionXeroFence, DELETED_ACCOUNT_PASSWORD_HASH } 
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
-import { retireInheritedEmailCopies } from "@/lib/member-email-inheritance";
+import { reconcileEmailInheritanceForMemberChange, retireInheritedEmailCopies } from "@/lib/member-email-inheritance";
 import { formerMemberRetentionBlockers } from "@/lib/privacy-retention-selection";
 import { createAuditLog } from "@/lib/audit";
 
@@ -43,7 +43,10 @@ export async function anonymiseFormerMember(
   await retireInheritedEmailCopies(tx, { id, email: member.email });
   await tx.member.updateMany({
     where: { OR: [{ inheritEmailFromId: id }, { inheritEmailChoiceId: id }] },
-    data: { inheritEmailFromId: null, inheritEmailChoiceId: null },
+    data: { inheritEmailFromId: null, inheritEmailChoiceId: null, inheritParentEmail: false },
+  });
+  await reconcileEmailInheritanceForMemberChange(tx, [id], {
+    trigger: "lifecycle-eligibility-change",
   });
   await tx.xeroObjectLink.updateMany({
     where: { localModel: "Member", localId: id, xeroObjectType: "CONTACT", active: true },

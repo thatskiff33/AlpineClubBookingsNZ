@@ -50,6 +50,11 @@ function payloadFields(expression: ts.Expression, seen = new Set<ts.Node>()): Fi
       else if (ts.isPropertyAssignment(property)) {
         const name = key(property.name);
         if (name === "active" || name === "cancelledAt" || name === "leavingDate") result[name].push(property.initializer);
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        const name = property.name.text;
+        // A computed lifecycle value may deactivate; classify it conservatively
+        // just like `active: enabled`, rather than hiding the writer entirely.
+        if (name === "active" || name === "cancelledAt" || name === "leavingDate") result[name].push(property.name);
       }
     }
   } else if (ts.isIdentifier(expression)) {
@@ -163,6 +168,8 @@ describe("Member deactivation writers record the departure in the same write (#4
 
   it.each([
     "tx.member.update({ where: { id }, data: { active: false } });",
+    "const active = false; tx.member.update({ data: { active } });",
+    "const cancelledAt = day; tx.member.update({ data: { cancelledAt } });",
     "const alias = { active: enabled }; const payload = { ...alias }; tx.member.updateMany({ data: payload });",
     "let patch = {}; patch.active = false; tx.member.update({ data: patch });",
     "const patch = {}; patch['active'] = false; tx.member.update({ data: patch });",
