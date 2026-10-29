@@ -147,7 +147,7 @@ describe("privacy retention selection and execution", () => {
     const s = store();
     s.settings.anonymiseMembersEnabled = true;
     s.data.member.push(member("former"));
-    const payment = { id: "payment", status: "PAID", additionalPaymentStatus: null, recoveryOperations: [], manualRefundTasks: [], stripePaymentIntentId: "pi-kept", xeroInvoiceId: "invoice-kept" };
+    const payment = { id: "payment", status: "SUCCEEDED", additionalAmountCents: 0, additionalPaymentStatus: null, recoveryOperations: [], manualRefundTasks: [], stripePaymentIntentId: "pi-kept", xeroInvoiceId: "invoice-kept" };
     s.data.booking.push({ id: "booking", memberId: "former", status: "COMPLETED", guests: [], payment });
     s.data.bookingGuest.push({ id: "guest", memberId: "former", firstName: "Former", lastName: "Person", dietaryRequirements: "Sensitive" });
     s.data.passwordResetToken.push({ id: "reset", memberId: "former" });
@@ -183,6 +183,24 @@ describe("privacy retention selection and execution", () => {
     s.hooks.beforeApplicationDelete = () => { s.data.memberApplication[0].status = "APPROVED"; };
     expect(await runPersonalDataPruneJob({ db: s.db, now: NOW })).toMatchObject({ deletedApplications: 0 });
     expect(s.data.memberApplication[0].status).toBe("APPROVED");
+  });
+
+  it.each([null, "FAILED"])("blocks a completed stay with an unpaid addition (%s)", async (additionalPaymentStatus) => {
+    const s = store();
+    s.settings.anonymiseMembersEnabled = true;
+    s.data.member.push(member("still-owes"));
+    s.data.booking.push({
+      id: "completed", memberId: "still-owes", guests: [], status: "COMPLETED",
+      payment: { status: "SUCCEEDED", additionalAmountCents: 1000, additionalPaymentStatus, recoveryOperations: [], manualRefundTasks: [] },
+    });
+    const preview = await getPrivacyRetentionPreview({ db: s.db, now: NOW });
+    expect(preview.formerMembers.count).toBe(0);
+    expect(preview.blockedMembers.rows).toEqual([
+      { id: "still-owes", date: BEFORE, reasons: ["open booking or booking money"] },
+    ]);
+    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 0, blocked: 1 });
+    expect(s.data.member[0].deletedAt).toBeNull();
+    expect(createAuditLog).not.toHaveBeenCalled();
   });
 
   it("a lost anonymisation claim runs no token, photo or audit side effects", async () => {

@@ -5,6 +5,7 @@ import { dateOnlyInstantOf } from "@/lib/club-time";
 import { addUtcYears } from "@/lib/retention-calendar";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { hasMemberContactChangeMergeBlocker } from "@/lib/xero-contact-create-recovery";
+import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 import type { PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
 
 export type RetentionDb = Prisma.TransactionClient;
@@ -35,6 +36,7 @@ export async function formerMemberRetentionBlockers(db: RetentionDb, memberId: s
       OR: [{ memberId }, { guests: { some: { memberId } } }],
       AND: [{ OR: [
         { status: { notIn: ["CANCELLED", "COMPLETED"] } },
+        buildAdditionalOwedWhere(),
         { payment: { is: { OR: [
           { status: { in: ["PENDING", "PROCESSING"] } },
           { additionalPaymentStatus: "PENDING" },

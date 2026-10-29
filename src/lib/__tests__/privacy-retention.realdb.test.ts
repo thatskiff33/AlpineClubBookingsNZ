@@ -51,6 +51,7 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
     for (const [suffix, leavingDate] of [
       ["member-old", "2019-06-30"], ["member-boundary", "2019-07-01"],
       ["member-inside", "2019-07-02"], ["member-undated", null], ["member-blocked", "2019-06-30"],
+      ["member-unpaid-addition", "2019-06-30"],
     ] as const) {
       await db.member.create({ data: {
         id: id(suffix), firstName: "Former", lastName: "Fixture", email: `${suffix}@example.invalid`,
@@ -69,13 +70,21 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
       id: id("booking-open"), memberId: id("member-blocked"), status: "CONFIRMED",
       checkIn: new Date("2026-08-01"), checkOut: new Date("2026-08-02"), totalPriceCents: 0, finalPriceCents: 0,
     } });
+    await db.booking.create({ data: {
+      id: id("booking-addition"), memberId: id("member-unpaid-addition"), status: "COMPLETED",
+      checkIn: new Date("2018-01-01"), checkOut: new Date("2018-01-02"), totalPriceCents: 1000, finalPriceCents: 2000,
+      payment: { create: {
+        id: id("payment-addition"), amountCents: 1000, status: "SUCCEEDED",
+        additionalAmountCents: 1000, additionalPaymentStatus: null,
+      } },
+    } });
   }, 30_000);
 
   afterAll(async () => {
     if (!db) return;
     try {
       await db.auditLog.deleteMany({ where: { entityId: { startsWith: PREFIX } } });
-      await db.payment.deleteMany({ where: { id: id("payment") } });
+      await db.payment.deleteMany({ where: { id: { in: [id("payment"), id("payment-addition")] } } });
       await db.booking.deleteMany({ where: { id: { startsWith: PREFIX } } });
       await db.member.deleteMany({ where: { id: { startsWith: PREFIX } } });
       await db.memberApplication.deleteMany({ where: { id: { startsWith: PREFIX } } });
@@ -98,6 +107,7 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
     expect(result.undatedMembers.rows).toEqual([{ id: id("member-undated"), date: null }]);
     expect(result.blockedMembers.rows).toEqual([
       { id: id("member-blocked"), date: new Date("2019-06-30"), reasons: ["open booking or booking money"] },
+      { id: id("member-unpaid-addition"), date: new Date("2019-06-30"), reasons: ["open booking or booking money"] },
     ]);
     expect(await prune({ db, now: NOW })).toMatchObject({ skipped: "disabled", deletedEmailLogs: 0, deletedApplications: 0 });
     expect(await anonymise({ db, now: NOW })).toMatchObject({ skipped: "disabled", anonymised: 0 });
@@ -118,7 +128,7 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
   it("anonymises exactly the previewed departure, preserving financial identities and undated profiles", async () => {
     const before = await preview({ db, now: NOW });
     await db.privacyRetentionSettings.update({ where: { id: "default" }, data: { anonymiseMembersEnabled: true } });
-    expect(await anonymise({ db, now: NOW })).toMatchObject({ anonymised: before.formerMembers.count, blocked: 1 });
+    expect(await anonymise({ db, now: NOW })).toMatchObject({ anonymised: before.formerMembers.count, blocked: 2 });
     expect(await db.member.findUnique({ where: { id: id("member-old") } })).toMatchObject({
       id: id("member-old"), firstName: "Deleted", lastName: "Member", deletedAt: NOW,
       xeroContactId: id("contact-member-old"), comments: null, phoneNumber: null, streetAddressLine1: null, dateOfBirth: null,
@@ -127,11 +137,11 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
       id: id("payment"), amountCents: 1000, status: "SUCCEEDED", xeroInvoiceId: id("invoice"),
       booking: { id: id("booking-settled"), memberId: id("member-old"), finalPriceCents: 1000 },
     });
-    for (const suffix of ["member-boundary", "member-inside", "member-undated", "member-blocked"]) {
+    for (const suffix of ["member-boundary", "member-inside", "member-undated", "member-blocked", "member-unpaid-addition"]) {
       expect(await db.member.findUnique({ where: { id: id(suffix) } })).toMatchObject({ firstName: "Former", deletedAt: null });
     }
     expect((await preview({ db, now: NOW })).undatedMembers.rows).toEqual(before.undatedMembers.rows);
-    expect(await anonymise({ db, now: NOW })).toMatchObject({ anonymised: 0, blocked: 1 });
+    expect(await anonymise({ db, now: NOW })).toMatchObject({ anonymised: 0, blocked: 2 });
     expect(await db.auditLog.count({ where: { entityId: id("member-old"), action: "privacy.retention.member_anonymised" } })).toBe(1);
   });
 });
