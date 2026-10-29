@@ -3,10 +3,6 @@
 New retention logic is in bounded modules. These additions connect it to existing
 registries and keep departure fields inside the lifecycle writes they describe.
 
-file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1309
-reason: The leaving-date write belongs in the existing atomic account deactivation payload; extracting two lines would separate it from active=false.
-
 file: src/app/api/admin/members/bulk-update/route.ts
 lines: 749
 reason: Departure stamping and the guarded update predicate must remain alongside the bulk mutation; the date-preservation helper is already shared.
