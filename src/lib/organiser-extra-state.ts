@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { asRecord } from "@/lib/xero-json";
+import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 
 export const ORGANISER_SHARE_RECEIPT_REASON = "organiser-combined-invoice-share";
@@ -18,7 +19,7 @@ export const ORGANISER_EXTRA_WAIVED_UNRAISED_CODE = "ORGANISER_EXTRA_WAIVED_BEFO
  */
 export async function organiserExtraWaivedBeforeRaised(db: Pick<Prisma.TransactionClient, "xeroSyncOperation">, bookingModificationId: string): Promise<boolean> {
   const row = await db.xeroSyncOperation.findFirst({
-    where: { localModel: "BookingModification", localId: bookingModificationId, queueType: "SUPPLEMENTARY_INVOICE", status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE },
+    where: { localModel: "BookingModification", localId: bookingModificationId, queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE, status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE },
     select: { id: true },
   });
   return row !== null;
@@ -63,7 +64,7 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
   const [links, issuedOrQueued, receipts, adjustments] = await Promise.all([
     db.xeroObjectLink.findMany({ where: { localModel: "BookingModification", localId: { in: ids }, role: "SUPPLEMENTARY_INVOICE", active: true }, select: { localId: true, xeroObjectId: true, metadata: true } }),
     db.xeroSyncOperation.findMany({
-      where: { localModel: "BookingModification", localId: { in: ids }, queueType: "SUPPLEMENTARY_INVOICE",
+      where: { localModel: "BookingModification", localId: { in: ids }, queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
         OR: [{ status: { notIn: ["SKIPPED", "RESOLVED"] } }, { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE }] },
       select: { id: true, localId: true, requestPayload: true, status: true, xeroObjectId: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
