@@ -1,6 +1,6 @@
 /** #4299: real money claims, with Xero represented only by inbound payloads. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { Invoice } from "xero-node";
+import { Invoice } from "xero-node";
 import type { Prisma } from "@prisma/client";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { readOrganiserExtraReduction, readOrganiserExtraState } from "@/lib/organiser-extra-state";
@@ -18,7 +18,7 @@ vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: vi.fn(async () => ({ tenantId: "fake-tenant", xero: { accountingApi: {
     getInvoice: vi.fn(async (_tenant: string, invoiceID: string) => {
       const paid = (xero.paidCents[invoiceID] ?? 0) / 100;
-      return { body: { invoices: [{ invoiceID, invoiceNumber: invoiceID, contact: { contactID: "organiser" }, amountPaid: paid, amountDue: 0, total: paid, status: "PAID" } as Invoice] } };
+      return { body: { invoices: [{ invoiceID, invoiceNumber: invoiceID, contact: { contactID: "organiser" }, amountPaid: paid, amountDue: 0, total: paid, status: Invoice.StatusEnum.PAID } as Invoice] } };
     }),
   } } })),
   callXeroApi: vi.fn(async (call: () => Promise<unknown>) => call()),
@@ -261,7 +261,7 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     const overlapped = await runWaiversConcurrently(1, true);
     expect(await waiversSucceeded()).toEqual([]);
     // Which waiver takes the lock first decides the split, never the total.
-    expect([...(await handBacks())].sort((a, b) => a - b)).toEqual(handBackCents);
+    expect([...(await handBacks())].sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(handBackCents);
     const raced = await racedRows();
     expect(raced.every((plan) => plan.racedPlanScopeId === `${R}-cancel`)).toBe(true);
     expect(raced.reduce((sum, plan) => sum + (plan.priceBasisCents ?? 0), 0)).toBe(2 * extraCents);
@@ -271,7 +271,7 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
 
     // A stale-claim retry of both waivers reserves nothing more.
     await runWaiversConcurrently(2);
-    expect([...(await handBacks())].sort((a, b) => a - b)).toEqual(handBackCents);
+    expect([...(await handBacks())].sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(handBackCents);
   }, 60_000);
 
   // One $60 extra ($50 + $10 fee), a 50% reduction waiving $30 of it and then a 25% cancel. Had the
