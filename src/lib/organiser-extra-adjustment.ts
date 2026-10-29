@@ -10,7 +10,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
-import { bindOrganiserExtraRefundToHandBack, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
+import { bindOrganiserExtraRefundToHandBack, hasOrganiserExtraReservation, reserveOrganiserExtraNetting } from "@/lib/organiser-extra-netting";
 import { organiserExtraPaidPriceCents, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
 import { calculateRefundAmount } from "@/lib/policies/cancellation";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
@@ -197,6 +197,15 @@ function racedCashRefundCents(basisCents: number, payload: Pick<OrganiserExtraAd
   return calculateRefundAmount(basisCents, 0, [frozenTier], "card").refundAmountCents;
 }
 
+/**
+ * Cash that arrived while this waiver was queued is refunded at the plan's
+ * tier. N1 (fix delta): measured per PLAN, not per waiver - every waiver of
+ * one cancel or reduction shares its fixed-fee remainder, so the refund is the
+ * tier over ALL the raced paid price of the plan's waivers, less every refund
+ * already reserved for it. Each waiver's raced basis is therefore recorded even
+ * when it refunds nothing yet (a 0 refund row), or a second waiver could not
+ * count it. Legacy rows (before `racedPlanScopeId`) are read per operation.
+ */
 async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPayload, cashCents: number, waivedCentsNowPaid: number, operationId: string): Promise<void> {
   if (!payload.modificationId || cashCents <= payload.cashAtPlanCents || waivedCentsNowPaid <= 0) return;
   const modificationId = payload.modificationId;
@@ -208,21 +217,34 @@ async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPaylo
   });
   const newlyPaidPriceCents = Math.max(0, organiserExtraPaidPriceCents(asPaid(cashCents)) - organiserExtraPaidPriceCents(asPaid(payload.cashAtPlanCents)));
   const racedBasisCents = Math.min(waivedCentsNowPaid, newlyPaidPriceCents);
-  const racedRefundCents = racedCashRefundCents(racedBasisCents, payload);
-  if (racedRefundCents <= 0) return;
+  if (racedBasisCents <= 0) return;
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const scopeId = `racing-cash:${operationId}:${cashCents}`;
+    if (await hasOrganiserExtraReservation(tx, payload.bookingId, scopeId)) return;
     const occurrenceKey = editRefundHandBackOccurrenceKey(`organiser-extra-racing-cash:${operationId}:${cashCents}`);
     const previous = await tx.manualRefundTask.findUnique({ where: { occurrenceKey }, select: { id: true } });
     if (previous) return;
     const priorPlans = await tx.xeroSyncOperation.findMany({ where: { queueType: payload.queueType, localId: payload.bookingId }, select: { requestPayload: true } });
     const reserved = priorPlans
       .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload))
-      .filter((plan) => plan?.purpose === "refund" && plan.scopeId.startsWith(`racing-cash:${operationId}:`));
-    const additionalBasisCents = Math.max(0, racedBasisCents - reserved.reduce((sum, plan) => sum + (plan?.priceBasisCents ?? 0), 0));
-    // Measured on all the raced cash so far, so the frozen fee remainder is charged once.
-    const additionalRefundCents = Math.max(0, racedRefundCents - reserved.reduce((sum, plan) => sum + (plan?.amountCents ?? 0), 0));
-    if (additionalRefundCents <= 0) return;
+      .filter((plan): plan is OrganiserExtraAdjustmentPayload => plan?.purpose === "refund" &&
+        (plan.racedPlanScopeId === payload.scopeId || (!plan.racedPlanScopeId && plan.scopeId.startsWith(`racing-cash:${operationId}:`))));
+    const basisOf = (rows: OrganiserExtraAdjustmentPayload[]) => rows.reduce((sum, plan) => sum + (plan.priceBasisCents ?? 0), 0);
+    const thisWaiverBasisCents = basisOf(reserved.filter((plan) => plan.modificationId === modificationId));
+    const additionalBasisCents = Math.max(0, racedBasisCents - thisWaiverBasisCents);
+    // No new raced price on this waiver: nothing new to refund (a refund is never reserved without its basis).
+    if (additionalBasisCents <= 0) return;
+    // This waiver's raced price now, plus what the plan's other waivers recorded.
+    const planBasisCents = racedBasisCents + basisOf(reserved.filter((plan) => plan.modificationId !== modificationId));
+    const additionalRefundCents = Math.max(0, racedCashRefundCents(planBasisCents, payload) - reserved.reduce((sum, plan) => sum + plan.amountCents, 0));
+    const netting = { state: { bookingId: payload.bookingId, invoices: [asPaid(cashCents)] }, scopeId, racedPlanScopeId: payload.scopeId,
+      reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage };
+    if (additionalRefundCents <= 0) {
+      // Nothing to hand back yet: record the basis, so the plan's next raced cash counts it.
+      await reserveOrganiserExtraNetting(tx, netting);
+      return;
+    }
     const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: payload.bookingId }, select: { id: true } });
     const task = await tx.manualRefundTask.create({
       data: {
@@ -232,11 +254,7 @@ async function reserveCashThatRacedWaiver(payload: OrganiserExtraAdjustmentPaylo
       },
       select: { id: true },
     });
-    const scopeId = `racing-cash:${operationId}:${cashCents}`;
-    await reserveOrganiserExtraNetting(tx, {
-      state: { bookingId: payload.bookingId, invoices: [asPaid(cashCents)] }, scopeId,
-      reductionCents: 0, refundAmountCents: additionalRefundCents, refundBasisCents: additionalBasisCents, refundPercentage: payload.refundPercentage,
-    });
+    await reserveOrganiserExtraNetting(tx, netting);
     await bindOrganiserExtraRefundToHandBack(tx, { bookingId: payload.bookingId, handBackTaskId: task.id, scopeId });
   });
 }

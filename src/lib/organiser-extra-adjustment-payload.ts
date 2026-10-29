@@ -15,6 +15,8 @@ export interface OrganiserExtraAdjustmentPayload {
   refundPercentage: number;
   /** N1: the plan's tier fixed fee its own refund did not absorb; raced cash pays it before any hand-back. */
   fixedFeeRemainderCents?: number;
+  /** N1 (fix delta): a raced-cash refund's source plan, so raced cash is measured, and its fee remainder charged, once per plan. */
+  racedPlanScopeId?: string;
   /** A refund is released only once this bank-transfer hand-back is completed. */
   handBackTaskId?: string;
 }
@@ -36,6 +38,7 @@ export function readOrganiserExtraAdjustmentPayload(value: unknown): OrganiserEx
   return { queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId, scopeId, modificationId, invoiceId,
     amountCents: p.amountCents, purpose: p.purpose, ...(typeof p.priceBasisCents === "number" ? { priceBasisCents: p.priceBasisCents } : {}), cashAtPlanCents: p.cashAtPlanCents, refundPercentage: p.refundPercentage,
     ...(typeof p.fixedFeeRemainderCents === "number" ? { fixedFeeRemainderCents: p.fixedFeeRemainderCents } : {}),
+    ...(readString(p.racedPlanScopeId) ? { racedPlanScopeId: readString(p.racedPlanScopeId)! } : {}),
     ...(readString(p.handBackTaskId) ? { handBackTaskId: readString(p.handBackTaskId)! } : {}),
   };
 }

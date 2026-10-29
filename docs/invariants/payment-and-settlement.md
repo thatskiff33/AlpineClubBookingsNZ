@@ -3963,11 +3963,11 @@ An organiser-paid internet-banking group's place bills each positive edit net
 (price plus recorded late-change fee) to the organiser on one supplementary
 invoice anchored on its `BookingModification` (#4299);
 `resolveOrganiserBilling` resolves payer and combined invoice.
-The joiner is asked for nothing; emails, responses and the quote say the
+The joiner is asked for nothing; emails, responses and quote say the
 organiser is invoiced (`billedToOrganiserCents`). Only an increase with no
 combined invoice is refused; an outage leaves the queued invoice retryable. No
 payment is posted to Xero and no primary-invoice update queued: the place never
-has a primary invoice; its enqueue and `createXeroInvoiceForBooking` refuse one. The
+has one; its enqueue and `createXeroInvoiceForBooking` refuse it. The
 organiser's notice follows the organiser booking's "No emails" switch, not the
 admin's notify-member choice, and names only what reserved waivers leave owed.
 
@@ -3978,8 +3978,8 @@ fully released invoice with no payment or credit
 (`classifyGroupSettlementInvoiceState`) is voided, else credited. Cash pays the
 fee first; only paid price joins the refundable share at the policy percentage.
 Cash racing a waiver is refunded at the edit's tier, less any fixed fee the
-plan left unabsorbed. Cancels, group
-cancel included, release every unpaid extra, exclude paid fees and record
+plan left unabsorbed, once per plan. Cancels, group
+cancels included, release every unpaid extra, exclude paid fees and record
 refunds on the payment's rows. Refund notes (combined invoice for the share,
 extra invoice for extra cash) wait for their bound bank-transfer hand-back. Xero
 cash is imported idempotently; reversed refunded cash raises a treasurer review.

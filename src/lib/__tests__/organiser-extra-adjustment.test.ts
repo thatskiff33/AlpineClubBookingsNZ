@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   complete: vi.fn(), save: vi.fn(), start: vi.fn(), settle: vi.fn(),
   updateCreditNote: vi.fn(), task: vi.fn(),
   plans: [] as { requestPayload: unknown }[],
+  // N1 fix delta: each extra's own change (default: +$50 with a $10 fee).
+  modifications: {} as Record<string, { priceDiffCents: number; changeFeeCents: number }>,
 }));
 const transactionStore = {
   $executeRaw: vi.fn(),
@@ -24,7 +26,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   xeroObjectLink: { findMany: vi.fn(async () => []) },
   payment: { findUniqueOrThrow: vi.fn(async () => ({ id: "child-payment" })) },
   manualRefundTask: { findUniqueOrThrow: mocks.task },
-  bookingModification: { findUniqueOrThrow: vi.fn(async () => ({ priceDiffCents: 5_000, changeFeeCents: 1_000 })) },
+  bookingModification: { findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => mocks.modifications[where.id] ?? { priceDiffCents: 5_000, changeFeeCents: 1_000 }) },
   $transaction: vi.fn(async (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => run(transactionStore as unknown as Prisma.TransactionClient)),
 } }));
 vi.mock("@/lib/xero-api-client", () => ({
@@ -55,6 +57,7 @@ describe("organiser extra adjustment provider execution", () => {
     for (const fn of Object.values(mocks)) if (vi.isMockFunction(fn)) fn.mockReset();
     mocks.operation = { xeroObjectId: null, correlationKey: "scope" };
     mocks.plans = [];
+    mocks.modifications = {};
     mocks.start.mockImplementation(async (input: { requestPayload: unknown }) => { mocks.plans.push(input); return { id: "raced-refund" }; });
     mocks.task.mockResolvedValue({ id: "hand-back", status: "COMPLETED" });
     mocks.settle.mockResolvedValue({ outcome: { refundPaymentErr: null, refundPaymentResponseBody: { paymentID: "bank-refund" }, refundPaymentSkipReason: null } });
@@ -143,6 +146,24 @@ describe("organiser extra adjustment provider execution", () => {
     await executeOrganiserExtraAdjustment(payload({ amountCents: 5_000, cashAtPlanCents: 1_000, refundPercentage: 25, ...(fixedFeeRemainderCents ? { fixedFeeRemainderCents } : {}) }), claim).catch(() => undefined);
     if (handBackCents === null) expect(mocks.task).not.toHaveBeenCalled();
     else expect(mocks.task).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amountCents: handBackCents }) }));
+  });
+  it.each([
+    { extraCents: 20_000, handBacks: [2_500, 5_000] }, // policy: (10000 + 40000) x 25% - 5000 = 7500
+    { extraCents: 8_000, handBacks: [1_500] }, // policy: (10000 + 16000) x 25% - 5000 = 1500
+  ])("N1 fix delta: two raced extras of $extraCents under one plan pay its $25 fee remainder once: hand-backs $handBacks", async ({ extraCents, handBacks }) => {
+    // 25% tier, $50 fee, $100 basis: the plan refunded $0 and left $25 of its fee unabsorbed.
+    const plan = { scopeId: "cancel", refundPercentage: 25, fixedFeeRemainderCents: 2_500, cashAtPlanCents: 0, amountCents: extraCents };
+    for (const id of ["a", "b"]) mocks.modifications[`increase-${id}`] = { priceDiffCents: extraCents, changeFeeCents: 0 };
+    for (const id of ["a", "b"]) {
+      // Each extra was paid in full while its waiver was queued.
+      mocks.invoice = { ...mocks.invoice, invoiceID: `extra-${id}`, amountPaid: extraCents / 100, amountDue: 0, total: extraCents / 100 };
+      await executeOrganiserExtraAdjustment(payload({ ...plan, modificationId: `increase-${id}`, invoiceId: `extra-${id}` }), { ...claim, id: `waiver-${id}` }).catch(() => undefined);
+    }
+    expect(mocks.task.mock.calls.map(([input]) => (input as { data: { amountCents: number } }).data.amountCents)).toEqual(handBacks);
+    // Every raced price is recorded against the plan, a $0 hand-back included.
+    const raced = mocks.plans.map((row) => row.requestPayload as { racedPlanScopeId?: string; priceBasisCents?: number });
+    expect(raced.every((row) => row.racedPlanScopeId === "cancel")).toBe(true);
+    expect(raced.reduce((sum, row) => sum + (row.priceBasisCents ?? 0), 0)).toBe(2 * extraCents);
   });
   it("refuses an unreadable refreshed invoice before allocating a waiver", async () => {
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [mocks.invoice] } }).mockResolvedValueOnce({ body: { invoices: [] } });
