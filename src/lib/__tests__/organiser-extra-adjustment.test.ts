@@ -165,6 +165,46 @@ describe("organiser extra adjustment provider execution", () => {
     expect(raced.every((row) => row.racedPlanScopeId === "cancel")).toBe(true);
     expect(raced.reduce((sum, row) => sum + (row.priceBasisCents ?? 0), 0)).toBe(2 * extraCents);
   });
+  describe("item 5: one $60 extra ($50 + $10 fee) waived by a 50% reduction, then a 25% cancel, the organiser paying all $60 in between", () => {
+    // Had the $60 arrived before the reduction, it pays the fee first: the reduction refunds its $30 at 50% ($15),
+    // the cancel the $20 of price left at 25% ($5), and the $10 fee is kept. Cash is refunded once, never twice.
+    const reduction = payload({ scopeId: "reduction", amountCents: 3_000, cashAtPlanCents: 0, refundPercentage: 50 });
+    const cancel = payload({ scopeId: "cancel", amountCents: 3_000, cashAtPlanCents: 0, refundPercentage: 25 });
+    const handBacks = () => mocks.task.mock.calls.map(([input]) => (input as { data: { amountCents: number } }).data.amountCents);
+    const racedBasisCents = () => mocks.plans.reduce((sum, row) => sum + ((row.requestPayload as { priceBasisCents?: number }).priceBasisCents ?? 0), 0);
+    beforeEach(() => { mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID }; });
+
+    it("both waivers queued when the cash lands: $15 then $5, and only the $50 of paid price is released", async () => {
+      await executeOrganiserExtraAdjustment(reduction, { ...claim, id: "reduction-waiver" });
+      await executeOrganiserExtraAdjustment(cancel, { ...claim, id: "cancel-waiver" });
+      expect(handBacks()).toEqual([1_500, 500]);
+      expect(racedBasisCents()).toBe(5_000);
+    });
+
+    it("the cancel's waiver runs first: still only the $50 of paid price is released, the fee never refunded", async () => {
+      await executeOrganiserExtraAdjustment(cancel, { ...claim, id: "cancel-waiver" });
+      await executeOrganiserExtraAdjustment(reduction, { ...claim, id: "reduction-waiver" });
+      expect(racedBasisCents()).toBe(5_000);
+    });
+
+    it("a waiver re-run on more raced cash counts its own earlier raced price once, never as another plan's release", async () => {
+      // $40 of the $60 paid when the $40 waiver (planned at $20 paid) first runs; all $60 when it runs again.
+      mocks.invoice = { ...mocks.invoice, amountPaid: 40, amountDue: 0, status: Invoice.StatusEnum.AUTHORISED };
+      await executeOrganiserExtraAdjustment(payload(), claim);
+      mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID };
+      await executeOrganiserExtraAdjustment(payload(), claim);
+      // $20 of newly paid price at 50%, then the other $20: $40 of the $50 (the $10 the plan saw paid is not raced).
+      expect(handBacks()).toEqual([1_000, 1_000]);
+      expect(racedBasisCents()).toBe(4_000);
+    });
+
+    it("the cancel saw the cash and refunded all $50 of paid price itself: the reduction's waiver refunds nothing more", async () => {
+      mocks.plans.push({ requestPayload: { ...payload({ scopeId: "cancel", purpose: "refund", amountCents: 1_250, priceBasisCents: 5_000, cashAtPlanCents: 6_000, refundPercentage: 25 }) } });
+      await executeOrganiserExtraAdjustment(reduction, { ...claim, id: "reduction-waiver" });
+      expect(mocks.task).not.toHaveBeenCalled();
+      expect(mocks.plans).toHaveLength(1);
+    });
+  });
   it("refuses an unreadable refreshed invoice before allocating a waiver", async () => {
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [mocks.invoice] } }).mockResolvedValueOnce({ body: { invoices: [] } });
     await expect(executeOrganiserExtraAdjustment(payload(), claim)).rejects.toThrow("unreadable");

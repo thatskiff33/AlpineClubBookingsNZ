@@ -5,7 +5,7 @@ import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-stat
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { asRecord } from "@/lib/xero-json";
 import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
-import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
+import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 
 export const ORGANISER_SHARE_RECEIPT_REASON = "organiser-combined-invoice-share";
 export const ORGANISER_EXTRA_RECEIPT_REASON = "organiser-extra-invoice-cash";
@@ -52,6 +52,10 @@ export function effectiveOrganiserPaidChangeFeeCents(recordedFeeCents: number, s
 export function organiserExtraPaidPriceCents(invoice: OrganiserExtraInvoice): number {
   return Math.max(0, Math.min(invoice.priceCents, invoice.cashCents - invoice.feeCents) - invoice.releasedPriceCents);
 }
+/** The paid price of one change's extra that every plan's refunds - policy or raced cash - have released. */
+export function organiserExtraReleasedPriceCents(plans: readonly (OrganiserExtraAdjustmentPayload | null)[], modificationId: string): number {
+  return plans.reduce((sum, plan) => sum + (plan?.modificationId === modificationId && plan.purpose === "refund" ? plan.priceBasisCents ?? plan.amountCents : 0), 0);
+}
 
 /** All reads are local, after the caller's existing global money lock. */
 export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: string): Promise<OrganiserExtraState> {
@@ -88,7 +92,7 @@ export async function readOrganiserExtraState(db: OrganiserExtraDb, bookingId: s
     invoices.push({ modificationId: modification.id, invoiceId: link?.xeroObjectId ?? null, priceCents, feeCents,
       cashCents: receipts.filter((r) => r.xeroInvoiceId === link?.xeroObjectId).reduce((s, r) => s + r.amountCents, 0),
       waivedCents: waivedUnraisedCents + plans.reduce((s, p) => s + (p?.purpose === "waive" ? p.amountCents : 0), 0),
-      releasedPriceCents: plans.reduce((s, p) => s + (p?.purpose === "refund" ? p.priceBasisCents ?? p.amountCents : 0), 0),
+      releasedPriceCents: organiserExtraReleasedPriceCents(plans, modification.id),
       refundedCents: plans.reduce((s, p) => s + (p?.purpose === "refund" ? p.amountCents : 0), 0),
     });
   }

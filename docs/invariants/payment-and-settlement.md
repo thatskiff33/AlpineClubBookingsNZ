@@ -4014,8 +4014,8 @@ refuse it); a `FAILED` one keeps the reserved waiver. A
 fully released invoice with no payment or credit
 (`classifyGroupSettlementInvoiceState`) is voided, else credited. Cash pays the
 fee first; only paid price joins the refundable share at the policy percentage.
-Cash racing a waiver is refunded at the edit's tier, less any fixed fee the
-plan left unabsorbed, once per plan. Cancels, group
+Cash racing a waiver is refunded once, at its plan's tier, less any fixed fee
+that plan left unabsorbed. Cancels, group
 cancels included, release every unpaid extra, exclude paid fees and record
 refunds on the payment's rows. Refund notes (combined invoice for the share,
 extra invoice for extra cash) wait for their bound bank-transfer hand-back. Xero

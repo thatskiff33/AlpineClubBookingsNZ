@@ -1,9 +1,10 @@
 /** #4299: real money claims, with Xero represented only by inbound payloads. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Invoice } from "xero-node";
+import type { Prisma } from "@prisma/client";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
-import { readOrganiserExtraState } from "@/lib/organiser-extra-state";
-import { reserveOrganiserExtraCancellation, bindOrganiserExtraRefundToHandBack, releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting";
+import { readOrganiserExtraReduction, readOrganiserExtraState } from "@/lib/organiser-extra-state";
+import { reserveOrganiserExtraCancellation, bindOrganiserExtraRefundToHandBack, releaseOrganiserExtraRefundNotes, settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 
 // Xero is only the extra invoices' live figures: what each one shows as paid.
@@ -137,10 +138,11 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
 });
 
 /**
- * #4299 N1 (fix delta): raced cash is reserved once per PLAN, under the real
- * global money lock, however the plan's waivers interleave.
+ * #4299: cash that races a queued waiver is refunded once - once per PLAN
+ * (N1 fix delta), under the real global money lock however the plan's waivers
+ * interleave, and once across plans that waive one invoice.
  */
-(RUN ? describe : describe.skip)("organiser extra raced cash, one plan's waivers - real PostgreSQL", () => {
+(RUN ? describe : describe.skip)("organiser extra raced cash - real PostgreSQL", () => {
   const R = "race-4299-raced";
   const ids = ["a", "b"] as const;
   const booking = `${R}-child`;
@@ -159,8 +161,9 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     await prisma.member.deleteMany({ where: { id: `${R}-member` } });
     await prisma.lodge.deleteMany({ where: { id: `${R}-lodge` } });
   }
-  /** A place with two unpaid organiser extras of `extraCents` each (no fee), and one cancel plan waiving both. */
-  async function seed(extraCents: number) {
+  /** A place whose organiser paid $100, with unpaid organiser extras (`ids` order, oldest first). */
+  async function seed(extras: { priceCents: number; feeCents: number }[]) {
+    xero.cashImported = false;
     await cleanup();
     const member = `${R}-member`;
     await prisma.member.create({ data: { id: member, email: `${R}@example.invalid`, firstName: "Raced", lastName: "Cash", passwordHash: "not-a-real-password", ageTier: "ADULT" } });
@@ -171,27 +174,39 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     await prisma.groupBookingSettlement.create({ data: { id: `${R}-settlement`, groupBookingId: `${R}-group`, amountCents: 10_000, source: "INTERNET_BANKING", status: "SUCCEEDED", xeroInvoiceId: `${R}-combined` } });
     await prisma.booking.create({ data: { ...stay, id: booking, parentBookingId: `${R}-organiser`, organiserSettled: true } });
     await prisma.payment.create({ data: { id: `${R}-payment`, bookingId: booking, amountCents: 10_000, source: "INTERNET_BANKING", status: "SUCCEEDED" } });
-    for (const id of ids) {
-      await prisma.bookingModification.create({ data: { id: `${R}-mod-${id}`, bookingId: booking, memberId: member, modificationType: "DATE_CHANGE", previousData: {}, newData: {}, priceDiffCents: extraCents, changeFeeCents: 0, createdAt: new Date(`2026-06-0${id === "a" ? 1 : 2}T00:00:00.000Z`) } });
-      await prisma.xeroObjectLink.create({ data: { localModel: "BookingModification", localId: `${R}-mod-${id}`, xeroObjectType: "INVOICE", xeroObjectId: `${R}-invoice-${id}`, role: "SUPPLEMENTARY_INVOICE", metadata: { organiserBilling: true, priceDiffCents: extraCents, changeFeeCents: 0 } } });
+    for (const [index, { priceCents, feeCents }] of extras.entries()) {
+      const id = ids[index]!;
+      await prisma.bookingModification.create({ data: { id: `${R}-mod-${id}`, bookingId: booking, memberId: member, modificationType: "DATE_CHANGE", previousData: {}, newData: {}, priceDiffCents: priceCents, changeFeeCents: feeCents, createdAt: new Date(Date.UTC(2026, 5, 1 + index)) } });
+      await prisma.xeroObjectLink.create({ data: { localModel: "BookingModification", localId: `${R}-mod-${id}`, xeroObjectType: "INVOICE", xeroObjectId: `${R}-invoice-${id}`, role: "SUPPLEMENTARY_INVOICE", metadata: { organiserBilling: true, priceDiffCents: priceCents, changeFeeCents: feeCents } } });
       xero.paidCents[`${R}-invoice-${id}`] = 0;
     }
-    // A 25% tier with a $50 fixed fee over a $100 basis: the plan refunds nothing and leaves $25 of its fee unabsorbed.
-    await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      await reserveOrganiserExtraCancellation(tx, { bookingId: booking, scopeId: `${R}-cancel`, refundAmountCents: 0, refundBasisCents: 10_000, refundPercentage: 25, fixedFeeCents: 5_000 });
-    });
+  }
+  /** One plan, reserved as the money claim does: under the global lock. */
+  const plan = (reserve: (tx: Prisma.TransactionClient) => Promise<void>) => prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await reserve(tx);
+  });
+  /** The organiser pays the extra in full, and the bank feed imports it. */
+  async function payInFull(id: (typeof ids)[number], cents: number) {
+    xero.paidCents[`${R}-invoice-${id}`] = cents;
+    const { syncOrganiserExtraInvoiceCash } = await import("@/lib/organiser-extra-receipt");
+    await syncOrganiserExtraInvoiceCash({ invoiceID: `${R}-invoice-${id}`, amountPaid: cents / 100, amountDue: 0, total: cents / 100 } as Invoice);
+  }
+  /** The plans' queued waivers, oldest plan first, claimed as the outbox claims them. */
+  async function claimWaivers(attempt: number) {
+    const waivers = (await prisma.xeroSyncOperation.findMany({ where: { localId: booking, queueType: "ORGANISER_EXTRA_ADJUSTMENT" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }))
+      .filter((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)?.purpose === "waive");
+    const startedAt = new Date(Date.UTC(2026, 6, 1, 0, attempt));
+    await prisma.xeroSyncOperation.updateMany({ where: { id: { in: waivers.map((row) => row.id) } }, data: { status: "RUNNING", startedAt } });
+    return waivers.map((row) => () => execute(readOrganiserExtraAdjustmentPayload(row.requestPayload)!, { id: row.id, startedAt }));
   }
   /**
    * Claims every queued waiver of the plan, as the outbox does, and runs them all at once. With
    * `barrier`, the global lock is held until both waivers queue on it, so their reservations overlap.
    */
   async function runWaiversConcurrently(attempt: number, barrier = false) {
-    const waivers = (await prisma.xeroSyncOperation.findMany({ where: { localId: booking, queueType: "ORGANISER_EXTRA_ADJUSTMENT" } }))
-      .filter((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)?.purpose === "waive");
+    const waivers = await claimWaivers(attempt);
     expect(waivers).toHaveLength(2);
-    const startedAt = new Date(Date.UTC(2026, 6, 1, 0, attempt));
-    await prisma.xeroSyncOperation.updateMany({ where: { id: { in: waivers.map((row) => row.id) } }, data: { status: "RUNNING", startedAt } });
     let release = () => {};
     const holding = new Promise<void>((resolve) => { release = resolve; });
     let locked = () => {};
@@ -202,7 +217,7 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
       await holding;
     }, { timeout: 30_000 }) : Promise.resolve();
     if (barrier) await isLocked;
-    const running = Promise.all(waivers.map((row) => execute(readOrganiserExtraAdjustmentPayload(row.requestPayload)!, { id: row.id, startedAt })));
+    const running = Promise.all(waivers.map((run) => run()));
     // Bounded by polls, not the clock: both waivers queue on the key the holder has.
     let bothQueued = false;
     for (let poll = 0; barrier && !bothQueued && poll < 400; poll += 1) {
@@ -214,11 +229,16 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     release();
     await holder;
     await running;
-    // Both completed: nothing was left due, so neither raised a credit note.
-    expect((await prisma.xeroSyncOperation.findMany({ where: { id: { in: waivers.map((row) => row.id) } } })).map((row) => row.status)).toEqual(["SUCCEEDED", "SUCCEEDED"]);
     return bothQueued;
   }
-  const handBacks = async () => (await prisma.manualRefundTask.findMany({ where: { bookingId: booking } })).map((task) => task.amountCents).sort((a, b) => a - b);
+  /** Every hand-back raised, oldest first. */
+  const handBacks = async () => (await prisma.manualRefundTask.findMany({ where: { bookingId: booking }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] })).map((task) => task.amountCents);
+  /** Raced cash's refund rows: every one names the plan whose waiver it met. */
+  const racedRows = async () => (await prisma.xeroSyncOperation.findMany({ where: { localId: booking, queueType: "ORGANISER_EXTRA_ADJUSTMENT" } }))
+    .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)!).filter((row) => row.racedPlanScopeId);
+  /** Every waiver completed with nothing left due, so none raised a credit note. */
+  const waiversSucceeded = async () => (await prisma.xeroSyncOperation.findMany({ where: { localId: booking, queueType: "ORGANISER_EXTRA_ADJUSTMENT", status: { not: "SUCCEEDED" } } }))
+    .filter((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)?.purpose === "waive");
 
   beforeAll(async () => {
     assertSafeRaceDbUrl(url, "organiser extra raced cash");
@@ -232,18 +252,17 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     { extraCents: 20_000, handBackCents: [2_500, 5_000], totalCents: 7_500 }, // (10000 + 40000) x 25% - 5000
     { extraCents: 8_000, handBackCents: [1_500], totalCents: 1_500 }, // (10000 + 16000) x 25% - 5000
   ])("two raced extras of $extraCents under one plan, run concurrently, hand back $totalCents in all, and a replay adds nothing", async ({ extraCents, handBackCents, totalCents }) => {
-    xero.cashImported = false;
-    await seed(extraCents);
-    // The organiser pays both extras in full while their waivers are queued; the bank feed imports it.
-    for (const id of ids) xero.paidCents[`${R}-invoice-${id}`] = extraCents;
-    const { syncOrganiserExtraInvoiceCash } = await import("@/lib/organiser-extra-receipt");
-    for (const id of ids) await syncOrganiserExtraInvoiceCash({ invoiceID: `${R}-invoice-${id}`, amountPaid: extraCents / 100, amountDue: 0, total: extraCents / 100 } as Invoice);
+    await seed([{ priceCents: extraCents, feeCents: 0 }, { priceCents: extraCents, feeCents: 0 }]);
+    // A 25% tier with a $50 fixed fee over a $100 basis: the plan refunds nothing and leaves $25 of its fee unabsorbed.
+    await plan((tx) => reserveOrganiserExtraCancellation(tx, { bookingId: booking, scopeId: `${R}-cancel`, refundAmountCents: 0, refundBasisCents: 10_000, refundPercentage: 25, fixedFeeCents: 5_000 }));
+    // The organiser pays both extras in full while their waivers are queued.
+    for (const id of ids) await payInFull(id, extraCents);
     xero.cashImported = true;
     const overlapped = await runWaiversConcurrently(1, true);
+    expect(await waiversSucceeded()).toEqual([]);
     // Which waiver takes the lock first decides the split, never the total.
-    expect(await handBacks()).toEqual(handBackCents);
-    const raced = (await prisma.xeroSyncOperation.findMany({ where: { localId: booking, queueType: "ORGANISER_EXTRA_ADJUSTMENT" } }))
-      .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)!).filter((plan) => plan.racedPlanScopeId);
+    expect([...(await handBacks())].sort((a, b) => a - b)).toEqual(handBackCents);
+    const raced = await racedRows();
     expect(raced.every((plan) => plan.racedPlanScopeId === `${R}-cancel`)).toBe(true);
     expect(raced.reduce((sum, plan) => sum + (plan.priceBasisCents ?? 0), 0)).toBe(2 * extraCents);
     expect(raced.reduce((sum, plan) => sum + plan.amountCents, 0)).toBe(totalCents);
@@ -252,6 +271,47 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
 
     // A stale-claim retry of both waivers reserves nothing more.
     await runWaiversConcurrently(2);
-    expect(await handBacks()).toEqual(handBackCents);
+    expect([...(await handBacks())].sort((a, b) => a - b)).toEqual(handBackCents);
+  }, 60_000);
+
+  // One $60 extra ($50 + $10 fee), a 50% reduction waiving $30 of it and then a 25% cancel. Had the
+  // organiser's $60 arrived before the reduction, it pays the fee first: the reduction refunds its $30 at
+  // 50% ($15), the cancel the $20 of price left at 25% ($5), and the fee is kept.
+  const reduceThenCancel = async (between?: () => Promise<void>) => {
+    await seed([{ priceCents: 5_000, feeCents: 1_000 }]);
+    await plan(async (tx) => settleOrganiserExtraReduction(tx, { reduction: await readOrganiserExtraReduction(tx, booking, 3_000), refundAmountCents: 0, refundBasisCents: 0, refundPercentage: 50 }));
+    await between?.();
+    // The cancel refunds the place at 25%: its $100 share, and whatever extra price the organiser has paid.
+    const paidExtraCents = Math.max(0, (await readOrganiserExtraState(prisma, booking)).invoices[0]!.cashCents - 1_000);
+    await plan((tx) => reserveOrganiserExtraCancellation(tx, { bookingId: booking, scopeId: `${R}-cancel`, refundAmountCents: (10_000 + paidExtraCents) / 4, refundBasisCents: 10_000 + paidExtraCents, refundPercentage: 25 }));
+  };
+
+  it("both plans' waivers queued when the $60 lands: hand-backs $15 and $5, $50 of paid price released once, and a replay adds nothing", async () => {
+    await reduceThenCancel();
+    await payInFull("a", 6_000);
+    xero.cashImported = true;
+    for (const attempt of [1, 2]) {
+      const waivers = await claimWaivers(attempt);
+      expect(waivers).toHaveLength(2);
+      for (const run of waivers) await run();
+      expect(await waiversSucceeded()).toEqual([]);
+      expect(await handBacks()).toEqual([1_500, 500]);
+    }
+    expect((await racedRows()).reduce((sum, row) => sum + (row.priceBasisCents ?? 0), 0)).toBe(5_000);
+  }, 60_000);
+
+  it("the cancel saw the $60 and refunded all $50 of paid price itself: the reduction's queued waiver refunds none of it again", async () => {
+    await reduceThenCancel(() => payInFull("a", 6_000));
+    // The cancel waived nothing (all paid) and released the extra's whole $50 at 25%.
+    const extraRefund = (await prisma.xeroSyncOperation.findMany({ where: { localId: booking, queueType: "ORGANISER_EXTRA_ADJUSTMENT" } }))
+      .map((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)!).filter((row) => row.scopeId === `${R}-cancel` && row.modificationId);
+    expect(extraRefund.map((row) => [row.purpose, row.priceBasisCents, row.amountCents])).toEqual([["refund", 5_000, 1_250]]);
+    xero.cashImported = true;
+    const waivers = await claimWaivers(1);
+    expect(waivers).toHaveLength(1);
+    await waivers[0]!();
+    expect(await waiversSucceeded()).toEqual([]);
+    expect(await handBacks()).toEqual([]);
+    expect(await racedRows()).toEqual([]);
   }, 60_000);
 });
