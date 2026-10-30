@@ -19,3 +19,9 @@ export const DEFAULT_PRIVACY_RETENTION_SETTINGS: PrivacyRetentionSettingsValues 
   anonymiseMembersEnabled: false,
   sentryReplayEnabled: false,
 };
+
+/** These settings can remove applications or member profiles. */
+export const MEMBERSHIP_RETENTION_FIELDS = new Set<keyof PrivacyRetentionSettingsValues>([
+  "rejectedApplicationRetentionYears", "formerMemberRetentionYears",
+  "pruneLogsAndApplicationsEnabled", "anonymiseMembersEnabled",
+]);

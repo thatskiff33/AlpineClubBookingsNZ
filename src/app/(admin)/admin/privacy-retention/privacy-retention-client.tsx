@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state";
-import { privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
+import { MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
 import { formatClubInstantDate, formatStayDateOrNull, parseInstant } from "@/lib/club-time";
 
 type PreviewGroup = {
@@ -56,6 +56,7 @@ const GROUPS = [
 
 export function PrivacyRetentionClient({ page }: { page: number }) {
   const canEdit = useAdminAreaEditAccess("support");
+  const canEditMembership = useAdminAreaEditAccess("membership");
   const clubTime = useClubTime();
   const router = useRouter();
   const [payload, setPayload] = useState<Payload | null>(null);
@@ -120,13 +121,14 @@ export function PrivacyRetentionClient({ page }: { page: number }) {
               <div className="grid gap-4 sm:grid-cols-3">
                 {PERIOD_FIELDS.map(([field, label]) => <div key={field} className="space-y-2">
                   <Label htmlFor={field}>{label}</Label>
-                  <Input id={field} type="number" min={privacyRetentionSettingsSchema.shape[field].minValue ?? undefined} max={privacyRetentionSettingsSchema.shape[field].maxValue ?? undefined} step={1} value={draft[field]} disabled={!editing || section.saving} onChange={(event) => section.setDraft({ [field]: Number(event.target.value) })} />
+                  <Input id={field} type="number" min={privacyRetentionSettingsSchema.shape[field].minValue ?? undefined} max={privacyRetentionSettingsSchema.shape[field].maxValue ?? undefined} step={1} value={draft[field]} disabled={!editing || section.saving || (MEMBERSHIP_RETENTION_FIELDS.has(field) && canEditMembership !== true)} onChange={(event) => section.setDraft({ [field]: Number(event.target.value) })} />
                 </div>)}
               </div>
+              {canEditMembership !== true && <p className="text-sm text-muted-foreground">Membership edit access is required to change member and application retention.</p>}
               <p className="text-sm text-muted-foreground">Former-member retention starts from the recorded leaving date. Members with no leaving date are never anonymised automatically. Financial records are retained.</p>
               <div className="space-y-3">
                 {SWITCH_FIELDS.map(([field, label]) => <label key={field} className="flex items-start gap-3">
-                  <input type="checkbox" checked={draft[field]} disabled={!editing || section.saving} aria-describedby={field === "sentryReplayEnabled" ? "replay-notice" : undefined} onChange={(event) => section.setDraft({ [field]: event.target.checked })} />
+                  <input type="checkbox" checked={draft[field]} disabled={!editing || section.saving || (MEMBERSHIP_RETENTION_FIELDS.has(field) && canEditMembership !== true)} aria-describedby={field === "sentryReplayEnabled" ? "replay-notice" : undefined} onChange={(event) => section.setDraft({ [field]: event.target.checked })} />
                   <span className="text-sm">{label}</span>
                 </label>)}
               </div>

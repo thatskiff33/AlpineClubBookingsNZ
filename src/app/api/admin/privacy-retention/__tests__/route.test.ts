@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
+import { DEFAULT_PRIVACY_RETENTION_SETTINGS, MEMBERSHIP_RETENTION_FIELDS } from "@/lib/privacy-retention-shared";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -74,6 +74,20 @@ describe("privacy retention admin API", () => {
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "support", level: "edit" } });
     expect(mocks.saveSettings).toHaveBeenCalledWith(DEFAULT_PRIVACY_RETENTION_SETTINGS, "admin-1");
     expect(await response.json()).toEqual({ settings: DEFAULT_PRIVACY_RETENTION_SETTINGS });
+  });
+  it.each([...MEMBERSHIP_RETENTION_FIELDS])("rejects changes to %s without membership edit", async field => {
+    mocks.hasAdminAreaAccess.mockReturnValue(false);
+    const oldValue = DEFAULT_PRIVACY_RETENTION_SETTINGS[field];
+    const changed = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, [field]: typeof oldValue === "boolean" ? !oldValue : oldValue + 1 };
+    expect((await PUT(put(changed))).status).toBe(403);
+    expect(mocks.hasAdminAreaAccess).toHaveBeenCalledWith({ id: "admin-1" }, { area: "membership", level: "edit" });
+    expect(mocks.saveSettings).not.toHaveBeenCalled();
+  });
+  it("allows support-only changes without membership edit", async () => {
+    mocks.hasAdminAreaAccess.mockReturnValue(false);
+    const changed = { ...DEFAULT_PRIVACY_RETENTION_SETTINGS, emailLogRetentionYears: 3, sentryReplayEnabled: true };
+    expect((await PUT(put(changed))).status).toBe(200);
+    expect(mocks.saveSettings).toHaveBeenCalledWith(changed, "admin-1");
   });
   it.each([
     {},

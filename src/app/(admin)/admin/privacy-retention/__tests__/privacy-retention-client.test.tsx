@@ -6,10 +6,10 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
 import { SENTRY_REPLAY_POLICY_CHANGED } from "@/lib/privacy-retention-replay";
 
-const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined, push: vi.fn() }));
+const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined, canEditMembership: true, push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
-  useAdminAreaEditAccess: () => mocks.canEdit,
+  useAdminAreaEditAccess: (area: string) => area === "membership" ? mocks.canEditMembership : mocks.canEdit,
   ADMIN_VIEW_ONLY_ACTION_REASON: "Your admin role can view this area but cannot make changes.",
 }));
 import { PrivacyRetentionClient } from "../privacy-retention-client";
@@ -126,4 +126,17 @@ describe("privacy retention settings and dry run", () => {
     await screen.findByText(/Could not load the retention preview/);
     expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
   });
+});
+
+it("disables member/application policy controls for a support-only editor", async () => {
+  mocks.canEditMembership = false;
+  renderClient();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  expect(screen.getByLabelText("Former members after leaving (years)")).toBeDisabled();
+  expect(screen.getByLabelText("Rejected applications (years)")).toBeDisabled();
+  expect(screen.getByLabelText("Enable former-member anonymisation")).toBeDisabled();
+  expect(screen.getByLabelText("Enable email log and rejected application pruning")).toBeDisabled();
+  expect(screen.getByLabelText("Email logs (years)")).toBeEnabled();
+  expect(screen.getByLabelText("Enable Sentry Session Replay")).toBeEnabled();
+  mocks.canEditMembership = true;
 });
