@@ -185,7 +185,8 @@ describe("Member deactivation writers record the departure in the same write (#4
     for (const identity of Object.keys(REVIEWED_UNDATED_WRITERS)) expect(WRITERS).toContain(identity);
     expect([...new Set(found.flatMap(({ identity, fields }) => fields.opaque.map((expression) => `${identity}: ${expression}`)))].sort())
       .toEqual(Object.keys(OPAQUE_PAYLOADS).sort());
-  });
+    // Parses every file under src/ and scripts/: ~3s locally, over 5s on a busy CI shard.
+  }, 120_000);
 
   it.each([
     "tx.member.update({ where: { id }, data: { active: false } });",
