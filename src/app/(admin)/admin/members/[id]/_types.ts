@@ -121,16 +121,28 @@ export interface MembershipTypeSummary {
   sortOrder: number;
 }
 
+// Subscription-category decoupling: an independent billing axis, resolved
+// alongside MembershipTypeSummary but with ZERO effect on booking
+// rights/rate — those stay governed by MembershipTypeSummary alone.
+export interface SubscriptionCategorySummary {
+  id: string;
+  key: string;
+  name: string;
+  isActive: boolean;
+}
+
 export interface SeasonalMembershipAssignmentSummary {
   id: string;
   memberId: string;
   seasonYear: number;
   membershipTypeId: string;
+  subscriptionCategoryId: string | null;
   applyFrom: string | null;
   assignedByMemberId: string | null;
   createdAt: string;
   updatedAt: string;
   membershipType: MembershipTypeSummary;
+  subscriptionCategory: SubscriptionCategorySummary | null;
 }
 
 export interface CommitteeRoleSummary {

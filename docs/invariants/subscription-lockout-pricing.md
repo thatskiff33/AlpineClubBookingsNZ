@@ -374,6 +374,13 @@ FACTS batch only, never `repricedMemberIds`: an owner who is not staying holds n
 nights, so counting them as repriced would inflate the violation's count and emit
 a rate notice about a charge nobody received.
 
+Subscription-category billing's own exemption decision routes through this SAME
+`resolveMemberSubscriptionSettlement` resolver (INV-MONEY-043) for each
+category-assigned member, rather than a fourth, independently-invented exemption
+rule — a member this resolver treats as exempt is never billed via a category
+either, keeping booking-access and billing in agreement for a category-assigned
+member exactly the way they already agree for a type-billed one.
+
 ### INV-LOCKOUT-021
 
 **Why the second trigger.** `HARD_BLOCK` refuses an unfinancial member *as a

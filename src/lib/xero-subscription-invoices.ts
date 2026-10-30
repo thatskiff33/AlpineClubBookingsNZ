@@ -6,6 +6,7 @@ import {
   type XeroClient,
 } from "xero-node";
 import logger from "@/lib/logger";
+import { chargeAxisDisplayName } from "@/lib/membership-charge-axis";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { findOrCreateXeroContact } from "@/lib/xero-contacts";
@@ -392,7 +393,13 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         amountCents: charge.chargedAmountCents,
         accountCode,
         itemCode: charge.xeroItemCode,
-        description: `${charge.membershipTypeName} membership ${seasonYearsLabel(charge.seasonYear, await refreshFinancialYearConfig())} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
+        // `chargeAxisDisplayName` (INV-SSOT-007) rather than
+        // `charge.membershipTypeName` directly — this is a legacy fallback
+        // for a pre-#1932 charge with zero component rows (every new charge,
+        // type or category, always gets ≥1), but TypeScript does not flag a
+        // null interpolated into a template literal, so it is defended
+        // anyway: a category charge's membershipTypeName is null.
+        description: `${chargeAxisDisplayName(charge)} membership ${seasonYearsLabel(charge.seasonYear, await refreshFinancialYearConfig())} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
       }];
 
   let invoiceId = charge.xeroInvoiceId;

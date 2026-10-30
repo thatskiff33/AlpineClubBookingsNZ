@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { chargeAxisDisplayName } from "@/lib/membership-charge-axis";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { useClubTime } from "@/components/club-time-provider";
@@ -36,7 +37,11 @@ type BillingData = {
     confirmationToken: string;
     entries: Array<{
       key: string;
-      membershipTypeName: string;
+      // Exactly one of these two is populated per entry — a category entry
+      // carries membershipTypeName null (chargeAxisDisplayName resolves the
+      // one that applies).
+      membershipTypeName: string | null;
+      subscriptionCategoryName?: string | null;
       billingBasis: string;
       prorationRule: string;
       chargedAmountCents: number;
@@ -91,12 +96,29 @@ type BillingData = {
       markedByName?: string | null;
       markedAt?: string | null;
     }>;
+    // Subscription-category decoupling (review finding): 2+ members billed
+    // SOLO under the SAME subscription category this run, because they are
+    // not in a shared FamilyGroup — each bills the full flat rate
+    // separately, which can cost MORE than their individual membership-type
+    // rates for a couple/family-style category. Billing itself is
+    // unaffected (a genuinely standalone category is not an error), but
+    // this is surfaced so the confirming officer notices and can group the
+    // members into a FamilyGroup before confirming, if that was the intent.
+    // Optional so an older cached response without the field still renders.
+    ungroupedCategoryMembers?: Array<{
+      subscriptionCategoryId: string;
+      subscriptionCategoryName: string;
+      members: Array<{ memberId: string; memberName: string }>;
+    }>;
   };
   charges: Array<{
     id: string;
     status: string;
     billingBasis: string;
-    membershipTypeName: string;
+    // Exactly one of these two is populated per charge — see the matching
+    // comment on `preview.entries` above.
+    membershipTypeName: string | null;
+    subscriptionCategoryName?: string | null;
     chargedAmountCents: number;
     recipientName: string;
     xeroInvoiceId: string | null;
@@ -355,7 +377,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
               <div className="space-y-2">
                 {data.preview.entries.map((entry) => (
                   <div key={entry.key} className="rounded-md border p-3 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{entry.membershipTypeName} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents, format)}</span></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{chargeAxisDisplayName({ membershipTypeName: entry.membershipTypeName, subscriptionCategoryName: entry.subscriptionCategoryName ?? null })} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents, format)}</span></div>
                     <p className="text-muted-foreground">{entry.billingBasis.replaceAll("_", " ")} · {entry.coveredMonths}/12 months · covers {entry.coveredMembers.map((member) => member.name).join(", ")}{entry.xeroAccountCode ? ` · Xero ${entry.xeroAccountCode}${entry.xeroItemCode ? ` / ${entry.xeroItemCode}` : ""}` : ""}</p>
                     {/* #2161 (D2): a PER_FAMILY charge can be marked as already
                         invoiced when the operator knows an ambiguous legacy
@@ -402,6 +424,24 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                   ))}
                 </ul>
               </details>
+            ) : null}
+            {(data.preview.ungroupedCategoryMembers ?? []).length > 0 ? (
+              <Alert variant="warning">
+                <p className="font-medium">
+                  {(data.preview.ungroupedCategoryMembers ?? []).reduce((sum, row) => sum + row.members.length, 0)} member(s) sharing a subscription category are billed separately, not as one group
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Each is still billed the full category rate on their own — for a couple/family-style category this can cost MORE than their individual membership-type rates. They are not in the same family group, which is required for a category to bill them together. Group them on their Family card, or leave as-is if this club genuinely bills this category per person.
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {(data.preview.ungroupedCategoryMembers ?? []).map((row) => (
+                    <li key={row.subscriptionCategoryId}>
+                      <span className="font-medium">{row.subscriptionCategoryName}:</span>{" "}
+                      {row.members.map((member) => member.memberName).join(", ")}
+                    </li>
+                  ))}
+                </ul>
+              </Alert>
             ) : null}
             {((data.preview.alreadyInvoiced ?? []).length + (data.preview.alreadyInvoicedFamilies ?? []).length) > 0 ? (
               <details className="rounded-md border p-3 text-sm">
@@ -473,7 +513,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 <h3 className="font-medium">Durable charge queue</h3>
                 {data.charges.map((charge) => (
                   <div key={charge.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
-                    <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}{isChargeClosedAsAlreadyPaid(charge) ? <p className="text-muted-foreground">{charge.lastErrorCode === STRAY_INVOICE_AFTER_CLOSE_CODE ? "Closed as already paid." : "Closed as already paid. No Xero invoice is raised for this charge."}</p> : null}</div>
+                    <div><p className="font-medium">{chargeAxisDisplayName({ membershipTypeName: charge.membershipTypeName, subscriptionCategoryName: charge.subscriptionCategoryName ?? null })} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}{isChargeClosedAsAlreadyPaid(charge) ? <p className="text-muted-foreground">{charge.lastErrorCode === STRAY_INVOICE_AFTER_CLOSE_CODE ? "Closed as already paid." : "Closed as already paid. No Xero invoice is raised for this charge."}</p> : null}</div>
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{charge.status.replaceAll("_", " ")}</Badge>
                       {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}

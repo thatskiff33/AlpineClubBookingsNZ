@@ -1122,9 +1122,33 @@ model MembershipSubscriptionCharge {
   source                MembershipSubscriptionChargeSource
   status                MembershipSubscriptionChargeStatus @default(QUEUED)
   membershipAnnualFeeId String?
-  membershipTypeId      String
-  membershipTypeKey     String
-  membershipTypeName    String
+  // Exactly one of the membershipType* trio or the subscriptionCategory*
+  // quartet below is populated per charge (DB CHECK
+  // MembershipCharge_type_xor_category, num_nonnulls = 1) — a charge bills
+  // either on the MembershipType axis (today's behaviour, unchanged) or on
+  // the independent SubscriptionCategory axis (couple/family-style flat fees
+  // decoupled from booking rights). The membershipType* trio widened from
+  // required to nullable across a WINDOWED pair of migrations
+  // (20261128010000/20261128020000 — see their headers and
+  // docs/BLUE_GREEN_MIGRATION_SAFETY.tsv), not an ordinary rolling expand:
+  // this repo's own precedent for "a second mutually-exclusive axis takes
+  // over a long-required column" (`Booking.memberId`/`organisationId`,
+  // INV-SSOT-005) is to null the column honestly and pay for it with a
+  // maintenance window, never to fake a placeholder value into it. Every
+  // pre-existing charge keeps membershipTypeId populated and
+  // subscriptionCategoryId null, so old rows are unaffected. Every reader of
+  // these columns off a persisted row — rather than off a freshly-looked-up
+  // MembershipType — must go through `chargeFamilyAxisKey`/
+  // `chargeAxisDisplayName` in `src/lib/membership-charge-axis.ts`
+  // (INV-SSOT-007), guarded by a census test, never a raw template literal:
+  // TypeScript does not flag a null inside `${...}`.
+  membershipTypeId      String?
+  membershipTypeKey     String?
+  membershipTypeName    String?
+  subscriptionCategoryId    String?
+  subscriptionCategoryKey   String?
+  subscriptionCategoryName  String?
+  subscriptionCategoryFeeId String?
   billingBasis          MembershipFeeBillingBasis
   prorationRule         MembershipFeeProrationRule
   annualAmountCents     Int
@@ -1164,6 +1188,7 @@ model MembershipSubscriptionCharge {
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
+  @@index([subscriptionCategoryId, seasonYear])
   // #4110: at most one LIVE family charge per (seasonYear, membershipTypeId,
   // familyGroupId) is enforced by the raw-SQL partial unique index
   // MembershipCharge_family_type_year_live_key (prisma/partial-unique-indexes.tsv),
@@ -1171,6 +1196,15 @@ model MembershipSubscriptionCharge {
   // family whose charge was voided (#2147) or closed as already paid (#4098) can
   // be billed again beside the retained row. Prisma cannot express it, which is
   // why the plain @@unique was dropped.
+  //
+  // Subscription-category decoupling: a sibling raw-SQL partial unique index,
+  // MembershipCharge_family_category_year_live_key, gives category charges the
+  // SAME at-most-one-live-charge-per-family + re-bill-after-void/close semantics
+  // on (seasonYear, subscriptionCategoryId, familyGroupId) — also recorded in
+  // prisma/partial-unique-indexes.tsv. A raw-SQL CHECK
+  // (MembershipCharge_type_xor_category) enforces num_nonnulls(membershipTypeId,
+  // subscriptionCategoryId) = 1 so every charge is unambiguously one axis or the
+  // other; not modelled here (Prisma cannot express CHECK constraints).
 }
 
 // Frozen per-line snapshot of an annual-fee component at the moment the charge
@@ -1285,6 +1319,12 @@ model MembershipBillingException {
   memberId       String?
   familyGroupId  String?
   membershipTypeId String?
+  // Subscription-category decoupling: populated instead of membershipTypeId
+  // when the exception was raised while resolving a member's category-based
+  // billing. Folded into the fingerprint alongside membershipTypeId so a
+  // category exception never shadows/collides with a type exception for the
+  // same member+family+code.
+  subscriptionCategoryId String?
   context        Json?
   firstSeenAt    DateTime                         @default(now())
   lastSeenAt     DateTime                         @default(now())
@@ -1300,6 +1340,7 @@ model MembershipBillingException {
   @@index([status, seasonYear, lastSeenAt])
   @@index([memberId, status])
   @@index([familyGroupId, status])
+  @@index([subscriptionCategoryId, status])
 }
 
 model MembershipSubscriptionBillingSettings {
@@ -1543,6 +1584,15 @@ model SeasonalMembershipAssignment {
   memberId           String
   seasonYear         Int
   membershipTypeId   String
+  // Independent billing axis (subscription-category decoupling project): which
+  // flat SubscriptionCategoryFee this member's annual subscription bills
+  // under, e.g. "Couple" or "2 Adults + 2+ Children", instead of their
+  // MembershipType's own per-member/per-family fee. Null (the default) means
+  // "Individual" — fall through to today's unchanged type-keyed billing. This
+  // has ZERO effect on booking rights/rate/lockout: those stay governed
+  // entirely by membershipTypeId above. Manually admin-assigned, same as
+  // membershipTypeId — never auto-derived from family composition.
+  subscriptionCategoryId String?
   applyFrom          DateTime?                  @db.Date
   assignedByMemberId String?
   source             MembershipAssignmentSource @default(ADMIN)
@@ -1550,15 +1600,101 @@ model SeasonalMembershipAssignment {
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
 
-  member         Member         @relation("SeasonalMembershipAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
-  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
-  assignedBy     Member?        @relation("SeasonalMembershipAssignmentAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
+  member               Member                @relation("SeasonalMembershipAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
+  membershipType       MembershipType        @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  subscriptionCategory SubscriptionCategory? @relation(fields: [subscriptionCategoryId], references: [id], onDelete: Restrict)
+  assignedBy           Member?               @relation("SeasonalMembershipAssignmentAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
 
   @@unique([memberId, seasonYear])
   @@index([seasonYear])
   @@index([membershipTypeId])
   @@index([seasonYear, membershipTypeId])
   @@index([assignedByMemberId])
+  @@index([subscriptionCategoryId])
+  @@index([seasonYear, subscriptionCategoryId])
+}
+
+// ---------------------------------------------------------------------------
+// Subscription Categories (billing axis decoupled from MembershipType)
+// ---------------------------------------------------------------------------
+
+// Admin-configurable billing category, independent of MembershipType. A
+// club defines as many categories as it needs (e.g. "Couple", "Adult +
+// Child", "2 Adults + 2+ Children") — not limited to a fixed set. Mirrors
+// MembershipType's shape but carries NO booking-rights fields: category only
+// ever affects which flat SubscriptionCategoryFee a member's subscription
+// resolves to, never bookingBehavior/rate/eligibility. The built-in
+// "individual" row (isBuiltIn = true) is a routing sentinel, not a priced
+// category — SeasonalMembershipAssignment.subscriptionCategoryId is null for
+// an Individual member (the common case), so this row is never looked up by
+// id at billing time; it exists only so the admin UI has an explicit,
+// non-deletable "Individual" option to select back to.
+model SubscriptionCategory {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  isBuiltIn   Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments SeasonalMembershipAssignment[]
+  fees        SubscriptionCategoryFee[]
+
+  @@index([isActive, sortOrder])
+}
+
+// Flat annual fee for one SubscriptionCategory — deliberately has NO
+// membershipTypeId and NO ageTier: a category fee is one number, independent
+// of which MembershipType(s) the covered members hold or their ages. Unlike
+// MembershipAnnualFee there is no flat-vs-tier split to represent, so (unlike
+// that model) this needs no partial unique index or GiST no-overlap
+// EXCLUDE — a plain composite unique on (subscriptionCategoryId,
+// effectiveFrom) is sufficient, matching JoiningFee's pre-age-tier shape.
+// Always resolves and bills "PER_FAMILY-shaped" (one charge per set of family
+// members sharing the category, collapsing to size 1 with no partner) — there
+// is no PER_MEMBER/PER_FAMILY/NO_INVOICE choice for a category fee the way
+// there is for MembershipAnnualFee.billingBasis.
+model SubscriptionCategoryFee {
+  id                     String                     @id @default(cuid())
+  subscriptionCategoryId String
+  amountCents            Int
+  prorationRule          MembershipFeeProrationRule @default(NONE)
+  effectiveFrom          DateTime                   @db.Date
+  effectiveTo            DateTime?                  @db.Date
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+
+  subscriptionCategory SubscriptionCategory              @relation(fields: [subscriptionCategoryId], references: [id], onDelete: Restrict)
+  components           SubscriptionCategoryFeeComponent[]
+
+  @@unique([subscriptionCategoryId, effectiveFrom])
+  @@index([subscriptionCategoryId, effectiveFrom, effectiveTo], map: "SubscriptionCategoryFee_effective_lookup_idx")
+}
+
+// Named components of a SubscriptionCategoryFee (mirrors
+// MembershipAnnualFeeComponent). INVARIANT: Σ(amountCents) == the parent
+// fee's amountCents, validated server-side in one transaction. Every
+// SubscriptionCategoryFee carries >=1 component at all times; the default
+// component (label "Subscription fee", prorate true) is auto-created on fee
+// creation.
+model SubscriptionCategoryFeeComponent {
+  id                        String   @id @default(cuid())
+  subscriptionCategoryFeeId String
+  label                     String
+  amountCents               Int
+  prorate                   Boolean  @default(true)
+  xeroAccountCode           String?
+  xeroItemCode              String?
+  sortOrder                 Int      @default(0)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  subscriptionCategoryFee SubscriptionCategoryFee @relation(fields: [subscriptionCategoryFeeId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionCategoryFeeId, sortOrder])
 }
 
 // ---------------------------------------------------------------------------

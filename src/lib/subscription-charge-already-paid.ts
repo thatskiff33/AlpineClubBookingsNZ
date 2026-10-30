@@ -5,6 +5,8 @@ import type {
   SubscriptionStatus,
 } from "@prisma/client";
 
+import { chargeFamilyAxisKey } from "@/lib/membership-charge-axis";
+
 /**
  * #4098: the one home for what a membership subscription charge's status means
  * for invoice work, and for the "already paid" conflict and its close. Client
@@ -246,9 +248,26 @@ export function confirmWithholdsInvoicingWarnings(source: MembershipSubscription
 export const WITHHELD_ON_APPROVAL_NOTE =
   "It was not invoiced on membership approval: Finance must review it in Subscription billing and confirm the billing run to invoice it.";
 
-/** The family entry an invoicing warning names, keyed the same way from either side. */
-export function invoicingWarningEntryKey(item: { familyGroupId: string | null; membershipTypeId: string | null }): string {
-  return `${item.membershipTypeId}:family:${item.familyGroupId}`;
+/**
+ * The family entry an invoicing warning names, keyed the same way from either
+ * side. Delegates to `chargeFamilyAxisKey` (INV-SSOT-007) rather than
+ * building its own template literal, so a category-axis warning/entry is
+ * keyed identically to how `membership-subscription-billing.ts` keys a
+ * category charge — a second, independent key-builder here would have been
+ * exactly the drift the shared accessor exists to prevent.
+ */
+export function invoicingWarningEntryKey(item: {
+  seasonYear: number;
+  familyGroupId: string | null;
+  membershipTypeId: string | null;
+  subscriptionCategoryId?: string | null;
+}): string {
+  return chargeFamilyAxisKey({
+    seasonYear: item.seasonYear,
+    familyGroupId: item.familyGroupId,
+    membershipTypeId: item.membershipTypeId,
+    subscriptionCategoryId: item.subscriptionCategoryId ?? null,
+  });
 }
 
 /**
@@ -279,10 +298,18 @@ export function isOfficerDecisionException(code: string): boolean {
  */
 export type ClosedFamilyDecisionReason = "EXEMPT_AT_CLOSE" | "REVERSED_UNDER_OLDER_CHARGE" | "REVERSED_UNDER_NEWEST_CHARGE";
 
-/** The two choices decision 4 gives the officer, worded once. */
+/**
+ * The two choices decision 4 gives the officer, worded once.
+ *
+ * `axisName` (renamed from `membershipTypeName` when category billing was
+ * folded into this same decision machinery) is whichever axis's display
+ * name applies — a membership type's name for a type charge, a
+ * `chargeAxisDisplayName`-resolved category name for a category charge. The
+ * wording itself does not care which axis it is.
+ */
 export function closedFamilyMemberDecisionMessage(input: {
   memberName: string;
-  membershipTypeName: string;
+  axisName: string;
 } & (
   | { reason: "EXEMPT_AT_CLOSE" | "REVERSED_UNDER_OLDER_CHARGE"; heldBy?: string }
   // Only ever raised for a held family, so what holds it is required.
@@ -290,12 +317,12 @@ export function closedFamilyMemberDecisionMessage(input: {
 )): string {
   const held = input.heldBy ? `, and the family is held back by ${input.heldBy}` : "";
   const why = input.reason === "EXEMPT_AT_CLOSE"
-    ? `${input.memberName} was not required to pay when the family's ${input.membershipTypeName} charge was closed as already paid, and now needs a subscription${held}.`
+    ? `${input.memberName} was not required to pay when the family's ${input.axisName} charge was closed as already paid, and now needs a subscription${held}.`
     : input.reason === "REVERSED_UNDER_OLDER_CHARGE"
       ? input.heldBy
-        ? `${input.memberName}'s payment under an earlier closed ${input.membershipTypeName} family charge was reversed${held}.`
-        : `${input.memberName}'s payment under an earlier closed ${input.membershipTypeName} family charge was reversed, but the family's newer charge, closed as already paid, still stands.`
-      : `${input.memberName}'s payment under the family's closed ${input.membershipTypeName} charge was reversed${held}.`;
+        ? `${input.memberName}'s payment under an earlier closed ${input.axisName} family charge was reversed${held}.`
+        : `${input.memberName}'s payment under an earlier closed ${input.axisName} family charge was reversed, but the family's newer charge, closed as already paid, still stands.`
+      : `${input.memberName}'s payment under the family's closed ${input.axisName} charge was reversed${held}.`;
   return (
     `${why} The family is not billed again. Decide how to bill ${input.memberName}: ` +
     "if the family fee already covers everyone in the family, mark them Paid; " +

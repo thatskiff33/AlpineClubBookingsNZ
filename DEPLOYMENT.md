@@ -1196,6 +1196,13 @@ docker compose logs --since 1h caddy | grep '"uri"'
 Read `docs/BLUE_GREEN_MIGRATION_POLICY.md` before deploying schema changes.
 Migrations must be compatible with old and new app versions during cutover.
 
+A fork that already ran an earlier, since-replaced version of the
+subscription-category migrations needs a one-time, out-of-band reconciliation
+before the current migration history will apply cleanly — see
+`docs/guides/subscription-category-redesign-production-reconciliation.md`.
+This does not apply to a deployment that has never run any
+subscription-category migration at all.
+
 Potentially breaking migrations require explicit operator acknowledgement with:
 
 ```bash

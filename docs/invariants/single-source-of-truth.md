@@ -567,3 +567,30 @@ case-sensitive default. #4146, #4165, #4190.
 - **Scope the query as well where an indexed column allows.** An exact prefix
   still matches a longer id beginning with the same id and delimiter; the
   duplicate-capture lookup also scopes by `bookingId`.
+
+## INV-SSOT-007
+
+A `MembershipSubscriptionCharge`'s family-dedup key and display name are built
+by `chargeFamilyAxisKey()` / `chargeAxisDisplayName()` in
+`src/lib/membership-charge-axis.ts`, nowhere else. `INV-MONEY-043`.
+
+- **Why one accessor.** The charge is billed on exactly one of two mutually
+  exclusive axes — `membershipTypeId` or `subscriptionCategoryId` — per the
+  `MembershipCharge_type_xor_category` CHECK. A raw template literal built off
+  only the type column (`` `${charge.membershipTypeId}:family:${id}` ``)
+  typechecks for a category charge too, since `membershipTypeId` is nullable,
+  but stringifies to the literal text `"null"` — collapsing every category
+  charge for a family onto one dedup key regardless of which category it
+  actually is, with no compiler error anywhere in the chain.
+- **A census keeps it one.** `membership-charge-axis-census.test.ts` reads
+  `membership-subscription-billing.ts` and `subscription-charge-already-paid.ts`
+  from disk (via `stripComments`, `INV-SSOT-004`) and fails the build on a new
+  raw family-key template literal outside the accessor; it also carries a
+  fixture-proof test confirming the regex actually catches the hazard it
+  exists to catch.
+- **The same accessor pair serves both the closed-family reversal engine
+  (#4110) and display.** Folding category charges into the existing
+  `billedFamilyTypes`/`resolveClosedFamilyDecision` machinery (rather than a
+  second, category-only decision path) depends on both axes producing keys in
+  the one shared format — the accessor is what makes that fold possible rather
+  than two parallel systems that can't see each other.

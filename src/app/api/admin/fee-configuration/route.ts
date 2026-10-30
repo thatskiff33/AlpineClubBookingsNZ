@@ -13,6 +13,7 @@ import {
   serializeFeeSchedule,
   validateFeeComponents,
   validateFeeScheduleInput,
+  validateSubscriptionCategoryFeeComponents,
   type FeeComponentInput,
 } from "@/lib/authoritative-fees";
 import { prisma } from "@/lib/prisma";
@@ -93,6 +94,24 @@ const mutationSchema = z.discriminatedUnion("action", [
     memberId: z.string().min(1),
     billingFamilyGroupId: z.string().min(1).nullable(),
   }).strict(),
+  // Subscription-category decoupling: a flat fee, independent of membership
+  // type. No ageTier, no billingBasis — a category fee is always a single
+  // invoiced flat amount (see the SubscriptionCategoryFee schema comment).
+  z.object({
+    action: z.literal("CREATE_SUBSCRIPTION_CATEGORY_FEE"),
+    subscriptionCategoryId: z.string().min(1),
+    prorationRule: z.enum(MEMBERSHIP_FEE_PRORATION_RULES),
+    components: z.array(componentInput).max(50).optional(),
+    ...scheduleDates,
+  }).strict(),
+  z.object({
+    action: z.literal("UPDATE_SUBSCRIPTION_CATEGORY_FEE"),
+    id: z.string().min(1),
+    prorationRule: z.enum(MEMBERSHIP_FEE_PRORATION_RULES),
+    components: z.array(componentInput).max(50).optional(),
+    ...scheduleDates,
+  }).strict(),
+  z.object({ action: z.literal("DELETE_SUBSCRIPTION_CATEGORY_FEE"), id: z.string().min(1) }).strict(),
 ]);
 
 // Reconcile an annual fee's components in the same transaction that writes the
@@ -180,8 +199,81 @@ async function reconcileMembershipFeeComponents(args: {
   );
 }
 
+// Subscription-category decoupling: the category-fee sibling of
+// reconcileMembershipFeeComponents. Simpler than its annual-fee counterpart in
+// two ways that both follow from a category fee having no billingBasis: there
+// is no NO_INVOICE branch (every category fee is always invoiced, so it
+// always carries >=1 component), and the predecessor-copy lookup scopes on
+// subscriptionCategoryId alone (no ageTier dimension to match).
+async function reconcileSubscriptionCategoryFeeComponents(args: {
+  tx: Prisma.TransactionClient;
+  fee: { id: string };
+  existing: { id: string; amountCents: number } | null;
+  subscriptionCategoryId: string;
+  suppliedComponents?: FeeComponentInput[];
+  newAmountCents: number;
+  format: ClubFormat;
+}) {
+  const { tx, fee, existing, subscriptionCategoryId, suppliedComponents, newAmountCents, format } = args;
+
+  const replaceWith = async (components: FeeComponentInput[]) => {
+    validateSubscriptionCategoryFeeComponents({ components, amountCents: newAmountCents }, format);
+    if (components.length === 0) return;
+    await tx.subscriptionCategoryFeeComponent.createMany({
+      data: components.map((component, index) => ({
+        subscriptionCategoryFeeId: fee.id,
+        label: component.label.trim(),
+        amountCents: component.amountCents,
+        prorate: component.prorate,
+        xeroAccountCode: component.xeroAccountCode?.trim() || null,
+        xeroItemCode: component.xeroItemCode?.trim() || null,
+        sortOrder: component.sortOrder ?? index,
+      })),
+    });
+  };
+
+  if (existing) {
+    const amountChanged = newAmountCents !== existing.amountCents;
+    if (suppliedComponents) {
+      await tx.subscriptionCategoryFeeComponent.deleteMany({ where: { subscriptionCategoryFeeId: fee.id } });
+      await replaceWith(suppliedComponents);
+      return;
+    }
+    if (amountChanged) {
+      throw new FeeScheduleValidationError(
+        "Editing the fee amount requires reconciling its components in the same request.",
+      );
+    }
+    return; // amount unchanged: keep the existing components
+  }
+
+  // CREATE: explicit components win, else copy a same-amount predecessor's
+  // components, else the single default component.
+  if (suppliedComponents) {
+    await replaceWith(suppliedComponents);
+    return;
+  }
+  const predecessor = await tx.subscriptionCategoryFee.findFirst({
+    where: { subscriptionCategoryId, id: { not: fee.id } },
+    orderBy: { effectiveFrom: "desc" },
+    include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+  });
+  if (predecessor && predecessor.components.length > 0 && predecessor.amountCents === newAmountCents) {
+    await replaceWith(predecessor.components.map((component) => ({
+      label: component.label,
+      amountCents: component.amountCents,
+      prorate: component.prorate,
+      xeroAccountCode: component.xeroAccountCode,
+      xeroItemCode: component.xeroItemCode,
+      sortOrder: component.sortOrder,
+    })));
+    return;
+  }
+  await replaceWith([{ label: "Subscription fee", amountCents: newAmountCents, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }]);
+}
+
 async function loadConfiguration(canEdit: boolean) {
-  const [familyBillingMode, membershipTypes, familyGroups, subscriptionIncomeMapping] = await Promise.all([
+  const [familyBillingMode, membershipTypes, subscriptionCategories, familyGroups, subscriptionIncomeMapping] = await Promise.all([
     getFamilyBillingMode(),
     prisma.membershipType.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -192,6 +284,23 @@ async function loadConfiguration(canEdit: boolean) {
           include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
         },
         joiningFees: { orderBy: [{ ageTier: "asc" }, { effectiveFrom: "desc" }] },
+      },
+    }),
+    prisma.subscriptionCategory.findMany({
+      // Review finding: the built-in "Individual" sentinel is never a priced
+      // category — it is the routing signal for "bill under membership type,
+      // as before" — so it is excluded here entirely, the same way the
+      // member-card's own category dropdown already filters it out. Without
+      // this, the picker defaulted to it (sortOrder 0, always first) and an
+      // admin could save a fee against it that nothing would ever read.
+      where: { isBuiltIn: false },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        id: true, key: true, name: true, isActive: true,
+        fees: {
+          orderBy: { effectiveFrom: "desc" },
+          include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+        },
       },
     }),
     prisma.familyGroup.findMany({
@@ -253,6 +362,27 @@ async function loadConfiguration(canEdit: boolean) {
       joiningFees: type.joiningFees.map((fee) => ({
         ...serializeFeeSchedule(fee),
         ageTier: fee.ageTier,
+      })),
+    })),
+    // Subscription-category decoupling: the independent billing axis's own
+    // fee schedules — no ageTier, no billingBasis (see the Annual fees block
+    // above for why those two exist there and not here).
+    subscriptionCategories: subscriptionCategories.map((category) => ({
+      id: category.id,
+      key: category.key,
+      name: category.name,
+      isActive: category.isActive,
+      fees: category.fees.map((fee) => ({
+        ...serializeFeeSchedule(fee),
+        components: fee.components.map((component) => ({
+          id: component.id,
+          label: component.label,
+          amountCents: component.amountCents,
+          prorate: component.prorate,
+          xeroAccountCode: component.xeroAccountCode,
+          xeroItemCode: component.xeroItemCode,
+          sortOrder: component.sortOrder,
+        })),
       })),
     })),
     familyGroups: familyGroups.map((group) => ({
@@ -428,7 +558,7 @@ export async function POST(request: Request) {
           await tx.familyGroup.update({ where: { id: input.familyGroupId }, data: { billingMembershipId: null } });
         }
         targetId = input.familyGroupId;
-      } else {
+      } else if (input.action === "SET_MEMBER_BILLING_FAMILY") {
         // SET_MEMBER_BILLING_FAMILY (#1932, E6): the chosen group must be one of
         // the member's families, so a selection can never point outside them.
         const member = await tx.member.findUnique({ where: { id: input.memberId }, select: { id: true } });
@@ -444,6 +574,65 @@ export async function POST(request: Request) {
         }
         await tx.member.update({ where: { id: input.memberId }, data: { billingFamilyGroupId: input.billingFamilyGroupId } });
         targetId = input.memberId;
+      } else {
+        // CREATE_SUBSCRIPTION_CATEGORY_FEE / UPDATE_SUBSCRIPTION_CATEGORY_FEE /
+        // DELETE_SUBSCRIPTION_CATEGORY_FEE — subscription-category decoupling.
+        // No individual-billing-mode gate and no ageTier/billing-basis checks:
+        // a category fee is always flat and always invoiced, so none of the
+        // annual-fee branch's PER_FAMILY-specific guards apply here.
+        if (input.action === "DELETE_SUBSCRIPTION_CATEGORY_FEE") {
+          const existing = await tx.subscriptionCategoryFee.findUnique({ where: { id: input.id } });
+          if (!existing) throw new FeeScheduleValidationError("Subscription category fee not found.", 404);
+          await lockFeeSchedule(tx, "subscriptionCategory", existing.subscriptionCategoryId);
+          await tx.subscriptionCategoryFee.delete({ where: { id: existing.id } });
+          targetId = existing.id;
+        } else {
+          const dates = validateFeeScheduleInput(input);
+          const existing = input.action === "UPDATE_SUBSCRIPTION_CATEGORY_FEE"
+            ? await tx.subscriptionCategoryFee.findUnique({ where: { id: input.id } })
+            : null;
+          if (input.action === "UPDATE_SUBSCRIPTION_CATEGORY_FEE" && !existing) {
+            throw new FeeScheduleValidationError("Subscription category fee not found.", 404);
+          }
+          const subscriptionCategoryId = input.action === "CREATE_SUBSCRIPTION_CATEGORY_FEE"
+            ? input.subscriptionCategoryId
+            : existing!.subscriptionCategoryId;
+          const targetCategory = await tx.subscriptionCategory.findUnique({
+            where: { id: subscriptionCategoryId },
+            select: { id: true, isBuiltIn: true },
+          });
+          if (!targetCategory) {
+            throw new FeeScheduleValidationError("Subscription category not found.", 404);
+          }
+          // Review finding: the built-in "Individual" sentinel is never a
+          // priced category — defense in depth beside the `where: { isBuiltIn:
+          // false }` that already keeps it out of this card's own picker.
+          if (input.action === "CREATE_SUBSCRIPTION_CATEGORY_FEE" && targetCategory.isBuiltIn) {
+            throw new FeeScheduleValidationError(
+              "The built-in Individual category never bills a fee of its own and cannot have one configured.",
+              409,
+            );
+          }
+          await lockFeeSchedule(tx, "subscriptionCategory", subscriptionCategoryId);
+          const overlap = await tx.subscriptionCategoryFee.findFirst({
+            where: { subscriptionCategoryId, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) },
+            select: { id: true },
+          });
+          if (overlap) throw new FeeScheduleValidationError("This subscription category fee overlaps an existing effective-date range.", 409);
+          const row = existing
+            ? await tx.subscriptionCategoryFee.update({ where: { id: existing.id }, data: { ...dates, prorationRule: input.prorationRule } })
+            : await tx.subscriptionCategoryFee.create({ data: { subscriptionCategoryId, ...dates, prorationRule: input.prorationRule } });
+          targetId = row.id;
+          await reconcileSubscriptionCategoryFeeComponents({
+            tx,
+            fee: row,
+            existing,
+            subscriptionCategoryId,
+            suppliedComponents: input.components,
+            newAmountCents: dates.amountCents,
+            format,
+          });
+        }
       }
       // `payment` (#2581): fee configuration IS money configuration, and
       // `payment` is `support` plus `finance` — the narrowest genuine gate for

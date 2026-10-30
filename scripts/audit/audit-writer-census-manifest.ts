@@ -712,7 +712,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // charge-backed recovery is held because Stripe shows a refund made outside the app since the
   // debt arose (INV-PAY-145), an awaited `createAuditLog` under `payment`. RE-MEASURED with
   // `pnpm run audit:census`.
-  writeSites: 523,
+  // 523 -> 526 (subscription-category-decoupling rework, merged onto main
+  // 69ade2d95, 29 Oct 2026): the three Subscription Categories admin-CRUD
+  // writers (create/update/delete), all `admin` category via `auditLog.create`.
+  // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  writeSites: 526,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -966,7 +970,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 77 -> 75 (#52): the two removed other-lodges writers above.
     // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
-    "auditLog.create": { total: 76, uncategorised: 0 },
+    // 76 -> 79 (subscription-category-decoupling rework): the three new
+    // Subscription Categories admin-CRUD writers, above.
+    "auditLog.create": { total: 79, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1298,7 +1304,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 110, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    // 110 -> 113 (subscription-category-decoupling rework): the three new
+    // Subscription Categories admin-CRUD writers, all `admin` — officer-only
+    // config, no member data, readable with support:view like every sibling
+    // writer in this category.
+    admin: 113, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

@@ -4,12 +4,12 @@ Audience: Operator
 
 ## What it is
 
-The consolidated fee console: **hut nightly fees**, **joining fees**, and **annual
-membership fees** in one place, plus the **family billing members** panel. Hut
-fees are edited by bookings admins; joining and annual fees by finance admins —
-you may be able to edit one group and only view the other. Find it at **Admin →
-Finance → Fees** (`/admin/fees`). The old `/admin/fee-configuration` route
-redirects here.
+The consolidated fee console: **hut nightly fees**, **joining fees**, **annual
+membership fees**, and **subscription category fees** in one place, plus the
+**family billing members** panel. Hut fees are edited by bookings admins; the
+other fee sections and the family billing panel by finance admins — you may be
+able to edit one group and only view the other. Find it at **Admin → Finance →
+Fees** (`/admin/fees`). The old `/admin/fee-configuration` route redirects here.
 
 Fees is unusual: you can open it with **either** bookings **or** finance view
 access, and each section self-gates its own editing. All amounts are stored as
@@ -22,6 +22,10 @@ date-only.
   tier.
 - You are configuring the one-off joining fee or the annual membership fee for a
   membership type.
+- You are setting a flat subscription rate for a billing category — e.g. a
+  "Couple" or "2 Adults + 2+ Children" tier that bills a group of members one
+  fee regardless of their individual membership types. See [Subscription
+  Categories](subscription-categories.md) for assigning members to one.
 - You need to name the invoice recipient (billing member) for each family.
 
 ## Step-by-step
@@ -151,6 +155,24 @@ date-only.
      full, so saved fees display the fee-level rule and never label a component
      "prorated" when the rule is *Full annual fee*.
 
+### Set subscription category fees
+
+1. In **Subscription category fees**, click **Edit**, then per subscription
+   category (created on the [Subscription Categories](subscription-categories.md)
+   page) set the **Amount (NZD)**, **Proration** (Full annual fee, or Remaining
+   months incl. decision month), and the effective dates. Unlike annual
+   membership fees, a category fee has no age tier and no billing-basis choice —
+   it is always one flat amount for the group of members sharing that category.
+2. Like annual fees, each category fee is split into **invoice-line
+   components** that must sum exactly to the fee amount, with the same
+   Account/Item pickers and the same per-component **Prorate** opt-in under
+   *Remaining months* proration.
+3. The built-in **Individual** category is a routing signal, not a priced
+   category — a member with no category assigned (the default) bills exactly
+   as they always have, under their membership type's own fee. Setting a fee
+   for **Individual** itself here is possible but has no effect: nothing ever
+   routes a member to it, so it is never read.
+
 ### Set family billing members
 
 1. If the club bills families via a billing member, the **Family billing members**
@@ -166,6 +188,7 @@ date-only.
 | Hut fees | Season Name, Type, Start/End Date, per-type/per-tier nightly rate, flat whole-lodge night rate (optional), Active | Bookings edit; rates entered in dollars, stored as cents; NZ date-only; a blank flat whole-lodge rate keeps whole-lodge bookings priced per guest; a season missing a required rate is flagged before a booking reaches it; seasons are listed in date order and nights no active season covers are flagged; **New season from this** starts a new season from an existing one's rates and never changes the one it copied |
 | Joining fees | Membership type, Age tier (or Flat), Amount, Effective from/to | Finance edit; per membership type + age tier |
 | Annual membership fees | Annual amount, Billing basis, Proration, Effective from/to, invoice-line components | Finance edit; GST-inclusive integer cents; components must sum to the total; effective ranges may not overlap for one type |
+| Subscription category fees | Subscription category, Amount, Proration, Effective from/to, invoice-line components | Finance edit; no age tier or billing-basis field — always one flat amount per category; components must sum to the total; the built-in Individual category's fee, if set, is never read |
 | Family billing members | Billing member per family | Finance edit; only in "bill families via a billing member" mode; recipient never inferred |
 
 ## Troubleshooting
@@ -176,6 +199,9 @@ date-only.
 | "You don't have permission to view this section" on joining/annual fees | You have bookings access but not finance | Ask a finance admin — those are managed by finance admins |
 | A section is read-only | You have view but not edit for that area | Ask an admin with edit access for that area (bookings for hut fees, finance for the rest) |
 | An annual-fee save is rejected | The invoice-line components do not sum to the fee total, or effective ranges overlap | Reconcile the components to the total; make effective ranges non-overlapping |
+| A subscription category fee save is rejected | The invoice-line components do not sum to the fee amount, or effective ranges for that category overlap | Reconcile the components to the amount; make effective ranges non-overlapping |
+| "No subscription categories yet" in the category fee section | No custom categories have been created | Create one on [Subscription Categories](subscription-categories.md), then set its fee here |
+| A member assigned a subscription category is flagged with a billing exception instead of being invoiced | No effective fee is configured for the category they are assigned, on the decision date | Set an effective fee for that category here — the member is never billed under their membership type's own rate as a fallback |
 | The component Account/Item dropdowns are empty and show an amber notice | Xero is not connected, so the live account/item lists cannot be loaded | Type the account/item codes manually for now; reconnect Xero (see [Xero](xero.md)) to pick from the live lists |
 | A season shows **Missing rates** | A membership type that carries its own nightly rates has none for that season — usually a type added after the season was created | Edit the season and fill in the rates the panel names. Nothing prices until you do; the booking is refused rather than charged a guessed amount |
 | **No season covers &lt;dates&gt;** appears between two seasons | Those nights fall outside every active season, so nothing prices them and a booking including one is refused | Move one of the two windows to meet the other, or add a season covering the nights. Check the Active badge first: a deactivated season sitting in the gap covers nothing |
@@ -189,8 +215,9 @@ date-only.
 - Back to the [documentation hub](../README.md).
 - Feature hub: [Finance dashboard](../finance-dashboard/README.md).
 - Sibling guides: [Subscriptions](subscriptions.md), [Seasons](seasons.md),
-  [Membership Types](membership-types.md), [Family Groups](family-groups.md),
-  [Age Groups](age-tier-settings.md).
+  [Membership Types](membership-types.md),
+  [Subscription Categories](subscription-categories.md),
+  [Family Groups](family-groups.md), [Age Groups](age-tier-settings.md).
 - Reference: the
   [fee configuration lifecycle](../STATE_MACHINES.md#fee-configuration-lifecycle),
   the fee [operator workflow](../AUTHORITATIVE_FEES.md#operator-workflow),

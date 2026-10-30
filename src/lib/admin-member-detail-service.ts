@@ -517,6 +517,11 @@ export async function getAdminMemberDetail(params: {
                 allowedAgeTiers: { select: { ageTier: true } },
               },
             },
+            // Subscription-category decoupling: independent billing axis,
+            // required by serializeSeasonalMembershipAssignment.
+            subscriptionCategory: {
+              select: { id: true, key: true, name: true, isActive: true },
+            },
           },
         },
         committeeAssignments: {

@@ -1475,7 +1475,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // on the merged tree (main b7466a631, 27 Oct 2026), never added.
     // 392 -> 393 unpinned (#4359): the card-refund re-send hold, unpinned `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 393 });
+    // 393 -> 396 unpinned (subscription-category-decoupling rework): the three
+    // new Subscription Categories admin-CRUD writers, unpinned `admin`.
+    ).toEqual({ pinned: 130, unpinned: 396 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

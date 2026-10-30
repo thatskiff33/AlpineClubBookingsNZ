@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   itemMappingFindFirst: vi.fn(),
   accountMappingFindUnique: vi.fn(),
   membershipAnnualFeeFindFirst: vi.fn(),
+  subscriptionCategoryFeeFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -13,6 +14,7 @@ vi.mock("@/lib/prisma", () => ({
     xeroItemCodeMapping: { findFirst: mocks.itemMappingFindFirst },
     xeroAccountMapping: { findUnique: mocks.accountMappingFindUnique },
     membershipAnnualFee: { findFirst: mocks.membershipAnnualFeeFindFirst },
+    subscriptionCategoryFee: { findFirst: mocks.subscriptionCategoryFeeFindFirst },
   },
 }));
 
@@ -20,9 +22,13 @@ import {
   FeeScheduleValidationError,
   getEffectiveJoiningFee,
   getEffectiveMembershipAnnualFee,
+  getEffectiveSubscriptionCategoryFee,
   scheduleOverlapWhere,
   validateFeeScheduleInput,
+  validateSubscriptionCategoryFeeComponents,
 } from "@/lib/authoritative-fees";
+
+const FORMAT = { currencyCode: "NZD", locale: "en-NZ" };
 
 /**
  * The club's day, supplied explicitly (#3123). `asOf` used to default to the
@@ -38,6 +44,7 @@ describe("authoritative fee schedules", () => {
     mocks.itemMappingFindFirst.mockResolvedValue(null);
     mocks.accountMappingFindUnique.mockResolvedValue(null);
     mocks.membershipAnnualFeeFindFirst.mockResolvedValue(null);
+    mocks.subscriptionCategoryFeeFindFirst.mockResolvedValue(null);
   });
 
   it("accepts inclusive single-day boundaries and preserves integer cents", () => {
@@ -167,5 +174,64 @@ describe("authoritative fee schedules", () => {
 
   it("exposes the validation error status for API conflict handling", () => {
     expect(new FeeScheduleValidationError("overlap", 409).status).toBe(409);
+  });
+
+  // Subscription-category decoupling: a flat, exact-window resolver with no
+  // age-tier dimension at all — unlike getEffectiveMembershipAnnualFee there
+  // is no flat-vs-tier precedence to test, just the window lookup itself.
+  describe("getEffectiveSubscriptionCategoryFee", () => {
+    it("resolves the effective flat fee on inclusive effective boundaries", async () => {
+      const asOf = new Date("2026-07-13T00:00:00.000Z");
+      mocks.subscriptionCategoryFeeFindFirst.mockResolvedValue({ id: "cat-fee-1", amountCents: 20000 });
+      await expect(getEffectiveSubscriptionCategoryFee({ subscriptionCategoryId: "cat-1" }, asOf))
+        .resolves.toMatchObject({ id: "cat-fee-1" });
+      expect(mocks.subscriptionCategoryFeeFindFirst).toHaveBeenCalledWith({
+        where: {
+          subscriptionCategoryId: "cat-1",
+          effectiveFrom: { lte: asOf },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+        },
+        orderBy: { effectiveFrom: "desc" },
+        include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+      });
+    });
+
+    it("returns null when no effective category fee exists", async () => {
+      mocks.subscriptionCategoryFeeFindFirst.mockResolvedValue(null);
+      await expect(getEffectiveSubscriptionCategoryFee({ subscriptionCategoryId: "cat-1" }, CLUB_TODAY))
+        .resolves.toBeNull();
+    });
+  });
+
+  // Subscription-category decoupling: the sibling of validateFeeComponents
+  // with no billingBasis param — a category fee is always invoiced, so there
+  // is no NO_INVOICE branch to test.
+  describe("validateSubscriptionCategoryFeeComponents", () => {
+    it("accepts components that sum exactly to the fee amount", () => {
+      expect(() => validateSubscriptionCategoryFeeComponents({
+        components: [{ label: "Subscription fee", amountCents: 20000, prorate: true, sortOrder: 0 }],
+        amountCents: 20000,
+      }, FORMAT)).not.toThrow();
+    });
+
+    it("rejects a fee with zero components", () => {
+      expect(() => validateSubscriptionCategoryFeeComponents({
+        components: [], amountCents: 20000,
+      }, FORMAT)).toThrow("at least one component");
+    });
+
+    it("rejects components that do not sum to the fee amount", () => {
+      expect(() => validateSubscriptionCategoryFeeComponents({
+        components: [{ label: "Subscription fee", amountCents: 19000, prorate: true, sortOrder: 0 }],
+        amountCents: 20000,
+      }, FORMAT)).toThrow("must sum to the fee amount");
+    });
+
+    it("rejects a component with no label", () => {
+      expect(() => validateSubscriptionCategoryFeeComponents({
+        components: [{ label: "  ", amountCents: 20000, prorate: true, sortOrder: 0 }],
+        amountCents: 20000,
+      }, FORMAT)).toThrow("must have a label");
+    });
   });
 });
