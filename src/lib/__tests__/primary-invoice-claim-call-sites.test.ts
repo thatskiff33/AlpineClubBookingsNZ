@@ -161,7 +161,8 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
 
   it("the guests route, which settles for itself, makes the same write and marks its row", () => {
     const route = read(GUESTS_ROUTE);
-    expect(route).toContain("await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0 })");
+    // #4299 (N3): the same write, no fee, now also told the place settles on its organiser's combined invoice.
+    expect(route).toContain("await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0, settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking) })");
     expect(route).toContain("primaryInvoiceSettlementHistory({ settledAgainstPrimaryInvoice })");
   });
 

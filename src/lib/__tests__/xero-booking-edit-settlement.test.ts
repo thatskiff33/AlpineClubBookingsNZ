@@ -422,6 +422,22 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(followForIntent).toHaveBeenCalledWith("pi_additional");
   });
 
+  it("#4299 N-b: records no primary-invoice update, queued or skipped, for an organiser-paid bank place", async () => {
+    const decision = await queueXeroBookingEditSettlement({
+      organiserBankPlace: true,
+      bookingId: "place_1",
+      bookingModificationId: "mod_place",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      datesChanged: true,
+    });
+    expect(decision.primaryInvoiceUpdateAction.type).toBe("none");
+    expect(mocks.recordSkippedXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
+  });
+
   it("queues a mixed-sign supplementary invoice with the signed price reduction (#1356)", async () => {
     const decision = await queueXeroBookingEditSettlement({
       bookingId: "booking_mixed",

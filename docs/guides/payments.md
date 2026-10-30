@@ -271,6 +271,10 @@ the money was taken on the group's combined invoice), so once you mark one paid
 back the finance contacts get a **Xero Sync Error** email naming the amount,
 the organiser and the invoice: in Xero, raise a credit note for that amount to
 the organiser against the group's invoice and record the bank refund against it.
+A place that has an extra invoice for a later price increase (#4299) is the
+exception: there the app raises the notes itself once you mark the task paid
+back (one against the group's invoice for the share, one against the extra
+invoice for the extra's part), so do not raise a note by hand for it.
 When the joiner cancels their own place with a refund due, the cancel raises
 one of these tasks too, for the policy's card-tier refund, to the organiser
 (never account credit for the joiner), and admins get the **Manual refund

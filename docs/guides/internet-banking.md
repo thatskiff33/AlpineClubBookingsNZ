@@ -140,6 +140,18 @@ has worked through the joiners; if it could not go out, a background job sends
 it later, and a task raised after the first was paid back gets its own email
 (#4042; details in [payments](payments.md#pay-back-a-refund-for-a-cash-booking)).
 
+**When a place in a group the organiser paid for costs more** (#4299). The app
+bills the organiser, not the joiner, on a separate Xero invoice for the extra
+and any late-change fee, and emails them the **Group Organiser Extra Invoice**
+message. Reconcile the organiser's bank transfer against that invoice in Xero as
+usual; the app reads the payment from Xero and records it on the joiner's
+place. If the place is later cut back or cancelled, the app waives what is
+still unpaid with a credit note (or voids an invoice nothing was paid on) and
+refunds the paid part at the cancellation policy's percentage through the
+organiser's refund task. If Xero shows the organiser's payment reversed after
+part of it was refunded, the app changes nothing and puts a task in **Xero
+Operations**: fix it in Xero, then choose **Resolve (fixed in Xero)**.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

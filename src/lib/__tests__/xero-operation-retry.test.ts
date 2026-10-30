@@ -964,6 +964,18 @@ describe("retryXeroSyncOperation", () => {
     ).toBeLessThan(mocks.createXeroInvoiceForBooking.mock.invocationCallOrder[0]);
   });
 
+  it.each([
+    { recorded: { skipped: true, refusal: "ORGANISER_PAID_INTERNET_BANKING" }, says: /^No invoice was created: The group organiser paid this place by internet banking/ },
+    { recorded: { skipped: true, reason: "Booking was manually marked paid" }, says: /manually marked paid \(cash \/ off-Xero\)/ },
+  ])("#4299 B1: a refused booking-invoice retry names the fence the handler recorded ($recorded.refusal)", async ({ recorded, says }) => {
+    mocks.findUniqueOperation.mockResolvedValueOnce(makeOperation()).mockResolvedValueOnce({ responsePayload: recorded });
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.createXeroInvoiceForBooking.mockResolvedValue(null);
+
+    const { message } = await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+    expect(message).toMatch(says);
+  });
+
   it("409s a booking-invoice retry whose claim lost (already queued or claimed elsewhere) without calling Xero (#2262 H3)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation());
     mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });

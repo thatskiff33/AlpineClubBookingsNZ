@@ -331,6 +331,8 @@ const tx = {
   // #3947 review: the queued supplementary invoice a later share joins.
   xeroSyncOperation: {
     findFirst: (...a: unknown[]) => mocks.xeroSyncOperationFindFirst(...a),
+    // #4299: no organiser extra refund note waits on these hand-backs.
+    findMany: async () => [],
   },
   // #3219 D2: closing a review whose price boxes are OFFERED is refused while
   // they are blank, so every edit-review closure now asks whether this strand

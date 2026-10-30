@@ -8,6 +8,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import { ORGANISER_EXTRA_RECEIPT_REASON, ORGANISER_SHARE_RECEIPT_REASON } from "@/lib/organiser-extra-state";
 
 function store(overrides: {
   payment?: unknown;
@@ -47,6 +48,20 @@ function store(overrides: {
 }
 
 describe("syncBookingLedgerSettlements", () => {
+  it("posts extra bank cash without double-posting the combined-invoice share materialised for aggregate repair", async () => {
+    const { s, createMany } = store({ payment: {
+      bookingId: "b1", manuallyMarkedPaidAt: null, manuallyMarkedPaidByMemberId: null, booking: { lodgeId: "l1" },
+      transactions: [
+        { id: "share", source: "INTERNET_BANKING", status: "SUCCEEDED", amountCents: 30_000, reason: ORGANISER_SHARE_RECEIPT_REASON },
+        { id: "extra", source: "INTERNET_BANKING", status: "SUCCEEDED", amountCents: 2_000, reason: ORGANISER_EXTRA_RECEIPT_REASON },
+      ], refunds: [],
+    } });
+    await syncBookingLedgerSettlements({ paymentId: "p1", store: s });
+    const rows = createMany.mock.calls[0]?.[0].data;
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0]).toMatchObject({ kind: "BANK_RECEIPT", anchorId: "extra", unitCents: 2_000 });
+  });
+
   it("posts what the rows imply, through the write door, skipping keys already there", async () => {
     const { s, createMany } = store();
     await syncBookingLedgerSettlements({ paymentId: "p1", store: s });

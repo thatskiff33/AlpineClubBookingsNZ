@@ -21,7 +21,7 @@ import {
 import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
 
 function tx() {
-  return { manualRefundTask: { createMany: vi.fn(async () => ({ count: 1 })) } };
+  return { manualRefundTask: { createMany: vi.fn(async () => ({ count: 1 })), findUniqueOrThrow: vi.fn(async () => ({ id: "handback" })) }, xeroSyncOperation: { findMany: vi.fn(async () => []) } };
 }
 
 describe("which edit refunds go back by hand (D-3813-6)", () => {

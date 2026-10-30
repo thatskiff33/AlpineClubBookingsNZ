@@ -12,6 +12,7 @@ import type { CalendarDate } from "@/lib/club-time";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
+  getRefundTier,
   loadCancellationPolicy,
   type CancellationPolicyDb,
 } from "@/lib/cancellation";
@@ -21,6 +22,7 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify-validation";
 import { ApiError } from "@/lib/api-error";
+import { effectiveOrganiserPaidChangeFeeCents } from "@/lib/organiser-extra-state";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import {
   refundableCashNetOfOpenHandBacks,
@@ -51,6 +53,37 @@ export type BookingModificationSettlementOptions = {
    */
   organiserRefundByBankTransfer: boolean;
 };
+
+/** One cash cap for the quote and save, after unpaid asks have been netted. */
+export async function refundableCashForModification(
+  db: OpenNonCancellationHandBackDb,
+  payment: LoadedBookingForModify["payment"],
+  reduction: ReductionAgainstUnpaidAsk,
+): Promise<number> {
+  const cashCents = await refundableCashNetOfOpenHandBacks(db, payment);
+  const paidFeeCents = reduction.organiserExtras && payment
+    ? effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, reduction.organiserExtras)
+    : 0;
+  return Math.max(0, cashCents - paidFeeCents);
+}
+
+/**
+ * #4299 S2 (`INV-PAY-148`): the card tier an edit nets organiser extras at,
+ * from the same policy and day `calculateModificationSettlementOptions` reads,
+ * and read even where those options are null: a reduction sized wholly against
+ * an unpaid extra leaves no cash basis, yet cash that races its waiver is
+ * refunded at this tier. 100%, no fee, only for an untiered re-price.
+ */
+export async function modificationCardRefundTier(
+  db: CancellationPolicyDb,
+  booking: Pick<LoadedBookingForModify, "checkIn" | "lodgeId">,
+  todayAtClub: CalendarDate,
+  untiered: boolean,
+): Promise<{ refundPercentage: number; fixedFeeCents: number }> {
+  if (untiered) return { refundPercentage: 100, fixedFeeCents: 0 };
+  const tier = getRefundTier(daysUntilDate(booking.checkIn, todayAtClub), await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db));
+  return { refundPercentage: tier.refundPercentage, fixedFeeCents: tier.fixedFeeCents };
+}
 
 /**
  * `db` is REQUIRED and reads the cancellation policy set: this module is
@@ -101,7 +134,7 @@ export async function calculateModificationSettlementOptions({
   const basisAmountCents = settlementBasisCents(
     booking,
     reduction.netChargeLeftCents,
-    await refundableCashNetOfOpenHandBacks(db, booking.payment),
+    await refundableCashForModification(db, booking.payment, reduction),
   );
   if (basisAmountCents === null) return null;
 

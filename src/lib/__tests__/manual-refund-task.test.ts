@@ -302,6 +302,10 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE, REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 
 const tx = {
+  xeroSyncOperation: {
+    findMany: vi.fn(async (): Promise<{ id: string }[]> => []),
+    updateMany: vi.fn(async () => ({ count: 1 })),
+  },
   // #3582: an edit review's completion takes lock(1) first, before its claim.
   $executeRaw: (...a: unknown[]) => mocks.executeRaw(...a),
   // #3639: the late capture a treasurer-approval task refunds, read before the claim.
@@ -627,6 +631,23 @@ beforeEach(() => {
 });
 
 describe("resolveManualRefundTask", () => {
+  it("releases only the organiser notes bound to the completed hand-back, after claiming the task", async () => {
+    tx.xeroSyncOperation.findMany.mockResolvedValueOnce([{ id: "extra-refund" }, { id: "share-refund" }]);
+    await resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+    expect(tx.xeroSyncOperation.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      queueType: "ORGANISER_EXTRA_ADJUSTMENT", status: "WAITING_PAYMENT", requestPayload: { path: ["handBackTaskId"], equals: "task-1" },
+    } }));
+    expect(tx.xeroSyncOperation.updateMany).toHaveBeenCalledExactlyOnceWith({ where: { id: { in: ["extra-refund", "share-refund"] }, status: "WAITING_PAYMENT" }, data: { status: "PENDING" } });
+    expect(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(tx.xeroSyncOperation.updateMany.mock.invocationCallOrder[0]!);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("dismissal never releases organiser refund notes for money that was not handed back", async () => {
+    await resolveManualRefundTask({ taskId: "task-1", resolution: "dismissed", note: "Not transferred", actingMemberId: "admin-1", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+    expect(tx.xeroSyncOperation.findMany).not.toHaveBeenCalled();
+    expect(tx.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
+  });
+
   it("completing writes the ledger allocation and the REFUNDED booking event — that is when the money is recorded as returned", async () => {
     await resolveManualRefundTask({
       taskId: "task-1",

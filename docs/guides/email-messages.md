@@ -154,6 +154,21 @@ says the amount for their share is being refunded to the card the organiser paid
 with; `{{joinerName}}` and `{{amount}}` are there for an override too. It is not
 sent when the admin chose not to email, or when the organiser is the joiner.
 
+**Group Organiser Extra Invoice** (#4299) goes to the organiser of a group they
+paid for by internet banking when a change makes a joiner's place cost more:
+the extra, with any late-change fee, is billed to the organiser on its own Xero
+invoice. `{{joinerName}}` names the place, `{{changeSummary}}` the kind of
+change ("Dates Changed", "Guests Added" and so on), `{{additionalAmount}}` what
+is still owed on the invoice and `{{xeroInvoiceNumber}}` the reference to quote.
+It is sent once per invoice, scoped to the organiser's own booking, so that
+booking's **No emails** switch withholds it; an admin's choice not to email the
+member about the joiner's change does not. If the change was cut back or
+cancelled before the invoice reached Xero, it names only what is still owed,
+and is not sent when nothing is. The joiner's own **Booking Modified** message
+reads "The extra $X for this change has been invoiced to the group organiser,
+because the group organiser paid for this booking. There is nothing for you to
+pay." instead of asking them for a payment.
+
 `{{amountDue}}` on the **Booking Request Approved** and **Split Guest Payment
 Link** messages is what the pay link asks the member to pay: the booking's price
 plus any change fee recorded on it, less account credit already applied - the

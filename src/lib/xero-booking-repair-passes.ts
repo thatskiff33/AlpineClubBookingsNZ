@@ -12,9 +12,7 @@ import { PartialRefundError } from "@/lib/payment-transactions";
 import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { classifyEditReviewChargeCapture } from "./xero-booking-repair-payments";
-import type {
-  BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus,
-} from "./xero-booking-repair-types";
+import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
 import { LATE_CAPTURE_REPAIR_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { describeRefusedRepairedLateCaptureRefund, describeRepairedLateCaptureRefund, madeRepairRefunds } from "@/lib/late-capture-repair-result-message";
@@ -23,6 +21,7 @@ import { applyAdditionalCaptureReceiptAction, applyKeptChangeCaptureRecordAction
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
+import { applyHistoricalOrganiserInvoiceRepair } from "./xero-booking-repair-organiser-billing";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
@@ -451,6 +450,7 @@ async function applyQueuedAction(
       action.resultMessage = result.message;
       return;
     }
+    case "QUEUE_HISTORICAL_ORGANISER_INVOICE": return applyHistoricalOrganiserInvoiceRepair(action, deps);
     case "QUEUE_SUPPLEMENTARY_INVOICE": {
       /**
        * #3187: the payment half of the ask travels WITH it.

@@ -246,6 +246,7 @@ guide.
 | Change costs less while you still have an unpaid additional payment from an earlier change | The reduction comes off that unpaid additional payment first: it is cancelled, or made smaller, and you are refunded or credited only for anything left over |
 | Change costs less on a booking your group organiser paid for by card | The difference goes back to the organiser's card, because they paid it; there is no account-credit choice |
 | Change costs more on a booking your group organiser paid for by card | The change cannot be paid online; contact the club |
+| Change costs more on a booking your group organiser paid for by internet banking | The extra, with any late-change fee, is invoiced to the organiser, not you; your email says so and there is nothing for you to pay |
 | The club's records do not say what each night was sold for | Your change is priced when you save it: your stay's stored total is shared across its nights, so what you are credited or charged always adds up to what you paid. A change made before this, still being checked, is worked out by a person and confirmed with you |
 | Nights are locked (near check-in) | The change may need club review before it applies |
 | Cancel a paid booking | Refund to card or account credit, per the cancellation schedule |

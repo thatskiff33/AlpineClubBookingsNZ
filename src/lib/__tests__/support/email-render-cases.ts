@@ -206,6 +206,7 @@ import {
   groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
+  groupOrganiserExtraInvoiceTemplate,
   groupOrganiserJoinerRefundTemplate,
   groupSettlementExpiredTemplate,
   groupSettlementReceiptTemplate,
@@ -1111,6 +1112,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     groupJoinSettledTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105 }) },
   { id: "groupOrganiserJoinerRefundTemplate:minimal", fn: "groupOrganiserJoinerRefundTemplate", render: () =>
     groupOrganiserJoinerRefundTemplate({ firstName: "firstName-1", joinerName: "joinerName-2 <&>", amountCents: 103, checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
+  { id: "groupOrganiserExtraInvoiceTemplate:minimal", fn: "groupOrganiserExtraInvoiceTemplate", render: () =>
+    groupOrganiserExtraInvoiceTemplate({ firstName: "firstName-1", joinerName: "joinerName-2 <&>", changeSummary: "changeSummary-3 <&>", amountCents: 6500, xeroInvoiceNumber: "xeroInvoiceNumber-5" }, CLUB_FORMAT_TEST) },
   { id: "groupSettlementExpiredTemplate:minimal", fn: "groupSettlementExpiredTemplate", render: () =>
     groupSettlementExpiredTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), joinerCount: 104, totalCents: 105 }, CLUB_FORMAT_TEST) },
   { id: "groupJoinReleasedTemplate:minimal", fn: "groupJoinReleasedTemplate", render: () =>

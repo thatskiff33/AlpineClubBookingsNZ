@@ -3791,6 +3791,13 @@ application rollback -> old worker cannot select quarantined new-version booking
 exhausted or suppressed -> admin-visible failure/suppression
 ```
 
+The organiser's extra-invoice notice (#4299) starts as a durable `FAILED` row
+with a pending-delivery reason, retained retry HTML, and an id derived from the
+template and booking change. Only the retry worker sends it, after its normal
+15-minute backoff and recipient checks. Replaying invoice creation finds the
+same email row; failure to persist that row leaves the invoice operation
+retryable. This avoids a synchronous send racing email recovery.
+
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
 page-fragment/bearer preservation, rollback isolation, which business-critical
@@ -3800,6 +3807,27 @@ unconfirmed environment, and a provider failure — stay distinguishable
 (INV-CONFIG-004).
 
 ## Xero Outbox And Reconciliation Lifecycle
+
+An organiser-paid bank-transfer place's extra invoice follows the existing
+supplementary-invoice outbox, anchored on its change (#4299, `INV-PAY-148`). Its
+queued create is committed with the edit; provider failure retries the same
+change, and cash reconciliation adds only the extra's actual receipts to the
+place. Its original combined-invoice share is retained.
+
+`ORGANISER_EXTRA_ADJUSTMENT` releases unpaid extras before policy refunds.
+Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
+`PENDING` only when the matching bank-transfer hand-back is `COMPLETED`. The
+worker claims `RUNNING` before provider work and completes under that claim.
+A full release of an invoice with no payment or credit voids it; any other
+release allocates a credit note. A still-queued extra invoice a release covers
+whole goes from `PENDING`, `WAITING_PAYMENT` or `FAILED` to `SKIPPED` and is
+never raised. Cash that races a release
+is recognised and its policy refund reserved. A reversal of cash already partly
+refunded raises a `REVIEW` row (`FAILED`, not replayable) that a treasurer
+resolves in Xero Operations.
+Refund notes target the invoice that held each paid share and wait for its
+unpaid-balance waiver to finish before payout. The organiser's app
+notice is a separate durable email row, sent by the email retry lifecycle.
 
 ```text
 local business event -> Xero outbox operation queued
