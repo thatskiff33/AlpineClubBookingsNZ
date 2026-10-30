@@ -949,9 +949,10 @@ export async function register() {
         );
         const { runPersonalDataPruneJob, runFormerMemberAnonymisationJob } = await import("./lib/privacy-retention-jobs");
         const { runRecordedCronTask } = await import("./lib/cron-recorded-task");
+        const { PRIVACY_DATA_PRUNE_JOB_NAME, FORMER_MEMBER_ANONYMISATION_JOB_NAME } = await import("./lib/privacy-retention-shared");
         for (const [jobName, work] of [
-          ["privacy-data-prune", runPersonalDataPruneJob],
-          ["former-member-anonymisation", runFormerMemberAnonymisationJob],
+          [PRIVACY_DATA_PRUNE_JOB_NAME, runPersonalDataPruneJob],
+          [FORMER_MEMBER_ANONYMISATION_JOB_NAME, runFormerMemberAnonymisationJob],
         ] as const) {
           await runStep(jobName, async () => {
             const outcome = await runRecordedCronTask({

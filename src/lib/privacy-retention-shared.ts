@@ -20,6 +20,10 @@ export const DEFAULT_PRIVACY_RETENTION_SETTINGS: PrivacyRetentionSettingsValues 
   sentryReplayEnabled: false,
 };
 
+/** The retention jobs' recorded names: admin cron health and the scheduler share them. */
+export const PRIVACY_DATA_PRUNE_JOB_NAME = "privacy-data-prune";
+export const FORMER_MEMBER_ANONYMISATION_JOB_NAME = "former-member-anonymisation";
+
 /** These settings can remove applications or member profiles. */
 export const MEMBERSHIP_RETENTION_FIELDS = new Set<keyof PrivacyRetentionSettingsValues>([
   "rejectedApplicationRetentionYears", "formerMemberRetentionYears",
