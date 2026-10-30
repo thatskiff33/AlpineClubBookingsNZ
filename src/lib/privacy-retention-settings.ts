@@ -9,6 +9,8 @@ import {
 } from "@/lib/privacy-retention-shared";
 
 export const PRIVACY_RETENTION_SETTINGS_ID = "default";
+const REPLAY_POLICY_CACHE_MS = 60_000;
+let replayPolicy: { value: Promise<boolean>; expiresAt: number } | undefined;
 
 export async function getPrivacyRetentionSettings(
   db: Pick<Prisma.TransactionClient, "privacyRetentionSettings"> = prisma,
@@ -42,11 +44,18 @@ export async function savePrivacyRetentionSettings(
       summary: "Privacy retention settings updated", metadata: values,
     }, tx);
   });
+  replayPolicy = undefined;
   return values;
 }
 
-/** Public rendering fails closed if the settings store is unavailable. */
+/** Coalesce public reads for 60s; unavailable policy is cached as OFF. */
 export async function getSentryReplayEnabled(): Promise<boolean> {
-  try { return (await getPrivacyRetentionSettings()).sentryReplayEnabled; }
-  catch { return false; }
+  const now = performance.now();
+  if (!replayPolicy || now >= replayPolicy.expiresAt) {
+    replayPolicy = {
+      value: getPrivacyRetentionSettings().then(settings => settings.sentryReplayEnabled).catch(() => false),
+      expiresAt: now + REPLAY_POLICY_CACHE_MS,
+    };
+  }
+  return replayPolicy.value;
 }

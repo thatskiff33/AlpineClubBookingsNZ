@@ -133,7 +133,11 @@ constitute the club's Replay opt-in.
 
 Open tabs recheck the Replay setting every minute and when they regain focus
 or become visible. Saving retention settings refreshes the current tab
-immediately. A failed policy read stops recording; background browser timer
+immediately on the process handling that save. Other processes may retain the
+previous policy for up to 60 seconds; combined with minute polling, an open tab
+can take up to two minutes to observe a change while visible. The public policy
+endpoint is rate limited and caches only the non-personal opt-in in process.
+A failed policy read stops recording once the cached policy expires; background browser timer
 throttling can delay the periodic refresh until the tab becomes visible.
 
 ## Dietary/allergy information (special-category data)
