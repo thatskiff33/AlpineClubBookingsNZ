@@ -347,6 +347,7 @@ describe("membership cancellation admin review", () => {
       where: { id: "member-1" },
       data: expect.objectContaining({
         active: false,
+        leavingDate: expect.any(Date),
         canLogin: false,
         cancelledAt: expect.any(Date),
         cancelledReason: "Moving away",

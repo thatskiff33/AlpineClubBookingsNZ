@@ -90,6 +90,16 @@ function accountSource() {
   }
 }
 
+describe("leaving date officer corrections", () => {
+  it("sends only a changed departure day", () => {
+    const form = buildContactEditForm({ ...contactSource(), leavingDate: "2018-02-28T00:00:00.000Z" });
+    expect(form.leavingDate).toBe("2018-02-28");
+    expect(buildContactPayload(form)).not.toHaveProperty("leavingDate");
+    expect(buildContactPayload({ ...form, leavingDate: "2017-01-01" })).toHaveProperty("leavingDate", "2017-01-01");
+    expect(buildContactPayload({ ...form, leavingDate: "" })).toHaveProperty("leavingDate", null);
+  });
+});
+
 describe("admin-member-edit-groups", () => {
   describe("buildContactPayload", () => {
     it("emits exactly the contact group's keys — no access/auth fields, no lifeMemberDate", () => {

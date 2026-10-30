@@ -715,7 +715,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // 523 -> 526 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
   // and `XERO_WEBHOOK_THRESHOLD_UPDATED`, each an awaited `createAuditLog` with a literal `xero`
   // category at the call site. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 526,
+  // 526 -> 528 (#4457): `privacy.retention.settings_updated` (`admin`) and
+  // `privacy.retention.member_anonymised` (`privacy`, so only membership:view readers see
+  // which member was anonymised), each an awaited `createAuditLog` with a literal category.
+  // RE-MEASURED with `pnpm run audit:census` after merging #4555.
+  writeSites: 528,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -932,7 +936,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 158 -> 161: the central-server lane (#4262) merged. RE-MEASURED with `pnpm run audit:census` on the merged tree (central-server lane + main b7466a631, 27 Oct 2026): the lane's four sites and upstream's are disjoint, composed, never added.
     // 161 -> 162 (#4359): the re-send hold's row, above.
     // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
-    createAuditLog: { total: 165, uncategorised: 0 },
+    // 165 -> 167 (#4457): the retention settings update and the member anonymisation, above.
+    createAuditLog: { total: 167, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1302,7 +1307,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 110, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 111, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
+    // support:view-only population: it records only retention settings, never a member.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1442,7 +1449,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // filter, so they read it there in full. What the category picks is the AI
     // Diagnostics correlation entry, which for `privacy` needs membership too.
     // 20 -> 21 (#3492): the guest promo-code lookup, above.
-    privacy: 21,
+    // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
+    privacy: 22,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,

@@ -295,6 +295,7 @@ function archiveTarget(overrides: Record<string, unknown> = {}) {
     active: false,
     canLogin: false,
     cancelledAt: new Date("2026-05-01T00:00:00.000Z"),
+    leavingDate: new Date("2026-05-01T00:00:00.000Z"),
     cancelledReason: "Moved away",
     archivedAt: null,
     archivedReason: null,
@@ -1437,6 +1438,7 @@ describe("member archive lifecycle actions", () => {
       where: { id: "member-1", archivedAt: null },
       data: expect.objectContaining({
         archivedAt: expect.any(Date),
+        leavingDate: new Date("2026-05-01T00:00:00.000Z"),
         active: false,
         canLogin: false,
       }),

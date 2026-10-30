@@ -1,3 +1,4 @@
+import { addUtcYears } from "@/lib/retention-calendar";
 import { type AuditLog, Prisma, PrismaClient } from "@prisma/client";
 import { createPrismaPgAdapter } from "@/lib/prisma-adapter";
 import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
@@ -314,17 +315,6 @@ function readEnv(name: string): string | undefined {
 function addUtcMonths(date: Date, months: number): Date {
   const next = new Date(date);
   next.setUTCMonth(next.getUTCMonth() + months);
-  return next;
-}
-
-// Clamped (#3939): 29 Feb in a year without one is 28 Feb, not 1 Mar. Every
-// caller subtracts years to get a deletion cutoff, so rolling over to 1 Mar
-// would delete up to a day early; the clamp errs towards keeping.
-function addUtcYears(date: Date, years: number): Date {
-  const next = new Date(date);
-  const month = next.getUTCMonth();
-  next.setUTCFullYear(next.getUTCFullYear() + years);
-  if (next.getUTCMonth() !== month) next.setUTCDate(0);
   return next;
 }
 

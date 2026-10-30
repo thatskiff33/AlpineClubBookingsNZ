@@ -445,6 +445,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
+  "/api/admin/privacy-retention": "support",
   "/api/admin/promo-codes": "bookings",
   "/api/admin/promo-codes/[id]": "bookings",
   "/api/admin/promo-codes/[id]/redemptions": "bookings",

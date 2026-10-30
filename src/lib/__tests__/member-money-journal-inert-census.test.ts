@@ -19,6 +19,7 @@ const ALLOWED: Record<string, string> = {
   "src/lib/member-money-tables.ts": "the relation list provisioning and the verifier share",
   "src/lib/database-roles.ts": "least-privilege provisioning (INSERT/SELECT grants, no rows)",
   "src/lib/member-merge-snapshot-columns.ts": "member-merge classification strings",
+  "src/lib/privacy-retention-classification.ts": "privacy schedule classification strings; no journal access",
   "scripts/verify-member-money-journal.ts": "operator verifier in a READ ONLY transaction",
 };
 const BOUNDARY = "src/lib/member-money/";

@@ -315,6 +315,10 @@ describe("#1604 bulk update — POST /api/admin/members/bulk-update", () => {
     const res = await bulkRequest({ ids: ["user2"], action: "deactivate" });
     expect(res.status).toBe(200);
     expect((await res.json()).updated).toBe(1);
+    expect(prisma.member.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ["user2"] }, OR: [{ active: true }, { leavingDate: null }] },
+      data: { active: false, leavingDate: expect.any(Date) },
+    }));
   });
 });
 
@@ -364,5 +368,8 @@ describe("#1604 deletion-request approval — POST /api/admin/deletion-requests/
     const res = await reviewRequest("dr1", { action: "approve" });
     expect(res.status).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalled();
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ active: false, leavingDate: new Date("2026-07-01T00:00:00.000Z") }),
+    }));
   });
 });

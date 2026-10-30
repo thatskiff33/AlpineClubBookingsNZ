@@ -179,9 +179,9 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
   },
   {
     file: "src/instrumentation-client.ts",
-    reads: 3,
+    reads: 2,
     reason:
-      "Sentry's own `environment` tag and its sample rates. Sentry wants the build mode; it is a reporting label, not a safety decision.",
+      "Sentry's own `environment` tag and tracing sample rate; Replay no longer reads build mode. Sentry wants the build mode; it is a reporting label, not a safety decision.",
   },
   {
     file: "src/app/api/admin/health/route.ts",

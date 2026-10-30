@@ -448,6 +448,12 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       },
       { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
       {
+        href: "/admin/privacy-retention",
+        label: "Privacy & Retention",
+        icon: Shield,
+        keywords: ["privacy", "retention", "anonymise", "replay", "pruning"],
+      },
+      {
         href: "/admin/backups",
         label: "Database Backups",
         icon: DatabaseBackup,

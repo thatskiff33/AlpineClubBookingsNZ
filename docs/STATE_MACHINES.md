@@ -3559,6 +3559,18 @@ Known participant statuses: `REQUESTED`, `PENDING_CONFIRMATION`, `DECLINED`,
 `APPROVED`, `REJECTED`, `CANCELLED`, `REJOINED`.
 Known lifecycle action statuses: `REQUESTED`, `APPROVED`, `REJECTED`.
 
+A departure has an explicit calendar day (`Member.leavingDate`, #4457).
+Single and bulk deactivation, cancellation approval, archive approval and
+account anonymisation write it alongside `active = false`; an inactive member's
+known departure is preserved through later cancellation or archive. A cancelled
+CSV import stays undated: its cancellation day is history, not a leaving date,
+so an officer records one before retention can count. Reactivation clears the date
+so a later departure starts a new retention period. A routine save of an
+already inactive record never infers a missing historical date, and the nullable
+migration backfills nothing. Officers can set or correct the known date in the
+member detail page's Contact group; active members and future departure dates
+are refused. Automatic retention excludes every inactive member without a date.
+
 ```text
 cancellation requested -> participant confirmations -> admin review
 admin approves -> local account/family changes -> Xero cancellation queued -> completed

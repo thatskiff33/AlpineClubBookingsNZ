@@ -35,6 +35,8 @@ export interface MemberContactEditForm extends MemberAddressValues {
   phoneNumber: string
   dateOfBirth: string
   joinedDate: string
+  leavingDate: string
+  leavingDateAsLoaded?: string
   occupation: string
   /**
    * #2941: present only when the detail response carried the key — i.e. the
@@ -76,6 +78,7 @@ interface MemberContactSource {
   phoneNumber: string | null
   dateOfBirth: string | null
   joinedDate: string | null
+  leavingDate?: string | null
   occupation: string | null
   dietaryRequirements?: string | null
   comments: string | null
@@ -123,6 +126,8 @@ export function buildContactEditForm(
     phoneNumber: member.phoneNumber || "",
     dateOfBirth: toDateInputValue(member.dateOfBirth),
     joinedDate: toDateInputValue(member.joinedDate),
+    leavingDate: toDateInputValue(member.leavingDate ?? null),
+    leavingDateAsLoaded: toDateInputValue(member.leavingDate ?? null),
     occupation: member.occupation ?? "",
     ...("dietaryRequirements" in member
       ? {
@@ -178,6 +183,9 @@ export function buildContactPayload(
     phoneNumber: form.phoneNumber || null,
     dateOfBirth: form.dateOfBirth || null,
     joinedDate: form.joinedDate || null,
+    ...(form.leavingDate !== form.leavingDateAsLoaded
+      ? { leavingDate: form.leavingDate || null }
+      : {}),
     occupation: form.occupation || null,
     // #2941: only a CHANGED value is sent (compared after normalisation), so
     // an unrelated Contact save cannot overwrite a newer member edit.

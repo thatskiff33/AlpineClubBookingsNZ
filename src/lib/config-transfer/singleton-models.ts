@@ -177,6 +177,18 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "bookkeeping beside it (cleanupStartedAt, lastCleanupAt, lastCleanupDeleted) " +
     "is this install's own run history and is meaningless on another -- " +
     "instance-local",
+  PrivacyRetentionSettings:
+    "the personal-data retention schedule (#4457): the windows after which the " +
+    "nightly jobs PERMANENTLY DELETE email logs and rejected applications and " +
+    "anonymise former members, the switches that turn those jobs on, and the " +
+    "Sentry Session Replay opt-in. ClubPostSettings' case: the jobs ship off and " +
+    "a club turns them on only after checking THIS install's dry-run list (owner " +
+    "decision, 28 Oct 2026), so importing an enabled switch would start deleting " +
+    "a target club's records on a schedule it never checked, and importing the " +
+    "Replay opt-in would start an overseas disclosure the target's privacy notice " +
+    "never named. The run leases beside them are this install's own job state. A " +
+    "fresh import keeps the target's own schedule, and a target with none keeps " +
+    "the defaults with every job off (fail-closed) -- instance-local",
   ServerNzSettings:
     "this install's own Alpine Central Server connection: a base URL bound to the " +
     "server THIS club was issued a key for (the key itself lives in the encrypted " +

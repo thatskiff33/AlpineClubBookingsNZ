@@ -1477,7 +1477,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 393 -> 396 unpinned (#4432): the two sync-now rows and the webhook threshold, unpinned `xero`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 396 });
+    // 396 -> 398 unpinned (#4457): the retention settings and member-anonymisation rows.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 398 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

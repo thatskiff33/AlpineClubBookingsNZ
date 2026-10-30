@@ -210,7 +210,7 @@ export async function POST(req: NextRequest) {
         updateData = { active: false };
         break;
       case "reactivate":
-        updateData = { active: true };
+        updateData = { active: true, leavingDate: null };
         break;
       case "set-role":
         updateData = {};
@@ -425,6 +425,7 @@ export async function POST(req: NextRequest) {
     // every one of them against the same day, which per-member reads
     // straddling club midnight would not.
     const clubTodayForBulk = await clubTodayDateOnlyInstant();
+    if (action === "deactivate") updateData.leavingDate = clubTodayForBulk;
 
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
@@ -447,7 +448,15 @@ export async function POST(req: NextRequest) {
         action === "set-role"
           ? { count: idsToUpdate.length }
           : await tx.member.updateMany({
-              where: { id: { in: idsToUpdate } },
+              where: {
+                id: { in: idsToUpdate },
+                // Repeating a deactivate must preserve an already recorded
+                // departure. The explicit action records today only when no
+                // current departure exists, or the member is leaving again.
+                ...(action === "deactivate"
+                  ? { OR: [{ active: true }, { leavingDate: null }] }
+                  : {}),
+              },
               data: updateData,
             });
 
@@ -719,7 +728,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      updated: result.count,
+      updated: action === "deactivate" ? idsToUpdate.length : result.count,
       notFound,
       // #2106 (MAJOR-5b): members skipped because an ORG grant would make them
       // N/A while they hold future linked-guest bookings. Empty when none.

@@ -37,6 +37,10 @@ const TWO_FACTOR_WRITE_SITES: Record<string, string> = {
     "member.update{totpSecret,twoFactorEnabled,twoFactorMethod} — the erasure's anonymisation; `security.two_factor.cleared` via `recordErasureTwoFactorClear` in the same transaction",
   "src/app/api/admin/deletion-requests/[id]/route.ts::POST#1":
     "twoFactorRecoveryCode.deleteMany — the erasure's revocation of every second-factor artefact, same transaction as the clear's row",
+  "src/lib/privacy-retention-anonymise.ts::anonymiseFormerMember.claim#0":
+    "member.updateMany{totpSecret,twoFactorEnabled,twoFactorMethod} — retention anonymisation of a former member (#4457); `security.two_factor.cleared` via `recordTwoFactorClear`, actor the named system job `former-member-anonymisation`, in the same transaction once the claim succeeds",
+  "src/lib/privacy-retention-anonymise.ts::anonymiseFormerMember#0":
+    "twoFactorRecoveryCode.deleteMany — the anonymisation's revocation of every second-factor artefact, same transaction as the clear's row",
 };
 
 describe("two-factor secret census: the tree (#3454)", { timeout: 180_000 }, () => {
@@ -49,7 +53,9 @@ describe("two-factor secret census: the tree (#3454)", { timeout: 180_000 }, () 
 
   it("pins every writer of a member's second factor, with how it is audited", () => {
     expect(
-      census.sites.map((site) => site.id),
+      // Both sides in one order: the scanner sorts by localeCompare, which puts
+      // `name.claim#0` before `name#0`, unlike the default sort below.
+      census.sites.map((site) => site.id).sort(),
       "A writer of `totpSecret`, `twoFactorEnabled`, `twoFactorMethod` or the " +
         "recovery codes appeared or moved. Route it through the audited paths in " +
         "`src/lib/two-factor.ts` / `two-factor-audit.ts` (INV-PRIV-020), then add " +

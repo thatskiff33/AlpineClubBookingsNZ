@@ -129,6 +129,10 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   {
+    site: "anonymiseFormerMember#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "Retention tests open booking money before erasing identity, excluding capture/cancel/refund; global then member lifecycle and credit, then the Xero Member row fence. Preserves all money and booking references.",
+  },
+  {
     site: "syncOrganiserExtraInvoiceCash#1", tier: "GLOBAL",
     reason: "#4299: record supplementary organiser bank-transfer cash against the child's payment and materialise its original combined-invoice share once. Serialises with edits/cancels; takes Payment row after global and re-reads the money. No provider calls in the transaction.",
     invariant: "INV-LOCK-002",

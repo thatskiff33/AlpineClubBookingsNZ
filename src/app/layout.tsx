@@ -1,3 +1,4 @@
+import { SentryReplayPolicy } from "@/components/sentry-replay-policy";
 import type { Metadata } from "next";
 import { SAFE_DEFAULT_CONFIG } from "@/config/club";
 import { getClubIdentity } from "@/lib/club-identity-settings";
@@ -58,6 +59,7 @@ export default async function RootLayout({
         className="min-h-full flex flex-col font-sans"
         suppressHydrationWarning
       >
+        <SentryReplayPolicy />
         {children}
       </body>
     </html>

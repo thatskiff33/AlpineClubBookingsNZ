@@ -13,6 +13,25 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
+## Review privacy retention before enabling cleanup (#4457)
+
+The three new automatic jobs ship OFF. After upgrading, review the
+[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
+**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
+member candidates and the configured periods before enabling any job. Defaults
+are 2 years for email logs, 1 year after reviewedAt for rejected applications,
+and 7 years after explicit leavingDate for former-member profile anonymisation.
+The periods are club settings. Disabling a job stops future cleanup; it cannot
+restore already deleted logs or applications, or anonymised profile values.
+
+Inactive members without leavingDate are listed separately and are never
+automatically erased. Establish a departure date from evidence rather than
+assuming an old login or inactive flag means the person left. Stable member
+IDs and financial references survive anonymisation for reconciliation.
+Existing audit, token, report and communications retention remains governed by
+its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
+privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
+
 ## Principles
 
 1. **Upgrade tag-to-tag, one release at a time.** Deploy released tags

@@ -606,6 +606,7 @@ model Member {
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   hutLeaderEligible                   Boolean            @default(false)
   hutLeaderEligibleAt                 DateTime?
+  leavingDate                         DateTime? @db.Date // Explicit departure day; NULL legacy dates are never inferred
   cancelledAt                         DateTime?
   cancelledReason                     String?
   cancelledViaRequestId               String?
@@ -8806,6 +8807,21 @@ enum SettlementMethod {
   INTERNET_BANKING
   ACCOUNT_CREDIT
   CASH
+}
+
+// Club-wide privacy retention. Missing row resolves to the same safe defaults.
+model PrivacyRetentionSettings {
+  id                                String   @id @default("default")
+  emailLogRetentionYears             Int      @default(2)
+  rejectedApplicationRetentionYears  Int      @default(1)
+  formerMemberRetentionYears         Int      @default(7)
+  pruneLogsAndApplicationsEnabled    Boolean  @default(false)
+  anonymiseMembersEnabled            Boolean  @default(false)
+  sentryReplayEnabled                Boolean  @default(false)
+  pruneStartedAt                    DateTime?
+  anonymiseStartedAt                DateTime?
+  updatedByMemberId                  String?
+  updatedAt                         DateTime @updatedAt
 }
 
 // #4432: club-level inbound webhook health, independent of ITR verification.

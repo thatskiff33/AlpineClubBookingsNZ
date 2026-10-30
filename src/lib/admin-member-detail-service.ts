@@ -184,6 +184,7 @@ export const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
+  leavingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format").optional().nullable().or(z.literal("")),
   lifeMemberDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
@@ -241,6 +242,7 @@ const ADMIN_MEMBER_AUDIT_FIELDS = [
   "ageTier",
   "joinedDate",
   "lifeMemberDate",
+  "leavingDate",
   "role",
   "financeAccessLevel",
   "accessRoles",
@@ -467,6 +469,7 @@ export async function getAdminMemberDetail(params: {
         xeroContactId: true,
         joinedDate: true,
         lifeMemberDate: true,
+        leavingDate: true,
         occupation: true,
         requiresInduction: true,
         // Per-member billing family selection (#1932, E6).
@@ -1089,7 +1092,23 @@ export async function updateAdminMember(params: {
   for (const f of ADDRESS_FIELDS) {
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
-  if (data.active !== undefined) updateData.active = data.active;
+  if (data.active !== undefined && data.active !== existing.active) {
+    updateData.active = data.active;
+    updateData.leavingDate = data.active ? null : clubTodayDateOnly;
+  }
+  if (data.leavingDate !== undefined) {
+    const leavingDay = data.leavingDate ? parseCalendarDate(data.leavingDate) : null;
+    if (data.leavingDate && !leavingDay) {
+      return jsonResult({ error: "Invalid leaving date" }, { status: 422 });
+    }
+    const leavingDate = leavingDay ? dateOnlyInstantOf(leavingDay) : null;
+    if (leavingDate && ((data.active ?? existing.active) || leavingDate > clubTodayDateOnly)) {
+      return jsonResult({ error: "Leaving date must be today or earlier for an inactive member" }, { status: 422 });
+    }
+    // An explicit officer correction can clear an unknown/incorrect date. A
+    // new deactivation always records its departure even if a form sends null.
+    if (!deactivatesTarget || leavingDate) updateData.leavingDate = leavingDate;
+  }
   if (data.canLogin !== undefined) updateData.canLogin = data.canLogin;
   const shouldSyncAccessRoles =
     data.accessRoles !== undefined ||
@@ -1442,6 +1461,7 @@ export async function updateAdminMember(params: {
           xeroContactId: true,
           joinedDate: true,
           lifeMemberDate: true,
+          leavingDate: true,
           requiresInduction: true,
           cancelledAt: true,
           comments: true,
@@ -1590,6 +1610,7 @@ export async function updateAdminMember(params: {
               ageTier: changedFields.includes("ageTier"),
               joinedDate: changedFields.includes("joinedDate"),
               lifeMemberDate: changedFields.includes("lifeMemberDate"),
+              leavingDate: changedFields.includes("leavingDate"),
               comments: changedFields.includes("comments"),
               emailInheritance: changedFields.includes("inheritEmailFromId"),
             },

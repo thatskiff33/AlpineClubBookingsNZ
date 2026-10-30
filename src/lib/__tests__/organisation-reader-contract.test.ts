@@ -442,6 +442,10 @@ const DECLARED_FILES: Record<string, string> = {
   "src/lib/member-money/internal/database-shape.ts":
     "pins the member-money journal's catalog definitions verbatim, so the debtor-kind CHECK's text names the organisation column; it reads no row and decides nothing about a school",
 
+  // #4457: the privacy-retention census classifies every Prisma model by name.
+  "src/lib/privacy-retention-classification.ts":
+    "names OrganisationContact as a key of the personal-data model inventory; it reads no row and decides nothing about a school",
+
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":
     "the required merge classification of OrganisationContact.member (resolve)",

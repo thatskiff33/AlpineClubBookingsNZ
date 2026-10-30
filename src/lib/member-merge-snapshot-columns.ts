@@ -122,6 +122,8 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // absorbed their record. The AuditLog row for CLUB_TIME_ZONE_UPDATED is the
   // full trail; this column is the settings row's own last-writer note.
   "ClubTimeSettings.updatedByMemberId",
+  // #4457: the officer who configured retention remains immutable attribution.
+  "PrivacyRetentionSettings.updatedByMemberId",
 
   // ENV-SAFETY 1 (#3034): who last switched the environment-safety override.
   // The same ordinary settings-audit actor column as ClubTimeSettings' above,

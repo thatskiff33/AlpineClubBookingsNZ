@@ -253,6 +253,7 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/auth/verify-email/route.ts`
 - `src/app/api/chores/[token]/route.ts`
 - `src/app/api/committee/route.ts`
+- `src/app/api/privacy/replay/route.ts` — public GET returns only the Replay opt-in, with the shared API rate limiter before any policy read. Concurrent reads share an in-process 15-second cache; settings failures return OFF, and local saves invalidate the cache. Open tabs re-check every 30 seconds, so switching Replay off reaches every instance and tab within about 45 seconds. Responses remain `no-store`.
 - `src/app/api/contact/route.ts`
 - `src/app/api/display/**/route.ts`
 - `src/app/api/health/route.ts`

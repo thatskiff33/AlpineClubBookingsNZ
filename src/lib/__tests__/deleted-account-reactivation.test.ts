@@ -651,7 +651,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await bulkUpdate(bulkReactivateRequest(["m1"]));
     expect(res.status).toBe(200);
     expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { active: true } }),
+      expect.objectContaining({ data: { active: true, leavingDate: null } }),
     );
   });
 

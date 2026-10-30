@@ -1,3 +1,4 @@
+import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -57,6 +58,7 @@ const archiveTargetMemberSelect = {
   lastName: true,
   email: true,
   active: true,
+  leavingDate: true,
   canLogin: true,
   cancelledAt: true,
   cancelledReason: true,
@@ -1620,6 +1622,7 @@ export async function reviewMemberArchiveRequest({
         archivedReason: request.reason,
         archivedViaLifecycleActionRequestId: request.id,
         active: false,
+        leavingDate: leavingDateForDeactivation(member, clubTodayForFanout),
         canLogin: false,
       },
     });
