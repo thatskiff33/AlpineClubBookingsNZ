@@ -26,7 +26,7 @@ export function SentryReplayPolicy({ enabled: supplied }: { enabled?: boolean })
     void refresh();
     // Root layouts survive navigation. Recheck open tabs as well as newly loaded
     // pages, and apply this tab's settings save without waiting for the timer.
-    const timer = window.setInterval(() => void refresh(), 60_000);
+    const timer = window.setInterval(() => void refresh(), 30_000);
     window.addEventListener("focus", refresh);
     window.addEventListener(SENTRY_REPLAY_POLICY_CHANGED, refresh);
     document.addEventListener("visibilitychange", onVisible);

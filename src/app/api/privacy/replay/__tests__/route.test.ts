@@ -39,7 +39,7 @@ describe("public Replay policy", () => {
     expect(mocks.applyRateLimit).toHaveBeenCalledWith({ id: "api" }, expect.any(Request));
     expect(mocks.findUnique).not.toHaveBeenCalled();
   });
-  it("coalesces concurrent reads and refreshes after 60 seconds", async () => {
+  it("coalesces concurrent reads and refreshes after 15 seconds", async () => {
     const responses = await Promise.all([GET(request()), GET(request())]);
     expect(mocks.findUnique).toHaveBeenCalledOnce();
     for (const response of responses) {
@@ -47,9 +47,9 @@ describe("public Replay policy", () => {
       expect(response.headers.get("Cache-Control")).toBe("no-store");
     }
     mocks.findUnique.mockResolvedValue(DEFAULT_PRIVACY_RETENTION_SETTINGS);
-    elapsed = 59_999;
+    elapsed = 14_999;
     expect(await (await GET(request())).json()).toEqual({ enabled: true });
-    elapsed = 60_000;
+    elapsed = 15_000;
     expect(await (await GET(request())).json()).toEqual({ enabled: false });
     expect(mocks.findUnique).toHaveBeenCalledTimes(2);
   });

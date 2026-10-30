@@ -151,3 +151,27 @@ it("carries the member cursor forward and restores it going back", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Previous" }));
   expect(mocks.push).toHaveBeenCalledWith("?page=1");
 });
+
+it("stops growing the cursor list once the member list is exhausted", async () => {
+  // Members ran out at member-099; email logs still have later pages.
+  fetchMock.mockResolvedValue(json({
+    ...PAYLOAD,
+    preview: { ...PAYLOAD.preview, emailLogs: { ...PAYLOAD.preview.emailLogs, count: 500 } },
+    memberHasMore: false,
+    memberNextCursor: "member-099",
+  }));
+  render(<ClubTimeProvider zone="Pacific/Auckland" locale="en-NZ"><PrivacyRetentionClient page={6} memberCursors={["member-024", "member-049", "member-099"]} /></ClubTimeProvider>);
+  await screen.findByText(/Former-member candidates across all pages/);
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(mocks.push).toHaveBeenLastCalledWith("?page=7&memberCursor=member-024&memberCursor=member-049&memberCursor=member-099");
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(mocks.push).toHaveBeenLastCalledWith("?page=5&memberCursor=member-024&memberCursor=member-049&memberCursor=member-099");
+});
+
+it("drops the member cursor that belongs to the page being left", async () => {
+  fetchMock.mockResolvedValue(json({ ...PAYLOAD, memberHasMore: false, memberNextCursor: "member-099" }));
+  render(<ClubTimeProvider zone="Pacific/Auckland" locale="en-NZ"><PrivacyRetentionClient page={4} memberCursors={["member-024", "member-049", "member-099"]} /></ClubTimeProvider>);
+  await screen.findByText(/Former-member candidates across all pages/);
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(mocks.push).toHaveBeenLastCalledWith("?page=3&memberCursor=member-024&memberCursor=member-049");
+});

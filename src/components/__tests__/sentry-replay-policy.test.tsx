@@ -76,11 +76,11 @@ describe("club opt-in for Sentry Replay", () => {
     await act(async () => { view = render(<SentryReplayPolicy />); });
     expect(sentry.replay?.start).toHaveBeenCalledOnce();
     const replay = sentry.replay;
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetchPolicy).toHaveBeenCalledTimes(2);
     expect(replay?.stop).toHaveBeenCalled();
     view!.unmount();
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(fetchPolicy).toHaveBeenCalledTimes(2);
   });
 

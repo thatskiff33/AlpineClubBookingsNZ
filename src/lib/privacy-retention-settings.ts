@@ -9,7 +9,9 @@ import {
 } from "@/lib/privacy-retention-shared";
 
 export const PRIVACY_RETENTION_SETTINGS_ID = "default";
-const REPLAY_POLICY_CACHE_MS = 60_000;
+// Short: switching Replay off must reach every instance quickly (with the
+// client's 30s re-check, at most about 45s end to end).
+const REPLAY_POLICY_CACHE_MS = 15_000;
 let replayPolicy: { value: Promise<boolean>; expiresAt: number } | undefined;
 
 export async function getPrivacyRetentionSettings(

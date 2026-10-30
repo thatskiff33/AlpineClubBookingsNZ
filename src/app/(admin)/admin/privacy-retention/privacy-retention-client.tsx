@@ -105,7 +105,13 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
 
   function pageUrl(next: boolean) {
     const params = new URLSearchParams({ page: String(page + (next ? 1 : -1)) });
-    const cursors = next ? [...memberCursors, payload?.memberNextCursor ?? memberCursors.at(-1) ?? ""] : memberCursors.slice(0, -1);
+    // Push a cursor only when the member list moved on; once it is exhausted the
+    // last cursor repeats, so the URL stops growing. Going back keeps at most one
+    // cursor per earlier page.
+    const nextCursor = payload?.memberNextCursor ?? memberCursors.at(-1) ?? "";
+    const cursors = next
+      ? (nextCursor === memberCursors.at(-1) ? memberCursors : [...memberCursors, nextCursor])
+      : memberCursors.slice(0, Math.max(0, Math.min(memberCursors.length, page - 2)));
     for (const cursor of cursors) params.append("memberCursor", cursor);
     // A support-only editor has no member cursor to carry.
     if (!payload?.canViewMembership) params.delete("memberCursor");
