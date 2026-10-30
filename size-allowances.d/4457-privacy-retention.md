@@ -8,19 +8,19 @@ lines: 749
 reason: Departure stamping and the guarded update predicate must remain alongside the bulk mutation; the date-preservation helper is already shared.
 
 file: src/app/api/admin/members/import/route.ts
-lines: 814
-reason: The explicit imported cancellation day belongs alongside the cancellation fields in the existing create payload.
+lines: 815
+reason: The explicit undated leaving date (a CSV cancellation day is not one) belongs alongside the cancellation fields in the existing create payload.
 
 file: src/components/admin-sidebar.tsx
-lines: 1211
+lines: 1216
 reason: The privacy route must be registered in the single navigation registry so sidebar and command palette share visibility.
 
 file: src/instrumentation.node.ts
-lines: 1723
+lines: 1716
 reason: Only registration is added beside existing nightly retention tasks; job implementations live in separate bounded modules.
 
 file: src/lib/admin-cron-health.ts
-lines: 945
+lines: 949
 reason: The new job definitions belong in the existing health registry so scheduling and health reporting remain consistent.
 
 file: src/lib/admin-member-detail-service.ts
