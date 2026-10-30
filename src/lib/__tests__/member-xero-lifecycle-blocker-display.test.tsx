@@ -15,7 +15,11 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// #4432: the summary also renders the sync-now button, which reads the session
+// and has its own tests (`xero-sync-now-button.test.tsx`); this file pins the blocker.
+vi.mock("@/components/admin/xero-sync-now-button", () => ({ XeroSyncNowButton: () => null }));
 
 import { MemberXeroContactSummary } from "@/app/(admin)/admin/members/[id]/_components/member-xero-contact-summary";
 import type { MemberDetail } from "@/app/(admin)/admin/members/[id]/_types";

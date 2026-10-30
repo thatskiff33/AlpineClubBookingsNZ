@@ -1,5 +1,6 @@
 "use client";
 
+import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink } from "lucide-react";
 import { buildXeroContactUrl } from "@/lib/xero-links";
@@ -8,8 +9,10 @@ import type { MemberDetail } from "../_types";
 export function MemberXeroContactSummary({
   member,
   xeroOrgShortCode,
+  onSynced,
 }: {
   member: MemberDetail;
+  onSynced?: () => void | Promise<void>;
   /**
    * Organisation short code for the contact deep link, or null when
    * unavailable — the link then degrades to the generic session-scoped Xero
@@ -20,6 +23,7 @@ export function MemberXeroContactSummary({
   return (
     <div className="text-sm">
       <p className="text-muted-foreground">Xero Contact</p>
+      <XeroSyncNowButton target={{ scope: "member", id: member.id }} onSynced={onSynced} />
       <div className="mt-1 space-y-2 font-medium">
         <div>
           {member.xeroContactId ? (

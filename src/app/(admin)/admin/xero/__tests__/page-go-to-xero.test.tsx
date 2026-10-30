@@ -22,6 +22,10 @@ vi.mock("@/components/club-identity-provider", () => ({
 
 // Keep the real "Go to Xero" button and state mapper — they are what the page
 // is pinned against here — and stub the data-fetching panels, which are not.
+// #4432: the webhook health panel fetches and reads the session; its own tests
+// are `webhook-health-panel.test.tsx`.
+vi.mock("../_components/webhook-health-panel", () => ({ WebhookHealthPanel: () => null }));
+
 vi.mock("../_components/panels", async () => {
   const actual =
     (await vi.importActual("../_components/go-to-xero-button")) as typeof import("../_components/go-to-xero-button");

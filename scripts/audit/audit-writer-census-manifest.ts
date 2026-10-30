@@ -712,7 +712,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // charge-backed recovery is held because Stripe shows a refund made outside the app since the
   // debt arose (INV-PAY-145), an awaited `createAuditLog` under `payment`. RE-MEASURED with
   // `pnpm run audit:census`.
-  writeSites: 523,
+  // 523 -> 526 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
+  // and `XERO_WEBHOOK_THRESHOLD_UPDATED`, each an awaited `createAuditLog` with a literal `xero`
+  // category at the call site. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 526,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -928,7 +931,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 157 -> 158 (#4253 release 2 fix round): the left-to-officers note, above.
     // 158 -> 161: the central-server lane (#4262) merged. RE-MEASURED with `pnpm run audit:census` on the merged tree (central-server lane + main b7466a631, 27 Oct 2026): the lane's four sites and upstream's are disjoint, composed, never added.
     // 161 -> 162 (#4359): the re-send hold's row, above.
-    createAuditLog: { total: 162, uncategorised: 0 },
+    // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
+    createAuditLog: { total: 165, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1407,7 +1411,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // Nobody's readership changes.
     // 42 -> 44 (#4270): `xero.credit_note.outside_spend_mirrored` and `.outside_spend_restored`.
     // Nobody's readership changes.
-    xero: 44,
+    // 44 -> 47 (#4432): `XERO_SYNC_NOW` (outcome and failure) and
+    // `XERO_WEBHOOK_THRESHOLD_UPDATED`, beside the other `xero` rows. Nobody's readership changes.
+    xero: 47,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

@@ -41,6 +41,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card.tsx",
   "src/app/(admin)/admin/member-fields/page.tsx",
   "src/app/(admin)/admin/video-meetings/setup/video-meetings-setup.tsx",
+  "src/app/(admin)/admin/xero/_components/webhook-health-panel.tsx",
   "src/components/admin/allocation-preferences-section.tsx",
   "src/components/admin/analytics-integration-card.tsx",
   "src/components/admin/booking-policies/adult-member-hosting-section.tsx",

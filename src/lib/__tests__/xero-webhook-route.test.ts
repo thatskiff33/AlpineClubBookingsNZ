@@ -1,3 +1,4 @@
+vi.mock("@/lib/xero-webhook-health", () => ({ recordXeroWebhookReceived: vi.fn().mockResolvedValue(undefined) }));
 import { createHmac } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -453,5 +454,51 @@ describe("Xero webhook route", () => {
           "xero:webhook:INVOICE:UPDATE:invoice-1:2026-05-29T00:00:00.000Z",
       })
     );
+  });
+});
+
+
+describe("Xero webhook health receipt", () => {
+  it("records a signed valid receipt, including an empty verification ping, but never an invalid signature", async () => {
+    const { recordXeroWebhookReceived } = await import("@/lib/xero-webhook-health");
+    vi.mocked(recordXeroWebhookReceived).mockResolvedValue(undefined);
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    expect((await POST(signedRequest({ events: [] }, "bad-signature"))).status).toBe(401);
+    expect(recordXeroWebhookReceived).not.toHaveBeenCalled();
+    expect((await POST(signedRequest({ events: [] }))).status).toBe(200);
+    expect(recordXeroWebhookReceived).toHaveBeenCalledOnce();
+  });
+  it("returns 200 for a valid ITR even when recording its receipt fails", async () => {
+    const { recordXeroWebhookReceived } = await import("@/lib/xero-webhook-health");
+    const logger = (await import("@/lib/logger")).default;
+    const error = new Error("receipt write unavailable");
+    vi.mocked(recordXeroWebhookReceived).mockRejectedValueOnce(error);
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    expect((await POST(signedRequest({ events: [] }))).status).toBe(200);
+    expect(logger.error).toHaveBeenCalledWith({ err: error }, "Failed to record Xero webhook receipt");
+    expect(mockRecordXeroWebhookValidation).toHaveBeenCalledWith("xero-webhook-key");
+  });
+  it("returns 500 for an event delivery when recording its receipt fails so Xero retries", async () => {
+    const { recordXeroWebhookReceived } = await import("@/lib/xero-webhook-health");
+    vi.mocked(recordXeroWebhookReceived).mockRejectedValueOnce(new Error("receipt write unavailable"));
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [{
+      eventType: "UPDATE", eventCategory: "INVOICE", resourceId: "invoice-1",
+      eventDateUtc: "2026-05-29T00:00:00.000Z",
+    }] }));
+    expect(response.status).toBe(500);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+  it("rejects an invalid complete batch before recording a receipt", async () => {
+    const { recordXeroWebhookReceived } = await import("@/lib/xero-webhook-health");
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    expect((await POST(signedRequest({ events: [{ invalid: true }] }))).status).toBe(400);
+    expect(recordXeroWebhookReceived).not.toHaveBeenCalled();
   });
 });
