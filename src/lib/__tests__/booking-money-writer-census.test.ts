@@ -77,6 +77,7 @@ const REVIEWED_WRITERS = [
   // #4317 review rounds 4 and 6: the restore's createMany also writes a capped in-progress promotion's rows scaled to the cap, or none for a code that cannot be scaled (scaleCappedCarriedRows via scaleSurvivors: INV-MONEY-029's one rule-derived amount, owner decision 24 Oct 2026 on #4302). No new site.
   "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany,opaquePayload|amountCents|4",
   "src/lib/payment-reconciliation.ts|booking|opaquePayload||1",
+  "src/lib/privacy-retention-anonymise.ts|bookingGuest|opaquePayload||1",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents|3",
   "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload||4",
   "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
@@ -207,6 +208,17 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
       reason: "attendee name and the rename's dietary decision only",
       sourceShape:
         /data:\s*\{\s*firstName:\s*update\.firstName,\s*lastName:\s*update\.lastName,\s*\.\.\.bookingGuestDietaryUpdateData\(renameDietary\(update\.guestId\)\),\s*\}/,
+    },
+  ],
+  [
+    // #4457: the retention anonymiser's pass over a former member's guest rows.
+    // Opaque only because it spreads the dietary erasure patch (`INV-PRIV-022`);
+    // it writes the name and dietary column and nothing that holds money.
+    "src/lib/privacy-retention-anonymise.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "anonymisation: name and the dietary erasure patch only",
+      sourceShape:
+        /tx\.bookingGuest\.updateMany\(\{\s*where:\s*\{\s*memberId:\s*id\s*\},\s*data:\s*\{\s*firstName:\s*"Deleted",\s*lastName:\s*"Member",\s*\.\.\.DIETARY_ERASURE_PATCH\s*\}\s*\}\)/,
     },
   ],
   [
