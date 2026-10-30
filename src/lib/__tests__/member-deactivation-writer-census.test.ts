@@ -29,6 +29,11 @@ function hasDepartureStamp(fields: Fields): boolean {
   // a day, even when both branches share the same mutable payload variable.
   return fields.leavingDate.some((value) => value.kind !== ts.SyntaxKind.NullKeyword && value.getText() !== "undefined");
 }
+// A reviewed undated writer must still name the column: an explicit null is a
+// decision, an omitted one could be an oversight.
+function writesExplicitlyUndated(fields: Fields): boolean {
+  return fields.leavingDate.length > 0 && fields.leavingDate.every((value) => value.kind === ts.SyntaxKind.NullKeyword);
+}
 function payloadFields(expression: ts.Expression, seen = new Set<ts.Node>()): Fields {
   const result: Fields = { active: [], cancelledAt: [], leavingDate: [], opaque: [] };
   const merge = (other: Fields) => {
@@ -155,13 +160,29 @@ const WRITERS = [
   "src/app/api/admin/members/import/route.ts",
 ].sort();
 
+// Lifecycle writers that deliberately leave the departure day unknown. #4457
+// counts only an explicit leaving date, never cancellation history ("not
+// taken: cancelledAt"), so these rows stay outside automatic anonymisation and
+// are listed for an officer to date.
+const REVIEWED_UNDATED_WRITERS: Record<string, string> = {
+  "src/app/api/admin/members/import/route.ts":
+    "a CSV's cancellation day is history, not an explicit leaving date; imported former members stay undated until an officer records one",
+};
+
 describe("Member deactivation writers record the departure in the same write (#4457)", () => {
   it("discovers exactly the reviewed lifecycle writers, each with leavingDate", () => {
     const found = ["src", "scripts"].flatMap((root) => sourceFiles(join(process.cwd(), root)))
       .flatMap((file) => writers(parse(readFileSync(file, "utf8"), file)));
     const lifecycle = found.filter(({ fields }) => fields.active.some((value) => value.kind !== ts.SyntaxKind.TrueKeyword) || fields.cancelledAt.some((value) => value.kind !== ts.SyntaxKind.NullKeyword));
     expect(lifecycle.map((writer) => writer.identity).sort()).toEqual(WRITERS);
-    for (const writer of lifecycle) expect(hasDepartureStamp(writer.fields), writer.identity).toBe(true);
+    for (const writer of lifecycle) {
+      if (writer.identity in REVIEWED_UNDATED_WRITERS) {
+        expect(writesExplicitlyUndated(writer.fields), `${writer.identity}: reviewed undated writer must write leavingDate: null`).toBe(true);
+      } else {
+        expect(hasDepartureStamp(writer.fields), writer.identity).toBe(true);
+      }
+    }
+    for (const identity of Object.keys(REVIEWED_UNDATED_WRITERS)) expect(WRITERS).toContain(identity);
     expect([...new Set(found.flatMap(({ identity, fields }) => fields.opaque.map((expression) => `${identity}: ${expression}`)))].sort())
       .toEqual(Object.keys(OPAQUE_PAYLOADS).sort());
   });
@@ -195,6 +216,15 @@ describe("Member deactivation writers record the departure in the same write (#4
     }`));
     expect(found).toHaveLength(1);
     expect(hasDepartureStamp(found[0].fields)).toBe(false);
+  });
+
+  it("accepts an undated writer only when it writes leavingDate: null explicitly", () => {
+    const [explicit] = writers(parse("function change() { tx.member.create({ data: { active: false, cancelledAt: day, leavingDate: null } }); }"));
+    const [omitted] = writers(parse("function change() { tx.member.create({ data: { active: false, cancelledAt: day } }); }"));
+    const [stamped] = writers(parse("function change() { tx.member.create({ data: { active: false, leavingDate: day } }); }"));
+    expect(writesExplicitlyUndated(explicit!.fields)).toBe(true);
+    expect(writesExplicitlyUndated(omitted!.fields)).toBe(false);
+    expect(writesExplicitlyUndated(stamped!.fields)).toBe(false);
   });
 
   it("ignores read predicates, other delegates, and literal active-only creation", () => {
