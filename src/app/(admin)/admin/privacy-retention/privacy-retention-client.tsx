@@ -34,6 +34,9 @@ type Payload = {
   };
   pageSize: number;
   canViewMembership: boolean;
+  formerMemberCandidateCount?: number;
+  memberNextCursor?: string | null;
+  memberHasMore?: boolean;
 };
 const ENDPOINT = "/api/admin/privacy-retention";
 const PERIOD_FIELDS = [
@@ -54,7 +57,7 @@ const GROUPS = [
   ["undatedMembers", "Inactive members with no leaving date", "Leaving date"],
 ] as const;
 
-export function PrivacyRetentionClient({ page }: { page: number }) {
+export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: number; memberCursors?: string[] }) {
   const canEdit = useAdminAreaEditAccess("support");
   const canEditMembership = useAdminAreaEditAccess("membership");
   const clubTime = useClubTime();
@@ -62,7 +65,10 @@ export function PrivacyRetentionClient({ page }: { page: number }) {
   const [payload, setPayload] = useState<Payload | null>(null);
   const [previewError, setPreviewError] = useState("");
   async function loadPayload(signal?: AbortSignal) {
-    const response = await fetch(`${ENDPOINT}?page=${page}`, { signal, cache: "no-store" });
+    const params = new URLSearchParams({ page: String(page) });
+    const memberAfter = memberCursors.at(-1);
+    if (memberAfter) params.set("memberAfter", memberAfter);
+    const response = await fetch(`${ENDPOINT}?${params}`, { signal, cache: "no-store" });
     if (!response.ok) throw new Error("Could not load the retention preview. Reload this page to try again.");
     const result = await response.json() as Payload;
     setPayload(result);
@@ -94,8 +100,17 @@ export function PrivacyRetentionClient({ page }: { page: number }) {
   });
   const draft = section.draft;
   const editing = section.editing && canEdit === true;
-  const maximumCount = payload ? Math.max(...Object.values(payload.preview).map((group) => group.count)) : 0;
-  const hasNextPage = payload ? page * payload.pageSize < maximumCount : false;
+  const maximumCount = payload ? Math.max(...Object.entries(payload.preview).filter(([key]) => key !== "formerMembers" && key !== "blockedMembers").map(([, group]) => group.count)) : 0;
+  const hasNextPage = payload ? (page * payload.pageSize < maximumCount || payload.memberHasMore === true) : false;
+
+  function pageUrl(next: boolean) {
+    const params = new URLSearchParams({ page: String(page + (next ? 1 : -1)) });
+    const cursors = next ? [...memberCursors, payload?.memberNextCursor ?? memberCursors.at(-1) ?? ""] : memberCursors.slice(0, -1);
+    for (const cursor of cursors) params.append("memberCursor", cursor);
+    // A support-only editor has no member cursor to carry.
+    if (!payload?.canViewMembership) params.delete("memberCursor");
+    return `?${params}`;
+  }
 
   function displayDate(value: string | null, dateOnly: boolean) {
     if (value === null) return "no leaving date — set one to include";
@@ -143,15 +158,16 @@ export function PrivacyRetentionClient({ page }: { page: number }) {
       </section>
       <section aria-labelledby="preview-heading" className="space-y-4">
         <h2 id="preview-heading" className="text-xl font-semibold">Dry-run preview</h2>
-        <p className="text-sm text-muted-foreground">These lists use the saved periods and the same eligibility checks as the jobs, even while the jobs are off. No records are changed by this preview. Each list shows up to 25 records per page; counts include all matching records.</p>
+        <p className="text-sm text-muted-foreground">These lists use the saved periods and the same eligibility checks as the jobs, even while the jobs are off. No records are changed by this preview. Each page checks up to 25 former-member candidates. Eligible and blocked counts describe this page; other counts include all matching records.</p>
         <div role="alert">{previewError}</div>
         {payload && <>
           {!payload.canViewMembership && <p className="text-sm text-muted-foreground">Membership view access is required to see rejected-application, former-member, blocked-member and undated-member lists.</p>}
+          {payload.canViewMembership && <p className="text-sm">Former-member candidates across all pages: {payload.formerMemberCandidateCount ?? 0}</p>}
           {GROUPS.map(([key, title, dateLabel]) => {
             const group = payload.preview[key];
             if (!group) return null;
             return <Card key={key}>
-              <CardHeader><CardTitle className="text-lg">{title} ({group.count})</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-lg">{title} ({group.count}{key === "formerMembers" || key === "blockedMembers" ? " on this page" : ""})</CardTitle></CardHeader>
               <CardContent>
                 {group.rows.length === 0 ? <p className="text-sm text-muted-foreground">{group.count === 0 ? "No matching records." : "No records on this page."}</p> : <Table>
                   <TableHeader><TableRow><TableHead>Record ID</TableHead><TableHead>{dateLabel}</TableHead>{key === "blockedMembers" && <TableHead>Why it is blocked</TableHead>}</TableRow></TableHeader>
@@ -165,9 +181,9 @@ export function PrivacyRetentionClient({ page }: { page: number }) {
             </Card>;
           })}
           <nav aria-label="Retention preview pages" className="flex items-center gap-3">
-            <Button variant="outline" disabled={page <= 1 || section.editing} onClick={() => router.push(`?page=${page - 1}`)}>Previous</Button>
+            <Button variant="outline" disabled={page <= 1 || section.editing} onClick={() => router.push(pageUrl(false))}>Previous</Button>
             <span className="text-sm">Page {page}</span>
-            <Button variant="outline" disabled={!hasNextPage || section.editing} onClick={() => router.push(`?page=${page + 1}`)}>Next</Button>
+            <Button variant="outline" disabled={!hasNextPage || section.editing} onClick={() => router.push(pageUrl(true))}>Next</Button>
           </nav>
           {section.editing && <p className="text-sm text-muted-foreground">Save or cancel your changes before changing preview pages.</p>}
         </>}

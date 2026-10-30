@@ -45,7 +45,7 @@ describe("privacy retention admin API", () => {
   it("requires support view and delegates paged preview to the job selector", async () => {
     const response = await GET(request("?page=2"));
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "support", level: "view" } });
-    expect(mocks.preview).toHaveBeenCalledWith({ page: 2, pageSize: 25, includeMembers: true });
+    expect(mocks.preview).toHaveBeenCalledWith({ page: 2, pageSize: 25, memberAfter: undefined, includeMembers: true });
     const payload = await response.json();
     expect(payload.settings).toEqual(DEFAULT_PRIVACY_RETENTION_SETTINGS);
     expect(mocks.getSettings).not.toHaveBeenCalled();
@@ -54,11 +54,15 @@ describe("privacy retention admin API", () => {
     expect(payload.preview.undatedMembers.rows[0].date).toBeNull();
     expect(payload.page).toBe(2);
   });
+  it("passes the former-member cursor to the bounded selector", async () => {
+    await GET(request("?page=2&memberAfter=member-25"));
+    expect(mocks.preview).toHaveBeenCalledWith({ page: 2, pageSize: 25, memberAfter: "member-25", includeMembers: true });
+  });
   it("omits every member group and disables their reads without membership view", async () => {
     mocks.hasAdminAreaAccess.mockReturnValue(false);
     const payload = await (await GET(request())).json();
     expect(mocks.hasAdminAreaAccess).toHaveBeenCalledWith({ id: "admin-1" }, { area: "membership", level: "view" });
-    expect(mocks.preview).toHaveBeenCalledWith({ page: 1, pageSize: 25, includeMembers: false });
+    expect(mocks.preview).toHaveBeenCalledWith({ page: 1, pageSize: 25, memberAfter: undefined, includeMembers: false });
     expect(payload.canViewMembership).toBe(false);
     expect(Object.keys(payload.preview)).toEqual(["emailLogs"]);
     expect(JSON.stringify(payload)).not.toContain("former-1");

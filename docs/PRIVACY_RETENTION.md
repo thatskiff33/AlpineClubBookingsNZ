@@ -17,7 +17,14 @@ Their periods are club settings, with defaults of **2 years**, **1 year from
 reviewedAt**, and **7 years from explicit leavingDate**, respectively. Review
 counts and candidates in **Admin → Privacy retention** (`/admin/privacy-retention`)
 before enabling them. Support view permission is required; member previews also
-require membership view permission. Editing requires support edit permission.
+require membership view permission. Editing requires support edit permission; changes to member or application
+periods and switches also require membership edit permission. The combined
+email/application pruning switch therefore requires both permissions.
+
+The preview checks at most 25 former-member candidates per page (plus one
+lookahead), using a member-ID cursor and the same selector as the jobs. The
+candidate total is a database count without blocker checks. Eligible and blocked
+counts describe the current page; other group counts include all matching rows.
 
 An inactive member without a leavingDate is **never automatically erased**.
 Such members appear separately for officers to review and establish a departure

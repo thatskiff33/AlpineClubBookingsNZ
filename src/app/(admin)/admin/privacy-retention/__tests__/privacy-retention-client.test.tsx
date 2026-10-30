@@ -140,3 +140,14 @@ it("disables member/application policy controls for a support-only editor", asyn
   expect(screen.getByLabelText("Enable Sentry Session Replay")).toBeEnabled();
   mocks.canEditMembership = true;
 });
+
+it("carries the member cursor forward and restores it going back", async () => {
+  fetchMock.mockResolvedValue(json({ ...PAYLOAD, memberHasMore: true, memberNextCursor: "member-049", formerMemberCandidateCount: 100 }));
+  render(<ClubTimeProvider zone="Pacific/Auckland" locale="en-NZ"><PrivacyRetentionClient page={2} memberCursors={["member-024"]} /></ClubTimeProvider>);
+  await screen.findByText(/Former-member candidates across all pages: 100/);
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/privacy-retention?page=2&memberAfter=member-024");
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(mocks.push).toHaveBeenCalledWith("?page=3&memberCursor=member-024&memberCursor=member-049");
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(mocks.push).toHaveBeenCalledWith("?page=1");
+});

@@ -13,7 +13,12 @@ export async function GET(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
-  const page = Number(new URL(request.url).searchParams.get("page") ?? 1);
+  const params = new URL(request.url).searchParams;
+  const page = Number(params.get("page") ?? 1);
+  const memberAfter = params.get("memberAfter") ?? undefined;
+  if (memberAfter !== undefined && (memberAfter.length === 0 || memberAfter.length > 200)) {
+    return NextResponse.json({ error: "Invalid member cursor." }, { status: 400 });
+  }
   if (!Number.isSafeInteger(page) || page < 1) {
     return NextResponse.json({ error: "Page must be a positive whole number." }, { status: 400 });
   }
@@ -22,7 +27,7 @@ export async function GET(request: Request) {
   });
   const pageSize = 25;
   const { settings, ...preview } = await getPrivacyRetentionPreview({
-    page, pageSize, includeMembers: canViewMembership,
+    page, pageSize, memberAfter, includeMembers: canViewMembership,
   });
   return NextResponse.json({
     settings,
@@ -35,6 +40,11 @@ export async function GET(request: Request) {
         undatedMembers: preview.undatedMembers,
       } : {}),
     },
+    ...(canViewMembership ? {
+      formerMemberCandidateCount: preview.formerMemberCandidateCount,
+      memberHasMore: preview.memberHasMore,
+      memberNextCursor: preview.memberNextCursor,
+    } : {}),
     page,
     pageSize,
     canViewMembership,

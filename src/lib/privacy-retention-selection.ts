@@ -61,11 +61,11 @@ export async function formerMemberRetentionBlockers(db: RetentionDb, memberId: s
 }
 
 export async function selectFormerMemberBatch(
-  db: RetentionDb, where: Prisma.MemberWhereInput, afterId?: string,
+  db: RetentionDb, where: Prisma.MemberWhereInput, afterId?: string, take = RETENTION_BATCH_SIZE,
 ) {
   const rows = await db.member.findMany({
     where: { AND: [where, ...(afterId ? [{ id: { gt: afterId } }] : [])] },
-    select: { id: true, leavingDate: true }, orderBy: { id: "asc" }, take: RETENTION_BATCH_SIZE,
+    select: { id: true, leavingDate: true }, orderBy: { id: "asc" }, take,
   });
   return Promise.all(rows.map(async (row) => ({
     id: row.id, date: row.leavingDate,

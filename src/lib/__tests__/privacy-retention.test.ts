@@ -98,6 +98,31 @@ describe("privacy retention selection and execution", () => {
     expect(s.db.privacyRetentionSettings.findUnique).toHaveBeenCalledOnce();
   });
 
+  it("bounds blocker reads to one candidate page and traverses the same job population", async () => {
+    const s = store();
+    s.data.member.push(...Array.from({ length: 120 }, (_, i) => member(`member-${String(i).padStart(3, "0")}`)));
+    s.data.familyGroupMember.push({ id: "family", memberId: "member-001" });
+    const first = await getPrivacyRetentionPreview({ db: s.db, now: NOW, pageSize: 25 });
+    expect(first.formerMemberCandidateCount).toBe(120);
+    expect(first.formerMembers.count).toBe(24);
+    expect(first.blockedMembers.count).toBe(1);
+    expect(first.memberHasMore).toBe(true);
+    expect(first.memberNextCursor).toBe("member-024");
+    expect(getMemberCreditBalance).toHaveBeenCalledTimes(26);
+    const ids = [...first.formerMembers.rows, ...first.blockedMembers.rows].map(row => row.id);
+    let cursor = first.memberNextCursor;
+    for (let page = 2; page <= 5; page++) {
+      const next = await getPrivacyRetentionPreview({ db: s.db, now: NOW, pageSize: 25, page, memberAfter: cursor ?? undefined });
+      ids.push(...next.formerMembers.rows.map(row => row.id), ...next.blockedMembers.rows.map(row => row.id));
+      cursor = next.memberNextCursor;
+      expect(next.memberHasMore).toBe(page < 5);
+    }
+    expect(new Set(ids).size).toBe(120);
+    expect(ids).toHaveLength(120);
+    s.settings.anonymiseMembersEnabled = true;
+    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 119, blocked: 1 });
+  });
+
   it("ships both jobs off and performs no transaction or destructive side effect", async () => {
     const s = store();
     s.data.member.push(member("off"));
