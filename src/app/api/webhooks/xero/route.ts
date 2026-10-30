@@ -188,12 +188,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid webhook event payload" }, { status: 400 });
   }
   // A durable receipt survives event/log retention, including empty ITR pings.
-  // Failures are retried by Xero rather than falsely reporting healthy delivery.
+  // Event deliveries retry on failure; valid ITR pings must always return 200 (#2081).
   try {
     await recordXeroWebhookReceived();
   } catch (error) {
     logger.error({ err: error }, "Failed to record Xero webhook receipt");
-    return NextResponse.json({ error: "Could not record webhook receipt" }, { status: 500 });
+    if (events.length > 0) {
+      return NextResponse.json({ error: "Could not record webhook receipt" }, { status: 500 });
+    }
   }
 
   // Intent-to-receive (ITR) receipt sink (#2081): Xero validates a new webhook

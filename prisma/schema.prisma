@@ -8810,6 +8810,7 @@ enum SettlementMethod {
 
 // #4432: club-level inbound webhook health, independent of ITR verification.
 model XeroInboundSettings {
+  createdAt             DateTime  @default(now())
   id                    String    @id @default("default")
   silentWebhookHours    Int       @default(24)
   lastWebhookReceivedAt DateTime?
