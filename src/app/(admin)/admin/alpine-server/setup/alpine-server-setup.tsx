@@ -573,14 +573,21 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           <div className="mb-4 rounded-md border border-border bg-muted p-3 text-sm">
             <p className="font-medium">What leaves this club when an item is enabled</p>
             <p className="mt-1 text-muted-foreground">
-              Your lodges&apos; names, locations, bed counts and booking-officer
-              contact details are uploaded to the central server and redistributed
-              to every other connected club, where they appear on those clubs&apos;
-              pages. The booking-officer email is the committee role&apos;s shared
+              Your lodge&apos;s name, location, bed count, and booking-officer
+              contact details are uploaded to the central server and used for the
+              central booking system.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              The booking-officer email is the committee role&apos;s shared
               address, never a member&apos;s personal one, and a member&apos;s phone
               number is shared only if your club already publishes it on your own
-              committee page. No other member data is sent.
+              committee page.
             </p>
+            <p className="mt-1 text-muted-foreground">
+              Only the booking officer&apos;s name and email are sent to other
+              clubs to enable booking sharing when a lodge is at capacity.
+            </p>
+            <p className="mt-1 text-muted-foreground">No other member data is sent.</p>
           </div>
           {!connectionReady ? (
             <p className="mb-4 text-sm text-muted-foreground">
