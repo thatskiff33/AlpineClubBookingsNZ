@@ -87,6 +87,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   HostingCoverageReevaluation: "personal",
   XeroToken: "non-personal",
   XeroConnection: "non-personal",
+  XeroInboundSettings: "non-personal",
   IntegrationCredential: "personal",
   IntegrationWizardProgress: "personal",
   WebhookValidationReceipt: "non-personal",

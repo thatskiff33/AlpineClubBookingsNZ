@@ -65,7 +65,7 @@ export async function anonymiseFormerMember(
     ...(member.xeroContactId ? [tx.xeroContactCache.deleteMany({ where: { contactId: member.xeroContactId } })] : []),
   ]);
   await createAuditLog({
-    action: "privacy.retention.member_anonymised", category: "admin", severity: "critical",
+    action: "privacy.retention.member_anonymised", category: "privacy", severity: "critical",
     entityType: "Member", entityId: id, subjectMemberId: id,
     summary: "Former member anonymised after retention period",
     metadata: { financialReferencesRetained: true },
