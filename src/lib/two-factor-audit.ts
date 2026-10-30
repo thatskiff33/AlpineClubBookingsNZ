@@ -65,6 +65,12 @@ export type TwoFactorActor =
   /** A named background job clearing it, e.g. retention anonymisation. */
   | { readonly kind: "system"; readonly actor: TwoFactorSystemActor };
 
+/**
+ * A person: the only actor that may enrol a factor or replace recovery codes.
+ * Every non-clear entry point takes this, so a job there does not compile.
+ */
+export type TwoFactorPersonActor = Exclude<TwoFactorActor, { readonly kind: "system" }>;
+
 /** The audit `action` each mutation records. One spelling, one home. */
 export const TWO_FACTOR_AUDIT_ACTIONS = {
   enrolled: "security.two_factor.enrolled",
@@ -76,23 +82,42 @@ export const TWO_FACTOR_AUDIT_ACTIONS = {
 export type TwoFactorAuditAction =
   (typeof TWO_FACTOR_AUDIT_ACTIONS)[keyof typeof TWO_FACTOR_AUDIT_ACTIONS];
 
-/** Thrown when a value reaching a two-factor mutation is not an actor. Echoes no secret. */
+/** Why an actor was refused. */
+type TwoFactorActorRefusal =
+  | { readonly kind: "unusable" }
+  | { readonly kind: "not-own-factor"; readonly subjectMemberId: string }
+  | { readonly kind: "job-may-only-clear" };
+
+function refusalMessage(operation: string, received: unknown, refusal: TwoFactorActorRefusal): string {
+  switch (refusal.kind) {
+    case "unusable":
+      return `Two-factor mutation "${operation}" supplied no usable actor (received ` +
+        `${JSON.stringify(received) ?? String(received)}). Name the member ` +
+        "({ kind: \"member\", memberId }) or the administrator " +
+        "({ kind: \"admin\", memberId }), or a job from TWO_FACTOR_SYSTEM_ACTORS " +
+        "({ kind: \"system\", actor }), from @/lib/two-factor-audit.";
+    case "not-own-factor":
+      return `Two-factor mutation "${operation}" was refused: a member actor ` +
+        `(${JSON.stringify(received)}) may change only their own second ` +
+        `factor, and this one belongs to member "${refusal.subjectMemberId}". ` +
+        "An administrator acting on another member names { kind: \"admin\" }.";
+    case "job-may-only-clear":
+      return `Two-factor mutation "${operation}" was refused: a job ` +
+        `(${JSON.stringify(received)}) may only clear a second factor. ` +
+        "Enrolling one or replacing recovery codes needs a member or an administrator.";
+  }
+}
+
+/** Thrown when a value reaching a two-factor mutation is not an actor allowed to make it. Echoes no secret. */
 export class TwoFactorActorError extends Error {
   readonly operation: string;
 
-  constructor(operation: string, received: unknown, subjectMemberId?: string) {
-    super(
-      subjectMemberId === undefined
-        ? `Two-factor mutation "${operation}" supplied no usable actor (received ` +
-            `${JSON.stringify(received) ?? String(received)}). Name the member ` +
-            "({ kind: \"member\", memberId }) or the administrator " +
-            "({ kind: \"admin\", memberId }), or a job from TWO_FACTOR_SYSTEM_ACTORS " +
-            "({ kind: \"system\", actor }), from @/lib/two-factor-audit."
-        : `Two-factor mutation "${operation}" was refused: a member actor ` +
-            `(${JSON.stringify(received)}) may change only their own second ` +
-            `factor, and this one belongs to member "${subjectMemberId}". ` +
-            "An administrator acting on another member names { kind: \"admin\" }.",
-    );
+  constructor(
+    operation: string,
+    received: unknown,
+    refusal: TwoFactorActorRefusal = { kind: "unusable" },
+  ) {
+    super(refusalMessage(operation, received, refusal));
     this.name = "TwoFactorActorError";
     this.operation = operation;
   }
@@ -127,20 +152,52 @@ export function assertTwoFactorActor(
 }
 
 /**
- * A member may only change their OWN second factor; an administrator acts on
- * someone else's. Refused before anything is written, because a row naming
- * member A as "the member themself" for member B's enrolment is a false record.
+ * Whether this actor may make this mutation of this member's second factor. A
+ * member may change only their OWN; an administrator acts on someone else's; a
+ * named job may only CLEAR one. Every entry point calls it before anything is
+ * written: a row naming member A as "the member themself" for member B's
+ * enrolment, or a job as the author of an enrolment, is a false record. The
+ * types already refuse a job outside a clear; this is the runtime half, for
+ * casts and untyped values.
  */
 export function assertTwoFactorActorMayAct(
-  operation: string,
+  operation: TwoFactorAuditAction,
   actor: unknown,
   subjectMemberId: string,
 ): asserts actor is TwoFactorActor {
   assertTwoFactorActor(operation, actor);
+  if (actor.kind === "system" && operation !== TWO_FACTOR_AUDIT_ACTIONS.cleared) {
+    throw new TwoFactorActorError(operation, actor, { kind: "job-may-only-clear" });
+  }
   if (actor.kind === "member" && actor.memberId !== subjectMemberId) {
-    throw new TwoFactorActorError(operation, actor, subjectMemberId);
+    throw new TwoFactorActorError(operation, actor, { kind: "not-own-factor", subjectMemberId });
   }
 }
+
+/** What every audit row for a two-factor mutation carries beside its action and actor. */
+type TwoFactorMutationDetails = {
+  subjectMemberId: string;
+  /** The method enrolled or being cleared (null when none was set or it does not apply). */
+  method: "TOTP" | "EMAIL" | null;
+  /**
+   * Whether an authenticator-app secret is being stored or destroyed. Not
+   * called `totpSecret`: the metadata redactor strips any key containing
+   * "secret", and this is a boolean, never the value.
+   */
+  authenticatorApp: boolean;
+  /** How many recovery codes were issued, when the event issued any. Never the codes. */
+  recoveryCodesIssued?: number;
+  request?: TwoFactorRequestContext;
+};
+
+/** A job appears only beside a clear; enrolment and code replacement name a person. */
+export type TwoFactorMutation = TwoFactorMutationDetails & (
+  | { action: typeof TWO_FACTOR_AUDIT_ACTIONS.cleared; actor: TwoFactorActor }
+  | {
+      action: Exclude<TwoFactorAuditAction, typeof TWO_FACTOR_AUDIT_ACTIONS.cleared>;
+      actor: TwoFactorPersonActor;
+    }
+);
 
 /**
  * Write the audit row for a two-factor mutation, on the SAME client that made
@@ -149,28 +206,10 @@ export function assertTwoFactorActorMayAct(
  */
 export async function recordTwoFactorMutation(
   db: AuditLogClient,
-  params: {
-    action: TwoFactorAuditAction;
-    actor: TwoFactorActor;
-    subjectMemberId: string;
-    /** The method enrolled or being cleared (null when none was set or it does not apply). */
-    method: "TOTP" | "EMAIL" | null;
-    /**
-     * Whether an authenticator-app secret is being stored or destroyed. Not
-     * called `totpSecret`: the metadata redactor strips any key containing
-     * "secret", and this is a boolean, never the value.
-     */
-    authenticatorApp: boolean;
-    /** How many recovery codes were issued, when the event issued any. Never the codes. */
-    recoveryCodesIssued?: number;
-    request?: TwoFactorRequestContext;
-  },
+  params: TwoFactorMutation,
 ): Promise<void> {
+  // Defence in depth: the entry points already asserted, before their writes.
   assertTwoFactorActorMayAct(params.action, params.actor, params.subjectMemberId);
-  if (params.actor.kind === "system" && params.action !== TWO_FACTOR_AUDIT_ACTIONS.cleared) {
-    // A job may clear a factor; enrolling or replacing one needs a person.
-    throw new TwoFactorActorError(params.action, params.actor);
-  }
   const actorMemberId = params.actor.kind === "system" ? null : params.actor.memberId;
   const summary =
     params.action === TWO_FACTOR_AUDIT_ACTIONS.enrolled

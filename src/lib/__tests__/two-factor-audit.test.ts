@@ -3,13 +3,37 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 
 import { createAuditLog } from "@/lib/audit";
+import type { enrollTwoFactor, replaceRecoveryCodes } from "@/lib/two-factor";
 import {
   TWO_FACTOR_AUDIT_ACTIONS,
   TwoFactorActorError,
   assertTwoFactorActor,
+  assertTwoFactorActorMayAct,
   recordTwoFactorClear,
   recordTwoFactorMutation,
+  type TwoFactorMutation,
 } from "@/lib/two-factor-audit";
+
+const JOB = { kind: "system", actor: "former-member-anonymisation" } as const;
+
+// Type-level: a job cannot be named where a factor is enrolled or replaced.
+// Each line fails to compile without its directive, so `pnpm run typecheck`
+// fails if the person-only types are ever widened back to admit a job.
+// @ts-expect-error a job may never enrol a second factor
+const enrolByJob: Parameters<typeof enrollTwoFactor>[0]["actor"] = JOB;
+// @ts-expect-error a job may never replace recovery codes
+const replaceByJob: Parameters<typeof replaceRecoveryCodes>[0]["actor"] = JOB;
+const enrolRow = { action: TWO_FACTOR_AUDIT_ACTIONS.enrolled, subjectMemberId: "member-1", method: "TOTP", authenticatorApp: true } as const;
+// @ts-expect-error a job's row may only be a clear
+const enrolRowByJob: TwoFactorMutation = { ...enrolRow, actor: JOB };
+const clearRowByJob: TwoFactorMutation = {
+  action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+  actor: JOB,
+  subjectMemberId: "member-1",
+  method: null,
+  authenticatorApp: false,
+};
+void [enrolByJob, replaceByJob, enrolRowByJob, clearRowByJob];
 
 const db = { auditLog: {} } as never;
 
@@ -27,16 +51,25 @@ describe("two-factor system actors (INV-PRIV-020)", () => {
     expect(() => assertTwoFactorActor("op", { kind: "system" })).toThrow(TwoFactorActorError);
   });
 
-  it("refuses a system actor for anything but a clear, before writing a row", async () => {
+  it("refuses a job for anything but a clear, with a message that says so", () => {
+    for (const action of [TWO_FACTOR_AUDIT_ACTIONS.enrolled, TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced]) {
+      expect(() => assertTwoFactorActorMayAct(action, JOB, "member-1")).toThrow(
+        /a job .* may only clear a second factor/,
+      );
+    }
+    expect(() => assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.cleared, JOB, "member-1")).not.toThrow();
+  });
+
+  it("refuses a cast job row for anything but a clear, before writing a row", async () => {
     for (const action of [TWO_FACTOR_AUDIT_ACTIONS.enrolled, TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced]) {
       await expect(
         recordTwoFactorMutation(db, {
           action,
-          actor: { kind: "system", actor: "former-member-anonymisation" },
+          actor: JOB,
           subjectMemberId: "member-1",
           method: "TOTP",
           authenticatorApp: true,
-        }),
+        } as never),
       ).rejects.toThrow(TwoFactorActorError);
     }
     expect(createAuditLog).not.toHaveBeenCalled();
