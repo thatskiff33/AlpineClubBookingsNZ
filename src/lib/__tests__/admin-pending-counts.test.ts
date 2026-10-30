@@ -1,3 +1,4 @@
+vi.mock("@/lib/xero-webhook-health", () => ({ getXeroWebhookHealth: vi.fn().mockResolvedValue({ connected: false, silent: false, hours: 24, lastReceivedAt: null }) }));
 import { buildUnpaidFinishedStaysWhere } from "@/lib/unpaid-finished-stays";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { BookingRequestStatus } from "@prisma/client";
@@ -146,6 +147,7 @@ describe("getAdminPendingCounts", () => {
 
   it("returns every queue count keyed for the sidebar", async () => {
     expect(await getAdminPendingCounts()).toEqual({
+      xeroSilentWebhook: 0,
       familyRequests: 1,
       memberApplications: 2,
       refundAppeals: 3,
@@ -290,4 +292,10 @@ describe("getAdminPendingCounts", () => {
       expect.objectContaining({ where: { id: "default" } }),
     );
   });
+  it("surfaces a silent webhook in the Needs Attention count", async () => {
+    const { getXeroWebhookHealth } = await import("@/lib/xero-webhook-health");
+    vi.mocked(getXeroWebhookHealth).mockResolvedValueOnce({ connected: true, silent: true, hours: 24, lastReceivedAt: null });
+    expect((await getAdminPendingCounts()).xeroSilentWebhook).toBe(1);
+  });
+
 });

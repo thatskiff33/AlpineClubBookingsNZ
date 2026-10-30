@@ -182,6 +182,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     // something pending (see the filtering in SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
     items: [
+      { href: "/admin/xero", label: "Silent Xero Webhook", icon: Bell },
       {
         href: "/admin/booking-requests",
         label: "Booking Requests",
@@ -983,6 +984,10 @@ function SidebarLinks({
   }
   if (counts.unassignedHutLeaderDates > 0) {
     badges["/admin/hut-leaders"] = counts.unassignedHutLeaderDates;
+  }
+
+  if ((counts.xeroSilentWebhook ?? 0) > 0) {
+    badges["/admin/xero"] = counts.xeroSilentWebhook!;
   }
 
   const renderedNavSections = getRenderedAdminNavSections(

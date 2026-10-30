@@ -4116,6 +4116,18 @@ additional lock is involved. As before,
 a crash after a send but before its sent stamp can repeat that alert when the
 ten-minute cooldown expires; the retry is at least once.
 
+### Shared Xero inbound run authority (#4432)
+
+The scheduled inbound cycle, HTTP cron's inbound/mirror tasks and whole-club
+sync-now action take the same dedicated PostgreSQL session advisory claim before
+running any tasks. A lost claim reports “A sync is already running” and runs
+nothing. No transaction spans the cycle. Success or failure closes the session;
+process/connection death also releases its claim, so there is no persisted
+RUNNING state to reap and no lease expiry that admits a live second holder.
+Connection loss fails the runner at its next task boundary and at completion.
+Individual tasks retain the recorded SUCCESS/FAILURE/SKIPPED lifecycle above.
+See [the claim and its ordering](CONCURRENCY_AND_LOCKING.md#xero-inbound-cycle-run-claim-4432).
+
 ### Xero cron run status: SKIPPED means no work (#4375)
 
 ```text

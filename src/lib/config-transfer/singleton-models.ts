@@ -69,6 +69,10 @@ export const SINGLETON_MODELS_REGISTERED_ELSEWHERE: Record<string, string> = {
  * a real, currently singleton-shaped model (both asserted by the guard test).
  */
 export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
+  XeroInboundSettings:
+    "webhook receipt and quiet-period monitoring policy belong to this install's " +
+    "Xero subscription (#4432); importing either could hide a target install's " +
+    "silent webhook — instance-local",
   XeroConnection:
     "this install's live Xero connection (#3806): the connected tenant, the " +
     "token expiry and the refresh lease. It belongs to the grant an " +

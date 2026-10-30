@@ -20,6 +20,11 @@ vi.mock("@/lib/xero-operation-outbox", () => ({}));
 vi.mock("@/lib/xero-operation-queue", () => ({}));
 vi.mock("@/lib/xero-inbound-reconciliation", () => ({}));
 vi.mock("@/lib/xero-membership-sync", () => ({}));
+// #4432: the inbound cycle now runs under a database run claim, proven against
+// real PostgreSQL in `xero-inbound-run-claim.realdb.test.ts`; here it passes through.
+vi.mock("@/lib/cron-run-claim", () => ({
+  withCronRunClaim: vi.fn(async (_name: string, work: (assertOwned: () => Promise<void>) => Promise<unknown>) => ({ claimed: true, result: await work(async () => {}) })),
+}));
 import { raiseCashSettlementAlert } from "@/lib/xero-inbound/settle-from-cash-notice";
 import { countExhaustedCashSettlementAlerts, retryCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { runXeroCronTaskList } from "@/lib/xero-cron-runner";

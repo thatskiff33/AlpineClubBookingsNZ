@@ -36,6 +36,9 @@ import "./support/race-harness-outbox-guard";
 // creates/drops its own unique schema. Importing registers the trigger proofs in
 // the explicit CI race command without changing the workflow or making ordinary
 // `pnpm test` depend on a database.
+// #4432: scheduled/manual inbound exclusion and dead-holder recovery.
+import "./xero-inbound-run-claim.realdb.test";
+import "./xero-sync-now.realdb.test";
 import "./minimum-stay-policy-trigger.realdb.test";
 // #2532 reuses the same guarded harness to prove the AI Diagnostics monthly
 // budget (AID-2, #2371) can never be overspent by concurrent reservers. Its

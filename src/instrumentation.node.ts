@@ -374,7 +374,6 @@ export async function register() {
     let isXeroLinkCleanupCronRunning = false;
     let isXeroReportCronRunning = false;
     let isXeroReplayCronRunning = false;
-    let isXeroInboundCronRunning = false;
     let isXeroCreditSyncCronRunning = false;
     let isPaymentsCronRunning = false;
     let isWaitlistCronRunning = false;
@@ -742,11 +741,6 @@ export async function register() {
 
       // Xero inbound webhook reconciliation safety net (every 15 minutes)
       cron.default.schedule("*/15 * * * *", async () => {
-        if (isXeroInboundCronRunning) {
-          logger.info({ job: "xero-inbound-reconcile" }, "Already running, skipping");
-          return;
-        }
-        isXeroInboundCronRunning = true;
         logger.info(
           { job: "xero-inbound-reconcile" },
           "Running Xero inbound reconciliation cycle"
@@ -759,8 +753,8 @@ export async function register() {
 
         try {
           // #4270: the credit-note mirror's backstop runs right after the inbound cycle.
-          const { runXeroCronTaskList } = await import("./lib/xero-cron-runner");
-          const result = await runXeroCronTaskList(["inbound", "credit-note-mirror"], { taskLabel: "inbound" });
+          const { runXeroInboundCronCycle } = await import("./lib/xero-cron-runner");
+          const result = await runXeroInboundCronCycle();
           logger.info(
             { job: "xero-inbound-reconcile", result: result.inboundReconciliation, creditNoteMirror: result.creditNoteMirror },
             "Xero inbound reconciliation cycle complete"
@@ -769,8 +763,6 @@ export async function register() {
         } catch (err) {
           reportCronError({ tag: "xero-inbound-reconcile", err, message: "Error processing stored Xero inbound events" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "error" });
-        } finally {
-          isXeroInboundCronRunning = false;
         }
       }, { timezone: cronTimeZone() });
 

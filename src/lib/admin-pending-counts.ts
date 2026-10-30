@@ -1,3 +1,4 @@
+import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import { prisma } from "@/lib/prisma";
 import { buildBookingRequestListWhere } from "@/lib/booking-request";
 import { getPendingMembershipCancellationReviewCount } from "@/lib/membership-cancellation-admin";
@@ -16,6 +17,7 @@ import {
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 export type AdminPendingCounts = {
+  xeroSilentWebhook?: number;
   familyRequests: number;
   memberApplications: number;
   refundAppeals: number;
@@ -133,7 +135,9 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     getUnassignedHutLeaderDates({ today, scope: { kind: "all" } }),
   ]);
 
+  const webhookHealth = await getXeroWebhookHealth();
   return {
+    xeroSilentWebhook: webhookHealth.silent ? 1 : 0,
     familyRequests,
     memberApplications,
     refundAppeals,
