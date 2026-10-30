@@ -824,6 +824,8 @@ in
 ## Outstanding additions on the booking confirmation (#4047)
 
 The booking detail page streams its additional-payment information separately.
+The officer chase/withdraw panel mounts after hydration; streamed HTML shows a
+loading message so React's hidden stream cannot duplicate the active panel.
 The owner sees each current card ask or dated remaining supplementary bank
 invoice amount with how to pay. Officers see the read-only audience; a plain
 linked guest sees neutral copy matching the current stay status, including
