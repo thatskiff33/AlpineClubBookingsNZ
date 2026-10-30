@@ -45,9 +45,9 @@ export type OrganiserExtraDb = Pick<Prisma.TransactionClient, "bookingModificati
 export function organiserExtraUnpaidCents(invoice: OrganiserExtraInvoice): number {
   return Math.max(0, invoice.priceCents + invoice.feeCents - invoice.cashCents - invoice.waivedCents);
 }
-/** N4: cash settles the fee first; an uncollected fee cannot reduce paid share refunds. */
+/** N4: price cuts and then cash settle the fee; only the uncollected remainder is excluded. */
 export function effectiveOrganiserPaidChangeFeeCents(recordedFeeCents: number, state: OrganiserExtraState): number {
-  return Math.max(0, recordedFeeCents - state.invoices.reduce((sum, invoice) => sum + Math.max(0, invoice.feeCents - invoice.cashCents), 0));
+  return Math.max(0, recordedFeeCents - state.invoices.reduce((sum, invoice) => sum + Math.max(0, Math.min(invoice.feeCents, invoice.priceCents + invoice.feeCents) - invoice.cashCents), 0));
 }
 export function organiserExtraPaidPriceCents(invoice: OrganiserExtraInvoice): number {
   return Math.max(0, Math.min(invoice.priceCents, invoice.cashCents - invoice.feeCents) - invoice.releasedPriceCents);

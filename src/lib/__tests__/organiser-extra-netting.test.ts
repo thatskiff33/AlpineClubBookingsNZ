@@ -52,6 +52,14 @@ describe("organiser bank-transfer extra netting (N1–N4)", () => {
     expect(organiserExtraPaidPriceCents(invoice({ cashCents: 1_500 }))).toBe(500);
     expect(effectiveOrganiserPaidChangeFeeCents(1_000, state(invoice({ cashCents: 500 })))).toBe(500);
   });
+  it.each([
+    { cashCents: 500, paidFeeCents: 1_000 },
+    { cashCents: 200, paidFeeCents: 700 },
+    { cashCents: 0, paidFeeCents: 500 },
+  ])("a 500-cent price cut nets against the 1000-cent fee before $cashCents cents cash pays it", ({ cashCents, paidFeeCents }) => {
+    const extra = invoice({ priceCents: -500, feeCents: 1_000, cashCents });
+    expect(effectiveOrganiserPaidChangeFeeCents(1_000, state(extra))).toBe(paidFeeCents);
+  });
   it("reservations prevent later edits from waiving or refunding the same extra twice", () => {
     const extra = invoice({ waivedCents: 4_000, refundedCents: 1_000, releasedPriceCents: 1_000 });
     const result = planOrganiserExtraNetting(state(extra), { reductionCents: 1_000, refundAmountCents: 500, refundBasisCents: 1_000 });
