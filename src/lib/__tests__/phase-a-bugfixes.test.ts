@@ -388,7 +388,10 @@ describe("#23: Cron Prisma startup check and health error display", () => {
 // #30 — Sentry Session Replay integration
 // ============================================================
 describe("#30: Sentry Session Replay", () => {
-  it("instrumentation-client.ts exists with replay config", async () => {
+  // #4457 (owner decision, 27 Oct 2026): Replay is off by default. The client
+  // init no longer installs it; SentryReplayPolicy adds and starts it only
+  // after the club setting opts in (its behaviour: sentry-replay-policy.test.tsx).
+  it("instrumentation-client.ts exists and installs no Replay integration", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const clientPath = path.resolve(
@@ -399,9 +402,23 @@ describe("#30: Sentry Session Replay", () => {
     expect(fs.existsSync(clientPath)).toBe(true);
 
     const content = fs.readFileSync(clientPath, "utf-8");
-    expect(content).toContain("replayIntegration");
+    expect(content).not.toContain("replayIntegration");
     expect(content).toContain("replaysSessionSampleRate");
     expect(content).toContain("replaysOnErrorSampleRate");
+  });
+
+  it("Replay is started only by the club opt-in policy, mounted in the root layout", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const read = (file: string) =>
+      fs.readFileSync(path.resolve(process.cwd(), file), "utf-8");
+
+    const policy = read("src/components/sentry-replay-policy.tsx");
+    expect(policy).toContain(
+      "Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })"
+    );
+    expect(policy).toContain("Sentry.getReplay()?.start()");
+    expect(read("src/app/layout.tsx")).toContain("<SentryReplayPolicy");
   });
 
   it("old sentry.client.config.ts is removed", async () => {
@@ -435,7 +452,7 @@ describe("#30: Sentry Session Replay", () => {
     expect(content).toContain("ResizeObserver loop");
   });
 
-  it("replay sample rates are configured correctly", async () => {
+  it("replay sample rates are zero in the client init", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const clientPath = path.resolve(
@@ -445,9 +462,9 @@ describe("#30: Sentry Session Replay", () => {
     );
     const content = fs.readFileSync(clientPath, "utf-8");
 
-    // 10% session replay in production
-    expect(content).toContain("0.1");
-    // 100% replay on errors
-    expect(content).toContain("replaysOnErrorSampleRate: 1.0");
+    // Off by default: no sampled sessions and no error-triggered buffering
+    // until the club opts in (#4457).
+    expect(content).toMatch(/replaysSessionSampleRate:\s*0,/);
+    expect(content).toMatch(/replaysOnErrorSampleRate:\s*0,/);
   });
 });
