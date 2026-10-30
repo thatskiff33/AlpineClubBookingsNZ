@@ -260,6 +260,7 @@ const NOTICE = "AdminViewOnlyNotice";
   cannot land with the prose out of step: both tests fail, and the fix is always
   to re-measure and update every place together — never to loosen an assertion.
 */
+// #4432 adds the shared sync control and staged webhook threshold section.
 const FIGURES = {
   /**
    * Every `<ViewOnlyActionButton>` render site in the admin tree.
@@ -394,7 +395,7 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  callSites: 381, // 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
+  callSites: 384, // 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -451,7 +452,7 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  optOuts: 326, // 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
+  optOuts: 329, // 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -542,7 +543,7 @@ const FIGURES = {
    * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
    * notes panel's own banner. MEASURED by re-running this census.
    */
-  staticOptOuts: 289, // 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
+  staticOptOuts: 292, // 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -637,7 +638,7 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 101, // 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
+  bannerComponents: 103, // 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

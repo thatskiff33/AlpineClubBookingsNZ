@@ -379,3 +379,34 @@ says what it would have done.
   [operational Xero](../ARCHITECTURE.md#operational-xero) and the
   [Xero member grouping](../../CONFIGURATION.md#xero-member-grouping) reference,
   and the [Xero member grouping invariants](../invariants/integrations.md#xero-member-grouping-e8-1934).
+
+## Pick up a change made in Xero now
+
+After recording a payment, changing a credit-note allocation or voiding a note
+in Xero, use **Sync from Xero now** on the member's Xero contact panel or the
+booking detail page. These read Xero and reuse the scheduled inbound repairs
+and credit-note mirror. The result reports changed financial records (including
+subscription status) and contact fields, or **Already in step**. Refreshing links and caches alone is not counted
+as a financial change. A failed sync may have updated some records; retrying is
+safe. Finance view-only users see disabled controls; Finance edit is required.
+All scopes share an officer rate limit of three requests per minute and record
+an audit entry under Xero.
+
+**Sync everything from Xero now**, on **Admin → Finance → Xero Sync**, runs the
+same bounded inbound cycle and credit-note sweep as the scheduler. Existing
+cursors, batch limits and sweep throttling still apply. It shares a database
+run claim with scheduled and HTTP cron runs; **A sync is already running** means
+no second cycle started. A stopped worker's database connection releases the
+claim automatically. Scoped buttons do not move the club's contact or membership
+delta cursors, so use those when you need a particular record refreshed now.
+
+The same page shows **Last webhook received**. Signed, valid deliveries count,
+including empty verification pings; rejected requests do not. When connected,
+a warning appears strictly after the saved quiet period, with a **Needs
+Attention** entry and a Stuck States item. The default is 24 hours. Use
+**Edit → Save/Cancel** to choose 1–720 hours. A connection that has never received
+a webhook gets the full threshold from its connection time. No quiet-period
+warning appears while disconnected or while the Xero module is disabled.
+
+Webhook receipt history and the quiet-period policy remain local to each
+installation during configuration transfer, like the Xero connection itself.

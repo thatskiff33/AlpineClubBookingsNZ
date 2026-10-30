@@ -1,3 +1,4 @@
+import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import type { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
@@ -77,6 +78,7 @@ export interface RefundsMissingCreditNotesSnapshot {
 }
 
 export interface XeroAdminHealthSnapshot {
+  webhookHealth?: Awaited<ReturnType<typeof getXeroWebhookHealth>>;
   unlinkedMembers: {
     count: number;
     href: string;
@@ -411,6 +413,7 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
 }
 
 export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnapshot> {
+  const webhookHealth = await getXeroWebhookHealth();
   const [
     unlinkedMemberCount,
     failedOperationOverview,
@@ -477,6 +480,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
   ]);
 
   return {
+    webhookHealth,
     unlinkedMembers: {
       count: unlinkedMemberCount,
       href: "/admin/members?active=true&xeroLinked=false",

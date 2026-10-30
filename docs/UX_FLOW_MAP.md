@@ -1760,3 +1760,20 @@ read-only link.
 
 For every journey, verify the next action, failure state, pending state,
 accessible form semantics, and destructive/financial-action explanation.
+
+### Refresh from Xero now (#4432)
+
+Finance edit users can refresh one member from the member detail Xero panel,
+one booking from its detail page, or run the shared scheduled inbound cycle
+from **Admin → Finance → Xero Sync**. Each action stays on the page and shows
+its result or retryable error; finance view-only users see disabled buttons and
+one section banner. Requests use `/api/admin/xero/sync-now` and are rate-limited
+and audited. Booking sync uses finance permissions independently of booking edit
+access. Whole-club runs refuse overlap with the scheduler.
+
+The Xero Sync page also shows the last verified webhook delivery and a
+connected-only quiet-period warning, linked from Needs Attention and Stuck
+States. Its hours setting defaults to 24 and follows read-only → Edit →
+Save/Cancel, with Save disabled until the valid value changes. The health read
+and settings write use `/api/admin/xero/webhook-health`. See the
+[operator steps](guides/xero.md#pick-up-a-change-made-in-xero-now).

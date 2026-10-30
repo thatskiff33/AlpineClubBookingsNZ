@@ -369,6 +369,11 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
 
 function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot) {
   addItem(items, {
+    id: "xero-silent-webhook", domain: "xero", title: "Silent Xero webhook",
+    severity: "warning", owner: "Finance", count: snapshot.webhookHealth?.silent ? 1 : 0,
+    href: "/admin/xero", summary: `No webhook received for more than ${snapshot.webhookHealth?.hours} hours. Check the Xero webhook subscription and sync now to catch up.`,
+  });
+  addItem(items, {
     id: "xero-failed-operations",
     domain: "xero",
     title: "Failed active outbox operations",
