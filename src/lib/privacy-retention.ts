@@ -35,8 +35,9 @@ export async function getPrivacyRetentionPreview({
         if (group.count >= skip && group.rows.length < take) group.rows.push(row);
         group.count++;
       }
-      if (batch.length < RETENTION_BATCH_SIZE) break;
-      afterId = batch[batch.length - 1].id;
+      const last = batch.at(-1);
+      if (!last || batch.length < RETENTION_BATCH_SIZE) break;
+      afterId = last.id;
     }
     const [count, rows] = await Promise.all([
       db.member.count({ where: selection.undatedMembers }),

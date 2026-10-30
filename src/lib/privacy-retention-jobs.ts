@@ -61,8 +61,9 @@ async function runClaimed(
           }, { isolationLevel: "Serializable", timeout: 15_000 });
           if (done) result.anonymised++; else result.blocked++;
         }
-        if (batch.length < RETENTION_BATCH_SIZE) break;
-        afterId = batch[batch.length - 1].id;
+        const last = batch.at(-1);
+        if (!last || batch.length < RETENTION_BATCH_SIZE) break;
+        afterId = last.id;
       }
     }
     return result;
