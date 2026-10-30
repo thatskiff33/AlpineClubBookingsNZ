@@ -1,5 +1,6 @@
 import "server-only";
 import {
+  type CentralLodgeLinkAudit,
   labelOwnedLodges,
   saveCentralLodgeLinks,
   suggestedCentralLodgeId,
@@ -124,8 +125,9 @@ async function decideLinks(owned: ReadonlyArray<OwnedCentralLodge> | null): Prom
 export async function saveLodgeLinkChoices(
   links: ReadonlyArray<{ lodgeId: string; centralLodgeId: string | null; expectCurrent: string | null }>,
   actorMemberId: string,
+  audit: CentralLodgeLinkAudit,
 ) {
-  const saved = await saveCentralLodgeLinks(links, actorMemberId);
+  const saved = await saveCentralLodgeLinks(links, audit);
   if (saved.ok) await syncOwnOtherLodgesFromFees("central lodge linked", actorMemberId);
   return saved;
 }

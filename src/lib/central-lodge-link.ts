@@ -1,6 +1,5 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { createAuditLog } from "@/lib/audit";
 import { otherLodgeChoiceLabel, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import {
@@ -137,6 +136,20 @@ export interface CentralLodgeLinkChange {
   expectCurrent?: string | null;
 }
 
+/**
+ * Writes one row's `LODGE_CENTRAL_LINK_UPDATED` audit entry on the save's
+ * transaction client. Each calling ROUTE writes it, so the audit writer census
+ * sees the site under the permission gate that admits it (INV-PRIV-013).
+ */
+export type CentralLodgeLinkAudit = (
+  entry: {
+    lodgeId: string;
+    before: { centralLodgeId: string | null };
+    after: { centralLodgeId: string | null };
+  },
+  tx: Prisma.TransactionClient,
+) => Promise<unknown>;
+
 export type CentralLodgeLinkSaveResult =
   | { ok: true; before: Array<{ lodgeId: string; centralLodgeId: string | null }> }
   | { ok: false; reason: "not-owned" | "duplicate" | "stale" }
@@ -155,8 +168,9 @@ export type CentralLodgeLinkSaveResult =
  * recording a new list (it unlinks deleted ids under the same lock) cannot
  * slip between the check and the write; then it locks each `Lodge` row
  * (`SELECT 1 … FOR UPDATE`, in id order), reads the link it is replacing,
- * writes the new one and writes `LODGE_CENTRAL_LINK_UPDATED` on the same
- * transaction client. Settings then Lodge is the download's own order, so
+ * writes the new one and has the caller write `LODGE_CENTRAL_LINK_UPDATED` on
+ * the same transaction client (`audit`). Settings then Lodge is the download's
+ * own order, so
  * neither can wait on the other in reverse. Two administrators saving at once
  * queue on the locks, so the second reads the first's link as its "before". A
  * save refused for ownership writes nothing; one refused by the unique index
@@ -173,7 +187,7 @@ export type CentralLodgeLinkSaveResult =
  */
 export async function saveCentralLodgeLinks(
   changes: ReadonlyArray<CentralLodgeLinkChange>,
-  actorMemberId: string,
+  audit: CentralLodgeLinkAudit,
 ): Promise<CentralLodgeLinkSaveResult> {
   const wanted = changes.flatMap((c) => (c.centralLodgeId === null ? [] : [c.centralLodgeId]));
   if (
@@ -221,23 +235,11 @@ export async function saveCentralLodgeLinks(
           where: { id: change.lodgeId },
           data: { centralLodgeId: change.centralLodgeId },
         });
-        // Category `admin`, like every writer under `/api/admin/lodges/`
-        // (INV-PRIV-013; see `LODGE_GATED_ADMIN_CATEGORIES_2765` in the audit census).
-        await createAuditLog(
+        await audit(
           {
-            action: "LODGE_CENTRAL_LINK_UPDATED",
-            memberId: actorMemberId,
-            actorMemberId,
-            entityType: "Lodge",
-            entityId: change.lodgeId,
-            category: "admin",
-            severity: "important",
-            outcome: "success",
-            summary: "Central lodge link updated",
-            metadata: {
-              before: { centralLodgeId: before[i]?.centralLodgeId ?? null },
-              after: { centralLodgeId: change.centralLodgeId },
-            },
+            lodgeId: change.lodgeId,
+            before: { centralLodgeId: before[i]?.centralLodgeId ?? null },
+            after: { centralLodgeId: change.centralLodgeId },
           },
           tx,
         );

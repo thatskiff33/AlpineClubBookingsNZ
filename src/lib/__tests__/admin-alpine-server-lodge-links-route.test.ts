@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   runLodgeLinkStep: vi.fn(),
   saveLodgeLinkChoices: vi.fn(),
   respondToSyncError: vi.fn(),
+  createAuditLog: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -22,6 +23,7 @@ vi.mock("@/lib/servernz-lodge-link-step", () => ({
   saveLodgeLinkChoices: mocks.saveLodgeLinkChoices,
 }));
 vi.mock("@/lib/servernz-sync-response", () => ({ respondToSyncError: mocks.respondToSyncError }));
+vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
 
 import { POST, PUT } from "@/app/api/admin/alpine-server/lodge-links/route";
 
@@ -65,7 +67,20 @@ describe("lodge-links route", () => {
   it("PUT saves the rows as sent", async () => {
     mocks.saveLodgeLinkChoices.mockResolvedValue({ ok: true, before: [] });
     expect((await PUT(put(LINKS))).status).toBe(200);
-    expect(mocks.saveLodgeLinkChoices).toHaveBeenCalledWith(LINKS.links, "admin-1");
+    expect(mocks.saveLodgeLinkChoices).toHaveBeenCalledWith(LINKS.links, "admin-1", expect.any(Function));
+    // Each row's audit entry: the card's row, on the save's transaction client.
+    const audit = mocks.saveLodgeLinkChoices.mock.calls[0]![2];
+    await audit({ lodgeId: "l1", before: { centralLodgeId: null }, after: { centralLodgeId: "c_a" } }, "tx");
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "LODGE_CENTRAL_LINK_UPDATED",
+        category: "admin",
+        entityId: "l1",
+        actorMemberId: "admin-1",
+        metadata: { before: { centralLodgeId: null }, after: { centralLodgeId: "c_a" } },
+      }),
+      "tx",
+    );
   });
 
   it.each([

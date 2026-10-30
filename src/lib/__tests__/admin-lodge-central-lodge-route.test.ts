@@ -327,6 +327,10 @@ describe("PUT /api/admin/lodges/[id]/central-lodge", () => {
 // The same writer, several rows at once: the setup page's link dialog (server
 // onboarding, B2) and its automatic one-to-one link.
 describe("saveCentralLodgeLinks (several rows)", () => {
+  // The caller's audit writer, on the save's transaction client.
+  const audit = (entry: { lodgeId: string; before: unknown; after: unknown }, tx: unknown) =>
+    mockCreateAuditLog({ entityId: entry.lodgeId, metadata: { before: entry.before, after: entry.after } }, tx);
+
   function stored(links: Record<string, string | null>) {
     mockPrisma.lodge.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
       where.id && where.id in links ? { centralLodgeId: links[where.id] } : null,
@@ -340,7 +344,7 @@ describe("saveCentralLodgeLinks (several rows)", () => {
         { lodgeId: "lodge_2", centralLodgeId: "ol_a" },
         { lodgeId: "lodge_1", centralLodgeId: "ol_b" },
       ],
-      "admin-1",
+      audit,
     );
     expect(result).toEqual({
       ok: true,
@@ -367,7 +371,7 @@ describe("saveCentralLodgeLinks (several rows)", () => {
     stored({ lodge_1: "ol_b" });
     const result = await saveCentralLodgeLinks(
       [{ lodgeId: "lodge_1", centralLodgeId: "ol_a", expectCurrent: null }],
-      "admin-1",
+      audit,
     );
     expect(result).toEqual({ ok: false, reason: "stale" });
     expect(mockPrisma.lodge.update).not.toHaveBeenCalled();
@@ -380,7 +384,7 @@ describe("saveCentralLodgeLinks (several rows)", () => {
         { lodgeId: "lodge_1", centralLodgeId: "ol_a" },
         { lodgeId: "lodge_2", centralLodgeId: "ol_a" },
       ],
-      "admin-1",
+      audit,
     );
     expect(result).toEqual({ ok: false, reason: "duplicate" });
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
@@ -394,7 +398,7 @@ describe("saveCentralLodgeLinks (several rows)", () => {
     mockPrisma.lodge.findUnique.mockImplementation(async ({ where }: { where: { id?: string; centralLodgeId?: string } }) =>
       where.id ? { centralLodgeId: null } : { id: "lodge_9", name: "Iwikau" },
     );
-    expect(await saveCentralLodgeLinks([{ lodgeId: "lodge_1", centralLodgeId: "ol_a" }], "admin-1")).toEqual({
+    expect(await saveCentralLodgeLinks([{ lodgeId: "lodge_1", centralLodgeId: "ol_a" }], audit)).toEqual({
       ok: false,
       reason: "already-linked",
       holderName: "Iwikau",

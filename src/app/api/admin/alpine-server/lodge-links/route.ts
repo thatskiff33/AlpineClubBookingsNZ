@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { isFullAdmin } from "@/lib/access-roles";
+import { createAuditLog } from "@/lib/audit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { runLodgeLinkStep, saveLodgeLinkChoices } from "@/lib/servernz-lodge-link-step";
@@ -69,7 +70,29 @@ export async function PUT(request: Request) {
 
   let saved;
   try {
-    saved = await saveLodgeLinkChoices(parsed.data.links, guard.session.user.id);
+    const actorId = guard.session.user.id;
+    saved = await saveLodgeLinkChoices(
+      parsed.data.links,
+      actorId,
+      (entry, tx) =>
+        // The same row the lodge's Central lodge card writes, so the same
+        // category, `admin` (INV-PRIV-013): one act, filed one way.
+        createAuditLog(
+          {
+            action: "LODGE_CENTRAL_LINK_UPDATED",
+            memberId: actorId,
+            actorMemberId: actorId,
+            entityType: "Lodge",
+            entityId: entry.lodgeId,
+            category: "admin",
+            severity: "important",
+            outcome: "success",
+            summary: "Central lodge link updated",
+            metadata: { before: entry.before, after: entry.after },
+          },
+          tx,
+        ),
+    );
   } catch {
     return NextResponse.json({ error: "Could not save the links." }, { status: 500 });
   }

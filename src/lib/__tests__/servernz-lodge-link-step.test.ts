@@ -170,14 +170,15 @@ describe("saveLodgeLinkChoices", () => {
       { lodgeId: "l1", centralLodgeId: "c_b", expectCurrent: "c_a" },
       { lodgeId: "l2", centralLodgeId: "c_a", expectCurrent: null },
     ];
-    expect(await saveLodgeLinkChoices(links, "admin-1")).toEqual({ ok: true, before: [] });
-    expect(mocks.saveLinks).toHaveBeenCalledWith(links, "admin-1");
+    const audit = vi.fn();
+    expect(await saveLodgeLinkChoices(links, "admin-1", audit)).toEqual({ ok: true, before: [] });
+    expect(mocks.saveLinks).toHaveBeenCalledWith(links, audit);
     expect(mocks.feesSync).toHaveBeenCalledTimes(1);
   });
 
   it("fills nothing when the save is refused", async () => {
     mocks.saveLinks.mockResolvedValue({ ok: false, reason: "already-linked", holderName: "Iwikau" });
-    await saveLodgeLinkChoices([{ lodgeId: "l1", centralLodgeId: "c_a", expectCurrent: null }], "admin-1");
+    await saveLodgeLinkChoices([{ lodgeId: "l1", centralLodgeId: "c_a", expectCurrent: null }], "admin-1", vi.fn());
     expect(mocks.feesSync).not.toHaveBeenCalled();
   });
 });

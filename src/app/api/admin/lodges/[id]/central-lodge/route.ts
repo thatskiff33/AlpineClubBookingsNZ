@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { createAuditLog } from "@/lib/audit";
 import { centralLinkStatus, labelOwnedLodges, saveCentralLodgeLinks } from "@/lib/central-lodge-link";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
@@ -141,9 +142,27 @@ export async function PUT(
   const lodgeId = parsedParams.data.id;
   let saved;
   try {
+    const actorId = guard.session.user.id;
     saved = await saveCentralLodgeLinks(
       [{ lodgeId, centralLodgeId: body.centralLodgeId }],
-      guard.session.user.id,
+      (entry, tx) =>
+        // Category `admin`, like every writer under `/api/admin/lodges/`
+        // (INV-PRIV-013; see `LODGE_GATED_ADMIN_CATEGORIES_2765` in the audit census).
+        createAuditLog(
+          {
+            action: "LODGE_CENTRAL_LINK_UPDATED",
+            memberId: actorId,
+            actorMemberId: actorId,
+            entityType: "Lodge",
+            entityId: entry.lodgeId,
+            category: "admin",
+            severity: "important",
+            outcome: "success",
+            summary: "Central lodge link updated",
+            metadata: { before: entry.before, after: entry.after },
+          },
+          tx,
+        ),
     );
   } catch {
     return NextResponse.json({ error: "Could not save" }, { status: 500 });
