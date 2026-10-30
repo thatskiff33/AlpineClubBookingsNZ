@@ -10,6 +10,8 @@ import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import { reconcileEmailInheritanceForMemberChange, retireInheritedEmailCopies } from "@/lib/member-email-inheritance";
 import { formerMemberRetentionBlockers } from "@/lib/privacy-retention-selection";
 import { createAuditLog } from "@/lib/audit";
+import { readTwoFactorClearEvidence, recordTwoFactorClear } from "@/lib/two-factor-audit";
+import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 
 /** Local-only erasure; never deletes the identity or financial references. */
 export async function anonymiseFormerMember(
@@ -25,6 +27,8 @@ export async function anonymiseFormerMember(
     where: { AND: [where, { id }] }, select: { id: true, email: true, photoImageId: true, xeroContactId: true },
   });
   if (!member || (await formerMemberRetentionBlockers(tx, id)).length) return false;
+  // INV-PRIV-020: read after the row lock, recorded only once the claim cleared it.
+  const twoFactorBefore = await readTwoFactorClearEvidence(tx, id);
   const claim = await tx.member.updateMany({
     where: { AND: [where, { id }] },
     data: {
@@ -40,6 +44,11 @@ export async function anonymiseFormerMember(
     },
   });
   if (claim.count !== 1) return false;
+  await recordTwoFactorClear(tx, {
+    before: twoFactorBefore,
+    actor: { kind: "system", actor: FORMER_MEMBER_ANONYMISATION_JOB_NAME },
+    subjectMemberId: id,
+  });
   await retireInheritedEmailCopies(tx, { id, email: member.email });
   await tx.member.updateMany({
     where: { OR: [{ inheritEmailFromId: id }, { inheritEmailChoiceId: id }] },

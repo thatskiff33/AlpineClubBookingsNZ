@@ -32,6 +32,7 @@ import {
   type AuditLogClient,
   type StructuredAuditEvent,
 } from "@/lib/audit";
+import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 
 /**
  * Request evidence for the row: the audit module's own shape, which
@@ -39,12 +40,30 @@ import {
  */
 export type TwoFactorRequestContext = StructuredAuditEvent["request"];
 
+/**
+ * The background jobs that may CLEAR a second factor with no person behind the
+ * write, each named (INV-PRIV-020 bullet 2's closed list, for this vocabulary).
+ * Adding one is a reviewed change; no system actor ever enrols a factor.
+ */
+export const TWO_FACTOR_SYSTEM_ACTORS = [
+  /** The retention job anonymising a former member after their period (#4457). */
+  FORMER_MEMBER_ANONYMISATION_JOB_NAME,
+] as const;
+
+export type TwoFactorSystemActor = (typeof TWO_FACTOR_SYSTEM_ACTORS)[number];
+
+const TWO_FACTOR_SYSTEM_ACTOR_SET: ReadonlySet<string> = new Set<string>(
+  TWO_FACTOR_SYSTEM_ACTORS,
+);
+
 /** Who changed a member's second factor. */
 export type TwoFactorActor =
   /** The member enrolling their own second factor. */
   | { readonly kind: "member"; readonly memberId: string }
   /** An administrator, e.g. approving the member's account erasure. */
-  | { readonly kind: "admin"; readonly memberId: string };
+  | { readonly kind: "admin"; readonly memberId: string }
+  /** A named background job clearing it, e.g. retention anonymisation. */
+  | { readonly kind: "system"; readonly actor: TwoFactorSystemActor };
 
 /** The audit `action` each mutation records. One spelling, one home. */
 export const TWO_FACTOR_AUDIT_ACTIONS = {
@@ -67,7 +86,8 @@ export class TwoFactorActorError extends Error {
         ? `Two-factor mutation "${operation}" supplied no usable actor (received ` +
             `${JSON.stringify(received) ?? String(received)}). Name the member ` +
             "({ kind: \"member\", memberId }) or the administrator " +
-            "({ kind: \"admin\", memberId }) from @/lib/two-factor-audit."
+            "({ kind: \"admin\", memberId }), or a job from TWO_FACTOR_SYSTEM_ACTORS " +
+            "({ kind: \"system\", actor }), from @/lib/two-factor-audit."
         : `Two-factor mutation "${operation}" was refused: a member actor ` +
             `(${JSON.stringify(received)}) may change only their own second ` +
             `factor, and this one belongs to member "${subjectMemberId}". ` +
@@ -86,7 +106,17 @@ export function assertTwoFactorActor(
   if (typeof actor !== "object" || actor === null) {
     throw new TwoFactorActorError(operation, actor);
   }
-  const { kind, memberId } = actor as { kind?: unknown; memberId?: unknown };
+  const { kind, memberId, actor: job } = actor as {
+    kind?: unknown;
+    memberId?: unknown;
+    actor?: unknown;
+  };
+  if (kind === "system") {
+    if (typeof job !== "string" || !TWO_FACTOR_SYSTEM_ACTOR_SET.has(job)) {
+      throw new TwoFactorActorError(operation, actor);
+    }
+    return;
+  }
   if (
     (kind !== "member" && kind !== "admin") ||
     typeof memberId !== "string" ||
@@ -137,6 +167,11 @@ export async function recordTwoFactorMutation(
   },
 ): Promise<void> {
   assertTwoFactorActorMayAct(params.action, params.actor, params.subjectMemberId);
+  if (params.actor.kind === "system" && params.action !== TWO_FACTOR_AUDIT_ACTIONS.cleared) {
+    // A job may clear a factor; enrolling or replacing one needs a person.
+    throw new TwoFactorActorError(params.action, params.actor);
+  }
+  const actorMemberId = params.actor.kind === "system" ? null : params.actor.memberId;
   const summary =
     params.action === TWO_FACTOR_AUDIT_ACTIONS.enrolled
       ? `Two-factor authentication turned on (${
@@ -153,8 +188,8 @@ export async function recordTwoFactorMutation(
       category: "security",
       severity: "important",
       outcome: "success",
-      memberId: params.actor.memberId,
-      actorMemberId: params.actor.memberId,
+      memberId: actorMemberId,
+      actorMemberId,
       subjectMemberId: params.subjectMemberId,
       targetId: params.subjectMemberId,
       entityType: "Member",
@@ -162,6 +197,7 @@ export async function recordTwoFactorMutation(
       summary,
       metadata: {
         actorKind: params.actor.kind,
+        ...(params.actor.kind === "system" ? { systemActor: params.actor.actor } : {}),
         method: params.method,
         authenticatorApp: params.authenticatorApp,
         ...(params.recoveryCodesIssued === undefined
@@ -179,11 +215,63 @@ export async function recordTwoFactorMutation(
 }
 
 /**
+ * The member's second factor as a clear needs to describe it. Only booleans
+ * and the method leave the read — the encrypted secret is tested for presence
+ * and never handed on.
+ */
+export type TwoFactorClearEvidence = {
+  readonly twoFactorEnabled: boolean;
+  readonly twoFactorMethod: "TOTP" | "EMAIL" | null;
+  readonly authenticatorApp: boolean;
+};
+
+/** Read {@link TwoFactorClearEvidence} on the caller's transaction, after its row lock. */
+export async function readTwoFactorClearEvidence(
+  tx: Pick<Prisma.TransactionClient, "member">,
+  memberId: string,
+): Promise<TwoFactorClearEvidence | null> {
+  const before = await tx.member.findUnique({
+    where: { id: memberId },
+    select: { twoFactorEnabled: true, twoFactorMethod: true, totpSecret: true },
+  });
+  if (!before) return null;
+  return {
+    twoFactorEnabled: before.twoFactorEnabled,
+    twoFactorMethod: before.twoFactorMethod,
+    authenticatorApp: Boolean(before.totpSecret),
+  };
+}
+
+/**
+ * Record the clear of a second factor read beforehand as `before`, on the
+ * transaction that clears it. A member with no second factor has nothing
+ * cleared and gets no row.
+ */
+export async function recordTwoFactorClear(
+  tx: AuditLogClient,
+  params: {
+    before: TwoFactorClearEvidence | null;
+    actor: Exclude<TwoFactorActor, { kind: "member" }>;
+    subjectMemberId: string;
+    request?: TwoFactorRequestContext;
+  },
+): Promise<void> {
+  const { before } = params;
+  if (!before || (!before.twoFactorEnabled && !before.authenticatorApp)) return;
+  await recordTwoFactorMutation(tx, {
+    action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+    actor: params.actor,
+    subjectMemberId: params.subjectMemberId,
+    method: before.twoFactorMethod,
+    authenticatorApp: before.authenticatorApp,
+    request: params.request,
+  });
+}
+
+/**
  * The account-erasure executor's half: read the member's second factor INSIDE
  * the erasure transaction (after its row lock) and, when there is one to clear,
- * record the clear on that same transaction. Only booleans leave the read — the
- * encrypted secret is tested for presence and never handed on. A member with no
- * second factor has nothing cleared and gets no row.
+ * record the clear on that same transaction.
  */
 export async function recordErasureTwoFactorClear(
   tx: Pick<Prisma.TransactionClient, "member" | "auditLog">,
@@ -193,18 +281,10 @@ export async function recordErasureTwoFactorClear(
     request?: TwoFactorRequestContext;
   },
 ): Promise<void> {
-  const before = await tx.member.findUnique({
-    where: { id: params.memberId },
-    select: { twoFactorEnabled: true, twoFactorMethod: true, totpSecret: true },
-  });
-  const authenticatorApp = Boolean(before?.totpSecret);
-  if (!before || (!before.twoFactorEnabled && !authenticatorApp)) return;
-  await recordTwoFactorMutation(tx, {
-    action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+  await recordTwoFactorClear(tx, {
+    before: await readTwoFactorClearEvidence(tx, params.memberId),
     actor: { kind: "admin", memberId: params.adminMemberId },
     subjectMemberId: params.memberId,
-    method: before.twoFactorMethod,
-    authenticatorApp,
     request: params.request,
   });
 }

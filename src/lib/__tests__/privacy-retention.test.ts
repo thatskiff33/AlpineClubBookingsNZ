@@ -196,6 +196,25 @@ describe("privacy retention selection and execution", () => {
     expect(createAuditLog).toHaveBeenCalledTimes(1);
   });
 
+  it("records the second factor's clear under the named job, in the anonymising transaction (INV-PRIV-020)", async () => {
+    const s = store();
+    s.settings.anonymiseMembersEnabled = true;
+    s.data.member.push(member("enrolled", { twoFactorEnabled: true, twoFactorMethod: "TOTP", totpSecret: "ciphertext" }));
+    s.data.twoFactorRecoveryCode.push({ id: "code", memberId: "enrolled" });
+    expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 1 });
+    expect(s.data.member[0]).toMatchObject({ twoFactorEnabled: false, twoFactorMethod: null, totpSecret: null });
+    expect(s.data.twoFactorRecoveryCode).toEqual([]);
+    const actions = vi.mocked(createAuditLog).mock.calls.map(([event]) => event.action);
+    expect(actions).toEqual(["security.two_factor.cleared", "privacy.retention.member_anonymised"]);
+    const [clear, client] = vi.mocked(createAuditLog).mock.calls[0]!;
+    expect(client).toBe(s.db);
+    expect(clear).toMatchObject({
+      memberId: null, actorMemberId: null, subjectMemberId: "enrolled",
+      metadata: { actorKind: "system", systemActor: "former-member-anonymisation", method: "TOTP", authenticatorApp: true },
+    });
+    expect(JSON.stringify(clear)).not.toContain("ciphertext");
+  });
+
   it("blocks open money and open booking obligations", async () => {
     const s = store();
     s.settings.anonymiseMembersEnabled = true;

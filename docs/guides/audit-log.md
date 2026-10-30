@@ -794,7 +794,7 @@ for a change that did not happen, and a change cannot happen without its entry.
 | `integration.credential.deleted` on `xero-oauth:token-set` | Xero is disconnected (`cause: oauth-disconnect`), or the tokens are destroyed because somebody saved a new Xero client id or secret (`cause: verify-reset`) | The administrator |
 | `security.two_factor.enrolled` | A member turns on two-factor sign-in | The member themself |
 | `security.two_factor.recovery_codes_replaced` | A member replaces their recovery codes, which invalidates every unused one | The member themself |
-| `security.two_factor.cleared` | An account erasure clears a member's second factor | The administrator who approved the erasure |
+| `security.two_factor.cleared` | An account erasure, or the former-member retention job (#4457), clears a member's second factor | The administrator who approved the erasure, or **System** with `systemActor: former-member-anonymisation` |
 
 **Finding out why the Xero connection broke.** A verify-reset entry carries
 `causedByCredential` (for example `xero:client_secret`). It shares a request ID
