@@ -76,6 +76,7 @@ import { processRefund, cancelPaymentIntentIfCancellable, listRefundsForPaymentI
 import {
   calculateRefundAmount,
   daysUntilDate,
+  getRefundTier,
   loadCancellationPolicy,
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
@@ -118,6 +119,44 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubFormat } from "@/lib/club-format";
 import { isRefusedRefundStatus } from "@/lib/payment-transaction-status";
 import { keyAfterStripeRefusals, refusedRefundMessage } from "@/lib/refused-card-refund-retry";
+import { readOrganiserExtraState, effectiveOrganiserPaidChangeFeeCents, ORGANISER_SHARE_RECEIPT_REASON, type OrganiserExtraState } from "@/lib/organiser-extra-state";
+import { reserveOrganiserExtraCancellation, bindOrganiserExtraRefundToHandBack, hasOrganiserExtraReservation } from "@/lib/organiser-extra-netting";
+import { applyLocalRefundAllocation, foldIntoTransactionRefundedAmount, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
+import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+
+/** #4299: the scope of one child's invoice debts, frozen with the group cancel's plan. */
+function groupCancelExtraScope(settlementId: string, childId: string): string {
+  return `group-cancel:${settlementId}:${childId}`;
+}
+
+/**
+ * #4299 (F2): a group cancel's refund on a child payment that carries
+ * `PaymentTransaction` rows, recorded on those rows - the combined share's row
+ * first, then the extra invoices' - and the aggregate re-derived from them, so
+ * a later reconcile keeps it. Any refund still only on the mirror is folded
+ * onto the rows first, as the paid cancel does (#1491).
+ */
+async function recordGroupCancelRefundOnRows(
+  tx: Prisma.TransactionClient,
+  payment: { id: string; status: PaymentStatus; refundedAmountCents: number },
+  refundCents: number,
+): Promise<void> {
+  await lockPaymentForRefundedTotal(tx, payment.id);
+  await foldMirrorRefundIntoLedger(
+    payment,
+    () => tx.paymentTransaction.findMany({
+      where: { paymentId: payment.id, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+      orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+      select: { id: true, amountCents: true, refundedAmountCents: true },
+    }),
+    (row, amountCents) => foldIntoTransactionRefundedAmount({ paymentTransactionId: row.id, amountCents, store: tx }),
+  );
+  if (refundCents <= 0) return;
+  const shareRows = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, reason: ORGANISER_SHARE_RECEIPT_REASON }, orderBy: [...LEDGER_ROWS_OLDEST_FIRST], select: { id: true } });
+  await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundCents, preferTransactionIds: shareRows.map((row) => row.id), store: tx });
+}
 
 // F3 (#1351): the recovery operation is enqueued BEFORE the inline Stripe
 // refund, so the cron must not claim it while this run is still executing.
@@ -327,6 +366,12 @@ export async function settleGroupBookingOnOrganiserCancel(
   // plan frozen before #3653 (one Stripe refund for the whole group, finished
   // the way it started), and an Internet Banking settlement, whose refund the
   // club pays by hand and which no Stripe refund can back.
+  const bankChildrenWithExtras = new Set<string>();
+  if (settlement && !settlement.stripePaymentIntentId) {
+    for (const child of children) {
+      if ((await readOrganiserExtraState(prisma, child.id)).invoices.length > 0) bankChildrenWithExtras.add(child.id);
+    }
+  }
   const settled = settlement?.status === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
   // #3653: a per-child refund this run could not complete. Still owed - the
@@ -344,30 +389,63 @@ export async function settleGroupBookingOnOrganiserCancel(
     const [firstChild] = children;
     const days = daysUntilDate(firstChild.checkIn, todayAtClub);
     const policy = await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId);
-    for (const child of children) {
+    /**
+     * ONE planner (#4299 review): every child tiers off the first child's day
+     * and policy, as before #4299. Extra invoices change only the BASIS: the
+     * payment is the locked re-read (their cash may have landed since the
+     * load), and an uncollected change fee is not kept out of it (N4).
+     */
+    const planChildRefund = async (child: (typeof children)[number], db: Prisma.TransactionClient | typeof prisma, extras?: OrganiserExtraState) => {
       // What remains of the child's payment, less its change fee (`INV-PAY-018`).
-      if (child.status !== BookingStatus.PAID || !child.payment || !hasCapturedPayment(child.payment)) continue;
-      const { refundAmountCents } = calculateRefundAmount(
-        cancelRefundableBaseCents({
-          ...child.payment,
-          // #3827 (`INV-PAY-117`): cash an earlier edit or refund request already
-          // promised back by hand is not refunded a second time here.
-          openNonCancellationHandBackCents: await openNonCancellationHandBackCents(prisma, child.payment.id),
-          finalPriceCents: child.finalPriceCents,
-        }),
-        days,
-        policy,
-        "card"
-      );
-      if (refundAmountCents > 0) refundByChildId.set(child.id, refundAmountCents);
-    }
-    // Persist the plan BEFORE the flip so a crash anywhere downstream re-drives
-    // with the RECORDED per-child amounts instead of recomputing.
-    if (refundByChildId.size > 0) {
-      await prisma.groupBookingSettlement.update({
-        where: { id: settlement.id },
-        data: { refundPlan: Object.fromEntries(refundByChildId) as unknown as Prisma.InputJsonValue },
+      if (child.status !== BookingStatus.PAID || !child.payment) return null;
+      const payment = extras ? await db.payment.findUniqueOrThrow({ where: { id: child.payment.id } }) : child.payment;
+      if (!hasCapturedPayment(payment)) return null;
+      const basisCents = cancelRefundableBaseCents({
+        ...payment,
+        ...(extras ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(payment.changeFeeCents, extras) } : {}),
+        // #3827 (`INV-PAY-117`): cash an earlier edit or refund request already
+        // promised back by hand is not refunded a second time here.
+        openNonCancellationHandBackCents: await openNonCancellationHandBackCents(db, payment.id),
+        finalPriceCents: child.finalPriceCents,
       });
+      return { basisCents, ...calculateRefundAmount(basisCents, days, policy, "card") };
+    };
+    if (!settlement.stripePaymentIntentId && bankChildrenWithExtras.size > 0) {
+      // Freeze the bank-transfer plan and all invoice debts with the same
+      // global money fence. Inbound cash cannot land between sizing and reserve.
+      refundByChildId = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        const persisted = await tx.groupBookingSettlement.findUniqueOrThrow({ where: { id: settlement.id }, select: { refundPlan: true } });
+        if (persisted.refundPlan !== null) return deserializeRefundPlan(persisted.refundPlan);
+        const planned = new Map<string, number>();
+        for (const child of children) {
+          const withExtras = bankChildrenWithExtras.has(child.id) && child.payment !== null;
+          if (withExtras) await lockPaymentForRefundedTotal(tx, child.payment!.id);
+          const extras = withExtras ? await readOrganiserExtraState(tx, child.id) : undefined;
+          const refund = await planChildRefund(child, tx, extras);
+          if (!refund) continue;
+          if (refund.refundAmountCents > 0) planned.set(child.id, refund.refundAmountCents);
+          if (withExtras) {
+            await reserveOrganiserExtraCancellation(tx, { bookingId: child.id, scopeId: groupCancelExtraScope(settlement.id, child.id), refundAmountCents: refund.refundAmountCents,
+              refundBasisCents: refund.basisCents, refundPercentage: refund.refundPercentage, fixedFeeCents: getRefundTier(days, policy).fixedFeeCents, createdByMemberId: sessionUserId });
+          }
+        }
+        await tx.groupBookingSettlement.update({ where: { id: settlement.id }, data: { refundPlan: Object.fromEntries(planned) } });
+        return planned;
+      });
+    } else {
+      for (const child of children) {
+        const refund = await planChildRefund(child, prisma);
+        if (refund && refund.refundAmountCents > 0) refundByChildId.set(child.id, refund.refundAmountCents);
+      }
+      // Persist the plan BEFORE the flip so a crash anywhere downstream re-drives
+      // with the RECORDED per-child amounts instead of recomputing.
+      if (refundByChildId.size > 0) {
+        await prisma.groupBookingSettlement.update({
+          where: { id: settlement.id },
+          data: { refundPlan: Object.fromEntries(refundByChildId) as unknown as Prisma.InputJsonValue },
+        });
+      }
     }
   } else if (settlement?.stripePaymentIntentId) {
     ({ refunded: refundByChildId, owed: owedByChildId } = await refundOrganiserCancelChildren({
@@ -556,22 +634,31 @@ export async function settleGroupBookingOnOrganiserCancel(
           : null;
         // #3653: a per-child refund's mirror and note are its executor's.
         if (mirrorPlan && refundForChild > 0 && payment) {
-          // Ledger bypass is acceptable here: these organiser-settled child
-          // payments have no PaymentTransaction rows (they were paid via the
-          // combined settlement PI, not per-child intents), so there is no
-          // ledger to post against — the per-child refundedAmountCents is the
-          // record of record for these refunds.
           const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
-          await tx.payment.update({
-            where: { id: payment.id },
-            data: {
-              refundedAmountCents: nextRefunded,
-              status:
-                nextRefunded >= payment.amountCents
-                  ? PaymentStatus.REFUNDED
-                  : PaymentStatus.PARTIALLY_REFUNDED,
-            },
-          });
+          if ((await tx.paymentTransaction.count({ where: { paymentId: payment.id, reason: ORGANISER_SHARE_RECEIPT_REASON } })) > 0) {
+            // #4299 (F2): an extra invoice's cash gave this child payment
+            // `PaymentTransaction` rows (`syncOrganiserExtraInvoiceCash` writes
+            // the combined share's row first), which are then the record; a
+            // mirror write would be undone by the next aggregate reconcile. The
+            // refund goes on the rows, the share's first, as the cancel's does.
+            await recordGroupCancelRefundOnRows(tx, payment, nextRefunded - payment.refundedAmountCents);
+          } else {
+            // Ledger bypass is acceptable here: these organiser-settled child
+            // payments have no PaymentTransaction rows (they were paid via the
+            // combined settlement PI, not per-child intents), so there is no
+            // ledger to post against — the per-child refundedAmountCents is the
+            // record of record for these refunds.
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: {
+                refundedAmountCents: nextRefunded,
+                status:
+                  nextRefunded >= payment.amountCents
+                    ? PaymentStatus.REFUNDED
+                    : PaymentStatus.PARTIALLY_REFUNDED,
+              },
+            });
+          }
           // Xero refund credit note per paid child, allocated against that
           // child's own settlement invoice so the books balance per joiner.
           // Enqueued INSIDE this tx (store: tx) so the outbox row commits
@@ -594,14 +681,24 @@ export async function settleGroupBookingOnOrganiserCancel(
           // Cancels` selects on the ORGANISER BOOKING being CANCELLED plus a still
           // -active organiser-settled child, over the same status set this loop
           // claims. `GroupBooking.status` is not in that query at all.
-          const queued = await enqueueXeroRefundCreditNoteOperation(
-            payment.id,
-            refundForChild,
-            { createdByMemberId: sessionUserId, store: tx }
-          );
-          queuedOperationId = queued.queueOperationId;
-          // #4042: an Internet Banking settlement's refund is the club's to repay by hand.
-          if (settlement && !settlement.stripePaymentIntentId) raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
+          // #4299 (N-e): the notes follow how the PLAN was made, not what the
+          // child holds now. A plan frozen with this child's invoice debts
+          // reserved its notes (the refund ones bound to the hand-back here); a
+          // plan frozen without them (an earlier run, or a child with no extra
+          // invoice) takes the one refund note below, so a re-drive never
+          // raises both or neither. The reverse - pre-#4299 code re-driving a
+          // plan this code froze, possible only across a blue-green overlap -
+          // raises its one note and binds nothing: the refund debts stay
+          // WAITING_PAYMENT, never released, so nothing is paid twice.
+          const extraScope = settlement ? groupCancelExtraScope(settlement.id, child.id) : null;
+          if (settlement && !settlement.stripePaymentIntentId && extraScope && (await hasOrganiserExtraReservation(tx, child.id, extraScope))) {
+            raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
+            if (raised.handBack) await bindOrganiserExtraRefundToHandBack(tx, { bookingId: child.id, handBackTaskId: raised.handBack.id, scopeId: extraScope });
+          } else {
+            const queued = await enqueueXeroRefundCreditNoteOperation(payment.id, refundForChild, { createdByMemberId: sessionUserId, store: tx });
+            queuedOperationId = queued.queueOperationId;
+            if (settlement && !settlement.stripePaymentIntentId) raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
+          }
         }
 
         // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION

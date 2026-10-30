@@ -489,10 +489,10 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
     const source = bookingPageSource();
 
     expect(source).toMatch(
-      /\{nonOwnerAdminViewer && !isDeleted && booking\.payment \? \(\s*<BookingAdditionalPaymentPanel/,
+      /\{nonOwnerAdminViewer && !isDeleted && booking\.payment \? \(\s*<BookingAdditionalPaymentPanelMount>\s*<BookingAdditionalPaymentPanel/,
     );
     // Exactly one render site, so a second ungated copy cannot creep in.
-    expect(source.match(/<BookingAdditionalPaymentPanel/g)).toHaveLength(1);
+    expect(source.match(/<BookingAdditionalPaymentPanel\s/g)).toHaveLength(1);
     // …and the re-send is handed the edit gate, never the view gate.
     expect(source).toMatch(/canResend=\{canSeeAdminTools\}/);
   });

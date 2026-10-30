@@ -626,7 +626,8 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
         "Folding a superseded Stripe balance into a supplementary invoice invoices " +
         "the same money twice.",
     ).toMatch(
-      /\} else if \(hasIssuedXeroInvoice && priceDiffCents > 0\) \{\s*additionalAmountCents = priceDiffCents;/,
+      // #4299: less the part billed to the organiser, which is still this edit's delta.
+      /\} else if \(hasIssuedXeroInvoice && priceDiffCents > 0\) \{\s*additionalAmountCents = priceDiffCents(?: - billedToOrganiserCents)?;/,
     );
   });
 

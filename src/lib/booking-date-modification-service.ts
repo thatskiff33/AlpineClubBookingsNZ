@@ -1,3 +1,5 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -199,6 +201,7 @@ type DateModificationTransactionResult =
      * consumers want a number and the minter must not be handed one.
      */
     additionalAmountCents: number;
+    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
     booking: ModifiedBooking;
     priceDiffCents: number;
     changeFeeCents: number;
@@ -241,6 +244,8 @@ export type DateModificationResponse = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;
   promoRemoved: boolean;
@@ -1239,6 +1244,7 @@ export async function modifyBookingDates({
 
     // #3582: the same before and after, per night, on the booking ledger —
     // under the `lock(1)` this transaction took first.
+    await queueOrganiserExtraForChange(tx, booking, bookingModification);
     await postModificationLedgerLines({
       store: tx,
       bookingId,
@@ -1341,6 +1347,7 @@ export async function modifyBookingDates({
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       additionalAmountCents,
+      billedToOrganiserCents: payments.billedToOrganiserCents,
       additionalAsk,
       retiredAdditionalAsks,
       unpaidAskCancelled,
@@ -1432,6 +1439,7 @@ export async function modifyBookingDates({
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     additionalAmountCents: result.additionalAmountCents,
+    billedToOrganiserCents: result.billedToOrganiserCents,
     additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
     stripeRefundId: refund.stripeRefundId ?? null,
     promoRemoved: result.promoRemoved,
@@ -1535,6 +1543,7 @@ async function dispatchDatePostTransactionSideEffects({
     bookingModificationId: result.bookingModificationId,
     createdByMemberId: actorMemberId,
     hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    organiserBankPlace: paidByOrganiserInternetBanking(result.booking), // #4299 N-b
     originalPaymentStatus: result.paymentStatus,
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
@@ -1626,6 +1635,7 @@ async function dispatchDatePostTransactionSideEffects({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: namedAdditionalCents,
+      billedToOrganiserCents: result.billedToOrganiserCents, // #4299
       unpaidAskCancelled: result.unpaidAskCancelled,
       additionalPaymentMethod:
         namedAdditionalCents > 0 &&
@@ -2240,6 +2250,7 @@ export async function adminShiftBookingDates({
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
     additionalPaymentClientSecret: null,
     stripeRefundId: null,
     promoRemoved: false,

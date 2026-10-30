@@ -16,6 +16,7 @@ import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
+import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting";
 import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
@@ -470,6 +471,8 @@ export async function resolveManualRefundTask(
       // #4162: a re-confirmed bank refund's answer (refused when missing or misplaced): its fresh note, or the hand-made note it tracks.
       await recordBankRefundVoidAnswerInTransaction({ task, route: settlementRoute, answer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null, actingMemberId, store: tx });
     }
+
+    if (resolution === "completed") await releaseOrganiserExtraRefundNotes(tx, task.id);
 
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
     // inside this claim, so a replayed dismissal queues nothing.

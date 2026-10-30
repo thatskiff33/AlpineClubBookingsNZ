@@ -110,6 +110,7 @@ import {
   keptLateCaptureRecordRoute,
 } from "@/lib/late-capture-kept-xero-rules";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /**
  * #3643: a booking's invoice-clearing credit note create that still stands -
@@ -283,6 +284,22 @@ export function classifyBookingContext(
           paymentId: payment.id,
           manuallyMarkedPaidAt: payment.manuallyMarkedPaidAt,
         },
+        actionKeys: [],
+      });
+    } else if (payment && !primaryInvoice && paidByOrganiserInternetBanking(booking)) {
+      // #4299 B1 (`INV-PAY-148`): the organiser paid this place by internet
+      // banking, so its money sits on the organiser's combined invoice and the
+      // place has no invoice of its own BY DESIGN. Queuing a primary invoice
+      // would raise, and email the joiner, an awaiting-payment invoice for the
+      // whole place. Informational and action-free, like the arm above; the
+      // enqueue choke point refuses the same place.
+      addFinding(findings, {
+        code: "ORGANISER_SETTLED_ON_COMBINED_INVOICE",
+        severity: "info",
+        summary:
+          "The group organiser paid this place by internet banking; it is settled on the organiser's combined invoice, so no invoice of its own is expected.",
+        safeToAutoApply: false,
+        details: { paymentId: payment.id },
         actionKeys: [],
       });
     } else if (payment && !primaryInvoice) {

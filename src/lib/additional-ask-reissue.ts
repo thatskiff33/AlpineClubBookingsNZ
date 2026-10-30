@@ -136,7 +136,7 @@ export async function settleReductionAgainstUnpaidAsk(
     unpaidAskOffsetCents: reduction.offsetCents,
     unpaidAskCancelled: reduction.offsetCents > 0 && reduction.askLeftCents === 0,
   };
-  if (reduction.offsetCents <= 0 || !booking.payment) {
+  if (reduction.organiserExtras || reduction.offsetCents <= 0 || !booking.payment) {
     return {
       ...settled,
       retiredAdditionalAsks: [],

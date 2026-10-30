@@ -2,6 +2,7 @@ import { EMAIL_FROM } from "../email-sender";
 import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { recordEmailAttempt } from "./attempt-log";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -21,7 +22,6 @@ import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
   finalizeBookingEmailHtml,
-  hasBookingDetailHref,
 } from "@/lib/booking-email-html";
 import {
   getEmailTransporter,
@@ -43,6 +43,10 @@ import {
 } from "@/lib/email-theme";
 
 export type EmailSendOutcome =
+  // A durable event already has a log row; FAILED rows remain owned by the
+  // retry worker. This says recorded, not delivered.
+  | { status: "already_recorded"; emailLogId: string }
+  | { status: "queued"; emailLogId: string }
   | {
       status: "sent";
       emailLogId: string | null;
@@ -239,6 +243,8 @@ export async function sendEmail({
   logRecipient,
   lodgeId,
   bookingContext,
+  idempotencyKey,
+  deferDelivery,
 }: {
   to: string;
   subject: string;
@@ -257,7 +263,13 @@ export async function sendEmail({
   // message that passes `"none"` escapes the per-booking "No emails" switch, so
   // thread the real id wherever one exists.
   bookingContext: EmailBookingContext;
-}): Promise<EmailSendOutcome> {
+} & (
+  // Stable business-event identity makes logging mandatory before delivery;
+  // the EmailLog primary key serializes concurrent re-drives. Deferred mail
+  // is sent exclusively by the retry worker and must carry such an identity.
+  | { deferDelivery: true; idempotencyKey: string }
+  | { deferDelivery?: false; idempotencyKey?: string }
+)): Promise<EmailSendOutcome> {
   // Backstop for the render gate (#2900). Callers build `html` inside
   // `renderEmailHtml()`, so the palette is normally loaded before this line —
   // this await then costs nothing. It still matters for the renders that happen
@@ -327,47 +339,22 @@ export async function sendEmail({
   assertNoCrlf(normalizedRecipient, "to");
   assertNoCrlf(emailLogRecipient, "logRecipient");
 
-  // Create EmailLog record (fire-and-forget logging won't break email delivery)
-  let emailLogId: string | null = null;
-  try {
-    const log = await prisma.emailLog.create({
-      data: {
-        to: emailLogRecipient,
-        subject: sanitizedSubject,
-        templateName,
-        // New booking rows quarantine retryable HTML from the pre-#2362
-        // worker, whose fixed query selects only legacy htmlBody. This makes a
-        // later application rollback fail closed without withholding the
-        // initial send. Sensitive templates remain unretained in both fields.
-        htmlBody:
-          bookingContext === "none" && persistHtmlBody ? prepared.html : null,
-        status: "QUEUED",
-        lastAttemptAt: new Date(),
-        // #2258: booking attribution on every booking-scoped message, not just
-        // withheld ones — the retry cron re-evaluates the switch from this
-        // column before it replays a FAILED row.
-        bookingId: bookingContext === "none" ? null : bookingContext.bookingId,
-        // #2362: retries must repeat the current authority check from a durable
-        // identity. `to` is deliberately never treated as proof of access.
-        // The nullable override flag doubles as the provenance marker: null is
-        // a legacy/unknown row; false/true means this context was recorded.
-        ...(bookingContext === "none"
-          ? {}
-          : {
-              bookingRecipientMemberId:
-                bookingContext.recipient.kind === "member"
-                  ? bookingContext.recipient.memberId
-                  : null,
-              bookingBodyOverrideApplied: prepared.bodyOverrideApplied,
-              bookingDetailLinkIncluded: hasBookingDetailHref(prepared.html),
-              bookingRetryHtmlBody: persistHtmlBody ? prepared.html : null,
-            }),
-      },
-    });
-    emailLogId = log.id;
-  } catch (err) {
-    logger.error({ err }, "Failed to create EmailLog record");
+  const recorded = await recordEmailAttempt({
+    recipient: emailLogRecipient,
+    subject: sanitizedSubject,
+    templateName,
+    html: prepared.html,
+    bookingContext,
+    bodyOverrideApplied: prepared.bodyOverrideApplied,
+    persistHtmlBody,
+    hasAttachments: Boolean(attachments?.length),
+    idempotencyKey,
+    deferDelivery,
+  });
+  if (recorded.kind === "already_recorded") {
+    return { status: "already_recorded", emailLogId: recorded.emailLogId };
   }
+  const emailLogId = recorded.emailLogId;
 
   // ---------------------------------------------------------------------
   // Per-booking "No emails" switch (#2258, owner decision D10).
@@ -511,6 +498,10 @@ export async function sendEmail({
       emailLogId,
       reason: environmentGate.reason,
     };
+  }
+
+  if (deferDelivery && emailLogId) {
+    return { status: "queued", emailLogId };
   }
 
   if (process.env.NODE_ENV === "development") {

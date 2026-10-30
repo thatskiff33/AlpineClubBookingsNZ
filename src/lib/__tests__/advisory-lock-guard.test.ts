@@ -133,6 +133,16 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     reason: "Retention tests open booking money before erasing identity, excluding capture/cancel/refund; global then member lifecycle and credit, then the Xero Member row fence. Preserves all money and booking references.",
   },
   {
+    site: "syncOrganiserExtraInvoiceCash#1", tier: "GLOBAL",
+    reason: "#4299: record supplementary organiser bank-transfer cash against the child's payment and materialise its original combined-invoice share once. Serialises with edits/cancels; takes Payment row after global and re-reads the money. No provider calls in the transaction.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "reserveOrganiserExtraRacedCash#1", tier: "GLOBAL",
+    reason: "#4299: cash that arrived while extra waivers were queued reserves every plan's policy-tiered organiser hand-back and refund note atomically. Each plan's reservation is a delta over the rows re-read under this key, so two waivers of one invoice (or of one plan) never reserve the same raced cash; the scope and occurrence keys back it. Provider calls run outside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",
@@ -746,6 +756,12 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   },
   {
     site: "settleGroupBookingOnOrganiserCancel#3",
+    tier: "GLOBAL",
+    reason: "#4299: freeze organiser bank-transfer child refunds and their extra-invoice waiver/refund debts atomically with the group plan. Inbound cash imports and edit writers take this key; all provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "settleGroupBookingOnOrganiserCancel#4",
     tier: "GLOBAL",
     reason:
       "Each child's cancel and its refund credit-note enqueue commit inside one transaction on the settlement cohort's key, and reconcile that child's allocations through the lock-held seam. #4042: on an Internet Banking settlement the same claim books the joiner's share on the organiser's hand-back task (create, grow while OPEN, or a supplementary task once closed), which this key makes single.",
@@ -1369,6 +1385,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // callers (the supersede's cancel step, the minters after their cancels, an
   // edit's Xero leg, the reaper, the release) hold nothing there. Still no new
   // raw site, no new key.
+  // #4299 S1 (`INV-PAY-148`): the enqueue refuses, under this key, a change
+  // whose organiser extra a waiver retired whole before it was raised, and
+  // the organiser create re-asks in a short transaction holding this key
+  // alone, from the outbox worker or an officer's retry holding nothing,
+  // before its Xero call. Same helper, no new raw site, no new key.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,

@@ -3,6 +3,7 @@
 // transitions after a modification. Code moved verbatim; import via the
 // "@/lib/booking-modify" barrel.
 
+import { settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   BookingStatus,
@@ -54,14 +55,14 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
-import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
+import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
-import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 
 export type PaymentAdjustmentResult = {
@@ -106,6 +107,12 @@ export type PaymentAdjustmentResult = {
   foldedReissuedAsks: FoldedReissuedAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
+  /**
+   * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
+   * internet-banking group place; 0 otherwise. The joiner is asked for none of
+   * it (`additionalAmountCents` excludes it), and the emails say who was billed.
+   */
+  billedToOrganiserCents: number;
 } & UnpaidAskSettlement; // #3954: what the reduction did to the unpaid ask
 
 /**
@@ -141,6 +148,8 @@ export {
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
 import {
+  modificationCardRefundTier,
+  refundableCashForModification,
   resolveSelectedSettlementAmount,
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
@@ -209,6 +218,8 @@ export async function applyPaymentAdjustments(
   assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
   assertOptionsSizedAfterUnpaidAsk(settlementOptions, reduction, booking.id, format);
   const netAmountCents = reduction.netChargeLeftCents;
+  // #4299 (N-a): only an increase needs the combined invoice, to bill the organiser.
+  const organiserBilling = await resolveOrganiserBillingForNet(tx, booking, netAmountCents);
   // #3502 (owner, 6 Oct 2026): a credit- or promo-paid ($0) booking's INCREASE is
   // asked by card, as a card-paid one's; every REDUCTION reads `hasSettledPayment`.
   const zeroDollarCardIncrease =
@@ -216,10 +227,11 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
     zeroDollarCardIncrease;
-  const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
+  // #4299: the one home's answer, or the organiser's combined invoice standing for it.
+  const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
-  const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
+  const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
@@ -249,7 +261,7 @@ export async function applyPaymentAdjustments(
         })
       : null;
   const xeroRefundAmountCents =
-    hasIssuedXeroInvoice && netAmountCents < 0
+    !organiserBilling && hasIssuedXeroInvoice && netAmountCents < 0
       ? hasSettledPayment
         ? selectedSettlement.amountCents
         : creditGiveBack
@@ -258,6 +270,9 @@ export async function applyPaymentAdjustments(
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
+  // #4299 (`INV-PAY-148`): the organiser is invoiced for the increase, so the
+  // joiner is asked for nothing; the emails and responses say who was billed.
+  const billedToOrganiserCents = organiserBilling ? xeroAdditionalAmountCents : 0;
 
   let refundAmountCents = 0;
   let accountCreditAmountCents = 0;
@@ -350,14 +365,23 @@ export async function applyPaymentAdjustments(
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else {
-        additionalAmountCents = xeroAdditionalAmountCents;
+        additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
       }
     }
 
     // #3954 x #3750: once - a caller that records it on the amount owed did.
     if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
-    additionalAmountCents = xeroAdditionalAmountCents;
+    additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
+  }
+
+  if (reduction.organiserExtras) {
+    // #4299 S2: the edit's own tier, frozen even with no options (a cut wholly against the unpaid extra).
+    const tier = await modificationCardRefundTier(tx, booking, todayAtClub, reductionUntiered || appliedCreditReturnedByCaller);
+    await settleOrganiserExtraReduction(tx, { reduction: reduction.organiserExtras, refundAmountCents,
+      refundBasisCents: settlementOptions?.basisAmountCents ?? Math.max(0, -netAmountCents),
+      refundPercentage: settlementOptions?.cardRefundPercentage ?? tier.refundPercentage, fixedFeeCents: tier.fixedFeeCents,
+    });
   }
 
   // #3980 (`INV-PAY-136`): the fee, and the claim on an unlinked invoice (409 if it moved).
@@ -365,6 +389,8 @@ export async function applyPaymentAdjustments(
     payment: booking.payment,
     changeFeeCents: feeRecordedHereCents,
     refusalMessage: primaryInvoiceRaisedMessage,
+    // #4299 N3: the place itself, not its combined invoice's record: a reduction with none on record claims no primary either.
+    settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking),
   });
 
   // #3653: refused here, before the edit commits, when the organiser's combined
@@ -394,6 +420,7 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     foldedReissuedAsks,
     settledAgainstPrimaryInvoice,
+    billedToOrganiserCents,
     ...unpaidAskSettlement,
   };
 }

@@ -146,6 +146,8 @@ const UNPROVEN_FIRST_READS: Record<string, string> = {
  * These declarations document consumer review, not an automatic data-flow proof.
  */
 const EXISTENCE_READS: Record<string, string> = {
+  "src/lib/organiser-extra-receipt.ts > syncOrganiserExtraInvoiceCash > primary":
+    "#4299: tests !primary to write the combined share's row once, before any extra-invoice cash; no row id is consumed.",
   "src/lib/booking-cancel.ts > paymentEligibleForPaidCancelPath > capturedTransaction":
     "returns Boolean(capturedTransaction) to choose the paid cancellation path; no row id is consumed.",
   "src/lib/booking-cancel.ts > paymentHasCaptureEvidence > capturedTransaction":

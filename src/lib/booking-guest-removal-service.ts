@@ -1,3 +1,4 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -128,6 +129,8 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   /**
    * #3371: the minter's own value, carrying what minting it would absorb. The
    * plain figure above is what the emails and the response body read; the two
@@ -1000,6 +1003,7 @@ export async function removeBookingGuestInTransaction({
 
   // #3582: the same before and after, per night, on the booking ledger — under
   // the `lock(1)` this function took first.
+  await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
     store: tx,
     bookingId,
@@ -1090,6 +1094,7 @@ export async function removeBookingGuestInTransaction({
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
+    billedToOrganiserCents: paymentImpact.billedToOrganiserCents,
     additionalAsk: paymentImpact.additionalAsk,
     retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
     unpaidAskCancelled: paymentImpact.unpaidAskCancelled,

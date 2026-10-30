@@ -159,6 +159,27 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     expect(factValue(summary!, "Covers refunds up to")).toBe("$75.00");
   });
 
+  it.each([
+    { purpose: "waive", title: "Queued: waive an organiser's extra invoice", label: "Waive the unpaid extra" },
+    { purpose: "refund", title: "Queued: record an organiser bank-transfer refund", label: "Refund the organiser by bank transfer" },
+  ])("summarizes an organiser extra adjustment: $purpose (#4299)", ({ purpose, title, label }) => {
+    const summary = summarizeXeroOperation({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      requestPayload: {
+        queueType: "ORGANISER_EXTRA_ADJUSTMENT", purpose, bookingId: "booking_place", scopeId: "cancel",
+        modificationId: "change_1", invoiceId: "extra_invoice", amountCents: 4000, cashAtPlanCents: 2000, refundPercentage: 50, handBackTaskId: "task_1",
+      },
+      responsePayload: null,
+    }, CLUB_FORMAT_TEST);
+    expect(summary?.title).toBe(title);
+    expect(factValue(summary!, "Purpose")).toBe(label);
+    expect(factValue(summary!, "Booking")).toBe("booking_plac...");
+    expect(factValue(summary!, "Xero invoice")).toBe("extra_invoic...");
+    expect(factValue(summary!, "Amount")).toBe("$40.00");
+    expect(factValue(summary!, "Hand-back task")).toBe("task_1");
+  });
+
   it("summarizes a queued credit-note allocation", () => {
     const summary = summarizeXeroOperation({
       entityType: "ALLOCATION",

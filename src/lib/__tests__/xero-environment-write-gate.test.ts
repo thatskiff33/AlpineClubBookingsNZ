@@ -299,6 +299,7 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "deleteCreditNoteAllocations",
       "emailInvoice",
       "updateContact",
+      "updateCreditNote",
       "updateInvoice",
     ];
     const unclassified = [...operations].filter(

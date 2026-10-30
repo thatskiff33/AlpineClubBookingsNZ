@@ -2,10 +2,7 @@ import "server-only";
 
 import { BookingStatus, ManualRefundTaskKind, type Prisma } from "@prisma/client";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
-import {
-  recordShortEditReviewChargeInvoice,
-  restateEditReviewChargeSupplementaryInvoice,
-} from "@/lib/edit-financial-review-charge-request";
+import { recordShortEditReviewChargeInvoice, restateEditReviewChargeSupplementaryInvoice } from "@/lib/edit-financial-review-charge-request";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import logger from "@/lib/logger";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -17,6 +14,7 @@ import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-r
 import { isCancelCardShortfallTask, isNonCancellationHandBackTask, refundRequestIdOfHandBack } from "@/lib/manual-refund-task-settlement-rules";
 import { cancellationHandBackNotedOnItsOwnRecord } from "@/lib/bank-hand-back-refund-note";
 import type { RefundMethod } from "@/lib/xero-refund-method";
+import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -152,6 +150,7 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
   actingMemberId: string;
   store: Prisma.TransactionClient;
 }): Promise<void> {
+  if (await releaseOrganiserExtraRefundNotes(store, task.id)) return; // #4299: its reserved organiser notes are its note
   const invoiceId = cancelledBookingRefundInvoiceId(task);
   if (isCancelCardShortfallTask(task)) {
     if (invoiceId !== null && route?.kind === "local-allocation" && route.refundCents > 0) await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", paidAnotherWayTaskId: task.id, store });

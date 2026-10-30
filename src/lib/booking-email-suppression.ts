@@ -132,6 +132,7 @@ export const ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES: ReadonlySet<string> =
     // #3956: the organiser's notice of a joiner's appeal refunded to their card,
     // scoped to the organiser's own booking.
     "group-organiser-joiner-refund",
+    "group-organiser-extra-invoice",
     "group-join-settled",
     "group-join-pay-self",
     "group-settlement-expired",

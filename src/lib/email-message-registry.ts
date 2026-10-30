@@ -31,6 +31,7 @@ import {
 import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
+import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
 import {
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
@@ -532,6 +533,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "refund-request-approved": ["refundSentence"],
   // #3956: the sentence that says whose card the money goes to, and for whom.
   "group-organiser-joiner-refund": ["refundSentence"],
+  "group-organiser-extra-invoice": [
+    "joinerName", "changeSummary", "additionalAmount", "xeroInvoiceNumber",
+  ],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -1256,6 +1260,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "Once per approved appeal, beside the joiner's approval email; withheld when the admin chose not to notify, or the organiser is the joiner",
   },
+  "group-organiser-extra-invoice": {
+    triggerSummary:
+      "A change increased the cost of a place in an organiser-paid Internet Banking group, and an extra invoice was raised to the organiser (#4299)",
+    frequency: "Once per extra invoice, to the organiser; scoped to the organiser's booking",
+  },
   "group-join-settled": {
     triggerSummary:
       "Organiser settled a joiner's spot as part of a combined group payment",
@@ -1824,6 +1833,13 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   // {{refundSentence}} sample previews.
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
+  },
+  "group-organiser-extra-invoice": {
+    joinerName: "Sam Joiner",
+    // The sender's own wording of a change (`bookingModificationTypeLabel`).
+    changeSummary: bookingModificationTypeLabel("DATE_CHANGE"),
+    additionalAmount: "$65.00",
+    xeroInvoiceNumber: "INV-0042",
   },
 };
 

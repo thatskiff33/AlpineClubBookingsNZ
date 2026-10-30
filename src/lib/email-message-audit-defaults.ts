@@ -535,6 +535,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Your group booking is settled — {{CLUB_NAME}}",
     "defaultBody": "Your Group Booking Is Settled\n\nHi {{firstName}}, thanks for settling your group's stay at {{CLUB_NAME}}'s lodge. Everyone you are paying for is now confirmed.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nJoiners settled: {{joinerCount}}\nTotal paid: {{total}}\n\nEach joiner has been emailed to confirm their spot. There is nothing more for them to pay.\n\nIf anything looks wrong, contact the club at {{SUPPORT_EMAIL}}."
   },
+  // #4299: a supplementary invoice for the organiser's Internet Banking group.
+  "group-organiser-extra-invoice": {
+    "defaultSubject": "Extra invoice for your group booking — {{CLUB_NAME}}",
+    "defaultBody": "Extra Invoice for Your Group Booking\n\nHi {{firstName}}, a change to a place in the group you paid for by internet banking has increased its cost. As the group organiser, you are responsible for this extra payment.\n\nPlace: {{joinerName}}\nChange: {{changeSummary}}\nExtra amount to pay: {{additionalAmount}}\nInvoice reference: {{xeroInvoiceNumber}}\n\nPlease pay this extra invoice by internet banking, quoting the invoice reference above.\n\nIf you need the club's bank details or think this invoice is wrong, contact the club at {{SUPPORT_EMAIL}}."
+  },
   // #3956 (`INV-PAY-123`): a joiner's approved appeal refunded to the organiser's card.
   "group-organiser-joiner-refund": {
     "defaultSubject": "A refund to your card for your group booking — {{CLUB_NAME}}",

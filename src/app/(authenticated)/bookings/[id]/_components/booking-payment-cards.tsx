@@ -4,6 +4,7 @@ import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
 import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
+import { BookingAdditionalPaymentPanelMount } from "@/components/admin/booking-additional-payment-panel-mount";
 import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
 import { additionalPaymentEpisodeStartedAt } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
@@ -385,19 +386,21 @@ export function BookingPaymentCards({
           left every other admin viewer with no sign that money was owing at all.
           Read-only, plus a re-send for admins who may write. */}
       {nonOwnerAdminViewer && !isDeleted && booking.payment ? (
-        <BookingAdditionalPaymentPanel
-          bookingId={booking.id}
-          bookingStatus={booking.status}
-          payment={booking.payment}
-          requestedOn={additionalPaymentEpisodeStartedAt({
-            paymentCreatedAt: booking.payment.createdAt,
-            latestAdditionalTransactionCreatedAt:
-              booking.payment.transactions[0]?.createdAt ?? null,
-          })}
-          askCause={additionalAskCause(booking.payment.transactions)}
-          canResend={canSeeAdminTools}
-          canWithdraw={canEditFinance}
-        />
+        <BookingAdditionalPaymentPanelMount>
+          <BookingAdditionalPaymentPanel
+            bookingId={booking.id}
+            bookingStatus={booking.status}
+            payment={booking.payment}
+            requestedOn={additionalPaymentEpisodeStartedAt({
+              paymentCreatedAt: booking.payment.createdAt,
+              latestAdditionalTransactionCreatedAt:
+                booking.payment.transactions[0]?.createdAt ?? null,
+            })}
+            askCause={additionalAskCause(booking.payment.transactions)}
+            canResend={canSeeAdminTools}
+            canWithdraw={canEditFinance}
+          />
+        </BookingAdditionalPaymentPanelMount>
       ) : null}
     </>
   );
