@@ -29,7 +29,8 @@ counts describe the current page; other group counts include all matching rows.
 An inactive member without a leavingDate is **never automatically erased**.
 Such members appear separately for officers to review and establish a departure
 date from evidence. Inactivity, last login and cancellation timestamps are not
-substitutes for an explicit leavingDate. Anonymisation preserves stable IDs,
+substitutes for an explicit leavingDate. Imported former members also retain
+NULL until an officer explicitly records their leaving date. Anonymisation preserves stable IDs,
 booking / payment links and financial references needed for reconciliation;
 it does not promise to scrub every historical narrative or provider record.
 
