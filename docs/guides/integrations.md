@@ -325,10 +325,31 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    refused. **Changing the address clears the stored key**, because a key issued
    by one server means nothing to another.
 4. Paste the API key and save. It is stored encrypted and never shown again.
-5. Enable the **Other Clubs details** item, then press **Download** to pull the
+   Saving it also registers this site's address with the central server, and
+   the page says how that went: registered; the address is not `https://`, so
+   the server cannot reach this site (shared posts still arrive by polling, but
+   the central lodge search cannot ask about free beds); the central server has
+   not approved your connection yet (this site registers itself every 3 hours
+   until it is approved, so come back afterwards); no server address is saved
+   yet; or it could not be reached (tried again every 3 hours).
+5. With **Other Clubs details** enabled, the same save then downloads the
    distributed set — which also tells this site which lodge is yours and turns
-   on **Edit my Lodge** in the Other lodges panel — and **Upload** to push your
-   own lodge's entry.
+   on **Edit my Lodge** in the Other lodges panel — and links your lodges to
+   the ones the central server lists as yours (the **Central lodge** link).
+   A **Link your lodges** dialog gives each of your lodges a choice of the
+   central server's lodges or **Not linked**; a central lodge chosen for one
+   lodge cannot be chosen for another. Current links are preselected, and with
+   one active lodge and one listed for you that pair is preselected too.
+   Nothing is linked until you press **Save links**, which saves them all —
+   every club links explicitly, a one-lodge club included. If the server lists
+   no lodge for you yet, or every lodge it lists is already linked, the page
+   says so instead. With the item disabled, enable it and press **Download**,
+   then link each lodge from its **Central lodge** card.
+6. Saving **Edit my Lodge** uploads your lodge to the central server straight
+   away, and the panel says whether it was sent; the nightly sync sends
+   anything that was not. **Upload** pushes it by hand. **View all lodge
+   details**, under Other Clubs details on the setup page, opens the Lodges
+   page.
 
 After that a nightly job at 3am syncs both directions on its own. It only sends
 your own lodge's entry, and only when it changed since last time, and only

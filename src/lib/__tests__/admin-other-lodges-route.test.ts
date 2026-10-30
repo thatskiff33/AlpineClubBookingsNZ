@@ -16,6 +16,13 @@ const mocks = vi.hoisted(() => ({
   readStoredServerVersion: vi.fn(),
   syncOwnOtherLodgesFromFees: vi.fn(),
   otherLodgeFeesProblem: vi.fn(),
+  uploadOtherClubsAfterSave: vi.fn(),
+}));
+
+// Server onboarding B4: a save of the club's own lodge uploads it straight
+// away; the upload's own outcomes are tested in servernz-upload-after-save.
+vi.mock("@/lib/servernz-upload-after-save", () => ({
+  uploadOtherClubsAfterSave: mocks.uploadOtherClubsAfterSave,
 }));
 
 // #77: the Fees-page fill has its own tests; here only that the save runs it.
@@ -180,6 +187,7 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue(adminSession);
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.auditLogCreate.mockResolvedValue(undefined);
+  mocks.uploadOtherClubsAfterSave.mockResolvedValue({ status: "uploaded", sent: 1 });
   mocks.readStoredServerVersion.mockResolvedValue({
     status: "match",
     serverVersion: "2.0",
@@ -380,6 +388,26 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     // The response is the LIST shape, so the panel can show it as saved.
     const data = await response.json();
     expect(data.otherLodge).toMatchObject({ owned: true, bookingOfficerPhone: "021 555 0000" });
+  });
+
+  it("uploads straight after the save has been written, and answers with the outcome", async () => {
+    mocks.findUnique.mockResolvedValue(record());
+    mocks.update.mockResolvedValue(record({ bedCapacity: 12 }));
+    mocks.uploadOtherClubsAfterSave.mockResolvedValue({ status: "running" });
+    const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.uploadOtherClubsAfterSave).toHaveBeenCalledWith("admin-1");
+    // After the write and its audit row, never inside a transaction.
+    expect(mocks.auditLogCreate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.uploadOtherClubsAfterSave.mock.invocationCallOrder[0]!,
+    );
+    expect((await response.json()).upload).toEqual({ status: "running" });
+  });
+
+  it("does not upload a save it refused", async () => {
+    mocks.findUnique.mockResolvedValue(theirs());
+    await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-2"));
+    expect(mocks.uploadOtherClubsAfterSave).not.toHaveBeenCalled();
   });
 
   it("accepts the unchanged name alongside the edit (the panel sends the whole form)", async () => {

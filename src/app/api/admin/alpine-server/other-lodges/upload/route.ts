@@ -3,10 +3,9 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/session-guards";
-import { createAuditLog } from "@/lib/audit";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { uploadOtherClubsToServer } from "@/lib/servernz-other-lodges-sync";
-import { respondSyncRunning, respondToSyncError } from "@/lib/servernz-sync-response";
+import { auditUpload, respondSyncRunning, respondToSyncError } from "@/lib/servernz-sync-response";
 import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
 import { assertStoredServerVersionMatches } from "@/lib/servernz-api";
 
@@ -36,15 +35,7 @@ export async function POST() {
     // claim is refused with nothing sent, rather than run alongside it.
     const result = await withOtherLodgesSyncClaim(() => uploadOtherClubsToServer());
     if (result === null) return respondSyncRunning();
-    await createAuditLog({
-      action: "alpine_server.other_lodges.upload",
-      category: "lodge",
-      severity: "info",
-      outcome: "success",
-      memberId: guard.session.user.id,
-      summary: "Uploaded Other Clubs to Alpine Central Server",
-      details: `created ${result.created}, updated ${result.updated}, skipped ${result.skipped}`,
-    });
+    await auditUpload(result, guard.session.user.id, "Uploaded Other Clubs to Alpine Central Server");
     return NextResponse.json(result);
   } catch (error) {
     return respondToSyncError(error, guard.session.user.id, "upload");

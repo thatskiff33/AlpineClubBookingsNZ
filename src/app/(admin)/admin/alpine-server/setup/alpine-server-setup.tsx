@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
 import {
   NO_KEY_SERVER_VERSION,
@@ -38,6 +39,7 @@ import {
   useAdminAreaEditAccess,
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
 } from "@/hooks/use-admin-area-edit-access";
+import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration } from "./server-connect-step";
 
 interface InitialState {
   apiKeySet: boolean;
@@ -177,6 +179,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   // and only while it is shown (an id that names nothing describes nothing).
   const addressUnsavedHint = useFieldHint();
   const describedByUnsaved = addressUnsaved ? addressUnsavedHint.fieldProps : {};
+  const lodgeLinks = useLodgeLinkStep();
 
   // The version check (#49): ONE call per page entry, from a mount effect,
   // and again only after a key or address is saved - never on re-render and
@@ -272,9 +275,12 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       if (!res.ok) throw new Error(data?.error ?? "Failed to save API key");
       setApiKeySet(true);
       setApiKey("");
-      setMessage({ kind: "ok", text: "API key stored securely." });
+      // The route registered this site's address; then the lodges are linked.
+      const registered = registrationMessage(data?.pushRegistration as KeySaveRegistration | undefined);
+      setMessage({ kind: registered.kind, text: registered.text });
       // A new key means a (possibly different) server can now be asked.
       void refreshVersion();
+      if (registered.linkLodges) await lodgeLinks.run();
     } catch (e) {
       setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
     } finally {
@@ -378,6 +384,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           {message.text}
         </p>
       ) : null}
+      {lodgeLinks.statusLine}
+      {lodgeLinks.dialog}
 
       {/* Connection */}
       <Card>
@@ -591,7 +599,10 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 </div>
                 <p className="text-sm text-muted-foreground">
                   The registry of other clubs&apos; lodges (name, location, booking
-                  officer, beds).
+                  officer, beds).{" "}
+                  <Link href="/admin/lodges" className="font-medium underline underline-offset-4">
+                    View all lodge details
+                  </Link>
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Until a lodge&apos;s Central lodge link is saved (Lodges, then

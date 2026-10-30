@@ -2409,13 +2409,17 @@ mispricing a booking.
   A replaced connection refuses the write. Connection replacement clears both
   Other lodges transfer positions and the shared-feed cursor and poison tracking
   in the same transaction as the address or key change.
-- **Central lodge link writer** — `PUT /api/admin/lodges/[id]/central-lodge`
+- **Central lodge link writer** — `saveCentralLodgeLinks` in
+  `src/lib/central-lodge-link.ts`, called by `PUT /api/admin/lodges/[id]/central-lodge`
+  and by the setup page's link step (`/api/admin/alpine-server/lodge-links`)
   (#62; #4262 review): in one transaction it first takes the settings row lock
   (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a
   download recording a new list (which unlinks deleted ids under the same
   lock) cannot land between the ownership check and the write; then it takes
-  `$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = $1 FOR UPDATE``, re-reads the
-  link it is replacing, writes the new `Lodge.centralLodgeId`, and writes its
+  `$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = $1 FOR UPDATE`` on each row
+  it saves, in id order, re-reads the link it is replacing (refusing a save
+  whose caller expected a different link), clears any link moving between the
+  rows, writes each new `Lodge.centralLodgeId`, and writes its
   `LODGE_CENTRAL_LINK_UPDATED` audit row on the same transaction client. Order:
   settings row, then `Lodge` row — the Other lodges download's own order (its
   hides and record-step unlink), so neither can wait on the other in reverse.

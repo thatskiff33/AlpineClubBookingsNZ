@@ -53,6 +53,7 @@ import {
   SERVERNZ_PROVIDER,
   SERVERNZ_WRITABLE_CREDENTIAL_KEYS,
 } from "@/lib/servernz-config";
+import { registerAfterKeySave } from "@/lib/servernz-push-registration";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -328,11 +329,19 @@ export async function POST(request: Request) {
 
   await applyVerifyReset(provider, guard.memberId, requestContext);
 
+  // A saved ServerNZ key registers this site's address at once, after the
+  // key's fenced write has committed (INV-INT-003).
+  const pushRegistration =
+    provider === SERVERNZ_PROVIDER && key === SERVERNZ_CREDENTIAL_KEYS.apiKey
+      ? await registerAfterKeySave()
+      : undefined;
+
   // Response confirms metadata only — the value is never returned.
   return NextResponse.json({
     ok: true,
     provider: result.provider,
     key: result.key,
     setAt: result.updatedAt.toISOString(),
+    ...(pushRegistration ? { pushRegistration } : {}),
   });
 }

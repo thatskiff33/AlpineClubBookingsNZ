@@ -5,8 +5,15 @@ import {
   invalidateProviderCredentialCache,
   setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
+import { getAppBaseUrl } from "@/lib/app-url";
 import logger from "@/lib/logger";
-import { ServerNzVersionMismatchError, registerPushTarget } from "@/lib/servernz-api";
+import {
+  ServerNzApiError,
+  ServerNzNotConfiguredError,
+  ServerNzVersionMismatchError,
+  registerPushTarget,
+} from "@/lib/servernz-api";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
 import {
   ServerNzConnectionChangedError,
@@ -16,16 +23,31 @@ import {
 /*
  * The shared-post push registration (epic #2992), apart from the mirror pass
  * that calls it first (`runMirrorSync`, `club-post-mirror.ts`) since #4470
- * fenced its secret on the connection it registered with.
+ * fenced its secret on the connection it registered with. The API key save
+ * calls it too, once the key has committed (`registerAfterKeySave`,
+ * triyder/AlpineClubBookingsNZ#97), so the setup page can say how it went.
  */
+
+/**
+ * One registration's outcome. `awaiting-approval` is the server's 403 for a
+ * pending or suspended club. It, `no-address` and `failed` (a connection
+ * replaced in flight included) are retried by the next mirror pass.
+ */
+export type PushRegistrationOutcome =
+  | "registered"
+  | "already-registered"
+  | "not-https"
+  | "no-address"
+  | "awaiting-approval"
+  | "failed";
 
 /**
  * Make sure the central server knows where to push for this install.
  *
  * Idempotent and cheap to call from the sync pass: it does nothing when a
- * secret is already stored. The callback URL is derived from NEXTAUTH_URL —
- * the address this install already knows itself by — so there is no second
- * base-URL setting to drift.
+ * secret is already stored. The callback URL is derived from this install's
+ * own address (`getAppBaseUrl`, which reads NEXTAUTH_URL), so there is no
+ * second base-URL setting to drift.
  *
  * A server address move removes the stored secret (#4470), so the next pass
  * registers with the new server. The secret is stored through the connection
@@ -33,17 +55,17 @@ import {
  * connection replaced while the request was out is the old server's, and is
  * dropped rather than stored, so it cannot stop that re-registration.
  */
-export async function ensurePushRegistration(): Promise<void> {
+export async function ensurePushRegistration(): Promise<PushRegistrationOutcome> {
   const existing = await getIntegrationCredentialValue(
     SERVERNZ_PROVIDER,
     SERVERNZ_CREDENTIAL_KEYS.pushSecret,
   );
-  if (existing) return;
+  if (existing) return "already-registered";
 
-  const base = process.env.NEXTAUTH_URL?.trim();
+  const base = getAppBaseUrl();
   // Push needs a URL the central server can reach over https; a localhost dev
   // install simply stays poll-only, which loses nothing but latency.
-  if (!base || !base.startsWith("https://")) return;
+  if (!base.startsWith("https://")) return "not-https";
 
   const callback = new URL("/api/webhooks/servernz-posts", base).toString();
   try {
@@ -74,6 +96,7 @@ export async function ensurePushRegistration(): Promise<void> {
       { callback, secretVersion: result.secretVersion },
       "Registered this install for shared-post pushes",
     );
+    return "registered";
   } catch (error) {
     // A version pause is the pass's answer, not registration's: let the pass
     // report it (#49 review item 1).
@@ -83,10 +106,35 @@ export async function ensurePushRegistration(): Promise<void> {
       logger.warn(
         "The Alpine Central Server connection changed while this install registered for pushes; the secret was not stored, and the next sync registers again",
       );
-      return;
+      return "failed";
     }
     // Poll-only is a working state, so registration failing must not fail the
     // sync pass that attempted it.
     logger.warn({ err: error }, "Could not register the shared-post push target");
+    if (error instanceof ServerNzNotConfiguredError) return "no-address";
+    // A pending or suspended club's key is refused with 403.
+    return error instanceof ServerNzApiError && error.status === 403
+      ? "awaiting-approval"
+      : "failed";
+  }
+}
+
+/**
+ * Register straight after an API key save, as an outcome for the setup page
+ * (triyder/AlpineClubBookingsNZ#97). The key save's fenced transaction has
+ * committed, and removed the replaced connection's secret
+ * (`clearServerNzPushSecret`), before this runs, so the registration is made
+ * with the key just stored. Never throws: the key is stored whatever this
+ * comes to, and the next mirror pass retries.
+ */
+export async function registerAfterKeySave(): Promise<
+  PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE
+> {
+  try {
+    return await ensurePushRegistration();
+  } catch (error) {
+    if (error instanceof ServerNzVersionMismatchError) return SERVER_VERSION_MISMATCH_CODE;
+    logger.warn({ err: error }, "Push registration after a key save failed");
+    return "failed";
   }
 }
