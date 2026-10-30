@@ -17,6 +17,11 @@ run syncs, retry operations, replay events, or change mappings and rules. Most
 panels appear only once Xero is connected. Xero pushes and reconciliation are
 idempotent — retrying the same work never double-charges.
 
+A booking edit's credit note may appear in Xero before its bank refund has
+been sent. It corrects the invoice, but the app records the refund only when
+the treasurer marks the edit's refund task paid back. Dismissing that task
+does not record a refund (#4315).
+
 ## When you'd use it
 
 - You are connecting Xero for the first time, or reconnecting it.
