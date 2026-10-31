@@ -22,7 +22,6 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   CHECK_COMMAND,
@@ -40,6 +39,7 @@ import {
   type FileStat,
   type OversizedFileStat,
 } from "./lib/file-size-budget";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 const ROOT = process.cwd();
 
@@ -408,9 +408,6 @@ export function main() {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-) {
+if (isMainModule(import.meta.url)) {
   main();
 }

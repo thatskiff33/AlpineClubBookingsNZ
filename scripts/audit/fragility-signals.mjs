@@ -31,7 +31,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   AUDIT_CUTOFF,
@@ -46,6 +46,7 @@ import {
   revertedCommit,
   unwrapRevertSubject,
 } from "./fragility-lib.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT_DIR = path.join(ROOT, "tmp/fragility");
@@ -234,4 +235,4 @@ function main() {
   console.error(`wrote tmp/fragility/repeats.json: ${repeats.length} candidate pairs ${JSON.stringify(bySignal)}`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) main();
+if (isMainModule(import.meta.url)) main();

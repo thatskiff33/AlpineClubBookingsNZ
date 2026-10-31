@@ -52,9 +52,9 @@
  * obligation on whoever records the decision, not a nicety.
  */
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 
 import { ghJson } from "./lib/github-cli.mjs";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 /** How many `#NNNN` references from the body get a state lookup. */
 export const LINKED_ISSUE_LIMIT = 12;
@@ -480,7 +480,7 @@ function main(argv) {
   console.log(out.join("\n"));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isMainModule(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (error) {

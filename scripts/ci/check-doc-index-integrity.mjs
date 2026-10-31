@@ -82,7 +82,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The index every invariant file and every id must be reachable from. */
 export const INVARIANT_INDEX = "docs/DOMAIN_INVARIANTS.md";
@@ -3330,7 +3330,6 @@ export function loadInvariantFilesAtRef(repoRoot, ref) {
   return files;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
 /**
  * `--words`: print the word-count inventory instead of auditing.
  *
@@ -3396,7 +3395,7 @@ export function formatWordInventory(files) {
   return lines.join("\n");
 }
 
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   const repoRoot = path.resolve(path.join(import.meta.dirname, "..", ".."));
   try {
     const files = loadTrackedFiles(repoRoot);

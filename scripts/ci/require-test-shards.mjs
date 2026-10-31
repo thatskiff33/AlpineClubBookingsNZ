@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
-import { pathToFileURL } from "node:url";
 
 import { escapeRegex } from "./escape-regex.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 // #3431: this is the sole required-check bridge for independent jobs.
 // `verify` runs it with the unit-test shard defaults and, since #4425, names
@@ -205,7 +205,7 @@ export function parseShardGateArgs(argv) {
   return options;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   let label = DEFAULT_SHARD_LABEL;
   try {
     const options = parseShardGateArgs(process.argv.slice(2));

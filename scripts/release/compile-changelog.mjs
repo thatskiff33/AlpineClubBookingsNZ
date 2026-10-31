@@ -39,9 +39,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -654,12 +654,10 @@ export function parseArgs(argv) {
   return { version, date, dryRun, append };
 }
 
-// Run directly only when this file IS the script node was given. Node reports
-// `import.meta.url` as the RESOLVED path, so `argv[1]` is resolved too: compared
-// unresolved, a run through a symlinked checkout or launcher matched nothing and
-// exited 0 having compiled nothing (#4569). `cut-release.mjs` does the same.
-const invokedPath = process.argv[1] ? pathToFileURL(fs.realpathSync(process.argv[1])).href : null;
-if (invokedPath === import.meta.url) {
+// Run directly only when this file IS the script node was given, compared by
+// real path: unresolved, a run through a symlinked checkout or launcher matched
+// nothing and exited 0 having compiled nothing (#4569, #4598).
+if (isMainModule(import.meta.url)) {
   try {
     const { version, date, dryRun, append } = parseArgs(process.argv.slice(2));
     compileChangelog({ version, date: date ?? releaseDateToday(), dryRun, append });

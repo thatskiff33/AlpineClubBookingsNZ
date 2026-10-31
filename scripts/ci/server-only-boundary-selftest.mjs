@@ -55,12 +55,13 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 export const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -348,38 +349,11 @@ function main() {
   process.exitCode = 1;
 }
 
-/**
- * Was this file RUN, rather than imported by the unit test beside it?
- *
- * BOTH SIDES ARE REALPATHED, and that is not defensive noise. Node resolves
- * `import.meta.url` through symlinks and hands back `process.argv[1]` exactly
- * as the caller spelled it, so under a checkout reached through a link - a
- * self-hosted runner whose workspace is one, a container bind-mount through
- * one, macOS where `/tmp` is one - the two strings differ, `main()` never runs,
- * and this exits 0 having proved nothing. Reproduced here with a Windows
- * junction. Nothing downstream would have noticed: the CI step was a bare
- * `node scripts/ci/server-only-boundary-selftest.mjs`, so the REQUIRED `verify`
- * check would have gone green with the boundary proof never executed. That step
- * now also greps for the success line, which is the same hole closed from the
- * other side - a silent exit 0 must not be able to satisfy a required check.
- *
- * `realpathSync` throws on a path that does not exist, so each side falls back
- * to its own resolved spelling rather than taking the process down.
- */
-export function isDirectInvocation(argvPath, moduleUrl) {
-  if (!argvPath) return false;
-  const real = (candidate) => {
-    try {
-      return realpathSync(candidate);
-    } catch {
-      return candidate;
-    }
-  };
-  return (
-    real(path.resolve(argvPath)) === real(path.resolve(fileURLToPath(moduleUrl)))
-  );
-}
-
-if (isDirectInvocation(process.argv[1], import.meta.url)) {
+// Was this file RUN, rather than imported by the unit test beside it? Compared
+// by real path (`is-main-module.mjs`): under a checkout reached through a link
+// an unresolved check never runs `main()` and exits 0 having proved nothing,
+// and the REQUIRED `verify` check would go green on it. That step also greps
+// for the success line, the same hole closed from the other side.
+if (isMainModule(import.meta.url)) {
   main();
 }

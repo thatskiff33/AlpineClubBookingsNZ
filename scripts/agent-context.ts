@@ -15,9 +15,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import { must } from "../src/lib/indexed-access";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 const DEFAULT_MAX_CHARS = 32_000;
 const DEFAULT_DEPTH = 1;
@@ -755,5 +755,4 @@ function runCli(): void {
   }
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
-if (invokedPath === import.meta.url) runCli();
+if (isMainModule(import.meta.url)) runCli();

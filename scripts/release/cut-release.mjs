@@ -38,7 +38,6 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 
 import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
 import {
@@ -53,6 +52,7 @@ import {
   releaseSection,
   releaseDateToday,
 } from "./compile-changelog.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -818,6 +818,6 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main();
 }
