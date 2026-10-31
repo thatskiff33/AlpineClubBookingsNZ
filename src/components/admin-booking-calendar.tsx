@@ -508,18 +508,16 @@ export function AdminBookingCalendar() {
                       className={`text-xs leading-none ${
                         isToday
                           ? "font-bold text-info-11 bg-info-3 rounded-full px-1.5 py-0.5"
-                          : isPast
-                            ? "text-muted-foreground"
-                            : "text-muted-foreground"
+                          : "text-muted-foreground"
                       }`}
                     >
                       {dayNum}
+                      {/* #4594: a past day is said, not faded; its cell is grey. */}
+                      {isPast ? <span className="sr-only"> (past)</span> : null}
                     </span>
                     {beds !== undefined && (
                       <span
                         className={`text-[11px] leading-none font-medium ${
-                          isPast ? "opacity-60 " : ""
-                        }${
                           beds === 0 ? "text-danger-11" : beds <= 5 ? "text-danger-11" : beds <= 15 ? "text-warning-11" : "text-success-11"
                         }`}
                       >
@@ -606,8 +604,8 @@ export function AdminBookingCalendar() {
                 key={`more-${cellIdx}`}
                 type="button"
                 data-more-day={dayStr}
-                className={`absolute pointer-events-auto flex items-center justify-center rounded border border-border bg-card text-[11px] font-medium text-muted-foreground hover:bg-accent ${
-                  isPastCell ? "opacity-60" : ""
+                className={`absolute pointer-events-auto flex items-center justify-center rounded border border-border text-[11px] font-medium text-muted-foreground hover:bg-accent ${
+                  isPastCell ? "border-dashed bg-muted" : "bg-card"
                 }`}
                 style={{
                   left: `calc(${leftPct}% + 2px)`,
@@ -680,7 +678,7 @@ export function AdminBookingCalendar() {
           // whole item used to be `opacity-30`, which took the label to 1.53:1
           // (#4466); the label stays at full muted ink so it can still be read.
           <div key={status} className="flex items-center gap-1.5">
-            <div className={`w-3.5 h-2.5 rounded-sm ${color} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
+            <div aria-hidden className={`w-3.5 h-2.5 rounded-sm ${color} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
             <span className={`text-muted-foreground ${enabledStatuses.has(status) ? "" : "line-through"}`}>
               {bookingStatusLabel(status)}
             </span>

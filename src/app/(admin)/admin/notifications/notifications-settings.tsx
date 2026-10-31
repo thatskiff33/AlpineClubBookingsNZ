@@ -376,13 +376,14 @@ export function AdminNotificationSettings({
                   <div
                     key={key}
                     className={`flex items-start gap-3 rounded-lg border border-border p-3${
-                      locked ? " opacity-60" : ""
+                      locked ? " border-dashed" : ""
                     }`}
                   >
                     <Checkbox
                       id={controlId}
                       checked={admin.preferences[key]}
                       disabled={!editing || locked || saving}
+                      aria-describedby={locked ? `${controlId}-locked` : undefined}
                       onCheckedChange={() =>
                         editing &&
                         !locked &&
@@ -398,8 +399,8 @@ export function AdminNotificationSettings({
                         {meta.description}
                       </p>
                       {locked ? (
-                        <p className="text-xs leading-5 text-muted-foreground">
-                          Not available: this alert belongs to an area their role
+                        <p id={`${controlId}-locked`} className="text-xs leading-5 text-muted-foreground">
+                          <span className="font-medium text-foreground">Locked:</span> this alert belongs to an area their role
                           cannot edit. It cannot be switched on here — give their
                           access role edit access to that area instead.
                         </p>

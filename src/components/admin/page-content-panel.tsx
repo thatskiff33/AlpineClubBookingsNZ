@@ -2442,7 +2442,7 @@ export function PageContentPanel() {
                     readOnly={isSystemPageSlug(selectedPage.slug) || !canEdit}
                     className={
                       isSystemPageSlug(selectedPage.slug) || !canEdit
-                        ? "cursor-not-allowed bg-muted opacity-70"
+                        ? "cursor-not-allowed bg-muted"
                         : ""
                     }
                   />
@@ -2468,7 +2468,7 @@ export function PageContentPanel() {
                     readOnly={isSystemPageSlug(selectedPage.slug) || !canEdit}
                     className={
                       isSystemPageSlug(selectedPage.slug) || !canEdit
-                        ? "cursor-not-allowed bg-muted opacity-70"
+                        ? "cursor-not-allowed bg-muted"
                         : ""
                     }
                   />
