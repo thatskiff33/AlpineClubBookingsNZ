@@ -5,13 +5,13 @@ import { pathToFileURL } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { blankLiterals } from "../../src/lib/__tests__/support/strip-comments.ts";
+import { blankLiterals } from "@/lib/__tests__/support/strip-comments";
 import { isMainModule } from "./is-main-module.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const HELPER = "scripts/lib/is-main-module.mjs";
 
-const TEMPORARY_DIRECTORIES = [];
+const TEMPORARY_DIRECTORIES: string[] = [];
 afterAll(() => {
   for (const directory of TEMPORARY_DIRECTORIES) rmSync(directory, { recursive: true, force: true });
 });
@@ -92,7 +92,7 @@ const HAND_WRITTEN_CHECKS = [
 const PREFILTER = /argv|import\s*\.\s*meta|require\s*\.\s*main/;
 
 /** Files that may hold a hand-written check, each with the reason. */
-const ALLOWED = new Map([[HELPER, "the helper itself"]]);
+const ALLOWED = new Map<string, string>([[HELPER, "the helper itself"]]);
 
 const SCANNED_EXTENSION = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const UNSCANNED_DIRECTORY = new Set([
@@ -109,7 +109,7 @@ const UNSCANNED_DIRECTORY = new Set([
   "public",
 ]);
 
-function scannableFiles(dir, found = []) {
+function scannableFiles(dir: string, found: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (!UNSCANNED_DIRECTORY.has(entry.name)) scannableFiles(path.join(dir, entry.name), found);
@@ -121,8 +121,8 @@ function scannableFiles(dir, found = []) {
 }
 
 /** `file:line: text` for every hand-written check outside {@link ALLOWED}. */
-function handWrittenChecks(root = REPO_ROOT) {
-  const hits = [];
+function handWrittenChecks(root: string = REPO_ROOT): { hits: string[]; scanned: number } {
+  const hits: string[] = [];
   let scanned = 0;
   for (const absolute of scannableFiles(root)) {
     const file = path.relative(root, absolute).split(path.sep).join("/");

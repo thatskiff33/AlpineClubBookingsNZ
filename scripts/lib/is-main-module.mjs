@@ -1,6 +1,6 @@
 /**
  * Was this module RUN, rather than imported? The one answer for every script
- * in the tree (#4598, INV-SSOT); `is-main-module.test.mjs` fails a hand-written
+ * in the tree (#4598, INV-SSOT); `is-main-module.test.ts` fails a hand-written
  * `process.argv[1]` check anywhere else.
  *
  * BOTH SIDES ARE REALPATHED. Node resolves `import.meta.url` through symlinks
