@@ -11,18 +11,16 @@
 -- (20261127010000) already are.
 --
 -- PostgreSQL cannot change a foreign key's action in place, so each is dropped
--- and re-added NOT VALID inside one short transaction (no moment without the
--- key, and no scan while the drop's ACCESS EXCLUSIVE lock is held); each is then
--- validated after COMMIT, which scans under SHARE UPDATE EXCLUSIVE and blocks no
--- writer. Every existing row already satisfied the same key, so validation
--- cannot fail.
+-- and re-added inside this one transaction: there is no moment without the key,
+-- and a failure rolls every key back. Every existing row already satisfied the
+-- same key, so re-adding it cannot fail.
 --
 -- Dropping a foreign key takes ACCESS EXCLUSIVE on BOTH its tables (measured on
 -- PostgreSQL 16), so the transaction takes all five up front, parents first —
 -- the order the booking writers take them in (a booking row, then its ledger
 -- lines or credit rows) — so a writer mid-way through cannot hold a parent the
--- migration then waits for. They are held only until COMMIT: no scan runs
--- inside.
+-- migration then waits for. They are held until COMMIT, through the re-added
+-- keys' validation scans of "BookingLedgerLine" and "MemberCredit".
 --
 -- OLD CODE: its only booking hard deletes are DRAFT bookings (booking-delete.ts,
 -- the draft-cleanup cron), and a DRAFT carries no ledger line or credit row, so
@@ -38,18 +36,11 @@ ALTER TABLE "MemberCredit" DROP CONSTRAINT "MemberCredit_sourceBookingId_fkey";
 ALTER TABLE "MemberCredit" DROP CONSTRAINT "MemberCredit_appliedToBookingId_fkey";
 ALTER TABLE "MemberCredit" DROP CONSTRAINT "MemberCredit_sourceBookingModificationId_fkey";
 
-ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE RESTRICT NOT VALID;
-ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_lodgeId_fkey" FOREIGN KEY ("lodgeId") REFERENCES "Lodge"("id") ON DELETE RESTRICT ON UPDATE RESTRICT NOT VALID;
-ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_reversesLineId_fkey" FOREIGN KEY ("reversesLineId") REFERENCES "BookingLedgerLine"("id") ON DELETE RESTRICT ON UPDATE RESTRICT NOT VALID;
-ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_sourceBookingId_fkey" FOREIGN KEY ("sourceBookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE RESTRICT NOT VALID;
-ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_appliedToBookingId_fkey" FOREIGN KEY ("appliedToBookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE RESTRICT NOT VALID;
-ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_sourceBookingModificationId_fkey" FOREIGN KEY ("sourceBookingModificationId") REFERENCES "BookingModification"("id") ON DELETE RESTRICT ON UPDATE RESTRICT NOT VALID;
+ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_lodgeId_fkey" FOREIGN KEY ("lodgeId") REFERENCES "Lodge"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_reversesLineId_fkey" FOREIGN KEY ("reversesLineId") REFERENCES "BookingLedgerLine"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_sourceBookingId_fkey" FOREIGN KEY ("sourceBookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_appliedToBookingId_fkey" FOREIGN KEY ("appliedToBookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_sourceBookingModificationId_fkey" FOREIGN KEY ("sourceBookingModificationId") REFERENCES "BookingModification"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 COMMIT;
-
-ALTER TABLE "BookingLedgerLine" VALIDATE CONSTRAINT "BookingLedgerLine_bookingId_fkey";
-ALTER TABLE "BookingLedgerLine" VALIDATE CONSTRAINT "BookingLedgerLine_lodgeId_fkey";
-ALTER TABLE "BookingLedgerLine" VALIDATE CONSTRAINT "BookingLedgerLine_reversesLineId_fkey";
-ALTER TABLE "MemberCredit" VALIDATE CONSTRAINT "MemberCredit_sourceBookingId_fkey";
-ALTER TABLE "MemberCredit" VALIDATE CONSTRAINT "MemberCredit_appliedToBookingId_fkey";
-ALTER TABLE "MemberCredit" VALIDATE CONSTRAINT "MemberCredit_sourceBookingModificationId_fkey";

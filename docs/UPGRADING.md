@@ -152,9 +152,10 @@ somehow did is refused (409) or skipped and logged by the nightly cleanup.
 guard treats as breaking: set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
 `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` such as "#4514 foreign keys change to
 RESTRICT; old colour compatible". No maintenance window is needed: the old
-colour keeps working. The keys' swap briefly locks `Booking`, `Lodge`,
-`BookingModification`, `MemberCredit` and `BookingLedgerLine`, so deploy at a
-quiet time ([ledger row](BLUE_GREEN_MIGRATION_SAFETY.tsv)). No provisioning
+colour keeps working. The keys' swap locks `Booking`, `Lodge`,
+`BookingModification`, `MemberCredit` and `BookingLedgerLine` for its one short
+transaction (about 120 ms on 200,000 ledger lines), so deploy at a quiet time
+([ledger row](BLUE_GREEN_MIGRATION_SAFETY.tsv)). No provisioning
 step is needed for either role set-up.
 
 **Local demo databases.** `pnpm run db:seed:demo` now refuses to run on a
