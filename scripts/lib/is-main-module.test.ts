@@ -76,15 +76,21 @@ describe("isMainModule (#4598)", () => {
   `import.meta.filename` with `===`/`!==`, read `import.meta.main`, or compare
   `require.main` with `module`.
 
+  Patterns run over the whole blanked file, not line by line, so a comparison a
+  formatter breaks after `===` still matches. Reading argv's entry point by
+  destructuring, `slice(1)` or `at(-1)` is matched too.
+
   Limit, stated rather than hidden: a check that captures `import.meta.url`
-  into a variable first and compares that variable with a destructured argv
-  entry is not matched. Every shape the tree actually used is.
+  into a variable first, then compares that variable with an argv entry held
+  in another variable, is not matched. Every shape the tree actually used is.
 */
 const HAND_WRITTEN_CHECKS = [
   /\bprocess\s*\.\s*argv\s*\[\s*1\s*\]/,
-  /\bprocess\s*\.\s*argv\s*\.\s*at\s*\(\s*1\s*\)/,
-  /\bimport\s*\.\s*meta\s*\.\s*(?:url|filename)\s*\)?\s*[!=]==?/,
-  /[!=]==?\s*(?:\w+\s*\(\s*)?import\s*\.\s*meta\s*\.\s*(?:url|filename)\b/,
+  /\bprocess\s*\.\s*argv\s*\.\s*at\s*\(\s*-?\s*1\s*\)/,
+  /\bprocess\s*\.\s*argv\s*\.\s*slice\s*\(\s*1\s*[,)]/,
+  /\[\s*,\s*[\w$]+[^\]]*\]\s*=\s*process\s*\.\s*argv\b/,
+  /\bimport\s*\.\s*meta\s*\.\s*(?:url|filename|dirname)\s*\)?\s*[!=]==?/,
+  /[!=]==?\s*(?:\w+\s*\(\s*)?import\s*\.\s*meta\s*\.\s*(?:url|filename|dirname)\b/,
   /\bimport\s*\.\s*meta\s*\.\s*main\b/,
   /\brequire\s*\.\s*main\s*[!=]==?\s*module\b|\bmodule\s*[!=]==?\s*require\s*\.\s*main\b/,
 ];
@@ -130,13 +136,15 @@ function handWrittenChecks(root: string = REPO_ROOT): { hits: string[]; scanned:
     scanned += 1;
     const source = readFileSync(absolute, "utf8");
     if (!PREFILTER.test(source)) continue;
-    const code = blankLiterals(source).split("\n");
+    // Whole-file, so `\s*` spans a comparison a formatter wrapped after `===`.
+    const code = blankLiterals(source);
     const original = source.split("\n");
-    code.forEach((line, index) => {
-      if (HAND_WRITTEN_CHECKS.some((pattern) => pattern.test(line))) {
-        hits.push(`${file}:${index + 1}: ${original[index]?.trim()}`);
-      }
-    });
+    for (const pattern of HAND_WRITTEN_CHECKS) {
+      const match = pattern.exec(code);
+      if (!match) continue;
+      const line = code.slice(0, match.index).split("\n").length;
+      hits.push(`${file}:${line}: ${original[line - 1]?.trim()}`);
+    }
   }
   return { hits, scanned };
 }
@@ -163,6 +171,11 @@ describe("INV-SSOT: one direct-run check (#4598)", () => {
       "if (process.argv.at(1) === here) main();",
       "if (import.meta.main) main();",
       "if (require.main === module) main();",
+      "if (pathToFileURL(entry).href ===\n  import.meta.url) main();",
+      "const [, entry] = process.argv;",
+      "const entry = process.argv.slice(1)[0];",
+      "if (process.argv.at(-1) === here) main();",
+      "if (import.meta.dirname === dir) main();",
     ];
     for (const shape of shapes) {
       const line = blankLiterals(shape);
@@ -173,6 +186,8 @@ describe("INV-SSOT: one direct-run check (#4598)", () => {
       "// compare process.argv[1] with import.meta.url",
       "const note = \"process.argv[1] === import.meta.url\";",
       "const ROOT = path.dirname(fileURLToPath(import.meta.url));",
+      "const args = process.argv.slice(2);",
+      "const [, , command] = process.argv;",
     ]) {
       const line = blankLiterals(fine);
       expect(HAND_WRITTEN_CHECKS.some((pattern) => pattern.test(line)), fine).toBe(false);
