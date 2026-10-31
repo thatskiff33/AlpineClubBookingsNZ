@@ -302,9 +302,8 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
   production access or a secret. A direct `thatskiff33` comment outranks it; in
   real doubt, ask. Fabricating or embellishing one is the gravest breach here.
 - **Read the thread, not the body:** `pnpm run issue <n>`; decisions often
-  sit in later comments (#2777). An
-  unanswered reviewer question is an open finding; the owner outranks a
-  reviewer.
+  sit in later comments (#2777). An unanswered reviewer question is an open
+  finding; the owner outranks a reviewer.
 - **A decision is not recorded until the body says so:** rewrite the body in
   the same sitting and remove `needs-decision`
   ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer)).
