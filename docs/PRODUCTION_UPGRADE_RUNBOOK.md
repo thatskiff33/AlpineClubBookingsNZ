@@ -341,7 +341,7 @@ undoing. Everything below is for the left-hand column.
 
 **The same, under another code: `40P01 deadlock detected`.** A migration that
 locks several tables up front (`20261127050000_retain_ledger_history_on_booking_delete`
-takes seven, parents first, each bounded by its own one-second `lock_timeout`)
+takes eight, parents first, each bounded by its own one-second `lock_timeout`)
 can meet a writer holding them in the other order. PostgreSQL then aborts one
 side; when it is the migration, the error is `P3018` with `40P01` and the state
 and recovery below are exactly those of a lock timeout.

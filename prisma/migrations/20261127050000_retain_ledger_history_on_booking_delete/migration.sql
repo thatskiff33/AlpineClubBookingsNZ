@@ -22,12 +22,18 @@
 -- the order the booking writers take them in (a booking or group row, then its
 -- ledger lines, credit rows or settlement) — so a writer mid-way through cannot
 -- hold a parent the migration then waits for. They are held until COMMIT,
--- through the re-added keys' validation scans. Each lock waits at most one
--- second (SET LOCAL lock_timeout), so a busy table stops the deploy before
--- cutover with nothing applied rather than queueing Booking traffic behind it.
+-- through the re-added keys' validation scans.
 --
 -- Also: an index on MemberMoneyObligation.memberId, which member hard delete
 -- now counts (journal debtor, INV-MONEY-043). The journal is empty until M3.
+-- Its table is locked in the same statement, last, so the index build waits
+-- for no lock after the seven are held.
+--
+-- Each of those eight lock waits is at most one second (SET LOCAL
+-- lock_timeout; PostgreSQL bounds each acquisition separately), so in the worst
+-- case Booking, taken first, is held about seven seconds before a busy table
+-- stops the deploy with nothing applied, rather than queueing Booking traffic
+-- behind it.
 --
 -- OLD CODE: its only booking hard deletes are DRAFT bookings (booking-delete.ts,
 -- the draft-cleanup cron); a DRAFT carries no ledger line or credit row, and is
@@ -39,7 +45,7 @@ BEGIN;
 
 SET LOCAL lock_timeout = '1s';
 
-LOCK TABLE "Booking", "Lodge", "BookingModification", "GroupBooking", "MemberCredit", "BookingLedgerLine", "GroupBookingSettlement" IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE "Booking", "Lodge", "BookingModification", "GroupBooking", "MemberCredit", "BookingLedgerLine", "GroupBookingSettlement", "MemberMoneyObligation" IN ACCESS EXCLUSIVE MODE;
 
 ALTER TABLE "BookingLedgerLine" DROP CONSTRAINT "BookingLedgerLine_bookingId_fkey";
 ALTER TABLE "BookingLedgerLine" DROP CONSTRAINT "BookingLedgerLine_lodgeId_fkey";

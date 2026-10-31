@@ -149,14 +149,14 @@ member or officer does changes: the app only ever hard-deletes draft bookings,
 which never carry money, and soft-deletes cancelled ones. A draft that somehow
 did is refused (409), or left out of the nightly cleanup and logged.
 
-**Deploy.** The migration drops and re-adds six foreign keys, which the deploy
+**Deploy.** The migration drops and re-adds seven foreign keys, which the deploy
 guard treats as breaking: set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
 `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` such as "#4514 foreign keys change to
 RESTRICT; old colour compatible". No maintenance window is needed: the old
 colour keeps working. The keys' swap locks `Booking`, `Lodge`,
-`BookingModification`, `GroupBooking`, `MemberCredit`, `BookingLedgerLine` and
-`GroupBookingSettlement` for its one short transaction (about 120 ms on 200,000
-ledger lines), so deploy at a quiet time
+`BookingModification`, `GroupBooking`, `MemberCredit`, `BookingLedgerLine`,
+`GroupBookingSettlement` and the empty `MemberMoneyObligation` for its one short
+transaction (about 120 ms on 200,000 ledger lines), so deploy at a quiet time
 ([ledger row](BLUE_GREEN_MIGRATION_SAFETY.tsv)). Each lock waits at most one
 second: if a busy table makes the deploy stop with `55P03` (lock timeout) or
 `40P01` (deadlock detected), nothing was applied and the old colour is still
