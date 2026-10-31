@@ -235,6 +235,8 @@ export async function runClubPostCleanup(
   }
 
   const staleBefore = new Date(now.getTime() - STALE_CLEANUP_CLAIM_MS);
+  // The exact stamp this pass writes, kept so the release clears only it (#4590).
+  const claimedAt = new Date(now.getTime());
 
   // The claim. `updateMany`'s matched-row count IS the claim: exactly one
   // caller can move the row from "free or stale" to "held", atomically.
@@ -243,7 +245,7 @@ export async function runClubPostCleanup(
       id: CLUB_POST_SETTINGS_ID,
       OR: [{ cleanupStartedAt: null }, { cleanupStartedAt: { lt: staleBefore } }],
     },
-    data: { cleanupStartedAt: now },
+    data: { cleanupStartedAt: claimedAt },
   });
   if (claim.count === 0) return { skipped: "busy", deleted: 0 };
 
@@ -259,10 +261,13 @@ export async function runClubPostCleanup(
 
     return { deleted: count };
   } finally {
-    // Released whatever happened: a failed pass must not wedge the next one.
+    // Released whatever happened, so a failed pass cannot wedge the next one,
+    // and ONLY while the row still holds this pass's own stamp (#4590, as the
+    // mirror's since #4586): a pass that outlived the stale window and was
+    // taken over must not clear the new holder's claim.
     await prisma.clubPostSettings
-      .update({
-        where: { id: CLUB_POST_SETTINGS_ID },
+      .updateMany({
+        where: { id: CLUB_POST_SETTINGS_ID, cleanupStartedAt: claimedAt },
         data: { cleanupStartedAt: null },
       })
       .catch(() => {
