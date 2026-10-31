@@ -20,8 +20,9 @@ import { describe, expect, it } from "vitest";
  *   comparing them (`INV-SSOT`). Each schema module must be imported by at
  *   least one API route and at least one `"use client"` module.
  *
- * Imports are read with TypeScript's own pre-processor, so a specifier
- * mentioned in a comment does not count.
+ * Imports are read from TypeScript's own parse, so a specifier mentioned in
+ * a comment does not count, and neither does a type-only import: it
+ * validates nothing.
  */
 
 const ROOT = process.cwd();
@@ -40,10 +41,43 @@ function walk(dir: string): string[] {
   });
 }
 
+function parse(file: string): ts.SourceFile {
+  return ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, false);
+}
+
+/**
+ * The module specifiers a file imports or re-exports a VALUE from. A
+ * type-only import validates nothing, so `import type { … }` and an import
+ * whose every name is `type` do not count as using a schema.
+ */
 function importsOf(file: string): string[] {
-  return ts
-    .preProcessFile(readFileSync(file, "utf8"), true, true)
-    .importedFiles.map((ref) => ref.fileName);
+  const specifiers: string[] = [];
+  for (const statement of parse(file).statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (clause?.isTypeOnly) continue;
+      const bindings = clause?.namedBindings;
+      const onlyTypeNames =
+        clause !== undefined &&
+        clause.name === undefined &&
+        bindings !== undefined &&
+        ts.isNamedImports(bindings) &&
+        bindings.elements.length > 0 &&
+        bindings.elements.every((element) => element.isTypeOnly);
+      if (onlyTypeNames) continue;
+      if (ts.isStringLiteral(statement.moduleSpecifier)) {
+        specifiers.push(statement.moduleSpecifier.text);
+      }
+    } else if (
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      specifiers.push(statement.moduleSpecifier.text);
+    }
+  }
+  return specifiers;
 }
 
 /** The file an import specifier names, without extension, or null if not in `src`. */
@@ -54,13 +88,7 @@ function resolveSpecifier(from: string, specifier: string): string | null {
 }
 
 function isClientModule(file: string): boolean {
-  const source = ts.createSourceFile(
-    file,
-    readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    false,
-  );
-  const first = source.statements[0];
+  const first = parse(file).statements[0];
   return Boolean(
     first &&
       ts.isExpressionStatement(first) &&
