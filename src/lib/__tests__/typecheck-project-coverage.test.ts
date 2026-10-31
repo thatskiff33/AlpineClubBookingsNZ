@@ -58,6 +58,8 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/eslint/ratchet.test.mjs",
   // #4462: the frozen-clock lint rule, a bare-Node .mjs rule like the above.
   "scripts/eslint/test-clock.test.mjs",
+  // #4467: the design-system control rules, a bare-Node .mjs rule like the above.
+  "scripts/eslint/design-system.test.mjs",
   // #4462: the agent-rule hook dispatcher runs under bare `node` before every
   // Bash call an agent makes, so it and its suite stay JavaScript.
   "scripts/agent-hooks/agent-hooks.test.mjs",
