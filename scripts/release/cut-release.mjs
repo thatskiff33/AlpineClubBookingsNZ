@@ -202,11 +202,11 @@ function releaseTags(cmd) {
   return cmd.git(["tag", "--list", "v*"]).split("\n").filter(Boolean);
 }
 
-/** Refuse when `tag` (or `branch`) already exists here or on the remote. */
+/**
+ * Refuse when `branch` exists here, or `tag` or `branch` on the remote. A local
+ * `tag` cannot exist: the version is always newer than every fetched tag.
+ */
 function refuseExisting(cmd, { tag, branch = null }) {
-  if (cmd.gitOk(["rev-parse", "-q", "--verify", `refs/tags/${tag}`])) {
-    throw new ReleaseCutError(`Tag ${tag} already exists locally; that version has been cut.`);
-  }
   if (branch && cmd.gitOk(["rev-parse", "-q", "--verify", `refs/heads/${branch}`])) {
     throw new ReleaseCutError(`Branch ${branch} already exists locally; finish or delete that release-prep branch first.`);
   }
