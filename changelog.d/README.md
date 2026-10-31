@@ -173,7 +173,8 @@ update does not exist, so refresh `origin/main` before running it.
 
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of
-that existing section and keeps its heading and date. That is only for a
+that existing section and keeps its heading and date. It refuses any section
+but the newest, so it cannot rewrite a released version's notes. That is only for a
 release prepared but not yet tagged, when fragments merged while its
 release-prep pull request was open; `pnpm run release:cut prepare --amend` runs
 it on a `release/v<version>-late` branch.
