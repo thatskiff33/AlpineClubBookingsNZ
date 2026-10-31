@@ -435,6 +435,7 @@ describe("release:cut publish on a fixture repository", () => {
     const sideEffects = run.calls.filter((call) => /^(git (tag -a|push)|gh )/.test(call));
     expect(sideEffects).toEqual([
       "gh auth status",
+      "gh repo view --json nameWithOwner --jq .nameWithOwner",
       `git tag -a v0.13.3 -m fixture-club-app v0.13.3\n\nRelease notes: the "## 0.13.3" section of CHANGELOG.md. ${merged}`,
       "git push origin refs/tags/v0.13.3",
       `gh release create v0.13.3 --verify-tag --title v0.13.3 --notes-file ${notesFile}`,
@@ -511,6 +512,18 @@ describe("release:cut publish on a fixture repository", () => {
     );
     expect(error.recovery).toContain("Nothing was created");
     expect(git(repo, "tag", "--list")).toBe("v0.13.2");
+  });
+
+  it("creates nothing when gh cannot tell which repository to publish to", () => {
+    const { repo } = mergedReleaseFixture();
+    const run = fixtureRunner(repo, { "gh repo view": { status: 1, stdout: "", stderr: "multiple remotes" } });
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: () => "/notes.md", log: silentLog() }),
+      /`gh repo view .*` failed:\nmultiple remotes/,
+    );
+    expect(error.recovery).toContain("gh repo set-default");
+    expect(git(repo, "tag", "--list")).toBe("v0.13.2");
+    expect(run.calls.some((call) => call.startsWith("git push"))).toBe(false);
   });
 
   it("keeps the local tag and prints the retry when the tag push fails", () => {

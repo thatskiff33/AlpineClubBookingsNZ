@@ -392,7 +392,7 @@ export function publishRelease({
   log(`  Commit: ${target} (on ${REMOTE}/main); previous release tag: ${previous?.tag ?? "none"}`);
   log(`  Notes: the "## ${version}" section, ${notes.split("\n").length} line(s).`);
   log("Steps (local first, then remote):");
-  log(`  1. gh auth status`);
+  log(`  1. gh auth status; gh repo view (the repository the release goes to)`);
   log(`  2. git tag -a ${tag} -m "${name} ${tag} …" ${target.slice(0, 12)}`);
   log(`  3. git push ${REMOTE} refs/tags/${tag}`);
   log(`  4. gh release create ${tag} --verify-tag --title ${tag} --notes-file <section>`);
@@ -403,6 +403,13 @@ export function publishRelease({
   }
 
   cmd.gh(["auth", "status"], "Nothing was created. Run gh auth login, then re-run.");
+  // The same repository resolution `gh release create` uses; with several
+  // remotes and no default it fails here, before anything is created.
+  const githubRepo = cmd.gh(
+    ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+    "Nothing was created. Choose the repository with gh repo set-default, then re-run.",
+  );
+  log(`  The GitHub release goes to ${githubRepo || "gh's default repository"}.`);
   cmd.git(["tag", "-a", tag, "-m", message, target], "Nothing was pushed or published; fix the cause and re-run.");
   const notesFile = writeNotes(tag, `${notes}\n`);
   const releaseArgs = ["release", "create", tag, "--verify-tag", "--title", tag, "--notes-file", notesFile];
