@@ -1527,10 +1527,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR UPDATE`, the one statement
   // counted here) before their images are read and the posts deleted, so no
   // writer adds an image row the batch did not list. Order: ClubPost rows (id
-  // order) -> ClubPostImage rows by cascade. The one other writer holding two
-  // posts (the share stamp below) takes them in id order too, so the batch
-  // cannot invert it. No advisory key. See docs/CONCURRENCY_AND_LOCKING.md ->
-  // "Message-board posts and their images".
+  // order) -> ClubPostImage rows by cascade. The share stamp below also takes
+  // its two posts in id order. Member merge (an `updateMany` of
+  // `authorMemberId`) and member deletion (`SetNull`) update many posts in
+  // scan order; a deadlock with a batch is detected and one side aborted, as
+  // with the single `deleteMany` before #4588. No advisory key. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
   "src/lib/club-post-retention.ts": 1,
   // Message-board share stamp (#4588): under the settings row
   // (`lockServerNzSettings`, counted under servernz-settings.ts), when the

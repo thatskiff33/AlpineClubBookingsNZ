@@ -2269,8 +2269,15 @@ mispricing a booking.
   | Share stamp (`stampShare`, `club-post-sharing.ts`, #4588) | Settings row (`lockServerNzSettings`), then, only when the mirror already copied our own post under the server's id, our post and that copy (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`); the copy is deleted (image rows by cascade) and our post stamped; the copy's files after commit. |
   | Member post create (`createClubPost`) | Inserts the new post, then claims the member's unclaimed images (two statements, no transaction; nothing else can hold the new post). |
 
-  Retention and the share stamp are the only writers holding two or more
-  posts, and both take them in id order. Post-only writers (hide, edit, the
+  Retention and the share stamp take two or more posts in id order. Two other
+  writers update many posts in scan order, not id order, and take no image
+  row: member merge, which moves `ClubPost.authorMemberId` from the loser to
+  the master in one `updateMany` (`member-merge-relations.ts`,
+  `member-merge.ts`), and member deletion, whose `onDelete: SetNull` clears
+  the same column. Either can meet a retention batch in the opposite order on
+  two posts; PostgreSQL detects that deadlock and aborts one transaction, a
+  risk the single `deleteMany` retention used before #4588 carried too.
+  Making those writers id-ordered is not done here. Post-only writers (hide, edit, the
   share's failure record, the withdrawal stamp, the mirror's own-post takedown)
   take no image row. The image-only writers touch no post row: upload, and the
   orphan sweep, which since #4588 deletes one row at a time and only while
