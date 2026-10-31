@@ -632,6 +632,16 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
     expect(git(repo, "branch", "--list", "release/v0.13.3")).toBe("");
   });
 
+  it("still prepares when package.json is ahead but no section was compiled for it", () => {
+    const { repo } = makeFixture();
+    fs.writeFileSync(path.join(repo, "package.json"), bumpPackageJson(PACKAGE_JSON, "0.13.3"));
+    git(repo, "commit", "-qam", "a hand bump with no compile");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const log = silentLog();
+    expect(prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log })).toMatchObject({ version: "0.13.3" });
+    expect(log.text()).toContain("Note: package.json says 0.13.3, not the latest tag's 0.13.2.");
+  });
+
   it("refuses to amend with nothing to fold", () => {
     const { repo } = mergedReleaseFixture();
     git(repo, "switch", "-q", "--detach", "origin/main");
@@ -927,6 +937,18 @@ describe("release:cut publish on a fixture repository", () => {
       `gh release create v0.13.3 --repo fixture-owner/fixture-repo --verify-tag --title v0.13.3 --notes-file ${writeNotes.file}`,
     ]);
     expect(fs.readFileSync(writeNotes.file, "utf8")).toBe("- **A fix (#4400).** Body.\n");
+  });
+
+  it("will not resume on a pushed tag that is off main's first-parent chain", () => {
+    const { repo, prep } = lateFragmentFixture();
+    git(repo, "tag", "-a", "v0.13.3", "-m", "v0.13.3", prep);
+    git(repo, "push", "-q", "origin", "refs/tags/v0.13.3");
+    const run = fixtureRunner(repo);
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /is not on origin\/main's first-parent chain/,
+    );
+    expect(run.sideEffects()).toEqual([]);
   });
 
   it("resumes a local-only tag with --commit after the push failed and main moved on", () => {
