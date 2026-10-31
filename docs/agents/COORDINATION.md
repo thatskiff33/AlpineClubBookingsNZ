@@ -169,7 +169,9 @@ assigns — starts from that checkpoint and the thread, not from a summary.
 ### When the pre-push checks cannot pass
 
 The pre-push checks (`AGENTS.md` → "Per-issue pipeline") are not skipped to
-save work. Never use `--no-verify`, a skipped check or a push of known-broken
+save work. A Stop hook sends a lane back to them once when its session's own
+directory differs from `origin/main` under `src/`; a lane editing another
+worktree by absolute path is not reminded. Never use `--no-verify`, a skipped check or a push of known-broken
 work to rescue it. Preserve it this way instead:
 
 1. Commit it locally on the lane's own branch, with a commit message naming

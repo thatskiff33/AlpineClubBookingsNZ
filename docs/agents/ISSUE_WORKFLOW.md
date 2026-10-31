@@ -193,13 +193,8 @@ comment** in order with author and timestamp, a DECISION SUMMARY, and a one-line
 state for each issue the body references. It has **no flag that prints less** —
 that is the feature, not an oversight.
 
-Use it instead of `gh issue view <n>`, which prints the body and stops.
-Comments need `--comments` or `--json comments`, so the short, obvious, default
-command returns the **stale half** — and in this repository the decision is very
-often in a comment written after the body. An agent then reads a list of
-unticked `- [ ] **Recommended** …` options, concludes the question is open, and
-either re-asks the owner something they answered last night or builds the option
-they turned down. #2777 is the canonical case and it is not the first.
+A hook blocks `gh issue view`, which prints the body without the comments
+where decisions often sit (#2777).
 
 The summary calls out one state loudly: **the body still offers unticked options
 and a comment records a decision.** When you see that warning, the body is the
