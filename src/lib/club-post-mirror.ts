@@ -331,12 +331,13 @@ async function upsertMirror(
  * Lock the row mirroring `serverPostId`, then re-read it (#4586). Every
  * message-board writer takes the `ClubPost` row before its `ClubPostImage`
  * rows; see docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their
- * images". No row yet locks nothing, and the unique `serverPostId` refuses a
- * second create.
+ * images". `serverPostId` is a mutable key (a share stamps it), so a lock that
+ * matched nothing is not found, never a row read unlocked; the unique column
+ * refuses a create racing that stamp.
  */
 async function lockMirroredPost<S extends Prisma.ClubPostSelect>(tx: ServerNzAnswerTx, serverPostId: string, select: S) {
-  await tx.$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = ${serverPostId} FOR UPDATE`;
-  return tx.clubPost.findUnique({ where: { serverPostId }, select });
+  const locked = await tx.$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = ${serverPostId} FOR UPDATE`;
+  return locked === 0 ? null : tx.clubPost.findUnique({ where: { serverPostId }, select });
 }
 
 /** Apply one tombstone under the fence and the post's row lock (#4470, #4586). */

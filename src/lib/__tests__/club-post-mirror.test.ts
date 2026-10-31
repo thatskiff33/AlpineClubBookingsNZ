@@ -1329,6 +1329,22 @@ describe("the mirror decides under the post's row lock, post before images (#458
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/06/old.webp");
   });
 
+  it("reads a lock that matched nothing as not found, never as a row read unlocked", async () => {
+    // A share stamping this id on our own post after the lock ran: the read
+    // would see that row with no lock held on it.
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([visiblePost()]));
+    mocks.postFindUnique.mockResolvedValueOnce(null).mockResolvedValue(MIRRORED);
+    mocks.executeRaw.mockResolvedValue(0);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(1);
+    expect(mocks.postFindUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    // Created: the unique serverPostId refuses it if a row took the id meanwhile.
+    expect(mocks.postCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("counts no removal, and deletes no file, when the locked read finds no row", async () => {
     mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "removed" }]));
 
