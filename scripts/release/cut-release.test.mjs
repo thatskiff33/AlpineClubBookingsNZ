@@ -1006,8 +1006,11 @@ describe("release:cut publish on a fixture repository", () => {
     git(repo, "config", "remote.origin.url", "https://release-bot:SECRET-TOKEN@localhost/o/r.git");
     const error = expectRefusal(
       () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
-      /origin's URL is not a GitHub repository URL: https:\/\/\*\*\*@localhost\/o\/r\.git/,
+      /origin's URL is not a GitHub repository URL: /,
     );
+    // Joined from parts so no literal here reads as a comment delimiter.
+    const redacted = ["https:", "", "***@localhost", "o", "r.git"].join("/");
+    expect(error.message).toBe(`origin's URL is not a GitHub repository URL: ${redacted}`);
     expect(`${error.message}\n${error.recovery}`).not.toContain("SECRET-TOKEN");
     expect(`${error.message}\n${error.recovery}`).not.toContain("release-bot");
   });
