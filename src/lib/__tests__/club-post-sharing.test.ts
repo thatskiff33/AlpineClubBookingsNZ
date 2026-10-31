@@ -132,6 +132,7 @@ beforeEach(() => {
 describe("the share's stamp and the mirror's copy of our own post (#4588)", () => {
   function sharedBack(copy: Record<string, unknown> | null) {
     mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string; serverPostId?: string } }) => {
+      if (where.id && where.id === copy?.id) return copy;
       if (where.id) return post();
       mocks.order.push("find-copy");
       return copy;
@@ -151,7 +152,8 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
   });
 
   it("removes the copy the mirror made before the stamp, both posts locked in id order, then stamps", async () => {
-    sharedBack({ id: "copy-1", originClubCode: "OURCLUB" });
+    // The mirror stores our words and author name exactly as we sent them.
+    sharedBack({ id: "copy-1", originClubCode: "OURCLUB", content: post().content, authorName: post().authorName });
     mocks.imageFindMany.mockResolvedValue([{ storageKey: "posts/2026/07/copy.webp" }]);
 
     expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
@@ -164,6 +166,27 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
     expect(mocks.deleteMany).toHaveBeenCalledWith({ where: { id: "copy-1" } });
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "post-1" } }));
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/07/copy.webp");
+  });
+
+  it.each([
+    ["other words", { content: "Somebody else's post.", authorName: "Jo Whitcombe" }],
+    ["another author", { content: "Chains needed above the second cattle stop.", authorName: "Someone Else" }],
+  ])("never deletes a mirrored post that is not our copy (%s), and fails the stamp without retrying (#4588 review)", async (_label, fields) => {
+    sharedBack({ id: "copy-1", originClubCode: "OTHERCLUB", ...fields });
+
+    const outcome = await shareOnePost("post-1");
+
+    expect(outcome).toMatchObject({ status: "failed", retryable: false });
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
+    // Our post was never stamped with the id.
+    expect(mocks.update.mock.calls.some(([args]) => args.data.serverPostId !== undefined)).toBe(false);
+    // The failure is recorded on our post, and the request cleared, because
+    // a retry would put a second copy on the server.
+    const recorded = mocks.update.mock.calls.at(-1)?.[0];
+    expect(recorded.data).toMatchObject({ shareRequestedAt: null, shareError: expect.stringMatching(/already held here by another club's post/) });
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ mirrorPostId: "copy-1" }), expect.stringMatching(/not our copy/),
+    );
   });
 
   it("never deletes another of this club's own posts that holds the id", async () => {

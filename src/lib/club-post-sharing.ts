@@ -61,11 +61,21 @@ export type ShareOutcome =
  * for.
  */
 function isRetryable(error: unknown): boolean {
+  // Sending again would only put a second copy on the server (#4588 review).
+  if (error instanceof ShareStampConflictError) return false;
   if (error instanceof ServerNzApiError) {
     if (error.status === 429) return true;
     return error.status < 400 || error.status >= 500;
   }
   return true;
+}
+
+/** The server's id for a share is held by a mirrored post that is not our copy (#4588 review). */
+class ShareStampConflictError extends Error {
+  constructor() {
+    super("The central server's id for this post is already held here by another club's post, so the share was not recorded.");
+    this.name = "ShareStampConflictError";
+  }
 }
 
 /**
@@ -79,8 +89,10 @@ function isRetryable(error: unknown): boolean {
  * own club by code: it does not store the code the server knows it by. So the
  * stamp takes the settings row first, the lock every mirror write holds (its
  * page fence), which means no mirror create of this id is in flight. If the
- * mirror got there first, its copy of our own post is deleted, our post and
- * that copy locked in id order before either changes, and the stamp lands.
+ * mirror got there first, its copy of our own post (proven by our words and
+ * author name) is deleted, our post and that copy locked in id order before
+ * either changes, and the stamp lands; a row that is not our copy is never
+ * touched.
  * From then on the mirror's locked re-read finds our post and skips it. Order:
  * settings row -> ClubPost rows (id order) -> ClubPostImage by cascade, as in
  * docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
@@ -92,6 +104,17 @@ async function stampShare(postId: string, serverPostId: string): Promise<void> {
     let files: string[] = [];
     if (copy && copy.originClubCode !== null) {
       await tx.$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (${postId}, ${copy.id}) ORDER BY "id" FOR UPDATE`;
+      // ONLY A PROVEN COPY OF OUR POST (#4588 review). Under both locks, the
+      // mirror row must carry our words and our author name exactly as the
+      // mirror stores what we sent; anything else (an id another club's post
+      // holds here, say after an address move) is never deleted, and the
+      // stamp fails without retrying, since a retry would share it twice.
+      const ours = await tx.clubPost.findUnique({ where: { id: postId }, select: { content: true, authorName: true } });
+      const mirrored = await tx.clubPost.findUnique({ where: { id: copy.id }, select: { content: true, authorName: true } });
+      if (!ours || !mirrored || mirrored.content !== ours.content.slice(0, 4000) || mirrored.authorName !== ours.authorName) {
+        logger.error({ postId, serverPostId, mirrorPostId: copy.id }, "A shared post's server id is held by a mirrored post that is not our copy; neither was changed");
+        throw new ShareStampConflictError();
+      }
       const images = await tx.clubPostImage.findMany({ where: { postId: copy.id }, select: { storageKey: true } });
       await tx.clubPost.deleteMany({ where: { id: copy.id } });
       files = images.map((image) => image.storageKey);
