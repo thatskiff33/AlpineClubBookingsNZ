@@ -1,0 +1,29 @@
+{
+  "description": "Agent rules a machine can check (#4462): scripts/agent-hooks/rules.mjs. Codex hook input does not name the subagent, so the implementor-only rules do not apply here.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-hooks/dispatch.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking agent rules"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-hooks/dispatch.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
