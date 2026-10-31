@@ -1,5 +1,5 @@
 {
-  "description": "Agent rules a machine can check (#4462): scripts/agent-hooks/rules.mjs. Codex hook input does not name the subagent, so the implementor-only rules do not apply here.",
+  "description": "Agent rules a machine can check (#4462): scripts/agent-hooks/rules.mjs. The implementor-only rules apply if Codex sends agent_type (the role is named implementor); not verified against a live run. The rules bind whether or not these hooks run.",
   "hooks": {
     "PreToolUse": [
       {

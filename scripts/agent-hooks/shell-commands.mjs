@@ -11,7 +11,10 @@
  *   keywords separate commands;
  * - quotes make data, but `$( … )` and backticks inside double quotes still run,
  *   so they are parsed as commands of their own;
- * - here-document bodies and here-strings are data;
+ * - here-strings and quoted here-documents (`<<'EOF'`) are data; an unquoted
+ *   here-document (`<<EOF`) is scanned like double-quoted text, because the
+ *   shell runs its `$( … )` and backticks;
+ * - ANSI-C quoting (`$'…'`) is one quoted word;
  * - redirections and their targets are not arguments;
  * - leading `VAR=value` assignments and wrappers (`env`, `timeout`, `nice`,
  *   `nohup`, `sudo`, `xargs`, `command`, `exec`, …) are stripped, and
@@ -60,18 +63,49 @@ function readDoubleQuoted(src, start, append, commands, depth) {
   return i + 1;
 }
 
-/** Skip the bodies of the here-documents opened on the line just ended. */
-function skipHeredocBodies(src, start, pending) {
+/** Parse the `$( … )` and backtick substitutions in unquoted here-document text. */
+function scanSubstitutions(text, commands, depth) {
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "\\") {
+      i += 2;
+    } else if (text[i] === "$" && text[i + 1] === "(" && text[i + 2] !== "(") {
+      const inner = parseSequence(text, i + 2, ")", depth + 1);
+      commands.push(...inner.commands);
+      i = inner.end;
+    } else if (text[i] === "`") {
+      const inner = parseSequence(text, i + 1, "`", depth + 1);
+      commands.push(...inner.commands);
+      i = inner.end;
+    } else {
+      i += 1;
+    }
+  }
+}
+
+/**
+ * Skip the bodies of the here-documents opened on the line just ended. A
+ * quoted delimiter makes the body data; an unquoted one leaves the shell to run
+ * its substitutions, so those are parsed into `commands`.
+ */
+function skipHeredocBodies(src, start, pending, commands, depth) {
   let i = start;
-  for (const { delimiter, stripTabs } of pending) {
+  for (const { delimiter, stripTabs, quoted } of pending) {
+    const bodyStart = i;
+    let bodyEnd = src.length;
     while (i < src.length) {
       const newline = src.indexOf("\n", i);
       const lineEnd = newline === -1 ? src.length : newline;
       let line = src.slice(i, lineEnd);
       if (stripTabs) line = line.replace(/^\t+/, "");
+      if (line === delimiter) {
+        bodyEnd = i;
+        i = lineEnd + 1;
+        break;
+      }
       i = lineEnd + 1;
-      if (line === delimiter) break;
     }
+    if (!quoted) scanSubstitutions(src.slice(bodyStart, Math.min(bodyEnd, src.length)), commands, depth);
   }
   return Math.min(i, src.length);
 }
@@ -81,14 +115,17 @@ function readHeredocDelimiter(src, start) {
   let i = start;
   while (src[i] === " " || src[i] === "\t") i += 1;
   let delimiter = "";
+  let quoted = false;
   while (i < src.length && !/[\s;&|<>()]/.test(src[i])) {
     const c = src[i];
     if (c === "'" || c === '"') {
+      quoted = true;
       const close = src.indexOf(c, i + 1);
       const end = close === -1 ? src.length : close;
       delimiter += src.slice(i + 1, end);
       i = end + 1;
     } else if (c === "\\") {
+      quoted = true;
       delimiter += src[i + 1] ?? "";
       i += 2;
     } else {
@@ -96,7 +133,7 @@ function readHeredocDelimiter(src, start) {
       i += 1;
     }
   }
-  return { delimiter, end: i };
+  return { delimiter, quoted, end: i };
 }
 
 /**
@@ -137,6 +174,22 @@ function parseSequence(src, start, terminator, depth) {
     if (c === "\\") {
       if (src[i + 1] !== "\n" && i + 1 < src.length) append(src[i + 1]);
       i += 2;
+    } else if (c === "$" && src[i + 1] === "'") {
+      // ANSI-C quoting: one word, in which a backslash escapes the next
+      // character, so `\'` does not close it.
+      let j = i + 2;
+      let text = "";
+      while (j < src.length && src[j] !== "'") {
+        if (src[j] === "\\" && j + 1 < src.length) {
+          text += src[j + 1];
+          j += 2;
+        } else {
+          text += src[j];
+          j += 1;
+        }
+      }
+      append(text);
+      i = j + 1;
     } else if (c === "'") {
       const close = src.indexOf("'", i + 1);
       const end = close === -1 ? src.length : close;
@@ -166,7 +219,7 @@ function parseSequence(src, start, terminator, depth) {
       i += 1;
     } else if (c === "\n") {
       endCommand();
-      i = skipHeredocBodies(src, i + 1, heredocs);
+      i = skipHeredocBodies(src, i + 1, heredocs, commands, depth);
       heredocs = [];
     } else if (c === "&" && src[i + 1] === ">") {
       endWord();
@@ -194,7 +247,7 @@ function parseSequence(src, start, terminator, depth) {
         const stripTabs = src[i] === "-";
         if (stripTabs) i += 1;
         const read = readHeredocDelimiter(src, i);
-        if (read.delimiter) heredocs.push({ delimiter: read.delimiter, stripTabs });
+        if (read.delimiter) heredocs.push({ delimiter: read.delimiter, stripTabs, quoted: read.quoted });
         i = read.end;
       } else {
         i += 1;

@@ -7,10 +7,13 @@
  * - `PreToolUse`: exits 2 with a one-line reason on stderr when the call breaks
  *   a rule in `rules.mjs`; otherwise exits 0 silently and the normal
  *   permission flow decides.
- * - `Stop`: when the working tree's diff against `origin/main` touches `src/`,
- *   prints a `systemMessage` reminding the lane of the pre-push checks
- *   (`AGENTS.md` -> "Per-issue pipeline"), once per session for a given set of
- *   files. It never blocks and is silent otherwise.
+ * - `Stop`: when the diff of the session's own `cwd` against its merge base
+ *   with `origin/main` touches `src/`, sends the lane back once with
+ *   `decision: "block"` and a reason naming the pre-push checks (and the same
+ *   text as a `systemMessage` for whoever watches). It fires once per session
+ *   for a given set of files, and never while `stop_hook_active` is set, so it
+ *   cannot loop. A lane editing another worktree by absolute path, from a
+ *   session whose `cwd` is elsewhere, is not reminded.
  *
  * It FAILS OPEN. Any internal error exits 1, which both runtimes treat as a
  * non-blocking hook error, with a note on stderr; a broken hook must never
@@ -24,17 +27,30 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { blockMessage, findViolation } from "./rules.mjs";
 
-/** The checks the Stop reminder names; `AGENTS.md` -> "Per-issue pipeline" owns them. */
+/**
+ * The Stop reminder. It names the section rather than copying its commands,
+ * so the list has one home (`AGENTS.md` -> "Per-issue pipeline").
+ */
 export const PRE_PUSH_REMINDER =
-  "Pre-push checks (AGENTS.md -> Per-issue pipeline): pnpm run db:generate, lint, typecheck, " +
-  "test:related $(git diff --name-only origin/main...HEAD), test:named for touched contracts, " +
-  "mutation checks for new guards, and a self-review of the diff.";
+  'Before pushing, run the checks in AGENTS.md -> "Per-issue pipeline" -> "Before pushing". ' +
+  "If they already ran on this diff, or you are not about to push, say so and stop.";
+
+/** Where reminder state lives: per user, so two accounts on one host do not share it. */
+export function defaultStateDir() {
+  let user = "user";
+  try {
+    user = String(userInfo().uid);
+  } catch {
+    // No passwd entry (some containers): fall back to a fixed name.
+  }
+  return path.join(tmpdir(), `agent-hooks-reminders-${user}`);
+}
 
 const GIT_TIMEOUT_MS = 4000;
 
@@ -72,7 +88,7 @@ function alreadyReminded(sessionId, files, stateDir) {
  * both injectable for tests. Returns `{ exitCode, stdout, stderr }`.
  */
 export function runHook(input, options = {}) {
-  const { role = null, listChanges = changedSourceFiles, stateDir = path.join(tmpdir(), "agent-hooks-reminders") } = options;
+  const { role = null, listChanges = changedSourceFiles, stateDir = defaultStateDir() } = options;
   const event = input?.hook_event_name;
   if (event === "PreToolUse") {
     const rule = findViolation(input, role);
@@ -87,7 +103,11 @@ export function runHook(input, options = {}) {
     }
     if (files.length > 0 && !alreadyReminded(input?.session_id ?? "", files, stateDir)) {
       const message = `This checkout's diff against origin/main touches ${files.length} file(s) under src/. ${PRE_PUSH_REMINDER}`;
-      return { exitCode: 0, stdout: JSON.stringify({ systemMessage: message }), stderr: "" };
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ decision: "block", reason: message, systemMessage: message }),
+        stderr: "",
+      };
     }
   }
   return { exitCode: 0, stdout: "", stderr: "" };

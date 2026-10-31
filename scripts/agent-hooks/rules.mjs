@@ -1,8 +1,10 @@
 /**
  * The agent rules a machine can check, in one place (#4462).
  *
- * Each rule here used to be a sentence in `AGENTS.md` or `docs/agents/` that a
- * session could forget under context pressure. They are enforced instead by:
+ * Each rule here is also stated in `AGENTS.md`, which binds every agent whether
+ * or not a hook runs (Codex before `/hooks` trust, a session with hooks
+ * disabled, a script that runs a command for you). Where they are installed,
+ * these mechanisms enforce it:
  *
  * - `.claude/settings.json`: a PreToolUse hook on `Bash` and `Agent` that runs
  *   `dispatch.mjs`, which exits 2 with the rule's reason when a call breaks a
@@ -13,8 +15,8 @@
  *   also applies those rules when the input's `agent_type` is `implementor`,
  *   which covers `-p` and untrusted runs where frontmatter hooks are skipped);
  * - `.codex/hooks.json`: the same dispatcher for Codex's PreToolUse and Stop.
- *   Codex's hook input does not name the subagent, so the implementor rules do
- *   not apply there.
+ *   The implementor rules apply there if Codex sends `agent_type` (its role
+ *   file is named `implementor`); that is not verified against a live run.
  *
  * Everything the hook decides is in this module, so the dispatcher, the
  * settings file and the tests read one list (INV-SSOT).
@@ -113,7 +115,37 @@ function isGitPush(words) {
   return words[0] === "git" && gitSubcommand(words)[0] === "push";
 }
 
+/**
+ * `{ endpoint, fields }` for a `gh api` call: the first positional argument,
+ * and every `-f`/`-F`/`--field`/`--raw-field` value. Other options that take a
+ * value are skipped, so a header or a jq filter is never read as a field.
+ */
+function ghApiCall(words) {
+  const args = ghArgs(words);
+  if (args[0] !== "api") return null;
+  const fieldFlags = new Set(["-f", "-F", "--field", "--raw-field"]);
+  const valued = new Set(["-X", "--method", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"]);
+  let endpoint = null;
+  const fields = [];
+  for (let i = 1; i < args.length; i += 1) {
+    const word = args[i];
+    const inline = word.match(/^(--field|--raw-field)=(.*)$/s) ?? word.match(/^(-[fF])(.+)$/s);
+    if (inline) fields.push(inline[2]);
+    else if (fieldFlags.has(word)) fields.push(args[(i += 1)] ?? "");
+    else if (valued.has(word)) i += 1;
+    else if (!word.startsWith("-") && endpoint === null) endpoint = word;
+  }
+  return { endpoint: endpoint ?? "", fields };
+}
+
+/** A `gh api` call that force-updates a ref: `…/git/refs/… -f force=true`. */
+function isForcedRefUpdate(words) {
+  const call = words[0] === "gh" ? ghApiCall(words) : null;
+  return call !== null && /(?:^|\/)git\/refs\//.test(call.endpoint) && call.fields.includes("force=true");
+}
+
 function isForcePush(words) {
+  if (isForcedRefUpdate(words)) return true;
   if (!isGitPush(words)) return false;
   return gitSubcommand(words)[1].some(
     (word) =>
@@ -125,19 +157,45 @@ function isForcePush(words) {
   );
 }
 
+/** `gh pr merge` options that take the next word as their value. */
+const GH_PR_MERGE_VALUED = new Set(["-b", "--body", "-t", "--subject", "-F", "--body-file", "-A", "--author-email", "-R", "--repo", "--match-head-commit"]);
+const GH_PR_MERGE_VALUED_SHORT = "btFAR";
+
+/** Whether `gh pr merge` arguments ask for a squash or a rebase. */
+function mergeArgsSquashOrRebase(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const word = args[i];
+    if (GH_PR_MERGE_VALUED.has(word)) {
+      i += 1;
+    } else if (word === "--squash" || word === "--rebase") {
+      return true;
+    } else if (/^--(?:squash|rebase)=/.test(word)) {
+      if (word.slice(word.indexOf("=") + 1).toLowerCase() !== "false") return true;
+    } else if (/^-[A-Za-z]+$/.test(word)) {
+      // A short cluster: a value-taking letter consumes the rest of the
+      // cluster, or the next word when it is the last letter.
+      for (let j = 1; j < word.length; j += 1) {
+        if (word[j] === "s" || word[j] === "r") return true;
+        if (GH_PR_MERGE_VALUED_SHORT.includes(word[j])) {
+          if (j === word.length - 1) i += 1;
+          break;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function isSquashOrRebaseMerge(words) {
   if (words[0] !== "gh") return false;
   const args = ghArgs(words);
-  if (args[0] === "pr" && args[1] === "merge") {
-    return args.slice(2).some(
-      (word) =>
-        word === "--squash" ||
-        word === "--rebase" ||
-        (!word.startsWith("--") && (shortCluster(word, "s") || shortCluster(word, "r"))),
-    );
-  }
-  if (args[0] === "api") return args.some((word) => /merge_method\s*[=:]\s*"?(?:squash|rebase)\b/.test(word));
-  return false;
+  if (args[0] === "pr" && args[1] === "merge") return mergeArgsSquashOrRebase(args.slice(2));
+  const call = ghApiCall(words);
+  return (
+    call !== null &&
+    /(?:^|\/)pulls\/\d+\/merge$/.test(call.endpoint) &&
+    call.fields.some((field) => /^merge_method=(?:squash|rebase)$/.test(field))
+  );
 }
 
 function isGhIssueView(words) {
@@ -157,7 +215,7 @@ export const BASH_RULES = [
     implementorOnly: false,
     test: isPrismaFormat,
     reason: "`prisma format` rewrites the hand-edited schema. Edit `prisma/schema.prisma` by hand.",
-    source: "#1567",
+    source: "AGENTS.md -> Safety (#1567)",
   },
   {
     id: "download-runner",
@@ -166,15 +224,15 @@ export const BASH_RULES = [
     reason:
       "`npx`, `pnpx`, `pnpm dlx` and `npm exec` can download and run an unreviewed package. " +
       "Run an installed tool with `pnpm exec <tool>`; the lane installs dependencies.",
-    source: "AGENTS.md -> Orchestration Model -> Worktrees",
+    source: "AGENTS.md -> Safety",
   },
   {
     id: "force-push",
     implementorOnly: false,
     test: isForcePush,
     reason:
-      "A push never forces (`--force`, `-f`, `--force-with-lease`, `--mirror` or a `+refspec`). " +
-      "Push a new commit, or merge rather than rebase.",
+      "A pushed branch is never rewritten: no `--force`, `-f`, `--force-with-lease`, `--mirror`, " +
+      "`+refspec` or forced ref update. Push a new commit, or merge rather than rebase.",
     source: "AGENTS.md -> Safety",
   },
   {
@@ -182,7 +240,7 @@ export const BASH_RULES = [
     implementorOnly: false,
     test: isSquashOrRebaseMerge,
     reason: "A PR merges with a merge commit: `gh pr merge <n> --merge`, or `--auto --merge`.",
-    source: "AGENTS.md -> Completion and Merge",
+    source: "AGENTS.md -> Safety",
   },
   {
     id: "gh-issue-view",

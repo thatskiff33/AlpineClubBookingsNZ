@@ -1,11 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { changedSourceFiles, roleFromArgv, runHook } from "./dispatch.mjs";
+import { PRE_PUSH_REMINDER, changedSourceFiles, defaultStateDir, roleFromArgv, runHook } from "./dispatch.mjs";
 import { BASH_RULES, FORBIDDEN_EFFORT, IMPLEMENTOR_ROLE, PERMISSION_DENY_RULES, findViolation } from "./rules.mjs";
 import { simpleCommands } from "./shell-commands.mjs";
 
@@ -51,6 +51,19 @@ describe("the Bash rules, for the main session and orchestrators", () => {
     ["gh pr merge 1 -r", "squash-or-rebase-merge"],
     ["gh pr merge 1 -ds", "squash-or-rebase-merge"],
     ["gh api -X PUT repos/o/r/pulls/1/merge -f merge_method=squash", "squash-or-rebase-merge"],
+    ["gh api -X PUT /repos/{owner}/{repo}/pulls/12/merge --field merge_method=rebase", "squash-or-rebase-merge"],
+    ["gh api repos/o/r/pulls/12/merge --raw-field=merge_method=squash -X PUT", "squash-or-rebase-merge"],
+    ["gh api repos/o/r/pulls/12/merge -Fmerge_method=squash", "squash-or-rebase-merge"],
+    ["gh pr merge 1 --squash=true", "squash-or-rebase-merge"],
+    ["gh pr merge 1 --rebase=1", "squash-or-rebase-merge"],
+    ["gh pr merge 1 -b body --squash", "squash-or-rebase-merge"],
+    ["gh pr merge 1 -bx -s", "squash-or-rebase-merge"],
+    ["gh pr merge 1 -sb body", "squash-or-rebase-merge"],
+    ["gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc -F force=true", "force-push"],
+    ["gh api repos/o/r/git/refs/heads/x -X PATCH -f force=true -f sha=abc", "force-push"],
+    ["echo $'a\\'b' && npx x", "download-runner"],
+    ["cat <<EOF\nhello $(npx y)\nEOF", "download-runner"],
+    ["cat <<-EOF\n\t`pnpm dlx z`\n\tEOF", "download-runner"],
     ["npx tsx a.ts", "download-runner"],
     ["npx -y some-package@1.0.0", "download-runner"],
     ["pnpm dlx x", "download-runner"],
@@ -88,6 +101,25 @@ describe("the Bash rules, for the main session and orchestrators", () => {
     "gh issue comment 1 --body-file x.md",
     "gh pr view 1",
     "gh api repos/o/r/pulls/1",
+    "gh pr merge 1 --merge --body \"never --squash or -s\"",
+    "gh pr merge 1 --merge -b -s",
+    "gh pr merge 1 --merge -t -r",
+    "gh pr merge 1 --merge --subject --rebase",
+    "gh pr merge 1 --merge -R -s/repo",
+    "gh pr merge 1 --merge --match-head-commit -s",
+    "gh pr merge 1 --merge --squash=false",
+    "gh api repos/o/r/issues/1/comments -f body='use merge_method=squash, never squash'",
+    "gh api repos/o/r/issues/1/comments -f body=merge_method=squash",
+    "gh api repos/o/r/pulls/1 -f merge_method=squash",
+    "gh api repos/o/r/git/refs/heads/x -X PATCH -f sha=abc -F force=false",
+    "gh api repos/o/r/issues/1/comments -f body=force=true",
+    "git push origin --delete old-branch",
+    "git push origin -d old-branch",
+    "echo $'it\\'s && npx x'",
+    "cat <<'EOF'\nhello $(npx y)\nEOF",
+    "cat <<\"EOF\"\nhello `npx y`\nEOF",
+    "cat <<\\EOF\nhello $(npx y)\nEOF",
+    "cat <<EOF\nplain npx text, git push -f\nEOF",
     // Quoted text that only MENTIONS a banned command is data.
     "git commit -m \"never use npx\"",
     "git commit -m \"x && git push -f; npx y\"",
@@ -151,6 +183,12 @@ describe("the Agent effort ceiling", () => {
     expect(findViolation({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "x" } })).toBeNull();
     expect(findViolation({ hook_event_name: "PreToolUse", tool_name: "Bash" })).toBeNull();
   });
+  it("applies the implementor rules to a Codex-shaped payload that names the role", () => {
+    const codex = { hook_event_name: "PreToolUse", turn_id: "t1", model: "gpt-6.1-sol", tool_name: "Bash", tool_input: { command: "git push origin HEAD" }, agent_type: IMPLEMENTOR_ROLE };
+    expect(findViolation(codex)?.id).toBe("implementor-push");
+    expect(findViolation({ ...codex, agent_type: undefined })).toBeNull();
+  });
+
   it("reads a Codex argument vector as a command", () => {
     expect(findViolation(bash(["git", "push", "-f"]))?.id).toBe("force-push");
     expect(findViolation(bash(["bash", "-lc", "cd x && npx y"]))?.id).toBe("download-runner");
@@ -260,13 +298,18 @@ describe("the dispatcher as a process", () => {
 describe("the Stop reminder", () => {
   const stop = (extra = {}) => ({ hook_event_name: "Stop", session_id: "s1", cwd: "/x", stop_hook_active: false, ...extra });
 
-  it("reminds once per session and set of src/ files, and never blocks", () => {
+  it("sends the lane back once per session and set of src/ files, then lets it stop", () => {
     const stateDir = mkdtempSync(path.join(tmpdir(), "agent-hooks-state-"));
     try {
       const listChanges = () => ["src/lib/a.ts"];
       const first = runHook(stop(), { listChanges, stateDir });
       expect(first.exitCode).toBe(0);
-      expect(JSON.parse(first.stdout).systemMessage).toContain("pnpm run db:generate, lint, typecheck");
+      const output = JSON.parse(first.stdout);
+      expect(output.decision).toBe("block");
+      expect(output.reason).toContain('AGENTS.md -> "Per-issue pipeline" -> "Before pushing"');
+      expect(output.systemMessage).toBe(output.reason);
+      // The loop guard: the continuation's own Stop, and any later Stop on the same files, is silent.
+      expect(runHook(stop({ stop_hook_active: true }), { listChanges, stateDir })).toEqual({ exitCode: 0, stdout: "", stderr: "" });
       expect(runHook(stop(), { listChanges, stateDir })).toEqual({ exitCode: 0, stdout: "", stderr: "" });
       expect(runHook(stop(), { listChanges: () => ["src/lib/a.ts", "src/lib/b.ts"], stateDir }).stdout).not.toBe("");
       expect(runHook(stop({ session_id: "s2" }), { listChanges, stateDir }).stdout).not.toBe("");
@@ -285,6 +328,17 @@ describe("the Stop reminder", () => {
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
     }
+  });
+
+  it("names the AGENTS.md section it points at, so the pointer cannot dangle", () => {
+    const agents = readFileSync(path.join(ROOT, "AGENTS.md"), "utf8");
+    expect(agents).toMatch(/^## Per-issue pipeline$/m);
+    expect(agents).toContain("- **Before pushing:**");
+    expect(PRE_PUSH_REMINDER).toContain('"Per-issue pipeline" -> "Before pushing"');
+  });
+
+  it("keeps its state per user", () => {
+    expect(defaultStateDir()).toBe(path.join(tmpdir(), `agent-hooks-reminders-${userInfo().uid}`));
   });
 
   it("lists src/ changes against the merge base with origin/main, including untracked files", () => {
