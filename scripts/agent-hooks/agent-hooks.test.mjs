@@ -78,6 +78,12 @@ describe("the Bash rules, for the main session and orchestrators", () => {
     ["./node_modules/.bin/prisma format", "prisma-format"],
     ["gh issue view 1", "gh-issue-view"],
     ["gh issue view 1 --comments", "gh-issue-view"],
+    ["gh issue view 1 --json body", "gh-issue-view"],
+    ["gh issue view 1 --json title,body", "gh-issue-view"],
+    ["gh issue view 1 --json=comments,state", "gh-issue-view"],
+    ["gh issue view 1 --json state --comments", "gh-issue-view"],
+    ["gh issue view 1 --json state -w", "gh-issue-view"],
+    ["gh issue view 1 --json", "gh-issue-view"],
     ["git commit -m \"fix $(npx something)\"", "download-runner"],
   ];
   it.each(blocked)("blocks %s", (command, id) => {
@@ -85,6 +91,9 @@ describe("the Bash rules, for the main session and orchestrators", () => {
   });
 
   const allowed = [
+    "gh issue view 1 --json state",
+    "gh issue view 1 --json labels,assignees,state --jq .state",
+    "gh -R o/r issue view 1 --json=state",
     "git push origin HEAD",
     "git push -u origin fix/4462-agent-rules-as-hooks",
     "git push --follow-tags origin main",

@@ -1,12 +1,46 @@
 {
+  "src/app/(admin)/admin/ai-diagnostics/_components/diagnostics-budget-card.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/audit-log/page.tsx": {
     "accessibility/minimum-text-size": {
       "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/background-jobs/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/backups/backups-client.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/backups/local-backup-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/backups/setup/backup-wizard-steps.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
     }
   },
   "src/app/(admin)/admin/bed-allocation/_components/allocation-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
+    },
+    "design-system/no-raw-button": {
+      "count": 1
     }
   },
   "src/app/(admin)/admin/bed-allocation/_components/board-cell.tsx": {
@@ -17,6 +51,9 @@
   "src/app/(admin)/admin/bed-allocation/_components/guest-chip.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 1
     }
   },
   "src/app/(admin)/admin/bed-allocation/page.tsx": {
@@ -25,27 +62,262 @@
     }
   },
   "src/app/(admin)/admin/book/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/chores/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 3
+    },
+    "design-system/no-raw-select": {
+      "count": 3
+    }
+  },
+  "src/app/(admin)/admin/committee/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/communications/page.tsx": {
+    "design-system/no-raw-table": {
       "count": 1
     }
   },
   "src/app/(admin)/admin/config-transfer/page.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/display/builder/display-builder.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 10
+    }
+  },
+  "src/app/(admin)/admin/display/devices/page.tsx": {
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/display/layouts/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 3
+    }
+  },
+  "src/app/(admin)/admin/display/reference/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/display/setup/display-wizard-steps.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/display/templates/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 4
+    }
+  },
+  "src/app/(admin)/admin/email-deliverability/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/family-groups/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-table": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/health/_components/email-deliverability-section.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
+    }
+  },
+  "src/app/(admin)/admin/health/_components/shared.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/health/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/hut-leaders/_components/custodian-bed-picker.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/hut-leaders/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 2
     }
   },
   "src/app/(admin)/admin/image-manager/image-manager-client.tsx": {
-    "jsx-a11y/click-events-have-key-events": {
-      "count": 1
-    },
-    "jsx-a11y/no-static-element-interactions": {
-      "count": 1
-    },
     "accessibility/minimum-text-size": {
+      "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 4
+    },
+    "jsx-a11y/click-events-have-key-events": {
       "count": 1
     },
     "jsx-a11y/no-autofocus": {
       "count": 2
+    },
+    "jsx-a11y/no-static-element-interactions": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/induction/[id]/print/page.tsx": {
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/lockers/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 4
+    }
+  },
+  "src/app/(admin)/admin/lodge/page.tsx": {
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/lodges/[id]/_components/lodge-central-lodge-card.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/lodges/[id]/_components/lodge-display-settings-card.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/lodges/[id]/setup/page.tsx": {
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/lodges/_components/other-lodges-panel.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/lodges/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 4
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    },
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/member-applications/page.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/_components/member-account-access-group.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 5
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/_components/member-dependent-dialog.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
     }
   },
   "src/app/(admin)/admin/members/[id]/_components/member-family-tree-card.tsx": {
@@ -53,14 +325,142 @@
       "count": 1
     }
   },
+  "src/app/(admin)/admin/members/[id]/_components/member-lodge-access-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/_components/member-parent-link-dialog.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/_components/member-xero-create-dialog.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/_hooks/use-member-relationships.ts": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/[id]/merge/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/_components/member-editor-dialog.tsx": {
+    "design-system/no-raw-input": {
+      "count": 4
+    }
+  },
   "src/app/(admin)/admin/members/_components/member-import-dialog.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
     }
   },
+  "src/app/(admin)/admin/members/_components/member-table.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/members/_components/member-xero-entrance-fee-fields.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/members/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/mountain-conditions/_components/mountain-conditions-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/payments/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
+    }
+  },
+  "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 3
+    },
+    "design-system/no-raw-input": {
+      "count": 6
+    },
+    "design-system/no-raw-select": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 2
+    }
+  },
+  "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/refund-requests/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/reports/page.tsx": {
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/roster/[date]/print/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/roster/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 3
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/seasons/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/site-style/site-style-wizard.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
     }
   },
   "src/app/(admin)/admin/subscriptions/_components/subscription-billing-panel.tsx": {
@@ -68,8 +468,27 @@
       "count": 1
     }
   },
+  "src/app/(admin)/admin/waitlist/page.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/work-parties/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/xero/_components/contact-sync-panel.tsx": {
     "accessibility/minimum-text-size": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
       "count": 2
     }
   },
@@ -78,29 +497,92 @@
       "count": 1
     }
   },
+  "src/app/(admin)/admin/xero/_components/failed-view-notice.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
   "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx": {
     "accessibility/minimum-text-size": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/xero/_components/mappings-panel.tsx": {
+    "design-system/no-raw-table": {
+      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/xero/_components/message.tsx": {
+    "design-system/no-raw-button": {
       "count": 1
     }
   },
   "src/app/(admin)/admin/xero/_components/operations-panel.tsx": {
     "accessibility/minimum-text-size": {
       "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(admin)/admin/xero/_components/setup-panels.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
     }
   },
   "src/app/(admin)/admin/xero/_components/shared.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 2
+    },
+    "design-system/no-raw-button": {
+      "count": 3
+    },
     "jsx-a11y/click-events-have-key-events": {
       "count": 1
     },
     "jsx-a11y/no-static-element-interactions": {
       "count": 1
-    },
-    "accessibility/minimum-text-size": {
-      "count": 2
+    }
+  },
+  "src/app/(admin)/admin/xero/_hooks/use-xero-connection.ts": {
+    "design-system/no-native-confirm": {
+      "count": 1
     }
   },
   "src/app/(admin)/admin/xero/member-grouping/page.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
+      "count": 1
+    }
+  },
+  "src/app/(authenticated)/book/_components/guests-step.tsx": {
+    "design-system/no-raw-input": {
+      "count": 3
+    }
+  },
+  "src/app/(authenticated)/book/_components/review-step.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 3
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(authenticated)/book/whole-lodge/_components/whole-lodge-request-form.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/(authenticated)/profile/account-credit-section.tsx": {
+    "design-system/no-raw-table": {
       "count": 1
     }
   },
@@ -109,13 +591,94 @@
       "count": 1
     }
   },
+  "src/app/(authenticated)/profile/notification-preferences.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/(finance)/finance/_components/finance-dashboard-client.tsx": {
+    "design-system/no-raw-select": {
+      "count": 7
+    }
+  },
+  "src/app/(finance)/finance/_components/ratio-explorer.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 2
+    },
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/app/(lodge)/lodge/kiosk/_components/kiosk-week-view.tsx": {
+    "design-system/no-raw-button": {
+      "count": 5
+    }
+  },
+  "src/app/(lodge)/lodge/kiosk/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 11
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx": {
+    "design-system/no-raw-button": {
+      "count": 12
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(website-dynamic)/booking-requests/booking-request-form.tsx": {
+    "design-system/no-raw-select": {
+      "count": 3
+    }
+  },
   "src/app/(website-dynamic)/booking-requests/respond/[token]/booking-request-respond-client.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
+  "src/app/(website-dynamic)/join/[code]/group-join-page-client.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
   "src/app/(website-dynamic)/school-bookings/school-booking-form.tsx": {
     "jsx-a11y/label-has-associated-control": {
+      "count": 1
+    }
+  },
+  "src/app/display/display-header-clock.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/app/error.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/app/global-error.tsx": {
+    "design-system/no-raw-button": {
       "count": 1
     }
   },
@@ -125,12 +688,18 @@
     }
   },
   "src/components/address-autocomplete.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
     "jsx-a11y/no-static-element-interactions": {
       "count": 1
     }
   },
   "src/components/admin-booking-calendar.tsx": {
     "accessibility/minimum-text-size": {
+      "count": 3
+    },
+    "design-system/no-raw-button": {
       "count": 3
     },
     "jsx-a11y/click-events-have-key-events": {
@@ -143,6 +712,9 @@
   "src/components/admin-sidebar.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
+    },
+    "design-system/no-raw-button": {
+      "count": 2
     }
   },
   "src/components/admin/__tests__/display-token-textarea.test.tsx": {
@@ -155,22 +727,46 @@
       "count": 1
     }
   },
+  "src/components/admin/admin-data-table.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/admin/admin-filter-bar.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
   "src/components/admin/allocation-preferences-section.tsx": {
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
   "src/components/admin/analytics-integration-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 2
     }
   },
   "src/components/admin/bank-refund-void-answer-choice.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
+  "src/components/admin/bank-refund-voids-to-answer-panel.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/components/admin/bed-allocation-move-dialog.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
@@ -185,16 +781,150 @@
       "count": 2
     }
   },
+  "src/components/admin/booking-filters.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-manual-payment-controls.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/components/admin/booking-policies/adult-member-hosting-section.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 3
+    }
+  },
   "src/components/admin/booking-policies/booking-periods-section.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
+  "src/components/admin/booking-policies/default-cancellation-policy-section.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-policies/group-discount-section.tsx": {
+    "design-system/no-raw-input": {
+      "count": 3
+    }
+  },
+  "src/components/admin/booking-policies/late-capture-refund-setting.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-policies/minimum-night-stay-section.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-policies/policy-feedback.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
+  "src/components/admin/booking-policies/public-booking-requests-section.tsx": {
+    "design-system/no-raw-input": {
+      "count": 5
+    }
+  },
+  "src/components/admin/booking-requests/booking-change-request-finished-stay.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-requests/booking-change-requests-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
   "src/components/admin/booking-requests/booking-request-contact-picker.tsx": {
-    "jsx-a11y/label-has-associated-control": {
+    "accessibility/minimum-text-size": {
       "count": 2
     },
-    "accessibility/minimum-text-size": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    },
+    "jsx-a11y/label-has-associated-control": {
+      "count": 2
+    }
+  },
+  "src/components/admin/booking-requests/booking-request-school-record-notice.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-requests/policy-exception-requests-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/booking-requests/whole-lodge-request-controls.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/components/admin/club-contact-panel.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/club-format-panel.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/club-posts/club-post-retention-section.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/club-posts/club-posts-admin.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    }
+  },
+  "src/components/admin/club-time-zone-panel.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/committee-photo-display-control.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/date-range-controls.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/dead-card-refunds-panel.tsx": {
+    "design-system/no-raw-input": {
       "count": 2
     }
   },
@@ -202,10 +932,10 @@
     "accessibility/minimum-text-size": {
       "count": 2
     },
-    "jsx-a11y/no-static-element-interactions": {
+    "jsx-a11y/no-autofocus": {
       "count": 1
     },
-    "jsx-a11y/no-autofocus": {
+    "jsx-a11y/no-static-element-interactions": {
       "count": 1
     }
   },
@@ -219,8 +949,21 @@
       "count": 1
     }
   },
+  "src/components/admin/family-group-editor.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
   "src/components/admin/family-groups/age-tier-badge.tsx": {
     "accessibility/minimum-text-size": {
+      "count": 1
+    }
+  },
+  "src/components/admin/family-groups/login-holder-section.tsx": {
+    "design-system/no-raw-input": {
       "count": 1
     }
   },
@@ -229,12 +972,36 @@
       "count": 1
     }
   },
+  "src/components/admin/family-groups/request-review-card.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/components/admin/finance-report-mappings-panel.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/components/admin/google-security-card.tsx": {
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
+  "src/components/admin/hand-back-method-choice.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/components/admin/induction-register-table.tsx": {
+    "design-system/no-raw-button": {
+      "count": 5
+    },
+    "design-system/no-raw-select": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 3
     }
@@ -245,6 +1012,12 @@
     }
   },
   "src/components/admin/induction-template-manager.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 3
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 2
     }
@@ -254,8 +1027,18 @@
       "count": 1
     }
   },
+  "src/components/admin/integration-wizard/integration-wizard.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
   "src/components/admin/internet-banking/internet-banking-settings-panel.tsx": {
     "jsx-a11y/label-has-associated-control": {
+      "count": 1
+    }
+  },
+  "src/components/admin/lodge-instructions-panel.tsx": {
+    "design-system/no-native-confirm": {
       "count": 1
     }
   },
@@ -270,11 +1053,17 @@
     }
   },
   "src/components/admin/manual-refund-task-queue.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
   "src/components/admin/member-guest-settings-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 4
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 4
     }
@@ -282,17 +1071,29 @@
   "src/components/admin/member-picker.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 1
     }
   },
   "src/components/admin/non-member-contact-form.tsx": {
-    "jsx-a11y/label-has-associated-control": {
+    "accessibility/minimum-text-size": {
       "count": 1
     },
-    "accessibility/minimum-text-size": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
   "src/components/admin/notice-audience-picker.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/no-static-element-interactions": {
       "count": 1
     }
@@ -305,25 +1106,58 @@
   "src/components/admin/occupancy-calendar.tsx": {
     "accessibility/minimum-text-size": {
       "count": 3
+    },
+    "design-system/no-raw-button": {
+      "count": 1
     }
   },
   "src/components/admin/page-content-panel.tsx": {
     "accessibility/minimum-text-size": {
       "count": 9
     },
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "jsx-a11y/label-has-associated-control": {
+      "count": 3
+    },
     "jsx-a11y/no-static-element-interactions": {
       "count": 1
+    }
+  },
+  "src/components/admin/public-content-settings-panel.tsx": {
+    "design-system/no-raw-input": {
+      "count": 4
+    },
+    "design-system/no-raw-select": {
+      "count": 2
+    }
+  },
+  "src/components/admin/rooms-beds-manager.tsx": {
+    "design-system/no-raw-select": {
+      "count": 2
     },
     "jsx-a11y/label-has-associated-control": {
       "count": 3
     }
   },
-  "src/components/admin/rooms-beds-manager.tsx": {
-    "jsx-a11y/label-has-associated-control": {
-      "count": 3
+  "src/components/admin/roster-editor.tsx": {
+    "design-system/no-native-confirm": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/admin/school-hut-leader-kinds-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
     }
   },
   "src/components/admin/subscription-lockout-settings-panel.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 2
     }
@@ -334,11 +1168,23 @@
     }
   },
   "src/components/admin/xero-account-multi-select.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/no-autofocus": {
       "count": 1
     }
   },
   "src/components/admin/xero-code-select.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
+    },
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/no-autofocus": {
       "count": 1
     }
@@ -348,7 +1194,25 @@
       "count": 3
     }
   },
+  "src/components/admin/xero-suggested-contact-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/analytics-consent.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/analytics-preferences-link.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
   "src/components/book/member-guest-find-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
     "jsx-a11y/no-static-element-interactions": {
       "count": 1
     }
@@ -356,9 +1220,30 @@
   "src/components/booking-calendar.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
+    },
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/booking/change-request-guest-entry.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/calendar/day-events-dialog.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/calendar/event-dialog.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
     }
   },
   "src/components/calendar/month-calendar.tsx": {
+    "design-system/no-raw-button": {
+      "count": 3
+    },
     "jsx-a11y/click-events-have-key-events": {
       "count": 1
     },
@@ -367,13 +1252,65 @@
     }
   },
   "src/components/cancel-booking-button.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
   },
+  "src/components/club-post-composer.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/club-post-editor.tsx": {
+    "design-system/no-raw-select": {
+      "count": 4
+    }
+  },
+  "src/components/edit-booking-panel.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/components/edit-booking/account-credit-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
   "src/components/edit-booking/admin-override-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 3
+    },
     "jsx-a11y/label-has-associated-control": {
       "count": 1
+    }
+  },
+  "src/components/edit-booking/edit-guests-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/edit-booking/existing-guest-row.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/edit-booking/other-lodge-rate-control.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/edit-booking/price-summary-card.tsx": {
+    "design-system/no-raw-input": {
+      "count": 3
     }
   },
   "src/components/finance/charts/mix-pie-chart.tsx": {
@@ -381,7 +1318,59 @@
       "count": 1
     }
   },
+  "src/components/group-booking/organiser-group-booking-card.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/guest-form.tsx": {
+    "design-system/no-raw-select": {
+      "count": 1
+    }
+  },
+  "src/components/guest-night-grid.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-table": {
+      "count": 1
+    }
+  },
+  "src/components/help-widget/diagnostics-provenance.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/help-widget/diagnostics-record-button.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/help-widget/diagnostics-view.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    },
+    "design-system/no-raw-input": {
+      "count": 2
+    }
+  },
+  "src/components/help-widget/help-chat-thread.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/help-widget/help-free-text-input.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
   "src/components/help-widget/help-widget.tsx": {
+    "design-system/no-raw-button": {
+      "count": 4
+    },
     "jsx-a11y/no-noninteractive-element-interactions": {
       "count": 2
     },
@@ -390,7 +1379,28 @@
     }
   },
   "src/components/hosting-coverage-linked-move-prompt.tsx": {
+    "design-system/no-raw-input": {
+      "count": 2
+    },
     "jsx-a11y/label-has-associated-control": {
+      "count": 1
+    }
+  },
+  "src/components/hosting-coverage-override-prompt.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/kiosk-lodge-instructions.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
+  "src/components/lodge-pin-relock-panel.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    },
+    "design-system/no-raw-input": {
       "count": 1
     }
   },
@@ -405,12 +1415,58 @@
     }
   },
   "src/components/member-photo-editor.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    },
     "jsx-a11y/img-redundant-alt": {
+      "count": 1
+    }
+  },
+  "src/components/nav-bar.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/promo-code-chips.tsx": {
+    "design-system/no-raw-button": {
+      "count": 2
+    }
+  },
+  "src/components/promo-code-input.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/promo-code-list.tsx": {
+    "design-system/no-raw-input": {
+      "count": 1
+    }
+  },
+  "src/components/site-banners.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/stripe/PaymentForm.tsx": {
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/stripe/SetupForm.tsx": {
+    "design-system/no-raw-button": {
       "count": 1
     }
   },
   "src/components/theme-switcher.tsx": {
     "accessibility/minimum-text-size": {
+      "count": 1
+    },
+    "design-system/no-raw-button": {
+      "count": 1
+    }
+  },
+  "src/components/time-picker.tsx": {
+    "design-system/no-raw-select": {
       "count": 1
     }
   },
@@ -425,6 +1481,9 @@
     }
   },
   "src/components/website/public-page-content-token.tsx": {
+    "design-system/no-raw-table": {
+      "count": 1
+    },
     "jsx-a11y/no-noninteractive-tabindex": {
       "count": 1
     }
@@ -437,6 +1496,9 @@
   "src/components/website/skifield-whakapapa-widget.tsx": {
     "accessibility/minimum-text-size": {
       "count": 4
+    },
+    "design-system/no-raw-table": {
+      "count": 1
     }
   },
   "src/lib/__tests__/bed-allocation-allocation-chip.test.tsx": {

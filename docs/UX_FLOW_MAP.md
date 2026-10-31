@@ -1584,10 +1584,148 @@ every screen:
   reads the semantic tokens so it adapts to dark mode. Prefer `Alert` over
   hand-rolled coloured banner `<div>`s.
 - **Destructive confirmations** use `useConfirm()` from
-  `src/components/confirm-dialog.tsx`, never `window.confirm`.
+  `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
+  it (`design-system/no-native-confirm`), with today's calls on a ratchet.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
+
+## Forms (#4467)
+
+A form is built on the shared form layer: shadcn's Form primitives over
+react-hook-form, validated by a zod schema (owner decision, 27 Oct 2026). The
+layer decides three things once, so no form has to:
+
+- **Each field's error is tied to its control.** `aria-invalid` is set while
+  the field fails, and `aria-describedby` names the error first, then any id
+  the caller passes, then the field's example, the order `FieldHint` fixed
+  in #2257.
+- **A failed submit is listed at the top of the form, and the list takes
+  focus.** `FormErrorSummary` is a `role="alert"` that shows each error as a
+  link that moves focus to its field. Focus moves only when a submit
+  completes, never while the person types. Between submits its text never
+  changes: an entry keeps the message it had at the submit and only
+  disappears once its field is fixed. The inline message shows the field's
+  current state.
+- **The browser and the API route check the same rules.** The schema lives in
+  `src/lib/forms/<name>-schema.ts`, imports nothing but `zod`, and is imported
+  by the route and the form. `shared-form-schema-census.test.ts` fails a
+  schema that either side stops using. `src/lib/club-theme-update-schema.ts`
+  shares a schema between a route and a page the same way but predates this
+  convention, so it sits outside `src/lib/forms/` and the census.
+
+The committee page's **Add / Edit Role** form is the worked example: its
+schema module is `src/lib/forms/committee-role-schema.ts`, and its form is
+`src/app/(admin)/admin/committee/_components/committee-role-form.tsx`.
+
+### Building a form
+
+1. **Write the schema** in `src/lib/forms/`. Keep each field's rule as a
+   constant, and build from them the route's wire schema (or one per route:
+   `POST` with its defaults, `PATCH` with every field optional and no
+   defaults) and the form's schema. The form's schema takes what the controls
+   hold and outputs the payload the route accepts; for example, an empty text
+   box becomes `null`. Write each message as the fix ("Enter a role name"),
+   because the summary shows it without the field's label.
+2. **Parse with it in the route**, and answer a refusal the existing way:
+   `{ error: "Invalid input", details: parsed.error.flatten() }` with a 400.
+   New routes use this shape; the member routes' bare `fieldErrors` shape
+   (`details: parsed.error.flatten().fieldErrors`, with a 422) is also read.
+3. **Build the form** with `useZodForm(schema, { defaultValues })` from
+   `src/hooks/use-zod-form.ts`. It also turns off react-hook-form's own
+   focus-the-first-error, which would take focus back from the summary.
+   Render `<Form {...form}>`, then a `<form noValidate>` with
+   `<FormErrorSummary />` before the fields. Each field is a `FormField`
+   whose `render` returns a `FormItem` holding `FormLabel`, `FormControl`
+   around exactly one primitive (`Input`, `Textarea`, `Checkbox`…), then
+   `FormMessage` and, for an example, `FormDescription`. Pass any further
+   description id, such as a view-only reason, as `aria-describedby` on
+   `FormControl`, not on the control: the control's own would replace the
+   error's.
+4. **Map the route's answer back.** In the `handleSubmit` callback, call
+   `applyServerValidationErrors(form, response.status, body)` on a refusal.
+   It acts only on a 400 or 422 whose `details` is zod's `flatten()` shape,
+   read by `readValidationDetails`, the one reader of that shape. Field
+   messages go on their fields; form-level ones, and any for a key the form
+   does not render, show unlinked in the summary. It returns `false` for
+   anything else (a 403, a 500, a 400 with no zod `details`): show the
+   route's `error` as before, through the page's `role="alert"` banner and
+   `useActionAttention`. Call it before the
+   callback returns, because the summary takes focus when the submit
+   completes.
+
+A staged settings section keeps `useSectionEditState` and every rule in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#adminmember-layer) when it adopts the
+layer.
+
+## Error and loading screens per area (#4467)
+
+When a page fails, the person stays in the area they were using. Every route
+group has its own `error.tsx`, rendered **inside** that group's layout, so an
+officer keeps the admin sidebar and a member keeps the member navigation; only
+the failed page is replaced. All of them are the one shared screen,
+`src/components/route-error.tsx`:
+
+- **Something went wrong**, with focus moved to that heading so a keyboard or
+  screen-reader user hears it.
+- **Try again** re-fetches the page from the server and re-renders it (Next's
+  `retry`), so a passing fault recovers without a reload and the URL is kept.
+- A link back to the area's own landing page, not the browser's previous page,
+  which may be the page that failed, another site, or nothing on a kiosk.
+- The error is reported to Sentry with its digest and the area, like the root
+  screen. The message and stack are never shown; a server error shows only
+  **Error ID** (the digest), which matches the server log line.
+
+| Area | Boundary | "Back" goes to | Loading state while a page streams in |
+| --- | --- | --- | --- |
+| Admin (`/admin/*`) | `(admin)/error.tsx` | `/admin` | Per page only: bookings, dashboard, members |
+| Member area (dashboard, bookings, profile, …) | `(authenticated)/error.tsx` | `/dashboard` | Per page only: dashboard, bookings, book, booking detail, consent |
+| Finance (`/finance`) | `(finance)/finance/error.tsx` | `/finance` | `(finance)/finance/loading.tsx` |
+| Lodge kiosk (`/lodge/*`) | `(lodge)/error.tsx` | `/lodge/kiosk` | None: the kiosk and roster fetch their own data on the client (hardening review F36: "do not add there") |
+| Sign-in, registration, recovery and token pages | `(public)/error.tsx` | `/` | None |
+| Public website | `(website)/error.tsx`, `(website-dynamic)/error.tsx` | `/` | None |
+
+Every loading state is the shared `src/components/route-loading.tsx`: a polite
+`status` region with a visually hidden label ("Loading bookings…") and skeleton
+blocks hidden from assistive technology, in the theme's tokens for light and
+dark.
+
+Only finance has a loading state for its whole area (`(finance)/finance`, its
+one page). The other six route groups have none at their root, on purpose,
+because a group-level `loading.tsx` changes what the server does, not only what
+the person sees while waiting:
+
+- **It starts the response before any page has decided anything**, so a page's
+  own "not found" or redirect arrives as a 200 instead of a 404 or 307 (Next's
+  `loading.md`, "Status codes").
+- **It makes every dynamic page in the group prefetchable** (Next's
+  `prefetching.md`): a page is prefetched as its link scrolls into view only
+  when it has a loading boundary.
+
+Each group's reason, recorded in `src/lib/route-group-boundaries.ts`:
+
+- **Admin**: every sidebar link would prefetch its page, each one running the
+  admin layout's guard and database loads on every admin page view; the
+  page-level not-found and redirect answers would become 200s; and every admin
+  end-to-end spec would meet the streaming double-render flake. Bookings,
+  dashboard and members keep their own placeholders.
+- **Member area**: pages decide 404s themselves (an out-of-audience notice must
+  be a real 404). The slow member pages keep their own placeholders.
+- **Lodge kiosk**: the kiosk and roster fetch their data on the client, so a
+  placeholder would never show on a fresh load, and the roster's redirect to the
+  kiosk would become a client-side one (hardening review F36: "do not add
+  there").
+- **Sign-in, registration and recovery**: `/login`, `/login/verify`,
+  `/login/enroll`, `/register` and `/membership-cancellation/[token]` redirect
+  from the page.
+- **Public website, both groups**: forbidden by
+  `scripts/ci/check-website-render-modes.mjs` (#2352, #2434), because a missing
+  page would become a soft 404 that the page store then keeps.
+
+`src/lib/__tests__/route-group-boundaries.test.ts` holds the tree to those
+answers: it fails if a new route group arrives without an error screen and a
+loading decision, or if a group with a reason gains a `loading.tsx` (anywhere
+in the group, except the admin and member areas, whose per-page ones stay).
 
 ## Back-link convention (admin drill-down leaves) (#2046)
 
@@ -1745,6 +1883,16 @@ establishes:
   modes) — instead of re-implementing the table shell / sort / pagination per
   page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
   over the shared `Pagination`.
+- **Design-system controls (#4467):** outside `src/components/ui/`, use
+  `Button`, `Input`, `Checkbox`, `Select` and `Table` (or `AdminDataTable`),
+  never a raw `<button>`, `<input>`, `<select>` or `<table>`, and `useConfirm()`
+  rather than the browser's confirm box. Lint reports each one, naming the
+  primitive to use; the existing usages sit on a count ratchet that only falls.
+  The scope, the named exceptions and how to lower the count are in
+  [`TESTING.md`](TESTING.md#design-system-control-ratchet-4467).
+- **Forms (#4467):** build a form on the shared form layer
+  (`src/components/ui/form.tsx`), with its zod schema shared with the API
+  route; see [Forms](#forms-4467).
 - **Long-page section nav (#1818):** wrap the long single-column member pages
   (`/profile`, `/bookings/[id]`) with `SectionNav` (`src/components/section-nav.tsx`;
   a sticky desktop anchor rail + a mobile `<details>` disclosure of in-page
