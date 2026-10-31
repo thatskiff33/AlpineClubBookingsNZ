@@ -68,6 +68,29 @@ function getUsageStatus(totalCalls: number): "healthy" | "warning" | "critical" 
   return "healthy";
 }
 
+/**
+ * #4531: whether a DEFERRABLE Xero call may spend today's budget - one whose
+ * caller loses nothing by waiting for a later run, such as confirming that a
+ * payment missing from an invoice was deleted. It stops at the "critical"
+ * threshold above, so the last share of the day is left to the outbox and the
+ * inbound sync. Xero's own daily-limit cooldown still refuses every call on
+ * top of this (`XeroDailyLimitError`). A deployment without the usage tables
+ * records nothing, so nothing is withheld here.
+ */
+export async function xeroDailyBudgetAllowsDeferrableCall(): Promise<boolean> {
+  const usagePrisma = prisma as XeroApiUsagePrisma;
+  if (!usagePrisma.xeroApiUsageDaily) {
+    return true;
+  }
+  const usageDate = await clubUsageDate(new Date());
+  const daily = (await usagePrisma.xeroApiUsageDaily.findUnique({
+    where: { usageDate },
+    select: { totalCalls: true },
+  })) as { totalCalls: number } | null;
+  const status = getUsageStatus(daily?.totalCalls ?? 0);
+  return status === "healthy" || status === "warning";
+}
+
 function truncateErrorMessage(errorMessage?: string | null): string | null {
   if (!errorMessage) {
     return null;

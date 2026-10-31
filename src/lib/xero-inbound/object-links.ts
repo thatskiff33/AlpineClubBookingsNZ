@@ -84,6 +84,18 @@ export const BOOKING_INVOICE_PAYMENT_ROLES = [
   SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
 ] as const;
 
+/** #4531: the status Xero gives a payment it has deleted (reversed). Terminal: never live again. */
+export const DELETED_XERO_PAYMENT_STATUS = "DELETED";
+
+/**
+ * #4531 (`INV-INT-031`): whether a Xero payment status is DELETED, the one
+ * spelling of that test. An inbound write of a payment Xero reports deleted
+ * lands its link inactive, so a deleted payment is never re-adopted.
+ */
+export function isDeletedXeroPaymentStatus(status: unknown): boolean {
+  return String(status ?? "").toUpperCase() === DELETED_XERO_PAYMENT_STATUS;
+}
+
 /**
  * #3643: whether a stored link records money paid against a booking's invoice.
  * A part payment leaves nothing else locally (the booking settles only when the

@@ -11,6 +11,7 @@ import {
   sendBookingConfirmedEmail,
 } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { isDeletedXeroPaymentStatus } from "@/lib/xero-inbound/object-links";
 import { findSettlingInternetBankingTransactionId, recordSettlingTransaction } from "@/lib/payment-settler";
 import {
   findSecondInstrumentSettlement,
@@ -115,7 +116,7 @@ export function classifyXeroInvoiceCashEvidence(
   }
   if (Array.isArray(invoice.payments)) {
     const cashPayments = invoice.payments.filter(
-      (payment) => String(payment.status ?? "").toUpperCase() !== "DELETED"
+      (payment) => !isDeletedXeroPaymentStatus(payment.status)
     );
     return cashPayments.length > 0 ? "cash" : "none";
   }
@@ -162,7 +163,7 @@ export function quantifyXeroInvoiceCashCents(
     }
     if (Array.isArray(invoice.payments)) {
       for (const payment of invoice.payments) {
-        if (String(payment.status ?? "").toUpperCase() === "DELETED") {
+        if (isDeletedXeroPaymentStatus(payment.status)) {
           continue;
         }
         const paymentCents = providerAmountToCents(payment.amount);
