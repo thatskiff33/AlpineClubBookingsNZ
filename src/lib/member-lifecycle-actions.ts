@@ -536,9 +536,8 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
       }),
   },
   {
-    // #4514 (D1 on #4482): a posted journal row keeps its debtor as a retained
-    // identity string, not a key, so nothing in the database stops this row
-    // going. A member whose balance the journal moves is archived instead.
+    // #4514 (D1 on #4482): a journal debtor is a retained identity string, not a
+    // key; a member whose balance the journal moves is archived instead.
     code: "member_money_history",
     label: "Member money journal rows name this member as debtor.",
     query: (db, memberId) => journalRowsNamingDebtor(db, memberId),

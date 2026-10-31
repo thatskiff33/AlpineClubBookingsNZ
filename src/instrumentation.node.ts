@@ -1174,8 +1174,7 @@ export async function register() {
 
           return {
             deletedDrafts: deleted.count,
-            // D1 (#4482): a draft financial history names is kept, never deleted.
-            withheldForFinancialHistory: dependents.withheldBookingIds,
+            withheldForFinancialHistory: dependents.withheldBookingIds, // D1, #4482
             promoRedemptions: dependents.promoRedemptions,
             changeRequests: dependents.changeRequests,
             modifications: dependents.modifications,
