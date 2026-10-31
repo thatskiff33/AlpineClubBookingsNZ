@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   imageDeleteMany: vi.fn(),
   // The post's row lock, taken inside the fence before the re-read (#4586).
   executeRaw: vi.fn(),
+  // A hide of an admin-removed mirror scrubs its reports (#4588 review).
+  reportDeleteMany: vi.fn(),
   settingsUpsert: vi.fn(),
   settingsUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
@@ -89,6 +91,7 @@ vi.mock("@/lib/prisma", () => ({
       delete: mocks.postDelete,
     },
     clubPostImage: { deleteMany: mocks.imageDeleteMany },
+    clubPostReport: { deleteMany: mocks.reportDeleteMany },
     $executeRaw: mocks.executeRaw,
     serverNzSettings: {
       upsert: mocks.settingsUpsert,
@@ -1135,6 +1138,11 @@ describe("runMirrorSync writes each page only for the connection it came from (#
  * future unfenced write on `prisma.` fails here.
  */
 describe("the mirror writes answers only through the fence (#4470)", () => {
+  it("keeps the database out of the pictures-and-body module split from it (#4588)", () => {
+    const source = stripComments(readFileSync(path.join(process.cwd(), "src/lib/club-post-mirror-images.ts"), "utf8"));
+    expect(source).not.toMatch(/\bprisma\b|\$transaction|@\/lib\/prisma/);
+  });
+
   it("calls the global client for reads and the claim alone", () => {
     const source = stripComments(readFileSync(path.join(process.cwd(), "src/lib/club-post-mirror.ts"), "utf8"));
     const calls = [...source.matchAll(/\bprisma\.(\$?\w+)(?:\s*\.(\w+))?/g)].map(([, model, method]) => `${model}.${method}`);
@@ -1354,5 +1362,133 @@ describe("the mirror decides under the post's row lock, post before images (#458
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
     expect(mocks.postDelete).not.toHaveBeenCalled();
     expect(mocks.deletePostImage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #4588: a mirror this club's admin removed never gets its words back, and a
+ * pass whose claim was taken over writes nothing after the takeover.
+ */
+describe("a removed mirror stays removed (#4588)", () => {
+  const REMOVED = {
+    id: "local-3", originClubCode: "RUAPEHU", originClubName: "Ruapehu Alpine Club",
+    content: "", bodyHtml: null, removedAt: new Date("2026-06-30T12:00:00.000Z"), hiddenAt: null, images: [],
+  };
+  const WITH_PICTURE = () => visiblePost({
+    content: "Edited at the origin club.",
+    images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }],
+  });
+
+  beforeEach(() => {
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/fresh", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+  });
+
+  it("downloads nothing and writes nothing for a re-delivery the first read sees removed", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([WITH_PICTURE()]));
+    mocks.postFindUnique.mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ upserted: 0, unchanged: 0 });
+    expect(mocks.fetchSharedPostImage).not.toHaveBeenCalled();
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("writes no words or pictures back, and drops its fresh files, when the post was removed before the lock", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([WITH_PICTURE()]));
+    // Not yet removed when first read; removed by the time the lock is held.
+    mocks.postFindUnique.mockResolvedValueOnce({ ...REMOVED, removedAt: null }).mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ upserted: 0, unchanged: 0 });
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/fresh");
+  });
+
+  it("leaves only a scrubbed marker on a HIDE, so a later restore cannot bring it back (#4588 review)", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "hidden" }]));
+    mocks.postFindUnique.mockResolvedValue({ ...REMOVED, images: [{ storageKey: "k/left-over" }] });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(0);
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    // Nothing but what recognises the id survives: no author, origin name,
+    // words, body, reports or pictures.
+    expect(mocks.reportDeleteMany).toHaveBeenCalledWith({ where: { postId: "local-3" } });
+    expect(mocks.imageDeleteMany).toHaveBeenCalledWith({ where: { postId: "local-3" } });
+    expect(mocks.postUpdate).toHaveBeenCalledWith({
+      where: { id: "local-3" },
+      data: { authorName: "", originClubName: null, content: "", bodyHtml: null, reportCount: 0 },
+    });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/left-over");
+  });
+
+  it("deletes a removed mirror outright on a final REMOVAL, reports and all (#4588 review)", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "removed" }]));
+    mocks.postFindUnique.mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(mocks.postDelete).toHaveBeenCalledWith({ where: { id: "local-3" } });
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still deletes a mirror nobody removed here on a hide", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "hidden" }]));
+    mocks.postFindUnique.mockResolvedValue({ ...REMOVED, removedAt: null });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(mocks.postDelete).toHaveBeenCalledWith({ where: { id: "local-3" } });
+    expect(mocks.reportDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("a pass whose claim was taken over writes nothing after the takeover (#4588)", () => {
+  const TAKEN_OVER_AT = new Date(NOW.getTime() + STALE_SYNC_CLAIM_MS + 1);
+
+  it("stops at its first write, with its own label, and leaves the new holder's claim", async () => {
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      mocks.row.commsSyncStartedAt = TAKEN_OVER_AT;
+      return envelope([visiblePost()]);
+    });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ stopped: "claim-taken-over", upserted: 0 });
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.row).toMatchObject({ commsCursorSince: null, commsSyncStartedAt: TAKEN_OVER_AT });
+    expect(mocks.row.commsLastSyncAt).toBeUndefined();
+    // Not counted against the change as a failure.
+    expect(mocks.row.commsPoisonChangeId).toBeUndefined();
+  });
+
+  it("refuses a tombstone and a position write too, keeping the pages applied before the takeover", async () => {
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce({ ...envelope([visiblePost()]), hasMore: true })
+      .mockImplementationOnce(async () => {
+        mocks.row.commsSyncStartedAt = TAKEN_OVER_AT;
+        return envelope([{ state: "removed", id: "srv-1", reason: "removed" }], { since: "2026-06-30T02:00:00.000Z", sinceId: "srv-2" });
+      });
+    mocks.postFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValue({
+      id: "local-9", originClubCode: "RUAPEHU", hiddenAt: null, removedAt: null, images: [],
+    });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ stopped: "claim-taken-over", upserted: 1, removed: 0, pages: 2 });
+    expect(mocks.postCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    expect(mocks.row).toMatchObject({ commsCursorSince: "2026-06-30T01:00:00.000Z", commsSyncStartedAt: TAKEN_OVER_AT });
   });
 });

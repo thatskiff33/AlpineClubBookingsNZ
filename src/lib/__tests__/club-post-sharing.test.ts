@@ -39,6 +39,14 @@ const mocks = vi.hoisted(() => {
     shareClubPost: vi.fn(),
     readPostImage: vi.fn(),
     isServerSyncPaused: vi.fn(),
+    // #4588: the share's stamp runs under the settings-row lock, and removes
+    // the mirror's copy of our own post if the mirror got there first.
+    lockServerNzSettings: vi.fn(),
+    executeRaw: vi.fn(),
+    deleteMany: vi.fn(),
+    imageFindMany: vi.fn(),
+    deletePostImage: vi.fn(),
+    order: [] as string[],
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   };
 });
@@ -54,13 +62,25 @@ vi.mock("@/lib/servernz-version-check", () => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    clubPost: {
-      findUnique: mocks.findUnique,
-      findMany: mocks.findMany,
-      update: mocks.update,
-    },
-  },
+  prisma: (() => {
+    const client: Record<string, unknown> = {
+      clubPost: {
+        findUnique: mocks.findUnique,
+        findMany: mocks.findMany,
+        update: mocks.update,
+        deleteMany: mocks.deleteMany,
+      },
+      clubPostImage: { findMany: mocks.imageFindMany },
+      $executeRaw: mocks.executeRaw,
+    };
+    client.$transaction = async (work: (tx: unknown) => Promise<unknown>) => work(client);
+    return client;
+  })(),
+}));
+
+vi.mock("@/lib/servernz-settings", () => ({
+  SERVERNZ_TRANSACTION_OPTIONS: { timeout: 150_000, maxWait: 10_000 },
+  lockServerNzSettings: mocks.lockServerNzSettings,
 }));
 
 vi.mock("@/lib/servernz-api", () => ({
@@ -72,6 +92,7 @@ vi.mock("@/lib/servernz-api", () => ({
 
 vi.mock("@/lib/post-image-storage", () => ({
   readPostImage: mocks.readPostImage,
+  deletePostImage: mocks.deletePostImage,
 }));
 
 import { retryPendingShares, shareOnePost } from "@/lib/club-post-sharing";
@@ -100,6 +121,83 @@ beforeEach(() => {
   mocks.update.mockResolvedValue({});
   mocks.readPostImage.mockResolvedValue(Buffer.from([1, 2, 3]));
   mocks.isServerSyncPaused.mockResolvedValue(false);
+  mocks.order.length = 0;
+  mocks.lockServerNzSettings.mockImplementation(async () => { mocks.order.push("settings"); });
+  mocks.executeRaw.mockImplementation(async () => { mocks.order.push("posts"); return 2; });
+  mocks.deleteMany.mockImplementation(async () => { mocks.order.push("delete-copy"); return { count: 1 }; });
+  mocks.imageFindMany.mockResolvedValue([]);
+  mocks.deletePostImage.mockImplementation(async () => { mocks.order.push("file"); });
+});
+
+describe("the share's stamp and the mirror's copy of our own post (#4588)", () => {
+  function sharedBack(copy: Record<string, unknown> | null) {
+    mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string; serverPostId?: string } }) => {
+      if (where.id && where.id === copy?.id) return copy;
+      if (where.id) return post();
+      mocks.order.push("find-copy");
+      return copy;
+    });
+    mocks.shareClubPost.mockResolvedValue({ id: "server-9" });
+    mocks.update.mockImplementation(async () => { mocks.order.push("stamp"); return {}; });
+  }
+
+  it("stamps under the settings-row lock, the lock every mirror write holds", async () => {
+    sharedBack(null);
+
+    expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
+
+    expect(mocks.order).toEqual(["settings", "find-copy", "stamp"]);
+    expect(mocks.findUnique).toHaveBeenLastCalledWith(expect.objectContaining({ where: { serverPostId: "server-9" } }));
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("removes the copy the mirror made before the stamp, both posts locked in id order, then stamps", async () => {
+    // The mirror stores our words and author name exactly as we sent them.
+    sharedBack({ id: "copy-1", originClubCode: "OURCLUB", content: post().content, authorName: post().authorName });
+    mocks.imageFindMany.mockResolvedValue([{ storageKey: "posts/2026/07/copy.webp" }]);
+
+    expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
+
+    expect(mocks.order).toEqual(["settings", "find-copy", "posts", "delete-copy", "stamp", "file"]);
+    const [strings, ...values] = mocks.executeRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join("?")).toBe('SELECT 1 FROM "ClubPost" WHERE "id" IN (?, ?) ORDER BY "id" FOR UPDATE');
+    expect(values).toEqual(["post-1", "copy-1"]);
+    expect(mocks.imageFindMany).toHaveBeenCalledWith({ where: { postId: "copy-1" }, select: { storageKey: true } });
+    expect(mocks.deleteMany).toHaveBeenCalledWith({ where: { id: "copy-1" } });
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "post-1" } }));
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/07/copy.webp");
+  });
+
+  it.each([
+    ["other words", { content: "Somebody else's post.", authorName: "Jo Whitcombe" }],
+    ["another author", { content: "Chains needed above the second cattle stop.", authorName: "Someone Else" }],
+  ])("never deletes a mirrored post that is not our copy (%s), and fails the stamp without retrying (#4588 review)", async (_label, fields) => {
+    sharedBack({ id: "copy-1", originClubCode: "OTHERCLUB", ...fields });
+
+    const outcome = await shareOnePost("post-1");
+
+    expect(outcome).toMatchObject({ status: "failed", retryable: false });
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
+    // Our post was never stamped with the id.
+    expect(mocks.update.mock.calls.some(([args]) => args.data.serverPostId !== undefined)).toBe(false);
+    // The failure is recorded on our post, and the request cleared, because
+    // a retry would put a second copy on the server.
+    const recorded = mocks.update.mock.calls.at(-1)?.[0];
+    expect(recorded.data).toMatchObject({ shareRequestedAt: null, shareError: expect.stringMatching(/already held here by another club's post/) });
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ mirrorPostId: "copy-1" }), expect.stringMatching(/not our copy/),
+    );
+  });
+
+  it("never deletes another of this club's own posts that holds the id", async () => {
+    sharedBack({ id: "post-0", originClubCode: null });
+    mocks.update.mockRejectedValueOnce(new Error("Unique constraint failed on serverPostId"));
+
+    await shareOnePost("post-1");
+
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
+  });
 });
 
 describe("shareOnePost", () => {

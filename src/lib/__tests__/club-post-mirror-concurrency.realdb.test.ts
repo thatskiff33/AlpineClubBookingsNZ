@@ -16,6 +16,17 @@
  * harness imports this suite; ordinary unit runs skip it. It owns `race-4586-`
  * posts and images and, like the other central-server suites, the singleton
  * settings row and its credentials.
+ *
+ * #4588 adds the board's lifecycle races, owning `race-4588-` rows and putting
+ * the board's settings row back as it found it:
+ * 3. A pass taken over mid-pass applies nothing after the takeover.
+ * 4. A mirror this club removed keeps its blank words when re-delivered, and
+ *    a server HIDE of it leaves only a scrubbed marker (no author, origin
+ *    name or reports) that a later restore cannot bring back.
+ * 5. A member's post claiming an old upload while the orphan sweep runs keeps
+ *    the image row and its file.
+ * 6. A mirror update adding a picture to a post retention is deleting leaves
+ *    no file on the mount without a row.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +39,10 @@ const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const BASE_URL = "https://central.race-4586.example.invalid";
 const SERVER_POST_ID = "race-4586-post";
 const STORAGE_KEYS = ["posts/2026/06/race-4586-a.webp", "posts/2026/06/race-4586-b.webp"];
+const MEMBER_ID = "race-4588-member";
+let savedBoardSettings: { retentionDays: number; cleanupStartedAt: Date | null } | null | undefined;
+let retention: typeof import("@/lib/club-post-retention");
+let posts: typeof import("@/lib/club-posts");
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let mirror: typeof import("@/lib/club-post-mirror");
 let admin: typeof import("@/lib/club-posts-admin");
@@ -50,8 +65,14 @@ type Latch = ReturnType<typeof latch>;
 
 (RUN ? describe : describe.skip)("message-board mirror concurrency — real PostgreSQL (#4586)", { timeout: 60_000 }, () => {
   async function clean() {
-    await prisma.clubPostImage.deleteMany({ where: { publicId: { startsWith: "race-4586-" } } });
-    await prisma.clubPost.deleteMany({ where: { OR: [{ id: { startsWith: "race-4586-" } }, { serverPostId: { startsWith: "race-4586-" } }] } });
+    await prisma.clubPostImage.deleteMany({ where: { OR: [
+      { publicId: { startsWith: "race-4586-" } }, { storageKey: { startsWith: "race-4588-" } },
+    ] } });
+    await prisma.clubPost.deleteMany({ where: { OR: [
+      { id: { startsWith: "race-4586-" } }, { serverPostId: { startsWith: "race-4586-" } },
+      { serverPostId: { startsWith: "race-4588-" } }, { authorMemberId: MEMBER_ID },
+    ] } });
+    await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
   }
@@ -63,6 +84,8 @@ type Latch = ReturnType<typeof latch>;
       if (String(url).endsWith("/api/v1/version")) {
         return new Response(JSON.stringify({ version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }));
       }
+      // A post's picture (#4588); its storing is observed, not performed.
+      if (String(url).includes("/api/images/posts/")) return new Response(new Uint8Array([1, 2, 3]));
       feedCalls += 1;
       return new Response(JSON.stringify(await page(feedCalls)));
     });
@@ -163,6 +186,11 @@ type Latch = ReturnType<typeof latch>;
     mirror = await import("@/lib/club-post-mirror");
     admin = await import("@/lib/club-posts-admin");
     storage = await import("@/lib/post-image-storage");
+    retention = await import("@/lib/club-post-retention");
+    posts = await import("@/lib/club-posts");
+    savedBoardSettings = await prisma.clubPostSettings.findUnique({
+      where: { id: "default" }, select: { retentionDays: true, cleanupStartedAt: true },
+    });
     const [{ PrismaClient: Client }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"), import("@/lib/prisma-adapter"),
     ]);
@@ -188,7 +216,12 @@ type Latch = ReturnType<typeof latch>;
 
   afterAll(async () => {
     try {
-      if (prisma) await clean();
+      if (prisma) {
+        await clean();
+        // The board's settings row, as this suite found it.
+        if (savedBoardSettings === null) await prisma.clubPostSettings.deleteMany({ where: { id: "default" } });
+        else if (savedBoardSettings) await prisma.clubPostSettings.update({ where: { id: "default" }, data: savedBoardSettings });
+      }
       await observer?.$disconnect();
     } finally {
       if (savedAuthSecret === undefined) delete process.env.AUTH_SECRET;
@@ -257,6 +290,7 @@ type Latch = ReturnType<typeof latch>;
       expect(await removalOutcome).toEqual({ error: null });
       const { result, error } = await passOutcome;
       expect(error).toBeNull();
+      // A "removed" tombstone is final, so the admin-removed row goes too.
       expect(result).toMatchObject({ removed: 1 });
       expect(await postState()).toEqual({ posts: 0, images: 0 });
       expect(deleted.mock.calls.map(([key]) => key).sort()).toEqual(STORAGE_KEYS);
@@ -301,6 +335,220 @@ type Latch = ReturnType<typeof latch>;
       resume.release();
       await Promise.allSettled([pass, removal]);
       spy.mockRestore();
+      deleted.mockRestore();
+    }
+  });
+  /** Waits until `count` statements queue on a lock over `table`'s rows. */
+  async function waitForBlocked(table: string, count: number, unlessSettled?: Promise<unknown>) {
+    let settled = false;
+    void unlessSettled?.then(() => { settled = true; }, () => { settled = true; });
+    const start = process.hrtime.bigint();
+    const pattern = `%"${table}"%`;
+    while (true) {
+      if (settled) return;
+      // An observation, not a row-lock read; there is no Prisma model for this view.
+      const rows = await observer.$queryRaw<Array<{ count: number }>>`
+        SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid()
+          AND wait_event_type = 'Lock' AND query ILIKE ${pattern}
+      `;
+      if ((rows[0]?.count ?? 0) >= count) return;
+      if (realElapsedMs(start) > 10_000) throw new Error(`Fewer than ${count} writer(s) queued on ${table}.`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  function visibleChange(id: string, content: string, imageIds: string[] = []) {
+    return { state: "visible", post: {
+      id, club: { id: "race-4588-club", name: "Race Club", code: "RACE4588" }, authorName: "Race Author", content,
+      bodyHtml: null, images: imageIds.map((image) => ({ url: `${BASE_URL}/api/images/posts/${image}.webp` })),
+      createdAt: "2024-06-30T00:00:00.000Z", updatedAt: "2026-06-30T00:00:00.000Z",
+    } };
+  }
+
+  /** The image pipeline, observed: every stored file gets a fresh key and no disk write. */
+  function observeStoredImages() {
+    let n = 0;
+    return vi.spyOn(storage, "writePostImage").mockImplementation(async () => {
+      n += 1;
+      const hex = n.toString(16).padStart(32, "a");
+      return { publicId: hex, storageKey: `race-4588-stored-${n}.webp`, mimeType: "image/webp", sha256: hex.repeat(2), width: 1, height: 1, bytes: 3 };
+    });
+  }
+
+  it("applies nothing from an old pass after a second pass took its claim (#4588)", async () => {
+    const first = new Date("2026-07-01T00:00:00.000Z");
+    const second = new Date(first.getTime() + mirror.STALE_SYNC_CLAIM_MS + 1_000);
+    const secondInFeed = latch();
+    const finishSecond = latch();
+    let secondPass: Promise<unknown> | undefined;
+    answerFeed(async (call) => {
+      if (call === 1) {
+        secondPass = mirror.runMirrorSync(second);
+        await secondInFeed.promise;
+        // The old pass's page: a post the newer pass knows nothing of.
+        return { changes: [visibleChange("race-4588-late", "An older version.")], cursor: { since: "2026-06-30T00:00:00.000Z", sinceId: "race-4588-late" }, hasMore: false };
+      }
+      secondInFeed.release();
+      await finishSecond.promise;
+      return EMPTY_PAGE;
+    });
+
+    try {
+      const result = await mirror.runMirrorSync(first);
+      expect(result).toMatchObject({ stopped: "claim-taken-over", upserted: 0 });
+      expect(await prisma.clubPost.count({ where: { serverPostId: "race-4588-late" } })).toBe(0);
+      expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({
+        commsSyncStartedAt: second, commsCursorSince: null, commsLastSyncAt: null,
+      });
+    } finally {
+      finishSecond.release();
+      await secondPass;
+    }
+  });
+
+  it("writes no words back to a mirror this club removed when it is delivered again (#4588)", async () => {
+    await prisma.clubPost.create({ data: {
+      serverPostId: "race-4588-removed", originClubCode: "RACE4588", originClubName: "Race Club", authorName: "Race Author",
+      content: "", removedAt: new Date("2026-06-30T12:00:00.000Z"), postedAt: new Date("2026-06-30T00:00:00.000Z"),
+    } });
+    const stored = observeStoredImages();
+    answerFeed(async () => ({ changes: [visibleChange("race-4588-removed", "Edited at the origin.", ["b".repeat(32)])], cursor: null, hasMore: false }));
+    try {
+      await mirror.runMirrorSync(new Date("2026-07-01T00:00:00.000Z"));
+      expect(await prisma.clubPost.findUnique({ where: { serverPostId: "race-4588-removed" }, select: { content: true, bodyHtml: true, _count: { select: { images: true } } } }))
+        .toEqual({ content: "", bodyHtml: null, _count: { images: 0 } });
+      // Nothing was downloaded for it.
+      expect(stored).not.toHaveBeenCalled();
+    } finally {
+      stored.mockRestore();
+    }
+  });
+
+  it("scrubs a removed mirror to a marker on a server hide, reports included, and a restore cannot bring it back (#4588 review)", async () => {
+    await prisma.member.create({ data: {
+      id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password",
+      firstName: "Race", lastName: "Member", ageTier: "ADULT", canLogin: true,
+    } });
+    const row = await prisma.clubPost.create({ data: {
+      serverPostId: "race-4588-hidden", originClubCode: "RACE4588", originClubName: "Race Club", authorName: "Race Author",
+      content: "", removedAt: new Date("2026-06-30T12:00:00.000Z"), postedAt: new Date("2026-06-30T00:00:00.000Z"), reportCount: 1,
+      reports: { create: [{ reporterMemberId: MEMBER_ID, reporterName: "Race Member", reason: "OTHER", details: "It said the removed words." }] },
+    } });
+    const stored = observeStoredImages();
+    answerFeed(async (call) => (call === 1
+      ? { changes: [{ state: "removed", id: "race-4588-hidden", reason: "hidden" }], cursor: null, hasMore: false }
+      // The server restores it, and it arrives as a visible change again.
+      : { changes: [visibleChange("race-4588-hidden", "Restored at the server.")], cursor: null, hasMore: false }));
+    try {
+      expect(await mirror.runMirrorSync(new Date("2026-07-01T00:00:00.000Z"))).toMatchObject({ removed: 0 });
+      const marker = await prisma.clubPost.findUnique({ where: { id: row.id }, select: {
+        serverPostId: true, originClubCode: true, originClubName: true, authorName: true, content: true, bodyHtml: true,
+        reportCount: true, removedAt: true, _count: { select: { reports: true, images: true } },
+      } });
+      expect(marker).toEqual({
+        serverPostId: "race-4588-hidden", originClubCode: "RACE4588", originClubName: null, authorName: "", content: "",
+        bodyHtml: null, reportCount: 0, removedAt: expect.any(Date), _count: { reports: 0, images: 0 },
+      });
+
+      expect(await mirror.runMirrorSync(new Date("2026-07-01T00:01:00.000Z"))).toMatchObject({ upserted: 0 });
+      expect(await prisma.clubPost.findUnique({ where: { id: row.id }, select: { content: true, authorName: true } }))
+        .toEqual({ content: "", authorName: "" });
+      expect(await prisma.clubPost.count({ where: { serverPostId: "race-4588-hidden" } })).toBe(1);
+    } finally {
+      stored.mockRestore();
+    }
+  });
+
+  it("keeps an old upload, row and file, that a new post claims while the orphan sweep deletes (#4588)", async () => {
+    await prisma.member.create({ data: {
+      id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password",
+      firstName: "Race", lastName: "Member", ageTier: "ADULT", canLogin: true,
+    } });
+    const publicId = "c".repeat(32);
+    const image = await prisma.clubPostImage.create({ data: {
+      publicId, storageKey: "race-4588-upload.webp", mimeType: "image/webp", sha256: "d".repeat(64), bytes: 3,
+      uploadedByMemberId: MEMBER_ID, createdAt: new Date("2026-06-30T00:00:00.000Z"),
+    } });
+    await prisma.clubPostSettings.upsert({ where: { id: "default" }, create: { id: "default", retentionDays: 0 }, update: { retentionDays: 0, cleanupStartedAt: null } });
+    const deleted = vi.spyOn(storage, "deletePostImage").mockResolvedValue(undefined);
+    const releaseRow = latch();
+    const rowHeld = latch();
+    // A third session holds the upload's row, so both writers queue on it:
+    // the claim first, then the sweep's delete.
+    const holder = observer.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "ClubPostImage" WHERE "id" = ${image.id} FOR UPDATE`;
+      rowHeld.release();
+      await releaseRow.promise;
+    }, { timeout: 30_000 });
+    let created: Promise<{ id: string }> | undefined;
+    let sweep: Promise<unknown> | undefined;
+    try {
+      await rowHeld.promise;
+      created = posts.createClubPost({
+        authorMemberId: MEMBER_ID, authorName: "Race Member", content: "With the picture.",
+        bodyHtml: `<p>With the picture.</p><img src="/api/club-posts/images/${publicId}" alt="">`,
+      });
+      await waitForBlocked("ClubPostImage", 1, created);
+      sweep = retention.runClubPostCleanup(new Date("2026-07-01T00:00:00.000Z"));
+      await waitForBlocked("ClubPostImage", 2, sweep);
+      releaseRow.release();
+      await holder;
+      const post = await created;
+      await sweep;
+
+      expect(await prisma.clubPostImage.findUnique({ where: { id: image.id }, select: { postId: true } })).toEqual({ postId: post.id });
+      expect(deleted).not.toHaveBeenCalledWith("race-4588-upload.webp");
+    } finally {
+      releaseRow.release();
+      await Promise.allSettled([holder, created, sweep]);
+      deleted.mockRestore();
+    }
+  });
+
+  it("lists every file of a post it expires, even one a mirror update adds mid-pass (#4588)", async () => {
+    await prisma.clubPost.create({ data: {
+      serverPostId: "race-4588-doomed", originClubCode: "RACE4588", originClubName: "Race Club", authorName: "Race Author",
+      content: "Two years old.", postedAt: new Date("2024-06-30T00:00:00.000Z"),
+      images: { create: [{ publicId: "e".repeat(32), storageKey: "race-4588-old.webp", mimeType: "image/webp", sha256: "f".repeat(64), bytes: 3, position: 0 }] },
+    } });
+    await prisma.clubPostSettings.upsert({ where: { id: "default" }, create: { id: "default", retentionDays: 365 }, update: { retentionDays: 365, cleanupStartedAt: null } });
+    const stored = observeStoredImages();
+    const deleted = vi.spyOn(storage, "deletePostImage").mockResolvedValue(undefined);
+    answerFeed(async () => ({ changes: [visibleChange("race-4588-doomed", "Edited, with a new picture.", ["1".repeat(32)])], cursor: null, hasMore: false }));
+    const held = latch();
+    const resume = latch();
+    // The mirror update, held after it locks the post (inside its fence).
+    const spy = holdAfterFirst(
+      (model, method, args) => model === "$" && method === "$executeRaw" && String(args[0]).includes('"ClubPost"'),
+      held, resume,
+    );
+    const pass = mirror.runMirrorSync(new Date("2026-07-01T00:00:00.000Z"));
+    let cleanup: Promise<unknown> | undefined;
+    try {
+      await Promise.race([held.promise, pass.then(() => { throw new Error("The mirror update escaped its hold."); })]);
+      spy.mockRestore();
+      // Retention has listed the doomed post; it queues on the post the
+      // mirror holds, then the mirror adds its picture and commits.
+      cleanup = retention.runClubPostCleanup(new Date("2026-07-01T00:00:00.000Z"));
+      await waitForBlockedPostWriter(cleanup);
+      resume.release();
+      expect(await pass).toMatchObject({ upserted: 1 });
+      expect(await cleanup).toMatchObject({ deleted: 1 });
+
+      const storedKeys = (await Promise.all(stored.mock.results.map((r) => r.value as Promise<{ storageKey: string }>))).map((s) => s.storageKey);
+      expect(storedKeys).toHaveLength(1);
+      expect(await prisma.clubPost.count({ where: { serverPostId: "race-4588-doomed" } })).toBe(0);
+      expect(await prisma.clubPostImage.count({ where: { storageKey: { startsWith: "race-4588-" } } })).toBe(0);
+      // No row is left, so every file must have been deleted: the old one by
+      // the mirror, the new one by retention.
+      const deletedKeys = deleted.mock.calls.map(([key]) => key);
+      expect(deletedKeys).toEqual(expect.arrayContaining(["race-4588-old.webp", ...storedKeys]));
+    } finally {
+      resume.release();
+      await Promise.allSettled([pass, cleanup]);
+      spy.mockRestore();
+      stored.mockRestore();
       deleted.mockRestore();
     }
   });
