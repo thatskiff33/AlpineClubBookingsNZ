@@ -791,8 +791,8 @@ Four rules follow, and a new spec must satisfy all four:
 
 Every route segment with a `loading.tsx` (`/book`, `/bookings`,
 `/bookings/[id]`, `/dashboard`, `/finance`, and since #4467 **every `/admin/*`
-and `/lodge/*` page**, through the group-level `(admin)/loading.tsx` and
-`(lodge)/loading.tsx`) is a React streaming (Suspense) boundary. During
+page**, through the group-level `(admin)/loading.tsx`) is a React streaming
+(Suspense) boundary. During
 the reveal the content exists **twice** — once in a `hidden` streamed template
 and once live — so a bare `getByText("…")` resolves to two elements and strict
 mode fails the assertion outright (`resolved to 2 elements … unexpected value

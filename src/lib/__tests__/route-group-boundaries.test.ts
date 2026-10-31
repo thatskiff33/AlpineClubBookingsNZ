@@ -46,6 +46,8 @@ const APP_DIR = path.join(process.cwd(), "src", "app");
  * exemption cannot outlive its reason unnoticed.
  */
 const LOADING_EXEMPT: Partial<Record<RouteGroupKey, string>> = {
+  lodge:
+    "The lodge kiosk and roster fetch their own data on the client, so a group loading boundary never shows on a fresh load, and it would turn the roster layout's server redirect to the kiosk into a client-side one. The July 2026 hardening review (docs/reviews/2026-07-15-production-hardening.md, F36) says of loading skeletons: 'Lodge routes are client-fetched — do not add there.'",
   authenticated:
     "Member pages decide their own 404s after a database read — /notices/[id] answers an out-of-audience member with a hard 404 that e2e/member-notices.spec.ts asserts — and a group loading boundary would turn every one into a streamed 200. The member screens that are slow to load already carry their own loading.tsx (dashboard, bookings, book, booking detail, consent).",
   public:

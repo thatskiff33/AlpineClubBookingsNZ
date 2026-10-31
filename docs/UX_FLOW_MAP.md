@@ -1612,7 +1612,7 @@ the failed page is replaced. All of them are the one shared screen,
 | Admin (`/admin/*`) | `(admin)/error.tsx` | `/admin` | `(admin)/loading.tsx`; bookings, dashboard and members keep their own skeletons |
 | Member area (dashboard, bookings, profile, …) | `(authenticated)/error.tsx` | `/dashboard` | Per page only: dashboard, bookings, book, booking detail, consent |
 | Finance (`/finance`) | `(finance)/finance/error.tsx` | `/finance` | `(finance)/finance/loading.tsx` |
-| Lodge kiosk (`/lodge/*`) | `(lodge)/error.tsx` | `/lodge/kiosk` | `(lodge)/loading.tsx` (in-app navigation only; the kiosk loads its own data) |
+| Lodge kiosk (`/lodge/*`) | `(lodge)/error.tsx` | `/lodge/kiosk` | None: the kiosk and roster fetch their own data on the client (hardening review F36: "do not add there") |
 | Sign-in, recovery and token pages | `(public)/error.tsx` | `/` | None |
 | Public website | `(website)/error.tsx`, `(website-dynamic)/error.tsx` | `/` | None |
 

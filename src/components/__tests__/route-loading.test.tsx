@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
 import AdminLoading from "@/app/(admin)/loading";
-import LodgeLoading from "@/app/(lodge)/loading";
 import FinanceDashboardLoading from "@/app/(finance)/finance/loading";
 import { RouteLoading } from "@/components/route-loading";
 
@@ -47,7 +46,6 @@ describe("RouteLoading (#4467)", () => {
 
   for (const [name, Loading] of [
     ["(admin)", AdminLoading],
-    ["(lodge)", LodgeLoading],
     ["(finance)/finance", FinanceDashboardLoading],
   ] as const) {
     it(`${name}/loading.tsx renders the shell`, () => {
