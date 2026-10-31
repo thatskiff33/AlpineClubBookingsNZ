@@ -57,6 +57,8 @@ tester.run("no-nested-interactive", accessibility.rules["no-nested-interactive"]
     { code: `${LINK}const a = <a href="/x"><Button>Go</Button></a>;`, errors: [{ messageId: "nested" }] },
     { code: `${LINK}const a = <Button><Link href="/x">Go</Link></Button>;`, errors: [{ messageId: "nested" }] },
     { code: `${LINK}const a = <Button asChild={false}><Link href="/x">Go</Link></Button>;`, errors: [{ messageId: "nested" }] },
+    // asChild that may be false at runtime renders a real <button> around the link.
+    { code: `${LINK}const a = <Button asChild={isLink}><Link href="/x">Go</Link></Button>;`, errors: [{ messageId: "nested" }] },
     { code: `${LINK}const a = <button type="button"><a href="/x">Go</a></button>;`, errors: [{ messageId: "nested" }] },
     // asChild hands the Button's role to its child; a control inside that child still nests.
     { code: `${LINK}const a = <Button asChild><Link href="/x"><Button>Go</Button></Link></Button>;`, errors: [{ messageId: "nested" }] },

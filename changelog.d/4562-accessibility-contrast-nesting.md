@@ -1,5 +1,5 @@
-- **Error messages are readable in dark mode, and faded text and doubled
-  buttons are gone (#4553).** In dark mode, red error text and the red error
+- **Error messages are readable in dark mode, payment-option and calendar
+  text is no longer faded, and doubled buttons are gone (#4553).** In dark mode, red error text and the red error
   boxes used a dark red that was very hard to read on the dark background. They
   now use the lighter red the status labels already use. Light mode and printed
   pages look the same as before.

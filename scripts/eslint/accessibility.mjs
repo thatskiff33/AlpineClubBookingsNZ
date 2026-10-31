@@ -51,19 +51,25 @@ const minimumTextSize = {
   },
 };
 
-// #4553 — axe `nested-interactive`: a link or button inside another link or
-// button. `<Link><Button>…</Button></Link>` renders `<a><button>…</button></a>`,
-// two tab stops for one action and an invalid content model. The fix is
+// #4553 — a link or button inside another link or button.
+// `<Link><Button>…</Button></Link>` renders `<a><button>…</button></a>`: two tab
+// stops for one action and an invalid HTML content model. axe's
+// `nested-interactive` only reports the button-outside direction
+// (`<button><a>`), so this rule, not the browser scan, is what catches a link
+// around a button. The fix is
 // `<Button asChild><Link>…</Link></Button>`: the Button's Slot renders no element
 // of its own, so it is not an interactive ancestor. Link and Button are matched
 // by import (next/link's default export, the ui `Button`), so an unrelated
 // `Link` such as an icon is not mistaken for one.
 const INTRINSIC_INTERACTIVE = new Set(["a", "button"]);
 
-function isTruthyAttribute(attribute) {
+// Only a bare `asChild` or `asChild={true}` is certain to render no element: an
+// expression such as `asChild={isLink}` may be false at runtime and render a
+// real `<button>`, so it still counts as an interactive ancestor.
+function isLiteralTrueAttribute(attribute) {
   if (attribute.value === null) return true;
   const expression = attribute.value.type === "JSXExpressionContainer" ? attribute.value.expression : attribute.value;
-  return !(expression.type === "Literal" && expression.value === false);
+  return expression.type === "Literal" && expression.value === true;
 }
 
 const noNestedInteractive = {
@@ -71,7 +77,7 @@ const noNestedInteractive = {
     type: "problem",
     schema: [],
     messages: {
-      nested: "<{{inner}}> sits inside <{{outer}}>: interactive controls must not nest (axe nested-interactive). Use <Button asChild><Link>…</Link></Button> (#4553).",
+      nested: "<{{inner}}> sits inside <{{outer}}>: interactive controls must not nest (invalid HTML, two tab stops). Use <Button asChild><Link>…</Link></Button> (#4553).",
     },
   },
   create(context) {
@@ -89,7 +95,7 @@ const noNestedInteractive = {
 
     function rendersNoElement(openingElement) {
       return kind(openingElement) === "button" && openingElement.attributes.some(
-        (attribute) => attribute.type === "JSXAttribute" && attribute.name.name === "asChild" && isTruthyAttribute(attribute),
+        (attribute) => attribute.type === "JSXAttribute" && attribute.name.name === "asChild" && isLiteralTrueAttribute(attribute),
       );
     }
 

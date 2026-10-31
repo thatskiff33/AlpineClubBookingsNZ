@@ -78,6 +78,11 @@ const SURFACES = ["--background", "--card", "--popover", "--muted", "--secondary
 // `--danger-muted`, so this contract does not claim a light box on those.
 const PAGE_SURFACES = ["--background", "--card", "--popover"];
 
+// Each list is the cascade an element in that theme sees, nearest first: a
+// `.dark .app-theme-scope` element matches both app-scope rules (the dark one
+// wins where both declare a token), then inherits `.dark`, then `:root`. The
+// ink is read through the same list, so a `--destructive` declared inside an
+// app scope is measured, not skipped.
 type Theme = {
   name: string;
   ink: Map<string, string>[];
@@ -88,10 +93,10 @@ type Theme = {
 
 const THEMES: Theme[] = [
   { name: "light :root", ink: [ROOT], surfaces: [ROOT], textSurfaces: [...SURFACES, "--danger-muted"], boxSurfaces: PAGE_SURFACES },
-  { name: "light app scope", ink: [ROOT], surfaces: [APP, ROOT], textSurfaces: SURFACES, boxSurfaces: PAGE_SURFACES },
+  { name: "light app scope", ink: [APP, ROOT], surfaces: [APP, ROOT], textSurfaces: SURFACES, boxSurfaces: PAGE_SURFACES },
   { name: "website", ink: [WEBSITE, ROOT], surfaces: [WEBSITE, ROOT], textSurfaces: SURFACES, boxSurfaces: PAGE_SURFACES },
   { name: "dark .dark", ink: [DARK, ROOT], surfaces: [DARK, ROOT], textSurfaces: [...SURFACES, "--danger-muted"], boxSurfaces: [...SURFACES, "--danger-muted"] },
-  { name: "dark app scope", ink: [DARK, ROOT], surfaces: [DARK_APP, DARK, ROOT], textSurfaces: SURFACES, boxSurfaces: SURFACES },
+  { name: "dark app scope", ink: [DARK_APP, APP, DARK, ROOT], surfaces: [DARK_APP, APP, DARK, ROOT], textSurfaces: SURFACES, boxSurfaces: SURFACES },
 ];
 
 describe("destructive token contrast (#4553)", () => {

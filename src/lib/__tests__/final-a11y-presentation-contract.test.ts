@@ -144,9 +144,15 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/components/ui/dropdown-menu.tsx",
     ];
     for (const file of files) {
-      expect(source(file), file).not.toMatch(
-        /<span\b[^>]*className=\{?["`][^"`]*(?<![:\w-])opacity-\d+/,
-      );
+      // Any class string on any element — a `className` literal, a template or a
+      // `cn(…)` argument, not only a literal on a `<span>`. Two uses are not
+      // text and stay allowed: an `aria-hidden` icon, and `opacity-0` on a
+      // control that a hover or focus variant reveals at full opacity.
+      const faded = source(file)
+        .split("\n")
+        .filter((line) => !line.includes("aria-hidden"))
+        .filter((line) => /["'`][^"'`]*(?<![:\w-])opacity-(?:[1-9]\d?)\b/.test(line));
+      expect(faded, file).toEqual([]);
     }
     expect(source("src/components/ui/dropdown-menu.tsx")).toContain(
       '"ml-auto text-xs tracking-widest text-muted-foreground"',
