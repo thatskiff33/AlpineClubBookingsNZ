@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   imageDeleteMany: vi.fn(),
   // The post's row lock, taken inside the fence before the re-read (#4586).
   executeRaw: vi.fn(),
+  // A hide of an admin-removed mirror scrubs its reports (#4588 review).
+  reportDeleteMany: vi.fn(),
   settingsUpsert: vi.fn(),
   settingsUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
@@ -89,6 +91,7 @@ vi.mock("@/lib/prisma", () => ({
       delete: mocks.postDelete,
     },
     clubPostImage: { deleteMany: mocks.imageDeleteMany },
+    clubPostReport: { deleteMany: mocks.reportDeleteMany },
     $executeRaw: mocks.executeRaw,
     serverNzSettings: {
       upsert: mocks.settingsUpsert,
@@ -1409,15 +1412,45 @@ describe("a removed mirror stays removed (#4588)", () => {
     expect(mocks.deletePostImage).toHaveBeenCalledWith("k/fresh");
   });
 
-  it("keeps a removed mirror's blank row on a tombstone, so a later restore cannot bring it back", async () => {
+  it("leaves only a scrubbed marker on a HIDE, so a later restore cannot bring it back (#4588 review)", async () => {
     mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "hidden" }]));
-    mocks.postFindUnique.mockResolvedValue(REMOVED);
+    mocks.postFindUnique.mockResolvedValue({ ...REMOVED, images: [{ storageKey: "k/left-over" }] });
 
     const result = await runMirrorSync(NOW);
 
     expect(result.removed).toBe(0);
     expect(mocks.postDelete).not.toHaveBeenCalled();
+    // Nothing but what recognises the id survives: no author, origin name,
+    // words, body, reports or pictures.
+    expect(mocks.reportDeleteMany).toHaveBeenCalledWith({ where: { postId: "local-3" } });
+    expect(mocks.imageDeleteMany).toHaveBeenCalledWith({ where: { postId: "local-3" } });
+    expect(mocks.postUpdate).toHaveBeenCalledWith({
+      where: { id: "local-3" },
+      data: { authorName: "", originClubName: null, content: "", bodyHtml: null, reportCount: 0 },
+    });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/left-over");
+  });
+
+  it("deletes a removed mirror outright on a final REMOVAL, reports and all (#4588 review)", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "removed" }]));
+    mocks.postFindUnique.mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(mocks.postDelete).toHaveBeenCalledWith({ where: { id: "local-3" } });
     expect(mocks.postUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still deletes a mirror nobody removed here on a hide", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "hidden" }]));
+    mocks.postFindUnique.mockResolvedValue({ ...REMOVED, removedAt: null });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(mocks.postDelete).toHaveBeenCalledWith({ where: { id: "local-3" } });
+    expect(mocks.reportDeleteMany).not.toHaveBeenCalled();
   });
 });
 

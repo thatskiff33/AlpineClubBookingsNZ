@@ -32,7 +32,10 @@ import {
  * follows from that. Content is upserted, never edited here; a tombstone
  * deletes the mirror row outright rather than soft-hiding it, because there is
  * nothing local worth keeping — the authoritative copy lives with the club
- * that wrote it. Our OWN posts coming back around the loop are recognised by
+ * that wrote it. The one exception (#4588): a "hidden" tombstone for a mirror
+ * this club's admin already removed leaves a scrubbed marker, because a hide
+ * can be reversed and the marker is what keeps the removal standing; see
+ * {@link applyRemoval}. Our OWN posts coming back around the loop are recognised by
  * `serverPostId` and skipped: this install is authoritative for those.
  *
  * DRIVEN TWO WAYS, ONE WRITER. The push webhook and the polling cron both end
@@ -243,21 +246,38 @@ async function lockMirroredPost<S extends Prisma.ClubPostSelect>(tx: ServerNzAns
   return locked === 0 ? null : tx.clubPost.findUnique({ where: { serverPostId }, select });
 }
 
-/** Apply one tombstone under the fence and the post's row lock (#4470, #4586). */
+/** Apply one tombstone under the fence and the post's row lock (#4470, #4586, #4588). */
 async function applyRemoval(
   serverPostId: string,
+  reason: "hidden" | "removed",
   write: ServerNzAnswerWrite,
 ): Promise<boolean> {
-  const removedFiles = await write(async (tx) => {
+  const outcome = await write(async (tx): Promise<{ files: string[]; removed: boolean } | null> => {
     const existing = await lockMirroredPost(tx, serverPostId, {
       id: true, originClubCode: true, hiddenAt: true, removedAt: true, images: { select: { storageKey: true } },
     });
     if (!existing) return null;
-    // A mirror this club's admin removed is KEPT (#4588): its words and
-    // pictures are already gone, and the blank row is what keeps the removal
-    // standing if the server restores the post later (a "hidden" takedown can
-    // be reversed). Retention deletes it in time.
-    if (existing.originClubCode !== null && existing.removedAt) return null;
+    const files = existing.images.map((image) => image.storageKey);
+    if (existing.originClubCode !== null && existing.removedAt && reason === "hidden") {
+      // A HIDE of a mirror this club's admin already removed (#4588). A hide
+      // can be reversed at the server, and deleting the row would let that
+      // restore re-create the post here, undoing the removal; so a MARKER
+      // stays, scrubbed of everything but what recognises the id. Kept:
+      // `serverPostId` (the recognition), `originClubCode` (non-null is what
+      // marks a mirror; null would make it read as our own post), `removedAt`
+      // (the decision), `postedAt` (so retention, where on, expires the marker
+      // too) and `hiddenAt` (a timestamp). Blanked: the author, the origin
+      // club's name, the words and the body; deleted: its reports (their
+      // reporter names and details can quote the removed words) and any image
+      // rows. A "removed" tombstone is final and deletes the row below.
+      await tx.clubPostReport.deleteMany({ where: { postId: existing.id } });
+      await tx.clubPostImage.deleteMany({ where: { postId: existing.id } });
+      await tx.clubPost.update({
+        where: { id: existing.id },
+        data: { authorName: "", originClubName: null, content: "", bodyHtml: null, reportCount: 0 },
+      });
+      return { files, removed: false };
+    }
     if (existing.originClubCode === null) {
       // OUR OWN post, taken down on the network side (a central-server admin
       // removed it, or reports hid it). The row stops claiming to be shared,
@@ -268,17 +288,19 @@ async function applyRemoval(
         where: { id: existing.id },
         data: { sharedAt: null, serverPostId: null, shareRequestedAt: null, hiddenAt: existing.hiddenAt ?? new Date() },
       });
-      return [];
+      return { files: [], removed: true };
     }
     // A mirror is a cache: the authoritative copy lives with the club that
-    // wrote it, so the row is deleted outright, its images by cascade.
+    // wrote it, so the row is deleted outright, its images and reports by
+    // cascade. That includes one this club's admin removed, on a "removed"
+    // tombstone: the takedown is final, so no marker is needed.
     await tx.clubPost.delete({ where: { id: existing.id } });
-    return existing.images.map((image) => image.storageKey);
+    return { files, removed: true };
   });
-  if (removedFiles === null) return false;
+  if (outcome === null) return false;
   // Rows first, files second, as everywhere else.
-  for (const key of removedFiles) await deletePostImage(key);
-  return true;
+  for (const key of outcome.files) await deletePostImage(key);
+  return outcome.removed;
 }
 
 /** The mirror's stored position: its cursor pair and its failure count (#4470). */
@@ -475,7 +497,7 @@ export async function runMirrorSync(
             if (outcome === "unchanged") result.unchanged += 1;
             else if (outcome !== "skipped") result.upserted += 1;
           } else {
-            if (await applyRemoval(change.id, pageWrite)) result.removed += 1;
+            if (await applyRemoval(change.id, change.reason, pageWrite)) result.removed += 1;
           }
         } catch (error) {
           // PER-CHANGE ISOLATION (#3091 review 2). A throw here used to

@@ -6,10 +6,9 @@
  * 2. A mirror tombstone and an admin removal of the same post, each held after
  *    its first lock while the other queues, in both orders. Both writers take
  *    the post row before its image rows, so neither deadlocks and the end state
- *    is consistent: no image rows, every named file deleted once the rows are
- *    gone, and the post row gone, or (since #4588) kept blank and removed when
- *    the admin's removal committed first. Taking the images first (the admin's
- *    old order) deadlocks in both orders here.
+ *    is one: no post row, no image rows, every named file deleted once the rows
+ *    are gone. Taking the images first (the admin's old order) deadlocks in
+ *    both orders here.
  *
  * Real writers only: `runMirrorSync` and `removeClubPost`, with the central
  * server answered by a stubbed `fetch` (no HTTP leaves this process) and the
@@ -21,7 +20,9 @@
  * #4588 adds the board's lifecycle races, owning `race-4588-` rows and putting
  * the board's settings row back as it found it:
  * 3. A pass taken over mid-pass applies nothing after the takeover.
- * 4. A mirror this club removed keeps its blank words when re-delivered.
+ * 4. A mirror this club removed keeps its blank words when re-delivered, and
+ *    a server HIDE of it leaves only a scrubbed marker (no author, origin
+ *    name or reports) that a later restore cannot bring back.
  * 5. A member's post claiming an old upload while the orphan sweep runs keeps
  *    the image row and its file.
  * 6. A mirror update adding a picture to a post retention is deleting leaves
@@ -266,7 +267,7 @@ type Latch = ReturnType<typeof latch>;
     expect((await prisma.serverNzSettings.findUnique({ where: { id: "default" } }))?.commsSyncStartedAt).toBeNull();
   });
 
-  it("removes the post's words and pictures once, without deadlock, when an admin removal holds the post and a tombstone queues", async () => {
+  it("removes the post once, without deadlock, when an admin removal holds the post and a tombstone queues", async () => {
     await seedMirroredPost();
     const deleted = vi.spyOn(storage, "deletePostImage").mockResolvedValue(undefined);
     answerFeed(async () => TOMBSTONE_PAGE);
@@ -289,13 +290,9 @@ type Latch = ReturnType<typeof latch>;
       expect(await removalOutcome).toEqual({ error: null });
       const { result, error } = await passOutcome;
       expect(error).toBeNull();
-      // The tombstone found the admin's removal under its lock and kept the
-      // blank row (#4588): it is what keeps a later restore from bringing the
-      // post back.
-      expect(result).toMatchObject({ removed: 0 });
-      expect(await postState()).toEqual({ posts: 1, images: 0 });
-      expect(await prisma.clubPost.findUnique({ where: { id: "race-4586-row" }, select: { content: true, removedAt: true } }))
-        .toEqual({ content: "", removedAt: expect.any(Date) });
+      // A "removed" tombstone is final, so the admin-removed row goes too.
+      expect(result).toMatchObject({ removed: 1 });
+      expect(await postState()).toEqual({ posts: 0, images: 0 });
       expect(deleted.mock.calls.map(([key]) => key).sort()).toEqual(STORAGE_KEYS);
     } finally {
       resume.release();
@@ -423,6 +420,41 @@ type Latch = ReturnType<typeof latch>;
         .toEqual({ content: "", bodyHtml: null, _count: { images: 0 } });
       // Nothing was downloaded for it.
       expect(stored).not.toHaveBeenCalled();
+    } finally {
+      stored.mockRestore();
+    }
+  });
+
+  it("scrubs a removed mirror to a marker on a server hide, reports included, and a restore cannot bring it back (#4588 review)", async () => {
+    await prisma.member.create({ data: {
+      id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password",
+      firstName: "Race", lastName: "Member", ageTier: "ADULT", canLogin: true,
+    } });
+    const row = await prisma.clubPost.create({ data: {
+      serverPostId: "race-4588-hidden", originClubCode: "RACE4588", originClubName: "Race Club", authorName: "Race Author",
+      content: "", removedAt: new Date("2026-06-30T12:00:00.000Z"), postedAt: new Date("2026-06-30T00:00:00.000Z"), reportCount: 1,
+      reports: { create: [{ reporterMemberId: MEMBER_ID, reporterName: "Race Member", reason: "OTHER", details: "It said the removed words." }] },
+    } });
+    const stored = observeStoredImages();
+    answerFeed(async (call) => (call === 1
+      ? { changes: [{ state: "removed", id: "race-4588-hidden", reason: "hidden" }], cursor: null, hasMore: false }
+      // The server restores it, and it arrives as a visible change again.
+      : { changes: [visibleChange("race-4588-hidden", "Restored at the server.")], cursor: null, hasMore: false }));
+    try {
+      expect(await mirror.runMirrorSync(new Date("2026-07-01T00:00:00.000Z"))).toMatchObject({ removed: 0 });
+      const marker = await prisma.clubPost.findUnique({ where: { id: row.id }, select: {
+        serverPostId: true, originClubCode: true, originClubName: true, authorName: true, content: true, bodyHtml: true,
+        reportCount: true, removedAt: true, _count: { select: { reports: true, images: true } },
+      } });
+      expect(marker).toEqual({
+        serverPostId: "race-4588-hidden", originClubCode: "RACE4588", originClubName: null, authorName: "", content: "",
+        bodyHtml: null, reportCount: 0, removedAt: expect.any(Date), _count: { reports: 0, images: 0 },
+      });
+
+      expect(await mirror.runMirrorSync(new Date("2026-07-01T00:01:00.000Z"))).toMatchObject({ upserted: 0 });
+      expect(await prisma.clubPost.findUnique({ where: { id: row.id }, select: { content: true, authorName: true } }))
+        .toEqual({ content: "", authorName: "" });
+      expect(await prisma.clubPost.count({ where: { serverPostId: "race-4588-hidden" } })).toBe(1);
     } finally {
       stored.mockRestore();
     }
