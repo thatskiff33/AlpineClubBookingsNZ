@@ -899,3 +899,27 @@ describe("compile-changelog", () => {
     expect(todayInNewZealand()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
+
+describe("compile-changelog run directly (#4569)", () => {
+  it("runs its main block when started through a symlink, never exiting 0 having done nothing", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "compile-changelog-link-"));
+    try {
+      const link = path.join(dir, "compile-changelog.mjs");
+      fs.symlinkSync(path.resolve("scripts/release/compile-changelog.mjs"), link);
+      // No version: a main block that runs refuses loudly; one that is skipped
+      // (the old unresolved argv[1] check) exits 0 and prints nothing.
+      let status = 0;
+      let stderr = "";
+      try {
+        execFileSync(process.execPath, [link], { cwd: dir, encoding: "utf8", stdio: "pipe" });
+      } catch (error) {
+        status = error.status;
+        stderr = String(error.stderr);
+      }
+      expect(status).toBe(1);
+      expect(stderr).toContain("compile-changelog failed");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
