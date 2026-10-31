@@ -87,6 +87,7 @@ import {
   unwrap,
   type ResolvedObject,
 } from "./ts-call-site-scan";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * The modules that OWN the credential boundary; their own writes are not sites.
@@ -778,11 +779,7 @@ function main(): void {
 }
 
 // `tsx scripts/audit/credential-actor-census.ts` runs the census; importing it
-// (the contract test does) must not. The path is matched in full rather than by
-// a substring, and through `toPosix`, so the guard behaves the same on Windows.
-if (
-  process.argv[1] &&
-  toPosix(process.argv[1]).endsWith("scripts/audit/credential-actor-census.ts")
-) {
+// (the contract test does) must not.
+if (isMainModule(import.meta.url)) {
   main();
 }

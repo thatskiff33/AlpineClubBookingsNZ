@@ -12,7 +12,7 @@
 // shard runs it.
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const DURATIONS_FILE = path.join(import.meta.dirname, "e2e-spec-durations.mjs");
 // `<job>\t<step>\t<ISO timestamp> <list-reporter line>`, the list reporter's
@@ -53,7 +53,7 @@ export function renderDurationsModule(seconds, source) {
   ].join("\n");
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isMainModule(import.meta.url)) {
   const logFile = process.argv[2];
   if (!logFile) {
     console.error("Usage: node scripts/ci/record-e2e-spec-durations.mjs <gh-run-log-file> [source note]");

@@ -1,5 +1,3 @@
-import { pathToFileURL } from "node:url";
-
 import { escapeRegex } from "./escape-regex.mjs";
 import {
   fetchLivePrBody,
@@ -8,6 +6,7 @@ import {
   readEventPrBody,
   selectPrBody,
 } from "./pr-body.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const HEADING = "## Concurrency And Lock Impact";
 
@@ -185,8 +184,7 @@ const OUTCOME_MESSAGES = {
   complete: "the PR body carries a complete declaration.",
 };
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const base = process.env.PR_BASE_SHA;
     const head = process.env.PR_HEAD_SHA;

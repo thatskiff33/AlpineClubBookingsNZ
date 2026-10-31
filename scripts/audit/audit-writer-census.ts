@@ -109,6 +109,7 @@ import {
   type ResolvedObject,
 } from "./ts-call-site-scan";
 import { stripSqlComments } from "../../prisma/migration-verification/split-statements";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The module that owns the audit boundary; its own writes are not call sites. */
 export const AUDIT_BOUNDARY_MODULE = "src/lib/audit.ts";
@@ -1351,9 +1352,6 @@ function main(): void {
 
 // `tsx scripts/audit/audit-writer-census.ts` runs the census; importing it (the
 // contract test does) must not.
-if (
-  process.argv[1] &&
-  toPosix(process.argv[1]).endsWith("scripts/audit/audit-writer-census.ts")
-) {
+if (isMainModule(import.meta.url)) {
   main();
 }

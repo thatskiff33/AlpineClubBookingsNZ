@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 const ACCESS_ROLE_CLEANUP_MIGRATION =
   "20260629160000_access_roles_membership_type_cleanup";
@@ -1072,7 +1072,7 @@ function main(): void {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isMainModule(import.meta.url)) {
   try {
     main();
   } catch (error) {

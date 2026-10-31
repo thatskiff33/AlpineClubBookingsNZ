@@ -25,10 +25,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { AREAS, areasForPair } from "./fragility-areas.mjs";
 import { AUDIT_CUTOFF, INCIDENTAL_WORDING, MIN_REFIX_GAP_DAYS, REPO, issueUrl, pairKey } from "./fragility-lib.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT_DIR = path.join(ROOT, "tmp/fragility");
@@ -276,7 +277,7 @@ function writeRanking() {
   console.error(`ranked ${rows.length} areas into ${path.relative(ROOT, docFile)}`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isMainModule(import.meta.url)) {
   if (process.argv.includes("candidates")) writeCandidates();
   else writeRanking();
 }

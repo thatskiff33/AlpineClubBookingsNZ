@@ -1,6 +1,5 @@
-import { pathToFileURL } from "node:url";
-
 import { decideScope, pullRequestChangedFiles, reportScope } from "./change-scope.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 // #4397: whether a pull request can change what the browser suite exercises.
 // 23 of 100 merged PRs touched only docs, unit tests or agent notes, and each
@@ -52,6 +51,6 @@ export function decide(eventName, listFiles = pullRequestChangedFiles) {
   return decideScope(eventName, e2eNeeded, listFiles);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   reportScope("E2E", decide(process.env.GITHUB_EVENT_NAME));
 }

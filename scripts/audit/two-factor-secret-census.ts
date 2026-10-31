@@ -49,6 +49,7 @@ import {
   toPosix,
   unwrap,
 } from "./ts-call-site-scan";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The `Member` columns that hold or switch the second factor. */
 export const TWO_FACTOR_SECRET_FIELDS = [
@@ -239,6 +240,6 @@ function main(): void {
   );
 }
 
-if (process.argv[1] && /two-factor-secret-census\.ts$/.test(process.argv[1])) {
+if (isMainModule(import.meta.url)) {
   main();
 }

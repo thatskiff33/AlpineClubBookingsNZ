@@ -29,9 +29,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { isBlameIgnoredPath } from "./fragility-lib.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT_DIR = path.join(ROOT, "tmp/fragility");
@@ -226,4 +227,4 @@ function main() {
   console.log(`\n${result.total} pairs; ${result.unmapped} map to no area.`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) main();
+if (isMainModule(import.meta.url)) main();

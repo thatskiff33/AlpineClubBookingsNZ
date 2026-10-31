@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 
 import { gitDiffChangedFiles, parseNameStatus } from "./pr-body.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 // #4397, #4425: whether a pull request's change can move what a required CI
 // job proves. A job runs this as a STEP and skips its heavy steps only when it
@@ -133,7 +133,7 @@ export function reportScope(label, { needed, reason }, outputPath = process.env.
   if (outputPath) appendFileSync(outputPath, `needed=${needed}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   const name = process.argv[2];
   const scope = Object.hasOwn(CHANGE_SCOPES, name ?? "") ? CHANGE_SCOPES[name] : undefined;
   // An unknown scope is a classification error like any other: run.

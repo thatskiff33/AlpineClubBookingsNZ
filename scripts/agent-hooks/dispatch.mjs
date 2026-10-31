@@ -26,11 +26,11 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
+import { isMainModule } from "../lib/is-main-module.mjs";
 import { blockMessage, findViolation } from "./rules.mjs";
 
 /**
@@ -138,17 +138,7 @@ function main() {
   process.exitCode = result.exitCode;
 }
 
-/**
- * Run as a script, compared by real path: a checkout reached through a symlink
- * gives a different `argv[1]`, and a guard that silently skipped `main()` there
- * would exit 0 and enforce nothing.
- */
-function invokedDirectly() {
-  try {
-    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (invokedDirectly()) main();
+// Compared by real path (`is-main-module.mjs`): a checkout reached through a
+// symlink gives a different `argv[1]`, and a guard that silently skipped
+// `main()` there would exit 0 and enforce nothing.
+if (isMainModule(import.meta.url)) main();

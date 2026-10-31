@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /** Read-only reservation report. No GitHub writes or automatic release. */
-import { pathToFileURL } from "node:url";
 
 import { ghJson } from "./lib/github-cli.mjs";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 const STALE_HOURS = 72;
 const STALE_MS = STALE_HOURS * 60 * 60 * 1000;
@@ -130,6 +130,6 @@ async function main() {
   if (!stale.length) console.log("No stale reservations.");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 }
