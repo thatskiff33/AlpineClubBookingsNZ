@@ -13,11 +13,13 @@ const h = vi.hoisted(() => ({
   writeAudit: vi.fn(),
   getPayments: vi.fn(),
   getPayment: vi.fn(),
+  opFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroObjectLink: { findMany: h.linkFindMany, updateMany: h.linkUpdateMany, findUnique: h.linkFindUnique },
+    xeroSyncOperation: { findFirst: h.opFindFirst },
   },
 }));
 vi.mock("@/lib/xero-api-usage", () => ({ xeroDailyBudgetAllowsDeferrableCall: h.budgetAllows }));
@@ -55,6 +57,7 @@ beforeEach(() => {
   h.budgetAllows.mockResolvedValue(true);
   h.linkUpdateMany.mockResolvedValue({ count: 1 });
   h.linkFindUnique.mockResolvedValue({ active: false, metadata: {} });
+  h.opFindFirst.mockResolvedValue(null);
 });
 
 describe("the deleted-payment link backfill (#4531)", () => {
@@ -167,5 +170,36 @@ describe("the deleted-payment link backfill (#4531)", () => {
     expect(h.getPayment).not.toHaveBeenCalled();
     expect(result).toMatchObject({ deferred: ["deleted-1", "deleted-2"], retiredLinks: 0 });
     expect(h.linkUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("--apply keeps a card receipt's deleted payment while its FAILED receipt operation may still run, and retires it once that is done", async () => {
+    const receiptLink = { ...link("deleted-capture"), localModel: "PaymentTransaction", localId: "txn-1", role: "ADDITIONAL_CAPTURE_PAYMENT" };
+    h.getPayments.mockResolvedValue({ body: { payments: [{ paymentID: "deleted-capture", status: "DELETED" }] } });
+    h.linkFindMany.mockResolvedValue([receiptLink]);
+    h.getPayment.mockResolvedValue({ body: { payments: [{ paymentID: "deleted-capture", status: "DELETED" }] } });
+    h.opFindFirst.mockResolvedValue({ id: "receipt-op", status: "FAILED", entityType: "PAYMENT", operationType: "CREATE" });
+
+    const held = await applyDeletedPaymentLinkBackfill(session);
+
+    expect(held).toMatchObject({ blocked: ["deleted-capture"], retiredLinks: 0 });
+    expect(h.getPayment).not.toHaveBeenCalled();
+    expect(h.opFindFirst.mock.calls[0][0].where).toMatchObject({ localModel: "PaymentTransaction", localId: "txn-1", manuallyResolvedAt: null });
+    expect(h.linkUpdateMany).toHaveBeenCalledTimes(1);
+    expect(h.linkUpdateMany.mock.calls[0][0].data).toEqual({
+      metadata: expect.objectContaining({ deletionCheckPending: true, deletionCheckBlockedBy: "receipt-op" }),
+    });
+
+    vi.clearAllMocks();
+    h.budgetAllows.mockResolvedValue(true);
+    h.linkUpdateMany.mockResolvedValue({ count: 1 });
+    h.opFindFirst.mockResolvedValue(null);
+    h.getPayments.mockResolvedValue({ body: { payments: [{ paymentID: "deleted-capture", status: "DELETED" }] } });
+    h.linkFindMany.mockResolvedValue([receiptLink]);
+    h.getPayment.mockResolvedValue({ body: { payments: [{ paymentID: "deleted-capture", status: "DELETED" }] } });
+
+    const done = await applyDeletedPaymentLinkBackfill(session);
+
+    expect(done).toMatchObject({ confirmedDeleted: ["deleted-capture"], retiredLinks: 1, blocked: [] });
+    expect(h.linkUpdateMany.mock.calls[0][0].data).toMatchObject({ active: false, metadata: expect.objectContaining({ status: "DELETED" }) });
   });
 });

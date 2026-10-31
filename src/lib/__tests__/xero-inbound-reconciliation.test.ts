@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   xeroSyncOperationFindMany: vi.fn(),
   xeroSyncCursorFindUnique: vi.fn(),
   xeroSyncCursorUpsert: vi.fn(),
+  xeroSyncOperationFindFirst: vi.fn(),
   memberFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
   // #2939: `applyInboundMemberContactPatch` now takes the contact-home lock and
@@ -139,6 +140,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       findMany: mocks.xeroSyncOperationFindMany,
+      // #4531: the retire asks whether an operation on the link's record may still run.
+      findFirst: mocks.xeroSyncOperationFindFirst,
     },
     xeroSyncCursor: {
       findUnique: mocks.xeroSyncCursorFindUnique,

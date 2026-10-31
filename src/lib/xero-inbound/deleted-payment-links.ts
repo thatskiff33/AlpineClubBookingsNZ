@@ -13,7 +13,10 @@
  * call: one attempt, no waiting, capped per run, and spent only below the usage
  * panel's "critical" threshold. A candidate that could not be judged is marked
  * pending, and the inbound cron cycle re-checks marked links at most every six
- * hours (`recheckPendingDeletedPaymentLinks`); the backfill
+ * hours (`recheckPendingDeletedPaymentLinks`). A link whose local row still has
+ * a Xero operation that may run again is never retired: that retry would read
+ * the link's absence as "not recorded" and send the payment again
+ * (`findRerunnableOperation`); it stays marked until the operation is done. The backfill
  * (`xero-deleted-payment-link-backfill.ts`) covers the rest. Nothing here runs
  * inside a transaction; every link write is one guarded statement.
  */
@@ -32,6 +35,7 @@ import {
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { xeroDailyBudgetAllowsDeferrableCall } from "@/lib/xero-api-usage";
 import { getXeroSyncCursor, upsertXeroSyncCursor } from "@/lib/xero-sync-cursors";
+import { XERO_RERUNNABLE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 import { quantifyXeroInvoiceCashCents } from "./invoice-paid-effects";
 import { sumListedXeroPaymentCents } from "./amounts";
 import { DEFAULT_XERO_SYNC_SCOPE, DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE } from "./constants";
@@ -63,7 +67,16 @@ export const DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 export const DELETION_CHECK_PENDING_KEY = "deletionCheckPending";
 const DELETION_CHECK_PENDING_SINCE_KEY = "deletionCheckPendingSince";
 const DELETION_CHECK_ATTEMPTS_KEY = "deletionCheckAttempts";
-const DELETION_CHECK_KEYS = [DELETION_CHECK_PENDING_KEY, DELETION_CHECK_PENDING_SINCE_KEY, DELETION_CHECK_ATTEMPTS_KEY];
+/** The operation that held a retire back, and when; rewritten on each check so a held link rotates to the back. */
+const DELETION_CHECK_BLOCKED_BY_KEY = "deletionCheckBlockedBy";
+const DELETION_CHECK_BLOCKED_AT_KEY = "deletionCheckBlockedAt";
+const DELETION_CHECK_KEYS = [
+  DELETION_CHECK_PENDING_KEY,
+  DELETION_CHECK_PENDING_SINCE_KEY,
+  DELETION_CHECK_ATTEMPTS_KEY,
+  DELETION_CHECK_BLOCKED_BY_KEY,
+  DELETION_CHECK_BLOCKED_AT_KEY,
+];
 
 type XeroClientSession = Awaited<ReturnType<typeof getAuthenticatedXeroClient>>;
 
@@ -259,53 +272,117 @@ function isPendingDeletionCheck(metadata: unknown): boolean {
   return asMetadataRecord(metadata)[DELETION_CHECK_PENDING_KEY] === true;
 }
 
+/** A Xero operation on a link's local row that may still run. */
+export type RerunnableOperation = { id: string; status: string; entityType: string; operationType: string };
+
+/**
+ * #4531 (PR #4596 review, finding 11): the Xero operation on this link's local
+ * row (`localModel`/`localId`, a Payment or a PaymentTransaction) that may
+ * still run: live, or FAILED/PARTIAL and not resolved by hand
+ * (`XERO_RERUNNABLE_OPERATION_STATUSES`). Two such parents - the booking
+ * change's card receipt and the primary invoice's PARTIAL payment repair - skip
+ * re-sending a payment while an active link records it, and their payment is
+ * made by a separate operation that writes the link before the parent
+ * completes. While one is open, retiring the link would let its retry pay
+ * again, so the retire waits.
+ */
+export async function findRerunnableOperation(
+  link: Pick<DeletedPaymentLinkRow, "localModel" | "localId">,
+): Promise<RerunnableOperation | null> {
+  return prisma.xeroSyncOperation.findFirst({
+    where: {
+      localModel: link.localModel,
+      localId: link.localId,
+      status: { in: [...XERO_RERUNNABLE_OPERATION_STATUSES] },
+      manuallyResolvedAt: null,
+    },
+    select: { id: true, status: true, entityType: true, operationType: true },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+type GuardedWriteResult = { result: "written" } | { result: "unchanged" } | { result: "blocked"; operation: RerunnableOperation };
+
 /**
  * One guarded write to an ACTIVE payment link: `change` builds the update from
  * the metadata as stored, or returns null for no write. Guarded on the row being
  * still active with that metadata, so a concurrent writer's metadata is never
- * overwritten; a lost guard re-reads and tries once more. Returns whether it wrote.
+ * overwritten; a lost guard re-reads and tries once more. `holdBack`, when
+ * given, is asked immediately before every attempt and stops the write.
  */
 async function writeActivePaymentLink(
   link: DeletedPaymentLinkRow,
   change: (metadata: unknown) => { active?: false; metadata: Record<string, unknown> } | null,
-): Promise<boolean> {
+  holdBack?: () => Promise<RerunnableOperation | null>,
+): Promise<GuardedWriteResult> {
   let metadata: unknown = link.metadata;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const next = change(metadata);
-    if (!next) return false;
+    if (!next) return { result: "unchanged" };
+    const operation = holdBack ? await holdBack() : null;
+    if (operation) return { result: "blocked", operation };
     const { count } = await prisma.xeroObjectLink.updateMany({
       where: { id: link.id, xeroObjectType: "PAYMENT", active: true, metadata: sameMetadata(metadata) },
       // Built here, so the write guard can see it names no `xeroObjectUrl`.
       data: { ...(next.active === false ? { active: false } : {}), metadata: next.metadata as Prisma.InputJsonValue },
     });
-    if (count === 1) return true;
+    if (count === 1) return { result: "written" };
     const reread = await prisma.xeroObjectLink.findUnique({
       where: { id: link.id },
       select: { active: true, metadata: true },
     });
-    if (!reread?.active) return false;
+    if (!reread?.active) return { result: "unchanged" };
     metadata = reread.metadata;
   }
-  return false;
+  return { result: "unchanged" };
 }
+
+export type RetireResult = "retired" | "blocked" | "unchanged";
 
 /**
  * Retire one link of a payment Xero confirmed DELETED: inactive, its recorded
  * status DELETED, every other metadata field kept but the pending marker.
- * Replays write nothing. Returns whether this call retired it.
+ *
+ * Not while its local row has an operation that may still run
+ * (`findRerunnableOperation`), asked immediately before each guarded write
+ * rather than in a transaction with it: nothing can make that answer wrong in
+ * between. An operation leaves the set by finishing, which only makes the
+ * hold-back stricter than needed; it never re-enters it (a recorded outcome is
+ * final, `INV-INT-029`, and a retry claim moves FAILED/PARTIAL to RUNNING,
+ * inside the set). The only new entry is a new operation, which never holds
+ * this payment's link. A held link is marked pending with the operation that
+ * held it, so the scheduled re-check tries again once it is done.
+ * Replays write nothing.
  */
-export async function retireDeletedXeroPaymentLink(link: DeletedPaymentLinkRow): Promise<boolean> {
-  return writeActivePaymentLink(link, (metadata) => ({
-    active: false,
-    metadata: { ...withoutPendingMarker(metadata), status: DELETED_XERO_PAYMENT_STATUS },
-  }));
+export async function retireDeletedXeroPaymentLink(link: DeletedPaymentLinkRow): Promise<RetireResult> {
+  const written = await writeActivePaymentLink(
+    link,
+    (metadata) => ({ active: false, metadata: { ...withoutPendingMarker(metadata), status: DELETED_XERO_PAYMENT_STATUS } }),
+    () => findRerunnableOperation(link),
+  );
+  if (written.result === "blocked") {
+    await markPendingDeletionCheck(link, false, written.operation);
+    logger.warn(
+      { linkId: link.id, paymentId: link.xeroObjectId, operation: written.operation },
+      "A payment deleted in Xero kept its link: an operation on its record may still run, and would pay again",
+    );
+    return "blocked";
+  }
+  return written.result === "written" ? "retired" : "unchanged";
 }
 
-/** Mark a candidate Xero could not judge; `failedAnswer` counts an answer that failed. */
-async function markPendingDeletionCheck(link: DeletedPaymentLinkRow, failedAnswer: boolean): Promise<void> {
+/**
+ * Mark a candidate Xero could not judge; `failedAnswer` counts an answer that
+ * failed, and `blockedBy` names the operation that held a retire back.
+ */
+async function markPendingDeletionCheck(
+  link: DeletedPaymentLinkRow,
+  failedAnswer: boolean,
+  blockedBy?: RerunnableOperation,
+): Promise<void> {
   await writeActivePaymentLink(link, (metadata) => {
     const record = asMetadataRecord(metadata);
-    if (record[DELETION_CHECK_PENDING_KEY] === true && !failedAnswer) return null;
+    if (record[DELETION_CHECK_PENDING_KEY] === true && !failedAnswer && !blockedBy) return null;
     const attempts = typeof record[DELETION_CHECK_ATTEMPTS_KEY] === "number" ? (record[DELETION_CHECK_ATTEMPTS_KEY] as number) : 0;
     return {
       metadata: {
@@ -313,6 +390,9 @@ async function markPendingDeletionCheck(link: DeletedPaymentLinkRow, failedAnswe
         [DELETION_CHECK_PENDING_KEY]: true,
         [DELETION_CHECK_PENDING_SINCE_KEY]: record[DELETION_CHECK_PENDING_SINCE_KEY] ?? new Date().toISOString(),
         [DELETION_CHECK_ATTEMPTS_KEY]: attempts + (failedAnswer ? 1 : 0),
+        ...(blockedBy
+          ? { [DELETION_CHECK_BLOCKED_BY_KEY]: blockedBy.id, [DELETION_CHECK_BLOCKED_AT_KEY]: new Date().toISOString() }
+          : {}),
       },
     };
   });
@@ -325,6 +405,18 @@ async function clearPendingDeletionCheck(link: DeletedPaymentLinkRow): Promise<v
   );
 }
 
+/**
+ * A payment none of whose links may be retired now: each has an operation
+ * that may still run. Asking Xero about it would spend a call for nothing, so
+ * each link is marked with its operation and Xero is not asked.
+ */
+export async function holdBackIfEveryLinkBlocked(links: DeletedPaymentLinkRow[]): Promise<boolean> {
+  const operations = await Promise.all(links.map((link) => findRerunnableOperation(link)));
+  if (operations.some((operation) => !operation)) return false;
+  for (const [index, link] of links.entries()) await markPendingDeletionCheck(link, false, operations[index]!);
+  return true;
+}
+
 export type DeletedPaymentLinkOutcome = {
   /** Why nothing was nominated, when the payload could not be trusted. */
   skippedReason?: string;
@@ -334,6 +426,8 @@ export type DeletedPaymentLinkOutcome = {
   confirmedLive: string[];
   unconfirmed: string[];
   deferred: string[];
+  /** Payments with a link held back by an operation on its record that may still run. */
+  blocked: string[];
   retiredLinks: number;
 };
 
@@ -358,6 +452,10 @@ async function judgeCandidatePayments(input: {
       for (const link of links) await markPendingDeletionCheck(link, false);
       continue;
     }
+    if (await holdBackIfEveryLinkBlocked(links)) {
+      outcome.blocked.push(paymentId);
+      continue;
+    }
     const { confirmation, called } = await confirmXeroPaymentDeleted(input.session, paymentId, {
       workflow: input.workflow,
       expected: input.expectedFor(links),
@@ -376,7 +474,9 @@ async function judgeCandidatePayments(input: {
     } else {
       outcome.confirmedDeleted.push(paymentId);
       for (const link of links) {
-        if (await retireDeletedXeroPaymentLink(link)) retired.push(link);
+        const result = await retireDeletedXeroPaymentLink(link);
+        if (result === "retired") retired.push(link);
+        else if (result === "blocked" && !outcome.blocked.includes(paymentId)) outcome.blocked.push(paymentId);
       }
     }
   }
@@ -418,6 +518,7 @@ function emptyOutcome(skippedReason?: string): DeletedPaymentLinkOutcome {
     confirmedLive: [],
     unconfirmed: [],
     deferred: [],
+    blocked: [],
     retiredLinks: 0,
   };
 }
@@ -470,9 +571,9 @@ export async function retireDeletedPaymentLinksAbsentFromPayload(input: {
     workflow: "retireDeletedXeroPaymentLinks",
   });
   await auditRetiredPaymentLinks(DELETED_PAYMENT_RETIRED_AUDIT_SOURCE, retired, { [key]: input.document.id });
-  if (outcome.deferred.length > 0 || outcome.unconfirmed.length > 0 || outcome.confirmedLive.length > 0) {
+  if (outcome.deferred.length > 0 || outcome.unconfirmed.length > 0 || outcome.confirmedLive.length > 0 || outcome.blocked.length > 0) {
     logger.warn(
-      { document: input.document, deferred: outcome.deferred, unconfirmed: outcome.unconfirmed, confirmedLive: outcome.confirmedLive },
+      { document: input.document, deferred: outcome.deferred, unconfirmed: outcome.unconfirmed, confirmedLive: outcome.confirmedLive, blocked: outcome.blocked },
       "Payments missing from a Xero document were left active until Xero confirms them deleted",
     );
   }

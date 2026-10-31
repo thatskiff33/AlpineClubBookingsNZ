@@ -22,5 +22,6 @@ describe("the deleted-payment link retire's real-database proof stays wired into
     expect(suite).toContain("the guarded write keeps a concurrent writer's metadata");
     expect(suite).toContain("a candidate Xero could not answer for is marked, and the scheduled re-check retires it");
     expect(suite).toContain("the backfill's --apply retires through the same write, once");
+    expect(suite).toContain("a PARTIAL invoice operation on the payment holds the retire back until it completes");
   });
 });

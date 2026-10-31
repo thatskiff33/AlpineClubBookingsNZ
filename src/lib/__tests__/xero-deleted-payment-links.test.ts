@@ -28,8 +28,12 @@ type LinkRow = {
   updatedAt: Date;
 };
 
+type OperationRow = { id: string; localModel: string; localId: string; status: string; manuallyResolvedAt: Date | null; entityType: string; operationType: string };
+
 const h = vi.hoisted(() => ({
   store: [] as LinkRow[],
+  operations: [] as OperationRow[],
+  opFindFirst: vi.fn(),
   tick: 0,
   linkFindMany: vi.fn(),
   linkUpdateMany: vi.fn(),
@@ -46,6 +50,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroObjectLink: { findMany: h.linkFindMany, updateMany: h.linkUpdateMany, findUnique: h.linkFindUnique },
+    xeroSyncOperation: { findFirst: h.opFindFirst },
   },
 }));
 vi.mock("@/lib/xero-api-usage", () => ({ xeroDailyBudgetAllowsDeferrableCall: h.budgetAllows }));
@@ -147,6 +152,32 @@ function honourQueries() {
     const row = h.store.find((candidate) => candidate.id === args.where.id);
     return row ? { ...row } : null;
   });
+  h.opFindFirst.mockImplementation(async (args: { where: { localModel: string; localId: string; status: { in: string[] }; manuallyResolvedAt: null } }) => {
+    const { where } = args;
+    const row = h.operations.find(
+      (operation) =>
+        operation.localModel === where.localModel &&
+        operation.localId === where.localId &&
+        where.status.in.includes(operation.status) &&
+        (where.manuallyResolvedAt !== null || operation.manuallyResolvedAt === null),
+    );
+    return row ? { id: row.id, status: row.status, entityType: row.entityType, operationType: row.operationType } : null;
+  });
+}
+
+function seedOperation(overrides: Partial<OperationRow>): OperationRow {
+  const row: OperationRow = {
+    id: `op-${h.operations.length + 1}`,
+    localModel: "Payment",
+    localId: "pay-local-1",
+    status: "PARTIAL",
+    manuallyResolvedAt: null,
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    ...overrides,
+  };
+  h.operations.push(row);
+  return row;
 }
 
 function seedLink(xeroObjectId: string, overrides: Partial<LinkRow> = {}): LinkRow {
@@ -190,6 +221,7 @@ function xeroError(statusCode: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.store.length = 0;
+  h.operations.length = 0;
   h.callOptions.length = 0;
   h.budgetAllows.mockResolvedValue(true);
   h.getCursor.mockResolvedValue(null);
@@ -435,7 +467,7 @@ describe("the guarded write (#4531)", () => {
   it("re-reads after a concurrent write and retires over its metadata, dropping the pending marker", async () => {
     const stale = seedLink("deleted", { metadata: { invoiceId: INVOICE, deletionCheckPending: true } });
     stored(stale.id).metadata = { invoiceId: INVOICE, amount: 125, deletionCheckPending: true };
-    expect(await retireDeletedXeroPaymentLink({ ...stale, metadata: { invoiceId: INVOICE, deletionCheckPending: true } })).toBe(true);
+    expect(await retireDeletedXeroPaymentLink({ ...stale, metadata: { invoiceId: INVOICE, deletionCheckPending: true } })).toBe("retired");
     expect(h.linkUpdateMany).toHaveBeenCalledTimes(2);
     expect(stored(stale.id)).toMatchObject({ active: false, metadata: { invoiceId: INVOICE, amount: 125, status: "DELETED" } });
     expect(stored(stale.id).metadata).not.toHaveProperty("deletionCheckPending");
@@ -443,7 +475,7 @@ describe("the guarded write (#4531)", () => {
 
   it("guards a link stored without metadata on its being null", async () => {
     const row = seedLink("deleted", { metadata: null });
-    expect(await retireDeletedXeroPaymentLink(row)).toBe(true);
+    expect(await retireDeletedXeroPaymentLink(row)).toBe("retired");
     expect(h.linkUpdateMany.mock.calls[0][0].where.metadata).toEqual({ equals: Prisma.AnyNull });
     expect(stored(row.id).metadata).toEqual({ status: "DELETED" });
   });
@@ -451,14 +483,95 @@ describe("the guarded write (#4531)", () => {
   it("gives up after two lost guards rather than overwrite blindly", async () => {
     const row = seedLink("deleted");
     h.linkUpdateMany.mockResolvedValue({ count: 0 });
-    expect(await retireDeletedXeroPaymentLink(row)).toBe(false);
+    expect(await retireDeletedXeroPaymentLink(row)).toBe("unchanged");
     expect(h.linkUpdateMany).toHaveBeenCalledTimes(2);
   });
 
   it("writes nothing to a link already retired", async () => {
     const row = seedLink("deleted", { active: false });
-    expect(await retireDeletedXeroPaymentLink(row)).toBe(false);
+    expect(await retireDeletedXeroPaymentLink(row)).toBe("unchanged");
     expect(stored(row.id).metadata).toEqual({ invoiceId: INVOICE, amount: 120, status: null });
+  });
+});
+
+describe("an operation that may still run holds the retire back (#4531, PR #4596 finding 11)", () => {
+  const retire = () =>
+    retireDeletedPaymentLinksAbsentFromPayload({
+      session,
+      document: { kind: "INVOICE", id: INVOICE },
+      payments: invoicePaymentsForAbsence(invoice()),
+      localScope: SCOPE,
+    });
+
+  it("a PARTIAL invoice operation on the payment keeps the deleted payment's link, asks Xero nothing, and the next check after it completes retires it", async () => {
+    seedLink("deleted");
+    const partial = seedOperation({ status: "PARTIAL" });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+
+    const held = await retire();
+
+    expect(held).toMatchObject({ blocked: ["deleted"], retiredLinks: 0, xeroCalls: 0 });
+    expect(h.getPayment).not.toHaveBeenCalled();
+    expect(h.opFindFirst.mock.calls[0][0].where).toEqual({
+      localModel: "Payment",
+      localId: "pay-local-1",
+      status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL"] },
+      manuallyResolvedAt: null,
+    });
+    expect(stored("link-deleted-pay-local-1")).toMatchObject({
+      active: true,
+      metadata: { deletionCheckPending: true, deletionCheckBlockedBy: partial.id, deletionCheckBlockedAt: "2026-07-01T00:00:00.000Z" },
+    });
+
+    partial.status = "SUCCEEDED";
+    const recheck = await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 });
+
+    expect(recheck).toMatchObject({ confirmedDeleted: ["deleted"], retiredLinks: 1, blocked: [] });
+    expect(stored("link-deleted-pay-local-1")).toMatchObject({ active: false, metadata: { invoiceId: INVOICE, status: "DELETED" } });
+    expect(stored("link-deleted-pay-local-1").metadata).not.toHaveProperty("deletionCheckBlockedBy");
+  });
+
+  it("an operation an officer resolved in Xero holds nothing back", async () => {
+    seedLink("deleted");
+    seedOperation({ status: "FAILED", manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z") });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+    expect(await retire()).toMatchObject({ retiredLinks: 1, blocked: [] });
+  });
+
+  it("re-asks at the write: an operation opened after Xero answered still holds the retire back", async () => {
+    seedLink("deleted");
+    h.getPayment.mockImplementation(async () => {
+      seedOperation({ status: "RUNNING" });
+      return xeroPayment("deleted", "DELETED");
+    });
+    const outcome = await retire();
+    expect(outcome).toMatchObject({ confirmedDeleted: ["deleted"], blocked: ["deleted"], retiredLinks: 0 });
+    expect(stored("link-deleted-pay-local-1")).toMatchObject({ active: true, metadata: { deletionCheckPending: true } });
+  });
+
+  it("holds back only the link whose record has the operation", async () => {
+    seedLink("deleted");
+    seedLink("deleted", { localModel: "Booking", localId: "booking-1" });
+    seedOperation({ localModel: "Booking", localId: "booking-1", status: "FAILED" });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+    const outcome = await retireDeletedPaymentLinksAbsentFromPayload({
+      session,
+      document: { kind: "INVOICE", id: INVOICE },
+      payments: invoicePaymentsForAbsence(invoice()),
+      localScope: [...SCOPE, { localModel: "Booking", localId: "booking-1" }],
+    });
+    expect(outcome).toMatchObject({ retiredLinks: 1, blocked: ["deleted"] });
+    expect(stored("link-deleted-pay-local-1").active).toBe(false);
+    expect(stored("link-deleted-booking-1").active).toBe(true);
+  });
+
+  it("a held link is rewritten on every check, so it moves behind the others", async () => {
+    const row = seedLink("deleted", { metadata: { invoiceId: INVOICE, deletionCheckPending: true } });
+    seedOperation({ status: "PARTIAL" });
+    const before = stored(row.id).updatedAt.getTime();
+    await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 });
+    expect(stored(row.id).updatedAt.getTime()).toBeGreaterThan(before);
+    expect(h.getPayment).not.toHaveBeenCalled();
   });
 });
 

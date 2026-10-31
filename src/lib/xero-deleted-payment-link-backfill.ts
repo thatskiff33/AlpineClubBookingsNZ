@@ -31,6 +31,7 @@ import {
   confirmXeroPaymentDeleted,
   DEFERRABLE_XERO_READ,
   DELETED_PAYMENT_LINK_SELECT,
+  holdBackIfEveryLinkBlocked,
   retireDeletedXeroPaymentLink,
   type DeletedPaymentLinkRow,
 } from "@/lib/xero-inbound/deleted-payment-links";
@@ -66,6 +67,8 @@ export type DeletedPaymentBackfillApplyResult = {
   confirmedLive: string[];
   unconfirmed: string[];
   deferred: string[];
+  /** Payments with a link held back by an operation on its record that may still run; marked for the scheduled re-check. */
+  blocked: string[];
   retiredLinks: number;
 };
 
@@ -193,6 +196,7 @@ export async function applyDeletedPaymentLinkBackfill(
     confirmedLive: [],
     unconfirmed: [],
     deferred: [],
+    blocked: [],
     retiredLinks: 0,
   };
   const retired: DeletedPaymentLinkRow[] = [];
@@ -200,6 +204,11 @@ export async function applyDeletedPaymentLinkBackfill(
   for (const candidate of report.candidates) {
     if (stop) {
       result.deferred.push(candidate.paymentId);
+      continue;
+    }
+    // Not while an operation on the link's record may still run and pay again.
+    if (await holdBackIfEveryLinkBlocked(candidate.links)) {
+      result.blocked.push(candidate.paymentId);
       continue;
     }
     const { confirmation, called } =
@@ -217,7 +226,9 @@ export async function applyDeletedPaymentLinkBackfill(
     } else {
       result.confirmedDeleted.push(candidate.paymentId);
       for (const link of candidate.links) {
-        if (await retireDeletedXeroPaymentLink(link)) retired.push(link);
+        const outcome = await retireDeletedXeroPaymentLink(link);
+        if (outcome === "retired") retired.push(link);
+        else if (outcome === "blocked" && !result.blocked.includes(candidate.paymentId)) result.blocked.push(candidate.paymentId);
       }
     }
   }
@@ -258,5 +269,8 @@ export function formatDeletedPaymentLinkBackfillApply(result: DeletedPaymentBack
     ...(result.confirmedLive.length ? [`Left active, Xero reports live: ${result.confirmedLive.join(", ")}`] : []),
     ...(result.unconfirmed.length ? [`Left active, not confirmed: ${result.unconfirmed.join(", ")}`] : []),
     ...(result.deferred.length ? [`Left for a later run (budget): ${result.deferred.join(", ")}`] : []),
+    ...(result.blocked.length
+      ? [`Left active, an operation on its record may still run (marked; re-checked automatically once it is done): ${result.blocked.join(", ")}`]
+      : []),
   ].join("\n");
 }

@@ -15,9 +15,8 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { SUPPLEMENTARY_INVOICE_PAYMENT_ROLE } from "@/lib/xero-inbound/object-links";
 
-import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 /** A receipt that will still run: live, or failed/partial and not resolved by hand. */
-const XERO_RERUNNABLE_RECEIPT_STATUSES = [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"] as const;
+import { XERO_RERUNNABLE_OPERATION_STATUSES as XERO_RERUNNABLE_RECEIPT_STATUSES } from "@/lib/xero-active-operation-statuses";
 
 /** The link the capture's Xero payment writes, on its `PaymentTransaction`. */
 export const ADDITIONAL_CAPTURE_PAYMENT_ROLE = "ADDITIONAL_CAPTURE_PAYMENT";

@@ -5,8 +5,9 @@
  * replay writes nothing and asks Xero nothing; a payload without `Payments`
  * retires nothing; the guarded write never overwrites a concurrent writer's
  * metadata; a candidate Xero could not answer for is marked and the scheduled
- * re-check retires it; and the backfill's `--apply` retires through the same
- * write.
+ * re-check retires it; an operation on the payment's record that may still run
+ * holds the retire back until it is done; and the backfill's `--apply` retires
+ * through the same write.
  *
  * Only Xero's client is doubled (synthetic payloads); every link read and
  * write is the real one. Ordinary Vitest runs skip the whole file. It reuses
@@ -36,6 +37,7 @@ let invoicePayload: Record<string, unknown>;
 (RUN ? describe : describe.skip)("a payment deleted in Xero retires its link - real PostgreSQL (#4531)", { timeout: 60_000 }, () => {
   async function clean() {
     await db.xeroObjectLink.deleteMany({ where: { localId: LOCAL_PAYMENT } });
+    await db.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: LOCAL_PAYMENT } });
     await db.xeroSyncCursor.deleteMany({ where: { resourceType: "DELETED_PAYMENT_RECHECK" } });
   }
 
@@ -146,12 +148,12 @@ let invoicePayload: Record<string, unknown>;
     // Another writer lands between the read and the retire.
     await db.xeroObjectLink.update({ where: { id: stale.id }, data: { metadata: { invoiceId: INVOICE, amount: 125, note: "concurrent" } } });
 
-    expect(await retireDeletedXeroPaymentLink(stale)).toBe(true);
+    expect(await retireDeletedXeroPaymentLink(stale)).toBe("retired");
     expect(await paymentLink(DELETED)).toMatchObject({
       active: false,
       metadata: { invoiceId: INVOICE, amount: 125, note: "concurrent", status: "DELETED" },
     });
-    expect(await retireDeletedXeroPaymentLink(stale)).toBe(false);
+    expect(await retireDeletedXeroPaymentLink(stale)).toBe("unchanged");
   });
 
   it("a candidate Xero could not answer for is marked, and the scheduled re-check retires it", async () => {
@@ -177,6 +179,38 @@ let invoicePayload: Record<string, unknown>;
     expect(await paymentLink(REPLACEMENT)).toMatchObject({ active: true });
     const again = await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0, session: await getAuthenticatedXeroClient() });
     expect(again).toMatchObject({ candidatePayments: 0, xeroCalls: 0 });
+  });
+
+  it("a PARTIAL invoice operation on the payment holds the retire back until it completes", async () => {
+    const { reconcileXeroInvoice } = await import("@/lib/xero-inbound/invoice");
+    const { recheckPendingDeletedPaymentLinks } = await import("@/lib/xero-inbound/deleted-payment-links");
+    const { getAuthenticatedXeroClient } = await import("@/lib/xero-api-client");
+    const partial = await db.xeroSyncOperation.create({
+      data: {
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: LOCAL_PAYMENT,
+        status: "PARTIAL",
+        correlationKey: `${P}-partial-invoice`,
+      },
+    });
+
+    const held = await reconcileXeroInvoice(INVOICE, CLUB_FORMAT_TEST, { skipSubscriptionRefresh: true });
+
+    expect(held.deletedPaymentLinks).toMatchObject({ blocked: [DELETED], retiredLinks: 0, xeroCalls: 0 });
+    expect(getPayment).not.toHaveBeenCalled();
+    expect(await paymentLink(DELETED)).toMatchObject({
+      active: true,
+      metadata: { deletionCheckPending: true, deletionCheckBlockedBy: partial.id },
+    });
+
+    await db.xeroSyncOperation.update({ where: { id: partial.id }, data: { status: "SUCCEEDED" } });
+    const recheck = await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0, session: await getAuthenticatedXeroClient() });
+
+    expect(recheck).toMatchObject({ confirmedDeleted: [DELETED], retiredLinks: 1, blocked: [] });
+    expect(await paymentLink(DELETED)).toMatchObject({ active: false, metadata: { status: "DELETED" } });
   });
 
   it("the backfill's --apply retires through the same write, once", async () => {
