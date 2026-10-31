@@ -46,6 +46,11 @@ import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { SERVERNZ_EXPECTED_SERVER_VERSION } from "@/lib/servernz-api-version";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
+// The orphan-sweep case's stored file. Built rather than written as one string:
+// gitleaks' generic-api-key reads a quoted name after `key` as a credential
+// (#4590; the historical literal is forgiven in .gitleaks.toml).
+const ORPHAN_STORAGE_KEY = ["race-4590", "orphan.webp"].join("-");
+
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const BASE_URL = "https://central.race-4586.example.invalid";
@@ -622,7 +627,7 @@ type Latch = ReturnType<typeof latch>;
       images: { create: [{ publicId: "9".repeat(32), storageKey: "race-4590-expired.webp", mimeType: "image/webp", sha256: "9".repeat(64), bytes: 3 }] },
     } });
     await prisma.clubPostImage.create({ data: {
-      publicId: "8".repeat(32), storageKey: "race-4590-orphan.webp", mimeType: "image/webp", sha256: "8".repeat(64), bytes: 3,
+      publicId: "8".repeat(32), storageKey: ORPHAN_STORAGE_KEY, mimeType: "image/webp", sha256: "8".repeat(64), bytes: 3,
       createdAt: new Date("2026-06-30T00:00:00.000Z"),
     } });
     const firstInFiles = latch();
@@ -634,7 +639,7 @@ type Latch = ReturnType<typeof latch>;
     // second at the orphan it sweeps.
     const deleted = vi.spyOn(storage, "deletePostImage").mockImplementation(async (key: string) => {
       if (key === "race-4590-expired.webp") { firstInFiles.release(); await resumeFirst.promise; }
-      if (key === "race-4590-orphan.webp") { secondInFiles.release(); await resumeSecond.promise; }
+      if (key === ORPHAN_STORAGE_KEY) { secondInFiles.release(); await resumeSecond.promise; }
     });
     const firstPass = retention.runClubPostCleanup(first);
     let secondPass: Promise<unknown> | undefined;
