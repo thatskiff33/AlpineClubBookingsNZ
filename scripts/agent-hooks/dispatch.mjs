@@ -78,7 +78,9 @@ function alreadyReminded(sessionId, files, stateDir) {
     mkdirSync(stateDir, { recursive: true });
     writeFileSync(file, fingerprint);
   } catch {
-    // An unrecorded reminder only repeats; it never blocks.
+    // Without a record the reminder would send the lane back on every turn,
+    // so an unwritable state directory skips it instead.
+    return true;
   }
   return false;
 }

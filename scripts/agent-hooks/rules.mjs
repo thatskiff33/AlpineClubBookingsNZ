@@ -56,10 +56,10 @@ function gitSubcommand(words) {
   return [words[i], words.slice(i + 1)];
 }
 
-/** The words after `gh`, past any leading flag. */
+/** The words after `gh`, past any leading flag (and the value `-R`/`--repo` takes). */
 function ghArgs(words) {
   let i = 1;
-  while (i < words.length && words[i].startsWith("-")) i += 1;
+  while (i < words.length && words[i].startsWith("-")) i += words[i] === "-R" || words[i] === "--repo" ? 2 : 1;
   return words.slice(i);
 }
 

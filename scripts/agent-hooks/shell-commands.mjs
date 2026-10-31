@@ -118,6 +118,11 @@ function readHeredocDelimiter(src, start) {
   let quoted = false;
   while (i < src.length && !/[\s;&|<>()]/.test(src[i])) {
     const c = src[i];
+    // `$'EOF'` and `$"EOF"`: bash drops the `$`, so the delimiter is `EOF`.
+    if (c === "$" && (src[i + 1] === "'" || src[i + 1] === '"')) {
+      i += 1;
+      continue;
+    }
     if (c === "'" || c === '"') {
       quoted = true;
       const close = src.indexOf(c, i + 1);

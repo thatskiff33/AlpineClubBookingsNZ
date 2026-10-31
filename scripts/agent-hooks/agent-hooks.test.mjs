@@ -143,6 +143,20 @@ describe("the Bash rules, for the main session and orchestrators", () => {
   });
 });
 
+describe("review-round bypasses (#4462)", () => {
+  it("ends a $'EOF' or $\"EOF\" here-document where bash does, so later commands are seen", () => {
+    expect(ruleFor("cat <<$'EOF'\nx\nEOF\ngit push --force origin main")).toBe("force-push");
+    expect(ruleFor('cat <<$"EOF"\nx\nEOF\nnpx y')).toBe("download-runner");
+    expect(ruleFor("cat <<$'EOF'\nnpx is data here\nEOF")).toBeNull();
+  });
+  it("reads past gh's -R/--repo value to the subcommand", () => {
+    expect(ruleFor("gh -R o/r pr merge 1 --squash")).toBe("squash-or-rebase-merge");
+    expect(ruleFor("gh --repo o/r pr merge 1 --squash")).toBe("squash-or-rebase-merge");
+    expect(ruleFor("gh -R o/r pr merge 1 --merge")).toBeNull();
+    expect(ruleFor("gh -R o/r issue view 1")).toBe("gh-issue-view");
+  });
+});
+
 describe("the implementor-only rules", () => {
   it("blocks git push and every gh command for the implementor role", () => {
     for (const extra of [{ agent_type: IMPLEMENTOR_ROLE }, { agent_type: `plugin:${IMPLEMENTOR_ROLE}` }]) {
@@ -327,6 +341,10 @@ describe("the Stop reminder", () => {
       expect(runHook(stop(), { listChanges: () => [], stateDir })).toEqual(quiet);
       expect(runHook(stop({ stop_hook_active: true }), { listChanges: () => ["src/a.ts"], stateDir })).toEqual(quiet);
       expect(runHook(stop(), { listChanges: () => { throw new Error("no git"); }, stateDir })).toEqual(quiet);
+      // An unwritable state directory would re-send the lane on every turn, so it skips the reminder.
+      const unwritable = path.join(stateDir, "file");
+      writeFileSync(unwritable, "");
+      expect(runHook(stop(), { listChanges: () => ["src/a.ts"], stateDir: path.join(unwritable, "sub") })).toEqual(quiet);
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
     }
