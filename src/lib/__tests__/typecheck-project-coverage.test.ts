@@ -111,6 +111,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   // suite stays JavaScript like the other script suites here.
   "scripts/lanes-stale.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
+  // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
+  // suite stays JavaScript beside the compiler's.
+  "scripts/release/cut-release.test.mjs",
   // #3673: the `.mjs` worktree-removal tool's own suite; it stays JavaScript
   // for the same reason as the stale-containers and issue-thread suites.
   "scripts/remove-worktree.test.mjs",

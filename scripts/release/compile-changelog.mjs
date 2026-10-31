@@ -97,6 +97,26 @@ const DEFAULT_POINTER_NOTE = [
   POINTER_NOTE_END,
 ];
 
+/** The heading a compiled release section carries: `## <version> - <date>`. */
+function releaseHeading(version, date) {
+  return `## ${version} - ${date}`;
+}
+
+/**
+ * The body of the `## <version> - <date>` section in `changelog`, without its
+ * heading and blank edges, or `null` when there is no such section. The one
+ * reader of a compiled section: the compiler refuses a version that already
+ * has one, and `cut-release.mjs` publishes it as the GitHub release notes.
+ */
+export function releaseSection(changelog, version) {
+  const lines = changelog.replace(/\r\n/g, "\n").split("\n");
+  const start = lines.findIndex((line) => line.startsWith(`## ${version} `));
+  if (start < 0) return null;
+  const nextOffset = lines.slice(start + 1).findIndex((line) => ANY_HEADING.test(line));
+  const end = nextOffset >= 0 ? start + 1 + nextOffset : lines.length;
+  return stripBlankEdges(lines.slice(start + 1, end)).join("\n");
+}
+
 /**
  * Deterministic fragment order: ascending, comparing runs of digits
  * numerically so `999-x.md` sorts before `2448-x.md` rather than after it
@@ -354,7 +374,7 @@ export function composeChangelog({ changelog, version, date, fragments }) {
   if (unrecognised.length > 0) {
     out.push("", ...unrecognised);
   }
-  out.push("", `## ${version} - ${date}`, "", ...entryLines);
+  out.push("", releaseHeading(version, date), "", ...entryLines);
   if (stripBlankEdges(tail).length > 0) {
     out.push("", ...stripBlankEdges(tail), "");
   } else {
@@ -404,7 +424,7 @@ export function compileChangelog({
   const originalChangelog = fs.readFileSync(changelogPath);
   const changelog = originalChangelog.toString("utf8").replace(/\r\n/g, "\n");
 
-  if (changelog.split("\n").some((line) => line.startsWith(`## ${version} `))) {
+  if (releaseSection(changelog, version) !== null) {
     throw new Error(`CHANGELOG.md already has a "## ${version}" section — nothing to compile.`);
   }
 
