@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Invoice } from "xero-node";
 import type { Prisma } from "@prisma/client";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { releaseBookingFinancialHistoryForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 import { effectiveOrganiserPaidChangeFeeCents, readOrganiserExtraReduction, readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { reserveOrganiserExtraCancellation, bindOrganiserExtraRefundToHandBack, releaseOrganiserExtraRefundNotes, settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
@@ -90,6 +91,8 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
 
 (RUN ? describe : describe.skip)("organiser extra netting — real PostgreSQL", () => {
   async function cleanup() {
+    // #4514: ledger lines no longer cascade with their booking (INV-MONEY-043).
+    await releaseBookingFinancialHistoryForTeardown(prisma, [childId, organiserId]);
     await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [childId, modificationId] } } });
     await prisma.xeroObjectLink.deleteMany({ where: { localId: modificationId } });
     await prisma.manualRefundTask.deleteMany({ where: { bookingId: childId } });
@@ -205,6 +208,7 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
   type Tier = { percentage: number; fixedFeeCents: number };
   let execute: (typeof import("@/lib/organiser-extra-adjustment"))["executeOrganiserExtraAdjustment"];
   async function cleanup() {
+    await releaseBookingFinancialHistoryForTeardown(prisma, [booking, `${R}-organiser`]);
     await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [booking, ...ids.map((id) => `${R}-mod-${id}`)] } } });
     await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [booking, `${R}-payment`, ...ids.map((id) => `${R}-mod-${id}`)] } } });
     await prisma.manualRefundTask.deleteMany({ where: { bookingId: booking } });
