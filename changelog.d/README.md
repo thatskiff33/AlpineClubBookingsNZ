@@ -165,7 +165,8 @@ drafts, branch-only commits and locally edited files are preserved; a locally
 edited merged allowance stops the compile before any write. A refreshed
 `origin/main` must be an ancestor of the release-prep checkout. Nothing is
 retired if there is no changelog release to compile. The date defaults to today
-in New Zealand; pass one as the second argument to override it. Historical
+in the release cutter's own time zone, or in `RELEASE_TIME_ZONE` when that is
+set (#4571); pass one as the second argument to override it. Historical
 sections are never rewritten. A failed removal restores the original changelog
 and fragments for a safe retry; if restoration itself fails, stop and inspect
 the files named by the error. The compiler cannot prove an unfetched remote

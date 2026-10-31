@@ -51,7 +51,7 @@ import {
   readFragments,
   releaseHeading,
   releaseSection,
-  todayInNewZealand,
+  releaseDateToday,
 } from "./compile-changelog.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
@@ -408,7 +408,7 @@ export function prepareRelease({
   execute = false,
   bump = null,
   amend = false,
-  date = todayInNewZealand(),
+  date = releaseDateToday(),
   run = defaultRun(repoRoot),
   compile = compileChangelog,
   log = console.log,
@@ -796,7 +796,7 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
         execute: options.execute,
         bump: options.bump,
         amend: options.amend,
-        date: options.date ?? todayInNewZealand(),
+        date: options.date ?? releaseDateToday(),
         log,
       });
     } else {
