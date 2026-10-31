@@ -1912,9 +1912,10 @@ use RESTRICT, and since M2 (#4514) the booking ledger's and credit rows' booking
 
 Database CHECKs, deferred triggers and INSERT/SELECT-only application grants
 carry `INV-MONEY-041`, `INV-MONEY-042` and `INV-OPS-016`. No legacy source is made
-mandatory yet. `src/lib/member-money/index.ts` exposes the account registry and
-operator verifier only; implementation lives in `internal/`. No posting API or
-production consumer is enabled. Later writer commands must implement the
+mandatory yet. `src/lib/member-money/index.ts` exposes the account registry, the
+operator verifier and, since M2 (#4514), two read-only references the deletion
+guards consult (`INV-MONEY-043`); implementation lives in `internal/`. No posting
+API is enabled. Later writer commands must implement the
 existing advisory tiers (`INV-LOCK-001`–`003`); M1 adds no advisory key, lifecycle
 participant, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
