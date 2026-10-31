@@ -2871,16 +2871,17 @@ phases print their whole plan and change nothing without `--execute`.
    pnpm run release:cut publish --execute
    ```
 
-   It reads the version from `package.json` on `origin/main` and refuses a
-   version no newer than the latest tag (nothing was prepared), a commit that
-   is not on `origin/main`, one with no compiled section for that
-   version, still holds `changelog.d/` fragments (something merged after the
-   release-prep commit — pass `--commit <merge-sha>` to tag that commit
-   instead), or whose tag exists. With `--execute` it checks `gh auth status`
-   and which repository `gh` will publish to, creates the annotated `v<version>` tag, and only then pushes the tag and
-   runs `gh release create` with the compiled section as the notes. A failed
-   push keeps the local tag and prints the retry; a failed publish never
-   deletes the pushed tag and prints the `gh release create` command to retry.
+   It reads the version from `package.json` on the merged commit (default
+   `origin/main`) and refuses when that version is no newer than the latest
+   tag (nothing was prepared), the commit is not on `origin/main`, it has no
+   compiled section for the version, or it still holds `changelog.d/`
+   fragments — something merged after the release-prep commit, so pass
+   `--commit <merge-sha>` to tag that commit instead. With `--execute` it
+   checks `gh auth status` and which repository `gh` will publish to, creates
+   the annotated `v<version>` tag, and only then pushes the tag and runs
+   `gh release create` with the compiled section as the notes. A failed push
+   keeps the local tag and prints the retry; a failed publish never deletes
+   the pushed tag and prints the `gh release create` command to retry.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
 8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
