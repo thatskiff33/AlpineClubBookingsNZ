@@ -150,6 +150,18 @@ describe("financial history outlives its booking: the schema (#4514, D1)", () =>
     expect([...financial].filter((name) => name in OPERATIONAL_BOOKING_RELATIONS)).toEqual([]);
   });
 
+  it("has the demo seed refuse on append-only money lines, through the one list, before it deletes anything", () => {
+    // Its cleanup is not one transaction: a refusal half-way would leave a
+    // half-wiped database, so the check must come before the first delete.
+    const seed = readFileSync(path.join(process.cwd(), "prisma/demo-seed.ts"), "utf8");
+    const cleanup = seed.slice(seed.indexOf("async function cleanup()"));
+    const refusal = cleanup.search(/bookingsWithFinancialHistory\(\s*prisma,\s*\w+,\s*APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS\s*\)/);
+    const firstDelete = cleanup.search(/\.deleteMany\(/);
+    expect(refusal, "the seed asks the one list for append-only money lines").toBeGreaterThan(-1);
+    expect(refusal).toBeLessThan(firstDelete);
+    expect(cleanup.slice(refusal, firstDelete)).toMatch(/throw new Error/);
+  });
+
   it("FAILS on a cascading or update-cascading key, and parses what the schema writes (fixture proof)", () => {
     const fixture = [
       "model BookingLedgerLine {",
