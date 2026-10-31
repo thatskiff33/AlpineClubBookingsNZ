@@ -126,8 +126,31 @@ async function stampShare(postId: string, serverPostId: string): Promise<void> {
     });
     return files;
   }, SERVERNZ_TRANSACTION_OPTIONS);
-  // Rows first, files second.
-  for (const key of copyFiles) await deletePostImage(key);
+  // Rows first, files second. After the commit, so a file that cannot be
+  // removed is logged, never reported as a failed stamp (#4590).
+  for (const key of copyFiles) {
+    await deletePostImage(key).catch((error: unknown) => {
+      logger.warn({ postId, storageKey: key, err: error }, "Could not delete a removed mirror copy's image file");
+    });
+  }
+}
+
+/**
+ * The stamp without the settings lock (#4590): our post takes the id only
+ * while it holds none. Correct without the lock because the unique
+ * `serverPostId` arbitrates: if the mirror's copy holds the id, this write is
+ * refused and the locked stamp runs again; once it lands, every mirror write
+ * re-reads under the post lock and finds our own post. A write that matched
+ * nothing succeeded only if our post already holds this very id.
+ */
+async function stampShareUnlocked(postId: string, serverPostId: string): Promise<void> {
+  const { count } = await prisma.clubPost.updateMany({
+    where: { id: postId, serverPostId: null },
+    data: { serverPostId, sharedAt: new Date(), shareError: null },
+  });
+  if (count === 1) return;
+  const row = await prisma.clubPost.findUnique({ where: { id: postId }, select: { serverPostId: true } });
+  if (row?.serverPostId !== serverPostId) throw new Error("The post could not take the central server's id");
 }
 
 /**
@@ -199,6 +222,7 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
     });
   }
 
+  let serverPostId: string;
   try {
     const result = await shareClubPost({
       // The central server cannot verify author identity — it trusts this
@@ -210,52 +234,103 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
       bodyHtml: post.bodyHtml,
       images,
     });
-
-    await stampShare(post.id, result.id);
-
-    return { status: "shared", serverPostId: result.id };
+    serverPostId = result.id;
   } catch (error) {
-    // The gate can still refuse between the pre-check and the send (a version
-    // recorded by another container, or the inline self-heal on a never-asked
-    // row). A pause is not an attempt: the counter and the row stay as they
-    // are, and the next pass asks again.
-    if (error instanceof ServerNzVersionMismatchError) {
-      logger.info(
-        { postId: post.id, expected: error.expected, serverVersion: error.serverVersion },
-        "Sharing a club post is paused: the central server API version differs",
-      );
-      return { status: "paused" };
-    }
-    const attempts = post.shareAttempts + 1;
-    // Retryable by ERROR KIND and still under the cap. A refusal that will
-    // never succeed stops at once; a transient failure stops at the cap
-    // (#3091 review 5) — either way the request is cleared and the reason is
-    // on the row, so the member is told plainly rather than left watching a
-    // post that never goes anywhere.
-    const retryable = isRetryable(error) && attempts < MAX_SHARE_ATTEMPTS;
-    const message =
-      error instanceof Error ? error.message : "The central server refused it.";
-    const recorded = (
-      isRetryable(error) && !retryable
-        ? `Gave up after ${MAX_SHARE_ATTEMPTS} attempts: ${message}`
-        : message
-    ).slice(0, 300);
+    return recordShareFailure(post, error);
+  }
+  return recordAcceptedShare(post, serverPostId);
+}
 
+/** A share that did not reach the server, or was refused: counted, and retried or given up (#3091 review 5). */
+async function recordShareFailure(
+  post: { id: string; shareAttempts: number },
+  error: unknown,
+): Promise<ShareOutcome> {
+  // The gate can still refuse between the pre-check and the send (a version
+  // recorded by another container, or the inline self-heal on a never-asked
+  // row). A pause is not an attempt: the counter and the row stay as they
+  // are, and the next pass asks again.
+  if (error instanceof ServerNzVersionMismatchError) {
+    logger.info(
+      { postId: post.id, expected: error.expected, serverVersion: error.serverVersion },
+      "Sharing a club post is paused: the central server API version differs",
+    );
+    return { status: "paused" };
+  }
+  const attempts = post.shareAttempts + 1;
+  // Retryable by ERROR KIND and still under the cap. A refusal that will
+  // never succeed stops at once; a transient failure stops at the cap
+  // (#3091 review 5) — either way the request is cleared and the reason is
+  // on the row, so the member is told plainly rather than left watching a
+  // post that never goes anywhere.
+  const retryable = isRetryable(error) && attempts < MAX_SHARE_ATTEMPTS;
+  const message =
+    error instanceof Error ? error.message : "The central server refused it.";
+  const recorded = (
+    isRetryable(error) && !retryable
+      ? `Gave up after ${MAX_SHARE_ATTEMPTS} attempts: ${message}`
+      : message
+  ).slice(0, 300);
+
+  await prisma.clubPost.update({
+    where: { id: post.id },
+    data: {
+      shareError: recorded,
+      shareAttempts: attempts,
+      ...(retryable ? {} : { shareRequestedAt: null }),
+    },
+  });
+
+  logger.warn(
+    { postId: post.id, retryable, attempts, err: error },
+    "Sharing a club post to the central server failed",
+  );
+  return { status: "failed", error: message, retryable };
+}
+
+/**
+ * Record a share the central server ACCEPTED (#4590). The post is on the
+ * server under `serverPostId` from here, so nothing below sends it again: a
+ * stamp that failed used to fall into the attempt-failure path, keep the
+ * request, and the next sweep shared the post a second time, leaving the
+ * first copy with no id here to withdraw it by.
+ *
+ * The id already returned is retried instead, in three steps: the locked stamp
+ * ({@link stampShare}); then a guarded write of the id alone, without the
+ * settings lock (enough when that lock was the trouble, and refused by the
+ * unique `serverPostId` if the mirror already copied the post back); then the
+ * locked stamp once more, which removes such a copy. If all three fail, the
+ * request is cleared, so it is never sent again, and the failure names the
+ * server id for an officer. Needs no new column: the id is recorded where it
+ * always lives, or named in `shareError`.
+ */
+async function recordAcceptedShare(
+  post: { id: string; shareAttempts: number },
+  serverPostId: string,
+): Promise<ShareOutcome> {
+  let lastError: unknown;
+  for (const stamp of [stampShare, stampShareUnlocked, stampShare]) {
+    try {
+      await stamp(post.id, serverPostId);
+      return { status: "shared", serverPostId };
+    } catch (error) {
+      // Not ours to delete: the same final refusal as before (#4588 review).
+      if (error instanceof ShareStampConflictError) return recordShareFailure(post, error);
+      lastError = error;
+    }
+  }
+  const message = `Shared to the central server as ${serverPostId}, but recording that here failed; it will not be sent again.`.slice(0, 300);
+  try {
     await prisma.clubPost.update({
       where: { id: post.id },
-      data: {
-        shareError: recorded,
-        shareAttempts: attempts,
-        ...(retryable ? {} : { shareRequestedAt: null }),
-      },
+      data: { shareRequestedAt: null, shareAttempts: post.shareAttempts + 1, shareError: message },
     });
-
-    logger.warn(
-      { postId: post.id, retryable, attempts, err: error },
-      "Sharing a club post to the central server failed",
-    );
-    return { status: "failed", error: message, retryable };
+  } catch (error) {
+    // Nothing more can be recorded; the log is the record.
+    logger.error({ postId: post.id, serverPostId, err: error }, "Could not record a share the central server accepted, nor clear its request");
   }
+  logger.error({ postId: post.id, serverPostId, err: lastError }, "A share the central server accepted could not be recorded here; it will not be sent again");
+  return { status: "failed", error: message, retryable: false };
 }
 
 export interface ShareSweepResult {
