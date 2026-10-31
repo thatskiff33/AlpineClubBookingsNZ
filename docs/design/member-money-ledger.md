@@ -194,9 +194,10 @@ identities, without update cascades or set-null rewrites. #4453 protected bookin
 and lodge ids, but [#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482)
 showed that parent DELETE could still erase legacy booking lines. M2
 ([#4514](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4514)) delivered
-D1: every key a legacy line or a journal row holds, and a credit row's booking
-links, is RESTRICT both ways (`INV-MONEY-043`), so no referential action reaches
-a posted row and the database refuses to delete a booking that has money.
+D1: every key a legacy line or a journal row holds, a credit row's booking
+links and a group settlement's group are RESTRICT both ways (`INV-MONEY-043`), so
+no referential action reaches a posted row, and the database refuses to delete a
+booking that financial history names.
 Personal-data erasure must use the retention design; it cannot erase economic
 postings by deleting their parent.
 

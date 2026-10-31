@@ -1036,21 +1036,24 @@ activated by registering an account.
 
 Financial history outlives its booking (#4514, Ledger M2; owner decision D1 on
 [#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482), 28 Oct
-2026). Every key a money line holds — `BookingLedgerLine`'s booking, lodge and
-reversed line, and every `MemberMoney*` key — and a `MemberCredit` row's three
-booking links are `ON DELETE RESTRICT ON UPDATE RESTRICT`. A referential action
-runs with the table owner's rights, so a cascade or a set-null would be a route
-around the application role's INSERT/SELECT grant; none exists. Deleting a
-booking that financial history names is refused for every role.
+2026). These keys are `ON DELETE RESTRICT ON UPDATE RESTRICT`: every key a money
+line holds (`BookingLedgerLine`'s booking, lodge and reversed line, and every
+`MemberMoney*` key), a `MemberCredit` row's three booking links and a
+`GroupBookingSettlement`'s group. A referential action runs with the table
+owner's rights, so a cascade or a set-null would be a route around the
+application role's INSERT/SELECT grant; none exists. With the payment and
+refund records, already RESTRICT, they are the relations
+`booking-financial-history.ts` names once: the database refuses, for every
+role, to delete a booking any of them names.
 
-A booking with money is therefore soft-deleted or left as it is, never
-hard-deleted. Only drafts are hard-deleted, and a draft never carries money;
-`booking-financial-history.ts` names the relations once, the draft route
-answers 409 and writes nothing for a draft one names, and the nightly cleanup
-skips and reports it rather than aborting the batch. Member hard delete refuses
-a member the journal names as debtor, a retained identity string rather than a
-key. Personal data follows the retention schedule (#4457), which keeps these
-rows. Pins: `booking-financial-history-census.test.ts` (every relation into a
-booking classified, money-line keys RESTRICT both ways) and
-`database-roles.realdb.test.ts` (an application-role booking delete cannot
-remove a ledger line or blank a credit link).
+Such a booking is soft-deleted or left as it is, never hard-deleted. Only
+drafts are hard-deleted, and a draft never carries money. The draft route
+answers 409 and writes nothing for a draft those relations name; the nightly
+cleanup leaves such a draft out and reports it. Should money reach a draft
+between that read and the delete, the refusal rolls the night's whole batch
+back, nothing deleted. Member hard delete refuses a member the journal names as
+debtor, a retained identity string rather than a key. Personal data follows the
+retention schedule (#4457), which keeps these rows. Pins:
+`booking-financial-history-census.test.ts` (relations classified, money-line
+keys RESTRICT both ways), `booking-financial-history.realdb.test.ts` and
+`database-roles.realdb.test.ts` (an application-role delete is refused).

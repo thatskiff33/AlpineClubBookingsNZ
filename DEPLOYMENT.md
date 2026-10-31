@@ -140,10 +140,11 @@ role are separate and unchanged.
 
 **Deleting a booking cannot remove its ledger lines.** A cascade would run with
 the table owner's rights, not the application's, so since #4514 every key a ledger
-line holds, and a member-credit row's booking links, is `ON DELETE RESTRICT ON
-UPDATE RESTRICT` (#4482's decision D1, `INV-MONEY-043`). The database refuses to
-delete a booking that has money, for every role, including on a single-role
-install; the app soft-deletes such bookings instead.
+line holds, a member-credit row's booking links and a group settlement's group
+key are `ON DELETE RESTRICT ON UPDATE RESTRICT` (#4482's decision D1,
+`INV-MONEY-043`). The database refuses to delete a booking any of those rows, or
+a payment or refund record, names, for every role, including on a single-role
+install. Such a booking is soft-deleted or left as it is.
 
 ### Switching a deployment over (blue/green)
 
