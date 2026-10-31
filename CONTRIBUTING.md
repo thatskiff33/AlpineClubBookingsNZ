@@ -249,13 +249,11 @@ for one. During the transition a pull request that still edits `CHANGELOG.md`
 directly also passes, and `CHANGELOG.md merge=union` in `.gitattributes` (#2451)
 keeps those merges conflict-free.
 
-At release time the maintainer compiles the fragments into a version section
-(`docs/MAINTENANCE.md`, "Public Reference Release Checklist"):
-
-```bash
-node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
-node scripts/release/compile-changelog.mjs 0.14.0             # write it
-```
+At release time `pnpm run release:cut prepare` compiles the fragments into a
+version section on a release-prep branch, and `pnpm run release:cut publish`
+tags the merged result (`docs/MAINTENANCE.md`, "Public Reference Release
+Checklist"). Name a fragment `*.feature.md` when it adds something new, so the
+release is minor rather than a patch (`changelog.d/README.md`, "Patch or minor").
 
 ## Validation
 

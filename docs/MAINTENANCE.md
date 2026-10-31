@@ -2799,11 +2799,32 @@ A failing drill is a **backup-pipeline incident**, not a routine test flake:
 
 ## Public Reference Release Checklist
 
-Before cutting a public reference release:
+Every production deploy ships a tagged release (#4465), cut with
+[`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
+only moves through pull requests, so the release is cut in two phases with the
+release-prep pull request between them — the order v0.13.2 was cut in. Both
+phases print their whole plan and change nothing without `--execute`.
 
-1. Create a release-prep branch from fresh `origin/main`.
-2. Update the version in `package.json` (`pnpm-lock.yaml` does not record it), then
-   compile the changelog:
+1. From a clean checkout of `origin/main`, prepare the release-prep commit:
+
+   ```bash
+   git switch --detach origin/main
+   pnpm run release:cut prepare             # dry run: version, fragments, steps
+   pnpm run release:cut prepare --execute   # make the local commit
+   ```
+
+   It fetches `origin/main` and the tags, refuses a dirty tree (an untracked
+   `changelog.d/` draft would be released), a checkout that is not exactly
+   `origin/main`, and a tag or `release/v<version>` branch that already exists.
+   The version is the latest `vX.Y.Z` tag plus a minor bump when any fragment
+   is named `*.feature.md`, or a patch bump otherwise
+   (`changelog.d/README.md`, "Patch or minor"); `--bump patch|minor|major`
+   overrides it and `--date YYYY-MM-DD` overrides the release date. With
+   `--execute` it creates `release/v<version>`, sets `package.json`'s
+   `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
+   (step 2) and commits. It never pushes. If it stops part way it prints how to
+   inspect the branch or abandon it.
+2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
    node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
@@ -2815,9 +2836,10 @@ Before cutting a public reference release:
    `## Unreleased`), deletes the fragments it consumed and the committed,
    clean `size-allowances.d/*.md` fragments made inert by their merge to main,
    and leaves the `## Unreleased` heading and its sentinel-marked pointer note
-   in place. Commit the compiled `CHANGELOG.md` and both sets of fragment
-   deletions together, then read the new section end to end and edit it for
-   order and duplication before pushing —
+   in place. The compiled `CHANGELOG.md` and both sets of fragment deletions
+   are committed together (`release:cut` does it; by hand, do the same), then
+   read the new section end to end and edit it for order and duplication
+   before pushing —
    `changelog.d/README.md` documents the convention. If the run prints
    `WARNING: unrecognised content left under "## Unreleased"`, resolve that
    first: the text it echoes was neither released nor deleted. A release-prep
@@ -2839,9 +2861,28 @@ Before cutting a public reference release:
 5. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. After merge, create the annotated release tag on the merged commit and
-   publish the GitHub release with validation evidence, migration notes, image
-   names, commit SHA, and non-blocking maintainability follow-ups.
+6. Push `release/v<version>` and open the release-prep pull request from the
+   template (`pnpm run pr:check <body-file>` first). It merges like any other.
+7. After it merges, tag the merged commit and publish the GitHub release:
+
+   ```bash
+   git fetch origin main
+   pnpm run release:cut publish             # dry run: commit, notes, steps
+   pnpm run release:cut publish --execute
+   ```
+
+   It reads the version from `package.json` on `origin/main` and refuses a
+   commit that is not on `origin/main`, has no compiled section for that
+   version, still holds `changelog.d/` fragments (something merged after the
+   release-prep commit — pass `--commit <merge-sha>` to tag that commit
+   instead), or whose tag exists. With `--execute` it checks `gh auth status`,
+   creates the annotated `v<version>` tag, and only then pushes the tag and
+   runs `gh release create` with the compiled section as the notes. A failed
+   push keeps the local tag and prints the retry; a failed publish never
+   deletes the pushed tag and prints the `gh release create` command to retry.
+   Add validation evidence, migration notes, image names and non-blocking
+   maintainability follow-ups to the published release by hand.
+8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 
