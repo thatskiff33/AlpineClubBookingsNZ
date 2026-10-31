@@ -2182,8 +2182,9 @@ mispricing a booking.
   writes each page through `serverNzAnswerWriter(page.sentOn)`: post
   create/update/removal, failure count, cursor and last-sync time, each one
   short transaction (settings row, credential read, `ClubPost`/`ClubPostImage`
-  or settings write). The cursor write also re-reads the stored pair under the
-  lock and refuses a position that moved since the pass read it. A refusal
+  or settings write). Every cursor and failure-count write also re-reads the
+  stored cursor pair and failure count under the lock and refuses if any
+  moved since the pass read or last wrote them (`writePosition`). A refusal
   stops the pass; its single-flight claim (`commsSyncStartedAt`) stays on the
   global client and is released as before. The three recorders in
   `servernz-settings.ts` (download, upload watermark, version) require a
