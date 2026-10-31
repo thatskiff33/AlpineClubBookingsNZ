@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   ROUTE_GROUP_BOUNDARIES,
+  type RouteGroupBoundary,
   type RouteGroupKey,
 } from "@/lib/route-group-boundaries";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * EVERY ROUTE GROUP HAS AN ERROR BOUNDARY, IN THE RIGHT PLACE (#4467 item 1).
@@ -22,8 +24,9 @@ import {
  *     render with the group's chrome around it and catch all of its pages;
  *   - the `error.tsx` there is missing, is not the shared `RouteError`, names a
  *     different group, or wires Next's `reset` instead of `retry`;
- *   - a group without a recorded reason lacks its `loading.tsx`, a group WITH one
- *     has quietly gained it, or any `loading.tsx` anywhere skips the accessible
+ *   - a group without a `loadingExemptReason` lacks its `loading.tsx`, a group
+ *     WITH one has quietly gained one (anywhere in the group, unless the reason
+ *     is marked root-only), or any `loading.tsx` anywhere skips the accessible
  *     `RouteLoading` shell.
  *
  * `test:related` cannot select this file — it reads `src/app` from disk and has no
@@ -33,34 +36,10 @@ import {
 
 const APP_DIR = path.join(process.cwd(), "src", "app");
 
-/**
- * Route groups that have NO group-level `loading.tsx`, and why. Each one is a
- * place where a Suspense boundary above the pages would change what the server
- * answers, not just what the user sees while waiting: a `loading.tsx` starts the
- * response stream, and "starting the stream sends the response headers and fixes
- * the status code" (`node_modules/next/dist/docs/01-app/03-api-reference/
- * 03-file-conventions/loading.md`, "Status codes"), so a page's own later
- * `notFound()` or `redirect()` becomes a 200 with a streamed fallback.
- *
- * An entry here is checked both ways: the group must not have the file, so an
- * exemption cannot outlive its reason unnoticed.
- */
-const LOADING_EXEMPT: Partial<Record<RouteGroupKey, string>> = {
-  lodge:
-    "The lodge kiosk and roster fetch their own data on the client, so a group loading boundary never shows on a fresh load, and it would turn the roster layout's server redirect to the kiosk into a client-side one. The July 2026 hardening review (docs/reviews/2026-07-15-production-hardening.md, F36) says of loading skeletons: 'Lodge routes are client-fetched — do not add there.'",
-  authenticated:
-    "Member pages decide their own 404s after a database read — /notices/[id] answers an out-of-audience member with a hard 404 that e2e/member-notices.spec.ts asserts — and a group loading boundary would turn every one into a streamed 200. The member screens that are slow to load already carry their own loading.tsx (dashboard, bookings, book, booking detail, consent).",
-  public:
-    "The sign-in and recovery screens decide redirects in the page (/login, /login/verify, /login/enroll, /membership-cancellation/[token]); behind a group loading boundary each 307 becomes a 200 plus a client-side redirect on the most-travelled path in the app.",
-  website:
-    "Forbidden by scripts/ci/check-website-render-modes.mjs (#2352, #2434): a boundary above the CMS catch-all can commit a 200 before it decides a URL is a 404, making a missing page a soft 404 that ISR then stores.",
-  websiteDynamic:
-    "Forbidden by scripts/ci/check-website-render-modes.mjs (#2352, #2434), which bans render boundaries in both public-website groups; the token pages here decide their own 404s.",
-};
-
-type Entry = (typeof ROUTE_GROUP_BOUNDARIES)[RouteGroupKey];
+// Widened to the declared shape so the optional loading answers read as
+// `string | undefined` on every entry rather than only on the ones that set them.
 const ENTRIES = Object.entries(ROUTE_GROUP_BOUNDARIES) as Array<
-  [RouteGroupKey, Entry]
+  [RouteGroupKey, RouteGroupBoundary]
 >;
 
 function routeGroupsOnDisk(): string[] {
@@ -92,8 +71,13 @@ function isWithin(child: string, parent: string): boolean {
   return child === parent || child.startsWith(`${parent}/`);
 }
 
-function source(relative: string): string {
-  return readFileSync(path.join(APP_DIR, relative), "utf8");
+/**
+ * A file's CODE, comments blanked. Every match below is about what the file
+ * does, so a commented-out import or a docblock mentioning `reset` must neither
+ * satisfy nor trip it.
+ */
+function code(relative: string): string {
+  return stripComments(readFileSync(path.join(APP_DIR, relative), "utf8"));
 }
 
 describe("route-group boundaries census (#4467)", () => {
@@ -142,7 +126,7 @@ describe("route-group boundaries census (#4467)", () => {
       expect(existsSync(path.join(APP_DIR, file)), `${file} is missing`).toBe(
         true,
       );
-      const text = source(file);
+      const text = code(file);
 
       expect(text.trimStart().startsWith('"use client";')).toBe(true);
       expect(text).toMatch(
@@ -163,27 +147,31 @@ describe("route-group boundaries census (#4467)", () => {
     });
 
     it("has a loading.tsx, or a recorded reason not to and no such file", () => {
-      const file = path.join(APP_DIR, boundaryDir, "loading.tsx");
-      const reason = LOADING_EXEMPT[key];
+      const reason = entry.loadingExemptReason;
+      const atBoundary = path.join(APP_DIR, boundaryDir, "loading.tsx");
 
       if (reason === undefined) {
-        expect(existsSync(file), `${boundaryDir}/loading.tsx is missing`).toBe(
-          true,
-        );
-      } else {
-        expect(reason.length).toBeGreaterThan(40);
         expect(
-          existsSync(file),
-          `${boundaryDir}/loading.tsx exists but LOADING_EXEMPT says it must not: ${reason}`,
-        ).toBe(false);
+          existsSync(atBoundary),
+          `${boundaryDir}/loading.tsx is missing; add it, or record loadingExemptReason in ROUTE_GROUP_BOUNDARIES`,
+        ).toBe(true);
+        return;
       }
-    });
-  });
 
-  it("names only real groups in LOADING_EXEMPT", () => {
-    for (const key of Object.keys(LOADING_EXEMPT)) {
-      expect(Object.keys(ROUTE_GROUP_BOUNDARIES)).toContain(key);
-    }
+      expect(reason.length).toBeGreaterThan(40);
+      // A reason about the whole group (prefetch fan-out, client-fetched
+      // screens, a gate that bans boundaries) is broken by a loading.tsx in ANY
+      // folder of it. Only a root-only exemption lets pages keep their own.
+      const offending = entry.loadingExemptAtRootOnly
+        ? existsSync(atBoundary)
+          ? [boundaryDir]
+          : []
+        : dirsHolding(group, "loading.tsx");
+      expect(
+        offending,
+        `loading.tsx found where ROUTE_GROUP_BOUNDARIES.${key}.loadingExemptReason says there must be none: ${reason}`,
+      ).toEqual([]);
+    });
   });
 
   it("rests the public-website exemptions on a ban that still exists", () => {
@@ -197,10 +185,12 @@ describe("route-group boundaries census (#4467)", () => {
       /const FORBIDDEN_SEGMENT_FILES = new Set\(\[([^\]]*)\]\)/,
     );
     expect(forbidden?.[1]).toContain('"loading.tsx"');
-    expect(LOADING_EXEMPT.website).toContain("check-website-render-modes.mjs");
-    expect(LOADING_EXEMPT.websiteDynamic).toContain(
-      "check-website-render-modes.mjs",
-    );
+    for (const key of ["website", "websiteDynamic"] as const) {
+      const entry: RouteGroupBoundary = ROUTE_GROUP_BOUNDARIES[key];
+      expect(entry.loadingExemptReason).toContain(
+        "check-website-render-modes.mjs",
+      );
+    }
   });
 
   it("gives every loading.tsx in the app the accessible RouteLoading shell", () => {
@@ -210,7 +200,7 @@ describe("route-group boundaries census (#4467)", () => {
     const bare = loadingDirs.filter(
       (dir) =>
         !/import\s*\{\s*RouteLoading\s*\}\s*from\s*"@\/components\/route-loading"/.test(
-          source(`${dir}/loading.tsx`),
+          code(`${dir}/loading.tsx`),
         ),
     );
     expect(

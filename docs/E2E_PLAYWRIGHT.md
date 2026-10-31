@@ -790,9 +790,8 @@ Four rules follow, and a new spec must satisfy all four:
 ### 2. A streaming route renders the same text twice for a beat
 
 Every route segment with a `loading.tsx` (`/book`, `/bookings`,
-`/bookings/[id]`, `/dashboard`, `/finance`, and since #4467 **every `/admin/*`
-page**, through the group-level `(admin)/loading.tsx`) is a React streaming
-(Suspense) boundary. During
+`/bookings/[id]`, `/dashboard`, `/admin/bookings`, `/admin/dashboard`,
+`/admin/members`, `/finance`) is a React streaming (Suspense) boundary. During
 the reveal the content exists **twice** — once in a `hidden` streamed template
 and once live — so a bare `getByText("…")` resolves to two elements and strict
 mode fails the assertion outright (`resolved to 2 elements … unexpected value

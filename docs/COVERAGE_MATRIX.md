@@ -123,7 +123,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
 | `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
-| `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E; a 404 in a real production runtime (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
+| `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | — | [guide](guides/work-parties.md) | 3 |

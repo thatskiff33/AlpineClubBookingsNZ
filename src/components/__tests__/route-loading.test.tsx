@@ -3,15 +3,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-import AdminLoading from "@/app/(admin)/loading";
+import AdminBookingsLoading from "@/app/(admin)/admin/bookings/loading";
 import FinanceDashboardLoading from "@/app/(finance)/finance/loading";
 import { RouteLoading } from "@/components/route-loading";
 
 /**
  * The shared loading shell (#4467): a polite live status region with a visually
  * hidden label, and skeleton blocks hidden from assistive technology. Rendered
- * through the group-level loading files as well as directly, so a group that
- * swaps the shell for a bare skeleton fails here as well as in the census.
+ * through real loading files as well as directly, so a page that swaps the
+ * shell for a bare skeleton fails here as well as in the census.
  */
 describe("RouteLoading (#4467)", () => {
   afterEach(cleanup);
@@ -45,7 +45,7 @@ describe("RouteLoading (#4467)", () => {
   });
 
   for (const [name, Loading] of [
-    ["(admin)", AdminLoading],
+    ["(admin)/admin/bookings", AdminBookingsLoading],
     ["(finance)/finance", FinanceDashboardLoading],
   ] as const) {
     it(`${name}/loading.tsx renders the shell`, () => {

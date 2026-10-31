@@ -1,23 +1,38 @@
 // @vitest-environment jsdom
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 /**
- * The route-error probe's gate (#4467). The page is TEST-ONLY: in a real
- * production runtime it must be a 404 whatever the request carries, and it must
- * not even read the request. These cases drive the real `isRealProductionRuntime()`
- * through the same environment variables a deployment sets, rather than mocking
- * the gate, so a change to the gate's wiring in the page is what fails here.
+ * The route-error probe's gates (#4467). The page is TEST-ONLY and runs three
+ * steps in a fixed order — production gate, admin guard, cookie — and these
+ * cases pin that order:
+ *
+ *   - in a real production runtime it is a 404 whatever the request carries,
+ *     and it neither runs the guard nor reads the cookie;
+ *   - outside production, a caller the admin guard refuses (signed out, or
+ *     signed in without admin standing) is redirected and never reaches the
+ *     cookie, so it can never make the page throw;
+ *   - only an admitted admin's cookie decides between throwing and rendering.
+ *
+ * The production gate is the REAL `isRealProductionRuntime()`, driven through
+ * the environment variables a deployment sets. The admin guard is mocked: what
+ * is under test is that this page calls it and obeys it before the cookie, and
+ * `admin-route-authorization-proof.test.ts` already drives the real guard over
+ * every admin page on disk, this one included.
  */
 
 const mocks = vi.hoisted(() => ({
   cookieValue: undefined as string | undefined,
-  cookiesRead: vi.fn(),
+  calls: [] as string[],
+  guardResult: { outcome: "admitted" } as
+    | { outcome: "admitted" }
+    | { outcome: "redirect"; destination: string },
 }));
 
 vi.mock("next/headers", () => ({
   cookies: async () => {
-    mocks.cookiesRead();
+    mocks.calls.push("cookies");
     return {
       get: (name: string) =>
         name === "route-error-probe" && mocks.cookieValue !== undefined
@@ -27,10 +42,25 @@ vi.mock("next/headers", () => ({
   },
 }));
 
-const NOT_FOUND = new Error("NEXT_NOT_FOUND (test sentinel)");
+vi.mock("@/lib/admin-layout-guard", () => ({
+  guardAdminLayout: async () => {
+    mocks.calls.push("guard");
+    return mocks.guardResult;
+  },
+}));
+
+class NotFoundSentinel extends Error {}
+class RedirectSentinel extends Error {
+  constructor(readonly destination: string) {
+    super(`redirect ${destination}`);
+  }
+}
 vi.mock("next/navigation", () => ({
   notFound: () => {
-    throw NOT_FOUND;
+    throw new NotFoundSentinel("NEXT_NOT_FOUND (test sentinel)");
+  },
+  redirect: (destination: string) => {
+    throw new RedirectSentinel(destination);
   },
 }));
 
@@ -51,10 +81,17 @@ function stubRuntime(runtime: {
   vi.stubEnv("APP_RUNTIME_ROLE", runtime.slot ?? "");
 }
 
+const E2E_STACK = {
+  nodeEnv: "production",
+  declaredRole: "non-production",
+  slot: "staging",
+} as const;
+
 describe("route-error probe page (#4467)", () => {
   beforeEach(() => {
     mocks.cookieValue = undefined;
-    mocks.cookiesRead.mockClear();
+    mocks.calls = [];
+    mocks.guardResult = { outcome: "admitted" };
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -81,31 +118,48 @@ describe("route-error probe page (#4467)", () => {
     ] as const;
 
     for (const { label, runtime } of productionRuntimes) {
-      it(`404s for ${label}, even with the throw cookie, and never reads it`, async () => {
+      it(`404s for ${label}, even with the throw cookie, running neither the guard nor the cookie read`, async () => {
         stubRuntime(runtime);
         mocks.cookieValue = ROUTE_ERROR_PROBE_THROW;
 
-        await expect(RouteErrorProbePage()).rejects.toBe(NOT_FOUND);
-        expect(mocks.cookiesRead).not.toHaveBeenCalled();
+        await expect(RouteErrorProbePage()).rejects.toBeInstanceOf(
+          NotFoundSentinel,
+        );
+        expect(mocks.calls).toEqual([]);
       });
     }
   });
 
-  describe("on the E2E stack (production build, declared non-production, staging slot)", () => {
-    beforeEach(() => {
-      stubRuntime({
-        nodeEnv: "production",
-        declaredRole: "non-production",
-        slot: "staging",
+  describe("outside production, a caller the admin guard refuses", () => {
+    for (const [label, destination] of [
+      ["a signed-out request", "/login?callbackUrl=%2Fadmin%2Ftesting%2Froute-error"],
+      ["a signed-in member without admin standing", "/dashboard"],
+    ] as const) {
+      it(`redirects ${label} and never reads the throw cookie`, async () => {
+        stubRuntime(E2E_STACK);
+        mocks.guardResult = { outcome: "redirect", destination };
+        mocks.cookieValue = ROUTE_ERROR_PROBE_THROW;
+
+        const outcome = RouteErrorProbePage();
+        await expect(outcome).rejects.toBeInstanceOf(RedirectSentinel);
+        await expect(outcome).rejects.toMatchObject({ destination });
+        expect(mocks.calls).toEqual(["guard"]);
       });
+    }
+  });
+
+  describe("for an admitted admin on the E2E stack", () => {
+    beforeEach(() => {
+      stubRuntime(E2E_STACK);
     });
 
-    it("throws its fixed message while the throw cookie is set", async () => {
+    it("throws its fixed message while the throw cookie is set, after the guard", async () => {
       mocks.cookieValue = ROUTE_ERROR_PROBE_THROW;
 
       await expect(RouteErrorProbePage()).rejects.toThrow(
         ROUTE_ERROR_PROBE_MESSAGE,
       );
+      expect(mocks.calls).toEqual(["guard", "cookies"]);
     });
 
     it("renders normally without the cookie, which is what a retry sees", async () => {
@@ -127,7 +181,7 @@ describe("route-error probe page (#4467)", () => {
     });
   });
 
-  it("is available under next dev (development build, nothing declared)", async () => {
+  it("is available to an admitted admin under next dev (development build, nothing declared)", async () => {
     stubRuntime({ nodeEnv: "development" });
     mocks.cookieValue = ROUTE_ERROR_PROBE_THROW;
 

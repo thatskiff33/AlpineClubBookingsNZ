@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
+import { guardAdminLayout } from "@/lib/admin-layout-guard";
 import {
   ROUTE_ERROR_PROBE_COOKIE,
   ROUTE_ERROR_PROBE_HEADING,
   ROUTE_ERROR_PROBE_MESSAGE,
-  routeErrorProbeOutcome,
+  ROUTE_ERROR_PROBE_THROW,
 } from "@/lib/route-error-probe";
 import { isRealProductionRuntime } from "@/lib/xero-mock-endpoint";
 
 /**
  * TEST-ONLY: the admin page the route-group error-boundary E2E makes fail on
- * purpose (#4467). A 404 in a real production runtime; see
- * `src/lib/route-error-probe.ts` for the gate and the cookie toggle.
+ * purpose (#4467). See `src/lib/route-error-probe.ts` for why the three steps
+ * below run in exactly this order: production gate, admin guard, cookie.
  */
 export const dynamic = "force-dynamic";
 
@@ -23,14 +24,19 @@ export const metadata: Metadata = {
 };
 
 export default async function RouteErrorProbePage() {
-  const outcome = await routeErrorProbeOutcome({
-    realProductionRuntime: isRealProductionRuntime(),
-    readCookie: async () =>
-      (await cookies()).get(ROUTE_ERROR_PROBE_COOKIE)?.value,
-  });
+  // 1. Before any await: a real production runtime gets a real 404.
+  if (isRealProductionRuntime()) notFound();
 
-  if (outcome === "absent") notFound();
-  if (outcome === "throw") throw new Error(ROUTE_ERROR_PROBE_MESSAGE);
+  // 2. The page guards itself: the admin layout's guard does not stop a child
+  // segment from running (Next's authentication guide, "Layouts and auth checks").
+  const guard = await guardAdminLayout();
+  if (guard.outcome === "redirect") redirect(guard.destination);
+
+  // 3. Only an admitted admin, outside production, reaches the toggle.
+  const toggle = (await cookies()).get(ROUTE_ERROR_PROBE_COOKIE)?.value;
+  if (toggle === ROUTE_ERROR_PROBE_THROW) {
+    throw new Error(ROUTE_ERROR_PROBE_MESSAGE);
+  }
 
   return (
     <div className="space-y-2">

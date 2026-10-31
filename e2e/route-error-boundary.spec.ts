@@ -17,9 +17,9 @@ import { ROUTE_GROUP_BOUNDARIES } from "../src/lib/route-group-boundaries";
 // probe.ts): it fails while this browser context sends the probe cookie and
 // renders a fixed heading once it does not. The toggle lives in the CONTEXT, not
 // the database, so a retried attempt starts clean (flake invariant 1) and nothing
-// here races another spec. Every assertion is role- or attribute-scoped, never a
-// bare getByText on streamed content (flake invariant 2): the admin group's
-// loading.tsx makes this a streaming route.
+// here races another spec. Every assertion is role- or attribute-scoped rather
+// than a bare getByText on page content (flake invariant 2), so it stays sound
+// if this route ever streams behind a loading boundary.
 test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
 
 test("a failing admin page shows the admin error screen inside the admin layout, and Try again recovers it", async ({
@@ -56,7 +56,12 @@ test("a failing admin page shows the admin error screen inside the admin layout,
     homeHref,
   );
 
-  // A server error reaches the screen only as its digest, never as its message.
+  // The digest is shown. The message check below is a smoke check only: in a
+  // production build Next already replaces a Server Component error's message
+  // before it reaches the browser, so it would pass without the boundary's own
+  // rule. That rule — never render the message, including a Client Component
+  // error that keeps its original one — is proved by
+  // src/components/__tests__/route-error.test.tsx.
   await expect(boundary.getByText(/^Error ID:/)).toBeVisible();
   await expect(page.getByText(ROUTE_ERROR_PROBE_MESSAGE)).toHaveCount(0);
 

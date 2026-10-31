@@ -1609,11 +1609,11 @@ the failed page is replaced. All of them are the one shared screen,
 
 | Area | Boundary | "Back" goes to | Loading state while a page streams in |
 | --- | --- | --- | --- |
-| Admin (`/admin/*`) | `(admin)/error.tsx` | `/admin` | `(admin)/loading.tsx`; bookings, dashboard and members keep their own skeletons |
+| Admin (`/admin/*`) | `(admin)/error.tsx` | `/admin` | Per page only: bookings, dashboard, members |
 | Member area (dashboard, bookings, profile, …) | `(authenticated)/error.tsx` | `/dashboard` | Per page only: dashboard, bookings, book, booking detail, consent |
 | Finance (`/finance`) | `(finance)/finance/error.tsx` | `/finance` | `(finance)/finance/loading.tsx` |
 | Lodge kiosk (`/lodge/*`) | `(lodge)/error.tsx` | `/lodge/kiosk` | None: the kiosk and roster fetch their own data on the client (hardening review F36: "do not add there") |
-| Sign-in, recovery and token pages | `(public)/error.tsx` | `/` | None |
+| Sign-in, registration, recovery and token pages | `(public)/error.tsx` | `/` | None |
 | Public website | `(website)/error.tsx`, `(website-dynamic)/error.tsx` | `/` | None |
 
 Every loading state is the shared `src/components/route-loading.tsx`: a polite
@@ -1621,15 +1621,42 @@ Every loading state is the shared `src/components/route-loading.tsx`: a polite
 blocks hidden from assistive technology, in the theme's tokens for light and
 dark.
 
-Four route groups have no group-wide loading state, on purpose. A `loading.tsx` starts
-the response before the page has decided anything, so a page's own "not found"
-or redirect would arrive as a 200 instead of a 404 or 307. The public website
-forbids it outright (`scripts/ci/check-website-render-modes.mjs`, #2352 and
-#2434: a missing page would become a stored soft 404); the member area decides
-404s per page (an out-of-audience notice must be a real 404); and the sign-in
-pages redirect from the page. `src/lib/__tests__/route-group-boundaries.test.ts`
-records each reason and fails if a new route group arrives without an error
-screen and a decision on its loading state.
+Only finance has a loading state for its whole area (`(finance)/finance`, its
+one page). The other six route groups have none at their root, on purpose,
+because a group-level `loading.tsx` changes what the server does, not only what
+the person sees while waiting:
+
+- **It starts the response before any page has decided anything**, so a page's
+  own "not found" or redirect arrives as a 200 instead of a 404 or 307 (Next's
+  `loading.md`, "Status codes").
+- **It makes every dynamic page in the group prefetchable** (Next's
+  `prefetching.md`): a page is prefetched as its link scrolls into view only
+  when it has a loading boundary.
+
+Each group's reason, recorded in `src/lib/route-group-boundaries.ts`:
+
+- **Admin**: every sidebar link would prefetch its page, each one running the
+  admin layout's guard and database loads on every admin page view; the
+  page-level not-found and redirect answers would become 200s; and every admin
+  end-to-end spec would meet the streaming double-render flake. Bookings,
+  dashboard and members keep their own placeholders.
+- **Member area**: pages decide 404s themselves (an out-of-audience notice must
+  be a real 404). The slow member pages keep their own placeholders.
+- **Lodge kiosk**: the kiosk and roster fetch their data on the client, so a
+  placeholder would never show on a fresh load, and the roster's redirect to the
+  kiosk would become a client-side one (hardening review F36: "do not add
+  there").
+- **Sign-in, registration and recovery**: `/login`, `/login/verify`,
+  `/login/enroll`, `/register` and `/membership-cancellation/[token]` redirect
+  from the page.
+- **Public website, both groups**: forbidden by
+  `scripts/ci/check-website-render-modes.mjs` (#2352, #2434), because a missing
+  page would become a soft 404 that the page store then keeps.
+
+`src/lib/__tests__/route-group-boundaries.test.ts` holds the tree to those
+answers: it fails if a new route group arrives without an error screen and a
+loading decision, or if a group with a reason gains a `loading.tsx` (anywhere
+in the group, except the admin and member areas, whose per-page ones stay).
 
 ## Back-link convention (admin drill-down leaves) (#2046)
 

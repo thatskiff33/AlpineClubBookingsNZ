@@ -4,22 +4,35 @@
  * The acceptance test for the route-group error boundaries has to make an admin
  * page fail on purpose and then recover from it, and no real page can be made to
  * do that without putting test logic into it. So one page exists for the
- * purpose — `ROUTE_ERROR_PROBE_PATH` — and this module is the whole of its
- * behaviour, kept free of server imports so the Playwright spec reads the same
- * constants the page does.
+ * purpose — `ROUTE_ERROR_PROBE_PATH`. This module holds its constants, kept free
+ * of server imports so the Playwright spec reads the same values the page does.
  *
- * ## Why it cannot be reached in production
+ * ## Why it cannot be reached in production, or by anyone but an admin
  *
- * The page asks the repo's existing test-harness gate, `isRealProductionRuntime()`
- * (`src/lib/xero-mock-endpoint.ts`, the backstop behind the `/api/testing/*`
- * routes), BEFORE it reads anything from the request. That gate answers "real
- * production" for any deployment that declares `APP_ENVIRONMENT_ROLE=production`
- * (the canonical answer, INV-CONFIG-003) and, as a backstop, for an undeclared
- * production build that is not the staging slot. There the page is a 404 and the
- * cookie is never read. The E2E stack declares `non-production` and runs as the
- * `staging` slot, so the probe exists there; `next dev` has it too. Everywhere it
- * exists it is still an admin page behind the admin layout's own guard, and all
- * it can do is fail with a fixed message and no data.
+ * The page does three things in a fixed order, and the order is the guarantee:
+ *
+ *   1. It asks the repo's existing test-harness gate, `isRealProductionRuntime()`
+ *      (`src/lib/xero-mock-endpoint.ts`, the backstop behind the `/api/testing/*`
+ *      routes). That answers "real production" for any deployment declaring
+ *      `APP_ENVIRONMENT_ROLE=production` (the canonical answer, INV-CONFIG-003)
+ *      and, as a backstop, for an undeclared production build that is not the
+ *      staging slot. There the page calls `notFound()` before any `await`, and
+ *      with no `loading.tsx` or Suspense between the root layout and this page
+ *      that happens before the response starts streaming, so it is a real 404
+ *      status (the admin group's not-found screen) — not a streamed 200.
+ *   2. It runs the admin guard itself, `guardAdminLayout()`, and redirects if
+ *      refused. The admin layout runs the same guard, but "a layout also does not
+ *      control whether the rest of the route renders. Route segments ... are
+ *      rendered by the router, so a layout that hides or swaps them does not stop
+ *      them from running" (`node_modules/next/dist/docs/01-app/02-guides/
+ *      authentication.md`, "Layouts and auth checks"). A page that relied on the
+ *      layout would still reach step 3 for a signed-out request. The
+ *      ai-diagnostics page carries the same call for the same reason.
+ *   3. Only then does it read the cookie.
+ *
+ * The E2E stack declares `non-production` and runs as the `staging` slot, so the
+ * probe exists there; `next dev` has it too. All it can do there is fail with a
+ * fixed message and no data, for an admitted administrator.
  *
  * ## Why a cookie, and why that makes "retry works" deterministic
  *
@@ -48,20 +61,3 @@ export const ROUTE_ERROR_PROBE_MESSAGE =
 
 /** The heading the probe renders once it stops throwing. */
 export const ROUTE_ERROR_PROBE_HEADING = "Route error probe";
-
-export type RouteErrorProbeOutcome = "absent" | "throw" | "render";
-
-/**
- * What the probe does for one request. The cookie is read through a callback
- * so that, in a real production runtime, the request is never read at all.
- */
-export async function routeErrorProbeOutcome({
-  realProductionRuntime,
-  readCookie,
-}: {
-  realProductionRuntime: boolean;
-  readCookie: () => Promise<string | undefined>;
-}): Promise<RouteErrorProbeOutcome> {
-  if (realProductionRuntime) return "absent";
-  return (await readCookie()) === ROUTE_ERROR_PROBE_THROW ? "throw" : "render";
-}
