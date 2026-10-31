@@ -30,7 +30,7 @@ vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: vi.fn(async () => CLUB_TIME_ZONE),
 }))
 
-import { getTodaysXeroUsageSummary, recordXeroApiUsage } from "@/lib/xero-api-usage"
+import { getTodaysXeroUsageSummary, recordXeroApiUsage, xeroDailyBudgetAllowsDeferrableCall } from "@/lib/xero-api-usage"
 
 describe("xero-api-usage", () => {
   beforeEach(() => {
@@ -177,5 +177,18 @@ describe("xero-api-usage", () => {
       rateLimitCategory: "day",
     })
     expect(summary.lastDailyLimitEvent?.id).toBe("evt-3")
+  })
+
+  // #4531: a deferrable call (a deleted-payment check) stops at the "critical" threshold.
+  it("allows a deferrable call below 85% of the daily budget and refuses it from there", async () => {
+    mockPrisma.xeroApiUsageDaily.findUnique.mockResolvedValueOnce(null)
+    await expect(xeroDailyBudgetAllowsDeferrableCall()).resolves.toBe(true)
+    mockPrisma.xeroApiUsageDaily.findUnique.mockResolvedValueOnce({ totalCalls: 849 })
+    await expect(xeroDailyBudgetAllowsDeferrableCall()).resolves.toBe(true)
+    mockPrisma.xeroApiUsageDaily.findUnique.mockResolvedValueOnce({ totalCalls: 850 })
+    await expect(xeroDailyBudgetAllowsDeferrableCall()).resolves.toBe(false)
+    expect(mockPrisma.xeroApiUsageDaily.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { usageDate: expect.any(Date) } }),
+    )
   })
 })
