@@ -637,7 +637,11 @@ import "./servernz-connection-race.realdb.test";
 // writes nothing more, a removed mirror keeps its blank words, a claim queued
 // ahead of the orphan sweep keeps its upload, and retention lists a picture a
 // mirror update adds mid-pass. It owns `race-4588-` rows and puts the board's
-// settings row back.
+// settings row back. #4590 adds a share the server accepted recorded through
+// the mirror's copy and never re-sent, a retention pass taken over leaving the
+// new claim, and a post refused when the sweep deleted its upload first
+// (`race-4590-` rows). Its review adds the inline share and the cron retry
+// sending once (#4592), and an accepted share recorded nowhere never re-sent.
 import "./club-post-mirror-concurrency.realdb.test";
 // #4262: the other-lodge name-index pair's windowed declaration measured, not
 // asserted: the previous release's name-keyed upsert refused once it applies,

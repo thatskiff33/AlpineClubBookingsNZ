@@ -223,6 +223,7 @@ describe("the cleanup pass", () => {
     // Nothing was claimed, so nothing may be released — releasing here would
     // free the claim the OTHER pass is holding.
     expect(mocks.settingsUpdate).not.toHaveBeenCalled();
+    expect(mocks.settingsUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("claims a free or stale row, reaping one a killed process left behind", async () => {
@@ -242,8 +243,8 @@ describe("the cleanup pass", () => {
     await expect(runClubPostCleanup(NOW)).rejects.toThrow("database went away");
 
     // A failed pass must not wedge the next one.
-    const release = mocks.settingsUpdate.mock.calls.at(-1)?.[0];
-    expect(release.data).toEqual({ cleanupStartedAt: null });
+    const release = mocks.settingsUpdateMany.mock.calls.at(-1)?.[0];
+    expect(release).toEqual({ where: { id: "default", cleanupStartedAt: NOW }, data: { cleanupStartedAt: null } });
   });
 
   it("records what it deleted, then releases", async () => {
@@ -256,9 +257,19 @@ describe("the cleanup pass", () => {
       lastCleanupAt: NOW,
       lastCleanupDeleted: 7,
     });
-    expect(mocks.settingsUpdate.mock.calls[1][0].data).toEqual({
+    expect(mocks.settingsUpdateMany.mock.calls.at(-1)?.[0].data).toEqual({
       cleanupStartedAt: null,
     });
+  });
+
+  it("releases only the exact stamp its claim wrote, so a taken-over pass clears nothing (#4590)", async () => {
+    await runClubPostCleanup(NOW);
+
+    const [claim, release] = mocks.settingsUpdateMany.mock.calls.map(([args]) => args);
+    expect(claim.data.cleanupStartedAt).toEqual(NOW);
+    // Conditional on that stamp: a second pass's claim matches nothing here.
+    expect(release.where).toEqual({ id: "default", cleanupStartedAt: claim.data.cleanupStartedAt });
+    expect(mocks.settingsUpdate.mock.calls.some(([args]) => "cleanupStartedAt" in args.data)).toBe(false);
   });
 
   it("cannot report busy forever on an install with no settings row", async () => {

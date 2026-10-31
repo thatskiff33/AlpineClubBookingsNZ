@@ -272,37 +272,57 @@ export async function createClubPost(input: {
     );
   }
 
-  const post = await prisma.clubPost.create({
-    data: {
-      authorMemberId: input.authorMemberId,
-      authorName: input.authorName,
-      content,
-      bodyHtml,
-      // The INTENTION only. `sharedAt` is stamped when the central server
-      // actually takes it, which may be seconds later or, if the server is
-      // down, on a later retry — the post is live on this board either way.
-      shareRequestedAt: input.shareToAllClubs ? new Date() : null,
-      // originClubCode/originClubName stay null: this club wrote it.
-      // sharedAt/serverPostId stay null until the server takes it.
-    },
-    select: { id: true },
-  });
-
-  // Claim the images this body refers to. Scoped to THIS member's own
-  // unclaimed uploads: without that, a body could name another member's
-  // publicId and steal an image off a post it does not own — the ids are
-  // unguessable, but "hard to guess" is not an authorisation check.
-  if (imageIds.length > 0) {
-    await prisma.clubPostImage.updateMany({
-      where: {
-        // Validated against MAX_CLUB_POST_IMAGES above, so no silent slice.
-        publicId: { in: imageIds },
-        postId: null,
-        uploadedByMemberId: input.authorMemberId,
+  // ONE TRANSACTION, AND EVERY PICTURE THE BODY NAMES IS CLAIMED OR NOTHING IS
+  // (#4590). The orphan sweep deletes uploads unattached for an hour; one it
+  // deleted just before this claim used to leave a live post naming a picture
+  // that no longer exists. A short claim rolls the post back and the member
+  // is told to add the picture again, the same plain refusal the composer
+  // already shows for too many pictures or too much formatting; silently
+  // dropping it would publish a post that is not the one they wrote. The new
+  // post's row comes first, then the image rows: the post-before-images order
+  // in docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their
+  // images".
+  const post = await prisma.$transaction(async (tx) => {
+    const created = await tx.clubPost.create({
+      data: {
+        authorMemberId: input.authorMemberId,
+        authorName: input.authorName,
+        content,
+        bodyHtml,
+        // The INTENTION only. `sharedAt` is stamped when the central server
+        // actually takes it, which may be seconds later or, if the server is
+        // down, on a later retry — the post is live on this board either way.
+        shareRequestedAt: input.shareToAllClubs ? new Date() : null,
+        // originClubCode/originClubName stay null: this club wrote it.
+        // sharedAt/serverPostId stay null until the server takes it.
       },
-      data: { postId: post.id },
+      select: { id: true },
     });
-  }
+
+    // Claim the images this body refers to. Scoped to THIS member's own
+    // unclaimed uploads: without that, a body could name another member's
+    // publicId and steal an image off a post it does not own — the ids are
+    // unguessable, but "hard to guess" is not an authorisation check.
+    if (imageIds.length > 0) {
+      const claimed = await tx.clubPostImage.updateMany({
+        where: {
+          // Validated against MAX_CLUB_POST_IMAGES above, so no silent slice.
+          publicId: { in: imageIds },
+          postId: null,
+          uploadedByMemberId: input.authorMemberId,
+        },
+        data: { postId: created.id },
+      });
+      if (claimed.count !== imageIds.length) {
+        throw new ClubPostValidationError(
+          "A picture in this post is no longer available to attach. Remove it, add it again, and post.",
+        );
+      }
+    }
+    return created;
+    // Bounded like the other short row-lock writers (#4590 review): the claim
+    // can queue behind the orphan sweep's delete of one of these uploads.
+  }, { maxWait: 10_000, timeout: 30_000 });
 
   // The content RETURNED is the content STORED -- with a rich body it was
   // derived from the sanitised HTML above, not taken from the request -- so

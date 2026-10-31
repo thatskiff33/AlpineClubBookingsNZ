@@ -158,4 +158,18 @@ describe("clubPostImageIds", () => {
   it("finds none in a body with no images", () => {
     expect(clubPostImageIds("<p>hello</p>")).toEqual([]);
   });
+
+  it("counts only pictures, never a pasted link or words naming an image URL (#4590 review)", () => {
+    const shown = "c".repeat(32);
+    const linked = "d".repeat(32);
+    const html =
+      `<p>See <a href="/api/club-posts/images/${linked}">this picture</a> ` +
+      `or paste /api/club-posts/images/${linked} as text.</p>` +
+      `<img src="/api/club-posts/images/${shown}" alt="">`;
+    expect(clubPostImageIds(html)).toEqual([shown]);
+  });
+
+  it("ignores an img whose src only contains our route, as the sanitiser drops it", () => {
+    expect(clubPostImageIds(`<img src="https://elsewhere.example/api/club-posts/images/${"e".repeat(32)}">`)).toEqual([]);
+  });
 });

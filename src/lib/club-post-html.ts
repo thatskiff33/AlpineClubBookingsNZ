@@ -98,7 +98,7 @@ const ALLOWED_STYLES: sanitizeHtml.IOptions["allowedStyles"] = {
  * embedding a tracking pixel, silently making every reader's browser call a
  * third party, or referencing a file:// or data: payload.
  */
-const IMAGE_SRC = /^\/api\/club-posts\/images\/[0-9a-f]{32}$/;
+const IMAGE_SRC = /^\/api\/club-posts\/images\/([0-9a-f]{32})$/;
 
 const OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -197,15 +197,28 @@ export function clubPostHtmlToText(html: string): string {
   );
 }
 
-/** Every publicId an `<img>` in this body refers to. */
+/**
+ * Every publicId an `<img src>` in this body refers to, in order, once each.
+ *
+ * Read from the PARSED `<img>` tags (#4590 review), with the same parser and
+ * the same `IMAGE_SRC` shape the sanitiser applies, never from the raw text: a
+ * pasted link to a picture (an `<a href>` or plain words naming an image URL)
+ * names no picture, and counting it made `createClubPost` refuse a post as
+ * missing a picture it never contained.
+ */
 export function clubPostImageIds(html: string): string[] {
   const ids: string[] = [];
-  const pattern = /\/api\/club-posts\/images\/([0-9a-f]{32})/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(html)) !== null) {
-    // The capture group has no `?` quantifier, so it is always present.
-    const id = match[1];
-    if (id !== undefined && !ids.includes(id)) ids.push(id);
-  }
+  sanitizeHtml(html, {
+    allowedTags: ["img"],
+    allowedAttributes: { img: ["src"] },
+    allowedSchemesByTag: { img: [] },
+    exclusiveFilter: (frame) => {
+      if (frame.tag === "img") {
+        const id = IMAGE_SRC.exec(frame.attribs?.src ?? "")?.[1];
+        if (id !== undefined && !ids.includes(id)) ids.push(id);
+      }
+      return false;
+    },
+  });
   return ids;
 }
