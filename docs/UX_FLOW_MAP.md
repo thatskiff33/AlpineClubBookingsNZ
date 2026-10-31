@@ -1688,8 +1688,11 @@ establishes:
   `bg-success-muted text-success` / `bg-warning-muted text-warning` (or the
   solid `bg-success text-success-foreground`) instead of hardcoded
   green/yellow Tailwind classes so badges/chips adapt to dark mode. The trio is
-  completed by `--info` (calm blue) and `--danger` (dark-adaptable red — used
-  instead of the solid `--destructive`, which fails dark-mode AA at 2.63:1).
+  completed by `--info` (calm blue) and `--danger` (dark-adaptable red), the
+  pair for solid destructive buttons and badges. The `text-destructive` error
+  ink is red-700 in light mode (#4466) and the dark `--danger` tone in dark
+  mode (#4553); `destructive-contrast-contract.test.ts` pins both, per theme
+  scope, from the values in `globals.css`.
 - **Status + occupancy primitives (#1804):** render any domain status with
   `StatusChip` (`src/components/ui/status-chip.tsx`; `kind` =
   booking|payment|subscription|lifecycle|financeAccess) — it resolves each state

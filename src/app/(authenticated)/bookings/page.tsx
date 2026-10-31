@@ -194,18 +194,18 @@ export default async function MyBookingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">My Bookings</h1>
-        <Link href="/book">
-          <Button>New Booking</Button>
-        </Link>
+        <Button asChild>
+          <Link href="/book">New Booking</Link>
+        </Button>
       </div>
 
       {items.length === 0 ? (
         <Card>
           <CardContent className="p-6 text-center">
             <p className="text-muted-foreground mb-4">You haven&apos;t made any bookings yet.</p>
-            <Link href="/book">
-              <Button>Book a Stay</Button>
-            </Link>
+            <Button asChild>
+              <Link href="/book">Book a Stay</Link>
+            </Button>
           </CardContent>
         </Card>
       ) : (

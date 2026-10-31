@@ -162,7 +162,7 @@ export function MonthCalendar({
                     )}
                     <span className="truncate">
                       {!event.allDay && (
-                        <span className="mr-1 tabular-nums opacity-70">
+                        <span className="mr-1 tabular-nums">
                           {formatEventTime(event, club.zone, club.format)}
                         </span>
                       )}

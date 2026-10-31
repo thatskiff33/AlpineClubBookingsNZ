@@ -56,11 +56,9 @@ export default function ForgotPasswordPage() {
           </CardDescription>
         </CardHeader>
         <CardFooter>
-          <Link href="/login" className="w-full">
-            <Button variant="outline" className="w-full">
-              Back to sign in
-            </Button>
-          </Link>
+          <Button asChild variant="outline" className="w-full">
+            <Link href="/login">Back to sign in</Link>
+          </Button>
         </CardFooter>
       </Card>
     );

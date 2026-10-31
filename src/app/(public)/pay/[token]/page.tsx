@@ -343,9 +343,9 @@ export default function PayByLinkPage() {
     return (
       <NarrativeCard narrative={context.narrative} tone={tone}>
         {showRebook ? (
-          <Link href="/booking-requests">
-            <Button variant="outline">Book these dates again</Button>
-          </Link>
+          <Button asChild variant="outline">
+            <Link href="/booking-requests">Book these dates again</Link>
+          </Button>
         ) : null}
       </NarrativeCard>
     );

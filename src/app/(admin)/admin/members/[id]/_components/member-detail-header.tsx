@@ -191,18 +191,18 @@ export function MemberDetailHeader({
           {xeroConnected === true &&
             (member.xeroContactId ? (
               <>
-                <a
-                  href={buildXeroContactUrl(member.xeroContactId, {
-                    shortCode: xeroOrgShortCode,
-                  })}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Button variant="outline" size="sm">
+                <Button asChild variant="outline" size="sm">
+                  <a
+                    href={buildXeroContactUrl(member.xeroContactId, {
+                      shortCode: xeroOrgShortCode,
+                    })}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     <ExternalLink className="h-4 w-4 mr-1" />
                     View in Xero
-                  </Button>
-                </a>
+                  </a>
+                </Button>
                 {!xeroWritesSuppressed && <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
