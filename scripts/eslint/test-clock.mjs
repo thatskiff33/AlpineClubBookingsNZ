@@ -62,10 +62,9 @@ function heldReading(context, node) {
   let scope = context.sourceCode.getScope(node);
   while (scope) {
     const variable = scope.set.get(node.name);
-    if (variable) {
-      if (variable.defs.some((def) => isReading(def.node?.init))) return true;
-      return variable.references.some((reference) => isReading(reference.writeExpr));
-    }
+    // A declaration's initialiser is a write reference too, so this covers
+    // `const start = Date.now()` as well as a later `start = Date.now()`.
+    if (variable) return variable.references.some((reference) => isReading(reference.writeExpr));
     scope = scope.upper;
   }
   return false;
