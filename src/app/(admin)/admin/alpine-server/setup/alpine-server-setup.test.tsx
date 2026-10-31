@@ -304,3 +304,68 @@ describe("AlpineServerSetup Download summary: deletions (#58)", () => {
     ).toBeTruthy();
   });
 });
+
+describe("AlpineServerSetup key save names the shown address (#4470)", () => {
+  const VERSION = { status: "no-key", serverVersion: null, expected: "2.6", checkedAt: null, couldNotCheck: false, missingBaseUrl: false };
+
+  function keySaveAnswers(answer: { ok: boolean; status: number; body: unknown }) {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/admin/alpine-server/version")) {
+        return { ok: true, status: 200, json: async () => VERSION };
+      }
+      if (String(url).includes("/api/admin/integrations/credentials") && init?.method === "POST") {
+        return { ok: answer.ok, status: answer.status, json: async () => answer.body };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  function saveKey(value: string) {
+    fireEvent.change(screen.getByLabelText(/API key/i), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: /save key/i }));
+  }
+
+  function postedBody() {
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/integrations/credentials"));
+    return JSON.parse(String(call?.[1]?.body));
+  }
+
+  it("sends the saved address it shows, not the unsaved text in the address field", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://typed-not-saved.test" } });
+    saveKey("acs_new");
+    await screen.findByText(/API key stored securely/i);
+    expect(postedBody()).toEqual({ provider: "servernz", key: "api_key", value: "acs_new", expectedBaseUrl: "https://central.test" });
+  });
+
+  it("sends null when no address is saved", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false, baseUrl: null })} />);
+    saveKey("acs_new");
+    await screen.findByText(/API key stored securely/i);
+    expect(postedBody().expectedBaseUrl).toBeNull();
+  });
+
+  it("tells the admin the address changed and to reload, and does not show the key as stored", async () => {
+    keySaveAnswers({
+      ok: false,
+      status: 409,
+      body: { code: "address-changed", error: "The central server address was changed after this page was loaded, so the API key was not saved: it may have been issued for the old address. Reload the page, check the address, and enter the key again." },
+    });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    saveKey("acs_old_server");
+    const message = await screen.findByText(/address was changed after this page was loaded/i);
+    expect(message.textContent).toMatch(/reload the page/i);
+    expect(message.className).toMatch(/text-destructive/);
+    expect(screen.queryByText(/^stored$/i)).toBeNull();
+    expect(screen.getByText(/^not set$/i)).toBeTruthy();
+  });
+
+  it("still says to reload when the 409 carries no message", async () => {
+    keySaveAnswers({ ok: false, status: 409, body: { code: "address-changed" } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    saveKey("acs_old_server");
+    expect((await screen.findByText(/address changed since this page loaded/i)).textContent).toMatch(/reload the page/i);
+  });
+});

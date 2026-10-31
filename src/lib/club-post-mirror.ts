@@ -12,7 +12,11 @@ import {
   type SyncPost,
 } from "@/lib/servernz-api";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
-import { getServerNzSetupState } from "@/lib/servernz-config";
+import {
+  SERVERNZ_CREDENTIAL_KEYS,
+  SERVERNZ_PROVIDER,
+  getServerNzSetupState,
+} from "@/lib/servernz-config";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
@@ -20,8 +24,13 @@ import {
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import {
   getIntegrationCredentialValue,
-  setIntegrationCredential,
+  invalidateProviderCredentialCache,
+  setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
+import {
+  ServerNzConnectionChangedError,
+  serverNzAnswerWriter,
+} from "@/lib/servernz-version-record";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -47,9 +56,13 @@ import {
  * writes nothing — evidence this sync owes on its own, and its tests carry it.
  */
 
-/** Provider key the push-verification secret is stored under, beside the API key. */
-export const SERVERNZ_PUSH_SECRET_KEY = "push_secret";
-const SERVERNZ_PROVIDER = "servernz";
+/**
+ * Provider key the push-verification secret is stored under, beside the API
+ * key: named here for the webhooks that verify with it, defined once in
+ * `SERVERNZ_CREDENTIAL_KEYS`, where the address move that removes it (#4470)
+ * reads it too.
+ */
+export const SERVERNZ_PUSH_SECRET_KEY = SERVERNZ_CREDENTIAL_KEYS.pushSecret;
 
 /** A claim older than this belongs to a process that died mid-pass. */
 export const STALE_SYNC_CLAIM_MS = 10 * 60 * 1000;
@@ -370,6 +383,12 @@ async function applyRemoval(serverPostId: string): Promise<boolean> {
  * secret is already stored. The callback URL is derived from NEXTAUTH_URL —
  * the address this install already knows itself by — so there is no second
  * base-URL setting to drift.
+ *
+ * A server address move removes the stored secret (#4470), so the next pass
+ * registers with the new server. The secret is stored through the connection
+ * fence for the identity the registration was sent on: one registered with a
+ * connection replaced while the request was out is the old server's, and is
+ * dropped rather than stored, so it cannot stop that re-registration.
  */
 export async function ensurePushRegistration(): Promise<void> {
   const existing = await getIntegrationCredentialValue(
@@ -386,19 +405,28 @@ export async function ensurePushRegistration(): Promise<void> {
   const callback = new URL("/api/webhooks/servernz-posts", base).toString();
   try {
     const result = await registerPushTarget(callback);
-    await setIntegrationCredential({
-      provider: SERVERNZ_PROVIDER,
-      key: SERVERNZ_PUSH_SECRET_KEY,
-      value: result.secret,
-      actor: { kind: "system", actor: "servernz-push-registration" },
-      // Declared last-writer-wins, and deliberately NOT create-only (#2723).
-      // `registerPushTarget` is a PUT: the central server keeps the most
-      // recent registration and issues it a new secret version. So if two
-      // containers both register, the secret worth storing is the LAST one
-      // issued — refusing to overwrite would leave this install holding a
-      // superseded secret and rejecting every push the server signs.
-      expect: { expect: "any" },
-    });
+    try {
+      await serverNzAnswerWriter(result.sentOn)((tx) =>
+        setIntegrationCredentialInTransaction({
+          tx,
+          provider: SERVERNZ_PROVIDER,
+          key: SERVERNZ_PUSH_SECRET_KEY,
+          value: result.secret,
+          actor: { kind: "system", actor: "servernz-push-registration" },
+          // Declared last-writer-wins, and deliberately NOT create-only (#2723).
+          // `registerPushTarget` is a PUT: the central server keeps the most
+          // recent registration and issues it a new secret version. So if two
+          // containers both register, the secret worth storing is the LAST one
+          // issued — refusing to overwrite would leave this install holding a
+          // superseded secret and rejecting every push the server signs.
+          expect: { expect: "any" },
+        }),
+      );
+    } finally {
+      // The fenced transaction is not the store's own, so this process's
+      // cached copy is dropped here, after it has ended either way.
+      invalidateProviderCredentialCache(SERVERNZ_PROVIDER);
+    }
     logger.info(
       { callback, secretVersion: result.secretVersion },
       "Registered this install for shared-post pushes",
@@ -407,6 +435,13 @@ export async function ensurePushRegistration(): Promise<void> {
     // A version pause is the pass's answer, not registration's: let the pass
     // report it (#49 review item 1).
     if (error instanceof ServerNzVersionMismatchError) throw error;
+    if (error instanceof ServerNzConnectionChangedError) {
+      // Nothing stored: the next pass registers on the connection now stored.
+      logger.warn(
+        "The Alpine Central Server connection changed while this install registered for pushes; the secret was not stored, and the next sync registers again",
+      );
+      return;
+    }
     // Poll-only is a working state, so registration failing must not fail the
     // sync pass that attempted it.
     logger.warn({ err: error }, "Could not register the shared-post push target");

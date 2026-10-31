@@ -18,10 +18,13 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   forgetServerConnectionAnswers: vi.fn(),
   lockServerNzSettings: vi.fn(),
-  tx: { serverNzSettings: { createMany: vi.fn() } },
+  tx: { serverNzSettings: { createMany: vi.fn(), findUnique: vi.fn() } },
 }));
 
-vi.mock("@/lib/servernz-settings", () => ({
+const SHOWN_URL = "https://central.example.invalid";
+
+vi.mock("@/lib/servernz-settings", async (importOriginal) => ({
+  normalizeBaseUrl: ((await importOriginal()) as typeof import("@/lib/servernz-settings")).normalizeBaseUrl,
   forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
   lockServerNzSettings: mocks.lockServerNzSettings,
   SERVERNZ_SETTINGS_ID: "default",
@@ -104,6 +107,7 @@ function asFullAdmin() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: SHOWN_URL });
   mocks.setIntegrationCredential.mockResolvedValue({
     provider: "xero",
     key: "client_secret",
@@ -226,7 +230,7 @@ describe("POST /api/admin/integrations/credentials", () => {
       labelVersion: "integration-credential:v1",
       updatedAt: new Date(),
     });
-    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement" }));
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement", expectedBaseUrl: SHOWN_URL }));
     expect(res.status).toBe(200);
     // #49: and the server's last reported version with it, in one write.
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(1);
@@ -240,9 +244,53 @@ describe("POST /api/admin/integrations/credentials", () => {
   it("does not report success when the connection-answer reset fails", async () => {
     asFullAdmin();
     mocks.forgetServerConnectionAnswers.mockRejectedValueOnce(new Error("reset failed"));
-    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "replacement" }));
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "replacement", expectedBaseUrl: SHOWN_URL }));
     expect(res.status).toBe(500);
     expect(await res.text()).not.toContain("replacement");
+  });
+
+  describe("the ServerNZ key names the address the page showed (#4470)", () => {
+    it("answers 409 with the reload message and writes nothing when the address moved", async () => {
+      asFullAdmin();
+      mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: "https://moved.example.invalid" });
+      const res = await POST(makeRequest({
+        provider: "servernz", key: "api_key", value: "acs_old_server_key", expectedBaseUrl: SHOWN_URL,
+      }));
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.code).toBe("address-changed");
+      expect(body.error).toMatch(/Reload the page/);
+      expect(JSON.stringify(body)).not.toContain("acs_old_server_key");
+      expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+      expect(mocks.forgetServerConnectionAnswers).not.toHaveBeenCalled();
+      expect(mocks.loggerError).not.toHaveBeenCalled();
+    });
+
+    it("saves a first key when the page showed no address and none is stored", async () => {
+      asFullAdmin();
+      mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: null });
+      const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_first", expectedBaseUrl: null }));
+      expect(res.status).toBe(200);
+      expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses a Save that does not say which address it was for, before any transaction", async () => {
+      asFullAdmin();
+      const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_unanchored" }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/Reload the page/);
+      expect(mocks.lockServerNzSettings).not.toHaveBeenCalled();
+      expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    });
+
+    it("refuses the address on every other credential, which it does not describe", async () => {
+      asFullAdmin();
+      const res = await POST(makeRequest({
+        provider: "xero", key: "client_secret", value: SECRET_VALUE, expectedBaseUrl: SHOWN_URL,
+      }));
+      expect(res.status).toBe(400);
+      expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    });
   });
 
   it("does NOT forget the owned-lodge list on another provider's write", async () => {

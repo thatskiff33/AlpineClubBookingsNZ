@@ -50,6 +50,15 @@ export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
 export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
 
 /**
+ * The credentials route's 409 for an Alpine Central Server API key whose Save
+ * named an address that is no longer the stored one (#4470): another Save moved
+ * the address after the setup page loaded, and nothing was written. Here, like
+ * the claim code above, because the setup page reads it to tell the
+ * administrator to reload.
+ */
+export const SERVERNZ_ADDRESS_CHANGED_CODE = "address-changed";
+
+/**
  * Why an Other lodges download did not record its cursor (#4262 review):
  * `DownloadSummary.stopped`. Here, beside the other sync codes, for the same
  * reason: the setup page (a client module) words each one, and the sync

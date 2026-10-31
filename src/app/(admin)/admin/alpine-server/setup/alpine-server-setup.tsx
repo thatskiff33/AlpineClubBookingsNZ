@@ -6,6 +6,7 @@ import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
 import {
   NO_KEY_SERVER_VERSION,
   OTHER_LODGES_SYNC_RUNNING_CODE,
+  SERVERNZ_ADDRESS_CHANGED_CODE,
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_MISMATCH_CODE,
   computeServerVersionStatus,
@@ -238,9 +239,22 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           provider: "servernz",
           key: "api_key",
           value: apiKey.trim(),
+          // The address this page shows as saved (#4470): the key is stored
+          // only while it is still the stored one, so a key issued by the old
+          // server is never saved against an address another Save moved to.
+          expectedBaseUrl: savedBaseUrl || null,
         }),
       });
       const data = await res.json().catch(() => null);
+      if (res.status === 409 && data?.code === SERVERNZ_ADDRESS_CHANGED_CODE) {
+        // Nothing was saved. The address shown here is out of date, so the
+        // page cannot offer a retry that means anything: reload, then decide.
+        throw new Error(
+          typeof data.error === "string"
+            ? data.error
+            : "The central server address changed since this page loaded, so the key was not saved. Reload the page and enter the key again.",
+        );
+      }
       if (!res.ok) throw new Error(data?.error ?? "Failed to save API key");
       setApiKeySet(true);
       setApiKey("");

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -41,6 +41,15 @@ const mocks = vi.hoisted(() => ({
   getServerNzSetupState: vi.fn(),
   getIntegrationCredentialValue: vi.fn(),
   setIntegrationCredential: vi.fn(),
+  invalidateProviderCredentialCache: vi.fn(),
+  answerWriter: vi.fn(),
+  answerTx: { fenced: "answer-tx" },
+  FakeConnectionChangedError: class FakeConnectionChangedError extends Error {
+    constructor() {
+      super("connection changed");
+      this.name = "ServerNzConnectionChangedError";
+    }
+  },
   writePostImage: vi.fn(),
   deletePostImage: vi.fn(),
   loggerWarn: vi.fn(),
@@ -90,11 +99,23 @@ vi.mock("@/lib/servernz-api", () => ({
 
 vi.mock("@/lib/servernz-config", () => ({
   getServerNzSetupState: mocks.getServerNzSetupState,
+  SERVERNZ_PROVIDER: "servernz",
+  SERVERNZ_CREDENTIAL_KEYS: { apiKey: "api_key", pushSecret: "push_secret" },
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
-  setIntegrationCredential: mocks.setIntegrationCredential,
+  invalidateProviderCredentialCache: mocks.invalidateProviderCredentialCache,
+  setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
+}));
+
+// #4470: the push secret is stored through the answer fence for the identity
+// the registration was sent on. The double records that identity and runs the
+// write on a stand-in fenced client; a refusal is staged per test.
+vi.mock("@/lib/servernz-version-record", () => ({
+  ServerNzConnectionChangedError: mocks.FakeConnectionChangedError,
+  serverNzAnswerWriter: (identity: unknown) => async (work: (tx: unknown) => Promise<unknown>) =>
+    mocks.answerWriter(identity, work),
 }));
 
 vi.mock("@/lib/post-image-storage", () => ({
@@ -102,7 +123,7 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { runMirrorSync } from "@/lib/club-post-mirror";
+import { SERVERNZ_PUSH_SECRET_KEY, ensurePushRegistration, runMirrorSync } from "@/lib/club-post-mirror";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const SERVER_IMAGE = "c".repeat(32);
@@ -149,6 +170,8 @@ beforeEach(() => {
   mocks.postFindUnique.mockResolvedValue(null);
   mocks.postCreate.mockResolvedValue({});
   mocks.transaction.mockResolvedValue([]);
+  mocks.answerWriter.mockImplementation(async (_identity: unknown, work: (tx: unknown) => Promise<unknown>) =>
+    work(mocks.answerTx));
 });
 
 describe("runMirrorSync", () => {
@@ -940,3 +963,51 @@ describe("runMirrorSync cursor overlap", () => {
   });
 });
 
+
+describe("ensurePushRegistration stores the secret only for the connection it registered on (#4470)", () => {
+  const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-1" };
+
+  beforeEach(() => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue(null);
+    process.env.NEXTAUTH_URL = "https://club.example.nz";
+    mocks.registerPushTarget.mockResolvedValue({ secret: "issued-secret", secretVersion: 3, sentOn: SENT_ON });
+  });
+  afterEach(() => {
+    delete process.env.NEXTAUTH_URL;
+  });
+
+  it("names the one stored key", () => {
+    expect(SERVERNZ_PUSH_SECRET_KEY).toBe("push_secret");
+  });
+
+  it("writes through the answer fence for the registration's identity, then drops the cached copy", async () => {
+    await ensurePushRegistration();
+    expect(mocks.answerWriter).toHaveBeenCalledWith(SENT_ON, expect.any(Function));
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.answerTx,
+      provider: "servernz",
+      key: "push_secret",
+      value: "issued-secret",
+      actor: { kind: "system", actor: "servernz-push-registration" },
+      expect: { expect: "any" },
+    });
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
+    expect(mocks.answerWriter.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.invalidateProviderCredentialCache.mock.invocationCallOrder[0]);
+  });
+
+  it("stores nothing, says why, and lets the pass go on when the connection changed in flight", async () => {
+    mocks.answerWriter.mockRejectedValue(new mocks.FakeConnectionChangedError());
+    await expect(ensurePushRegistration()).resolves.toBeUndefined();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed while this install registered/));
+  });
+
+  it("registers nothing while a secret is stored", async () => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
+    await ensurePushRegistration();
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.answerWriter).not.toHaveBeenCalled();
+  });
+});

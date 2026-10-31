@@ -438,8 +438,10 @@ describe("a never-asked row self-heals with ONE inline check (default 1)", () =>
       .mockResolvedValueOnce(respond(200, { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }))
       .mockResolvedValueOnce(respond(200, { url: "https://club.test/hook", secretVersion: 1, secret: "s".repeat(40) }));
 
-    await registerPushTarget("https://club.test/hook");
+    const registered = await registerPushTarget("https://club.test/hook");
 
+    // #4470: the identity it was sent on comes back, for the fenced secret write.
+    expect(registered.sentOn).toEqual({ baseUrl: "https://central.test", credentialVersion: expect.any(String) });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://central.test/api/v1/version");
     expect(String(fetchMock.mock.calls[1][0])).toBe("https://central.test/api/v1/push-target");
