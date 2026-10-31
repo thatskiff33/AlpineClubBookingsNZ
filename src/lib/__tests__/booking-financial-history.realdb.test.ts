@@ -82,7 +82,7 @@ async function name(relation: BookingFinancialHistoryRelation, bookingId: string
       await prisma.refundRequest.create({ data: { bookingId, memberId: MEMBER_ID, reason: "race 4514" } });
       return;
     case "ManualRefundTask.bookingId":
-      await prisma.manualRefundTask.create({ data: { bookingId, reason: "race 4514" } });
+      await prisma.manualRefundTask.create({ data: { bookingId, reason: "race 4514", amountCents: 100, raisedAmountCents: 100 } });
       return;
     case "PaymentRecoveryOperation.bookingId":
       await prisma.paymentRecoveryOperation.create({
