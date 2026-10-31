@@ -171,6 +171,8 @@ on each such pull.
 | The buttons are greyed out | Your role has membership **view**, not **edit** | Ask a full admin for membership edit access |
 | A hidden post still shows for a member | They are looking at a cached page | Ask them to reload; hiding takes effect immediately on the server |
 | A member says their post vanished | It was hidden or removed by an admin | Check **Hidden**, and the audit log for a removal |
+| A post shows as not shared, or a shared post could not be withdrawn, but it is on other clubs' boards | Sharing reached the central server but recording that here failed (rare: the database was unavailable at that moment). Nothing on screen shows this yet. To avoid a duplicate, the site never sends a post twice, so it is not retried | Ask whoever runs the site to look up the post's server id: it is in the post's share error in the database, or in the error log, which names the post and the server id. Then ask the central server's administrator to take that copy down. Removing the post here does not withdraw it, because this site holds no server id for it |
+| A post you shared never appeared on other clubs' boards | Sharing was interrupted (the site restarted or the database dropped mid-share). A share is sent at most once, so it is not retried | Post it again with **Share to all clubs** ticked |
 
 ## Related links
 
