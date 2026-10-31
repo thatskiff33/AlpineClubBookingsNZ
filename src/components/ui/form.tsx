@@ -164,7 +164,8 @@ function FormLabel({
  * names the error before any other description. Ids passed in
  * `aria-describedby` — a view-only reason, say — sit between the two. Each
  * of the field's own ids is named only while its element is rendered with
- * something in it, so none points at nothing (an axe failure).
+ * something in it, so none points at nothing (an axe failure). It must sit
+ * inside a `FormItem`, which is where the description and message register.
  */
 function FormControl({
   "aria-describedby": callerDescribedBy,
@@ -239,7 +240,8 @@ function FormDescription({
  * The field's inline error, registered so the control is described by it
  * while it shows one. It is not a live region: the summary is what is
  * announced, and an inline message re-validated on every keystroke would
- * interrupt the person typing.
+ * interrupt the person typing. It must sit inside a `FormItem`: outside one it
+ * has nothing to register with, so the control is not described by it.
  */
 function FormMessage({
   className,

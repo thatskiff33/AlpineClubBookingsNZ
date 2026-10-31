@@ -14,23 +14,33 @@ import { z } from "zod";
  * Each message names the fix, because the error summary lists them as links
  * with no field label in front ("Enter a role name").
  */
-/** The limits the routes enforce, which the form's controls also apply. */
-export const COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH = 1000;
-export const COMMITTEE_ROLE_SORT_ORDER_MIN = 0;
-export const COMMITTEE_ROLE_SORT_ORDER_MAX = 100000;
-
 const roleName = z
   .string()
   .trim()
   .min(1, "Enter a role name")
   .max(120, "Use a role name of 120 characters or fewer");
 
+/** The limits the routes enforce, which the form's controls also apply. */
+export const COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH = 1_000;
+export const COMMITTEE_ROLE_SORT_ORDER_MIN = 0;
+export const COMMITTEE_ROLE_SORT_ORDER_MAX = 100_000;
+
+/**
+ * A limit as an officer reads it, with a thousands separator ("100,000").
+ * Inserted inline rather than with `toLocaleString`, as
+ * `lodge-effective-capacity.ts` does: this module imports nothing but `zod`,
+ * and a bare `toLocaleString` is lint-restricted (`INV-DATE-015`).
+ */
+function displayLimit(limit: number): string {
+  return String(limit).replace(/\B(?=(\d{3})+$)/g, ",");
+}
+
 const roleDescription = z
   .string()
   .trim()
   .max(
     COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH,
-    `Use a description of ${COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH} characters or fewer`,
+    `Use a description of ${displayLimit(COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH)} characters or fewer`,
   )
   .nullable();
 
@@ -50,7 +60,7 @@ const roleSortOrder = z
   )
   .max(
     COMMITTEE_ROLE_SORT_ORDER_MAX,
-    `Enter a sort order of ${COMMITTEE_ROLE_SORT_ORDER_MAX} or less`,
+    `Enter a sort order of ${displayLimit(COMMITTEE_ROLE_SORT_ORDER_MAX)} or less`,
   );
 
 const roleIsActive = z.boolean();

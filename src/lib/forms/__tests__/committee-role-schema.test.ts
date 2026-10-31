@@ -55,6 +55,17 @@ describe("committee role schemas", () => {
     });
   });
 
+  it("states its limits as an officer reads them, with a thousands separator", () => {
+    const messages = (input: unknown) =>
+      committeeRoleCreateSchema.safeParse(input).error?.issues.map((issue) => issue.message) ?? [];
+    expect(messages({ name: "Chair", description: "x".repeat(1_001) })).toContain(
+      "Use a description of 1,000 characters or fewer",
+    );
+    expect(messages({ name: "Chair", sortOrder: 100_001 })).toContain(
+      "Enter a sort order of 100,000 or less",
+    );
+  });
+
   it("keeps create's isActive default and gives PATCH none", () => {
     expect(committeeRoleCreateSchema.parse({ name: "Chair" }).isActive).toBe(true);
     // A default on PATCH would re-activate an archived role on a rename.

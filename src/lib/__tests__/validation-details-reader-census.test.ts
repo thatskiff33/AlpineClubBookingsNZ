@@ -16,7 +16,11 @@ import { describe, expect, it } from "vitest";
  * - `<x>.details.fieldErrors` / `<x>.details?.formErrors`, or
  * - `Object.entries(<x>.details)` (and `keys` / `values`).
  *
- * It reads TypeScript's parse, so prose in a comment does not count. A route
+ * It reads TypeScript's parse, so prose in a comment does not count. Its
+ * limit: a reader that first destructures `details` into its own binding
+ * (`const { details } = body; details.fieldErrors`) or reaches it by element
+ * access (`body["details"]`) is not matched. None exists today, and matching
+ * any identifier named `details` would flag the one legitimate reader. A route
  * BUILDING the body (`parsed.error.flatten().fieldErrors`) is not a read and
  * does not match: neither shape goes through a `details` property.
  */
