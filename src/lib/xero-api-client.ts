@@ -481,7 +481,6 @@ function parseXeroRetryAfterSeconds(value: string | undefined): number | null {
   return null;
 }
 
-/** #4531: also read by a deferrable call that defers, rather than retries, these statuses. */
 export function isRetryableXeroTransientStatus(statusCode: number | undefined): boolean {
   return (
     statusCode === 408 ||
