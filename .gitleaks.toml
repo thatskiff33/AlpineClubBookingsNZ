@@ -77,6 +77,10 @@ description = "The fabricated audit-archive password one PR #4479 commit wrote i
 regexes = ['''^archive-pw$''']
 
 [[allowlists]]
+description = "The fabricated push secret PR #4582's first commit wrote into `servernz-connection-race.realdb.test.ts` as the doubled central server's answer to a push registration in the standing-connection control (#4470). It is a readable label padded to the schema's 32-character minimum, issued by no server and never a credential; the test now builds its secrets at runtime (`\"s\".repeat(40)`), so the tree no longer carries it. Forgive this exact literal in its historical commits only, without exempting any path or secret shape."
+regexes = ['''^race-4470-standing-secret-padded-to-32-chars$''']
+
+[[allowlists]]
 description = "The three Stripe TEST-mode placeholders this repository writes down, as exact literals: the diagnostics knowledge-bundle fixtures, the Playwright environment's publishable placeholder, and the booking-payment wrapper's fixture key. Any OTHER Stripe test key still fails the gate — `sk_test_` is a real test-mode credential and only these three named strings are forgiven. Live keys (`sk_live_`, `pk_live_`, `rk_live_`) are never allowlisted by shape. 51 findings across history."
 regexes = [
   '''^sk_test_placeholder$''',

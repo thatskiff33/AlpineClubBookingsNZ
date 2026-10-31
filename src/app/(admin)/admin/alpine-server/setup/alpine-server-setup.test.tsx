@@ -304,3 +304,113 @@ describe("AlpineServerSetup Download summary: deletions (#58)", () => {
     ).toBeTruthy();
   });
 });
+
+describe("AlpineServerSetup key save names the shown address (#4470)", () => {
+  const VERSION = { status: "no-key", serverVersion: null, expected: "2.6", checkedAt: null, couldNotCheck: false, missingBaseUrl: false };
+
+  function keySaveAnswers(answer: { ok: boolean; status: number; body: unknown }) {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/admin/alpine-server/version")) {
+        return { ok: true, status: 200, json: async () => VERSION };
+      }
+      if (String(url).includes("/api/admin/integrations/credentials") && init?.method === "POST") {
+        return { ok: answer.ok, status: answer.status, json: async () => answer.body };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  function saveKey(value: string) {
+    fireEvent.change(screen.getByLabelText(/API key/i), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: /save key/i }));
+  }
+
+  function postedBody() {
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/integrations/credentials"));
+    return JSON.parse(String(call?.[1]?.body));
+  }
+
+  it("sends the saved address it shows", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    saveKey("acs_new");
+    await screen.findByText(/API key stored securely/i);
+    expect(postedBody()).toEqual({ provider: "servernz", key: "api_key", value: "acs_new", expectedBaseUrl: "https://central.test" });
+  });
+
+  it("keeps Save key off, and says why, while the address field holds an unsaved address", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://typed-not-saved.test" } });
+    fireEvent.change(screen.getByLabelText(/API key/i), { target: { value: "acs_for_typed_server" } });
+    const save = screen.getByRole("button", { name: /save key/i }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(screen.getByTestId("api-key-address-unsaved").textContent).toMatch(/save the address first/i);
+    fireEvent.click(save);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/integrations/credentials"))).toBe(false);
+  });
+
+  it("describes the key field and Save key with that hint, and only while it is shown", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    const keyField = screen.getByLabelText(/API key/i);
+    const save = screen.getByRole("button", { name: /save key/i });
+    const describedIds = (element: HTMLElement) => (element.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+    expect(screen.queryByTestId("api-key-address-unsaved")).toBeNull();
+    expect(describedIds(keyField)).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://typed-not-saved.test" } });
+    const hintId = screen.getByTestId("api-key-address-unsaved").id;
+    expect(hintId).not.toBe("");
+    expect(describedIds(keyField)).toContain(hintId);
+    expect(describedIds(save)).toContain(hintId);
+    expect(document.getElementById(hintId)?.textContent).toMatch(/save the address first/i);
+
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://central.test" } });
+    expect(screen.queryByTestId("api-key-address-unsaved")).toBeNull();
+    expect(describedIds(keyField)).toEqual([]);
+    expect(describedIds(save)).not.toContain(hintId);
+  });
+
+  it.each([
+    ["the saved address with a trailing slash", "https://central.test/"],
+    ["the saved address with surrounding spaces", "  https://central.test  "],
+  ])("treats %s as the saved address", async (_label, typed) => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: typed } });
+    saveKey("acs_new");
+    await screen.findByText(/API key stored securely/i);
+    expect(screen.queryByTestId("api-key-address-unsaved")).toBeNull();
+  });
+
+  it("sends null when no address is saved", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false, baseUrl: null })} />);
+    saveKey("acs_new");
+    await screen.findByText(/API key stored securely/i);
+    expect(postedBody().expectedBaseUrl).toBeNull();
+  });
+
+  it("tells the admin the address changed and to reload, and does not show the key as stored", async () => {
+    keySaveAnswers({
+      ok: false,
+      status: 409,
+      body: { code: "address-changed", error: "The central server address was changed after this page was loaded, so the API key was not saved: it may have been issued for the old address. Reload the page, check the address, and enter the key again." },
+    });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    saveKey("acs_old_server");
+    const message = await screen.findByText(/address was changed after this page was loaded/i);
+    expect(message.textContent).toMatch(/reload the page/i);
+    expect(message.className).toMatch(/text-destructive/);
+    expect(screen.queryByText(/^stored$/i)).toBeNull();
+    expect(screen.getByText(/^not set$/i)).toBeTruthy();
+  });
+
+  it("still says to reload when the 409 carries no message", async () => {
+    keySaveAnswers({ ok: false, status: 409, body: { code: "address-changed" } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    saveKey("acs_old_server");
+    expect((await screen.findByText(/address was changed after this page was loaded/i)).textContent).toMatch(/reload the page/i);
+  });
+});

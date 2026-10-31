@@ -24,7 +24,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
 }));
-vi.mock("@/lib/club-post-mirror", () => ({ SERVERNZ_PUSH_SECRET_KEY: "push_secret" }));
 vi.mock("@/lib/servernz-settings", () => ({ loadServerNzSettings: mocks.loadServerNzSettings }));
 vi.mock("@/lib/module-settings", async (importOriginal) => ({
   ...((await importOriginal()) as object),
@@ -114,6 +113,8 @@ describe("GET /api/webhooks/servernz-availability (#62)", () => {
     expect(lodgeId).toBe("lodge_local");
     expect((from as Date).toISOString().slice(0, 10)).toBe("2026-07-10");
     expect((to as Date).toISOString().slice(0, 10)).toBe("2026-07-13");
+    // Verified with the one stored push secret (#4470).
+    expect(mocks.getIntegrationCredentialValue).toHaveBeenCalledWith("servernz", "push_secret");
   });
 
   it("accepts a stay that starts today and one of exactly 30 nights", async () => {

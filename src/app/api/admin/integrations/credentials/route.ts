@@ -47,6 +47,7 @@ import {
   DIAGNOSTICS_WRITABLE_CREDENTIAL_KEYS,
 } from "@/lib/ai-diagnostics-config";
 import {
+  ServerNzAddressChangedError,
   setServerNzApiKey,
   SERVERNZ_CREDENTIAL_KEYS,
   SERVERNZ_PROVIDER,
@@ -150,6 +151,8 @@ const bodySchema = z.object({
   // A credential value; capped by the store's own bound. Never logged, never
   // returned.
   value: z.string().min(1).max(INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH),
+  // The ServerNZ key's page-shown server address (#4470), bounded like its column.
+  expectedBaseUrl: z.string().max(500).nullable().optional(),
 });
 
 async function requireFullAdmin() {
@@ -220,13 +223,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const { provider, key, value } = parsed.data;
+  const { provider, key, value, expectedBaseUrl } = parsed.data;
   const allowedKeys = WRITABLE_CREDENTIALS[provider];
   if (!allowedKeys || !allowedKeys.includes(key)) {
     return NextResponse.json(
       { error: "Unknown provider or credential key." },
       { status: 400 },
     );
+  }
+
+  // Required for the ServerNZ key (one server issued it) and no other (#4470).
+  const isServerNzApiKey = provider === SERVERNZ_PROVIDER && key === SERVERNZ_CREDENTIAL_KEYS.apiKey;
+  if (isServerNzApiKey !== (expectedBaseUrl !== undefined)) {
+    const error = isServerNzApiKey
+      ? "Reload the page and enter the key again: the save did not say which central server address it was for."
+      : "expectedBaseUrl applies only to the Alpine Central Server API key.";
+    return NextResponse.json({ error }, { status: 400 });
   }
 
   // Capture-time gate for the restore-validation DSN (#2095 MAJOR-2): it carries
@@ -263,9 +275,10 @@ export async function POST(request: Request) {
     // The request context travels in so the row keeps its id, IP and user agent.
     // The form posts the value it wants stored; there is no read-modify-write
     // here for a second Full Admin to make stale, so both writes expect `any`.
-    // ServerNZ's API key (its one writable key) is saved under the connection fence.
-    result = provider === SERVERNZ_PROVIDER && key === SERVERNZ_CREDENTIAL_KEYS.apiKey
-      ? await setServerNzApiKey(value, { kind: "admin", memberId: guard.memberId }, requestContext)
+    // ServerNZ's API key (its one writable key) is saved under the connection
+    // fence, and only while the address the page showed is still the stored one.
+    result = isServerNzApiKey
+      ? await setServerNzApiKey(value, expectedBaseUrl ?? null, { kind: "admin", memberId: guard.memberId }, requestContext)
       : credentialWriteResetsXeroTokens(provider, key)
       ? await withXeroVerifyReset(
           {
@@ -294,6 +307,10 @@ export async function POST(request: Request) {
           request: requestContext,
         });
   } catch (error) {
+    // Another Save moved the address (#4470): nothing written; no secret in it.
+    if (error instanceof ServerNzAddressChangedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
+    }
     if (error instanceof WeakAuthSecretError) {
       // Plain-English capture-time gate message; safe to surface (no secret).
       return NextResponse.json({ error: error.message }, { status: 400 });

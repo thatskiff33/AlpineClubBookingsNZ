@@ -23,6 +23,11 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
+import {
+  SERVERNZ_ADDRESS_CHANGED_CODE,
+  SERVERNZ_ADDRESS_CHANGED_MESSAGE,
+} from "@/lib/servernz-api-version";
 import {
   readIntegrationCredentialRow,
   setIntegrationCredentialInTransaction,
@@ -50,6 +55,13 @@ export const SERVERNZ_PROVIDER = "servernz";
 
 export const SERVERNZ_CREDENTIAL_KEYS = {
   apiKey: "api_key",
+  /**
+   * The push-verification secret the server issued when this install
+   * registered its push target (`ensurePushRegistration`,
+   * `servernz-push-registration.ts`). System-written, never admin-writable: it belongs to
+   * the server it was registered with, so an address move removes it (#4470).
+   */
+  pushSecret: "push_secret",
 } as const;
 
 /**
@@ -104,11 +116,35 @@ export async function readServerNzCredentialVersion(
 }
 
 /**
+ * A key save refused because the server address changed after the setup page
+ * showed it (#4470): the key may have been issued by the old server, and saving
+ * it against the new address would send it there on the next request. Nothing
+ * was written. The message is safe to show an administrator.
+ */
+export class ServerNzAddressChangedError extends Error {
+  /** The machine code the credentials route's 409 carries for the setup page. */
+  readonly code = SERVERNZ_ADDRESS_CHANGED_CODE;
+  constructor() {
+    super(SERVERNZ_ADDRESS_CHANGED_MESSAGE);
+    this.name = "ServerNzAddressChangedError";
+  }
+}
+
+/**
  * Store (or replace) the ServerNZ API key. Encrypted at rest. The one
  * definition of key replacement (#4436): the credentials route calls it. The
  * new key and the reset of the previous connection's answers commit together
  * under the connection fence, so no request pairs the new key with the old
- * connection's owned-lodge list or API version.
+ * connection's owned-lodge list or API version, and the push secret registered
+ * with the old key is removed with them (#4470).
+ *
+ * `expectedBaseUrl` is the server address the setup form showed beside the key
+ * field (`null` when it showed none), and it is REQUIRED (#4470). A key is
+ * issued by one server, so it is saved only while that address is still the
+ * stored one, compared under the same settings-row lock an address move takes:
+ * a move that committed first refuses the save with
+ * `ServerNzAddressChangedError`, writing nothing, and a move that comes later
+ * removes the key with the address it was saved for.
  *
  * The actor is the caller's to supply and is REQUIRED (#2723) — this used to
  * take an optional `updatedByUserId`, which let an admin action reach the store
@@ -116,10 +152,20 @@ export async function readServerNzCredentialVersion(
  */
 export async function setServerNzApiKey(
   value: string,
+  expectedBaseUrl: string | null,
   actor: CredentialActor,
   request?: CredentialRequestContext,
 ): Promise<SetCredentialResult> {
   return withServerNzConnectionTransaction(async (tx) => {
+    const stored = await tx.serverNzSettings.findUnique({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      select: { baseUrl: true },
+    });
+    // Both sides through the one normaliser: the stored value already went
+    // through it on the way in, and a blank address the page showed is `null`.
+    if ((stored?.baseUrl ?? null) !== normalizeBaseUrl(expectedBaseUrl)) {
+      throw new ServerNzAddressChangedError();
+    }
     const saved = await setIntegrationCredentialInTransaction({
       tx,
       provider: SERVERNZ_PROVIDER,
@@ -127,10 +173,15 @@ export async function setServerNzApiKey(
       value,
       actor,
       // The admin form posts the key it wants stored outright; there is no
-      // read-modify-write here to be stale against.
+      // read-modify-write here to be stale against. The address check above is
+      // what ties the key to the server it was issued for.
       expect: { expect: "any" },
       request,
     });
+    // The push registration was made with the replaced key (#4470): a key
+    // rotated because it may have leaked rotates its push secret too, and the
+    // next sync registers again with the new key.
+    await clearServerNzPushSecret(actor, tx, request);
     await forgetServerConnectionAnswers(tx);
     return saved;
   });
@@ -164,11 +215,39 @@ export async function clearServerNzApiKey(
 }
 
 /**
+ * Remove the push-verification secret the old connection registered (#4470).
+ * Its callers are the address move (`saveServerNzConnectionSettings`) and the
+ * key replacement (`setServerNzApiKey`), each in its own fenced transaction:
+ * with the secret gone, pushes signed with it stop verifying (in another
+ * process, once its credential cache, at most 45 seconds, expires), and the
+ * next sync pass's `ensurePushRegistration` registers this install with the
+ * connection now stored. A system-written row, so there is no version an
+ * administrator saw to expect: the intended end state is "gone".
+ */
+export async function clearServerNzPushSecret(
+  actor: CredentialActor,
+  tx: ServerNzConnectionTx,
+  request?: CredentialRequestContext,
+): Promise<void> {
+  await deleteIntegrationCredentialInTransaction({
+    tx,
+    provider: SERVERNZ_PROVIDER,
+    key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
+    actor,
+    expect: { expect: "any" },
+    request,
+  });
+}
+
+/**
  * Save the non-secret connection settings, moving the server address and its
  * key as ONE unit (#4436). The address is where requests send the key, so a
  * changed address removes the stored key and forgets the old server's answers
- * in the same fenced transaction: no request can read the new address with the
- * old key. An unchanged address (or a flag-only save) keeps both. The caller
+ * (its owned list, version and every sync cursor) in the same fenced
+ * transaction: no request can read the new address with the old key. The old
+ * server's push secret goes in that transaction too (#4470), so the next sync
+ * registers with the new server. An unchanged address (or a flag-only save)
+ * keeps all of them. The caller
  * has already checked who may move the address and validated it; no HTTP and
  * no audit row here — the settings route audits after commit.
  *
@@ -192,6 +271,7 @@ export async function saveServerNzConnectionSettings(
     const apiKeyCleared = input.baseUrl !== undefined && before.baseUrl !== settings.baseUrl;
     if (apiKeyCleared) {
       await clearServerNzApiKey(actor, tx);
+      await clearServerNzPushSecret(actor, tx);
     }
     return { settings, apiKeyCleared };
   });

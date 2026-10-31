@@ -1505,6 +1505,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Amenity/Lodge rows -> audit. No advisory key; disjoint from booking/money
   // writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge list writer,
   // and every Other lodges download write".
+  // #4470, two more participants of the same one statement, no new lock: the
+  // key save compares the address its page showed under the connection fence
+  // (settings -> credential -> audit, as before), and a push registration
+  // stores its secret through the answer fence (settings -> credential read ->
+  // push-secret write -> audit). The address move removes that secret in its
+  // own fenced transaction. The answer recorders take a `ServerNzAnswerTx`
+  // that only the answer fence mints.
   "src/lib/servernz-settings.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and

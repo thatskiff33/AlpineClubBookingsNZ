@@ -1,6 +1,7 @@
 import { after, NextRequest, NextResponse } from "next/server";
 
-import { runMirrorSync, SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror";
+import { runMirrorSync } from "@/lib/club-post-mirror";
+import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -49,8 +50,8 @@ export async function POST(request: NextRequest) {
   }
 
   const secret = await getIntegrationCredentialValue(
-    "servernz",
-    SERVERNZ_PUSH_SECRET_KEY,
+    SERVERNZ_PROVIDER,
+    SERVERNZ_CREDENTIAL_KEYS.pushSecret,
   );
   if (!secret) {
     // No secret means this install never registered, so nothing can verify.
