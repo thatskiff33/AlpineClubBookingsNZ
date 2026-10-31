@@ -657,6 +657,7 @@ import {
 } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { releaseBookingFinancialHistoryForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 
 let prisma: typeof import("@/lib/prisma")["prisma"];
 let markGroupSettlementIntentFailed: typeof import("@/lib/group-settlement")["markGroupSettlementIntentFailed"];
@@ -1311,6 +1312,10 @@ describe("concurrency race DB safety guard (#1881)", () => {
 
       if (typeof prisma !== "undefined") {
         await attemptCleanup(() => clearBaselineFixtures());
+        // #4514: a group's settlement no longer goes with it (INV-MONEY-043).
+        await attemptCleanup(() =>
+          releaseBookingFinancialHistoryForTeardown(prisma, [APP_BOOKING_ID, MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID])
+        );
         await attemptCleanup(() =>
           prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } })
         );
