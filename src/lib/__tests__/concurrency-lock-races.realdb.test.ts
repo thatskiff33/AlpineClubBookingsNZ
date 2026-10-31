@@ -633,7 +633,11 @@ import "./servernz-connection-race.realdb.test";
 // one post, each held after its first lock, finish without deadlock in both
 // orders (post row before image rows). Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns `race-4586-` posts and the singleton
-// settings row.
+// settings row. #4588 adds the board lifecycle races there: a pass taken over
+// writes nothing more, a removed mirror keeps its blank words, a claim queued
+// ahead of the orphan sweep keeps its upload, and retention lists a picture a
+// mirror update adds mid-pass. It owns `race-4588-` rows and puts the board's
+// settings row back.
 import "./club-post-mirror-concurrency.realdb.test";
 // #4262: the other-lodge name-index pair's windowed declaration measured, not
 // asserted: the previous release's name-keyed upsert refused once it applies,

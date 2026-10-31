@@ -2191,7 +2191,10 @@ mispricing a booking.
   (`commsSyncStartedAt`) stays on the global client. Since #4586 the release
   is an `updateMany` matching the exact stamp the claim wrote, so a pass whose
   claim went stale and was taken over clears nothing, and the second pass's
-  claim stands until it ends. The three recorders in
+  claim stands until it ends. Since #4588 every page write also re-reads that
+  stamp under the settings-row lock and refuses once another pass holds the
+  claim, so a taken-over pass writes nothing more and stops as
+  `claim-taken-over`. The three recorders in
   `servernz-settings.ts` (download, upload watermark, version) require a
   branded `ServerNzAnswerTx`, which only `withCurrentServerNzConnection`
   mints after its identity check, so calling them outside the fence does not
@@ -2252,7 +2255,7 @@ mispricing a booking.
   The transaction uses the settings fence's bounded wait
   (`SERVERNZ_TRANSACTION_OPTIONS`). No advisory lock; disjoint from the
   booking/capacity/credit and money clusters.
-- **Message-board posts and their images** (#4586): every writer that changes
+- **Message-board posts and their images** (#4586, #4588): every writer that changes
   both a `ClubPost` row and its `ClubPostImage` rows takes the **post row
   first**. `ClubPostImage.postId` cascades on delete, so a post delete reaches
   the image rows after the post. Taking the images first deadlocked an admin
@@ -2260,17 +2263,27 @@ mispricing a booking.
 
   | Writer | Order |
   | --- | --- |
-  | Mirror upsert and tombstone (`club-post-mirror.ts`) | Settings row (the page's fence), then `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = $1 FOR UPDATE`` (`lockMirroredPost`) and a re-read under it; create or update, or delete, then image rows. A zero count is not found. |
+  | Mirror upsert and tombstone (`club-post-mirror.ts`) | Settings row (the page's fence, which since #4588 also refuses unless `commsSyncStartedAt` is still this pass's claim stamp), then `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = $1 FOR UPDATE`` (`lockMirroredPost`) and a re-read under it; create or update, or delete, then image rows. A zero count is not found. A row this club removed is never rewritten, and a tombstone keeps it (#4588). |
   | Admin removal (`removeClubPost`, `club-posts-admin.ts`) | Status-guarded `updateMany` (`removedAt: null`) takes the post row; images and share state re-read under it, then the image rows deleted. A lost claim is a no-op, or not found when the row is gone. Files deleted after commit. |
-  | Retention (`runClubPostCleanup`) | `clubPost.deleteMany`, image rows by cascade. |
+  | Retention (`runClubPostCleanup`, #4588) | Batches of 200: `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (…) ORDER BY "id" FOR UPDATE``, the images re-read under those locks, the posts deleted (image rows by cascade); the files after commit. |
+  | Share stamp (`stampShare`, `club-post-sharing.ts`, #4588) | Settings row (`lockServerNzSettings`), then, only when the mirror already copied our own post under the server's id, our post and that copy (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`); the copy is deleted (image rows by cascade) and our post stamped; the copy's files after commit. |
   | Member post create (`createClubPost`) | Inserts the new post, then claims the member's unclaimed images (two statements, no transaction; nothing else can hold the new post). |
 
-  Post-only writers (hide, edit, share, withdrawal stamp, the mirror's own-post
-  takedown) take no image row. The image-only writers (upload, orphan sweep)
-  touch no post row. No advisory key; disjoint from the booking/capacity/credit
-  and money clusters. `club-post-mirror-concurrency.realdb.test.ts` holds a
-  tombstone and an admin removal of one post after their first lock in both
-  orders; neither deadlocks. The images-first order deadlocks in both.
+  Retention and the share stamp are the only writers holding two or more
+  posts, and both take them in id order. Post-only writers (hide, edit, the
+  share's failure record, the withdrawal stamp, the mirror's own-post takedown)
+  take no image row. The image-only writers touch no post row: upload, and the
+  orphan sweep, which since #4588 deletes one row at a time and only while
+  `postId` is still null, deleting a file only for a row it deleted, so a
+  claim committing first keeps its image and a single-row delete cannot
+  deadlock against the claim's multi-row update. No advisory key; disjoint
+  from the booking/capacity/credit and money clusters.
+  `club-post-mirror-concurrency.realdb.test.ts` holds a tombstone and an admin
+  removal of one post after their first lock in both orders (neither
+  deadlocks; the images-first order deadlocks in both), and since #4588 a
+  pass taken over mid-pass, a claim queued ahead of the orphan sweep on one
+  upload, and a mirror update adding a picture to a post retention is
+  expiring.
 
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes
