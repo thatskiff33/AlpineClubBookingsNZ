@@ -799,6 +799,16 @@ describe("compile-changelog", () => {
     expect(log.text()).toContain('Appended to "## 0.13.3 - 2026-10-31" in CHANGELOG.md.');
   });
 
+  it("refuses to append to any section but the newest, even when run directly", () => {
+    const prepared = ["# Changelog", "", "## Unreleased", "", NOTE, "", "## 0.13.3 - 2026-10-31", "", "- **Newest (#4400).**", "", HISTORY].join("\n");
+    const root = makeRepo({ changelog: prepared, fragments: { "4500-late.md": "- **Late (#4500).**\n" } });
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.13.2", date: "2026-11-02", append: true, log: silentLog() }),
+    ).toThrow(/"## 0\.13\.2 - 2026-07-23" is not the newest release section in CHANGELOG\.md \(that is "## 0\.13\.3 - 2026-10-31"\)/);
+    expect(read(root)).toBe(prepared);
+    expect(fragmentFiles(root)).toEqual(["4500-late.md"]);
+  });
+
   it("refuses to append when the section does not exist", () => {
     const root = makeRepo({ fragments: { "4500-late.md": "- **Late (#4500).**\n" } });
     expect(() =>

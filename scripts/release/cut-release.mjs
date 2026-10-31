@@ -107,6 +107,14 @@ export function latestReleaseTag(tags) {
   return best;
 }
 
+/** The bump that took `from` (`{ major, minor, patch }` or `null`) to `to`. */
+export function releaseBump(from, to) {
+  const base = from ?? { major: 0, minor: 0, patch: 0 };
+  if (to.major !== base.major) return "major";
+  if (to.minor !== base.minor) return "minor";
+  return "patch";
+}
+
 /** The bump the fragment types call for: minor when any fragment is a feature. */
 export function fragmentBump(fragmentNames) {
   const features = fragmentNames.filter((name) => name.toLowerCase().endsWith(FEATURE_FRAGMENT_SUFFIX));
@@ -157,7 +165,13 @@ export function parseGitHubRemote(url) {
     /^(?:https?|ssh|git):\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(text) ??
     /^(?:[^@/]+@)?([^/:]+):([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(text);
   if (!match || !match[1].includes(".")) return null;
-  return { host: match[1].toLowerCase(), owner: match[2], name: match[3] };
+  const host = match[1].toLowerCase().replace(/^www\.github\.com$/, "github.com");
+  return { host, owner: match[2], name: match[3] };
+}
+
+/** `url` with any `user:password@` / `token@` credentials replaced, safe to print. */
+export function redactUrl(url) {
+  return String(url ?? "").replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1***@");
 }
 
 /** The anchor GitHub gives a Markdown heading (lower case, punctuation dropped, spaces to hyphens). */
@@ -270,6 +284,7 @@ function commands(run) {
     gitOk: (args) => call("git", args).status === 0,
     gh: (args, recovery) => must("gh", args, recovery),
     ghOk: (args) => call("gh", args).status === 0,
+    run: call,
   };
 }
 
@@ -303,14 +318,42 @@ function localTagCommit(cmd, tag) {
     : null;
 }
 
-/** The GitHub repository `origin` names, from its configured URL. */
+function configValues(cmd, key) {
+  const result = cmd.run("git", ["config", "--get-all", key]);
+  return result.status === 0 ? result.stdout.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+const repoSlug = (repo) => (repo.host === "github.com" ? `${repo.owner}/${repo.name}` : `${repo.host}/${repo.owner}/${repo.name}`);
+
+/**
+ * The GitHub repository the tag is pushed to: `origin`'s push URL(s), or its
+ * URL when none is set. Read as configured (before `insteadOf` rewrites), and
+ * refused when the push and fetch URLs name different repositories — the
+ * release would land beside a tag that was pushed somewhere else.
+ */
 function originRepository(cmd) {
-  const url = cmd.git(["config", "--get", `remote.${REMOTE}.url`]);
-  const repo = parseGitHubRemote(url);
-  if (!repo) {
-    throw new ReleaseCutError(`${REMOTE}'s URL is not a GitHub repository URL: ${url}`, `Point ${REMOTE} at the GitHub repository the release belongs to.`);
+  const fetchUrls = configValues(cmd, `remote.${REMOTE}.url`);
+  const pushUrls = configValues(cmd, `remote.${REMOTE}.pushurl`);
+  const urls = [...(pushUrls.length > 0 ? pushUrls : fetchUrls), ...fetchUrls];
+  if (urls.length === 0) throw new ReleaseCutError(`There is no "${REMOTE}" remote.`);
+  const repos = urls.map((url) => {
+    const repo = parseGitHubRemote(url);
+    if (!repo) {
+      throw new ReleaseCutError(
+        `${REMOTE}'s URL is not a GitHub repository URL: ${redactUrl(url)}`,
+        `Point ${REMOTE} at the GitHub repository the release belongs to.`,
+      );
+    }
+    return { ...repo, slug: repoSlug(repo) };
+  });
+  const differ = repos.find((repo) => repo.slug.toLowerCase() !== repos[0].slug.toLowerCase());
+  if (differ) {
+    throw new ReleaseCutError(
+      `${REMOTE}'s push and fetch URLs name different repositories (${repos[0].slug} and ${differ.slug}).`,
+      `Make remote.${REMOTE}.pushurl and remote.${REMOTE}.url name the same repository, then re-run.`,
+    );
   }
-  return { ...repo, slug: repo.host === "github.com" ? `${repo.owner}/${repo.name}` : `${repo.host}/${repo.owner}/${repo.name}` };
+  return repos[0];
 }
 
 /** Refuse when `branch` exists here or on origin. */
@@ -378,29 +421,61 @@ export function prepareRelease({
   const packagePath = path.join(repoRoot, "package.json");
   const packageText = fs.readFileSync(packagePath, "utf8");
   const packageVersion = JSON.parse(packageText).version;
+  const changelogText = fs.readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8");
+  const latest = latestReleaseTag(remoteTags);
+  const packageParts = parseReleaseTag(`v${packageVersion}`);
+  // A release prepared and merged but not yet tagged: package.json is ahead of
+  // origin's latest tag and CHANGELOG.md already has that version's section.
+  const pendingRelease =
+    packageParts !== null &&
+    (latest === null || compareParts(packageParts, latest.parts) > 0) &&
+    releaseSection(changelogText, packageVersion) !== null;
 
   let plan;
   let nextPackageText = null;
   if (amend) {
     const tag = `v${packageVersion}`;
-    if (!parseReleaseTag(tag)) throw new ReleaseCutError(`package.json has no X.Y.Z version: ${packageVersion}`);
+    if (!packageParts) throw new ReleaseCutError(`package.json has no X.Y.Z version: ${packageVersion}`);
     if (remoteTags.includes(tag)) {
       throw new ReleaseCutError(
         `${tag} is already released on ${REMOTE}, so there is no untagged release to amend.`,
         "Late fragments go into the next release: pnpm run release:cut prepare",
       );
     }
-    const section = releaseSection(fs.readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8"), packageVersion);
+    const section = releaseSection(changelogText, packageVersion);
     if (section === null) {
       throw new ReleaseCutError(
         `CHANGELOG.md has no "## ${packageVersion}" section: nothing was prepared to amend.`,
         "Prepare the release first: pnpm run release:cut prepare",
       );
     }
+    // A late feature cannot ride in a patch release: the version would understate it.
+    const preparedBump = releaseBump(latest?.parts ?? null, packageParts);
+    const late = fragmentBump(fragmentNames);
+    if (late.bump === "minor" && preparedBump === "patch") {
+      throw new ReleaseCutError(
+        `${tag} was prepared as a patch release, but late fragment(s) ${late.features.join(", ")} are features, which need a minor release.`,
+        [
+          `Either carry them into the next release: publish ${tag} with pnpm run release:cut publish --carry-late-fragments --execute`,
+          `Or re-prepare as a minor release: revert the release-prep pull request's merge (its fragments come back),`,
+          `  merge the revert, then run pnpm run release:cut prepare --execute from a fresh ${MAIN_REF}`,
+        ].join("\n"),
+      );
+    }
     plan = { version: packageVersion, tag, branch: `release/${tag}-late`, heading: section.heading };
     log(`Late-fragment fold into ${tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
     log(`  Base: ${MAIN_REF} ${main.slice(0, 12)}; appending to "${section.heading}"`);
   } else {
+    if (pendingRelease) {
+      throw new ReleaseCutError(
+        `v${packageVersion} is prepared but not tagged: package.json is ahead of ${REMOTE}'s latest tag ` +
+          `(${latest?.tag ?? "none"}) and CHANGELOG.md has its section. A new prepare would plan a version below it.`,
+        [
+          `Publish it: pnpm run release:cut publish --execute`,
+          `Or, if fragments merged since its release-prep commit, fold them in first: pnpm run release:cut prepare --amend --execute`,
+        ].join("\n"),
+      );
+    }
     plan = computeRelease({ tags: remoteTags, fragmentNames, override: bump });
     plan.heading = releaseHeading(plan.version, date);
     nextPackageText = bumpPackageJson(packageText, plan.version);
@@ -483,6 +558,22 @@ export function prepareRelease({
   return { ...plan, amend, executed: true, date, commit };
 }
 
+/**
+ * `sha` when it is on main's first-parent chain. Only a commit CI pushed to
+ * main has GHCR images, so only its tag can be deployed; a release-prep
+ * branch commit inside a merge is on main but never was main's tip.
+ */
+function requireFirstParent(firstParent, sha) {
+  if (!firstParent.includes(sha)) {
+    throw new ReleaseCutError(
+      `${sha.slice(0, 12)} is not on ${MAIN_REF}'s first-parent chain: it was never a commit CI pushed to ${MAIN_BRANCH}, ` +
+        `so no image was built for it and a deploy of its tag could not pull one.`,
+      "Tag a merge commit on main: the release-prep pull request's merge commit, or origin/main (the default).",
+    );
+  }
+  return sha;
+}
+
 /** Recovery for fragments that reached the target after the release-prep commit. */
 function lateFragmentRecovery(tag) {
   return [
@@ -513,39 +604,65 @@ export function publishRelease({
 
   const repo = originRepository(cmd);
   const main = refreshMain(cmd);
-  const target = cmd.git(["rev-parse", "--verify", `${commit ?? MAIN_TRACKING_REF}^{commit}`]);
-  // Only a commit CI pushed to main — main's first-parent chain — has GHCR
-  // images, so only it can be deployed by tag. A release-prep branch commit
-  // inside a merge is on main but never was main's tip.
   const firstParent = cmd.git(["rev-list", "--first-parent", main]).split("\n");
-  if (!firstParent.includes(target)) {
-    throw new ReleaseCutError(
-      `${target.slice(0, 12)} is not on ${MAIN_REF}'s first-parent chain: it was never a commit CI pushed to ${MAIN_BRANCH}, ` +
-        `so no image was built for it and a deploy of its tag could not pull one.`,
-      "Tag a merge commit on main: the release-prep pull request's merge commit, or origin/main (the default).",
-    );
-  }
-  const pkg = JSON.parse(cmd.git(["show", `${target}:package.json`]));
-  const version = String(pkg.version ?? "");
+  let target = requireFirstParent(firstParent, cmd.git(["rev-parse", "--verify", `${commit ?? MAIN_TRACKING_REF}^{commit}`]));
+  const versionAt = (sha) => {
+    const pkg = JSON.parse(cmd.git(["show", `${sha}:package.json`]));
+    const version = String(pkg.version ?? "");
+    if (!parseReleaseTag(`v${version}`)) throw new ReleaseCutError(`package.json at ${sha.slice(0, 12)} has no X.Y.Z version: ${version}`);
+    return { pkg, version };
+  };
+  const { version } = versionAt(target);
+  let { pkg } = versionAt(target);
   const tag = `v${version}`;
-  if (!parseReleaseTag(tag)) throw new ReleaseCutError(`package.json at ${target.slice(0, 12)} has no X.Y.Z version: ${version}`);
+  const ghRepo = ["--repo", repo.slug];
 
   const local = localTagCommit(cmd, tag);
   const remote = remoteTagCommit(cmd, tag);
   if (remote !== null && remote !== target) {
+    // Released, or an earlier publish pushed the tag and stopped before the
+    // release — after which main may have moved on. Only the release decides.
+    if (cmd.ghOk(["release", "view", tag, ...ghRepo])) {
+      throw new ReleaseCutError(
+        `${REMOTE} already has ${tag} on ${remote.slice(0, 12)}, not ${target.slice(0, 12)}: ${tag} is released, and nothing newer is prepared here.`,
+        "Run pnpm run release:cut prepare and merge its pull request first.",
+      );
+    }
+    if (commit !== null) {
+      throw new ReleaseCutError(
+        `${REMOTE}'s ${tag} is on ${remote.slice(0, 12)}, not ${target.slice(0, 12)}, and its GitHub release is missing: an earlier publish stopped after pushing the tag.`,
+        `Resume against the tagged commit: pnpm run release:cut publish --execute --commit ${remote}`,
+      );
+    }
+    log(`  ${REMOTE}'s ${tag} is on ${remote.slice(0, 12)} and its release is missing; ${MAIN_REF} has moved since. Resuming on ${remote.slice(0, 12)}.`);
+    target = requireFirstParent(firstParent, remote);
+    const resumed = versionAt(target);
+    if (resumed.version !== version) {
+      throw new ReleaseCutError(`${REMOTE}'s ${tag} is on ${target.slice(0, 12)}, whose package.json is not ${version}.`);
+    }
+    pkg = resumed.pkg;
+  }
+  if (remote === null && local !== null && local !== target) {
     throw new ReleaseCutError(
-      `${REMOTE} already has ${tag} on ${remote.slice(0, 12)}, not ${target.slice(0, 12)}: ${tag} is released, and nothing newer is prepared here.`,
-      "Run pnpm run release:cut prepare and merge its pull request first.",
+      `This clone's tag ${tag} is on ${local.slice(0, 12)}, not ${target.slice(0, 12)}, and ${REMOTE} has no ${tag}: ` +
+        `an earlier publish stopped before pushing it, and ${MAIN_REF} has moved since.`,
+      `Resume against the tagged commit: pnpm run release:cut publish --execute --commit ${local}`,
     );
   }
-  if (local !== null && local !== target) {
+  if (remote !== null && local !== null && local !== target) {
     throw new ReleaseCutError(
-      `This clone's tag ${tag} points at ${local.slice(0, 12)}, not ${target.slice(0, 12)}, and ${REMOTE} has no ${tag}.`,
-      `Inspect it with git show ${tag}; if it is a leftover, delete it with git tag -d ${tag} and re-run.`,
+      `${REMOTE}'s ${tag} is on ${target.slice(0, 12)}, but this clone's ${tag} is on ${local.slice(0, 12)}.`,
+      `Replace the local tag with origin's, then re-run: git tag -d ${tag} && git fetch ${REMOTE} tag ${tag}`,
     );
   }
   // fresh: nothing done; tagged: local tag at the target; pushed: origin has it.
   const state = remote !== null ? "pushed" : local !== null ? "tagged" : "fresh";
+  if (state === "tagged" && cmd.git(["cat-file", "-t", `refs/tags/${tag}`]) !== "tag") {
+    throw new ReleaseCutError(
+      `This clone's ${tag} is a lightweight tag; a release tag must be annotated.`,
+      `Delete it and re-run, and publish creates the annotated tag: git tag -d ${tag} && pnpm run release:cut publish --execute --commit ${target}`,
+    );
+  }
 
   const changelog = cmd.git(["show", `${target}:CHANGELOG.md`]);
   const section = releaseSection(changelog, version);
@@ -562,7 +679,9 @@ export function publishRelease({
     .filter(Boolean)
     .map((file) => path.posix.basename(file))
     .filter(isFragmentName);
-  if (state === "fresh") {
+  // Pushed is past the point of no return: the checks below already passed
+  // when that tag was created. A local tag has not left this clone yet.
+  if (state !== "pushed") {
     if (previous && compareParts(parseReleaseTag(tag), previous.parts) <= 0) {
       throw new ReleaseCutError(
         `${tag} is not newer than the latest release tag on ${REMOTE}, ${previous.tag}: there is no prepared release to publish.`,
@@ -604,7 +723,6 @@ export function publishRelease({
   }
   if (state !== "fresh") log(`  Resuming: ${state === "tagged" ? `the local tag ${tag} is already on the commit` : `${REMOTE} already has ${tag} on the commit`}.`);
 
-  const ghRepo = ["--repo", repo.slug];
   const releaseExists = state === "pushed" && cmd.ghOk(["release", "view", tag, ...ghRepo]);
   if (releaseExists) {
     log(`Done already: the GitHub release ${tag} exists on ${repo.slug}. Nothing to do.`);
@@ -635,7 +753,7 @@ export function publishRelease({
 
   const notesFile = writeNotes(tag, body.text);
   const releaseArgs = ["release", "create", tag, ...ghRepo, "--verify-tag", "--title", tag, "--notes-file", notesFile];
-  const rerun = `Re-run: pnpm run release:cut publish --execute${commit ? ` --commit ${target}` : ""} — it resumes from this step.`;
+  const rerun = `Re-run: pnpm run release:cut publish --execute --commit ${target} — it resumes from this step.`;
   if (state === "fresh") {
     cmd.git(["tag", "-a", tag, "-m", message, target], "Nothing was pushed or published; fix the cause and re-run.");
   }

@@ -406,6 +406,14 @@ export function composeChangelog({ changelog, version, date, fragments, append =
     const history = stripBlankEdges(tail);
     const found = locateSection(history, isVersionHeading(version));
     if (!found) throw new Error(`CHANGELOG.md has no "## ${version}" section to append to.`);
+    // Only the newest section can still be untagged; appending to any older
+    // one would rewrite a released version's notes.
+    if (found.start !== 0) {
+      throw new Error(
+        `"${history[found.start]}" is not the newest release section in CHANGELOG.md (that is "${history[0]}"); ` +
+          "--append only adds to the newest, untagged one.",
+      );
+    }
     const body = stripBlankEdges(history.slice(found.start + 1, found.end));
     const rest = history.slice(found.end);
     out.push("", ...history.slice(0, found.start), history[found.start], "", ...body, ...entryLines);

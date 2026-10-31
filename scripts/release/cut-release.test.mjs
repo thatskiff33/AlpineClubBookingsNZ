@@ -295,6 +295,8 @@ describe("package.json, remote and release-body helpers", () => {
     expect(parseGitHubRemote("ssh://git@github.com/o/r.git")).toEqual(repo);
     expect(parseGitHubRemote("ssh://git@github.com:22/o/r.git")).toEqual(repo);
     expect(parseGitHubRemote("https://GHE.example.org/o/r.git")).toEqual({ host: "ghe.example.org", owner: "o", name: "r" });
+    expect(parseGitHubRemote("https://www.github.com/o/r.git")).toEqual(repo);
+    expect(parseGitHubRemote("git@WWW.GitHub.com:o/r.git")).toEqual(repo);
     expect(parseGitHubRemote("/srv/git/origin.git")).toBeNull();
     expect(parseGitHubRemote("file:///srv/git/origin.git")).toBeNull();
     expect(parseGitHubRemote("https://github.com/o")).toBeNull();
@@ -496,15 +498,15 @@ function mergedReleaseFixture(options) {
  * release-prep PR is open, then the prep PR merges with a merge commit.
  * Returns the prep commit (never main's tip) and the merge commit.
  */
-function lateFragmentFixture() {
+function lateFragmentFixture({ lateName = "4500-late.md", bump = null } = {}) {
   const fixture = makeFixture();
-  prepareRelease({ repoRoot: fixture.repo, execute: true, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
+  const plan = prepareRelease({ repoRoot: fixture.repo, execute: true, bump, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
   const prep = git(fixture.repo, "rev-parse", "HEAD");
   git(fixture.repo, "switch", "-q", "--detach", "origin/main");
-  fs.writeFileSync(path.join(fixture.repo, "changelog.d", "4500-late.md"), "- **Late (#4500).**\n");
+  fs.writeFileSync(path.join(fixture.repo, "changelog.d", lateName), "- **Late (#4500).**\n");
   git(fixture.repo, "add", "--all");
   git(fixture.repo, "commit", "-qm", "Merge pull request #4500");
-  git(fixture.repo, "merge", "-q", "--no-ff", "-m", "Merge pull request #4501 from release/v0.13.3", prep);
+  git(fixture.repo, "merge", "-q", "--no-ff", "-m", `Merge pull request #4501 from ${plan.branch}`, prep);
   git(fixture.repo, "push", "-q", "origin", "HEAD:main");
   return { ...fixture, prep, merge: git(fixture.repo, "rev-parse", "HEAD") };
 }
@@ -590,6 +592,44 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
       /CHANGELOG\.md has no "## 0\.13\.2" section: nothing was prepared to amend/,
     );
     expect(never.recovery).toContain("pnpm run release:cut prepare");
+  });
+
+  it("refuses a late feature in a patch release, and offers carry or re-prepare", () => {
+    const { repo } = lateFragmentFixture({ lateName: "4500-late.feature.md" });
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: silentLog() }),
+      /v0\.13\.3 was prepared as a patch release, but late fragment\(s\) 4500-late\.feature\.md are features/,
+    );
+    expect(error.recovery).toContain("pnpm run release:cut publish --carry-late-fragments --execute");
+    expect(error.recovery).toContain("revert the release-prep pull request's merge");
+  });
+
+  it("folds a late feature into a release already prepared as minor", () => {
+    const { repo } = lateFragmentFixture({ lateName: "4500-late.feature.md", bump: "minor" });
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    expect(prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({
+      tag: "v0.14.0",
+      branch: "release/v0.14.0-late",
+    });
+  });
+
+  it("refuses a plain prepare while a prepared release is still untagged, instead of planning a downgrade", () => {
+    const { repo } = mergedReleaseFixture({ fragments: { "4400-feature.feature.md": "- **New (#4400).**\n" } });
+    expect(JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8")).version).toBe("0.14.0");
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    fs.writeFileSync(path.join(repo, "changelog.d", "4600-fix.md"), "- **Fix (#4600).**\n");
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "Merge pull request #4600");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /v0\.14\.0 is prepared but not tagged: package\.json is ahead of origin's latest tag \(v0\.13\.2\)/,
+    );
+    expect(error.recovery).toContain("pnpm run release:cut publish --execute");
+    expect(error.recovery).toContain("pnpm run release:cut prepare --amend --execute");
+    expect(git(repo, "branch", "--list", "release/v0.13.3")).toBe("");
   });
 
   it("refuses to amend with nothing to fold", () => {
@@ -683,10 +723,11 @@ describe("release:cut publish on a fixture repository", () => {
     );
   });
 
-  it("says nothing is prepared when origin already has the version's tag elsewhere", () => {
+  it("says nothing is prepared when origin's tag of the version is elsewhere and released", () => {
     const { repo } = makeFixture({ fragments: {} });
+    const released = { "gh release view": { status: 0, stdout: "v0.13.2\n", stderr: "" } };
     const error = expectRefusal(
-      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, released), log: silentLog() }),
       /origin already has v0\.13\.2 on [0-9a-f]{12}, not [0-9a-f]{12}: v0\.13\.2 is released/,
     );
     expect(error.recovery).toContain("release:cut prepare");
@@ -765,14 +806,14 @@ describe("release:cut publish on a fixture repository", () => {
   });
 
   it("keeps the local tag when the push fails, and a re-run resumes at the push", () => {
-    const { repo } = mergedReleaseFixture();
+    const { repo, merged } = mergedReleaseFixture();
     const failing = fixtureRunner(repo, { "git push": { status: 1, stdout: "", stderr: "rejected" } });
     const error = expectRefusal(
       () => publishRelease({ repoRoot: repo, execute: true, run: failing, writeNotes: notesWriter(), log: silentLog() }),
       /`git push origin refs\/tags\/v0\.13\.3` failed:\nrejected/,
     );
     expect(error.recovery).toContain("exists locally but was NOT pushed");
-    expect(error.recovery).toContain("Re-run: pnpm run release:cut publish --execute — it resumes from this step.");
+    expect(error.recovery).toContain(`Re-run: pnpm run release:cut publish --execute --commit ${merged} — it resumes from this step.`);
     expect(error.recovery).toContain("Or discard it: git tag -d v0.13.3");
     expect(error.recovery).not.toMatch(/prepare/);
     expect(failing.calls.some((call) => call.startsWith("gh release create"))).toBe(false);
@@ -796,7 +837,7 @@ describe("release:cut publish on a fixture repository", () => {
       /`gh release create v0\.13\.3 .*` failed:\nHTTP 502/,
     );
     expect(error.recovery).toContain("Tag v0.13.3 IS pushed, but the GitHub release was NOT published");
-    expect(error.recovery).toContain("Re-run: pnpm run release:cut publish --execute");
+    expect(error.recovery).toContain(`Re-run: pnpm run release:cut publish --execute --commit ${merged}`);
     expect(error.recovery).not.toMatch(/prepare|tag -d|--delete/);
 
     // The push was stubbed; make origin hold the tag the way a real push would.
@@ -834,14 +875,140 @@ describe("release:cut publish on a fixture repository", () => {
     expect(run.sideEffects()).toEqual([]);
   });
 
-  it("refuses a local tag of the version that points elsewhere, without recommending prepare", () => {
+  it("points a local-only tag elsewhere at --commit, never at prepare or deleting it", () => {
     const { repo, merged } = mergedReleaseFixture();
     git(repo, "tag", "-a", "v0.13.3", "-m", "stray", `${merged}~1`);
     const error = expectRefusal(
       () => publishRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), writeNotes: notesWriter(), log: silentLog() }),
-      /This clone's tag v0\.13\.3 points at [0-9a-f]{12}, not [0-9a-f]{12}, and origin has no v0\.13\.3/,
+      /This clone's tag v0\.13\.3 is on [0-9a-f]{12}, not [0-9a-f]{12}, and origin has no v0\.13\.3/,
     );
-    expect(error.recovery).toContain("git tag -d v0.13.3");
-    expect(error.recovery).not.toMatch(/prepare/);
+    expect(error.recovery).toContain(`pnpm run release:cut publish --execute --commit ${git(repo, "rev-parse", `${merged}~1`)}`);
+    expect(error.recovery).not.toMatch(/prepare|tag -d/);
+  });
+
+  it("names both commits when origin's tag is on the target but this clone's is elsewhere", () => {
+    const { repo, merged } = mergedReleaseFixture();
+    git(repo, "tag", "-a", "v0.13.3", "-m", "v0.13.3", merged);
+    git(repo, "push", "-q", "origin", "refs/tags/v0.13.3");
+    git(repo, "tag", "-d", "v0.13.3");
+    git(repo, "tag", "-a", "v0.13.3", "-m", "stray", `${merged}~1`);
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /origin's v0\.13\.3 is on [0-9a-f]{12}, but this clone's v0\.13\.3 is on [0-9a-f]{12}\./,
+    );
+    expect(error.recovery).toBe("Replace the local tag with origin's, then re-run: git tag -d v0.13.3 && git fetch origin tag v0.13.3");
+  });
+
+  it("resumes on origin's tagged commit after the release failed and main moved on", () => {
+    const { repo, merged } = mergedReleaseFixture();
+    const failing = fixtureRunner(repo, { "gh release create": { status: 1, stdout: "", stderr: "HTTP 502" } });
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run: failing, writeNotes: notesWriter(), log: silentLog() }),
+      /gh release create/,
+    );
+    git(repo, "push", "-q", "origin", "refs/tags/v0.13.3"); // the push the stub stood in for
+    git(repo, "commit", "-q", "--allow-empty", "-m", "Merge pull request #4600 (docs)");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const moved = git(repo, "rev-parse", "HEAD");
+
+    const explicit = expectRefusal(
+      () => publishRelease({ repoRoot: repo, commit: moved, run: fixtureRunner(repo), log: silentLog() }),
+      /origin's v0\.13\.3 is on [0-9a-f]{12}, not [0-9a-f]{12}, and its GitHub release is missing/,
+    );
+    expect(explicit.recovery).toBe(`Resume against the tagged commit: pnpm run release:cut publish --execute --commit ${merged}`);
+
+    const rerun = fixtureRunner(repo);
+    const log = silentLog();
+    const writeNotes = notesWriter();
+    const result = publishRelease({ repoRoot: repo, execute: true, run: rerun, writeNotes, log });
+    expect(result).toMatchObject({ state: "pushed", commit: merged, executed: true });
+    expect(log.text()).toContain("its release is missing; origin/main has moved since. Resuming on");
+    expect(rerun.sideEffects()).toEqual([
+      `gh release create v0.13.3 --repo fixture-owner/fixture-repo --verify-tag --title v0.13.3 --notes-file ${writeNotes.file}`,
+    ]);
+    expect(fs.readFileSync(writeNotes.file, "utf8")).toBe("- **A fix (#4400).** Body.\n");
+  });
+
+  it("resumes a local-only tag with --commit after the push failed and main moved on", () => {
+    const { repo, merged } = mergedReleaseFixture();
+    const failing = fixtureRunner(repo, { "git push": { status: 1, stdout: "", stderr: "rejected" } });
+    const first = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run: failing, writeNotes: notesWriter(), log: silentLog() }),
+      /git push/,
+    );
+    expect(first.recovery).toContain(`--commit ${merged}`);
+    git(repo, "commit", "-q", "--allow-empty", "-m", "Merge pull request #4600 (docs)");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+
+    const moved = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), writeNotes: notesWriter(), log: silentLog() }),
+      /This clone's tag v0\.13\.3 is on [0-9a-f]{12}, not [0-9a-f]{12}, and origin has no v0\.13\.3/,
+    );
+    expect(moved.recovery).toBe(`Resume against the tagged commit: pnpm run release:cut publish --execute --commit ${merged}`);
+
+    const rerun = fixtureRunner(repo);
+    const result = publishRelease({ repoRoot: repo, execute: true, commit: merged, run: rerun, writeNotes: notesWriter(), log: silentLog() });
+    expect(result).toMatchObject({ state: "tagged", commit: merged });
+    expect(rerun.sideEffects()).toEqual([
+      "git push origin refs/tags/v0.13.3",
+      expect.stringMatching(/^gh release create v0\.13\.3 --repo fixture-owner\/fixture-repo /),
+    ]);
+  });
+
+  it("still runs the content checks when only a local tag exists", () => {
+    const { repo, merge } = lateFragmentFixture();
+    git(repo, "tag", "-a", "v0.13.3", "-m", "v0.13.3", merge);
+    const run = fixtureRunner(repo);
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /holds 1 fragment\(s\) that merged after the release-prep commit/,
+    );
+    expect(run.sideEffects()).toEqual([]);
+    const carried = fixtureRunner(repo);
+    expect(
+      publishRelease({ repoRoot: repo, execute: true, carryLateFragments: true, run: carried, writeNotes: notesWriter(), log: silentLog() }).state,
+    ).toBe("tagged");
+  });
+
+  it("refuses a lightweight local tag and says how to recreate it", () => {
+    const { repo, merged } = mergedReleaseFixture();
+    git(repo, "tag", "v0.13.3", merged);
+    const run = fixtureRunner(repo);
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /This clone's v0\.13\.3 is a lightweight tag; a release tag must be annotated/,
+    );
+    expect(error.recovery).toBe(
+      `Delete it and re-run, and publish creates the annotated tag: git tag -d v0.13.3 && pnpm run release:cut publish --execute --commit ${merged}`,
+    );
+    expect(run.sideEffects()).toEqual([]);
+  });
+
+  it("takes the repository from the push URL and refuses one that disagrees with the fetch URL", () => {
+    const { repo } = mergedReleaseFixture();
+    git(repo, "config", "remote.origin.pushurl", "git@github.com:fixture-owner/fixture-repo.git");
+    const log = silentLog();
+    publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log });
+    expect(log.text()).toContain("Repository: fixture-owner/fixture-repo (from origin)");
+
+    git(repo, "config", "remote.origin.pushurl", "git@github.com:someone-else/fork.git");
+    const run = fixtureRunner(repo);
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /origin's push and fetch URLs name different repositories \(someone-else\/fork and fixture-owner\/fixture-repo\)/,
+    );
+    expect(error.recovery).toContain("remote.origin.pushurl");
+    expect(run.sideEffects()).toEqual([]);
+  });
+
+  it("never prints the credentials in an unparseable origin URL", () => {
+    const { repo } = mergedReleaseFixture();
+    git(repo, "config", "remote.origin.url", "https://release-bot:SECRET-TOKEN@localhost/o/r.git");
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /origin's URL is not a GitHub repository URL: https:\/\/\*\*\*@localhost\/o\/r\.git/,
+    );
+    expect(`${error.message}\n${error.recovery}`).not.toContain("SECRET-TOKEN");
+    expect(`${error.message}\n${error.recovery}`).not.toContain("release-bot");
   });
 });
