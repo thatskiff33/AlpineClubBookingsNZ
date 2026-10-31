@@ -350,6 +350,28 @@ describe("AlpineServerSetup key save names the shown address (#4470)", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/integrations/credentials"))).toBe(false);
   });
 
+  it("describes the key field and Save key with that hint, and only while it is shown", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    const keyField = screen.getByLabelText(/API key/i);
+    const save = screen.getByRole("button", { name: /save key/i });
+    const describedIds = (element: HTMLElement) => (element.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+    expect(screen.queryByTestId("api-key-address-unsaved")).toBeNull();
+    expect(describedIds(keyField)).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://typed-not-saved.test" } });
+    const hintId = screen.getByTestId("api-key-address-unsaved").id;
+    expect(hintId).not.toBe("");
+    expect(describedIds(keyField)).toContain(hintId);
+    expect(describedIds(save)).toContain(hintId);
+    expect(document.getElementById(hintId)?.textContent).toMatch(/save the address first/i);
+
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://central.test" } });
+    expect(screen.queryByTestId("api-key-address-unsaved")).toBeNull();
+    expect(describedIds(keyField)).toEqual([]);
+    expect(describedIds(save)).not.toContain(hintId);
+  });
+
   it.each([
     ["the saved address with a trailing slash", "https://central.test/"],
     ["the saved address with surrounding spaces", "  https://central.test  "],

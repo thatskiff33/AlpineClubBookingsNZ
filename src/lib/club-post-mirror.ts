@@ -11,10 +11,7 @@ import {
   type SyncPost,
 } from "@/lib/servernz-api";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
-import {
-  SERVERNZ_CREDENTIAL_KEYS,
-  getServerNzSetupState,
-} from "@/lib/servernz-config";
+import { getServerNzSetupState } from "@/lib/servernz-config";
 import { ensurePushRegistration } from "@/lib/servernz-push-registration";
 import {
   advancedDownloadCursor,
@@ -52,13 +49,6 @@ import {
  * writes nothing — evidence this sync owes on its own, and its tests carry it.
  */
 
-/**
- * Provider key the push-verification secret is stored under, beside the API
- * key: named here for the webhooks that verify with it, defined once in
- * `SERVERNZ_CREDENTIAL_KEYS`, where the address move that removes it (#4470)
- * reads it too.
- */
-export const SERVERNZ_PUSH_SECRET_KEY = SERVERNZ_CREDENTIAL_KEYS.pushSecret;
 
 /** A claim older than this belongs to a process that died mid-pass. */
 export const STALE_SYNC_CLAIM_MS = 10 * 60 * 1000;
@@ -266,20 +256,6 @@ async function upsertMirror(
   // Prisma throws on an Invalid Date — which would be a poison change. A post
   // with an unreadable timestamp is not worth wedging the sync over: skip it,
   // loudly. It re-arrives whenever the server fixes its serialisation.
-  // Every row write below is fenced on the connection this page came from
-  // (#4470). A refused write leaves the image files just stored unreferenced,
-  // so they are removed here rather than left for the orphan sweep.
-  const fenced = async <T>(work: (tx: ServerNzAnswerTx) => Promise<T>): Promise<T> => {
-    try {
-      return await write(work);
-    } catch (error) {
-      if (error instanceof ServerNzConnectionChangedError) {
-        for (const image of storedImages) await deletePostImage(image.storageKey);
-      }
-      throw error;
-    }
-  };
-
   if (!Number.isFinite(postedAt.getTime())) {
     logger.error(
       { serverPostId: post.id, createdAt: post.createdAt },
@@ -287,6 +263,19 @@ async function upsertMirror(
     );
     return "skipped";
   }
+
+  // Every row write below is fenced on the connection this page came from
+  // (#4470). A write that fails for any reason, a refusal included, rolled
+  // back and committed no row naming the image files just stored, and no
+  // sweep reclaims a file without a row, so they are removed here.
+  const fenced = async <T>(work: (tx: ServerNzAnswerTx) => Promise<T>): Promise<T> => {
+    try {
+      return await write(work);
+    } catch (error) {
+      for (const image of storedImages) await deletePostImage(image.storageKey);
+      throw error;
+    }
+  };
 
   if (existing) {
     // THE REPEAT THE CURSOR OVERLAP RE-DELIVERS (#3449). A post already
@@ -397,6 +386,25 @@ async function applyRemoval(
     await deletePostImage(image.storageKey);
   }
   return true;
+}
+
+/** The mirror's stored position: its cursor pair and its failure count (#4470). */
+type MirrorPosition = {
+  commsCursorSince: string | null;
+  commsCursorSinceId: string | null;
+  commsPoisonChangeId: string | null;
+  commsPoisonCount: number;
+};
+const POSITION_SELECT = {
+  commsCursorSince: true, commsCursorSinceId: true, commsPoisonChangeId: true, commsPoisonCount: true,
+} as const;
+function positionOf(row: Partial<MirrorPosition> | null | undefined): MirrorPosition {
+  return {
+    commsCursorSince: row?.commsCursorSince ?? null,
+    commsCursorSinceId: row?.commsCursorSinceId ?? null,
+    commsPoisonChangeId: row?.commsPoisonChangeId ?? null,
+    commsPoisonCount: row?.commsPoisonCount ?? 0,
+  };
 }
 
 const PAUSED: MirrorSyncResult = {
@@ -518,6 +526,24 @@ export async function runMirrorSync(
     });
     let poisonId = cursor?.commsPoisonChangeId ?? null;
     let poisonCount = cursor?.commsPoisonCount ?? 0;
+    // THE POSITION THIS PASS HOLDS (#4470): the stored cursor pair and failure
+    // count as it read or last wrote them. Every position write re-reads them
+    // under the page's fence and refuses, writing nothing, if any moved: a key
+    // replaced at the same address resets them and leaves a page that passes
+    // the fence (sent on the new key), so without this the pass would write
+    // its old position, or step over a post on a stale failure count, onto
+    // the new connection. A moved position stops the pass like a replaced one.
+    let held = positionOf(cursor);
+    const writePosition = async (pageWrite: ServerNzAnswerWrite, data: Partial<MirrorPosition>) => {
+      await pageWrite(async (tx) => {
+        const stored = positionOf(await tx.serverNzSettings.findUnique({ where: { id: "default" }, select: POSITION_SELECT }));
+        if ((Object.keys(held) as (keyof MirrorPosition)[]).some((key) => stored[key] !== held[key])) {
+          throw new ServerNzConnectionChangedError();
+        }
+        await tx.serverNzSettings.update({ where: { id: "default" }, data });
+      });
+      held = { ...held, ...data };
+    };
     // TWO POSITIONS, kept apart on purpose (#3449). `durable` is what the row
     // holds and only ever moves forward. `request` is where the NEXT page asks
     // from: the overlapped position first, then whatever the server returned,
@@ -575,27 +601,22 @@ export async function runMirrorSync(
           if (error instanceof ServerNzVersionMismatchError) throw error;
           if (error instanceof ServerNzConnectionChangedError) throw error;
           if (poisonId === changeKey && poisonCount >= 2) {
+            // Said only once the count it rests on is still the stored one.
+            await writePosition(pageWrite, { commsPoisonChangeId: null, commsPoisonCount: 0 });
             logger.error(
               { changeKey, failures: poisonCount + 1, err: error },
               "Skipping a poison mirror-sync change after repeated failures; the rest of the feed continues",
             );
             poisonId = null;
             poisonCount = 0;
-            await pageWrite((tx) => tx.serverNzSettings.update({
-              where: { id: "default" },
-              data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
-            }));
             continue;
           }
           poisonCount = poisonId === changeKey ? poisonCount + 1 : 1;
           poisonId = changeKey;
-          await pageWrite((tx) => tx.serverNzSettings.update({
-            where: { id: "default" },
-            data: {
-              commsPoisonChangeId: changeKey.slice(0, 64),
-              commsPoisonCount: poisonCount,
-            },
-          }));
+          await writePosition(pageWrite, {
+            commsPoisonChangeId: changeKey.slice(0, 64),
+            commsPoisonCount: poisonCount,
+          });
           throw error;
         }
         if (poisonId === changeKey) {
@@ -603,10 +624,7 @@ export async function runMirrorSync(
           // cause after all. Forget it before it can be blamed again.
           poisonId = null;
           poisonCount = 0;
-          await pageWrite((tx) => tx.serverNzSettings.update({
-            where: { id: "default" },
-            data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
-          }));
+          await writePosition(pageWrite, { commsPoisonChangeId: null, commsPoisonCount: 0 });
         }
       }
 
@@ -621,34 +639,11 @@ export async function runMirrorSync(
       // kept whole: the server's `sinceId` belongs with the server's `since`,
       // so a refused step keeps BOTH stored halves.
       //
-      // AND ONLY OVER THE POSITION THIS PASS HOLDS (#4470). Under the fence the
-      // stored pair is re-read and must still be the one this pass started
-      // from or last wrote: a key replacement at the same address between the
-      // pass's first read and its first pull resets it and leaves a page that
-      // passes the fence (it was sent on the new key), so without this check
-      // the old position would be written onto the new connection. A moved
-      // position stops the pass as a replaced connection, writing nothing.
+      // AND ONLY OVER THE POSITION THIS PASS HOLDS (#4470): `writePosition`.
       if (envelope.cursor) {
-        const previous = durable;
         const since = advancedDownloadCursor(durable.since, envelope.cursor.since);
         if (since === envelope.cursor.since) durable = envelope.cursor;
-        const next = durable;
-        await pageWrite(async (tx) => {
-          const stored = await tx.serverNzSettings.findUnique({
-            where: { id: "default" },
-            select: { commsCursorSince: true, commsCursorSinceId: true },
-          });
-          if (
-            (stored?.commsCursorSince ?? null) !== previous.since ||
-            (stored?.commsCursorSinceId ?? null) !== previous.sinceId
-          ) {
-            throw new ServerNzConnectionChangedError();
-          }
-          await tx.serverNzSettings.update({
-            where: { id: "default" },
-            data: { commsCursorSince: next.since, commsCursorSinceId: next.sinceId },
-          });
-        });
+        await writePosition(pageWrite, { commsCursorSince: durable.since, commsCursorSinceId: durable.sinceId });
         request = envelope.cursor;
       }
 

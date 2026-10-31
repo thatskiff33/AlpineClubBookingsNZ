@@ -17,6 +17,7 @@ import {
 } from "@/lib/servernz-api-version";
 import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import { Input } from "@/components/ui/input";
+import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -166,6 +167,10 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   // key would be stored against the saved address and, on the version check
   // that follows, sent there. Save the address first.
   const addressUnsaved = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(savedBaseUrl);
+  // The "save the address first" hint describes the key field and its button,
+  // and only while it is shown (an id that names nothing describes nothing).
+  const addressUnsavedHint = useFieldHint();
+  const describedByUnsaved = addressUnsaved ? addressUnsavedHint.fieldProps : {};
 
   // The version check (#49): ONE call per page entry, from a mount effect,
   // and again only after a key or address is saved - never on re-render and
@@ -444,21 +449,23 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 placeholder={apiKeySet ? "•••••••• (enter a new key to replace)" : "acs_…"}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
+                {...describedByUnsaved}
               />
               <ViewOnlyActionButton
                 canEdit={canWriteConnection}
                 readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
                 onClick={saveApiKey}
                 disabled={busy !== null || !apiKey.trim() || addressUnsaved}
+                {...describedByUnsaved}
               >
                 {busy === "apiKey" ? "Saving…" : "Save key"}
               </ViewOnlyActionButton>
             </div>
             {addressUnsaved ? (
-              <p className="text-xs text-muted-foreground" data-testid="api-key-address-unsaved">
+              <FieldHint {...addressUnsavedHint.hintProps} data-testid="api-key-address-unsaved">
                 Save the address first: a key is issued by one server, and the
                 address above is not the saved one.
-              </p>
+              </FieldHint>
             ) : null}
             {apiKeySet ? (
               <p className="text-xs text-muted-foreground">

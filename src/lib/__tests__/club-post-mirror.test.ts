@@ -59,6 +59,7 @@ const mocks = vi.hoisted(() => ({
   writePostImage: vi.fn(),
   deletePostImage: vi.fn(),
   loggerWarn: vi.fn(),
+  loggerError: vi.fn(),
   checkServerVersion: vi.fn(),
 }));
 
@@ -71,7 +72,7 @@ vi.mock("@/lib/servernz-version-check", () => ({
 vi.mock("@/lib/logger", () => ({
   default: {
     warn: mocks.loggerWarn,
-    error: vi.fn(),
+    error: mocks.loggerError,
     info: vi.fn(),
     debug: vi.fn(),
   },
@@ -129,7 +130,7 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { SERVERNZ_PUSH_SECRET_KEY, runMirrorSync } from "@/lib/club-post-mirror";
+import { runMirrorSync } from "@/lib/club-post-mirror";
 import { ensurePushRegistration } from "@/lib/servernz-push-registration";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
@@ -995,10 +996,6 @@ describe("ensurePushRegistration stores the secret only for the connection it re
     delete process.env.NEXTAUTH_URL;
   });
 
-  it("names the one stored key", () => {
-    expect(SERVERNZ_PUSH_SECRET_KEY).toBe("push_secret");
-  });
-
   it("writes through the answer fence for the registration's identity, then drops the cached copy", async () => {
     await ensurePushRegistration();
     expect(mocks.answerWriter).toHaveBeenCalledWith(SENT_ON, expect.any(Function));
@@ -1139,5 +1136,56 @@ describe("the mirror writes answers only through the fence (#4470)", () => {
     ]);
     // ...and that one update is the release of the claim.
     expect(source).toMatch(/prisma\.serverNzSettings\s*\.update\(\{ where: \{ id: "default" \}, data: \{ commsSyncStartedAt: null \} \}\)/);
+  });
+});
+
+describe("runMirrorSync's failure count belongs to the position it read (#4470 delta review)", () => {
+  const NEW = { baseUrl: "https://central.test", credentialVersion: "v-new" };
+
+  it("does not step over a post on a count a key replacement reset while the pass ran", async () => {
+    // Two failures recorded on the OLD key, and no cursor yet either side.
+    Object.assign(mocks.row, { commsPoisonChangeId: "srv-1", commsPoisonCount: 2 });
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      // The replacement's reset commits after the pass read the row; the page
+      // is sent on the NEW key, so the connection fence itself passes.
+      Object.assign(mocks.row, { commsPoisonChangeId: null, commsPoisonCount: 0 });
+      return { changes: [visiblePost()], cursor: { since: "2026-06-30T01:00:00.000Z", sinceId: "srv-1" }, hasMore: false, sentOn: NEW };
+    });
+    mocks.postCreate.mockRejectedValueOnce(new Error("value too long"));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.stopped).toBe("connection-changed");
+    // Not stepped over: the reset count stands, and no cursor moved past it.
+    expect(mocks.row).toMatchObject({ commsPoisonChangeId: null, commsPoisonCount: 0, commsCursorSince: null });
+    expect(mocks.loggerError).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/Skipping a poison/));
+  });
+
+  it("does not count a first failure on the new key onto the old key's count", async () => {
+    Object.assign(mocks.row, { commsPoisonChangeId: "srv-1", commsPoisonCount: 1 });
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      Object.assign(mocks.row, { commsPoisonChangeId: null, commsPoisonCount: 0 });
+      return { changes: [visiblePost()], cursor: null, hasMore: false, sentOn: NEW };
+    });
+    mocks.postCreate.mockRejectedValueOnce(new Error("value too long"));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.stopped).toBe("connection-changed");
+    expect(mocks.row).toMatchObject({ commsPoisonChangeId: null, commsPoisonCount: 0 });
+  });
+
+  it("removes a post's freshly stored pictures when its write fails for any reason, not only a refusal", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([
+      visiblePost({ images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }] }),
+    ]));
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/failed-write", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+    mocks.postCreate.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(runMirrorSync(NOW)).rejects.toThrow("database unavailable");
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/failed-write");
   });
 });

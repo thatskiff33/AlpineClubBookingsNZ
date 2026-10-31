@@ -7,7 +7,7 @@ import {
   freeBedsForStay,
 } from "@/lib/central-availability";
 import { resolveLocalLodgeForCentralId } from "@/lib/central-lodge-link";
-import { SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror";
+import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   addDaysDateOnly,
@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
   const limited = await applyRateLimit(rateLimiters.api, request);
   if (limited) return limited;
 
-  const secret = await getIntegrationCredentialValue("servernz", SERVERNZ_PUSH_SECRET_KEY);
+  const secret = await getIntegrationCredentialValue(SERVERNZ_PROVIDER, SERVERNZ_CREDENTIAL_KEYS.pushSecret);
   if (!secret) {
     // Never registered (the Communication Portal is off or was never set up),
     // so nothing can verify. The central server shows "beds available unknown".
