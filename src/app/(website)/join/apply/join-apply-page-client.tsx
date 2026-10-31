@@ -274,15 +274,9 @@ export function JoinApplyPageClient({
       const data = await response.json();
 
       if (!response.ok) {
-        // The route's validation details are read through the one shared reader
-        // (#4580); anything else falls back to the route's own sentence.
-        const details = readValidationDetails(data);
-        if (details && details.fieldErrors.length > 0) {
-          const nextErrors: FieldErrors = {};
-          for (const [field, messages] of details.fieldErrors) {
-            nextErrors[field as keyof FieldErrors] = messages[0];
-          }
-          setFieldErrors(nextErrors);
+        const details = readValidationDetails(data)?.fieldErrors ?? [];
+        if (details.length > 0) {
+          setFieldErrors(Object.fromEntries(details.map(([field, messages]) => [field, messages[0]])));
         } else {
           setError(
             data.error || "Could not submit your application right now.",
