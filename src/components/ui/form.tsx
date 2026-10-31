@@ -180,8 +180,9 @@ function FormControl({
     .join(" ");
 
   return (
+    // No `data-slot` of its own: the Slot's props land on the control, and
+    // the control's own (`Checkbox`'s "checkbox") must survive.
     <Slot
-      data-slot="form-control"
       id={formItemId}
       aria-describedby={describedBy || undefined}
       aria-invalid={!!error}
