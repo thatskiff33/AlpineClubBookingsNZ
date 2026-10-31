@@ -6,6 +6,7 @@
 // submit fails — and where it does NOT go while the person is typing.
 
 import "@testing-library/jest-dom/vitest";
+import * as React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -225,26 +226,89 @@ describe("FormErrorSummary", () => {
 
   it("never moves focus while the person types, and only shrinks between submits", async () => {
     render(<TestForm />);
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Ruth" } });
+    });
     await submit();
     await expectToHoldFocus(screen.getByRole("alert"), "the error summary");
+    const listed = () =>
+      Array.from(screen.queryByRole("alert")?.querySelectorAll("a") ?? []).map(
+        (link) => link.textContent,
+      );
+    expect(listed()).toEqual(["Enter an email address", "Tick to agree"]);
 
     const email = screen.getByLabelText("Email");
     email.focus();
     await act(async () => {
       fireEvent.change(email, { target: { value: "ruth@example.org" } });
     });
-    // A fixed field leaves the summary; a newly broken one waits for a submit.
+    expect(listed()).toEqual(["Tick to agree"]);
+
+    // A field that was valid at the submit and breaks while typing shows its
+    // inline error and waits for the next submit to join the summary.
     const name = screen.getByLabelText("Name");
+    name.focus();
     await act(async () => {
-      fireEvent.change(name, { target: { value: "R" } });
       fireEvent.change(name, { target: { value: "" } });
     });
+    expect(screen.getByText("Enter a name")).toBeInTheDocument();
+    expect(listed()).toEqual(["Tick to agree"]);
 
-    const summary = screen.getByRole("alert");
-    expect(
-      Array.from(summary.querySelectorAll("a")).map((link) => link.textContent),
-    ).toEqual(["Enter a name", "Tick to agree"]);
+    // Fix the last listed field: the summary goes. Break a fixed one again:
+    // it does not come back, so nothing is announced mid-typing.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox"));
+    });
+    email.focus();
+    await act(async () => {
+      fireEvent.change(email, { target: { value: "ruth@" } });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Enter an email address")).toBeInTheDocument();
     expect(document.activeElement).toBe(email);
+  });
+
+  it("moves no focus when it mounts after a failed submit", async () => {
+    function Toggled() {
+      const form = useZodForm(schema, {
+        defaultValues: { name: "", email: "", agree: false },
+      });
+      const [shown, setShown] = React.useState(false);
+      return (
+        <Form {...form}>
+          <form noValidate onSubmit={form.handleSubmit(async () => {})}>
+            {shown ? <FormErrorSummary /> : null}
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <button type="submit">Save</button>
+            <button type="button" onClick={() => setShown(true)}>
+              Show summary
+            </button>
+          </form>
+        </Form>
+      );
+    }
+    render(<Toggled />);
+    await submit();
+    const toggle = screen.getByRole("button", { name: "Show summary" });
+    toggle.focus();
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+
+    // It shows what is wrong, and leaves focus where the person put it.
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a name");
+    await expectToHoldFocus(toggle, "the control the person used");
   });
 
   it("takes focus again on the next failed submit", async () => {

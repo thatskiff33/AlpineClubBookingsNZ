@@ -288,9 +288,11 @@ function collectFormErrors(
  *   `submitCount`, which rises once per completed submit and never while the
  *   person types, and it uses `scrollToError`, the shared failure position.
  * - **It only ever shrinks between submits.** It lists the fields that failed
- *   at the last submit and are still failing, with their current message;
- *   a field that starts failing while the person types shows its inline
- *   message and joins the summary at the next submit.
+ *   at the last submit, with their current message, and drops each one as it
+ *   is fixed. A field that starts failing while the person types, or fails
+ *   again after being fixed, shows its inline message and joins the summary
+ *   at the next submit: the summary never reappears, or grows, mid-typing,
+ *   so it is never announced while the person types.
  * - **Each entry links to its control** and focuses it.
  *
  * Render it inside `<Form>`, before the fields. `useZodForm` turns off
@@ -312,24 +314,25 @@ function FormErrorSummary({
   const ref = React.useRef<HTMLDivElement>(null);
   const titleId = `${formId}-error-summary-title`;
 
-  // The names that failed at the last submit, captured in the render that
-  // first sees the new `submitCount` (React's "adjust state while rendering"),
-  // so the list and the focus land in the same commit.
+  // The names still listed: those that failed at the last submit, less each
+  // one fixed since. Kept with React's "adjust state while rendering", so the
+  // list and the focus land in the same commit. A summary mounted after a
+  // submit starts from the errors on screen and, below, moves no focus.
+  const current = collectFormErrors(errors);
+  const failing = new Set(current.map((entry) => entry.name));
   const [snapshot, setSnapshot] = React.useState<{
     submitCount: number;
     names: ReadonlySet<string | null>;
-  }>({ submitCount: 0, names: new Set() });
-  const current = collectFormErrors(errors);
+  }>(() => ({ submitCount, names: failing }));
+  let listed = snapshot.names;
   if (snapshot.submitCount !== submitCount) {
-    setSnapshot({
-      submitCount,
-      names: new Set(current.map((entry) => entry.name)),
-    });
+    listed = failing;
+    setSnapshot({ submitCount, names: listed });
+  } else if ([...listed].some((name) => !failing.has(name))) {
+    listed = new Set([...listed].filter((name) => failing.has(name)));
+    setSnapshot({ submitCount, names: listed });
   }
-  const shown =
-    snapshot.submitCount === submitCount
-      ? current.filter((entry) => snapshot.names.has(entry.name))
-      : current;
+  const shown = current.filter((entry) => listed.has(entry.name));
 
   // Only a new submit may move focus. The list shrinking as the person fixes
   // fields re-runs this effect, and the count it last acted on stops it. It
