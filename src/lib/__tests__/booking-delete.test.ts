@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   // soft-delete's own audit entry is written inside the transaction, before
   // Stripe is called, so it cannot carry this outcome.
   logAudit: vi.fn(),
+  // #4514 (D1): which bookings financial history names.
+  bookingsWithFinancialHistory: vi.fn(),
 }));
 
 const mockTx = {
@@ -127,6 +129,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/booking-financial-history", () => ({
+  bookingsWithFinancialHistory: (...args: unknown[]) => mocks.bookingsWithFinancialHistory(...args),
+}));
+
 vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
   logAudit: mocks.logAudit,
@@ -202,6 +208,40 @@ describe("deleteBooking", () => {
       canceled: true,
     });
     mocks.markPaymentIntentTransactionFailed.mockResolvedValue(null);
+    mocks.bookingsWithFinancialHistory.mockResolvedValue(new Set());
+  });
+
+  it("refuses a draft that financial history names, writing nothing (#4514, D1)", async () => {
+    const draft = makeBooking({
+      promoRedemptions: [{
+        id: "redemption-1",
+        promoCodeId: "promo-1",
+        discountCents: 1000,
+        freeNightsUsed: null,
+        eligibleGuestCount: 1,
+      }],
+    });
+    mocks.bookingFindUnique.mockResolvedValue(draft);
+    mocks.bookingsWithFinancialHistory.mockResolvedValue(new Set(["booking-1"]));
+
+    const result = await deleteBooking({
+      bookingId: "booking-1",
+      actor: { memberId: "member-1", role: "MEMBER", ipAddress: "127.0.0.1" },
+    });
+
+    expect(result).toEqual({
+      status: 409,
+      error: "This draft booking has financial history, so it cannot be deleted",
+      blockers: [{ code: "financial_history", label: "Financial history names this booking", count: 1 }],
+    });
+    expect(mocks.bookingsWithFinancialHistory).toHaveBeenCalledWith(mockTx, ["booking-1"]);
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    expect(mocks.promoRedemptionDelete).not.toHaveBeenCalled();
+    expect(mocks.promoCodeUpdate).not.toHaveBeenCalled();
+    expect(mocks.bookingChangeRequestDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.bookingModificationDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.bookingEventDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.bookingDelete).not.toHaveBeenCalled();
   });
 
   it("hard-deletes an owned draft after durable audit and promo cleanup", async () => {
@@ -771,6 +811,7 @@ describe("deleteBooking — soft-delete cancels in-flight PaymentIntents (#2700)
       canceled: true,
     });
     mocks.markPaymentIntentTransactionFailed.mockResolvedValue(null);
+    mocks.bookingsWithFinancialHistory.mockResolvedValue(new Set());
   });
 
   it("cancels the in-flight MODIFICATION intent so nothing further can be captured", async () => {

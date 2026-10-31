@@ -1293,8 +1293,10 @@ the seed does not overwrite existing seasonal assignments.
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
-contains any email outside `demo.alpineclub.test`. The demo seed then deletes
-demo plus transactional rows before rebuilding a broad sample dataset. The demo
+contains any email outside `demo.alpineclub.test`. It also refuses, before
+deleting anything, a database where a booking carries booking-ledger or journal
+lines: that history is never deleted (#4514), so recreate such a database instead. The demo seed then
+deletes demo plus transactional rows before rebuilding a broad sample dataset. The demo
 seed uses fake emails under `demo.alpineclub.test` and fake provider
 identifiers only. Set `DEMO_SEED_PASSWORD` to override the default local demo
 password.

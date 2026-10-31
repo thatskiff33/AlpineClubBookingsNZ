@@ -1,6 +1,6 @@
 /**
- * M1 (#4513) ships the member-money journal inert: no production path reads it
- * or posts to it. This census reads every non-test source file under `src/` and
+ * M1 (#4513) ships the member-money journal inert: no production path posts to
+ * it, and only the deletion guards M2 (#4514) names below read it. This census reads every non-test source file under `src/` and
  * `scripts/`, and the seeds and other top-level files in `prisma/`, and fails on
  * a journal reference outside the module boundary and the files that only name,
  * provision or verify it. The migration is SQL, outside the scan. A later child that adds a writer or reader edits this
@@ -22,7 +22,27 @@ const ALLOWED: Record<string, string> = {
   "src/lib/privacy-retention-classification.ts": "privacy schedule classification strings; no journal access",
   "scripts/verify-member-money-journal.ts": "operator verifier in a READ ONLY transaction",
 };
+
+/**
+ * M2 (#4514, D1 on #4482): deletion guards that READ what posted rows retain,
+ * through the boundary's index. Each is held to the same "posts nothing" check
+ * as the boundary itself, and an `importOnly` reader may name the journal in
+ * nothing but its import from `@/lib/member-money` — no delegate, table, enum or
+ * SQL function — so a general module cannot grow a journal access unreviewed.
+ */
+const READERS: Record<string, { reason: string; importOnly: boolean }> = {
+  "src/lib/booking-financial-history.ts": {
+    reason: "draft hard delete skips a booking a journal leg names (read-only)",
+    importOnly: false,
+  },
+  "src/lib/member-lifecycle-actions.ts": {
+    reason: "member hard delete refuses a journal debtor (read-only count)",
+    importOnly: true,
+  },
+};
 const BOUNDARY = "src/lib/member-money/";
+/** One `import { … } from "@/lib/member-money";` statement, on its own line(s). */
+const BOUNDARY_IMPORT = /^import\s*\{[^}]*\}\s*from\s*["']@\/lib\/member-money["'];?[ \t]*$/gm;
 
 /**
  * A journal table, enum or Prisma delegate; a relation field reaching it from
@@ -78,22 +98,41 @@ describe("member money journal stays inert in M1 (#4513)", () => {
   const found = referencing();
 
   it("has no reader or writer outside the boundary and its named support files", () => {
-    const offenders = found.filter((file) => !file.startsWith(BOUNDARY) && !(file in ALLOWED));
+    const offenders = found.filter((file) => !file.startsWith(BOUNDARY) && !(file in ALLOWED) && !(file in READERS));
     expect(offenders, "a production path names the member-money journal; M1 ships it inert").toEqual([]);
   });
 
   it("is not vacuous: every allowed file and the boundary still match", () => {
-    for (const file of Object.keys(ALLOWED)) expect(found).toContain(file);
+    for (const file of [...Object.keys(ALLOWED), ...Object.keys(READERS)]) expect(found).toContain(file);
     expect(found.some((file) => file.startsWith(BOUNDARY))).toBe(true);
   });
 
-  it("posts nothing from inside the boundary or the verifier", () => {
-    for (const file of [...found.filter((f) => f.startsWith(BOUNDARY)), "scripts/verify-member-money-journal.ts"]) {
+  it("posts nothing from inside the boundary, the verifier or an M2 reader", () => {
+    for (const file of [
+      ...found.filter((f) => f.startsWith(BOUNDARY)),
+      "scripts/verify-member-money-journal.ts",
+      ...Object.keys(READERS),
+    ]) {
       const text = readFileSync(join(ROOT, file), "utf8");
       expect(text, file).not.toMatch(WRITE_STATEMENT);
       expect(text, file).not.toMatch(/\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/);
     }
     expect(readFileSync(join(ROOT, "scripts/verify-member-money-journal.ts"), "utf8")).toMatch(/READ ONLY/);
+  });
+
+  it("lets an import-only reader name the journal in its boundary import and nowhere else (#4514)", () => {
+    for (const [file, { importOnly }] of Object.entries(READERS)) {
+      if (!importOnly) continue;
+      const text = readFileSync(join(ROOT, file), "utf8");
+      expect(text.match(BOUNDARY_IMPORT), `${file} imports the boundary`).not.toBeNull();
+      const rest = text.replace(BOUNDARY_IMPORT, "");
+      expect(REFERENCE.filter((pattern) => pattern.test(rest)).map(String), file).toEqual([]);
+    }
+    // Fixture proof: a delegate beside the import is caught, the import alone is not.
+    const importLine = 'import { journalRowsNamingDebtor } from "@/lib/member-money";';
+    expect(REFERENCE.some((pattern) => pattern.test(importLine.replace(BOUNDARY_IMPORT, "")))).toBe(false);
+    const withDelegate = `${importLine}\nawait tx.memberMoneyLine.count();`;
+    expect(REFERENCE.some((pattern) => pattern.test(withDelegate.replace(BOUNDARY_IMPORT, "")))).toBe(true);
   });
 
   it("recognises every write statement form, and only the pinned definitions' grammar escapes it", () => {

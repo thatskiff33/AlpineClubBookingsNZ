@@ -635,8 +635,8 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   fails a credit write with no sync after it.
 
   **Insert-only, because credit rows are.** No code changes a row's amount,
-  type or booking link — the census fails one that tries; only deleting a
-  booking nulls the link, and its lines go with it — so each row posts one
+  type or booking link — the census fails one that tries, and the database
+  refuses to delete a booking a row names (`INV-MONEY-043`) — so each row posts one
   line keyed `credit:<id>`, never reversed, for the row's negation: applied
   credit `CREDIT_APPLIED` (a give-back is negative), minted credit
   `CREDIT_ISSUED`. While a booking's applied rows net to zero or less — every
@@ -1022,7 +1022,7 @@ Every bridge to `BookingLedgerLine` retains its exact source identity through a
 unique RESTRICT foreign key. Its `MemberMoneySourcePosting` rows name exact
 legs in that same journal; a bridge to a nonzero journal requires leg coverage.
 Posted financial parents use RESTRICT with no
-update cascade. No existing legacy cascade is changed by M1; M2 owns that work.
+update cascade. No legacy cascade was changed by M1; M2 did (`INV-MONEY-043`).
 
 The account chart uses stable internal enums; Xero account codes remain settings
 in the existing mapping registry. Keys the chart only proposes live in
@@ -1031,3 +1031,29 @@ step that first reads one registers it. System receivables, member-credit and
 tax controls are reached through document/control bridges, never direct
 journals. An unset mapping cannot prevent local posting. No provider adapter is
 activated by registering an account.
+
+## INV-MONEY-043
+
+Financial history outlives its booking (#4514, Ledger M2; owner decision D1 on
+[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482), 28 Oct
+2026). These keys are `ON DELETE RESTRICT ON UPDATE RESTRICT`: every key a money
+line holds (`BookingLedgerLine`'s booking, lodge and reversed line, and every
+`MemberMoney*` key), a `MemberCredit` row's three booking links and a
+`GroupBookingSettlement`'s group. A referential action runs with the table
+owner's rights, so a cascade or a set-null would be a route around the
+application role's INSERT/SELECT grant; none exists. With the payment and
+refund records, already RESTRICT, they are the relations
+`booking-financial-history.ts` names once: the database refuses, for every
+role, to delete a booking any of them names.
+
+Such a booking is soft-deleted or left as it is, never hard-deleted. Only
+drafts are hard-deleted, and a draft never carries money. The draft route
+answers 409 and writes nothing for a draft those relations name; the nightly
+cleanup leaves such a draft out and reports it. Should money reach a draft
+between that read and the delete, the refusal rolls the night's whole batch
+back, nothing deleted. Member hard delete refuses a member the journal names as
+debtor, a retained identity string rather than a key. Personal data follows the
+retention schedule (#4457), which keeps these rows. Pins:
+`booking-financial-history-census.test.ts` (relations classified, money-line
+keys RESTRICT both ways), `booking-financial-history.realdb.test.ts` and
+`database-roles.realdb.test.ts` (an application-role delete is refused).

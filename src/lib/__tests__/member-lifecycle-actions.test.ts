@@ -56,6 +56,9 @@ const mockPrisma = vi.hoisted(() => {
     bookingModification: countDelegate(),
     bookingChangeRequest: countDelegate(),
     deletionRequest: countDelegate(),
+    // #4514: posted journal rows naming the member as debtor.
+    memberMoneyLine: countDelegate(),
+    memberMoneyObligation: countDelegate(),
     xeroObjectLink: {
       findMany: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn(),
@@ -370,6 +373,8 @@ const countDelegates = [
   mockPrisma.bookingModification,
   mockPrisma.bookingChangeRequest,
   mockPrisma.deletionRequest,
+  mockPrisma.memberMoneyLine,
+  mockPrisma.memberMoneyObligation,
 ];
 
 describe("member delete lifecycle actions", () => {
@@ -608,6 +613,31 @@ describe("member delete lifecycle actions", () => {
         OR: expect.arrayContaining([{ chargeCoverage: { some: {} } }]),
       }),
     });
+  });
+
+  it("blocks hard delete while journal rows name the member as debtor: a retained identity (#4514, D1)", async () => {
+    // The debtor is an identity string, not a key, so the database would let
+    // the member row go and leave the balance naming nobody.
+    mockPrisma.memberMoneyLine.count.mockResolvedValue(2);
+    mockPrisma.memberMoneyObligation.count.mockResolvedValue(1);
+
+    const eligibility = await getMemberDeleteEligibility({
+      memberId: "member-1",
+      currentAdminMemberId: "admin-2",
+    });
+
+    expect(eligibility.eligible).toBe(false);
+    expect(eligibility.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "journal_debtor",
+          label: "Member money journal rows name this member as debtor.",
+          count: 3,
+        }),
+      ]),
+    );
+    expect(mockPrisma.memberMoneyLine.count).toHaveBeenCalledWith({ where: { memberId: "member-1" } });
+    expect(mockPrisma.memberMoneyObligation.count).toHaveBeenCalledWith({ where: { memberId: "member-1" } });
   });
 
   it("blocks delete eligibility when subscription charges name the member as invoice recipient (#1886 F34)", async () => {

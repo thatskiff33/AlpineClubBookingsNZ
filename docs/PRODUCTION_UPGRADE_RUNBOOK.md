@@ -339,6 +339,13 @@ docker compose exec -T postgres psql -U tac -d tacbookings -c "
 make sure it has finished or been stopped, and deploy again. Nothing needs
 undoing. Everything below is for the left-hand column.
 
+**The same, under another code: `40P01 deadlock detected`.** A migration that
+locks several tables up front (`20261127050000_retain_ledger_history_on_booking_delete`
+takes eight, parents first, each bounded by its own one-second `lock_timeout`)
+can meet a writer holding them in the other order. PostgreSQL then aborts one
+side; when it is the migration, the error is `P3018` with `40P01` and the state
+and recovery below are exactly those of a lock timeout.
+
 **What state the club is in.** Safe, and no worse than before the deploy. The
 old colour is still serving on the old schema, no traffic has moved, and the
 migration applied nothing — `_prisma_migrations` records the attempt with

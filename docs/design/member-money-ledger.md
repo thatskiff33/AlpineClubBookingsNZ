@@ -190,13 +190,25 @@ half a journal. Event keys include source event/attempt identity and revision;
 they never use wall-clock arrival time, equal amounts or array position.
 
 Foreign keys from posted records use RESTRICT for financial parents and stable
-identities, without update cascades or set-null rewrites. #4453 protects booking
-and lodge ids but [#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482)
-shows parent DELETE can still erase legacy booking lines. Section 10 proposes
-archiving financial parents and RESTRICT for that existing cascade too. Until
-that decision is approved and delivered, append-only enforcement is incomplete
-and the ledger cut-over remains blocked. Personal-data erasure must use the
-retention design; it cannot erase economic postings by deleting their parent.
+identities, without update cascades or set-null rewrites. #4453 protected booking
+and lodge ids, but [#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482)
+showed that parent DELETE could still erase legacy booking lines. M2
+([#4514](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4514)) delivered
+D1: every key a legacy line or a journal row holds, a credit row's booking
+links and a group settlement's group are RESTRICT both ways (`INV-MONEY-043`), so
+no referential action reaches a posted row, and the database refuses to delete a
+booking that financial history names.
+Personal-data erasure must use the retention design; it cannot erase economic
+postings by deleting their parent.
+
+**What a posted row retains.** A booking, a lodge, a reversed line and the
+journal's own parents are keys, so their rows outlive the posting: a booking
+with money is soft-deleted or left as it is, never hard-deleted. A debtor
+(member or organisation), the acting officer and a guest strand are retained
+identity strings, not keys. They survive an anonymisation (#4457 keeps stable
+ids) and a merge (D4); member hard delete, for a record added in error, refuses
+a member the journal names as debtor. Guest names copied onto a line follow the
+retention schedule, which keeps them as financial evidence.
 
 ### Module boundary and transactions
 
@@ -467,7 +479,7 @@ old-code rehearsals, rollback evidence and owner-only production operations.
 
 | Step | Shippable outcome and gate | Modules and invariants that change or retire |
 | --- | --- | --- |
-| A. Expand and protect | Add inert journal, accounts, source bridge, constraints, restricted grants, ownership registry and read-only verifier. Resolve section 10's retention decision; close #4482 before claiming durable append-only storage. No reader/provider change. | Keep all existing repair and census modules. Extend `INV-MONEY-032`/`033` to journal immutability and whole-batch keys; preserve the booking confirmation fence. No invariant retires. |
+| A. Expand and protect | Add inert journal, accounts, source bridge, constraints, restricted grants, ownership registry and read-only verifier. Resolve section 10's retention decision; close #4482 before claiming durable append-only storage (M1 #4513 and M2 #4514 delivered both). No reader/provider change. | Keep all existing repair and census modules. Extend `INV-MONEY-032`/`033` to journal immutability and whole-batch keys; preserve the booking confirmation fence. No invariant retires. |
 | B. Post every event and reconstruct history | Cohort-by-cohort adapters post alongside existing source writes in their transactions, including pre-settlement payable bank charges and subscriptions. Backfill deterministically through the same planners. Require full population coverage, conservation, source uniqueness and exact historical provider coverage. The existing seven-identity census must be `GATE_OPEN`; the journal adds its own per-account/obligation/lot proof. | `booking-ledger-*-sync.ts`, `member-credit.ts`, `payment-transactions.ts`, subscription/fee writers remain compatibility participants. Preserve `INV-MONEY-008`/`009` snapshots; restate `INV-MONEY-034`–`036` as source-to-journal contracts. `rate-derived-night-price-backfill`, `stored-night-price-repair*` and orphaned-credit backfills stay available for evidenced history resolution, not auto-run. No general deletion of repairs. |
 | C. Switch inbound authority | After #4460 proofs and old-worker drain, all Xero sources use section 6, and compatibility projections are written only by the journal adapter. Deploy restricted writer capability/import rules with an explicit shrinking legacy allowlist. No mixed old recount/new posting workers. | Retire money-mutation arms of `xero-inbound/credit-note-repairs.ts`, `recount-left-unsettled.ts`, `kept-settle-correction-recount.ts` and the old inbound paths into `reconcilePaymentAggregates`; retain transport, identity lookup and audit responsibilities. Fold `xero-credit-note-spent-outside-app.ts` and `xero-credit-note-mirror*.ts` economic planning into R22, preserving refusal/sweep triggers. Replace `INV-ADDPAY-021`'s Xero-to-card-total raise/floor logic with fact ownership. Preserve `INV-MONEY-007` approvals/outside-spend exceptions. |
 | D. Move readers, one reversible surface per PR | #3584 foundation and officer panel → member panel → history → confirmation → finance → modification email, plus its separately scoped data export. Columns still written and compared. Corpus pins and whole-history surface parity gate each move; classified differences need existing approval or the owner. | Readers use one projection/store, extending #3584 rather than maintaining another balance helper. `INV-PAY-020` reads journal settlement evidence; `INV-MONEY-030`/`031` preserve provenance and officer-only verdicts. No writer policy or repair retires merely because a screen moved. |
@@ -598,6 +610,8 @@ soft-deleted, never hard-deleted; and immutable economic identities are retained
 Personal-data minimisation and erasure follow the separate retention schedule
 (#4457), including the existing decision about copied charge descriptions.
 Not taken: a parent-delete trigger, or permitting financial-history deletion.
+Delivered by M2 (#4514): section 3's foreign-key paragraph says what each
+posted row retains.
 
 ### D2. Legacy bank hand-backs inferred from a voided Xero note: keep the cash, ask once
 

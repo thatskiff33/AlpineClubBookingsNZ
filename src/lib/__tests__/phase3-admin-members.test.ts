@@ -39,6 +39,9 @@ vi.mock("@/lib/prisma", () => ({
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
+    // #4514: member hard-delete eligibility reads the journal's debtors.
+    memberMoneyLine: { count: vi.fn().mockResolvedValue(0) },
+    memberMoneyObligation: { count: vi.fn().mockResolvedValue(0) },
     membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
     promoCodeAssignment: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn() },

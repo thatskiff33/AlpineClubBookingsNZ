@@ -1174,12 +1174,16 @@ export async function register() {
 
           return {
             deletedDrafts: deleted.count,
+            withheldForFinancialHistory: dependents.withheldBookingIds, // D1, #4482
             promoRedemptions: dependents.promoRedemptions,
             changeRequests: dependents.changeRequests,
             modifications: dependents.modifications,
           };
         });
 
+        if (cleanup.withheldForFinancialHistory.length > 0) {
+          logger.warn({ job: "draft-cleanup", bookingIds: cleanup.withheldForFinancialHistory }, "Expired drafts kept: financial history names them");
+        }
         logger.info({ job: "draft-cleanup", ...cleanup }, "Draft cleanup complete");
         await recordCronRun("draft-cleanup", startedAt, "SUCCESS", cleanup);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "draft-cleanup", status: "ok" });

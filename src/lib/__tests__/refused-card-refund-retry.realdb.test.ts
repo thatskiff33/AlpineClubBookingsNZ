@@ -35,6 +35,7 @@ import type Stripe from "stripe";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
+import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 
 /** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
@@ -143,6 +144,8 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
     }
 
     async function deleteFixtures() {
+      // #4514: ledger lines no longer cascade with their booking (INV-MONEY-043).
+      await releaseBookingFinancialHistoryForTeardown(prisma, [BOOKING_ID, CANCEL_BOOKING_ID]);
       await deletePaymentRows();
       await deleteCancelRows();
       await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });

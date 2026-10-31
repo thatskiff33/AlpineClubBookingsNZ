@@ -126,6 +126,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-022` | At most one joining-fee invoice per member; conflicts surface, never adopted |
 | `INV-MONEY-041` | Member journals commit complete balanced batches with exact reversals |
 | `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
+| `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 
 ## Booking Dates And Capacity
 

@@ -16,15 +16,15 @@
  *    table, sequence or TEMPORARY right.
  *
  * WHAT "APPEND-ONLY" MEANS HERE, exactly. No statement the application role
- * runs can UPDATE a ledger line or an audit row, and no route can either: not a
+ * runs can UPDATE or DELETE a ledger line or an audit row, and no route can either: not a
  * view or rule over them (the re-check below refuses one), not a SECURITY
  * DEFINER routine (refused unless allow-listed), and not a parent-key UPDATE (a
  * trigger on "Booking" and "Lodge" refuses any key change, migration
- * `20261125010000_restrict_booking_ledger_key_updates`). ONE route deletes ledger
- * lines on purpose: deleting a booking removes its lines through
- * `BookingLedgerLine.bookingId`'s `ON DELETE CASCADE`, which runs with the table
- * owner's rights. Whether that should change belongs to the ledger design (#4482), not to
- * this grant.
+ * `20261125010000_restrict_booking_ledger_key_updates`), and not a referential action:
+ * a cascade would run with the table owner's rights, so every key a ledger line
+ * holds is RESTRICT both ways (#4482's decision D1, delivered by #4514 in
+ * `20261127050000_retain_ledger_history_on_booking_delete`). Deleting a booking
+ * that has lines is refused for every role.
  *
  * plus a fourth, narrow AUDIT-RETENTION role for the one job that must change
  * audit rows: `runAuditLogRetentionJob` anonymises request data after 90 days and
