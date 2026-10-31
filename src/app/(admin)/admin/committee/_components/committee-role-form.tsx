@@ -31,6 +31,10 @@ import type {
  * The page owns the form instance and the save, so it can reset the form when
  * a role is opened and keep its request-level error banner for a refusal that
  * is not about a field (a 403, a 500).
+ *
+ * The page renders the one view-only banner and vouches for this form by
+ * passing `ancestorRendersViewOnlyBanner` (#2168); rendered anywhere else
+ * without it, Save Role explains itself.
  */
 export function CommitteeRoleForm({
   form,
@@ -39,6 +43,7 @@ export function CommitteeRoleForm({
   saving,
   onSubmit,
   onClose,
+  ancestorRendersViewOnlyBanner = false,
 }: {
   form: UseFormReturn<CommitteeRoleFormValues, unknown, CommitteeRolePayload>;
   editing: boolean;
@@ -46,6 +51,7 @@ export function CommitteeRoleForm({
   saving: boolean;
   onSubmit: (payload: CommitteeRolePayload) => Promise<void>;
   onClose: () => void;
+  ancestorRendersViewOnlyBanner?: boolean;
 }) {
   return (
     <Form {...form}>
@@ -157,7 +163,7 @@ export function CommitteeRoleForm({
         <div className="mt-4 flex gap-2">
           <ViewOnlyActionButton
             canEdit={canEdit}
-            describeReason={false}
+            describeReason={!ancestorRendersViewOnlyBanner}
             type="submit"
             disabled={saving}
           >

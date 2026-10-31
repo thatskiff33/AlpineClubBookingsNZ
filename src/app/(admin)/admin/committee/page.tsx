@@ -430,6 +430,7 @@ export default function CommitteePage() {
               saving={saving}
               onSubmit={handleRoleSubmit}
               onClose={closeRoleForm}
+              ancestorRendersViewOnlyBanner
             />
           ) : null}
 
