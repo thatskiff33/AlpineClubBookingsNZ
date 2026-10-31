@@ -22,7 +22,7 @@ export type RouteLoadingProps = {
  * tells a screen reader to hold its announcement until the region stops being
  * busy, which for a fallback that is simply replaced would be never.
  *
- * Colours come from the `Skeleton` primitive (`bg-primary/10`), which reads the
+ * Colours come from the `Skeleton` primitive, which reads the
  * theme tokens, so the shell follows light and dark mode with the rest of the
  * app; the global `prefers-reduced-motion` guard freezes its pulse.
  */
