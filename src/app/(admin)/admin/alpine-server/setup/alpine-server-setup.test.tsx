@@ -330,13 +330,36 @@ describe("AlpineServerSetup key save names the shown address (#4470)", () => {
     return JSON.parse(String(call?.[1]?.body));
   }
 
-  it("sends the saved address it shows, not the unsaved text in the address field", async () => {
+  it("sends the saved address it shows", async () => {
     keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
     render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
-    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://typed-not-saved.test" } });
     saveKey("acs_new");
     await screen.findByText(/API key stored securely/i);
     expect(postedBody()).toEqual({ provider: "servernz", key: "api_key", value: "acs_new", expectedBaseUrl: "https://central.test" });
+  });
+
+  it("keeps Save key off, and says why, while the address field holds an unsaved address", async () => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: "https://typed-not-saved.test" } });
+    fireEvent.change(screen.getByLabelText(/API key/i), { target: { value: "acs_for_typed_server" } });
+    const save = screen.getByRole("button", { name: /save key/i }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(screen.getByTestId("api-key-address-unsaved").textContent).toMatch(/save the address first/i);
+    fireEvent.click(save);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/integrations/credentials"))).toBe(false);
+  });
+
+  it.each([
+    ["the saved address with a trailing slash", "https://central.test/"],
+    ["the saved address with surrounding spaces", "  https://central.test  "],
+  ])("treats %s as the saved address", async (_label, typed) => {
+    keySaveAnswers({ ok: true, status: 200, body: { ok: true } });
+    render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
+    fireEvent.change(screen.getByLabelText(/server base url/i), { target: { value: typed } });
+    saveKey("acs_new");
+    await screen.findByText(/API key stored securely/i);
+    expect(screen.queryByTestId("api-key-address-unsaved")).toBeNull();
   });
 
   it("sends null when no address is saved", async () => {

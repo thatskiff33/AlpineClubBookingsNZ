@@ -17,13 +17,13 @@ vi.mock("@/lib/prisma", () => ({
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
   clearServerVersionCheck,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
-  normalizeBaseUrl,
   loadOwnedOtherLodges,
   readOwnedOtherLodges,
   recordOtherLodgesDownload,

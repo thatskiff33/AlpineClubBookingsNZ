@@ -15,6 +15,7 @@ import {
   type DownloadStopReason,
   type ServerVersionCheck,
 } from "@/lib/servernz-api-version";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -160,6 +161,11 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   );
 
   const connectionReady = apiKeySet && savedBaseUrl.length > 0;
+  // A key belongs to the server that issued it (#4470). While the address
+  // field holds something other than the saved address, Save key is off: the
+  // key would be stored against the saved address and, on the version check
+  // that follows, sent there. Save the address first.
+  const addressUnsaved = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(savedBaseUrl);
 
   // The version check (#49): ONE call per page entry, from a mount effect,
   // and again only after a key or address is saved - never on re-render and
@@ -443,11 +449,17 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 canEdit={canWriteConnection}
                 readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
                 onClick={saveApiKey}
-                disabled={busy !== null || !apiKey.trim()}
+                disabled={busy !== null || !apiKey.trim() || addressUnsaved}
               >
                 {busy === "apiKey" ? "Saving…" : "Save key"}
               </ViewOnlyActionButton>
             </div>
+            {addressUnsaved ? (
+              <p className="text-xs text-muted-foreground" data-testid="api-key-address-unsaved">
+                Save the address first: a key is issued by one server, and the
+                address above is not the saved one.
+              </p>
+            ) : null}
             {apiKeySet ? (
               <p className="text-xs text-muted-foreground">
                 Last updated {fmt(clubTime, initialState.apiKeyUpdatedAt)}. The key is stored

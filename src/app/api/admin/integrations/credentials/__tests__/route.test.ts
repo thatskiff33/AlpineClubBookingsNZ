@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   isFullAdmin: vi.fn(),
   setIntegrationCredential: vi.fn(),
+  deleteIntegrationCredential: vi.fn(),
   createAuditLog: vi.fn(),
   // #3454: the Xero verify-reset runs the credential write and the token
   // destruction in ONE transaction; this double runs the write it is handed.
@@ -23,8 +24,7 @@ const mocks = vi.hoisted(() => ({
 
 const SHOWN_URL = "https://central.example.invalid";
 
-vi.mock("@/lib/servernz-settings", async (importOriginal) => ({
-  normalizeBaseUrl: ((await importOriginal()) as typeof import("@/lib/servernz-settings")).normalizeBaseUrl,
+vi.mock("@/lib/servernz-settings", () => ({
   forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
   lockServerNzSettings: mocks.lockServerNzSettings,
   SERVERNZ_SETTINGS_ID: "default",
@@ -51,6 +51,8 @@ vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
   // The in-transaction write is the same writer with the caller's `tx`, so the
   // same double serves both and every assertion below reads either.
   setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
+  // #4470: a ServerNZ key replacement removes the push secret in its fence.
+  deleteIntegrationCredentialInTransaction: mocks.deleteIntegrationCredential,
 }));
 vi.mock("@/lib/stripe-config", () => ({
   STRIPE_PROVIDER: "stripe",
@@ -239,6 +241,10 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.lockServerNzSettings).toHaveBeenCalledWith(mocks.tx);
     expect(mocks.lockServerNzSettings.mock.invocationCallOrder[0]).toBeLessThan(mocks.setIntegrationCredential.mock.invocationCallOrder[0]);
     expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]);
+    // #4470: the old key's push registration goes with it, by the same admin.
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith(expect.objectContaining({
+      tx: mocks.tx, provider: "servernz", key: "push_secret", actor: { kind: "admin", memberId: "admin-1" },
+    }));
   });
 
   it("does not report success when the connection-answer reset fails", async () => {

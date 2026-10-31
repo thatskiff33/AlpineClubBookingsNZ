@@ -18,9 +18,7 @@ const mocks = vi.hoisted(() => ({
   forgetServerConnectionAnswers: vi.fn(),
 }));
 
-vi.mock("@/lib/servernz-settings", async (importOriginal) => ({
-  // The real normaliser: the address check must agree with what is stored.
-  normalizeBaseUrl: ((await importOriginal()) as typeof import("@/lib/servernz-settings")).normalizeBaseUrl,
+vi.mock("@/lib/servernz-settings", () => ({
   forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
   lockServerNzSettings: mocks.lockServerNzSettings,
   SERVERNZ_SETTINGS_ID: "default",
@@ -224,6 +222,24 @@ describe("a key is saved only for the address the setup page showed (#4470)", ()
 });
 
 describe("the old server's push secret (#4470)", () => {
+  it("goes with a key replacement, after the key and before the answer reset, in the same fence", async () => {
+    const actor = { kind: "admin", memberId: "member-1" } as const;
+    const request = { id: "req-1", ipAddress: "1.2.3.4", userAgent: "test" };
+    await setServerNzApiKey("acs_rotated", STORED_URL, actor, request);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.tx, provider: "servernz", key: "push_secret", actor, expect: { expect: "any" }, request,
+    });
+    const removed = mocks.deleteIntegrationCredential.mock.invocationCallOrder[0];
+    expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(removed);
+    expect(removed).toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]);
+  });
+
+  it("stays when a key save is refused for a moved address", async () => {
+    await expect(setServerNzApiKey("acs_old", "https://old.example.invalid", { kind: "admin", memberId: "m" }))
+      .rejects.toBeInstanceOf(ServerNzAddressChangedError);
+    expect(mocks.deleteIntegrationCredential).not.toHaveBeenCalled();
+  });
+
   it("is removed under the provider namespace, by the forwarded admin actor", async () => {
     const actor = { kind: "admin", memberId: "member-1" } as const;
     await withServerNzConnectionTransaction((tx) => clearServerNzPushSecret(actor, tx));
@@ -233,6 +249,7 @@ describe("the old server's push secret (#4470)", () => {
       key: "push_secret",
       actor,
       expect: { expect: "any" },
+      request: undefined,
     });
     expect(SERVERNZ_CREDENTIAL_KEYS.pushSecret).toBe("push_secret");
     // Never admin-writable: the server issues it.

@@ -23,6 +23,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import {
   SERVERNZ_ADDRESS_CHANGED_CODE,
   SERVERNZ_ADDRESS_CHANGED_MESSAGE,
@@ -43,7 +44,6 @@ import {
   forgetServerConnectionAnswers,
   loadServerNzSettings,
   lockServerNzSettings,
-  normalizeBaseUrl,
   updateServerNzSettings,
   SERVERNZ_SETTINGS_ID,
   SERVERNZ_TRANSACTION_OPTIONS,
@@ -135,7 +135,8 @@ export class ServerNzAddressChangedError extends Error {
  * definition of key replacement (#4436): the credentials route calls it. The
  * new key and the reset of the previous connection's answers commit together
  * under the connection fence, so no request pairs the new key with the old
- * connection's owned-lodge list or API version.
+ * connection's owned-lodge list or API version, and the push secret registered
+ * with the old key is removed with them (#4470).
  *
  * `expectedBaseUrl` is the server address the setup form showed beside the key
  * field (`null` when it showed none), and it is REQUIRED (#4470). A key is
@@ -177,6 +178,10 @@ export async function setServerNzApiKey(
       expect: { expect: "any" },
       request,
     });
+    // The push registration was made with the replaced key (#4470): a key
+    // rotated because it may have leaked rotates its push secret too, and the
+    // next sync registers again with the new key.
+    await clearServerNzPushSecret(actor, tx, request);
     await forgetServerConnectionAnswers(tx);
     return saved;
   });
@@ -210,16 +215,19 @@ export async function clearServerNzApiKey(
 }
 
 /**
- * Remove the push-verification secret the old server issued (#4470). Its
- * caller is the address move in `saveServerNzConnectionSettings`, in the same
- * fenced transaction: with the secret gone, the old server's pushes no longer
- * verify, and the next sync pass's `ensurePushRegistration` registers this
- * install with the new server. A system-written row, so there is no version an
+ * Remove the push-verification secret the old connection registered (#4470).
+ * Its callers are the address move (`saveServerNzConnectionSettings`) and the
+ * key replacement (`setServerNzApiKey`), each in its own fenced transaction:
+ * with the secret gone, pushes signed with it stop verifying (in another
+ * process, once its credential cache, at most 45 seconds, expires), and the
+ * next sync pass's `ensurePushRegistration` registers this install with the
+ * connection now stored. A system-written row, so there is no version an
  * administrator saw to expect: the intended end state is "gone".
  */
 export async function clearServerNzPushSecret(
   actor: CredentialActor,
   tx: ServerNzConnectionTx,
+  request?: CredentialRequestContext,
 ): Promise<void> {
   await deleteIntegrationCredentialInTransaction({
     tx,
@@ -227,6 +235,7 @@ export async function clearServerNzPushSecret(
     key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
     actor,
     expect: { expect: "any" },
+    request,
   });
 }
 

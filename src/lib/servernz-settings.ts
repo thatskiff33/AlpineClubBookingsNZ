@@ -2,6 +2,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { ownedCentralLodgesSchema, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
 
 /**
@@ -187,13 +188,6 @@ export async function loadServerNzSettings(
     if (db !== prisma) throw error;
     return { ...DEFAULTS };
   }
-}
-
-/** Normalise a base URL: trim, drop a trailing slash, or null when blank. */
-export function normalizeBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/\/+$/, "");
 }
 
 export interface BaseUrlValidation {
