@@ -88,7 +88,7 @@
       "count": 1
     },
     "design-system/no-raw-input": {
-      "count": 2
+      "count": 1
     }
   },
   "src/app/(admin)/admin/communications/page.tsx": {

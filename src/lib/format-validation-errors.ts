@@ -88,6 +88,41 @@ function nonEmptyStrings(value: unknown): string[] {
 }
 
 /**
+ * The field and form-level messages in an API route's validation refusal, or
+ * `null` when the body carries no `details` object. The one reader of that
+ * shape: `formatValidationErrorResponse` below turns it into lines, and
+ * `applyServerValidationErrors` (`src/lib/forms/server-validation-errors.ts`,
+ * #4467) puts it back on a form's fields. Both shapes the routes send are read
+ * (see the top of this file); blank and non-string messages are dropped, and a
+ * field left with none is dropped with them.
+ */
+export function readValidationDetails(data: unknown): {
+  formErrors: string[];
+  fieldErrors: Array<[field: string, messages: string[]]>;
+} | null {
+  if (!isRecord(data) || !isRecord(data.details)) return null;
+
+  const details = data.details;
+  // Full flatten() shape carries a nested `fieldErrors` object; the member
+  // routes send that nested object directly as `details`.
+  const hasFlattenShape =
+    "fieldErrors" in details && isRecord((details as FlattenShape).fieldErrors);
+  const fieldErrors = hasFlattenShape
+    ? ((details as FlattenShape).fieldErrors as Record<string, unknown>)
+    : details;
+
+  return {
+    // Top-level, non-field errors exist only in the full flatten() shape.
+    formErrors: hasFlattenShape
+      ? nonEmptyStrings((details as FlattenShape).formErrors)
+      : [],
+    fieldErrors: Object.entries(fieldErrors)
+      .map(([key, value]): [string, string[]] => [key, nonEmptyStrings(value)])
+      .filter(([, messages]) => messages.length > 0),
+  };
+}
+
+/**
  * Flatten a 422 validation response into one legible line per field
  * (e.g. "Date of birth: Invalid date format"). Callers can render the array as
  * a list. Falls back to `data.error`, then `options.defaultMessage`, then
@@ -103,29 +138,16 @@ export function formatValidationErrorResponse(
       ? data.error
       : defaultMessage;
 
-  if (!isRecord(data) || !isRecord(data.details)) return [fallback];
+  const details = readValidationDetails(data);
+  if (!details) return [fallback];
 
-  const details = data.details;
-  // Full flatten() shape carries a nested `fieldErrors` object; the member
-  // routes send that nested object directly as `details`.
-  const hasFlattenShape =
-    "fieldErrors" in details && isRecord((details as FlattenShape).fieldErrors);
-  const fieldErrors = hasFlattenShape
-    ? ((details as FlattenShape).fieldErrors as Record<string, unknown>)
-    : details;
-
-  const lines: string[] = [];
-
-  // Top-level, non-field errors surface without a label.
-  if (hasFlattenShape) {
-    lines.push(...nonEmptyStrings((details as FlattenShape).formErrors));
-  }
-
-  for (const [key, value] of Object.entries(fieldErrors)) {
-    const messages = nonEmptyStrings(value);
-    if (messages.length === 0) continue;
-    lines.push(`${memberFieldLabel(key)}: ${messages.join("; ")}`);
-  }
+  const lines = [
+    // Top-level, non-field errors surface without a label.
+    ...details.formErrors,
+    ...details.fieldErrors.map(
+      ([key, messages]) => `${memberFieldLabel(key)}: ${messages.join("; ")}`,
+    ),
+  ];
 
   return lines.length > 0 ? lines : [fallback];
 }
