@@ -304,7 +304,7 @@ export function AssignmentForm({
                         <div
                           key={m.id}
                           className={`rounded-lg border p-4 ${
-                            m.fullyCovered ? "opacity-60 " : ""
+                            m.fullyCovered ? "border-dashed " : ""
                           }${
                             isSelected
                               ? "border-info bg-info-muted"

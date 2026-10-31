@@ -447,10 +447,7 @@ export default function CommitteePage() {
             </TableHeader>
             <TableBody>
               {roles.map((role) => (
-                <TableRow
-                  key={role.id}
-                  className={role.isActive ? "" : "opacity-60"}
-                >
+                <TableRow key={role.id}>
                   <TableCell>
                     <div className="font-medium">{role.name}</div>
                     {role.description ? (
@@ -482,8 +479,9 @@ export default function CommitteePage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => openEditRoleForm(role)}
+                      aria-label={`Edit ${role.name}`}
                     >
-                      <Pencil className="h-4 w-4" />
+                      <Pencil aria-hidden className="h-4 w-4" />
                     </ViewOnlyActionButton>
                   </TableCell>
                 </TableRow>
@@ -526,10 +524,7 @@ export default function CommitteePage() {
                   !assignment.committeeRole.contactEmail;
 
                 return (
-                  <TableRow
-                    key={assignment.id}
-                    className={assignment.isActive ? "" : "opacity-60"}
-                  >
+                  <TableRow key={assignment.id}>
                     <TableCell>
                       <div className="font-medium">
                         {assignment.member.displayName}
@@ -579,8 +574,9 @@ export default function CommitteePage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => openAssignmentForm(assignment)}
+                          aria-label={`Edit ${assignment.member.displayName} as ${assignment.committeeRole.name}`}
                         >
-                          <Pencil className="h-4 w-4" />
+                          <Pencil aria-hidden className="h-4 w-4" />
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
@@ -589,8 +585,9 @@ export default function CommitteePage() {
                           size="sm"
                           className="text-danger hover:bg-danger-muted hover:text-danger"
                           onClick={() => handleDeactivateAssignment(assignment)}
+                          aria-label={`Remove ${assignment.member.displayName} as ${assignment.committeeRole.name}`}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 aria-hidden className="h-4 w-4" />
                         </ViewOnlyActionButton>
                       </div>
                     </TableCell>

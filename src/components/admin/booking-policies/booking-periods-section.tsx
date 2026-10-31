@@ -616,7 +616,7 @@ export function BookingPeriodsSection() {
               ) : (
                 <div className="space-y-3">
                   {periods.map((period) => (
-                    <Card key={period.id} className={!period.active ? "opacity-60" : ""}>
+                    <Card key={period.id} className={!period.active ? "border-dashed" : ""}>
                       <CardContent className="pt-4">
                         <div className="flex items-start justify-between mb-3">
                           <div>
