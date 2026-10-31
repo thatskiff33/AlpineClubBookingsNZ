@@ -14,7 +14,9 @@
  * address its page showed, racing a move in both orders; a download whose
  * ADDRESS moves while its pull is out; and the old server's push secret, both
  * removed by the move and refused when a registration in flight across the
- * move comes back. They own `race-4470-` values.
+ * move comes back. They own `race-4470-` values. The fix round adds a
+ * message-board mirror page in flight across a move, and a key replacement at
+ * the same address rotating the push secret.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -53,6 +55,7 @@ function latch() {
     await prisma.auditLog.deleteMany({ where: { memberId: ACTOR_ID } });
     await prisma.auditLog.deleteMany({ where: { action: "alpine_server.other_lodges.hidden", details: { contains: "race-4262" } } });
     await prisma.lodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
+    await prisma.clubPost.deleteMany({ where: { serverPostId: { startsWith: "race-4470-" } } });
     await prisma.otherLodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
     await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
@@ -446,6 +449,13 @@ function latch() {
       expect(await storedPushSecret()).toBeNull();
     });
 
+    it("is removed by a key replacement at the same address too (#4470 review)", async () => {
+      await seedPushSecret("race-4470-old-key-push-secret");
+      await config.setServerNzApiKey("race-4470-rotated-key", OLD_URL, { kind: "admin", memberId: ACTOR_ID });
+      expect(await storedPushSecret()).toBeNull();
+      expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({ baseUrl: OLD_URL });
+    });
+
     it("is stored when the connection stands (the control)", async () => {
       process.env.NEXTAUTH_URL = "https://club.race-4470.example.invalid";
       const { ensurePushRegistration } = await import("@/lib/club-post-mirror");
@@ -454,6 +464,74 @@ function latch() {
       })));
       await ensurePushRegistration();
       expect(await storedPushSecret()).toBe("race-4470-standing-secret-padded-to-32-chars");
+    });
+  });
+
+  describe("a message-board mirror page in flight across an address move (#4470 review)", () => {
+    const savedNextAuthUrl = process.env.NEXTAUTH_URL;
+    const PAGE = {
+      changes: [{ state: "visible", post: {
+        id: "race-4470-post", club: { id: "race-4470-club", name: "Race Club", code: "RACE4470" },
+        authorName: "Race Author", content: "From the old server.", bodyHtml: null, images: [],
+        createdAt: "2026-06-30T00:00:00.000Z", updatedAt: "2026-06-30T00:00:00.000Z",
+      } }],
+      cursor: { since: "2026-06-30T00:00:00.000Z", sinceId: "race-4470-post" },
+      hasMore: false,
+    };
+
+    beforeEach(() => {
+      // Poll-only: no push registration call in these passes.
+      delete process.env.NEXTAUTH_URL;
+    });
+    afterAll(() => {
+      if (savedNextAuthUrl === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = savedNextAuthUrl;
+    });
+
+    async function mirrorState() {
+      const [row, posts] = await Promise.all([
+        prisma.serverNzSettings.findUnique({ where: { id: "default" }, select: { commsCursorSince: true, commsCursorSinceId: true, commsLastSyncAt: true, commsSyncStartedAt: true } }),
+        prisma.clubPost.count({ where: { serverPostId: { startsWith: "race-4470-" } } }),
+      ]);
+      return { ...row, posts };
+    }
+
+    it("writes no post, cursor or last-sync time once the address moves while the page is out", async () => {
+      const { runMirrorSync } = await import("@/lib/club-post-mirror");
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        // The pass's own version check first, then the page.
+        if (String(url).endsWith("/api/v1/version")) {
+          return new Response(JSON.stringify({ version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }));
+        }
+        // The administrator's address move commits while the page is out.
+        await moveAddress();
+        return new Response(JSON.stringify(PAGE));
+      });
+
+      const result = await runMirrorSync(new Date());
+
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+        `${OLD_URL}/api/v1/version`, `${OLD_URL}/api/v1/feed/sync`,
+      ]);
+      expect(result).toMatchObject({ stopped: "connection-changed", upserted: 0, pages: 1 });
+      expect(await mirrorState()).toEqual({
+        commsCursorSince: null, commsCursorSinceId: null, commsLastSyncAt: null, commsSyncStartedAt: null, posts: 0,
+      });
+    });
+
+    it("applies the same page when the connection stands (the control)", async () => {
+      const { runMirrorSync } = await import("@/lib/club-post-mirror");
+      fetchMock.mockImplementation(async (url: string | URL) => new Response(JSON.stringify(
+        String(url).endsWith("/api/v1/version") ? { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true } : PAGE,
+      )));
+
+      const result = await runMirrorSync(new Date());
+
+      expect(result).toMatchObject({ upserted: 1, pages: 1 });
+      expect(result.stopped).toBeUndefined();
+      expect(await mirrorState()).toMatchObject({
+        commsCursorSince: PAGE.cursor.since, commsCursorSinceId: PAGE.cursor.sinceId, commsSyncStartedAt: null, posts: 1,
+      });
     });
   });
 

@@ -21,6 +21,7 @@ import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
+import type { ServerNzAnswerTx } from "@/lib/servernz-settings";
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import {
   getIntegrationCredentialValue,
@@ -30,6 +31,7 @@ import {
 import {
   ServerNzConnectionChangedError,
   serverNzAnswerWriter,
+  type ServerNzAnswerWrite,
 } from "@/lib/servernz-version-record";
 
 /**
@@ -94,6 +96,13 @@ export interface MirrorSyncResult {
   unchanged: number;
   removed: number;
   pages: number;
+  /**
+   * `connection-changed` (#4470): the server address or API key was replaced
+   * while this pass ran, so it stopped at its first write for a page from the
+   * replaced connection. That page wrote nothing: no post, failure count,
+   * cursor or last-sync time; pages applied before the change stand.
+   */
+  stopped?: "connection-changed";
 }
 
 /** What {@link upsertMirror} did with one visible change. */
@@ -152,7 +161,10 @@ function serverImageId(url: string): string | null {
  * server on every render; and the board must keep working when the central
  * server is down — which is the whole reason mirrors exist.
  */
-async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
+async function upsertMirror(
+  post: SyncPost,
+  write: ServerNzAnswerWrite,
+): Promise<MirrorUpsertOutcome> {
   const existing = await prisma.clubPost.findUnique({
     where: { serverPostId: post.id },
     select: {
@@ -260,6 +272,20 @@ async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
   // Prisma throws on an Invalid Date — which would be a poison change. A post
   // with an unreadable timestamp is not worth wedging the sync over: skip it,
   // loudly. It re-arrives whenever the server fixes its serialisation.
+  // Every row write below is fenced on the connection this page came from
+  // (#4470). A refused write leaves the image files just stored unreferenced,
+  // so they are removed here rather than left for the orphan sweep.
+  const fenced = async <T>(work: (tx: ServerNzAnswerTx) => Promise<T>): Promise<T> => {
+    try {
+      return await write(work);
+    } catch (error) {
+      if (error instanceof ServerNzConnectionChangedError) {
+        for (const image of storedImages) await deletePostImage(image.storageKey);
+      }
+      throw error;
+    }
+  };
+
   if (!Number.isFinite(postedAt.getTime())) {
     logger.error(
       { serverPostId: post.id, createdAt: post.createdAt },
@@ -297,9 +323,9 @@ async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
     // mirror, and diffing it against local rows buys nothing but edge cases.
     // Rows first, then files — the failure order that leaves orphaned files
     // (invisible, swept later) rather than broken images (visible forever).
-    await prisma.$transaction([
-      prisma.clubPostImage.deleteMany({ where: { postId: existing.id } }),
-      prisma.clubPost.update({
+    await fenced(async (tx) => {
+      await tx.clubPostImage.deleteMany({ where: { postId: existing.id } });
+      await tx.clubPost.update({
         where: { id: existing.id },
         data: {
           content,
@@ -307,15 +333,15 @@ async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
           originClubName: post.club.name,
           images: { create: storedImages },
         },
-      }),
-    ]);
+      });
+    });
     for (const old of existing.images) {
       await deletePostImage(old.storageKey);
     }
     return "updated";
   }
 
-  await prisma.clubPost.create({
+  await fenced((tx) => tx.clubPost.create({
     data: {
       serverPostId: post.id,
       originClubCode: post.club.code,
@@ -330,12 +356,15 @@ async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
       postedAt,
       images: { create: storedImages },
     },
-  });
+  }));
   return "created";
 }
 
-/** Apply one tombstone. */
-async function applyRemoval(serverPostId: string): Promise<boolean> {
+/** Apply one tombstone, its row write fenced like the upsert's (#4470). */
+async function applyRemoval(
+  serverPostId: string,
+  write: ServerNzAnswerWrite,
+): Promise<boolean> {
   const existing = await prisma.clubPost.findUnique({
     where: { serverPostId },
     select: {
@@ -354,7 +383,7 @@ async function applyRemoval(serverPostId: string): Promise<boolean> {
     // copy is HIDDEN, not deleted, because the words belong to this club's own
     // member and takedown convergence is a moderation action, not an erasure.
     // A club admin can unhide it, at which point it is a local-only post.
-    await prisma.clubPost.update({
+    await write((tx) => tx.clubPost.update({
       where: { id: existing.id },
       data: {
         sharedAt: null,
@@ -362,14 +391,14 @@ async function applyRemoval(serverPostId: string): Promise<boolean> {
         shareRequestedAt: null,
         hiddenAt: existing.hiddenAt ?? new Date(),
       },
-    });
+    }));
     return true;
   }
 
   // A mirror is a cache: the authoritative copy lives with the club that wrote
   // it, so there is nothing worth keeping and the row is deleted outright.
   // Rows first, files second, as everywhere else.
-  await prisma.clubPost.delete({ where: { id: existing.id } });
+  await write((tx) => tx.clubPost.delete({ where: { id: existing.id } }));
   for (const image of existing.images) {
     await deletePostImage(image.storageKey);
   }
@@ -578,19 +607,32 @@ export async function runMirrorSync(
     };
     let request = overlappedMirrorCursor(durable.since, durable.sinceId);
 
+    // EVERY WRITE FROM A PAGE IS FENCED on the connection that page was sent
+    // on (#4470), the Other lodges download's protocol: posts, removals, the
+    // failure count, the cursor and the last-sync time each commit in one
+    // short `serverNzAnswerWriter` transaction that re-reads the stored
+    // address and key version under the settings-row lock. A page from a
+    // connection replaced while it was in flight writes nothing, so it cannot
+    // put the old server's position back over the replacement's reset (which
+    // would skip the new server's older posts for good, the cursor never
+    // moving backwards); the pass stops at that write. Posts applied from
+    // earlier pages stand: a move does not remove mirrored posts.
+    let write: ServerNzAnswerWrite | null = null;
     for (let page = 0; page < MAX_PAGES_PER_PASS; page++) {
       const envelope = await pullSharedPostSync(request);
+      const pageWrite = serverNzAnswerWriter(envelope.sentOn);
+      write = pageWrite;
       result.pages += 1;
 
       for (const change of envelope.changes) {
         const changeKey = change.state === "visible" ? change.post.id : change.id;
         try {
           if (change.state === "visible") {
-            const outcome = await upsertMirror(change.post);
+            const outcome = await upsertMirror(change.post, pageWrite);
             if (outcome === "unchanged") result.unchanged += 1;
             else if (outcome !== "skipped") result.upserted += 1;
           } else {
-            if (await applyRemoval(change.id)) result.removed += 1;
+            if (await applyRemoval(change.id, pageWrite)) result.removed += 1;
           }
         } catch (error) {
           // PER-CHANGE ISOLATION (#3091 review 2). A throw here used to
@@ -607,7 +649,9 @@ export async function runMirrorSync(
           // A version pause is not a poison change (#49): it is the server's
           // answer about the whole connection, so it neither counts against
           // this change nor steps over it - the pass reports paused below.
+          // Nor is a replaced connection (#4470): the pass stops below.
           if (error instanceof ServerNzVersionMismatchError) throw error;
+          if (error instanceof ServerNzConnectionChangedError) throw error;
           if (poisonId === changeKey && poisonCount >= 2) {
             logger.error(
               { changeKey, failures: poisonCount + 1, err: error },
@@ -615,21 +659,21 @@ export async function runMirrorSync(
             );
             poisonId = null;
             poisonCount = 0;
-            await prisma.serverNzSettings.update({
+            await pageWrite((tx) => tx.serverNzSettings.update({
               where: { id: "default" },
               data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
-            });
+            }));
             continue;
           }
           poisonCount = poisonId === changeKey ? poisonCount + 1 : 1;
           poisonId = changeKey;
-          await prisma.serverNzSettings.update({
+          await pageWrite((tx) => tx.serverNzSettings.update({
             where: { id: "default" },
             data: {
               commsPoisonChangeId: changeKey.slice(0, 64),
               commsPoisonCount: poisonCount,
             },
-          });
+          }));
           throw error;
         }
         if (poisonId === changeKey) {
@@ -637,10 +681,10 @@ export async function runMirrorSync(
           // cause after all. Forget it before it can be blamed again.
           poisonId = null;
           poisonCount = 0;
-          await prisma.serverNzSettings.update({
+          await pageWrite((tx) => tx.serverNzSettings.update({
             where: { id: "default" },
             data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
-          });
+          }));
         }
       }
 
@@ -654,12 +698,34 @@ export async function runMirrorSync(
       // would rewind the durable position a minute per quiet pass. The pair is
       // kept whole: the server's `sinceId` belongs with the server's `since`,
       // so a refused step keeps BOTH stored halves.
+      //
+      // AND ONLY OVER THE POSITION THIS PASS HOLDS (#4470). Under the fence the
+      // stored pair is re-read and must still be the one this pass started
+      // from or last wrote: a key replacement at the same address between the
+      // pass's first read and its first pull resets it and leaves a page that
+      // passes the fence (it was sent on the new key), so without this check
+      // the old position would be written onto the new connection. A moved
+      // position stops the pass as a replaced connection, writing nothing.
       if (envelope.cursor) {
+        const previous = durable;
         const since = advancedDownloadCursor(durable.since, envelope.cursor.since);
         if (since === envelope.cursor.since) durable = envelope.cursor;
-        await prisma.serverNzSettings.update({
-          where: { id: "default" },
-          data: { commsCursorSince: durable.since, commsCursorSinceId: durable.sinceId },
+        const next = durable;
+        await pageWrite(async (tx) => {
+          const stored = await tx.serverNzSettings.findUnique({
+            where: { id: "default" },
+            select: { commsCursorSince: true, commsCursorSinceId: true },
+          });
+          if (
+            (stored?.commsCursorSince ?? null) !== previous.since ||
+            (stored?.commsCursorSinceId ?? null) !== previous.sinceId
+          ) {
+            throw new ServerNzConnectionChangedError();
+          }
+          await tx.serverNzSettings.update({
+            where: { id: "default" },
+            data: { commsCursorSince: next.since, commsCursorSinceId: next.sinceId },
+          });
         });
         request = envelope.cursor;
       }
@@ -667,10 +733,12 @@ export async function runMirrorSync(
       if (!envelope.hasMore) break;
     }
 
-    await prisma.serverNzSettings.update({
+    // The last page's connection: a pass whose connection was replaced after
+    // its last write does not stamp the new connection as synced.
+    await write?.((tx) => tx.serverNzSettings.update({
       where: { id: "default" },
       data: { commsLastSyncAt: now },
-    });
+    }));
     return result;
   } catch (error) {
     // The server refused mid-pass for version (its 409, recorded by the API
@@ -683,6 +751,16 @@ export async function runMirrorSync(
         "Shared-post mirror sync paused mid-pass: central server API version differs",
       );
       return { ...PAUSED, ...result, skipped: SERVER_VERSION_MISMATCH_CODE };
+    }
+    // The connection was replaced mid-pass (#4470): stopped at the first write
+    // for it, which wrote nothing. Released below; the next pass starts from
+    // the replacement's (reset) position on the connection now stored.
+    if (error instanceof ServerNzConnectionChangedError) {
+      logger.warn(
+        { ...result },
+        "The Alpine Central Server connection changed while the shared-post mirror ran; nothing from it was written after the change",
+      );
+      return { ...result, stopped: "connection-changed" };
     }
     throw error;
   } finally {

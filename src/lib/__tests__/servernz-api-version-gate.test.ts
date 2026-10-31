@@ -448,6 +448,15 @@ describe("a never-asked row self-heals with ONE inline check (default 1)", () =>
     expectRecorded(SERVERNZ_EXPECTED_SERVER_VERSION);
   });
 
+  it("hands a feed page back with the identity it was sent on, for the mirror's fenced writes (#4470)", async () => {
+    settings(null);
+    fetchMock
+      .mockResolvedValueOnce(respond(200, { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }))
+      .mockResolvedValueOnce(respond(200, { changes: [], cursor: null, hasMore: false }));
+    const page = await pullSharedPostSync({});
+    expect(page.sentOn).toEqual({ baseUrl: "https://central.test", credentialVersion: expect.any(String) });
+  });
+
   it("refuses the real request when the inline answer differs, having sent only the version call", async () => {
     settings(null);
     fetchMock.mockResolvedValueOnce(respond(200, { version: "3.0", match: false }));

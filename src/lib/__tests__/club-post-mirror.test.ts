@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stripComments } from "./support/strip-comments";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -33,6 +36,9 @@ const mocks = vi.hoisted(() => ({
   settingsUpsert: vi.fn(),
   settingsUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
+  // The settings row as the doubles hold it: the fenced cursor write re-reads
+  // it (#4470), so reads see what earlier writes stored.
+  row: {} as Record<string, unknown>,
   settingsUpdate: vi.fn(),
   transaction: vi.fn(),
   pullSharedPostSync: vi.fn(),
@@ -43,7 +49,7 @@ const mocks = vi.hoisted(() => ({
   setIntegrationCredential: vi.fn(),
   invalidateProviderCredentialCache: vi.fn(),
   answerWriter: vi.fn(),
-  answerTx: { fenced: "answer-tx" },
+  answerTx: {} as Record<string, unknown>,
   FakeConnectionChangedError: class FakeConnectionChangedError extends Error {
     constructor() {
       super("connection changed");
@@ -72,7 +78,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
+  prisma: Object.assign(mocks.answerTx, {
     clubPost: {
       findUnique: mocks.postFindUnique,
       create: mocks.postCreate,
@@ -87,7 +93,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.settingsUpdate,
     },
     $transaction: mocks.transaction,
-  },
+  }),
 }));
 
 vi.mock("@/lib/servernz-api", () => ({
@@ -162,14 +168,19 @@ beforeEach(() => {
   mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
   mocks.settingsUpsert.mockResolvedValue({});
   mocks.settingsUpdateMany.mockResolvedValue({ count: 1 });
-  mocks.settingsFindUnique.mockResolvedValue({
-    commsCursorSince: null,
-    commsCursorSinceId: null,
+  mocks.row = { commsCursorSince: null, commsCursorSinceId: null };
+  mocks.settingsFindUnique.mockImplementation(async () => ({ ...mocks.row }));
+  mocks.settingsUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+    Object.assign(mocks.row, data);
+    return {};
   });
-  mocks.settingsUpdate.mockResolvedValue({});
   mocks.postFindUnique.mockResolvedValue(null);
   mocks.postCreate.mockResolvedValue({});
   mocks.transaction.mockResolvedValue([]);
+  mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.postUpdate.mockResolvedValue({});
+  // The fenced writes run on the mocked client's own delegates, so every
+  // row assertion below reads the same doubles whichever client wrote.
   mocks.answerWriter.mockImplementation(async (_identity: unknown, work: (tx: unknown) => Promise<unknown>) =>
     work(mocks.answerTx));
 });
@@ -298,7 +309,8 @@ describe("runMirrorSync", () => {
 
     expect(mocks.postCreate).not.toHaveBeenCalled();
     expect(mocks.postUpdate).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
   });
 
   it("deletes a mirror outright on a tombstone, files included", async () => {
@@ -470,7 +482,7 @@ describe("runMirrorSync", () => {
   });
 
   it("steps OVER a change that has failed three consecutive passes, and the feed continues", async () => {
-    mocks.settingsFindUnique.mockResolvedValue({
+    Object.assign(mocks.row, {
       commsCursorSince: null,
       commsCursorSinceId: null,
       commsPoisonChangeId: "srv-1",
@@ -499,7 +511,7 @@ describe("runMirrorSync", () => {
   });
 
   it("forgets recorded poison when the change applies cleanly on retry", async () => {
-    mocks.settingsFindUnique.mockResolvedValue({
+    Object.assign(mocks.row, {
       commsCursorSince: null,
       commsCursorSinceId: null,
       commsPoisonChangeId: "srv-1",
@@ -562,7 +574,7 @@ describe("runMirrorSync cursor overlap", () => {
   const ONE_MINUTE_EARLIER = "2026-06-30T00:59:00.000Z";
 
   function storedPosition(position = STORED) {
-    mocks.settingsFindUnique.mockResolvedValue({
+    Object.assign(mocks.row, {
       commsCursorSince: position.since,
       commsCursorSinceId: position.sinceId,
       commsPoisonChangeId: null,
@@ -629,7 +641,8 @@ describe("runMirrorSync cursor overlap", () => {
     expect(result.upserted).toBe(0);
     expect(mocks.postCreate).not.toHaveBeenCalled();
     expect(mocks.postUpdate).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
     expect(mocks.deletePostImage).not.toHaveBeenCalled();
     // The durable position still moves to the server's answer.
     expect(cursorWrites()).toEqual([
@@ -683,7 +696,8 @@ describe("runMirrorSync cursor overlap", () => {
 
     expect(second.unchanged).toBe(1);
     expect(second.upserted).toBe(0);
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
     expect(mocks.postCreate).toHaveBeenCalledTimes(1);
     expect(mocks.deletePostImage).toHaveBeenCalledTimes(1);
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/07/duplicate.webp");
@@ -746,7 +760,8 @@ describe("runMirrorSync cursor overlap", () => {
 
     expect(again.unchanged).toBe(1);
     expect(again.upserted).toBe(0);
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
     expect(mocks.deletePostImage.mock.calls.map(([key]) => key)).toEqual([
       "posts/2026/07/one-again.webp",
       "posts/2026/07/two-again.webp",
@@ -780,7 +795,10 @@ describe("runMirrorSync cursor overlap", () => {
 
     expect(result.upserted).toBe(1);
     expect(result.unchanged).toBe(0);
-    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    // One fenced write replaced the images and the post together (#4470).
+    expect(mocks.answerWriter).toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mocks.postUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("leaves an initial sync with no stored position unchanged", async () => {
@@ -1009,5 +1027,114 @@ describe("ensurePushRegistration stores the secret only for the connection it re
     await ensurePushRegistration();
     expect(mocks.registerPushTarget).not.toHaveBeenCalled();
     expect(mocks.answerWriter).not.toHaveBeenCalled();
+  });
+});
+
+describe("runMirrorSync writes each page only for the connection it came from (#4470)", () => {
+  const OLD = { baseUrl: "https://old.central.test", credentialVersion: "v-old" };
+  const NEW = { baseUrl: "https://old.central.test", credentialVersion: "v-new" };
+
+  function page(changes: unknown[], sentOn: unknown, cursor = { since: "2026-06-30T01:00:00.000Z", sinceId: "srv-1" }, hasMore = false) {
+    return { changes, cursor, hasMore, sentOn };
+  }
+
+  function refuseFor(identity: unknown) {
+    mocks.answerWriter.mockImplementation(async (sentOn: unknown, work: (tx: unknown) => Promise<unknown>) => {
+      if (sentOn === identity) throw new mocks.FakeConnectionChangedError();
+      return work(mocks.answerTx);
+    });
+  }
+
+  it("writes the post, the cursor and the last-sync time through the page's own fence", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(page([visiblePost()], OLD));
+    const result = await runMirrorSync(NOW);
+    expect(result).toMatchObject({ upserted: 1, pages: 1 });
+    expect(result.stopped).toBeUndefined();
+    // Post, cursor, last-sync: three fenced writes, all for OLD.
+    expect(mocks.answerWriter.mock.calls.map(([identity]) => identity)).toEqual([OLD, OLD, OLD]);
+    expect(mocks.row).toMatchObject({ commsCursorSince: "2026-06-30T01:00:00.000Z", commsLastSyncAt: NOW });
+  });
+
+  it("stops at a replaced connection's first write: no post, cursor, failure count or last-sync, its pictures removed", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(page(
+      [visiblePost({ images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }] })],
+      OLD,
+    ));
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/local-img", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+    refuseFor(OLD);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.stopped).toBe("connection-changed");
+    expect(result.upserted).toBe(0);
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.row).toEqual({ commsCursorSince: null, commsCursorSinceId: null, commsSyncStartedAt: null });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/local-img");
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/connection changed while the shared-post mirror ran/));
+  });
+
+  it("does not count a replaced connection as a poison change", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(page([{ state: "removed", id: "srv-gone" }], OLD));
+    mocks.postFindUnique.mockResolvedValue({ id: "local-gone", originClubCode: "RUAPEHU", hiddenAt: null, images: [] });
+    refuseFor(OLD);
+    const result = await runMirrorSync(NOW);
+    expect(result).toMatchObject({ stopped: "connection-changed", removed: 0 });
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    expect(mocks.row).not.toHaveProperty("commsPoisonChangeId");
+  });
+
+  it("keeps the pages applied before the change and writes nothing from the page after it", async () => {
+    const first = { since: "2026-06-30T01:30:00.000Z", sinceId: "srv-5" };
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce(page([visiblePost()], NEW, first, true))
+      .mockResolvedValueOnce(page([visiblePost({ id: "srv-6" })], OLD, { since: "2026-06-30T02:00:00.000Z", sinceId: "srv-6" }));
+    refuseFor(OLD);
+    const result = await runMirrorSync(NOW);
+    expect(result).toMatchObject({ stopped: "connection-changed", upserted: 1, pages: 2 });
+    expect(mocks.postCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.row).toMatchObject({ commsCursorSince: first.since, commsCursorSinceId: first.sinceId });
+    expect(mocks.row).not.toHaveProperty("commsLastSyncAt");
+  });
+
+  it("writes no position over one that moved since the pass read it (a key replaced before the first pull)", async () => {
+    mocks.row = { commsCursorSince: "2026-06-30T00:00:00.000Z", commsCursorSinceId: "srv-old" };
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      // The replacement's reset commits after the pass read the position, and
+      // the page is sent on the NEW key, so the fence itself passes.
+      mocks.row.commsCursorSince = null;
+      mocks.row.commsCursorSinceId = null;
+      return page([], NEW, { since: "2026-06-29T00:00:00.000Z", sinceId: "srv-new" });
+    });
+    const result = await runMirrorSync(NOW);
+    expect(result.stopped).toBe("connection-changed");
+    expect(mocks.row).toMatchObject({ commsCursorSince: null, commsCursorSinceId: null });
+    expect(mocks.row).not.toHaveProperty("commsLastSyncAt");
+  });
+});
+
+/**
+ * A light census (#4470), the download's own (`servernz-version-record.test.ts`):
+ * the mirror reaches the global client only to READ and for its single-flight
+ * claim. Every write it makes from a server answer (posts, removals, failure
+ * count, cursor, last-sync time) goes through the page's fenced writer, so a
+ * future unfenced write on `prisma.` fails here.
+ */
+describe("the mirror writes answers only through the fence (#4470)", () => {
+  it("calls the global client for reads and the claim alone", () => {
+    const source = stripComments(readFileSync(path.join(process.cwd(), "src/lib/club-post-mirror.ts"), "utf8"));
+    const calls = [...source.matchAll(/\bprisma\.(\$?\w+)(?:\s*\.(\w+))?/g)].map(([, model, method]) => `${model}.${method}`);
+    const READS = new Set(["findUnique", "findMany", "findFirst", "count"]);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((call) => !READS.has(call.split(".")[1] ?? "")).sort()).toEqual([
+      // The claim's materialise, take and release: no server answer in them.
+      "serverNzSettings.update",
+      "serverNzSettings.updateMany",
+      "serverNzSettings.upsert",
+    ]);
+    // ...and that one update is the release of the claim.
+    expect(source).toMatch(/prisma\.serverNzSettings\s*\.update\(\{ where: \{ id: "default" \}, data: \{ commsSyncStartedAt: null \} \}\)/);
   });
 });

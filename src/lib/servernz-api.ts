@@ -502,7 +502,7 @@ export async function withdrawClubPost(serverPostId: string): Promise<void> {
 export async function pullSharedPostSync(cursor: {
   since?: string | null;
   sinceId?: string | null;
-}): Promise<SyncEnvelope> {
+}): Promise<SyncEnvelope & { sentOn: ServerNzConnectionIdentity }> {
   const { baseUrl, apiKey, identity } = await resolveConnection();
   const url = new URL(`${baseUrl}/api/v1/feed/sync`);
   if (cursor.since) {
@@ -516,7 +516,10 @@ export async function pullSharedPostSync(cursor: {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) await refuse(res, identity);
-  return syncEnvelopeSchema.parse(await res.json());
+  // The connection it was sent on (#4470): the mirror writes this page through
+  // `serverNzAnswerWriter(sentOn)`, so a page from a replaced connection
+  // writes no post, cursor or failure count over the replacement's reset.
+  return { ...syncEnvelopeSchema.parse(await res.json()), sentOn: identity };
 }
 
 /**
