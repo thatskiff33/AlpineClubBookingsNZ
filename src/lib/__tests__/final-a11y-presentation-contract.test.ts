@@ -130,6 +130,29 @@ describe("#1819 final accessibility presentation contract", () => {
     expect(review).not.toContain("opacity-80");
   });
 
+  it("never fades option and event text below its AA ink with opacity (#4553)", () => {
+    // Each of these spans sits on a pair that already clears 4.5:1 (muted or
+    // info-11 ink on a payment option, primary/accent foreground on an event
+    // chip). Stacking opacity on it blends the ink toward its surface and
+    // drops it under AA, so the text inherits the pair as is.
+    const files = [
+      "src/components/group-booking/organiser-group-booking-card.tsx",
+      "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx",
+      "src/app/(admin)/admin/book/page.tsx",
+      "src/components/calendar/day-events-dialog.tsx",
+      "src/components/calendar/month-calendar.tsx",
+      "src/components/ui/dropdown-menu.tsx",
+    ];
+    for (const file of files) {
+      expect(source(file), file).not.toMatch(
+        /<span\b[^>]*className=\{?["`][^"`]*(?<![:\w-])opacity-\d+/,
+      );
+    }
+    expect(source("src/components/ui/dropdown-menu.tsx")).toContain(
+      '"ml-auto text-xs tracking-widest text-muted-foreground"',
+    );
+  });
+
   it("pins non-colour calendar and bed-allocation cues", () => {
     const bookingCalendar = source("src/components/booking-calendar.tsx");
     const occupancyCalendar = source(

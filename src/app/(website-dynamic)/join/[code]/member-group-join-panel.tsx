@@ -375,7 +375,7 @@ export function MemberGroupJoinPanel({
                       <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
                         <span className="block font-medium">Card</span>
-                        <span className="block text-xs opacity-80">
+                        <span className="block text-xs">
                           {/* #2919 review: a template like every other body here
                               — render it, do not print it. */}
                           {renderClientBookingMessage({
@@ -400,7 +400,7 @@ export function MemberGroupJoinPanel({
                       <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
                         <span className="block font-medium">Internet Banking</span>
-                        <span className="block text-xs opacity-80">
+                        <span className="block text-xs">
                           {renderClientBookingMessage({
                             template:
                               bookingMessages[
