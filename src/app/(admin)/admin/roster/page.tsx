@@ -433,11 +433,15 @@ export default function RosterPage() {
               link it prints the default lodge's roster, which is the one thing
               worse than not printing at all, because it leaves the building. */}
           {lodgeScopeReady ? (
-            <a
-              href={`/admin/roster/${selectedDatePathSegment}/print?lodgeId=${encodeURIComponent(scopedLodgeId)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-            ><Button variant="outline">Print Roster</Button></a>
+            <Button asChild variant="outline">
+              <a
+                href={`/admin/roster/${selectedDatePathSegment}/print?lodgeId=${encodeURIComponent(scopedLodgeId)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Print Roster
+              </a>
+            </Button>
           ) : null}
         </div>
       </div>

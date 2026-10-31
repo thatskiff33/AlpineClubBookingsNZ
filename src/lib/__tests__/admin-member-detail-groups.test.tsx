@@ -341,7 +341,7 @@ describe("Admin member detail grouped layout", () => {
     await renderPage();
 
     expect(screen.getByRole("button", { name: /Add Dependent/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /View in Xero/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /View in Xero/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Link to Xero/ })).toBeNull();
     expect(
       screen.queryByRole("button", { name: "More member actions" })
@@ -354,9 +354,11 @@ describe("Admin member detail grouped layout", () => {
 
     await renderPage();
 
+    // #4553 — one link, not a button nested inside a link (axe nested-interactive).
     expect(
-      screen.getByRole("button", { name: /View in Xero/ })
+      screen.getByRole("link", { name: /View in Xero/ })
     ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /View in Xero/ })).toBeNull();
     expect(
       screen.getByRole("button", { name: "More member actions" })
     ).toBeTruthy();
@@ -375,7 +377,7 @@ describe("Admin member detail grouped layout", () => {
     expect(
       screen.getByRole("button", { name: "More member actions" })
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /View in Xero/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /View in Xero/ })).toBeNull();
     expect(screen.queryByText("Create in Xero")).toBeNull();
   });
 

@@ -3207,7 +3207,10 @@ const eslintConfig = defineConfig([
   {
     files: ["src/**/*.{js,jsx,ts,tsx}"],
     plugins: { accessibility },
-    rules: { "accessibility/minimum-text-size": "error" },
+    rules: {
+      "accessibility/minimum-text-size": "error",
+      "accessibility/no-nested-interactive": "error",
+    },
   },
   {
     files: ["src/**/*.css"],

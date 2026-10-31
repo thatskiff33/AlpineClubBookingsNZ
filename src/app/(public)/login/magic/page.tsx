@@ -169,9 +169,9 @@ function MagicSignIn() {
           </CardDescription>
         </CardHeader>
         <CardFooter>
-          <Link href="/forgot-password" className="w-full">
-            <Button className="w-full">Forgot password</Button>
-          </Link>
+          <Button asChild className="w-full">
+            <Link href="/forgot-password">Forgot password</Link>
+          </Button>
         </CardFooter>
       </Card>
     );
@@ -189,9 +189,9 @@ function MagicSignIn() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <Link href="/login" className="w-full">
-          <Button className="w-full">Back to sign in</Button>
-        </Link>
+        <Button asChild className="w-full">
+          <Link href="/login">Back to sign in</Link>
+        </Button>
       </CardContent>
     </Card>
   );
