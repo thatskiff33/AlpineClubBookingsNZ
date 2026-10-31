@@ -27,6 +27,14 @@
  *    the image row and its file.
  * 6. A mirror update adding a picture to a post retention is deleting leaves
  *    no file on the mount without a row.
+ *
+ * #4590 adds three more, owning `race-4590-` rows:
+ * 7. A share the server accepted, whose locked stamp fails while the mirror's
+ *    copy already holds the id, is recorded by the retries and never sent
+ *    again.
+ * 8. A retention pass taken over mid-pass leaves the new pass's claim.
+ * 9. An upload the orphan sweep deletes just before a new post claims it
+ *    refuses the post: no post names a picture that is gone.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,6 +51,7 @@ const MEMBER_ID = "race-4588-member";
 let savedBoardSettings: { retentionDays: number; cleanupStartedAt: Date | null } | null | undefined;
 let retention: typeof import("@/lib/club-post-retention");
 let posts: typeof import("@/lib/club-posts");
+let sharing: typeof import("@/lib/club-post-sharing");
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let mirror: typeof import("@/lib/club-post-mirror");
 let admin: typeof import("@/lib/club-posts-admin");
@@ -67,10 +76,12 @@ type Latch = ReturnType<typeof latch>;
   async function clean() {
     await prisma.clubPostImage.deleteMany({ where: { OR: [
       { publicId: { startsWith: "race-4586-" } }, { storageKey: { startsWith: "race-4588-" } },
+      { storageKey: { startsWith: "race-4590-" } },
     ] } });
     await prisma.clubPost.deleteMany({ where: { OR: [
       { id: { startsWith: "race-4586-" } }, { serverPostId: { startsWith: "race-4586-" } },
       { serverPostId: { startsWith: "race-4588-" } }, { authorMemberId: MEMBER_ID },
+      { id: { startsWith: "race-4590-" } }, { serverPostId: { startsWith: "race-4590-" } },
     ] } });
     await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
@@ -188,6 +199,7 @@ type Latch = ReturnType<typeof latch>;
     storage = await import("@/lib/post-image-storage");
     retention = await import("@/lib/club-post-retention");
     posts = await import("@/lib/club-posts");
+    sharing = await import("@/lib/club-post-sharing");
     savedBoardSettings = await prisma.clubPostSettings.findUnique({
       where: { id: "default" }, select: { retentionDays: true, cleanupStartedAt: true },
     });
@@ -549,6 +561,139 @@ type Latch = ReturnType<typeof latch>;
       await Promise.allSettled([pass, cleanup]);
       spy.mockRestore();
       stored.mockRestore();
+      deleted.mockRestore();
+    }
+  });
+  it("records a share the server accepted, through the mirror's copy, when the locked stamp fails, and never sends it again (#4590)", async () => {
+    const SERVER_ID = "race-4590-srv";
+    const ours = await prisma.clubPost.create({ data: {
+      id: "race-4590-own", authorName: "Race Member", content: "Our own words.", shareRequestedAt: new Date("2026-06-30T23:00:00.000Z"),
+    } });
+    // The mirror pulled it back before the stamp: its copy holds the id.
+    await prisma.clubPost.create({ data: {
+      serverPostId: SERVER_ID, originClubCode: "RACE4590", originClubName: "Race Club", authorName: "Race Member",
+      content: "Our own words.", postedAt: new Date("2026-06-30T23:00:00.000Z"),
+    } });
+    let shares = 0;
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/api/v1/version")) {
+        return new Response(JSON.stringify({ version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }));
+      }
+      shares += 1;
+      return new Response(JSON.stringify({ id: SERVER_ID }));
+    });
+    // The first transaction after the server accepted the share, the locked
+    // stamp, fails (a lock wait running out, say); the retries are real.
+    const original = prisma.$transaction.bind(prisma) as (arg: unknown, options?: unknown) => Promise<unknown>;
+    let failed = false;
+    const spy = vi.spyOn(prisma, "$transaction").mockImplementation(((arg: unknown, options?: unknown) => {
+      if (shares === 1 && !failed) {
+        failed = true;
+        return Promise.reject(new Error("lock wait timeout"));
+      }
+      return original(arg, options);
+    }) as never);
+    try {
+      expect(await sharing.shareOnePost(ours.id)).toEqual({ status: "shared", serverPostId: SERVER_ID });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(await prisma.clubPost.findUnique({ where: { id: ours.id }, select: { serverPostId: true, sharedAt: true } }))
+      .toEqual({ serverPostId: SERVER_ID, sharedAt: expect.any(Date) });
+    // The copy went, and the next sweep sends nothing.
+    expect(await prisma.clubPost.count({ where: { serverPostId: SERVER_ID } })).toBe(1);
+    await sharing.retryPendingShares(new Date("2026-07-01T00:00:00.000Z"));
+    expect(shares).toBe(1);
+  });
+
+  it("leaves the claim of a retention pass that took over while the old one ran (#4590)", async () => {
+    const first = new Date("2026-07-01T00:00:00.000Z");
+    const second = new Date(first.getTime() + retention.STALE_CLEANUP_CLAIM_MS + 1_000);
+    await prisma.clubPostSettings.upsert({ where: { id: "default" }, create: { id: "default", retentionDays: 365 }, update: { retentionDays: 365, cleanupStartedAt: null } });
+    await prisma.clubPost.create({ data: {
+      id: "race-4590-expired", authorName: "Race Author", content: "Old.", postedAt: new Date("2024-06-30T00:00:00.000Z"),
+      images: { create: [{ publicId: "9".repeat(32), storageKey: "race-4590-expired.webp", mimeType: "image/webp", sha256: "9".repeat(64), bytes: 3 }] },
+    } });
+    await prisma.clubPostImage.create({ data: {
+      publicId: "8".repeat(32), storageKey: "race-4590-orphan.webp", mimeType: "image/webp", sha256: "8".repeat(64), bytes: 3,
+      createdAt: new Date("2026-06-30T00:00:00.000Z"),
+    } });
+    const firstInFiles = latch();
+    const secondInFiles = latch();
+    const resumeFirst = latch();
+    const resumeSecond = latch();
+    // Each pass is held at its first file deletion, which runs with its claim
+    // held and no row lock: the first at its expired post's picture, the
+    // second at the orphan it sweeps.
+    const deleted = vi.spyOn(storage, "deletePostImage").mockImplementation(async (key: string) => {
+      if (key === "race-4590-expired.webp") { firstInFiles.release(); await resumeFirst.promise; }
+      if (key === "race-4590-orphan.webp") { secondInFiles.release(); await resumeSecond.promise; }
+    });
+    const firstPass = retention.runClubPostCleanup(first);
+    let secondPass: Promise<unknown> | undefined;
+    try {
+      await firstInFiles.promise;
+      secondPass = retention.runClubPostCleanup(second);
+      await secondInFiles.promise;
+      resumeFirst.release();
+      await firstPass;
+      // The first pass has ended; the second still holds its own claim.
+      expect((await prisma.clubPostSettings.findUnique({ where: { id: "default" } }))?.cleanupStartedAt).toEqual(second);
+    } finally {
+      resumeFirst.release();
+      resumeSecond.release();
+      await Promise.allSettled([firstPass, secondPass]);
+      deleted.mockRestore();
+    }
+    expect((await prisma.clubPostSettings.findUnique({ where: { id: "default" } }))?.cleanupStartedAt).toBeNull();
+  });
+
+  it("refuses a post whose upload the orphan sweep deleted first, so no post names a missing picture (#4590)", async () => {
+    await prisma.member.create({ data: {
+      id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password",
+      firstName: "Race", lastName: "Member", ageTier: "ADULT", canLogin: true,
+    } });
+    const publicId = "7".repeat(32);
+    const image = await prisma.clubPostImage.create({ data: {
+      publicId, storageKey: "race-4590-upload.webp", mimeType: "image/webp", sha256: "7".repeat(64), bytes: 3,
+      uploadedByMemberId: MEMBER_ID, createdAt: new Date("2026-06-30T00:00:00.000Z"),
+    } });
+    await prisma.clubPostSettings.upsert({ where: { id: "default" }, create: { id: "default", retentionDays: 0 }, update: { retentionDays: 0, cleanupStartedAt: null } });
+    const deleted = vi.spyOn(storage, "deletePostImage").mockResolvedValue(undefined);
+    const releaseRow = latch();
+    const rowHeld = latch();
+    // A third session holds the upload's row so both queue on it: the sweep's
+    // delete first, then the new post's claim.
+    const holder = observer.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "ClubPostImage" WHERE "id" = ${image.id} FOR UPDATE`;
+      rowHeld.release();
+      await releaseRow.promise;
+    }, { timeout: 30_000 });
+    let sweep: Promise<unknown> | undefined;
+    let created: Promise<unknown> | undefined;
+    try {
+      await rowHeld.promise;
+      sweep = retention.runClubPostCleanup(new Date("2026-07-01T00:00:00.000Z"));
+      await waitForBlocked("ClubPostImage", 1, sweep);
+      created = posts.createClubPost({
+        authorMemberId: MEMBER_ID, authorName: "Race Member", content: "With the picture.",
+        bodyHtml: `<p>With the picture.</p><img src="/api/club-posts/images/${publicId}" alt="">`,
+      });
+      const createdOutcome = created.then(() => ({ error: null }), (error: unknown) => ({ error }));
+      await waitForBlocked("ClubPostImage", 2, created);
+      releaseRow.release();
+      await holder;
+      await sweep;
+
+      expect((await createdOutcome).error).toBeInstanceOf(posts.ClubPostValidationError);
+      // Refused whole: no post, and the swept upload's row and file are gone.
+      expect(await prisma.clubPost.count({ where: { authorMemberId: MEMBER_ID } })).toBe(0);
+      expect(await prisma.clubPostImage.count({ where: { id: image.id } })).toBe(0);
+      expect(deleted).toHaveBeenCalledWith("race-4590-upload.webp");
+    } finally {
+      releaseRow.release();
+      await Promise.allSettled([holder, sweep, created]);
       deleted.mockRestore();
     }
   });
