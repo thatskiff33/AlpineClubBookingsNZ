@@ -138,6 +138,29 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Booking-ledger history outlives its booking (#4514)
+
+**What changes.** Migration `20261127050000_retain_ledger_history_on_booking_delete`
+makes every key a booking-ledger line holds, and a member-credit row's three
+booking links, refuse deletion (`ON DELETE RESTRICT ON UPDATE RESTRICT`). The
+database now refuses to delete a booking that has money, whatever role asks.
+Nothing a member or officer does changes: the app only ever hard-deletes draft
+bookings, which never carry money, and soft-deletes cancelled ones. A draft that
+somehow did is refused (409) or skipped and logged by the nightly cleanup.
+
+**Deploy.** The migration drops and re-adds six foreign keys, which the deploy
+guard treats as breaking: set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
+`BLUE_GREEN_MIGRATION_OVERRIDE_REASON` such as "#4514 foreign keys change to
+RESTRICT; old colour compatible". No maintenance window is needed: the old
+colour keeps working. The keys' swap briefly locks `Booking`, `Lodge`,
+`BookingModification`, `MemberCredit` and `BookingLedgerLine`, so deploy at a
+quiet time ([ledger row](BLUE_GREEN_MIGRATION_SAFETY.tsv)). No provisioning
+step is needed for either role set-up.
+
+**Local demo databases.** `pnpm run db:seed:demo` now refuses to run on a
+database holding booking-ledger lines, rather than deleting them. Recreate the
+demo database and seed again.
+
 ### Member money journal foundation (#4513)
 
 **What changes.** Migration `20261127010000_member_money_journal` adds seven

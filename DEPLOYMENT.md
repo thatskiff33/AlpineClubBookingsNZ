@@ -115,8 +115,8 @@ Audience: Operator.
 By default every container connects as `tac`, the PostgreSQL superuser. Since
 #4453 a deployment can split that into roles that each hold only what their job
 needs. The application then cannot change a booking-ledger line or an audit entry,
-even if its credential leaks (owner decision, 27 Oct 2026). One route remains on
-purpose: **deleting a booking still deletes its ledger lines** (below).
+even if its credential leaks (owner decision, 27 Oct 2026). Deleting a booking
+cannot remove its ledger lines either (below).
 
 | Role | Default name | Used by | May |
 | --- | --- | --- | --- |
@@ -132,16 +132,18 @@ statements. It cannot reach a ledger line or audit row by another route either:
 - a view or rule over them is SELECT-only;
 - a `SECURITY DEFINER` routine is refused;
 - changing a booking's or a lodge's key is refused (a trigger on each parent,
-  so the foreign keys' `ON UPDATE CASCADE` can never fire).
+  and since #4514 the ledger's keys are `ON UPDATE RESTRICT` as well).
 
 `src/lib/__tests__/database-roles.realdb.test.ts` proves each of these against
 PostgreSQL. The AI Diagnostics role (ADR-007) and the audit archive database's
 role are separate and unchanged.
 
-**Deleting a booking still deletes its ledger lines.** `BookingLedgerLine.bookingId`
-is `ON DELETE CASCADE`, and a cascade runs with the table owner's rights, not the
-application's. That is how booking deletion works today. Whether it should change
-belongs to the ledger design, not to these grants; #4482 tracks it.
+**Deleting a booking cannot remove its ledger lines.** A cascade would run with
+the table owner's rights, not the application's, so since #4514 every key a ledger
+line holds, and a member-credit row's booking links, is `ON DELETE RESTRICT ON
+UPDATE RESTRICT` (#4482's decision D1, `INV-MONEY-043`). The database refuses to
+delete a booking that has money, for every role, including on a single-role
+install; the app soft-deletes such bookings instead.
 
 ### Switching a deployment over (blue/green)
 
@@ -357,8 +359,8 @@ REFERENCES on a journal table, or one of those rights on a column.
 A successful empty journal is valid M1 evidence, not proof of backfill,
 legacy posting coverage, historical parity or readiness to switch readers.
 No provider credentials are needed. Source links can later attach legacy
-confirmation evidence without extending sealed legs. M2 owns the existing
-booking-ledger deletion cascade; this migration does not change old writers.
+confirmation evidence without extending sealed legs. This migration does not
+change old writers; M2 (#4514) removed the booking-ledger deletion cascade.
 
 M1 adds no Xero account-mapping setting and changes nothing on the Xero
 setup screen. The internal chart in `src/lib/member-money/` names the mapping

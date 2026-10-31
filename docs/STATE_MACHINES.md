@@ -1197,6 +1197,13 @@ DRAFT can never carry an override).
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.
 
+Financial history outlives its booking (`INV-MONEY-043`, #4514): the database
+refuses to delete a booking that a ledger line, journal leg, credit row,
+payment or refund record names. Only a `DRAFT` is ever hard-deleted — by its
+owner or an admin, or by the nightly `draft-cleanup` when it expires — and a
+draft never carries money; one that did would be refused with 409
+(`financial_history`) or skipped and reported by the cron, nothing written.
+
 Cancelled-booking soft-delete is an admin cleanup state, not hard erasure. It
 keeps the booking record and remains blocked by captured/refunded/credited
 payment, refund, member-credit, payment-recovery, or Xero history. Internal

@@ -73,7 +73,9 @@ leaves posted journal rows untouched and moves the merged-away member's open
 balances to the survivor by an explicit journal transfer with an audit trail
 ([decision D4](../design/member-money-ledger.md#d4-member-merge-transfer-open-balances-explicitly);
 posted from M3 on, for charges (M3), refunds owed (M4) and member credit (M5);
-M1 posts nothing).
+M1 posts nothing). The booking ledger's `BookingLedgerLine.lodgeId` and
+`bookingId` keys are RESTRICT both ways as well (#4514, `INV-MONEY-043`): a lodge
+or booking a line names can neither be deleted nor re-keyed.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 

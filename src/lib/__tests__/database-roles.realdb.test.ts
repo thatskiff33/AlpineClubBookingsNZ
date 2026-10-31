@@ -570,32 +570,29 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       // booking delete cannot remove ledger lines. D1 (owner, 28 Oct 2026) made
       // every financial key RESTRICT; a referential action runs with the table
       // owner's rights, so before it the cascade was a route around the grant.
-      it("cannot remove a booking's ledger lines, or blank a credit row's booking link, by deleting the booking (#4482, D1)", async () => {
-        const kept = "tac4514-booking-with-history";
-        const memberId = "tac4514-member";
-        await appPrisma.member.create({
-          data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Ledger", lastName: "Keeper" },
-        });
-        await appPrisma.booking.create({
-          data: {
-            id: kept,
-            lodgeId,
-            organisationId: "tac4453-organisation",
-            checkIn: new Date("2026-09-01T00:00:00.000Z"),
-            checkOut: new Date("2026-09-02T00:00:00.000Z"),
-            totalPriceCents: 100,
-            finalPriceCents: 100,
-          },
-        });
+      // Each booking below carries ONE kind of history, so each refusal is that
+      // key's own: a booking held by a credit row too would mask a ledger cascade.
+      const createHistoryBooking = (id: string, checkIn: string, checkOut: string) => appPrisma.booking.create({
+        data: {
+          id,
+          lodgeId,
+          organisationId: "tac4453-organisation",
+          checkIn: new Date(`${checkIn}T00:00:00.000Z`),
+          checkOut: new Date(`${checkOut}T00:00:00.000Z`),
+          totalPriceCents: 100,
+          finalPriceCents: 100,
+        },
+      });
+
+      it("cannot remove a booking's ledger lines by deleting the booking, by any route (#4482, D1)", async () => {
+        const kept = "tac4514-booking-with-lines";
+        await createHistoryBooking(kept, "2026-09-01", "2026-09-02");
         const line = await appPrisma.bookingLedgerLine.create({
           data: {
             bookingId: kept, lodgeId, side: "ADJUSTMENT", kind: "AGREED_ADJUSTMENT", sign: 1, quantity: 1,
             unitCents: 100, amountCents: 100, guestNames: [], anchorKind: "REVIEW_TASK", anchorId: "tac4514-delete",
             narration: "Adjustment agreed with member: outlives its booking",
           },
-        });
-        const credit = await appPrisma.memberCredit.create({
-          data: { memberId, amountCents: -100, type: "BOOKING_APPLIED", description: "tac4514 applied", appliedToBookingId: kept },
         });
 
         // Every route the application role has to the booking row.
@@ -604,28 +601,38 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         await withClient(urlFor(DATABASES.upgrade, "app"), async (client) => {
           await client.query("BEGIN");
           expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
-          expect(await sqlstate(client, `DELETE FROM "Lodge" WHERE "id" = $1`, [lodgeId])).toBe(FOREIGN_KEY_VIOLATION);
           expect(await sqlstate(client, `TRUNCATE "Booking" CASCADE`)).toBe(INSUFFICIENT_PRIVILEGE);
           // The parent-key routes: a line's own key is not the application's to
-          // change, and the parents' keys stay refused (S-F1).
+          // change, and the booking's key stays refused (S-F1).
           expect(await sqlstate(client, `UPDATE "BookingLedgerLine" SET "id" = 'tac4514-renamed' WHERE "id" = $1`, [line.id])).toBe(INSUFFICIENT_PRIVILEGE);
           expect(await sqlstate(client, `UPDATE "Booking" SET "id" = 'tac4514-renamed' WHERE "id" = $1`, [kept])).toBe(RESTRICT_VIOLATION);
           await client.query("ROLLBACK");
         });
-        // The owner is refused too: RESTRICT binds whoever deletes. With the line
-        // gone (only the owner can), the credit row alone still refuses it.
+        // The owner is refused too: RESTRICT binds whoever deletes.
         await withClient(urlFor(DATABASES.upgrade), async (client) => {
           await client.query("BEGIN");
-          expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
-          expect(await sqlstate(client, `DELETE FROM "BookingLedgerLine" WHERE "id" = $1`, [line.id])).toBe("ok");
           expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
           await client.query("ROLLBACK");
         });
 
         expect(await appPrisma.bookingLedgerLine.findMany({ where: { bookingId: kept }, select: { id: true } })).toEqual([{ id: line.id }]);
-        expect(await appPrisma.memberCredit.findUniqueOrThrow({ where: { id: credit.id }, select: { appliedToBookingId: true } }))
-          .toEqual({ appliedToBookingId: kept });
         expect(await appPrisma.booking.count({ where: { id: kept } })).toBe(1);
+      });
+
+      it("cannot blank a credit row's booking link by deleting the booking (D1, INV-MONEY-035)", async () => {
+        const credited = "tac4514-booking-with-credit";
+        const memberId = "tac4514-member";
+        await appPrisma.member.create({
+          data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Ledger", lastName: "Keeper" },
+        });
+        await createHistoryBooking(credited, "2026-09-05", "2026-09-06");
+        const credit = await appPrisma.memberCredit.create({
+          data: { memberId, amountCents: -100, type: "BOOKING_APPLIED", description: "tac4514 applied", appliedToBookingId: credited },
+        });
+
+        await expect(appPrisma.booking.delete({ where: { id: credited } })).rejects.toMatchObject({ code: "P2003" });
+        expect(await appPrisma.memberCredit.findUniqueOrThrow({ where: { id: credit.id }, select: { appliedToBookingId: true } }))
+          .toEqual({ appliedToBookingId: credited });
       });
 
       it("still hard-deletes a draft that carries no money, as the previous release's draft paths do", async () => {
