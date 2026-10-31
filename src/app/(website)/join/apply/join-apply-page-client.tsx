@@ -20,6 +20,7 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { readValidationDetails } from "@/lib/format-validation-errors";
 
 /*
   #2264 — the phone row is three boxes sharing ONE example. Greyed "64", "27"
@@ -273,12 +274,9 @@ export function JoinApplyPageClient({
       const data = await response.json();
 
       if (!response.ok) {
-        if (data.details) {
-          const nextErrors: FieldErrors = {};
-          Object.entries(data.details).forEach(([field, messages]) => {
-            nextErrors[field as keyof FieldErrors] = (messages as string[])[0];
-          });
-          setFieldErrors(nextErrors);
+        const details = readValidationDetails(data)?.fieldErrors ?? [];
+        if (details.length > 0) {
+          setFieldErrors(Object.fromEntries(details.map(([field, messages]) => [field, messages[0]])));
         } else {
           setError(
             data.error || "Could not submit your application right now.",

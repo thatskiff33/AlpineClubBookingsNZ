@@ -114,4 +114,39 @@ describe("JoinApplyPageClient error accessibility (F30, #1889)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Applications are closed right now.");
   });
+
+  it("puts the route's field details on the field, read through the shared reader (#4580)", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: "Please provide two different nominators",
+        details: { nominator2Email: ["Choose a different second nominator", "ignored second message"] },
+      }),
+    });
+
+    render(<JoinApplyPageClient club={club} showHero={false} />);
+
+    fillValidApplicant();
+    submitForm();
+
+    const nominator2 = screen.getByLabelText("Second nominator email");
+    await waitFor(() => expect(nominator2.getAttribute("aria-invalid")).toBe("true"));
+    expect(screen.getByText("Choose a different second nominator")).toBeTruthy();
+    expect(screen.queryByText("ignored second message")).toBeNull();
+  });
+
+  it("shows the route's own sentence when the details are not a field map (#4580)", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Something about the nominators", details: ["not", "a", "map"] }),
+    });
+
+    render(<JoinApplyPageClient club={club} showHero={false} />);
+
+    fillValidApplicant();
+    submitForm();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Something about the nominators");
+  });
 });
