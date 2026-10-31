@@ -42,7 +42,6 @@ export const PERMISSION_DENY_RULES = [
   "Bash(pnpm dlx *)",
   "Bash(prisma format *)",
   "Bash(pnpm exec prisma format *)",
-  "Bash(gh issue view *)",
   "Bash(git push --force *)",
   "Bash(git push --force-with-lease *)",
   "Bash(git push -f *)",
@@ -201,7 +200,30 @@ function isSquashOrRebaseMerge(words) {
 function isGhIssueView(words) {
   if (words[0] !== "gh") return false;
   const args = ghArgs(words);
-  return args[0] === "issue" && args[1] === "view";
+  if (args[0] !== "issue" || args[1] !== "view") return false;
+  return !isGhIssueMetadataRead(args.slice(2));
+}
+
+/** Issue text a `--json` field list can name; anything else is metadata. */
+const ISSUE_TEXT_FIELDS = new Set(["body", "comments"]);
+
+/**
+ * `gh issue view <n> --json state,labels` prints metadata and never the body,
+ * so it cannot stand in for reading the thread (#4572). It counts as a metadata
+ * read only with a `--json` field list naming no issue text, and without
+ * `--comments` or `--web`.
+ */
+function isGhIssueMetadataRead(rest) {
+  let fields = null;
+  for (let i = 0; i < rest.length; i += 1) {
+    const word = rest[i];
+    if (word === "--comments" || word === "-c" || word === "--web" || word === "-w") return false;
+    if (word === "--json") fields = rest[i + 1] ?? "";
+    else if (word.startsWith("--json=")) fields = word.slice("--json=".length);
+  }
+  if (fields === null) return false;
+  const names = fields.split(",").map((name) => name.trim()).filter(Boolean);
+  return names.length > 0 && !names.some((name) => ISSUE_TEXT_FIELDS.has(name));
 }
 
 /**
@@ -248,7 +270,7 @@ export const BASH_RULES = [
     test: isGhIssueView,
     reason:
       "Use `pnpm run issue <n>`: it reads the whole thread, where decisions often sit; " +
-      "`gh issue view` prints only the body (#2777).",
+      "`gh issue view` prints only the body (#2777). A metadata read such as `--json state,labels` is allowed.",
     source: "AGENTS.md -> Pre-authorisation and attributability",
   },
   {

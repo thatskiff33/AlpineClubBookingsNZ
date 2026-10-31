@@ -194,7 +194,8 @@ state for each issue the body references. It has **no flag that prints less** â€
 that is the feature, not an oversight.
 
 A hook blocks `gh issue view`, which prints the body without the comments
-where decisions often sit (#2777).
+where decisions often sit (#2777); a `--json` metadata read without `body` or
+`comments` is allowed (#4572).
 
 The summary calls out one state loudly: **the body still offers unticked options
 and a comment records a decision.** When you see that warning, the body is the
