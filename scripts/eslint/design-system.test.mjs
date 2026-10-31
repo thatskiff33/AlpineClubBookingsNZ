@@ -158,6 +158,14 @@ async function designSystemRules(filePath, code = RAW) {
 // Every rule the plugin has: RAW must trip each one, so a new rule fails here until it does.
 const ALL = Object.keys(designSystem.rules).map((name) => `design-system/${name}`).sort();
 
+it("tells the author, in every message, to migrate rather than disable", () => {
+  for (const [name, definition] of Object.entries(designSystem.rules)) {
+    for (const message of Object.values(definition.meta.messages)) {
+      expect(message, name).toContain("Never an eslint-disable comment: migrate to the primitive");
+    }
+  }
+});
+
 describe("design-system rules through the repository config", () => {
   it("switches on every rule the plugin has, as an error", async () => {
     const config = await new ESLint().calculateConfigForFile("src/app/(admin)/admin/probe/page.tsx");
