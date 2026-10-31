@@ -7417,9 +7417,13 @@ model MemberCredit {
   requestedBy               Member?                       @relation("RequestedAdminCredits", fields: [requestedById], references: [id], onDelete: SetNull)
   approvedBy                Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
   approvalRequest           AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
-  sourceBooking             Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
-  sourceBookingModification BookingModification?          @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: SetNull)
-  appliedToBooking          Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
+  /// D1 (#4482, M2 #4514): a credit row's booking links are financial
+  /// relationships. `Restrict`, not `SetNull`: deleting a booking (or one of its
+  /// modifications) a credit row names is refused, so the link is never blanked
+  /// (`INV-MONEY-035`, `INV-MONEY-043`).
+  sourceBooking             Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceBookingModification BookingModification?          @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  appliedToBooking          Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // #1620: slices of THIS credit lot (a positive funding row) that have been
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
@@ -8729,13 +8733,17 @@ model BookingLedgerLine {
 
   lodgeId String @default(dbgenerated("default_lodge_id()"))
 
-  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  /// D1 (#4482, M2 #4514): a line outlives its booking. Every key a line holds
+  /// is `Restrict` both ways, so no referential action can delete or rewrite a
+  /// posted line: a booking with lines is soft-deleted, never hard-deleted, and
+  /// no parent's key can move under it (`INV-MONEY-043`).
+  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// `Restrict`, not `SetNull`: deleting a line is already forbidden, and a
   /// cascade that blanked another line's pointer would be that forbidden
   /// mutation arriving through the database instead of through code.
-  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict)
+  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy BookingLedgerLine? @relation("BookingLedgerReversal")
-  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([bookingId, postedAt])
   @@index([anchorKind, anchorId])
