@@ -145,8 +145,9 @@ export async function loadOwnedOtherLodges(
  * the recorder can safely decline an answer when the row is absent.
  * Every answer writer goes through the one fence built on it,
  * `withCurrentServerNzConnection` / `serverNzAnswerWriter`
- * (`servernz-version-record.ts`): the version recorder and every write of the
- * Other lodges download and upload watermark (#4485). The Central lodge link
+ * (`servernz-version-record.ts`): the version recorder, every write of the
+ * Other lodges download and upload watermark (#4485), and the push secret a
+ * registration stores (#4470). The Central lodge link
  * writer takes it before its `Lodge` row to re-check the owned list.
  */
 export async function lockServerNzSettings(

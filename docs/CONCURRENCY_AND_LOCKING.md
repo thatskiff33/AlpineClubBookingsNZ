@@ -2165,6 +2165,24 @@ mispricing a booking.
   money clusters. The #4436 race suite forces a sync and address move in both
   orders, including a warmed old-key cache, and a sync holding the old address
   while the move and a new key's save queue behind it.
+  Since #4470 three more writers join, with no new lock. Key replacement
+  carries the address its setup page showed and, after the settings lock,
+  re-reads the stored address. It refuses with `ServerNzAddressChangedError`
+  (the credentials route's 409), having written nothing, when another save
+  moved it, so a key issued by the old server never lands beside the new
+  address. A key saved first is removed by the move queued behind it.
+  Address replacement also deletes the old server's `push_secret` in its
+  transaction, after the API key (settings row, `api_key` row,
+  `push_secret` row, audit). `ensurePushRegistration` stores a newly issued
+  secret through `serverNzAnswerWriter` for the identity its registration
+  was sent on (settings row, credential read, `push_secret` write, audit),
+  so a registration in flight across a move stores nothing and the next pass
+  registers with the new server. The answer recorders (download, upload
+  watermark, version) require a branded `ServerNzAnswerTx`, which only
+  `withCurrentServerNzConnection` mints after its identity check, so an
+  unfenced answer write does not compile. The race suite forces a key save
+  against a move in both orders, an address move under an in-flight download,
+  and a push registration across a move.
 - **Owned-lodge list writer, and every Other lodges download write** —
   `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
   connection fence above (#4262 review): `downloadOtherClubsFromServer` builds

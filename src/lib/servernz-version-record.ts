@@ -30,7 +30,8 @@ export interface ServerNzConnectionIdentity {
 
 /**
  * THE CONNECTION FENCE for writing a central-server ANSWER (#4366, #4436;
- * the Other lodges download since the #4262 review): run `work` in one short
+ * the Other lodges download since the #4262 review; the push secret a
+ * registration stores since #4470): run `work` in one short
  * transaction that first takes the settings row lock (`lockServerNzSettings`)
  * and re-reads the stored address and API-key credential version under it,
  * and runs `work` only while both are still the ones `identity` captured
