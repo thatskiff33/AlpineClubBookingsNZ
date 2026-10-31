@@ -126,8 +126,11 @@ describe("design-system rules through the repository config", () => {
   it("reports every raw control in app code, and the browser confirm in a .ts hook", async () => {
     expect(await designSystemRules("src/app/(admin)/admin/probe/page.tsx")).toEqual(ALL);
     expect(await designSystemRules("src/components/probe-panel.tsx")).toEqual(ALL);
-    expect(await designSystemRules("src/app/(admin)/admin/probe/_hooks/use-probe.ts", 'export const go = () => window.confirm("x");'))
-      .toEqual(["design-system/no-native-confirm"]);
+    // A bare confirm resolves to the browser global the repository config declares.
+    expect(await designSystemRules("src/app/(admin)/admin/probe/_hooks/use-probe.ts", 'export const go = () => confirm("x") && window.confirm("y");'))
+      .toEqual(["design-system/no-native-confirm", "design-system/no-native-confirm"]);
+    expect(await designSystemRules("src/app/(admin)/admin/probe/use-probe.ts", 'import { useConfirm } from "@/components/confirm-dialog";\nexport function useProbe() { const { confirm } = useConfirm(); return () => confirm({ title: "x" }); }'))
+      .toEqual([]);
   }, 20_000);
 
   it("leaves the primitives and test files alone", async () => {
