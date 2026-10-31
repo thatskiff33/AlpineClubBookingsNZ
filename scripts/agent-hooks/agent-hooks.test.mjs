@@ -92,7 +92,7 @@ describe("the Bash rules, for the main session and orchestrators", () => {
     "git commit -m \"never use npx\"",
     "git commit -m \"x && git push -f; npx y\"",
     "git commit -m 'x && git push -f; npx y'",
-    "git commit -m x\\ \\&\\&\\ git\\ push\\ -f",
+    "echo \\; git push -f",
     "git commit -m 'stop git push --force and gh pr merge --squash'",
     "echo \"gh issue view is banned; use pnpm run issue\"",
     "grep -rn \"prisma format\" docs/",
