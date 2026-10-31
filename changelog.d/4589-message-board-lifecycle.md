@@ -2,9 +2,10 @@
   no longer lose its picture to the clean-up (#4588).** Five rare faults in
   the club message board are closed:
   - A post from another club that an administrator removed here no longer gets
-    its words and pictures written back when that club edits it. A removal
-    from the Alpine Central Server also leaves it removed here, so a post the
-    server later restores does not reappear.
+    its words and pictures written back when that club edits it. If the
+    Alpine Central Server then hides it, only a blank marker stays here (no
+    author, club name or reports), so a post the server later restores does
+    not reappear; if the server removes it, it is deleted here.
   - The clean-up of abandoned uploads no longer deletes a picture that a member
     attached to a new post at the same moment.
   - The retention clean-up now deletes every picture of an expired post, even
