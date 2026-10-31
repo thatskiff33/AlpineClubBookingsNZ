@@ -1865,11 +1865,17 @@ establishes:
   surfaces still hand-roll their attention that way — the module names them.
 - **Final sweep (#1819):** colour-coded calendar seasons, payment choices, and
   focused bed-allocation cards/cells pair their colour with visible text/icons
-  or a distinct border style.
+  or a distinct border style. The shared error `Alert` uses the AA `--danger`
+  pair rather than `--destructive`. The bookings table keeps a horizontally
+  scrollable minimum width, while booking review, family-group, and member
+  detail controls stack at phone width. The eight #1809 admin-list surfaces now
+  use semantic surrounding form/config/pagination chrome as well as semantic
+  table chrome.
 - **Choice cards (#4563):** a set of mutually exclusive options drawn as cards,
   such as Card or Internet Banking, uses `OptionCard` inside `OptionCardGroup`
   (`src/components/ui/option-card.tsx`). Each card is a native button with
-  `aria-pressed`, the chosen one shows a check icon and the word "Selected",
+  `aria-pressed`, the chosen one shows a check icon and the word "Selected"
+  (seen, not read: `aria-pressed` announces it) and a strong `border-info` edge,
   and the group is named by its visible heading. All four payment pickers
   (booking review, admin Book, the organiser's group settlement, the group
   join panel) use it; never draw a card whose only cue is its tint.
@@ -1879,12 +1885,7 @@ establishes:
   in its status badge or label; a card may add `border-dashed` as a second,
   non-text cue. Never fade a row with `opacity-*`: it drops the text under
   4.5:1, and axe exempts only disabled controls, not text.
-  `final-a11y-presentation-contract.test.ts` fails a faded row in those files. The shared error `Alert` uses the AA `--danger`
-  pair rather than `--destructive`. The bookings table keeps a horizontally
-  scrollable minimum width, while booking review, family-group, and member
-  detail controls stack at phone width. The eight #1809 admin-list surfaces now
-  use semantic surrounding form/config/pagination chrome as well as semantic
-  table chrome.
+  `final-a11y-presentation-contract.test.ts` fails a faded row in those files.
 - **List loading/empty primitives (#1803):** use the shared `Spinner`
   (`src/components/ui/spinner.tsx`; `role="status"` with an sr-only label, and
   it degrades to a static indicator under reduced motion) and `EmptyState`

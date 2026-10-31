@@ -54,7 +54,7 @@ const OptionCard = React.forwardRef<HTMLButtonElement, OptionCardProps>(
       className={cn(
         "flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm",
         selected
-          ? "border-info-7 bg-info-3 text-info-11"
+          ? "border-info bg-info-3 text-info-11 ring-1 ring-info"
           : "border-border bg-card text-card-foreground hover:border-foreground",
         className,
       )}
@@ -65,7 +65,10 @@ const OptionCard = React.forwardRef<HTMLButtonElement, OptionCardProps>(
         <span className="block font-medium">{title}</span>
         {children ? <span className="block text-xs">{children}</span> : null}
         {selected ? (
-          <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
+          // Seen, not heard: `aria-pressed` already announces the state, and
+          // keeping the word out of the name stops a change of choice
+          // re-reading both cards' names (#4563 review).
+          <span aria-hidden className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
             <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />
             Selected
           </span>

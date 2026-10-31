@@ -318,7 +318,7 @@
      alpha, and light mode now uses one error red, as dark mode does since
      #4553. Restated in `.website-theme` below; `destructive-contrast-contract`
      measures both from this file. */
-  --destructive: #991b1b;
+  --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -471,7 +471,7 @@
      overrides these per-club by source order (see `src/lib/theme/app-tokens.ts`,
      `WEBSITE_ROLE_ALIASES`). The BRANDED look is preserved deliberately: a light
      page (neutral-1), a GOLD (accent-9) primary/ring, and a DARK charcoal
-     (neutral-12) nav. `--destructive*` stay fixed oklch (not brand-derived).
+     (neutral-12) nav. `--destructive*` stay fixed, not brand-derived (`--destructive` is `var(--danger)`).
      Pinned against the resolver in `app-theme-layout-contract.test.ts` so the
      CSS literals and the derivation cannot drift. */
   --background: #f6f8f7;
@@ -491,7 +491,7 @@
   --accent: #e0e3e1;
   --accent-foreground: #1c211d;
   /* #4466, #4563 — the AA error ink; see the `:root` note. */
-  --destructive: #991b1b;
+  --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --border: #d0d3d0;
   --input: #c5c8c5;

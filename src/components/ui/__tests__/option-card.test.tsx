@@ -55,8 +55,10 @@ describe("OptionCard (#4563)", () => {
     expect(bank).toHaveAttribute("aria-pressed", "true");
     expect(within(bank).getByText("Selected")).toBeVisible();
     expect(within(card).queryByText("Selected")).toBeNull();
-    // The accessible name carries the state in words too.
-    expect(bank).toHaveAccessibleName(/Internet Banking.*Selected/);
+    // The state is announced once, by aria-pressed; the visible word stays
+    // out of the name so a change of choice does not re-read both names.
+    expect(bank).not.toHaveAccessibleName(/Selected/);
+    expect(bank).toHaveClass("border-info");
   });
 
   it("is a native, focusable button, so Enter and Space choose it with no key handler", () => {

@@ -103,6 +103,14 @@ const THEMES: Theme[] = [
 describe("destructive token contrast (#4553)", () => {
   const alphas = destructiveFillAlphas();
 
+  it("defines the error ink once: --destructive points at --danger in every theme (#4563)", () => {
+    // A copied value would let a later change to --danger silently split the
+    // two reds; a reference cannot.
+    for (const [name, scope] of [[":root", ROOT], [".website-theme", WEBSITE], [".dark", DARK]] as const) {
+      expect(scope.get("--destructive"), name).toBe("var(--danger)");
+    }
+  });
+
   it("finds the error-box fills it measures", () => {
     // A census that matched nothing would make every box check below vacuous.
     expect(alphas).toContain(10);
