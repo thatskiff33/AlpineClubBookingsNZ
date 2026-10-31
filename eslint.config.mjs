@@ -5,6 +5,7 @@ import nextTs from "eslint-config-next/typescript";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 import css from "@eslint/css";
 import accessibility from "./scripts/eslint/accessibility.mjs";
+import testClock from "./scripts/eslint/test-clock.mjs";
 
 // #2264 — the three date-rendering restrictions, named so the "Number
 // formatting only" block below can re-state the two date ones while dropping
@@ -3211,6 +3212,15 @@ const eslintConfig = defineConfig([
       "accessibility/minimum-text-size": "error",
       "accessibility/no-nested-interactive": "error",
     },
+  },
+  {
+    // #4462: the frozen test clock's elapsed-time rule, enforced rather than
+    // written down (docs/TESTING.md -> "The frozen test clock", rule 5). Vitest
+    // files only: the Playwright suite under e2e/ runs on the real clock.
+    files: ["**/__tests__/**/*.{ts,tsx,mts,js,mjs}", "**/*.test.{ts,tsx,mts,js,mjs}"],
+    ignores: ["e2e/**"],
+    plugins: { "test-clock": testClock },
+    rules: { "test-clock/no-date-now-elapsed": "error" },
   },
   {
     files: ["src/**/*.css"],
