@@ -703,8 +703,8 @@ function ContactLinkMismatchPanel({
                       <p className="text-xs text-warning">{mismatch.reasons.join(", ")}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="inline-flex"><Button variant="outline" size="sm">Open Member</Button></a>
-                      <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="inline-flex"><Button variant="outline" size="sm">Open in Xero</Button></a>
+                      <Button asChild variant="outline" size="sm"><a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)}>Open Member</a></Button>
+                      <Button asChild variant="outline" size="sm"><a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer">Open in Xero</a></Button>
                       <Button size="sm" variant="outline" onClick={() => void onUnlink(mismatch.memberId, mismatch.memberName)} disabled={recoveryActive || unlinkingMemberId === mismatch.memberId}>
                         {unlinkingMemberId === mismatch.memberId ? "Unlinking..." : "Unlink"}
                       </Button>

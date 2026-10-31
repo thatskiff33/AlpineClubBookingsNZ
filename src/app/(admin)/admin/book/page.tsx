@@ -1409,7 +1409,7 @@ export default function AdminBookPage() {
                     <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
                       <span className="block font-medium">Card</span>
-                      <span className="block text-xs opacity-80">
+                      <span className="block text-xs">
                         The member pays by card to secure the booking.
                       </span>
                     </span>
@@ -1426,7 +1426,7 @@ export default function AdminBookPage() {
                     <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
                       <span className="block font-medium">Internet Banking</span>
-                      <span className="block text-xs opacity-80">
+                      <span className="block text-xs">
                         Email the member a Xero invoice to pay by bank transfer.
                       </span>
                     </span>

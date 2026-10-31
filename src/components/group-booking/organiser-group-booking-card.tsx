@@ -631,7 +631,7 @@ export function OrganiserGroupBookingCard({
                         <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>
                           <span className="block font-medium">Card</span>
-                          <span className="block text-xs opacity-80">
+                          <span className="block text-xs">
                             Pay now to settle the group.
                           </span>
                         </span>
@@ -648,7 +648,7 @@ export function OrganiserGroupBookingCard({
                         <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>
                           <span className="block font-medium">Internet Banking</span>
-                          <span className="block text-xs opacity-80">
+                          <span className="block text-xs">
                             {renderClientBookingMessage({
                               template:
                                 bookingMessages[

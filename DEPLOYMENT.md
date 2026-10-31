@@ -805,6 +805,9 @@ updates for review. The pnpm minimum release age matches the npm Dependabot
 cooldown: seven days (`10080` minutes).
 The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
 installs work during rollout; remove it after the next Nodemailer update.
+`follow-redirects@1.16.2` has one too: it is the fix for a high advisory, and
+it was still inside the cooldown when the advisory blocked the required audit
+(#4565). Remove it once that version is seven days old.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -892,6 +895,32 @@ allowed, the last duplicate wins). Step 3/8 prints which source each name came
 from, because a default that silently points at the upstream registry is how
 a fork's deploy fails at step 9 with "not found". Note that `sudo` strips the
 shell environment; the `.env` route survives it.
+
+### Cut the release first (#4465)
+
+Every production deploy runs a tagged release, so adopting clubs and forks can
+tell which `main` commit is a known-good release, and a rollback has a version
+to name. Before the deploy, cut the release with `pnpm run release:cut`
+([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
+full order, its refusals and its recovery messages are in
+[`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),
+"Public Reference Release Checklist":
+
+1. `pnpm run release:cut prepare --execute` on a clean checkout of
+   `origin/main` builds the `release/v<version>` commit; push it and merge it
+   as the release-prep pull request.
+2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
+   tag and publishes the GitHub release.
+3. Deploy that tag from the host's source checkout:
+
+   ```bash
+   git fetch origin tag v0.14.0
+   DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh
+   ```
+
+   `DEPLOY_REF` pins the deploy to the tagged commit even if `main` has moved
+   since; while nothing has merged after the release, `origin/main` is that
+   commit and the plain command deploys the same thing.
 
 ### The deploy refuses a commit that exists on no remote (#3539)
 

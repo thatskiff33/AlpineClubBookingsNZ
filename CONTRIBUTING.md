@@ -81,7 +81,11 @@ writes a `package-lock.json` or a `node_modules` tree (measured on npm 11.16:
 the backstop behind both). `package-lock.json` is
 git-ignored and CI fails a branch that carries one; `pnpm-lock.yaml` is the only
 lockfile. `npm run` and `npx` may still happen to work, but they are not the
-supported spelling.
+supported spelling. Agents may not use `npx` or `pnpm dlx`: the agent-rule
+hooks in `.claude/settings.json` and `.codex/hooks.json` block them, and the
+rule binds either way (#4462). The hooks inspect the command line only, so a
+package script that calls `pnpm dlx` itself, such as
+`pnpm run theme:vendor-transpile`, is not inspected.
 
 **Where the settings live.** `pnpm-workspace.yaml` holds all of pnpm's
 settings: `overrides` (the reasons for each are in
@@ -245,13 +249,11 @@ for one. During the transition a pull request that still edits `CHANGELOG.md`
 directly also passes, and `CHANGELOG.md merge=union` in `.gitattributes` (#2451)
 keeps those merges conflict-free.
 
-At release time the maintainer compiles the fragments into a version section
-(`docs/MAINTENANCE.md`, "Public Reference Release Checklist"):
-
-```bash
-node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
-node scripts/release/compile-changelog.mjs 0.14.0             # write it
-```
+At release time `pnpm run release:cut prepare` compiles the fragments into a
+version section on a release-prep branch, and `pnpm run release:cut publish`
+tags the merged result (`docs/MAINTENANCE.md`, "Public Reference Release
+Checklist"). Name a fragment `*.feature.md` when it adds something new, so the
+release is minor rather than a patch (`changelog.d/README.md`, "Patch or minor").
 
 ## Validation
 
