@@ -434,13 +434,7 @@ export default function RosterPage() {
               worse than not printing at all, because it leaves the building. */}
           {lodgeScopeReady ? (
             <Button asChild variant="outline">
-              <a
-                href={`/admin/roster/${selectedDatePathSegment}/print?lodgeId=${encodeURIComponent(scopedLodgeId)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Print Roster
-              </a>
+              <a href={`/admin/roster/${selectedDatePathSegment}/print?lodgeId=${encodeURIComponent(scopedLodgeId)}`} target="_blank" rel="noopener noreferrer">Print Roster</a>
             </Button>
           ) : null}
         </div>
