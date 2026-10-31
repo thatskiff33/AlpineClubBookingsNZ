@@ -43,7 +43,34 @@ the baseline to pass lint. After fixing debt, run
 commands do not modify it.
 
 Focused rule and ratchet contracts run with
-`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs`.
+`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs scripts/eslint/design-system.test.mjs`.
+
+### Design-system control ratchet (#4467)
+
+Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
+primitives in `src/components/ui/`, each naming the one to use:
+`design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
+`no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
+browser's confirm box (`window.confirm(…)`, or a bare `confirm(…)` that
+resolves to the global; a `confirm` from `useConfirm()` is the sanctioned one).
+Today's usages are recorded in `eslint-suppressions.json` with the debt above,
+per file and per rule, so swapping a raw `<select>` for a raw `<button>` still
+fails. Migrate, then prune; never add a count.
+
+The exceptions are named:
+
+- **By path** (`eslint.config.mjs`): `src/components/ui/` itself; test files
+  (`__tests__/`, `*.test.*`, `src/test/`), which are not app UI and mock
+  primitives with raw stand-ins; and the files in `PRIMITIVE_IMPLEMENTATIONS`,
+  each excused one rule with a written reason: the admin table shell and sort
+  header (#1805).
+- **By element** (the rule): `<input type="hidden">`, and an
+  `<input type="file">` hidden by a literal `hidden` attribute or a `hidden` or
+  `sr-only` class, the picker a `Button` opens. A visible file input uses
+  `<Input type="file">`.
+
+Not covered: `React.createElement`, a `confirm` reached through an alias, and
+`<textarea>`.
 The shared axe fixture and mobile project are described in
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md#accessibility-and-mobile-checks-4466).
 
