@@ -51,8 +51,8 @@ vi.mock("@/lib/prisma", () => ({
       },
       clubPostImage: { updateMany: mocks.imageUpdateMany },
     };
-    client.$transaction = async (work: (tx: unknown) => Promise<unknown>) => {
-      mocks.transaction();
+    client.$transaction = async (work: (tx: unknown) => Promise<unknown>, options?: unknown) => {
+      mocks.transaction(options);
       return work(client);
     };
     return client;
@@ -244,6 +244,8 @@ describe("the pictures a post names are all claimed, or the post is refused (#45
 
     expect(res.status).toBe(201);
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    // Bounded like the other short row-lock writers, not Prisma's 2 s / 5 s.
+    expect(mocks.transaction).toHaveBeenCalledWith({ maxWait: 10_000, timeout: 30_000 });
     expect(mocks.imageUpdateMany).toHaveBeenCalledWith({
       where: { publicId: { in: ids }, postId: null, uploadedByMemberId: MEMBER_ID },
       data: { postId: "post-1" },
@@ -261,6 +263,16 @@ describe("the pictures a post names are all claimed, or the post is refused (#45
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/no longer available to attach.*add it again/);
     expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("claims nothing for a pasted link to a picture, and posts it (#4590 review)", async () => {
+    const res = await POST(post({
+      content: "a link",
+      bodyHtml: `<p>See <a href="/api/club-posts/images/${ids[0]}">this picture</a></p>`,
+    }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.imageUpdateMany).not.toHaveBeenCalled();
   });
 
   it("claims nothing for a post with no pictures", async () => {

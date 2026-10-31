@@ -320,7 +320,9 @@ export async function createClubPost(input: {
       }
     }
     return created;
-  });
+    // Bounded like the other short row-lock writers (#4590 review): the claim
+    // can queue behind the orphan sweep's delete of one of these uploads.
+  }, { maxWait: 10_000, timeout: 30_000 });
 
   // The content RETURNED is the content STORED -- with a rich body it was
   // derived from the sanitised HTML above, not taken from the request -- so
