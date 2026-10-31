@@ -129,7 +129,8 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { SERVERNZ_PUSH_SECRET_KEY, ensurePushRegistration, runMirrorSync } from "@/lib/club-post-mirror";
+import { SERVERNZ_PUSH_SECRET_KEY, runMirrorSync } from "@/lib/club-post-mirror";
+import { ensurePushRegistration } from "@/lib/servernz-push-registration";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const SERVER_IMAGE = "c".repeat(32);

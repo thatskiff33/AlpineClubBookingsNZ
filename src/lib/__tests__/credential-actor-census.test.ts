@@ -149,7 +149,7 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredential admin / any",
   // #4470: the push secret is stored inside the answer fence's transaction for
   // the connection the registration was sent on, so it is the in-transaction form.
-  "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
+  "src/lib/servernz-push-registration.ts::ensurePushRegistration#0":
     "setIntegrationCredentialInTransaction system / any",
   "src/lib/google-config.ts::clearGoogleVerified#0":
     "deleteIntegrationCredential (forwarded) actor / any",

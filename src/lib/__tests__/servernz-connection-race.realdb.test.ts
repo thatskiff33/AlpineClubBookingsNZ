@@ -39,7 +39,7 @@ let api: typeof import("@/lib/servernz-api");
 let lodgeSync: typeof import("@/lib/servernz-other-lodges-sync");
 let observer: PrismaClient;
 const savedAuthSecret = process.env.AUTH_SECRET;
-// #4470: the push-registration cases load `club-post-mirror`, whose image
+// #4470: the mirror cases load `club-post-mirror`, whose image
 // storage loads `sharp`, and loading it sets `VIPSHOME` (#4107 env guard).
 const savedVipsHome = process.env.VIPSHOME;
 const fetchMock = vi.fn();
@@ -443,7 +443,7 @@ function latch() {
 
     it("is not stored from a registration whose address moved while it was out", async () => {
       process.env.NEXTAUTH_URL = "https://club.race-4470.example.invalid";
-      const { ensurePushRegistration } = await import("@/lib/club-post-mirror");
+      const { ensurePushRegistration } = await import("@/lib/servernz-push-registration");
       fetchMock.mockImplementation(async (url: string | URL) => {
         expect(String(url)).toBe(`${OLD_URL}/api/v1/push-target`);
         // The administrator moves the address while the PUT is out.
@@ -464,7 +464,7 @@ function latch() {
 
     it("is stored when the connection stands (the control)", async () => {
       process.env.NEXTAUTH_URL = "https://club.race-4470.example.invalid";
-      const { ensurePushRegistration } = await import("@/lib/club-post-mirror");
+      const { ensurePushRegistration } = await import("@/lib/servernz-push-registration");
       fetchMock.mockImplementation(async () => new Response(JSON.stringify({
         url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: STANDING_SECRET,
       })));

@@ -58,7 +58,7 @@ export const SERVERNZ_CREDENTIAL_KEYS = {
   /**
    * The push-verification secret the server issued when this install
    * registered its push target (`ensurePushRegistration`,
-   * `club-post-mirror.ts`). System-written, never admin-writable: it belongs to
+   * `servernz-push-registration.ts`). System-written, never admin-writable: it belongs to
    * the server it was registered with, so an address move removes it (#4470).
    */
   pushSecret: "push_secret",
