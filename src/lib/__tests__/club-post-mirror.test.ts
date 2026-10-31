@@ -1084,6 +1084,8 @@ describe("runMirrorSync writes each page only for the connection it came from (#
     expect(result).toMatchObject({ stopped: "connection-changed", removed: 0 });
     expect(mocks.postDelete).not.toHaveBeenCalled();
     expect(mocks.row).not.toHaveProperty("commsPoisonChangeId");
+    // Not even attempted: the refused removal is the pass's one fenced write.
+    expect(mocks.answerWriter).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the pages applied before the change and writes nothing from the page after it", async () => {
