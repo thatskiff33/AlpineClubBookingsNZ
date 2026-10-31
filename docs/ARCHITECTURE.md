@@ -1643,20 +1643,6 @@ a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
 
-**The shared form layer (#4467) validates fields; it is not an edit model.**
-Its pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467): a zod schema
-in `src/lib/forms/` shared with the write route, `useZodForm`, inline errors
-and a `FormErrorSummary` that takes focus. A settings section that adopts it
-keeps everything above: `useSectionEditState` still owns Edit, Cancel to the
-snapshot and the dirty- and view-gated Save, and the section's permanently
-mounted banner and feedback regions still carry its request-level outcomes.
-The summary is the one region the layer adds. It is mounted only while it
-lists errors, and is announced by taking focus when a submit completes rather
-than as a live region, so the "permanently mounted" rule above does not apply
-to it. The first form on the layer is the committee page's role form, a
-submit-style form rather than a staged section; no staged section uses the
-layer yet.
-
 The rule binds sections that are NEW or MODIFIED. Known departures that this
 rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
 toggles), the older staged-but-ungated settings forms, the age-tier and
@@ -1853,6 +1839,23 @@ load compare equal to the scope the section mounts on. The unknown state must
 also be RECOVERABLE without leaving the page: it carries a **Try again** action
 that re-runs the current key's load in place. All three keyed booking-policy
 sections (default cancellation, booking periods, minimum night stay) carry this.
+
+**The shared form layer (#4467) validates fields; it is not an edit model.**
+Its pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467): a zod schema
+in `src/lib/forms/` shared with the write route, `useZodForm`, inline errors
+and a `FormErrorSummary` that takes focus. A settings section that adopts it
+keeps every rule above: `useSectionEditState` still owns Edit, Cancel to the
+snapshot and the dirty- and view-gated Save, and the section's permanently
+mounted banner and feedback regions still carry its request-level outcomes.
+The summary is the one region the layer adds, and it follows
+`FocusedActionError` rather than the permanently-mounted rule: a
+`role="alert"` mounted when a submit fails, already filled, and announced by
+taking focus as the submit completes, so it does not depend on a live region
+being registered first. Between submits its text never changes; entries only
+disappear as their fields are fixed, so nothing is announced while the person
+types. The first form on the layer is the committee page's role form, a
+submit-style form rather than a staged section; no staged section uses the
+layer yet.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
