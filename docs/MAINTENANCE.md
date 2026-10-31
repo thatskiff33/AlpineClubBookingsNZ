@@ -2813,10 +2813,12 @@ phases print their whole plan and change nothing without `--execute`.
    pnpm run release:cut prepare --execute   # make the local commit
    ```
 
-   It fetches `origin/main` and the tags, refuses a dirty tree (an untracked
-   `changelog.d/` draft would be released), a checkout that is not exactly
-   `origin/main`, and a tag or `release/v<version>` branch that already exists.
-   The version is the latest `vX.Y.Z` tag plus a minor bump when any fragment
+   It fetches `origin/main`, refuses a dirty tree (an untracked `changelog.d/`
+   draft would be released), a checkout that is not exactly `origin/main`, a
+   `release/v<version>` branch that already exists here or on `origin`, and a
+   local tag for the version that `origin` does not have. The version is the
+   latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
+   bump when any fragment
    is named `*.feature.md`, or a patch bump otherwise
    (`changelog.d/README.md`, "Patch or minor"); `--bump patch|minor|major`
    overrides it and `--date YYYY-MM-DD` overrides the release date. With
@@ -2867,21 +2869,42 @@ phases print their whole plan and change nothing without `--execute`.
 
    ```bash
    git fetch origin main
-   pnpm run release:cut publish             # dry run: commit, notes, steps
+   pnpm run release:cut publish             # dry run: commit, body, steps
    pnpm run release:cut publish --execute
    ```
 
    It reads the version from `package.json` on the merged commit (default
-   `origin/main`) and refuses when that version is no newer than the latest
-   tag (nothing was prepared), the commit is not on `origin/main`, it has no
-   compiled section for the version, or it still holds `changelog.d/`
-   fragments — something merged after the release-prep commit, so pass
-   `--commit <merge-sha>` to tag that commit instead. With `--execute` it
-   checks `gh auth status` and which repository `gh` will publish to, creates
-   the annotated `v<version>` tag, and only then pushes the tag and runs
-   `gh release create` with the compiled section as the notes. A failed push
-   keeps the local tag and prints the retry; a failed publish never deletes
-   the pushed tag and prints the `gh release create` command to retry.
+   `origin/main`; `--commit <sha>` names another) and publishes to the
+   repository `origin`'s URL names, passing it to every `gh` call. It refuses
+   when:
+
+   - the commit is not on `origin/main`'s **first-parent** chain — only a
+     commit CI pushed to `main` has GHCR images, so only its tag can be
+     deployed (a release-prep branch commit inside a merge never was);
+   - `origin` already has the version's tag on another commit, or the version
+     is not newer than `origin`'s latest tag — nothing new was prepared;
+   - `CHANGELOG.md` has no section for the version, or still has entries
+     written directly under `## Unreleased`;
+   - the commit still holds `changelog.d/` fragments. Required checks are not
+     strict, so a pull request can merge while the release-prep one is open
+     and leave its fragment in the merge commit. Two supported ways out:
+     **fold** them — from a fresh `origin/main`,
+     `pnpm run release:cut prepare --amend --execute` appends them to the
+     untagged `## <version>` section on `release/v<version>-late`; merge that
+     pull request and publish its merge commit — or **carry** them:
+     `pnpm run release:cut publish --carry-late-fragments --execute` publishes
+     anyway and lists them as carried into the next release.
+
+   The dry run also checks `gh auth status` and that `gh` can reach the
+   repository, and says which release body it will use: the section itself,
+   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
+   with the entry count and a link to the section in `CHANGELOG.md` at the
+   tag. With `--execute` it writes the body to a file, creates the annotated
+   `v<version>` tag, and only then pushes the tag and runs
+   `gh release create`. A re-run after a failure resumes: a local tag on the
+   commit resumes at the push, a pushed tag at `gh release create`, and an
+   existing release is reported as done. A failed push keeps the local tag; a
+   failed publish never deletes the pushed tag.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
 8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
