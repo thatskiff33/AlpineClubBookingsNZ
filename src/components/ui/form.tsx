@@ -93,6 +93,8 @@ function FormField<
 type FormItemContextValue = {
   hasDescription: boolean;
   setHasDescription: (present: boolean) => void;
+  hasMessage: boolean;
+  setHasMessage: (present: boolean) => void;
 };
 
 const FormItemContext = React.createContext<FormItemContextValue | null>(null);
@@ -116,15 +118,18 @@ function useFormField() {
     formMessageId: `${formItemId}-message`,
     hasDescription: itemContext?.hasDescription ?? false,
     setHasDescription: itemContext?.setHasDescription,
+    hasMessage: itemContext?.hasMessage ?? false,
+    setHasMessage: itemContext?.setHasMessage,
     ...fieldState,
   };
 }
 
 function FormItem({ className, ...props }: React.ComponentProps<"div">) {
   const [hasDescription, setHasDescription] = React.useState(false);
+  const [hasMessage, setHasMessage] = React.useState(false);
   const value = React.useMemo(
-    () => ({ hasDescription, setHasDescription }),
-    [hasDescription],
+    () => ({ hasDescription, setHasDescription, hasMessage, setHasMessage }),
+    [hasDescription, hasMessage],
   );
   return (
     <FormItemContext.Provider value={value}>
@@ -157,7 +162,9 @@ function FormLabel({
  * Wraps the ONE control a field renders (`Input`, `Textarea`, `Checkbox`…)
  * and gives it the field's id, `aria-invalid`, and an `aria-describedby` that
  * names the error before any other description. Ids passed in
- * `aria-describedby` — a view-only reason, say — sit between the two.
+ * `aria-describedby` — a view-only reason, say — sit between the two. Each
+ * of the field's own ids is named only while its element is rendered with
+ * something in it, so none points at nothing (an axe failure).
  */
 function FormControl({
   "aria-describedby": callerDescribedBy,
@@ -170,9 +177,10 @@ function FormControl({
     formDescriptionId,
     formMessageId,
     hasDescription,
+    hasMessage,
   } = useFormField();
   const describedBy = [
-    error ? formMessageId : null,
+    hasMessage ? formMessageId : null,
     callerDescribedBy,
     hasDescription ? formDescriptionId : null,
   ]
@@ -195,17 +203,28 @@ function FormControl({
   );
 }
 
+/**
+ * Tell the field's `FormItem` an element is rendered, so `FormControl` names
+ * its id, and that it has gone when it unmounts or empties.
+ */
+function useRegisterWithItem(
+  register: ((present: boolean) => void) | undefined,
+  present: boolean,
+) {
+  React.useLayoutEffect(() => {
+    if (!register || !present) return;
+    register(true);
+    return () => register(false);
+  }, [register, present]);
+}
+
 /** The field's hint: `FieldHint`, registered so the control is described by it. */
 function FormDescription({
   className,
   ...props
 }: Omit<React.ComponentPropsWithoutRef<typeof FieldHint>, "id">) {
   const { formDescriptionId, setHasDescription } = useFormField();
-  React.useLayoutEffect(() => {
-    if (!setHasDescription) return;
-    setHasDescription(true);
-    return () => setHasDescription(false);
-  }, [setHasDescription]);
+  useRegisterWithItem(setHasDescription, true);
   return (
     <FieldHint
       data-slot="form-description"
@@ -217,7 +236,8 @@ function FormDescription({
 }
 
 /**
- * The field's inline error. It is not a live region: the summary is what is
+ * The field's inline error, registered so the control is described by it
+ * while it shows one. It is not a live region: the summary is what is
  * announced, and an inline message re-validated on every keystroke would
  * interrupt the person typing.
  */
@@ -226,8 +246,9 @@ function FormMessage({
   children,
   ...props
 }: React.ComponentPropsWithoutRef<"p">) {
-  const { error, formMessageId } = useFormField();
+  const { error, formMessageId, setHasMessage } = useFormField();
   const body = error ? String(error.message ?? "") : children;
+  useRegisterWithItem(setHasMessage, Boolean(body));
   if (!body) return null;
   return (
     <p
@@ -287,12 +308,13 @@ function collectFormErrors(
  * - **Focus moves only on a submit.** The effect is keyed on react-hook-form's
  *   `submitCount`, which rises once per completed submit and never while the
  *   person types, and it uses `scrollToError`, the shared failure position.
- * - **It only ever shrinks between submits.** It lists the fields that failed
- *   at the last submit, with their current message, and drops each one as it
- *   is fixed. A field that starts failing while the person types, or fails
- *   again after being fixed, shows its inline message and joins the summary
- *   at the next submit: the summary never reappears, or grows, mid-typing,
- *   so it is never announced while the person types.
+ * - **Between submits it only shrinks, and its text never changes.** It is a
+ *   `role="alert"` that takes focus, like `FocusedActionError`, so any change
+ *   to its text is announced. It shows what the last submit found, each
+ *   entry with the message it had then, and drops an entry once its field is
+ *   fixed. A field that fails differently, starts failing, or fails again
+ *   after being fixed while the person types shows that in its inline
+ *   message, and reaches the summary at the next submit.
  * - **Each entry links to its control** and focuses it.
  *
  * Render it inside `<Form>`, before the fields. `useZodForm` turns off
@@ -314,25 +336,28 @@ function FormErrorSummary({
   const ref = React.useRef<HTMLDivElement>(null);
   const titleId = `${formId}-error-summary-title`;
 
-  // The names still listed: those that failed at the last submit, less each
-  // one fixed since. Kept with React's "adjust state while rendering", so the
-  // list and the focus land in the same commit. A summary mounted after a
-  // submit starts from the errors on screen and, below, moves no focus.
+  // What the last submit found, entry by entry WITH its message, less each
+  // entry whose field has been fixed since. Kept with React's "adjust state
+  // while rendering", so the list and the focus land in the same commit. The
+  // text is frozen at the submit: the box is an alert, and a field moving
+  // from one rule's message to another's while the person types must not
+  // rewrite it (only an entry's disappearance changes it). A summary mounted
+  // after a submit starts from the errors on screen and, below, moves no
+  // focus.
   const current = collectFormErrors(errors);
   const failing = new Set(current.map((entry) => entry.name));
   const [snapshot, setSnapshot] = React.useState<{
     submitCount: number;
-    names: ReadonlySet<string | null>;
-  }>(() => ({ submitCount, names: failing }));
-  let listed = snapshot.names;
+    entries: readonly SummaryEntry[];
+  }>(() => ({ submitCount, entries: current }));
+  let shown = snapshot.entries;
   if (snapshot.submitCount !== submitCount) {
-    listed = failing;
-    setSnapshot({ submitCount, names: listed });
-  } else if ([...listed].some((name) => !failing.has(name))) {
-    listed = new Set([...listed].filter((name) => failing.has(name)));
-    setSnapshot({ submitCount, names: listed });
+    shown = current;
+    setSnapshot({ submitCount, entries: shown });
+  } else if (shown.some((entry) => !failing.has(entry.name))) {
+    shown = shown.filter((entry) => failing.has(entry.name));
+    setSnapshot({ submitCount, entries: shown });
   }
-  const shown = current.filter((entry) => listed.has(entry.name));
 
   // Only a new submit may move focus. The list shrinking as the person fixes
   // fields re-runs this effect, and the count it last acted on stops it. It

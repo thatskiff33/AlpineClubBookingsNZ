@@ -18,9 +18,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type {
-  CommitteeRoleFormValues,
-  CommitteeRolePayload,
+import {
+  COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH,
+  COMMITTEE_ROLE_SORT_ORDER_MAX,
+  COMMITTEE_ROLE_SORT_ORDER_MIN,
+  type CommitteeRoleFormValues,
+  type CommitteeRolePayload,
 } from "@/lib/forms/committee-role-schema";
 
 /**
@@ -64,7 +67,13 @@ export function CommitteeRoleForm({
           <h2 className="font-medium text-foreground">
             {editing ? "Edit Role" : "Add Role"}
           </h2>
-          <Button type="button" variant="ghost" size="icon" onClick={onClose}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close"
+            onClick={onClose}
+          >
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -94,7 +103,8 @@ export function CommitteeRoleForm({
                     ref={field.ref}
                     name={field.name}
                     type="number"
-                    min={0}
+                    min={COMMITTEE_ROLE_SORT_ORDER_MIN}
+                    max={COMMITTEE_ROLE_SORT_ORDER_MAX}
                     value={field.value}
                     onBlur={field.onBlur}
                     onChange={(event) =>
@@ -133,7 +143,7 @@ export function CommitteeRoleForm({
                 <Textarea
                   {...field}
                   rows={3}
-                  maxLength={1000}
+                  maxLength={COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH}
                   disabled={!canEdit}
                 />
               </FormControl>
@@ -145,18 +155,21 @@ export function CommitteeRoleForm({
           control={form.control}
           name="isActive"
           render={({ field }) => (
-            <FormItem className="mt-4 flex items-center gap-2 space-y-0">
-              <FormControl>
-                <Checkbox
-                  ref={field.ref}
-                  name={field.name}
-                  checked={field.value}
-                  onBlur={field.onBlur}
-                  onCheckedChange={field.onChange}
-                  disabled={!canEdit}
-                />
-              </FormControl>
-              <FormLabel className="font-normal">Active</FormLabel>
+            <FormItem className="mt-4">
+              <div className="flex items-center gap-2">
+                <FormControl>
+                  <Checkbox
+                    ref={field.ref}
+                    name={field.name}
+                    checked={field.value}
+                    onBlur={field.onBlur}
+                    onCheckedChange={field.onChange}
+                    disabled={!canEdit}
+                  />
+                </FormControl>
+                <FormLabel className="font-normal">Active</FormLabel>
+              </div>
+              <FormMessage />
             </FormItem>
           )}
         />

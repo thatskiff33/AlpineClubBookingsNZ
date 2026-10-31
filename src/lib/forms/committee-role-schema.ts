@@ -14,6 +14,11 @@ import { z } from "zod";
  * Each message names the fix, because the error summary lists them as links
  * with no field label in front ("Enter a role name").
  */
+/** The limits the routes enforce, which the form's controls also apply. */
+export const COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH = 1000;
+export const COMMITTEE_ROLE_SORT_ORDER_MIN = 0;
+export const COMMITTEE_ROLE_SORT_ORDER_MAX = 100000;
+
 const roleName = z
   .string()
   .trim()
@@ -23,7 +28,10 @@ const roleName = z
 const roleDescription = z
   .string()
   .trim()
-  .max(1000, "Use a description of 1,000 characters or fewer")
+  .max(
+    COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH,
+    `Use a description of ${COMMITTEE_ROLE_DESCRIPTION_MAX_LENGTH} characters or fewer`,
+  )
   .nullable();
 
 const roleContactEmail = z
@@ -36,8 +44,14 @@ const roleContactEmail = z
 const roleSortOrder = z
   .number()
   .int("Enter the sort order as a whole number")
-  .min(0, "Enter a sort order of 0 or more")
-  .max(100000, "Enter a sort order of 100,000 or less");
+  .min(
+    COMMITTEE_ROLE_SORT_ORDER_MIN,
+    `Enter a sort order of ${COMMITTEE_ROLE_SORT_ORDER_MIN} or more`,
+  )
+  .max(
+    COMMITTEE_ROLE_SORT_ORDER_MAX,
+    `Enter a sort order of ${COMMITTEE_ROLE_SORT_ORDER_MAX} or less`,
+  );
 
 const roleIsActive = z.boolean();
 

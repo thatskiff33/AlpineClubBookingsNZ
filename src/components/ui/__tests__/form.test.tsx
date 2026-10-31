@@ -59,7 +59,7 @@ function TestForm({
         noValidate
         onSubmit={form.handleSubmit(async (values) => {
           await onValid(values);
-          if (serverBody !== undefined) applyServerValidationErrors(form, serverBody);
+          if (serverBody !== undefined) applyServerValidationErrors(form, 400, serverBody);
         })}
       >
         <FormErrorSummary />
@@ -386,8 +386,129 @@ describe("server field errors on the form", () => {
     await submit();
 
     const summary = screen.getByRole("alert");
-    expect(summary).toHaveTextContent('Unrecognized key: "colour" Sort order: Too big');
+    expect(summary).toHaveTextContent('Unrecognized key: "colour"; Sort order: Too big');
     expect(summary.querySelectorAll("a")).toHaveLength(0);
+  });
+});
+
+// Review F1 and F2 (#4467): a field with more than one rule, and a field that
+// renders no FormMessage.
+const codeSchema = z.object({
+  code: z
+    .string()
+    .min(3, "Use at least 3 characters")
+    .regex(/^[a-z]+$/, "Use lowercase letters only"),
+  nickname: z.string(),
+});
+
+function CodeForm({ serverBody }: { serverBody?: unknown }) {
+  const form = useZodForm(codeSchema, { defaultValues: { code: "", nickname: "" } });
+  return (
+    <Form {...form}>
+      <form
+        noValidate
+        onSubmit={form.handleSubmit(async () => {
+          if (serverBody !== undefined) applyServerValidationErrors(form, 400, serverBody);
+        })}
+      >
+        <FormErrorSummary />
+        <FormField
+          control={form.control}
+          name="code"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Code</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="nickname"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Nickname</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+        <button type="submit">Save</button>
+      </form>
+    </Form>
+  );
+}
+
+describe("the summary's text between submits", () => {
+  it("keeps the message the submit found while the field moves to another rule's", async () => {
+    render(<CodeForm />);
+    await submit();
+    const summary = screen.getByRole("alert");
+    expect(summary).toHaveTextContent("Use at least 3 characters");
+
+    const code = screen.getByLabelText("Code");
+    code.focus();
+    await act(async () => {
+      fireEvent.change(code, { target: { value: "ABCD" } });
+    });
+
+    // The inline message follows the field; the alert's text does not change,
+    // so nothing is re-announced while the person types.
+    expect(screen.getByText("Use lowercase letters only")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBe(summary);
+    expect(summary).toHaveTextContent("Use at least 3 characters");
+    expect(summary).not.toHaveTextContent("Use lowercase letters only");
+    expect(document.activeElement).toBe(code);
+
+    await act(async () => {
+      fireEvent.change(code, { target: { value: "abcd" } });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // The next submit shows what it finds now.
+    await act(async () => {
+      fireEvent.change(code, { target: { value: "AB" } });
+    });
+    await submit();
+    expect(screen.getByRole("alert")).toHaveTextContent("Use at least 3 characters");
+  });
+});
+
+describe("FormMessage registration", () => {
+  it("names no message id for a failed field that renders no FormMessage", async () => {
+    render(
+      <CodeForm
+        serverBody={{ error: "Invalid input", details: { fieldErrors: { nickname: ["Taken"] } } }}
+      />,
+    );
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Code"), { target: { value: "abcd" } });
+    });
+    await submit();
+
+    const nickname = screen.getByLabelText("Nickname");
+    expect(nickname).toHaveAttribute("aria-invalid", "true");
+    // Every id it names must resolve; with no message and no hint there are none.
+    for (const id of describedByIds(nickname)) {
+      expect(document.getElementById(id), id).not.toBeNull();
+    }
+    expect(nickname).not.toHaveAttribute("aria-describedby");
+    expect(screen.getByRole("alert")).toHaveTextContent("Taken");
+  });
+
+  it("drops the message id when the error clears", async () => {
+    render(<CodeForm />);
+    await submit();
+    const code = screen.getByLabelText("Code");
+    expect(describedByIds(code)).toHaveLength(1);
+    await act(async () => {
+      fireEvent.change(code, { target: { value: "abcd" } });
+    });
+    expect(code).not.toHaveAttribute("aria-describedby");
   });
 });
 

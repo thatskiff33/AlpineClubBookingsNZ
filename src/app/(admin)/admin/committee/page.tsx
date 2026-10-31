@@ -272,7 +272,7 @@ export default function CommitteePage() {
         }
         // A field the route refused is marked on that field and listed in
         // the form's error summary, which takes focus (#4467).
-        if (applyServerValidationErrors(roleForm, body)) return;
+        if (applyServerValidationErrors(roleForm, response.status, body)) return;
         throw new Error(apiErrorMessageFromBody(body, "Failed to save role"));
       }
       closeRoleForm();
@@ -618,6 +618,7 @@ export default function CommitteePage() {
                   type="button"
                   variant="ghost"
                   size="icon"
+                  aria-label="Close"
                   onClick={closeAssignmentForm}
                 >
                   <X className="h-4 w-4" />

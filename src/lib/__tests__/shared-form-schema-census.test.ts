@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
  *
  * Imports are read from TypeScript's own parse, so a specifier mentioned in
  * a comment does not count, and neither does a type-only import: it
- * validates nothing.
+ * validates nothing. A dynamic `import("…")` does count.
  */
 
 const ROOT = process.cwd();
@@ -41,18 +41,32 @@ function walk(dir: string): string[] {
   });
 }
 
-function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, false);
+function parse(file: string, text = readFileSync(file, "utf8")): ts.SourceFile {
+  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
 }
 
 /**
- * The module specifiers a file imports or re-exports a VALUE from. A
- * type-only import validates nothing, so `import type { … }` and an import
- * whose every name is `type` do not count as using a schema.
+ * The module specifiers a file imports or re-exports a VALUE from, including
+ * a dynamic `import("…")` anywhere in it (a form that loads its schema
+ * lazily still uses it). A type-only import validates nothing, so
+ * `import type { … }` and an import whose every name is `type` do not count
+ * as using a schema.
  */
-function importsOf(file: string): string[] {
+function importsOf(file: string, text?: string): string[] {
+  const source = parse(file, text);
   const specifiers: string[] = [];
-  for (const statement of parse(file).statements) {
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      const [argument] = node.arguments;
+      if (argument && ts.isStringLiteralLike(argument)) specifiers.push(argument.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  for (const statement of source.statements) {
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause;
       if (clause?.isTypeOnly) continue;
@@ -122,6 +136,22 @@ describe("shared form schemas (#4467)", () => {
     expect(schemaModules.map((file) => path.basename(file))).toContain(
       "committee-role-schema.ts",
     );
+  });
+
+  it("reads value imports, re-exports and dynamic imports, and skips types and comments", () => {
+    const text = [
+      'import type { A } from "@/lib/forms/type-only-schema";',
+      'import { type B } from "@/lib/forms/type-names-schema";',
+      '// import { c } from "@/lib/forms/comment-schema";',
+      'import { d } from "@/lib/forms/value-schema";',
+      'export { e } from "@/lib/forms/reexport-schema";',
+      'async function load() { return import("@/lib/forms/dynamic-schema"); }',
+    ].join("\n");
+    expect(importsOf("probe.tsx", text).sort()).toEqual([
+      "@/lib/forms/dynamic-schema",
+      "@/lib/forms/reexport-schema",
+      "@/lib/forms/value-schema",
+    ]);
   });
 
   it.each(schemaModules.map((file) => [path.relative(ROOT, file), file]))(

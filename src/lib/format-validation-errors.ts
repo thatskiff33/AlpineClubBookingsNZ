@@ -71,13 +71,8 @@ export function memberFieldLabel(key: string): string {
   return MEMBER_FIELD_LABELS[key] ?? humanizeFieldKey(key);
 }
 
-interface FlattenShape {
-  formErrors?: unknown;
-  fieldErrors?: unknown;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function nonEmptyStrings(value: unknown): string[] {
@@ -87,13 +82,36 @@ function nonEmptyStrings(value: unknown): string[] {
   );
 }
 
+/** A zod message list: an array of strings. */
+function isMessageList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/** zod's `fieldErrors`: every value a message list (or absent). */
+function isFieldMessageMap(value: unknown): value is Record<string, string[] | undefined> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => entry === undefined || isMessageList(entry))
+  );
+}
+
+const FLATTEN_KEYS = new Set(["formErrors", "fieldErrors"]);
+
 /**
  * The field and form-level messages in an API route's validation refusal, or
- * `null` when the body carries no `details` object. The one reader of that
- * shape: `formatValidationErrorResponse` below turns it into lines, and
- * `applyServerValidationErrors` (`src/lib/forms/server-validation-errors.ts`,
- * #4467) puts it back on a form's fields. Both shapes the routes send are read
- * (see the top of this file); blank and non-string messages are dropped, and a
+ * `null` when the body's `details` is not one of the two shapes zod's
+ * `flatten()` produces: the full `{ formErrors, fieldErrors }`, or the member
+ * routes' bare `fieldErrors` map. Anything else a route puts in `details` (a
+ * list of refused rows, a provider payload) is not a field refusal and is not
+ * read as one.
+ *
+ * THE ONE READER of that shape: `formatValidationErrorResponse` below turns it
+ * into lines, `readAdminQueryErrorMessage` (`src/lib/admin-query-error.ts`)
+ * quotes its first message, and `applyServerValidationErrors`
+ * (`src/lib/forms/server-validation-errors.ts`, #4467) puts it back on a
+ * form's fields. `validation-details-reader-census.test.ts` fails a module
+ * that reads a body's `details` field map itself; the public application
+ * form is the one it still names, as debt. Blank messages are dropped, and a
  * field left with none is dropped with them.
  */
 export function readValidationDetails(data: unknown): {
@@ -101,25 +119,34 @@ export function readValidationDetails(data: unknown): {
   fieldErrors: Array<[field: string, messages: string[]]>;
 } | null {
   if (!isRecord(data) || !isRecord(data.details)) return null;
-
   const details = data.details;
-  // Full flatten() shape carries a nested `fieldErrors` object; the member
-  // routes send that nested object directly as `details`.
-  const hasFlattenShape =
-    "fieldErrors" in details && isRecord((details as FlattenShape).fieldErrors);
-  const fieldErrors = hasFlattenShape
-    ? ((details as FlattenShape).fieldErrors as Record<string, unknown>)
-    : details;
 
+  const keys = Object.keys(details);
+  const isFull =
+    keys.length > 0 &&
+    keys.every((key) => FLATTEN_KEYS.has(key)) &&
+    (details.fieldErrors === undefined || isFieldMessageMap(details.fieldErrors)) &&
+    (details.formErrors === undefined || isMessageList(details.formErrors));
+  if (!isFull && !isFieldMessageMap(details)) return null;
+
+  const fieldErrors = isFull ? (details.fieldErrors ?? {}) : details;
   return {
     // Top-level, non-field errors exist only in the full flatten() shape.
-    formErrors: hasFlattenShape
-      ? nonEmptyStrings((details as FlattenShape).formErrors)
-      : [],
-    fieldErrors: Object.entries(fieldErrors)
+    formErrors: isFull ? nonEmptyStrings(details.formErrors) : [],
+    fieldErrors: Object.entries(fieldErrors as Record<string, unknown>)
       .map(([key, value]): [string, string[]] => [key, nonEmptyStrings(value)])
       .filter(([, messages]) => messages.length > 0),
   };
+}
+
+/** One field's messages as one sentence run, as every reader shows them. */
+export function joinFieldMessages(messages: readonly string[]): string {
+  return messages.join("; ");
+}
+
+/** "Date of birth: Invalid date format" — a field's messages under its label. */
+export function labelFieldMessages(key: string, messages: readonly string[]): string {
+  return `${memberFieldLabel(key)}: ${joinFieldMessages(messages)}`;
 }
 
 /**
@@ -144,9 +171,7 @@ export function formatValidationErrorResponse(
   const lines = [
     // Top-level, non-field errors surface without a label.
     ...details.formErrors,
-    ...details.fieldErrors.map(
-      ([key, messages]) => `${memberFieldLabel(key)}: ${messages.join("; ")}`,
-    ),
+    ...details.fieldErrors.map(([key, messages]) => labelFieldMessages(key, messages)),
   ];
 
   return lines.length > 0 ? lines : [fallback];

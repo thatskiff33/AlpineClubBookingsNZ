@@ -227,6 +227,42 @@ describe("committee role form on the shared form layer (#4467)", () => {
     await expectRecoveryAlertToHoldFocus(alert);
   });
 
+  it.each([
+    ["a 500", 500, { error: "Committee roles are unavailable." }],
+    [
+      "a 400 with no field details (PATCH's empty-body refusal)",
+      400,
+      { error: "At least one committee role field is required" },
+    ],
+  ])("shows %s in the page banner and marks no field", async (_label, status, body) => {
+    respond(() => json(body, status));
+    await openAddRole();
+    fireEvent.change(screen.getByLabelText(/Role Name/i), {
+      target: { value: "Chair" },
+    });
+    await save();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(body.error);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    for (const control of [
+      screen.getByLabelText(/Role Name/i),
+      screen.getByLabelText("Sort Order"),
+      screen.getByLabelText("Role Email"),
+      screen.getByLabelText("Description"),
+      screen.getByRole("checkbox", { name: "Active" }),
+    ]) {
+      expect(control).toHaveAttribute("aria-invalid", "false");
+    }
+    await expectRecoveryAlertToHoldFocus(alert);
+  });
+
+  it("names the icon-only Close button", async () => {
+    respond(() => json({}));
+    await openAddRole();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
   it("uses the Checkbox primitive for Active and the example as the email's description", async () => {
     respond(() => json({}));
     await openAddRole();
