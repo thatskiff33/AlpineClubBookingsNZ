@@ -366,6 +366,6 @@ describe("AlpineServerSetup key save names the shown address (#4470)", () => {
     keySaveAnswers({ ok: false, status: 409, body: { code: "address-changed" } });
     render(<AlpineServerSetup initialState={initial({ apiKeySet: false })} />);
     saveKey("acs_old_server");
-    expect((await screen.findByText(/address changed since this page loaded/i)).textContent).toMatch(/reload the page/i);
+    expect((await screen.findByText(/address was changed after this page was loaded/i)).textContent).toMatch(/reload the page/i);
   });
 });

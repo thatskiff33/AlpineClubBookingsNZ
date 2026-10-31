@@ -7,6 +7,7 @@ import {
   NO_KEY_SERVER_VERSION,
   OTHER_LODGES_SYNC_RUNNING_CODE,
   SERVERNZ_ADDRESS_CHANGED_CODE,
+  SERVERNZ_ADDRESS_CHANGED_MESSAGE,
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_MISMATCH_CODE,
   computeServerVersionStatus,
@@ -249,11 +250,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       if (res.status === 409 && data?.code === SERVERNZ_ADDRESS_CHANGED_CODE) {
         // Nothing was saved. The address shown here is out of date, so the
         // page cannot offer a retry that means anything: reload, then decide.
-        throw new Error(
-          typeof data.error === "string"
-            ? data.error
-            : "The central server address changed since this page loaded, so the key was not saved. Reload the page and enter the key again.",
-        );
+        throw new Error(SERVERNZ_ADDRESS_CHANGED_MESSAGE);
       }
       if (!res.ok) throw new Error(data?.error ?? "Failed to save API key");
       setApiKeySet(true);

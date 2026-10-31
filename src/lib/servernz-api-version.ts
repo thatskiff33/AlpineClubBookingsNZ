@@ -58,6 +58,10 @@ export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
  */
 export const SERVERNZ_ADDRESS_CHANGED_CODE = "address-changed";
 
+/** What that refusal tells the administrator: one wording, route and page alike. */
+export const SERVERNZ_ADDRESS_CHANGED_MESSAGE =
+  "The central server address was changed after this page was loaded, so the API key was not saved: it may have been issued for the old address. Reload the page, check the address, and enter the key again.";
+
 /**
  * Why an Other lodges download did not record its cursor (#4262 review):
  * `DownloadSummary.stopped`. Here, beside the other sync codes, for the same
