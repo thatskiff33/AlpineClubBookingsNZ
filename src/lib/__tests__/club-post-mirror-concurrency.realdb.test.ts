@@ -35,6 +35,10 @@
  * 8. A retention pass taken over mid-pass leaves the new pass's claim.
  * 9. An upload the orphan sweep deletes just before a new post claims it
  *    refuses the post: no post names a picture that is gone.
+ * 10. The post route's inline share and the cron's retry, both past their
+ *    reads, send the post exactly once (#4592): the claim before the send.
+ * 11. A share accepted whose stamp retries AND the final record all fail
+ *    leaves no request, so a later sweep sends nothing.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,6 +56,7 @@ let savedBoardSettings: { retentionDays: number; cleanupStartedAt: Date | null }
 let retention: typeof import("@/lib/club-post-retention");
 let posts: typeof import("@/lib/club-posts");
 let sharing: typeof import("@/lib/club-post-sharing");
+let versionCheck: typeof import("@/lib/servernz-version-check");
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let mirror: typeof import("@/lib/club-post-mirror");
 let admin: typeof import("@/lib/club-posts-admin");
@@ -200,6 +205,7 @@ type Latch = ReturnType<typeof latch>;
     retention = await import("@/lib/club-post-retention");
     posts = await import("@/lib/club-posts");
     sharing = await import("@/lib/club-post-sharing");
+    versionCheck = await import("@/lib/servernz-version-check");
     savedBoardSettings = await prisma.clubPostSettings.findUnique({
       where: { id: "default" }, select: { retentionDays: true, cleanupStartedAt: true },
     });
@@ -696,5 +702,82 @@ type Latch = ReturnType<typeof latch>;
       await Promise.allSettled([holder, sweep, created]);
       deleted.mockRestore();
     }
+  });
+  /** Answers the central server: the version, and every share POST with `id` (counted). */
+  function answerShares(id: string, hold?: Promise<void>) {
+    const sent = { count: 0 };
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/api/v1/version")) {
+        return new Response(JSON.stringify({ version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }));
+      }
+      sent.count += 1;
+      if (hold) await hold;
+      return new Response(JSON.stringify({ id }));
+    });
+    return sent;
+  }
+
+  it("sends a post once when the inline share and the cron retry run together (#4592)", async () => {
+    const ours = await prisma.clubPost.create({ data: {
+      id: "race-4590-twice", authorName: "Race Member", content: "Shared once.", shareRequestedAt: new Date("2026-06-30T23:00:00.000Z"),
+    } });
+    const sent = answerShares("race-4590-srv-once");
+    // Both callers reach the pause check, past their reads of the row, before
+    // either may go on to the claim.
+    const bothRead = latch();
+    let arrived = 0;
+    const original = versionCheck.isServerSyncPaused;
+    const paused = vi.spyOn(versionCheck, "isServerSyncPaused").mockImplementation(async () => {
+      arrived += 1;
+      if (arrived === 2) bothRead.release();
+      if (arrived <= 2) await bothRead.promise;
+      return original();
+    });
+    try {
+      const [inline] = await Promise.all([
+        sharing.shareOnePost(ours.id),
+        sharing.retryPendingShares(new Date("2026-07-01T00:00:00.000Z")),
+      ]);
+      expect(inline.status === "shared" || (inline.status === "skipped" && inline.reason === "claimed")).toBe(true);
+    } finally {
+      paused.mockRestore();
+    }
+
+    expect(sent.count).toBe(1);
+    expect(await prisma.clubPost.findUnique({ where: { id: ours.id }, select: { serverPostId: true, shareRequestedAt: true } }))
+      .toEqual({ serverPostId: "race-4590-srv-once", shareRequestedAt: null });
+  });
+
+  it("sends nothing on a later sweep after an accepted share whose recording failed throughout (#4590 review)", async () => {
+    const ours = await prisma.clubPost.create({ data: {
+      id: "race-4590-unrecorded", authorName: "Race Member", content: "Recorded nowhere.", shareRequestedAt: new Date("2026-06-30T23:00:00.000Z"),
+    } });
+    const sent = answerShares("race-4590-srv-unrecorded");
+    // After the server accepts, every write the recording makes fails, the
+    // final record included: the database dropping, say.
+    const down = () => Promise.reject(new Error("database unavailable"));
+    const realUpdateMany = prisma.clubPost.updateMany.bind(prisma.clubPost);
+    const realTx = prisma.$transaction.bind(prisma) as (...args: unknown[]) => Promise<unknown>;
+    // Up until the server has the share, down from then on.
+    const tx = vi.spyOn(prisma, "$transaction").mockImplementation(((...args: unknown[]) =>
+      (sent.count === 0 ? realTx(...args) : down())) as never);
+    const updateMany = vi.spyOn(prisma.clubPost, "updateMany").mockImplementation(((args: never) =>
+      (sent.count === 0 ? realUpdateMany(args) : down())) as never);
+    const update = vi.spyOn(prisma.clubPost, "update").mockImplementation((() => down()) as never);
+    let outcome: Awaited<ReturnType<typeof sharing.shareOnePost>>;
+    try {
+      outcome = await sharing.shareOnePost(ours.id);
+    } finally {
+      tx.mockRestore();
+      updateMany.mockRestore();
+      update.mockRestore();
+    }
+    expect(outcome).toMatchObject({ status: "failed", retryable: false });
+    expect(sent.count).toBe(1);
+    // The claim took the request before the send, so nothing asks again.
+    expect(await prisma.clubPost.findUnique({ where: { id: ours.id }, select: { serverPostId: true, shareRequestedAt: true } }))
+      .toEqual({ serverPostId: null, shareRequestedAt: null });
+    await sharing.retryPendingShares(new Date("2026-07-01T00:00:00.000Z"));
+    expect(sent.count).toBe(1);
   });
 });
